@@ -1,0 +1,12 @@
+/.tools/
+/.cache/
+/.local/
+/work/
+/outputs/
+/coverage.out
+/.memdb/
+/.env
+/.env.*
+!/.env.example
+*.test
+*.exe

@@ -62,7 +62,7 @@ SuiteWard's own development environment is settled separately from product deplo
 
 The codebase will use one application Go module, `cmd/` entry points, and internal domain, application, adapter, and composition boundaries. Capabilities are grouped to preserve cohesive invariants and support parallel tasks. See [ADR 0024](decisions/0024-single-module-project-structure.md).
 
-The [development guide](development-guide.md) defines the accepted standard-library test/log/error conventions and explicit dependency composition. CI and coverage policy remain engineering decisions to complete.
+The [development guide](development-guide.md) defines the accepted standard-library test/log/error conventions and explicit dependency composition. The [CI and coverage guide](ci-and-coverage.md) defines accepted quality gates and the staged activation of the initial engineering configuration.
 
 ## Items still open
 

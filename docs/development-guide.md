@@ -16,7 +16,7 @@ Use small, purpose-built fakes at actual external boundaries. Pass controlled ti
 
 Keep the M0 suite runnable without external services. Later infrastructure tests must be identifiable and runnable separately. Parallel tests must own independent mutable resources; do not use timing sleeps as a substitute for coordinating concurrent test behavior.
 
-Coverage targets, CI checks, and the detailed test matrix are separate engineering decisions and are not selected by this guide.
+Coverage targets and CI checks are defined in the [CI and coverage guide](ci-and-coverage.md). Detailed persistence and generated-code checks must be implemented with those capabilities.
 
 Reference: [Go testing documentation](https://pkg.go.dev/testing).
 
@@ -56,4 +56,4 @@ Keep dependencies visible in a component's construction rather than looking them
 
 Each task includes its behavior tests and follows the same conventions, regardless of the implementing agent. Additional libraries should address a concrete limitation and be discussed with the coordinating agent when they change shared dependencies. Install selected tools locally with pinned versions as required by ADR 0023.
 
-Configuration loading, migrations, formatting/static-analysis gates, vulnerability checks, coverage thresholds, and release automation remain separate open decisions. No application dependency or CI workflow is installed by this document.
+Configuration loading, migrations, and release automation remain separate open decisions. Formatting/static-analysis gates, vulnerability checks, and coverage policy are now defined in the [CI and coverage guide](ci-and-coverage.md).

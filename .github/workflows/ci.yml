@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  inspect:
+    name: Inspect repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.inspect.outputs.go }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: inspect
+        run: ./scripts/ci.ps1 -Mode Inspect
+
+  foundation:
+    name: Foundation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check documentation links
+        run: ./scripts/ci.ps1 -Mode Documents
+      - name: Check CI classification and gate behavior
+        run: ./scripts/test-ci.ps1
+
+  go:
+    name: Go (${{ matrix.os }})
+    needs: inspect
+    if: needs.inspect.outputs.go == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    env:
+      GOTOOLCHAIN: local
+      GOPATH: ${{ github.workspace }}/.cache/gopath
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOBIN: ${{ github.workspace }}/.tools/bin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Build, format, analyze, and test
+        run: ./scripts/check-go.ps1
+
+  coverage:
+    name: Race, security, and coverage
+    needs: inspect
+    if: needs.inspect.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GOTOOLCHAIN: local
+      GOPATH: ${{ github.workspace }}/.cache/gopath
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOBIN: ${{ github.workspace }}/.tools/bin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Race tests and real coverage report
+        run: ./scripts/check-go.ps1 -Coverage
+      - name: Check reachable known vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          if ($LASTEXITCODE -ne 0) { throw 'govulncheck installation failed' }
+          & (Join-Path $env:GOBIN 'govulncheck') ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Vulnerability check failed or found reachable vulnerabilities' }
+      - name: Preserve coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-linux
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          version: v11.3.1
+          files: coverage.out
+          disable_search: true
+          fail_ci_if_error: true
+          handle_no_reports_found: false
+          cleanup: true
+
+  gate:
+    name: CI / Gate
+    needs: [inspect, foundation, go, coverage]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      NEEDS_JSON: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every applicable verification
+        run: ./scripts/ci.ps1 -Mode Gate

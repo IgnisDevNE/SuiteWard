@@ -6,7 +6,7 @@ The project is in engineering preparation. Application implementation has not st
 
 Start with the [planning documentation](docs/README.md), [project baseline](docs/project-baseline.md), and [engineering plan](docs/engineering-plan.md).
 
-Initial GitHub Actions and Codecov configuration is prepared. See [CI and coverage](docs/ci-and-coverage.md) for the current checks and activation steps.
+See [CI and coverage](docs/ci-and-coverage.md) for GitHub Actions checks, Codecov configuration, and staged activation.
 
 The accepted application stack is Go, Chi, PostgreSQL, pgx, sqlc, and River. Development targets Windows, with Windows and Linux CI and local PostgreSQL in Podman. Development tools should be installed within the project wherever practical.
 

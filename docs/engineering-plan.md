@@ -81,7 +81,9 @@ Memtrace documents repository-scoped storage and worktree overlays. Graph worktr
 
 ## CI preparation update
 
-Git is now initialized locally. A documentation-only bootstrap commit is prepared on local `main`, and the CI/Codecov changes are prepared on `infra/codecov-ci`. Publication and remote runs are pending the user's authorization of the initial `main` bootstrap.
+Git is initialized, and the user-authorized documentation bootstrap `a4be88c` is published on `main`. The user merged CI/Codecov [PR #1](https://github.com/IgnisDevNE/SuiteWard/pull/1) as `650fb81`. Its foundation checks passed on GitHub-hosted Windows and Linux runners both in the PR and in [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580).
+
+`main` now requires an up-to-date PR and the observed `CI / Gate` check from GitHub Actions, with administrator enforcement and force pushes/deletion disabled. Human merge authorization remains operational while human and agent use the same GitHub identity.
 
 Codecov already recognizes SuiteWard through the organization's existing GitHub App installation. No new upload token or organization-wide permission change was needed. The first real coverage report remains pending application code and tests.
 
@@ -89,7 +91,7 @@ Codecov already recognizes SuiteWard through the organization's existing GitHub 
 
 - Exact tool versions, project-local bootstrap and cache layout, shared local/CI commands, and the production support matrix. Windows development, Windows/Linux CI, Podman PostgreSQL, and the local-installation policy are settled in ADR 0023.
 - Configuration loading, migrations, detailed test allocation, and operational log settings. Core test, logging, error, and dependency-composition conventions are settled in the development guide. The module and package-boundary direction is settled in ADR 0024; concrete interfaces and aggregate definitions remain implementation work.
-- Activation and remote validation of prepared CI/Codecov checks, human-authorized branch protection, persistence/generation jobs when those capabilities exist, and M0's final project-wide coverage non-regression policy. Initial quality policy and upload authentication are settled in the CI guide.
+- First real Go/coverage execution and validation of the Codecov patch requirement, separate credentials for technically enforced human merge authority, persistence/generation jobs when those capabilities exist, and M0's final project-wide coverage non-regression policy. Foundation CI and its branch requirement are active; initial quality policy and upload authentication are settled in the CI guide.
 - SuiteWard-only Memtrace configuration, worktree handling, and decision-memory conventions.
 - Backlog location, task readiness/completion rules, reviewer roles, concurrency limits, and escalation behavior.
 - Engineering-foundation acceptance criteria and the concrete M0 task dependency graph. M1-M3 should retain milestone outcomes without prematurely fixing details explicitly deferred by the product ADRs.

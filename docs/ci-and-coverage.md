@@ -1,7 +1,7 @@
 # CI and coverage
 
 - **Updated:** 2026-09-26
-- **Status:** Policy accepted; initial configuration prepared locally. Remote execution and coverage enforcement are not yet verified.
+- **Status:** Policy accepted; initial configuration was merged in [PR #1](https://github.com/IgnisDevNE/SuiteWard/pull/1). Foundation CI has passed on GitHub-hosted Windows and Linux runners, including the `main` push. Application coverage enforcement awaits real Go code and reports.
 
 ## Accepted quality policy
 
@@ -41,13 +41,13 @@ Codecov waits for CI to succeed before reporting its final status. `CI / Gate` m
 
 ## Staged activation
 
-1. Publish the approved documentation bootstrap as the initial `main` history. The user must authorize this first publication under the agreed human-controlled integration policy.
-2. Publish `infra/codecov-ci` and open its infrastructure PR. Run its real Windows/Linux foundation jobs and verify the emitted `CI / Gate` check.
-3. Activate the verified CI requirement without requiring an absent Codecov result. Merge only after the user's authorization. Do not require a second human reviewer who does not exist; a same-account PR author cannot provide GitHub's separate approving review.
+1. Completed: the user authorized publication of documentation bootstrap `a4be88c` as the initial `main` history.
+2. Completed: `infra/codecov-ci` is published as PR #1. Its Windows/Linux foundation jobs and `CI / Gate` succeeded in [the first hosted run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287204180) for revision `0d4b4ae`.
+3. Completed: `main` requires an up-to-date PR and `CI / Gate` from the observed GitHub Actions App (ID 15368), with administrator enforcement and force pushes/deletion disabled. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that separate review. The user merged PR #1; [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580) passed for merge commit `650fb81`.
 4. The first real Go implementation PR must exercise the Go/coverage workflow, establish an actual report, and validate Codecov's status behavior. Confirm an under-covered change fails before enabling the observed patch check as a required branch context. No empty coverage baseline is substituted for this step.
 5. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
 
-The user continues to authorize every integration into `main`. Repository rule details and the enforcement mechanism for human merge authority must be confirmed during protection setup; a green CI run alone is not that authorization.
+The user continues to authorize every integration into `main`. GitHub checks and PR requirements are active, but the provider cannot distinguish a human from an agent using the same GitHub identity. Human merge authorization remains an operational rule until a separate identity/credential design is established; a green CI run alone is not that authorization.
 
 ## Local verification performed during preparation
 
@@ -56,7 +56,7 @@ The user continues to authorize every integration into `main`. Repository rule d
 - Tracked documentation links checked and staged changes checked for whitespace errors.
 - `codecov.yml` validated against Codecov's official validation endpoint.
 
-These checks do not claim a GitHub-hosted run, Linux execution, application test result, or successful coverage upload. Those depend on the publication and first-code steps above.
+The initial foundation checks were subsequently verified on GitHub-hosted Windows and Linux runners, as recorded above. Go build/tests, race detection, vulnerability scanning, and coverage upload remain intentionally inapplicable until application code exists. No application test result or successful coverage upload is claimed.
 
 ## References
 

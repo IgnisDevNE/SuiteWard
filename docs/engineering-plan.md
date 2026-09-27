@@ -81,7 +81,7 @@ Memtrace documents repository-scoped storage and worktree overlays. Graph worktr
 
 ## CI preparation update
 
-Git is initialized, and the user-authorized documentation bootstrap `a4be88c` is published on `main`. CI/Codecov changes are submitted in [PR #1](https://github.com/IgnisDevNE/SuiteWard/pull/1), whose initial foundation checks passed on GitHub-hosted Windows and Linux runners. Its merge awaits separate user authorization.
+Git is initialized, and the user-authorized documentation bootstrap `a4be88c` is published on `main`. The user merged CI/Codecov [PR #1](https://github.com/IgnisDevNE/SuiteWard/pull/1) as `650fb81`. Its foundation checks passed on GitHub-hosted Windows and Linux runners both in the PR and in [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580).
 
 `main` now requires an up-to-date PR and the observed `CI / Gate` check from GitHub Actions, with administrator enforcement and force pushes/deletion disabled. Human merge authorization remains operational while human and agent use the same GitHub identity.
 

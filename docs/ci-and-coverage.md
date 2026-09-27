@@ -1,7 +1,7 @@
 # CI and coverage
 
 - **Updated:** 2026-09-26
-- **Status:** Policy accepted; initial configuration is submitted in [PR #1](https://github.com/IgnisDevNE/SuiteWard/pull/1). Foundation CI has passed on GitHub-hosted Windows and Linux runners. Application coverage enforcement awaits real Go code and reports.
+- **Status:** Policy accepted; initial configuration was merged in [PR #1](https://github.com/IgnisDevNE/SuiteWard/pull/1). Foundation CI has passed on GitHub-hosted Windows and Linux runners, including the `main` push. Application coverage enforcement awaits real Go code and reports.
 
 ## Accepted quality policy
 
@@ -43,7 +43,7 @@ Codecov waits for CI to succeed before reporting its final status. `CI / Gate` m
 
 1. Completed: the user authorized publication of documentation bootstrap `a4be88c` as the initial `main` history.
 2. Completed: `infra/codecov-ci` is published as PR #1. Its Windows/Linux foundation jobs and `CI / Gate` succeeded in [the first hosted run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287204180) for revision `0d4b4ae`.
-3. Completed: `main` requires an up-to-date PR and `CI / Gate` from the observed GitHub Actions App (ID 15368), with administrator enforcement and force pushes/deletion disabled. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that separate review. Merging PR #1 still requires the user's authorization.
+3. Completed: `main` requires an up-to-date PR and `CI / Gate` from the observed GitHub Actions App (ID 15368), with administrator enforcement and force pushes/deletion disabled. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that separate review. The user merged PR #1; [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580) passed for merge commit `650fb81`.
 4. The first real Go implementation PR must exercise the Go/coverage workflow, establish an actual report, and validate Codecov's status behavior. Confirm an under-covered change fails before enabling the observed patch check as a required branch context. No empty coverage baseline is substituted for this step.
 5. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
 

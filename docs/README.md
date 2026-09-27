@@ -8,5 +8,7 @@ The [engineering preparation plan](engineering-plan.md) tracks development pract
 
 The [development guide](development-guide.md) records accepted conventions for tests, structured logs, errors, and explicit dependency composition.
 
-These files record planning decisions. Application code, deployment configuration, and release licensing notices have not yet been implemented by this documentation work.
+The [CI and coverage guide](ci-and-coverage.md) records the accepted quality gates, prepared Codecov/GitHub Actions configuration, and staged activation requirements.
+
+These files record planning decisions and engineering preparation. Initial CI configuration is prepared; application code, deployment configuration, and release licensing notices have not yet been implemented.
 

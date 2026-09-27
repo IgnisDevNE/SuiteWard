@@ -27,6 +27,7 @@ This plan builds on the [project baseline](project-baseline.md) and [accepted AD
 - Develop natively on Windows, build and test in Windows and Linux CI, and use the existing Podman environment for local PostgreSQL tests. Install tools inside the project wherever practical, including the Go toolchain; reserve global installation for genuine host-level requirements. See [ADR 0023](decisions/0023-development-environment-and-project-local-tooling.md).
 - Use one application Go module, entry points in `cmd/`, and implementation in `internal/`, separating domain rules, application use cases, adapters, and composition. Group related capabilities without creating a package per entity or agent. See [ADR 0024](decisions/0024-single-module-project-structure.md).
 - Use standard Go `testing`, table-driven cases where useful, and small boundary fakes; structured `log/slog` logging; explicit errors inspected by identity/type; and manual dependency composition through constructors or parameters. See the [development guide](development-guide.md).
+- Require applicable Windows/Linux build and tests, formatting/static analysis, Linux race and vulnerability checks, and later real PostgreSQL and generation checks. Codecov patch coverage is 90%, while total coverage is informational during M0. Configuration and staged activation are described in the [CI and coverage guide](ci-and-coverage.md).
 - Preserve the accepted product roadmap: M0 proves the domain; M1 delivers integrity governance; M2 adds canonical execution; M3 adds justified supply-chain hardening.
 - Complete engineering preparation before starting product implementation. Infrastructure planning does not reopen the accepted application stack.
 
@@ -65,7 +66,7 @@ Their combined stale-approval and concurrent-promotion scenarios are required co
 
 ## Environment observations
 
-Read-only observations made on 2026-09-26:
+Initial read-only observations made on 2026-09-26, before the CI preparation described below:
 
 - The local SuiteWard directory contains planning documents and has no Git metadata or application module yet.
 - `IgnisDevNE/SuiteWard` is an empty public repository with `main` as its configured default branch. It was initially observed as private; the user corrected the visibility, and a subsequent API check confirmed it is public. The current GitHub credentials have repository administration access.
@@ -78,11 +79,17 @@ GitHub plan constraints: [protected branches documentation](https://docs.github.
 
 Memtrace documents repository-scoped storage and worktree overlays. Graph worktree selection and Fleet coordination scope are separate; their concrete configuration must be validated before relying on them for agent coordination. See [workspaces](https://memtrace.io/docs/concepts/workspaces) and [Fleet coordination](https://memtrace.io/docs/features/fleet).
 
+## CI preparation update
+
+Git is now initialized locally. A documentation-only bootstrap commit is prepared on local `main`, and the CI/Codecov changes are prepared on `infra/codecov-ci`. Publication and remote runs are pending the user's authorization of the initial `main` bootstrap.
+
+Codecov already recognizes SuiteWard through the organization's existing GitHub App installation. No new upload token or organization-wide permission change was needed. The first real coverage report remains pending application code and tests.
+
 ## Decisions still required
 
 - Exact tool versions, project-local bootstrap and cache layout, shared local/CI commands, and the production support matrix. Windows development, Windows/Linux CI, Podman PostgreSQL, and the local-installation policy are settled in ADR 0023.
 - Configuration loading, migrations, detailed test allocation, and operational log settings. Core test, logging, error, and dependency-composition conventions are settled in the development guide. The module and package-boundary direction is settled in ADR 0024; concrete interfaces and aggregate definitions remain implementation work.
-- CI jobs, security checks, coverage policy, Codecov authentication, and staged activation of required checks.
+- Activation and remote validation of prepared CI/Codecov checks, human-authorized branch protection, persistence/generation jobs when those capabilities exist, and M0's final project-wide coverage non-regression policy. Initial quality policy and upload authentication are settled in the CI guide.
 - SuiteWard-only Memtrace configuration, worktree handling, and decision-memory conventions.
 - Backlog location, task readiness/completion rules, reviewer roles, concurrency limits, and escalation behavior.
 - Engineering-foundation acceptance criteria and the concrete M0 task dependency graph. M1-M3 should retain milestone outcomes without prematurely fixing details explicitly deferred by the product ADRs.

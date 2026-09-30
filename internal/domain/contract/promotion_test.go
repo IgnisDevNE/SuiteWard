@@ -308,3 +308,147 @@ func TestIntegrationRejectsIncompleteObservations(t *testing.T) {
 		})
 	}
 }
+
+func promotionPolicy(t *testing.T, project contract.ProjectID, revision contract.PolicyRevisionID, owner contract.PrincipalID) contract.Policy {
+	t.Helper()
+	principal,err:=contract.NewPrincipal(owner,contract.Human)
+	if err!=nil {t.Fatal(err)}
+	policy,err:=contract.NewPolicy(project,revision,principal)
+	if err!=nil {t.Fatal(err)}
+	return policy
+}
+
+func promotionBinding(t *testing.T, input contract.BindingInput) contract.ApprovalBinding {
+	t.Helper()
+	value,err:=contract.NewApprovalBinding(input)
+	if err!=nil {t.Fatal(err)}
+	return value
+}
+
+func promotionProposal(t *testing.T, input contract.BindingInput, origin contract.SourceRevision, carrier contract.ApprovalCarrierID) contract.Proposal {
+	t.Helper()
+	revision,err:=contract.NewProposalRevision(promotionBinding(t,input),origin,carrier)
+	if err!=nil {t.Fatal(err)}
+	proposal,err:=contract.NewProposal(revision)
+	if err!=nil {t.Fatal(err)}
+	return proposal
+}
+
+func promotionContext(t *testing.T) contract.PromotionContext {
+	t.Helper()
+	canonical:=promotionCanonical(t)
+	proposed:=promotionProtected(t,promotionManifest(t,"new"),"scope",map[string]string{"runner":"v1"})
+	return promotionContextWith(t,canonical,proposed)
+}
+
+func promotionContextWith(t *testing.T, canonical contract.CanonicalSnapshot, proposed contract.ProtectedContract) contract.PromotionContext {
+	t.Helper()
+	ref:=contract.ProposalReference{ProjectID:"project",SuiteID:"suite",ProposalID:"proposal",RevisionID:"r1"}
+	baseline,_:=canonical.Suite().CurrentVersionID()
+	proposal:=promotionProposal(t,contract.BindingInput{Reference:ref,ExpectedCanonical:baseline,Manifest:proposed.Manifest().Digest(),Scope:proposed.ScopeDigest(),PolicyRevision:"policy",CoveredInputs:proposed.CoveredInputs()},"candidate-source","carrier")
+	policy:=promotionPolicy(t,"project","policy","owner")
+	consent,err:=contract.NewConsent("project","suite","proposal")
+	if err!=nil {t.Fatal(err)}
+	owner,err:=contract.NewPrincipal("owner",contract.Human)
+	if err!=nil {t.Fatal(err)}
+	command,err:=contract.NewCommand(contract.CommandInput{OperationID:"approve-op",SourceCommandID:"approve-source",Actor:owner,Reference:ref,Carrier:"carrier",Action:contract.ApproveConsent,Order:1})
+	if err!=nil {t.Fatal(err)}
+	consent,result,err:=consent.Apply(proposal,policy,command)
+	if err!=nil||result.Outcome()!=contract.ConsentApproved {t.Fatalf("approval fixture: %v %v",result,err)}
+	evidence,err:=contract.NewIntegrityEvidence("emitter","integrated-source",proposal.Current().Binding(),contract.IntegrityPassed)
+	if err!=nil {t.Fatal(err)}
+	assessment,err:=contract.AssessIntegrity("integrated-source",proposal.Current().Binding(),&evidence)
+	if err!=nil {t.Fatal(err)}
+	schedule,err:=contract.NewSchedule("project","suite")
+	if err!=nil {t.Fatal(err)}
+	schedule,err=schedule.Admit(proposal,true)
+	if err!=nil {t.Fatal(err)}
+	return contract.PromotionContext{Canonical:canonical,Proposed:proposed,Proposal:proposal,Reference:ref,Carrier:"carrier",Policy:policy,Consent:consent,Assessment:assessment,Scheduling:schedule,ExpectedStateRevision:10,ExpectedSchedulingGeneration:schedule.Generation()}
+}
+
+func promotionRevoke(t *testing.T, c *contract.PromotionContext) {
+	t.Helper()
+	owner,err:=contract.NewPrincipal("owner",contract.Human);if err!=nil{t.Fatal(err)}
+	command,err:=contract.NewCommand(contract.CommandInput{OperationID:"revoke-op",SourceCommandID:"revoke-source",Actor:owner,Reference:c.Reference,Carrier:c.Carrier,Action:contract.RevokeConsent,Order:2});if err!=nil{t.Fatal(err)}
+	c.Consent,_,err=c.Consent.Apply(c.Proposal,c.Policy,command);if err!=nil{t.Fatal(err)}
+}
+
+func promotionNewerCanonical(t *testing.T) contract.CanonicalSnapshot {
+	t.Helper()
+	_,_,protected,_:=promotionCanonicalParts(t)
+	recordInput:=promotionRecordInput(t)
+	recordInput.VersionID="v2"
+	value,err:=contract.NewCanonicalSnapshot(promotionSuite(t,"project","suite","v2",10),promotionVersion(t,"project","suite","v2",protected.Manifest()),protected,promotionRecord(t,recordInput))
+	if err!=nil{t.Fatal(err)}
+	return value
+}
+
+func promotionWaitingSchedule(t *testing.T, proposal contract.Proposal) contract.Schedule {
+	t.Helper()
+	b:=proposal.Current().Binding()
+	ref:=b.Reference();ref.ProposalID="first-proposal"
+	first:=promotionProposal(t,contract.BindingInput{Reference:ref,ExpectedCanonical:b.ExpectedCanonical(),Manifest:b.ManifestDigest(),Scope:b.ScopeDigest(),PolicyRevision:b.PolicyRevisionID(),CoveredInputs:b.CoveredInputs()},"first-source","first-carrier")
+	schedule,err:=contract.NewSchedule("project","suite");if err!=nil{t.Fatal(err)}
+	schedule,err=schedule.Admit(first,true);if err!=nil{t.Fatal(err)}
+	schedule,err=schedule.Admit(proposal,true);if err!=nil{t.Fatal(err)}
+	return schedule
+}
+
+func TestPromotionReadinessCombinedAuthorityMatrix(t *testing.T) {
+	for _,baseline:=range []string{"current","stale"}{for _,approval:=range []string{"active","missing","revoked"}{for _,scheduling:=range []string{"active","stale","waiting"}{
+		t.Run(baseline+"/"+approval+"/"+scheduling,func(t *testing.T){
+			c:=promotionContext(t)
+			if baseline=="stale" {c.Canonical=promotionNewerCanonical(t)}
+			if approval=="missing" {c.Consent=contract.Consent{}} else if approval=="revoked" {promotionRevoke(t,&c)}
+			if scheduling=="stale" {c.ExpectedSchedulingGeneration++} else if scheduling=="waiting" {c.Scheduling=promotionWaitingSchedule(t,c.Proposal);c.ExpectedSchedulingGeneration=c.Scheduling.Generation()}
+			beforeSuite:=c.Canonical.Suite()
+			beforeConsent:=c.Consent.Results()
+			beforeSchedule:=c.Scheduling.Entries()
+			outcome,reason:=contract.PromotionReady,contract.PromotionReasonNone
+			if baseline=="stale" {outcome,reason=contract.PromotionBlocked,contract.PromotionReasonCanonicalChanged} else if approval!="active" {outcome,reason=contract.PromotionBlocked,contract.PromotionReasonApprovalMissing} else if scheduling!="active" {outcome,reason=contract.PromotionBlocked,contract.PromotionReasonSchedulingBlocked}
+			decision,err:=contract.CheckPromotionReadiness(c,"integrated-source")
+			requirePromotionDecision(t,decision,err,outcome,reason)
+			if c.Canonical.Suite()!=beforeSuite||!reflect.DeepEqual(c.Consent.Results(),beforeConsent)||!reflect.DeepEqual(c.Scheduling.Entries(),beforeSchedule){t.Fatal("readiness changed original authority snapshots")}
+		})
+	}}}
+}
+
+func TestPromotionReadinessDistinguishesInitialEmptyInventory(t *testing.T) {
+	empty:=promotionProtected(t,promotionManifest(t),"scope",map[string]string{"runner":"v1"})
+	initial:=promotionContextWith(t,promotionAbsentCanonical(t),empty)
+	decision,err:=contract.CheckPromotionReadiness(initial,"integrated-source")
+	requirePromotionDecision(t,decision,err,contract.PromotionBlocked,contract.PromotionReasonEmptyInventory)
+	established:=promotionContextWith(t,promotionCanonical(t),empty)
+	decision,err=contract.CheckPromotionReadiness(established,"integrated-source")
+	requirePromotionDecision(t,decision,err,contract.PromotionReady,contract.PromotionReasonNone)
+}
+
+func requirePromotionDecision(t *testing.T, decision contract.PromotionDecision, err error, outcome contract.PromotionOutcome, reason contract.PromotionReason) {
+	t.Helper()
+	if err!=nil||decision.Outcome()!=outcome||decision.Reason()!=reason {t.Fatalf("decision outcome=%v reason=%v err=%v; want outcome=%v reason=%v",decision.Outcome(),decision.Reason(),err,outcome,reason)}
+	if effect,present:=decision.Effect();present||!effect.IsZero(){t.Fatal("non-promoting decision carried canonical effects")}
+}
+
+func TestPromotionReadinessRequiresActualCurrentConsent(t *testing.T) {
+	context:=promotionContext(t)
+	decision,err:=contract.CheckPromotionReadiness(context,"integrated-source")
+	requirePromotionDecision(t,decision,err,contract.PromotionReady,contract.PromotionReasonNone)
+	if context.Canonical.Suite().Revision()!=10||!context.Consent.HasApproval(context.Proposal,context.Policy){t.Fatal("readiness mutated authority")}
+	for name,change:=range map[string]func(*contract.PromotionContext){
+		"absent consent":func(c *contract.PromotionContext){c.Consent=contract.Consent{}},
+		"empty consent":func(c *contract.PromotionContext){var err error;c.Consent,err=contract.NewConsent("project","suite","proposal");if err!=nil{t.Fatal(err)}},
+		"different owner":func(c *contract.PromotionContext){c.Policy=promotionPolicy(t,"project","policy","new-owner")},
+		"revoked consent":func(c *contract.PromotionContext){
+			owner,err:=contract.NewPrincipal("owner",contract.Human);if err!=nil{t.Fatal(err)}
+			command,err:=contract.NewCommand(contract.CommandInput{OperationID:"revoke-op",SourceCommandID:"revoke-source",Actor:owner,Reference:c.Reference,Carrier:c.Carrier,Action:contract.RevokeConsent,Order:2});if err!=nil{t.Fatal(err)}
+			c.Consent,_,err=c.Consent.Apply(c.Proposal,c.Policy,command);if err!=nil{t.Fatal(err)}
+		},
+	}{t.Run(name,func(t *testing.T){c:=promotionContext(t);change(&c);decision,err:=contract.CheckPromotionReadiness(c,"integrated-source");requirePromotionDecision(t,decision,err,contract.PromotionBlocked,contract.PromotionReasonApprovalMissing)})}
+	context.Policy=promotionPolicy(t,"project","next-policy","owner")
+	decision,err=contract.CheckPromotionReadiness(context,"integrated-source")
+	requirePromotionDecision(t,decision,err,contract.PromotionBlocked,contract.PromotionReasonPolicyChanged)
+	context=promotionContext(t)
+	context.Policy=promotionPolicy(t,"foreign","policy","owner")
+	decision,err=contract.CheckPromotionReadiness(context,"integrated-source")
+	requirePromotionDecision(t,decision,err,contract.PromotionBlocked,contract.PromotionReasonContextMismatch)
+}

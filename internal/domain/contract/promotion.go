@@ -138,3 +138,60 @@ func (p ProtectedContract) IsZero() bool { return p.manifest.IsZero() }
 func (p ProtectedContract) matches(binding ApprovalBinding) bool {
 	return !p.IsZero() && !binding.IsZero() && p.manifest.Digest() == binding.ManifestDigest() && p.scope == binding.ScopeDigest() && maps.Equal(p.coveredInputs, binding.CoveredInputs())
 }
+
+var ErrInvalidPromotion = errors.New("invalid promotion")
+
+// PromotionContext is a caller-supplied snapshot of all governing authority.
+type PromotionContext struct {
+	Canonical CanonicalSnapshot
+	Proposed ProtectedContract
+	Proposal Proposal
+	Reference ProposalReference
+	Carrier ApprovalCarrierID
+	Policy Policy
+	Consent Consent
+	Assessment IntegrityAssessment
+	Scheduling Schedule
+	ExpectedStateRevision StateRevision
+	ExpectedSchedulingGeneration ScheduleGeneration
+}
+
+type PromotionOutcome uint8
+const (
+	PromotionBlocked PromotionOutcome = iota + 1
+	PromotionReady
+	PromotionNoChange
+	PromotionProposed
+)
+type PromotionReason uint8
+const (
+	PromotionReasonNone PromotionReason = iota
+	PromotionReasonContextMismatch
+	PromotionReasonProposalNotCurrent
+	PromotionReasonCanonicalChanged
+	PromotionReasonStateChanged
+	PromotionReasonPolicyChanged
+	PromotionReasonApprovalMissing
+	PromotionReasonAssessmentMismatch
+	PromotionReasonIntegrityNotPassed
+	PromotionReasonSchedulingBlocked
+	PromotionReasonIntegrationMissing
+	PromotionReasonIntegrationMismatch
+	PromotionReasonCanonicalPresent
+	PromotionReasonEmptyInventory
+	PromotionReasonCorrectionContextReused
+)
+
+type PromotionEffect struct{}
+func (e PromotionEffect) IsZero() bool {return true}
+
+type PromotionDecision struct {
+	outcome PromotionOutcome
+	reason PromotionReason
+	effect PromotionEffect
+}
+func (d PromotionDecision) Outcome() PromotionOutcome {return d.outcome}
+func (d PromotionDecision) Reason() PromotionReason {return d.reason}
+func (d PromotionDecision) Effect() (PromotionEffect,bool) {return d.effect,!d.effect.IsZero()}
+func blockedPromotion(reason PromotionReason) PromotionDecision {return PromotionDecision{outcome:PromotionBlocked,reason:reason}}
+func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision,error) {return blockedPromotion(PromotionReasonNone),nil}

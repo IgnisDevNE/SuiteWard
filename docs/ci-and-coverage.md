@@ -1,7 +1,7 @@
 # CI and coverage
 
 - **Updated:** 2026-09-30
-- **Status:** Policy accepted; initial configuration was merged in [PR #1](https://github.com/IgnisDevNE/SuiteWard/pull/1). Foundation CI has passed on GitHub-hosted Windows and Linux runners, including the `main` push. Application coverage enforcement awaits real Go code and reports.
+- **Status:** Policy accepted. M0.01 has verified real Windows/Linux Go checks, Linux race/security/coverage, and Codecov success/failure at the 90% patch threshold. Requiring the observed Codecov check on `main` still needs repository administration permission; see [M0.01 execution evidence](plan/executions/M0.01.md).
 
 ## Accepted quality policy
 
@@ -22,7 +22,7 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 | Job | Current behavior |
 | --- | --- |
 | Inspect repository | Compare tracked files with the base revision to select foundation or Go verification. Removing an existing Go module/source cannot silently disable the Go checks. |
-| Foundation, Windows and Linux | Parse PowerShell scripts; validate the workflow with actionlint, documentation links, CI classification/gate behavior, development tooling safety/isolation, and the delivery graph/generated phase pages. |
+| Foundation, Windows and Linux | Parse PowerShell scripts; validate the workflow with actionlint, documentation links, CI classification/gate behavior, coverage argument handling, development tooling safety/isolation, and the delivery graph/generated phase pages. |
 | TDD evidence | F0.01 adds validation of task modes, execution-record structure, complete changed-file accounting, distinct author/reviewer declarations, RED/GREEN Git ancestry, and final task-file binding for PRs and `main` pushes. It is a required prerequisite of `CI / Gate`. |
 | Go, Windows and Linux | When real Go source exists: verify formatting, analyze, build, and test. A module without real packages fails. |
 | Race, security, and coverage | When Go exists: run Linux race/coverage tests, scan reachable vulnerabilities, preserve the coverage artifact, and upload the actual report. |
@@ -30,7 +30,7 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 
 There is no placeholder application package and no artificial coverage upload. The PowerShell tests verify CI infrastructure behavior and are not counted as application coverage. Once Go code exists, even a documentation-only PR runs the Go jobs so required coverage contexts remain available.
 
-The TDD validator reads committed evidence and Git history; it never executes commands supplied by that evidence. Full checkout history is required to check the recorded checkpoints. A well-formed JSON claim does not prove that a command ran, when it ran, that its diagnostic is authentic, or that its assertions are meaningful. Independent review checks those limits; normal CI executes the final revision's tests. F0.01 must establish its own hosted result before the new enforcement is claimed operational. The already completed F0 baseline has explicit historical status and no invented retrospective RED/GREEN evidence.
+The TDD validator reads committed evidence and Git history; it never executes commands supplied by that evidence. Full checkout history is required to check the recorded checkpoints. A well-formed JSON claim does not prove that a command ran, when it ran, that its diagnostic is authentic, or that its assertions are meaningful. Independent review checks those limits; normal CI executes the final revision's tests. F0.01 established hosted enforcement and F0.02 restored the checkpoint ancestry lost in its squash integration. The already completed F0 baseline has explicit historical status and no invented retrospective RED/GREEN evidence.
 
 Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. Tool downloads and caches use the job workspace where applicable; the compiler is provisioned in the ephemeral runner environment. The [local bootstrap](local-development.md) installs the same Go/scanner versions inside each checkout and reuses `scripts/check-go.ps1` for application verification.
 
@@ -49,8 +49,9 @@ Codecov waits for CI to succeed before reporting its final status. `CI / Gate` m
 1. Completed: the user authorized publication of documentation bootstrap `a4be88c` as the initial `main` history.
 2. Completed: `infra/codecov-ci` is published as PR #1. Its Windows/Linux foundation jobs and `CI / Gate` succeeded in [the first hosted run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287204180) for revision `0d4b4ae`.
 3. Completed: `main` requires an up-to-date PR and `CI / Gate` from the observed GitHub Actions App (ID 15368), with administrator enforcement and force pushes/deletion disabled. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that separate review. The user merged PR #1; [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580) passed for merge commit `650fb81`.
-4. The first real Go implementation PR must exercise the Go/coverage workflow, establish an actual report, and validate Codecov's status behavior. Confirm an under-covered change fails before enabling the observed patch check as a required branch context. No empty coverage baseline is substituted for this step.
-5. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
+4. Verified in [PR #6](https://github.com/IgnisDevNE/SuiteWard/pull/6): the first real domain code activates Windows/Linux Go and Linux race/security/coverage. The actual Codecov report covers six domain files at 100%; a controlled real-test subset produces 6.34% and fails `codecov/patch` against 90%. The diagnostic configuration is restored exactly. Exact revisions, the coverage-argument regression repair, and both hosted observations are in the [execution record](plan/executions/M0.01.md). No empty baseline or synthetic application package was used.
+5. Administrative activation remains: require `codecov/patch` from observed Codecov App 254 in addition to `CI / Gate`. The bot lacks repository administration permission; no personal fallback is authorized by this delivery. Final PR revision checks must pass before integration.
+6. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
 
 The user continues to authorize every integration into `main`. GitHub checks and PR requirements are active, but the provider cannot distinguish a human from an agent using the same GitHub identity. Human merge authorization remains an operational rule until a separate identity/credential design is established; a green CI run alone is not that authorization.
 
@@ -61,7 +62,7 @@ The user continues to authorize every integration into `main`. GitHub checks and
 - Tracked documentation links checked and staged changes checked for whitespace errors.
 - `codecov.yml` validated against Codecov's official validation endpoint.
 
-The initial foundation checks were subsequently verified on GitHub-hosted Windows and Linux runners, as recorded above. Go build/tests, race detection, vulnerability scanning, and coverage upload remain intentionally inapplicable until application code exists. No application test result or successful coverage upload is claimed.
+The initial foundation checks were subsequently verified on GitHub-hosted Windows and Linux runners, as recorded above. Application checks were inapplicable during that preparation. M0.01 supplies actual domain packages and the real hosted Go, race, vulnerability, and coverage results described in the staged activation record.
 
 The F0 expansion adds actionlint, parsing of all PowerShell helpers, and delivery-plan validation through `scripts/check-foundation.ps1`. It is published in [bot PR #3](https://github.com/IgnisDevNE/SuiteWard/pull/3). Windows/Linux foundation jobs passed for `8cb7682` in [run 36662944560](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36662944560); each later revision requires its own checks. See [foundation readiness](plan/readiness.md).
 

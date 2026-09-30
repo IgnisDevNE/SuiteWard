@@ -278,7 +278,7 @@
         "outcome": "accepted",
         "author": "root and phase_domain_plan",
         "reviewer": "m001_authority",
-        "notes": "Independently reran whole-module GREEN at ca9e6daa53ce5f466fb109a030bd75177e5e5b35 and reviewed the initial behavioral RED log. Verified go.mod binding, all component file bindings and ancestry, real dependency composition and standard-library-only scope. This accepts local implementation; hosted Windows/Linux, real Codecov upload and negative proof are recorded separately when observed. Independently replayed coverage repair RED 1a23f8df6a1fcf93ed58deea7a165043e82a2dea and GREEN 4c454e991b3c98de4a808272883c2500888660b7 with the exact regression command (exit 1/0), reviewed all three final scripts and accepted without findings. The script-local command fixture is explicitly separate from native hosted coverage evidence."
+        "notes": "Independently reran whole-module GREEN at ca9e6daa53ce5f466fb109a030bd75177e5e5b35 and reviewed the initial behavioral RED log. Verified go.mod binding, all component file bindings and ancestry, real dependency composition and standard-library-only scope. This accepts local implementation; hosted Windows/Linux, real Codecov upload and negative proof are recorded separately when observed. Independently replayed coverage repair RED 1a23f8df6a1fcf93ed58deea7a165043e82a2dea and GREEN 4c454e991b3c98de4a808272883c2500888660b7 with the exact regression command (exit 1/0), reviewed all three final scripts and accepted without findings. The script-local command fixture is explicitly separate from native hosted coverage evidence. m001_artifact independently verified both actual Codecov reports and the failed 90% patch check. Diagnostic files were restored exactly before final publication; the PR body records checks for its final head."
       },
       "task_id": "M0.01-I",
       "mode": "required",
@@ -293,8 +293,26 @@
         "scripts/check-foundation.ps1",
         "docs/plan/backlog.json",
         "docs/plan/phases/M0.01.md",
-        "docs/plan/executions/M0.01.md"
-      ]
+        "docs/plan/executions/M0.01.md",
+        "docs/ci-and-coverage.md"
+      ],
+      "hosted_verification": {
+        "permission_boundary": "At verification main requires only CI / Gate from App 15368. Adding observed codecov/patch from App 254 requires repository administration absent from the bot installation; no personal fallback or main merge performed.",
+        "negative": {
+          "run_url": "https://github.com/IgnisDevNE/SuiteWard/actions/runs/36669292132",
+          "revision": "8d70b26d8910fbdce8284446822b7bc2778aac3a",
+          "outcome": "Real limited-test subset report over the same six files: 4/63 lines, 6.34%. Codecov check 109741041436 from App 254: codecov/patch failure, 6.34% of diff hit against target 90.00%. Normal test/race/upload jobs passed; unchanged TDD/CI gates rejected the temporary unaccounted diagnostic configuration. Draft only; never mergeable phase evidence."
+        },
+        "positive": {
+          "run_url": "https://github.com/IgnisDevNE/SuiteWard/actions/runs/36669021638",
+          "revision": "1edb4c8d410bf03c3961f95b4c24cd6e46ea9ec5",
+          "outcome": "All eight GitHub Actions jobs succeeded, including Windows/Linux Go, Linux race, govulncheck and real coverage upload. Codecov check 109740372598 from App 254: codecov/patch success, 100.00% of diff hit against target 90.00%; real report 63/63 lines across six domain files."
+        },
+        "restoration": {
+          "outcome": "Workflow, Codecov config, module, domain and scripts are byte-identical to the accepted positive baseline. The phase evidence gate passes after restoration.",
+          "revision": "6197971993bee35c08370bb169f70f4cc0296f46"
+        }
+      }
     }
   ]
 }

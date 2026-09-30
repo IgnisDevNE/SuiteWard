@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"errors"
 	"maps"
 	"testing"
 
@@ -101,5 +102,55 @@ func TestApprovalBindingEmptyContextAndAbsentValues(t *testing.T) {
 	input.CoveredInputs = map[string]string{"environment": "environment-1", "runner": "runner-1"}
 	if !mustBinding(t, input).Equal(mustBinding(t, proposalBindingInput())) {
 		t.Fatal("map insertion order changed binding identity")
+	}
+}
+
+func TestApprovalBindingRejectsIncompleteInputs(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*contract.BindingInput)
+	}{
+		{"empty project", func(i *contract.BindingInput) { i.Reference.ProjectID = "" }},
+		{"blank project", func(i *contract.BindingInput) { i.Reference.ProjectID = " \t" }},
+		{"empty suite", func(i *contract.BindingInput) { i.Reference.SuiteID = "" }},
+		{"blank suite", func(i *contract.BindingInput) { i.Reference.SuiteID = "\u2003" }},
+		{"empty proposal", func(i *contract.BindingInput) { i.Reference.ProposalID = "" }},
+		{"blank proposal", func(i *contract.BindingInput) { i.Reference.ProposalID = " \n" }},
+		{"empty revision", func(i *contract.BindingInput) { i.Reference.RevisionID = "" }},
+		{"blank revision", func(i *contract.BindingInput) { i.Reference.RevisionID = "\t" }},
+		{"blank baseline", func(i *contract.BindingInput) { i.ExpectedCanonical = " \n" }},
+		{"absent manifest", func(i *contract.BindingInput) { i.Manifest = artifact.Digest{} }},
+		{"absent scope", func(i *contract.BindingInput) { i.Scope = artifact.Digest{} }},
+		{"empty policy", func(i *contract.BindingInput) { i.PolicyRevision = "" }},
+		{"blank policy", func(i *contract.BindingInput) { i.PolicyRevision = "\u2003" }},
+		{"empty context key", func(i *contract.BindingInput) { i.CoveredInputs[""] = "value" }},
+		{"blank context key", func(i *contract.BindingInput) { i.CoveredInputs[" \t"] = "value" }},
+		{"empty context value", func(i *contract.BindingInput) { i.CoveredInputs["source"] = "" }},
+		{"blank context value", func(i *contract.BindingInput) { i.CoveredInputs["source"] = "\u2003" }},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			input := proposalBindingInput()
+			tt.change(&input)
+			binding, err := contract.NewApprovalBinding(input)
+			if !errors.Is(err, contract.ErrInvalidBinding) {
+				t.Fatalf("error = %v, want ErrInvalidBinding", err)
+			}
+			if !binding.IsZero() {
+				t.Fatal("rejected inputs produced a constructed binding")
+			}
+		})
+	}
+}
+
+func TestApprovalBindingPreservesAcceptedIdentifierBytes(t *testing.T) {
+	input := proposalBindingInput()
+	input.Reference = contract.ProposalReference{ProjectID: " project ", SuiteID: " suite ", ProposalID: " proposal ", RevisionID: " revision "}
+	input.ExpectedCanonical = " version "
+	input.PolicyRevision = " policy "
+	input.CoveredInputs = map[string]string{" Source ": " revision\t"}
+	binding := mustBinding(t, input)
+	if binding.Reference() != input.Reference || binding.ExpectedCanonical() != input.ExpectedCanonical || binding.PolicyRevisionID() != input.PolicyRevision || !maps.Equal(binding.CoveredInputs(), input.CoveredInputs) {
+		t.Fatal("accepted identifier bytes were normalized")
 	}
 }

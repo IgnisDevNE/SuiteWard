@@ -3,6 +3,7 @@ package contract
 import (
 	"errors"
 	"maps"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -46,8 +47,26 @@ type ApprovalBinding struct {
 }
 
 func NewApprovalBinding(input BindingInput) (ApprovalBinding, error) {
+	if !validProposalReference(input.Reference) || input.Manifest.IsZero() || input.Scope.IsZero() || strings.TrimSpace(string(input.PolicyRevision)) == "" {
+		return ApprovalBinding{}, ErrInvalidBinding
+	}
+	if input.ExpectedCanonical != "" && strings.TrimSpace(string(input.ExpectedCanonical)) == "" {
+		return ApprovalBinding{}, ErrInvalidBinding
+	}
+	for key, value := range input.CoveredInputs {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return ApprovalBinding{}, ErrInvalidBinding
+		}
+	}
 	input.CoveredInputs = maps.Clone(input.CoveredInputs)
 	return ApprovalBinding{input: input, valid: true}, nil
+}
+
+func validProposalReference(reference ProposalReference) bool {
+	return strings.TrimSpace(string(reference.ProjectID)) != "" &&
+		strings.TrimSpace(string(reference.SuiteID)) != "" &&
+		strings.TrimSpace(string(reference.ProposalID)) != "" &&
+		strings.TrimSpace(string(reference.RevisionID)) != ""
 }
 
 func (b ApprovalBinding) IsZero() bool                       { return !b.valid }

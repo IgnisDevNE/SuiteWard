@@ -146,9 +146,6 @@ func (s Schedule) Admit(proposal Proposal, contractChanging bool) (Schedule, err
 	if err := s.checkProposal(proposal); err != nil {
 		return s, err
 	}
-	if !contractChanging {
-		return s, nil
-	}
 	revision := proposal.Current()
 	for _, entry := range s.entries {
 		if entry.proposal == revision.Binding().Reference().ProposalID {
@@ -160,6 +157,9 @@ func (s Schedule) Admit(proposal Proposal, contractChanging bool) (Schedule, err
 		if entry.carrier == revision.Carrier() {
 			return s, ErrScheduleConflict
 		}
+	}
+	if !contractChanging {
+		return s, nil
 	}
 	entry := ScheduleEntry{proposal: revision.Binding().Reference().ProposalID, carrier: revision.Carrier(), state: ScheduleWaiting}
 	next := s

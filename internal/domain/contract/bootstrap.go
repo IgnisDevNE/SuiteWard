@@ -18,5 +18,12 @@ type BootstrapInput struct {
 
 func DecideBootstrap(input BootstrapInput) (PromotionDecision, error) {
 	context := input.Promotion.Context
+	if (input.Mode != ExistingBaselineBootstrap && input.Mode != FirstTestBootstrap) || context.Canonical.IsZero() ||
+		context.Proposal.IsZero() || context.Proposed.IsZero() || input.Promotion.CorrectsVersionID != "" {
+		return PromotionDecision{}, ErrInvalidBootstrap
+	}
+	if _, present := context.Canonical.Suite().CurrentVersionID(); present {
+		return blockedPromotion(PromotionReasonCanonicalPresent), nil
+	}
 	return CheckPromotionReadiness(context, context.Proposal.Current().Origin())
 }

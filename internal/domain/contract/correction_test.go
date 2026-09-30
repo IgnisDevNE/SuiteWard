@@ -271,3 +271,83 @@ func TestCorrectionRevocationPreservesCompletedSnapshot(t *testing.T) {
 		t.Fatal("post-promotion revocation reset the pointer or rewrote history")
 	}
 }
+
+func TestCorrectionRejectsInvalidHistoricalContext(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*contract.CorrectionInput)
+	}{
+		{"missing target", func(i *contract.CorrectionInput) { i.Target = contract.HistoricalCanonical{} }},
+		{"missing current snapshot", func(i *contract.CorrectionInput) { i.Promotion.Context.Canonical = contract.CanonicalSnapshot{} }},
+		{"current canonical absent", func(i *contract.CorrectionInput) { i.Promotion.Context.Canonical = lifecycleAbsent(t) }},
+		{"missing proposal", func(i *contract.CorrectionInput) { i.Promotion.Context.Proposal = contract.Proposal{} }},
+		{"conflicting attribution", func(i *contract.CorrectionInput) { i.Promotion.CorrectsVersionID = "unrelated-version" }},
+		{"reuse target version ID", func(i *contract.CorrectionInput) { i.Promotion.NewVersionID = i.Target.Version().ID() }},
+		{"reuse current version ID", func(i *contract.CorrectionInput) {
+			i.Promotion.NewVersionID = i.Promotion.Context.Canonical.Version().ID()
+		}},
+		{"foreign target project", func(i *contract.CorrectionInput) {
+			version := lifecycleVersion(t, "other-project", "suite", "v1", i.Target.Version().Manifest())
+			i.Target = lifecycleHistory(t, version, lifecycleRecord(t, lifecycleRecordInput(t, version, "target-proposal", "target-pr")))
+		}},
+		{"foreign target suite", func(i *contract.CorrectionInput) {
+			version := lifecycleVersion(t, "project", "other-suite", "v1", i.Target.Version().Manifest())
+			i.Target = lifecycleHistory(t, version, lifecycleRecord(t, lifecycleRecordInput(t, version, "target-proposal", "target-pr")))
+		}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			input := lifecycleCorrection(t, false)
+			test.change(&input)
+			decision, err := contract.DecideCorrection(input)
+			if !errors.Is(err, contract.ErrInvalidCorrection) {
+				t.Fatalf("invalid correction context returned outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+			}
+			if _, ok := decision.Effect(); ok {
+				t.Fatal("invalid correction produced an effect")
+			}
+		})
+	}
+}
+
+func TestCorrectionRequiresFreshProposalAndCarrier(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		proposal contract.ProposalID
+		carrier  contract.ApprovalCarrierID
+	}{
+		{"current proposal", "current-proposal", "fresh-pr"},
+		{"target proposal", "target-proposal", "fresh-pr"},
+		{"current carrier", "fresh-proposal", "current-pr"},
+		{"target carrier", "fresh-proposal", "target-pr"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := lifecycleCorrection(t, false)
+			context := input.Promotion.Context
+			input.Promotion.Context = lifecycleContext(t, context.Canonical, context.Proposed.Manifest(), test.proposal, test.carrier, "candidate", "integrated-correction", "new-revision")
+			input.Promotion.Integration = lifecycleIntegration(t, "integrated-correction", test.carrier, contract.IntegrationMergedChange)
+			decision, err := contract.DecideCorrection(input)
+			if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != contract.PromotionReasonCorrectionContextReused {
+				t.Fatalf("new revision/consent reused historical proposal or carrier: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+			}
+			if _, ok := decision.Effect(); ok {
+				t.Fatal("reused context produced a corrective effect")
+			}
+		})
+	}
+}
+
+func TestCorrectionAcceptsCurrentTargetAndMatchingAttribution(t *testing.T) {
+	input := lifecycleCorrection(t, false)
+	current := input.Promotion.Context.Canonical
+	input.Target = lifecycleHistory(t, current.Version(), current.Record())
+	input.Promotion.CorrectsVersionID = current.Version().ID()
+	decision, err := contract.DecideCorrection(input)
+	if err != nil || decision.Outcome() != contract.PromotionProposed {
+		t.Fatalf("fresh correction of current historical target rejected: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+	}
+	effect, ok := decision.Effect()
+	if !ok || effect.Promotion().CorrectsVersionID() != current.Version().ID() {
+		t.Fatal("current target relation was lost")
+	}
+}

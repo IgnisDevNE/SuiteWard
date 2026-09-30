@@ -31,12 +31,16 @@ func lifecycleAbsent(t *testing.T) contract.CanonicalSnapshot {
 	return canonical
 }
 
-func lifecycleContext(t *testing.T, canonical contract.CanonicalSnapshot, manifest artifact.Manifest, proposalID contract.ProposalID, carrier contract.ApprovalCarrierID, origin, assessedSource contract.SourceRevision) contract.PromotionContext {
+func lifecycleContext(t *testing.T, canonical contract.CanonicalSnapshot, manifest artifact.Manifest, proposalID contract.ProposalID, carrier contract.ApprovalCarrierID, origin, assessedSource contract.SourceRevision, revisionIDs ...contract.ProposalRevisionID) contract.PromotionContext {
 	t.Helper()
 	protected := lifecycleProtected(t, manifest)
 	baseline, _ := canonical.Suite().CurrentVersionID()
+	revisionID := contract.ProposalRevisionID("revision-1")
+	if len(revisionIDs) > 0 {
+		revisionID = revisionIDs[0]
+	}
 	binding, err := contract.NewApprovalBinding(contract.BindingInput{
-		Reference:         contract.ProposalReference{ProjectID: "project", SuiteID: "suite", ProposalID: proposalID, RevisionID: "revision-1"},
+		Reference:         contract.ProposalReference{ProjectID: "project", SuiteID: "suite", ProposalID: proposalID, RevisionID: revisionID},
 		ExpectedCanonical: baseline, Manifest: manifest.Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "policy", CoveredInputs: protected.CoveredInputs(),
 	})
 	if err != nil {

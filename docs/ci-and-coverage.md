@@ -58,7 +58,7 @@ The user continues to authorize every integration into `main`. GitHub checks and
 
 The initial foundation checks were subsequently verified on GitHub-hosted Windows and Linux runners, as recorded above. Go build/tests, race detection, vulnerability scanning, and coverage upload remain intentionally inapplicable until application code exists. No application test result or successful coverage upload is claimed.
 
-The F0 expansion adds actionlint, parsing of all PowerShell helpers, and delivery-plan validation through `scripts/check-foundation.ps1`. These prepared workflow changes require their own bot PR and hosted verification; earlier successful main runs do not prove this new revision. See [foundation readiness](plan/readiness.md).
+The F0 expansion adds actionlint, parsing of all PowerShell helpers, and delivery-plan validation through `scripts/check-foundation.ps1`. It is published in [bot PR #3](https://github.com/IgnisDevNE/SuiteWard/pull/3). Windows/Linux foundation jobs passed for `8cb7682` in [run 36662944560](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36662944560); each later revision requires its own checks. See [foundation readiness](plan/readiness.md).
 
 ## References
 

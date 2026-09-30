@@ -14,4 +14,4 @@ The [local development guide](local-development.md) explains the project-local t
 
 The [CI and coverage guide](ci-and-coverage.md) records the accepted quality gates, prepared Codecov/GitHub Actions configuration, and staged activation requirements.
 
-These files record planning decisions and engineering preparation. Initial CI configuration is active; the latest local environment and planning changes await bot publication. Application code, deployment configuration, and release licensing notices have not yet been implemented.
+These files record planning decisions and engineering preparation. Initial CI configuration is active; [PR #3](https://github.com/IgnisDevNE/SuiteWard/pull/3), authored by `ignisdevne[bot]`, delivers the local environment and phase plan. Its current checks and authorized merge determine F0 completion. Application code, deployment configuration, and release licensing notices have not yet been implemented.

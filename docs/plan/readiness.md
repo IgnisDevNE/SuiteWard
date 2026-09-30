@@ -6,9 +6,9 @@ Snapshot: 2026-09-30. This describes SuiteWard's own development infrastructure,
 | --- | --- | --- |
 | Local tooling | Pinned, checksum-verified Go 1.27.1, sqlc 1.31.1, actionlint 1.7.12, and govulncheck 1.8.0 installed inside the checkout. | New worktrees run the local setup command. |
 | Local PostgreSQL | Digest-pinned PostgreSQL 18.6 in rootless Podman, authenticated TCP verified; separate checkouts have distinct resources. | Real pgx/sqlc integration arrives in M1.01. |
-| Windows/Linux | Local infrastructure checks verified on Windows and a Linux container; existing foundation CI passed on both hosted OS runners. | Updated F0 workflow still needs its bot PR and hosted run. |
+| Windows/Linux | Local infrastructure checks verified on Windows and Linux; F0 foundation jobs passed on both hosted OS runners for `8cb7682` in [run 36662944560](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36662944560). | Every subsequent PR revision must pass its own applicable checks. |
 | GitHub main | Public repository; main is protected. Latest observed main revision is `61b60f0ee3c7813b372842d6578e5675f61633b2`. | Preserve protection when publishing F0. |
-| Existing CI | [Main run 36287533851](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287533851) succeeded. Required gate is `CI / Gate`. | F0 adds hosted workflow linting, script parsing, and plan validation. |
+| Existing CI | [Main run 36287533851](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287533851) succeeded. Required gate is `CI / Gate`; [PR #3](https://github.com/IgnisDevNE/SuiteWard/pull/3) adds hosted workflow linting, script parsing, and plan validation. | Activate the F0 workflow on main through the authorized PR merge. |
 | Codecov | Organization App installed and public tokenless/OIDC upload configured. Patch target 90%; project total informational during M0. | First genuine report and negative patch-status proof in M0.01; no artificial baseline. |
 | GitHub publication identity | `ignisdevne[bot]`, App 5028495, installation 163660443. Existing key authentication, effective Workflows write permission, and a short-lived token restricted to SuiteWard were verified. | Publication uses the bot. Main merge requires the user's authorization. |
 | Memtrace | CLI 1.2.8; user initialized repository scope. Recent retrieval did not establish the new code/decision context reliably. | Supplementary only; versioned documents remain canonical. Fleet/worktree behavior is not yet a dependency. |
@@ -38,4 +38,4 @@ The project's `CI / Gate` is distinct from the future customer-facing `SuiteWard
 - M2 selects a customer test profile and execution isolation policy before implementing the Docker backend.
 - Managed hosting, especially hosted execution versus customer infrastructure, remains an explicit later decision.
 
-F0 is prepared locally until its bot publication, hosted verification, and authorized merge are recorded. A prepared environment does not imply those remote steps have occurred.
+F0 is published in [PR #3](https://github.com/IgnisDevNE/SuiteWard/pull/3), authored by `ignisdevne[bot]`. Its initial foundation jobs passed on Windows and Linux. Consult the PR's current revision checks before integration; F0 is not integrated until the user authorizes and completes the main merge. Publication and earlier successful checks do not themselves grant that authorization.

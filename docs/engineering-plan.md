@@ -1,7 +1,7 @@
 # SuiteWard engineering preparation
 
 - **Updated:** 2026-09-30
-- **Status:** Engineering foundation prepared for bot publication; authentication and required permissions are verified. The phase/task backlog is defined and application implementation has not started.
+- **Status:** Engineering foundation published as [PR #3](https://github.com/IgnisDevNE/SuiteWard/pull/3) by `ignisdevne[bot]`; authentication and required permissions are verified. The phase/task backlog is defined and application implementation has not started. F0 completion requires the current PR checks and the user's authorized merge.
 - **Purpose:** Define how SuiteWard itself will be developed before application implementation starts.
 
 This plan builds on the [project baseline](project-baseline.md) and [accepted ADRs](decisions/README.md). It concerns our development workflow and infrastructure. The product's rules for governing customer repositories remain separate.

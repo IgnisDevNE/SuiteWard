@@ -1,6 +1,6 @@
 # Delivery plan
 
-This plan defines 22 phases and 108 tasks. **Each phase produces one integration PR.** A milestone spans several phases. Task branches/worktrees contribute reviewed commits to the phase; a task does not require a separate PR.
+This plan defines 23 phases and 110 tasks. **Each phase produces one integration PR.** A milestone spans several phases. Task branches/worktrees contribute reviewed commits to the phase; a task does not require a separate PR.
 
 Start with [foundation readiness](readiness.md), [parallel delivery](parallel-delivery.md), and [open decisions](decisions.md). The [canonical backlog](backlog.json) contains ownership, contracts, start and integration dependencies, acceptance scenarios, and verification for every task. The phase pages below are generated from it and checked in CI. They describe planned work, not completed implementation.
 
@@ -10,7 +10,8 @@ Start with [foundation readiness](readiness.md), [parallel delivery](parallel-de
 | --- | --- | --- |
 | [F0: Development environment, GitHub foundation, and delivery plan](phases/F0.md) | An isolated Windows/Linux development workflow, checked GitHub CI configuration, and an executable phase/task plan. | None |
 | [F0.01: Per-task TDD and evidence enforcement](phases/F0.01.md) | Require meaningful RED/GREEN cycles, justified documentation exceptions, and checked phase evidence. | F0 |
-| [M0.01: Immutable contract values](phases/M0.01.md) | Real, tested Go domain values for deterministic artifact identity, immutable canonical snapshots, and the MVP authority boundary. | F0.01 |
+| [F0.02: Restore TDD checkpoint ancestry](phases/F0.02.md) | Preserve original RED/GREEN commits after the squash of PR #4 without changing implementation or weakening validation. | F0.01 |
+| [M0.01: Immutable contract values](phases/M0.01.md) | Real, tested Go domain values for deterministic artifact identity, immutable canonical snapshots, and the MVP authority boundary. | F0.02 |
 | [M0.02: Exact proposals and human consent](phases/M0.02.md) | Immutable proposal revisions, explicit approval bindings, ordered consent/revocation rules, and source-bound integrity assessments. | M0.01 |
 | [M0.03: Guarded canonical transitions](phases/M0.03.md) | Pure domain decisions for canonical promotion, both bootstrap paths, corrective history, and local scheduling fences. | M0.02 |
 | [M0.04: Atomic application coordination and milestone proof](phases/M0.04.md) | Application use cases coordinate domain outcomes through a consumed atomic boundary, proven with a test-only reference store and deterministic race/retry scenarios. | M0.03 |
@@ -59,7 +60,7 @@ flowchart LR
     T --> A
 ```
 
-F0 established the engineering environment, GitHub foundation, and this plan. F0.01 adds the accepted [TDD policy](../tdd.md) and its evidence gate before product source starts. Product implementation requires F0.01-I; C0 contract/document preparation may start sooner. M0 then proves domain and application invariants without services; M1 delivers durable integrity governance, required checks, backups, and guided recovery. M2 adds canonical execution after selecting the first customer profile and isolation policy. M3 selects hardening from demonstrated threats; it does not pre-authorize a signing or cloud stack.
+F0 established the engineering environment, GitHub foundation, and this plan. F0.01 adds the accepted [TDD policy](../tdd.md) and its evidence gate. F0.02 repairs the checkpoint ancestry omitted by the squash of PR #4; product implementation requires F0.02-I and a verified repaired main. C0 contract/document preparation may start sooner. M0 then proves domain and application invariants without services; M1 delivers durable integrity governance, required checks, backups, and guided recovery. M2 adds canonical execution after selecting the first customer profile and isolation policy. M3 selects hardening from demonstrated threats; it does not pre-authorize a signing or cloud stack.
 
 For M0.01, the artifact, authority, and immutable snapshot lanes start together after C0. M0.02 contract preparation can overlap those implementations. Each later phase distinguishes needs_to_start from needs_to_merge; phase merge ordering is not a blanket development start barrier. Use reviewed interfaces and small test fakes to reduce blocking, then prove the actual components together.
 

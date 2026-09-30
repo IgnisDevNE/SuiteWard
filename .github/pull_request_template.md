@@ -3,6 +3,8 @@
 <!-- Concrete trigger and resulting behavior. One phase, one PR. -->
 
 Phase: <!-- F0, M0.01, ...; link docs/plan/phases/<ID>.md -->
+
+Merge method: **Create a merge commit**. Preserve the RED/GREEN checkpoint commits; do not squash or rebase this phase.
 Tasks completed: <!-- Stable task IDs; describe partial/excluded work explicitly. -->
 
 ## Review and evidence

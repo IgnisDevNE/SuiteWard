@@ -28,6 +28,10 @@ A standalone refactor with no intended behavior change needs a separately review
 
 Preserve referenced task commits when integrating. Merge or otherwise preserve their ancestry; do not squash away RED/GREEN checkpoints referenced by the record. The final phase PR must pass all checks. A historical failing test checkpoint is evidence of the cycle, not an acceptable failing final revision.
 
+On GitHub choose **Create a merge commit**. A green PR check evaluates the PR history; it cannot guarantee which merge method will later be chosen. Inspect the resulting main revision as well.
+
+PR #4 was squash-integrated as `c0f173deb6d2bd7ef577b6e8ce5d6acbee391a82`: its files match the reviewed phase, but that commit omitted the original checkpoint ancestry and the main evidence gate correctly failed. F0.02 restores the actual original history through a merge, leaving the implementation, validator and F0.01 evidence unchanged. The recovery must preserve those commits when merged; its documentation-only evidence check cannot detect a second squash by itself. Product work waits for the repaired main check and explicit ancestry verification.
+
 ## Execution record
 
 Commit one record at `docs/plan/executions/<phase>.json`. It contains `schema_version: 1`, the exact phase ID, and a `tasks` entry for every task in the phase. Planned work stays in the backlog; the record states what actually happened. Use the [task evidence template](plan/task-evidence-template.md) for supplementary execution notes.

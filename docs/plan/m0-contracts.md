@@ -224,6 +224,316 @@ A passed integrity assessment does not establish human consent, completed promot
 
 ## M0-C3: guarded transitions and partial state
 
+### M0.03 consumed checkpoint
+
+The integration base is main `49383d5644291191a02cd90e144dc5ac1b3b598c`. PR #7 retained the M0.02 RED/GREEN checkpoints and passed all eight hosted CI jobs; its main coverage report records 262 covered lines with no misses. M0.03 extends the existing values, actual consent aggregate, and exact-source integrity assessment. All three consumers independently reviewed and accepted the following technical contracts before implementation.
+
+| Task | Owner | Branch / worktree suffix | Owned files |
+| --- | --- | --- | --- |
+| M0.03-C0 | root; reviewed by all three consumers | `phase/M0.03` / `m0.03` | This contract checkpoint |
+| M0.03-A | m001_artifact | `task/M0.03-A` / `m003-promotion` | `contract/promotion.go`, `audit.go`, and adjacent tests |
+| M0.03-B | m001_authority | `task/M0.03-B` / `m003-lifecycle` | `contract/bootstrap.go`, `correction.go`, and adjacent tests |
+| M0.03-C | phase_domain_plan | `task/M0.03-C` / `m003-scheduling` | `contract/scheduling.go` and adjacent tests |
+| M0.03-I | root; independently reviewed | `phase/M0.03` / `m0.03` | Backlog, generated phase page, execution record, and aggregate verification |
+
+Source paths are under `internal/domain/`; all worktrees are under `D:/Repos/SuiteWard-worktrees/`. Each checkout owns its tools and caches. C releases reviewed admission/eligibility behavior early for A; A releases reviewed values/readiness/promotion behavior for B. Consumers merge real prerequisite commits, preserving their history, rather than creating duplicate declarations. Each implementation task owns meaningful behavioral RED/GREEN cycles and its tests. C0 and I are documentation/aggregate verification only; any new executable integration behavior must first receive a task assignment and TDD evidence.
+
+M0 is a pure local model. A constructed principal, integration observation, scheduling resolution, canonical snapshot, or historical record represents trusted caller-supplied facts; none authenticates those facts. State revisions and scheduling generations are explicit concurrency context. The later application boundary must compare and commit all relevant authority together; equality of only the canonical pointer does not establish that a decision is still valid.
+
+#### Promotion values and guards (A)
+
+All values below have private fields. Constructors validate and copy caller maps; getters return copies. Reconstitution constructors seal supplied facts, never authenticate their provenance or authorize adoption. These declarations belong to A's four owned files only.
+
+```go
+type ContractChange uint8
+const (
+    ContractUnchanged ContractChange = iota + 1
+    ContractChanged
+)
+func NewProtectedContract(manifest artifact.Manifest, scope artifact.Digest, coveredInputs map[string]string) (ProtectedContract, error)
+func (ProtectedContract) Manifest() artifact.Manifest
+func (ProtectedContract) ScopeDigest() artifact.Digest
+func (ProtectedContract) CoveredInputs() map[string]string
+func (ProtectedContract) Equal(ProtectedContract) bool
+func (ProtectedContract) IsZero() bool
+
+func NewCanonicalSnapshot(suite Suite, version SuiteVersion, protected ProtectedContract, record PromotionRecord) (CanonicalSnapshot, error)
+func (CanonicalSnapshot) Suite() Suite
+func (CanonicalSnapshot) Version() SuiteVersion
+func (CanonicalSnapshot) Contract() ProtectedContract
+func (CanonicalSnapshot) Record() PromotionRecord
+func (CanonicalSnapshot) IsZero() bool
+func ClassifyContractChange(current CanonicalSnapshot, proposed ProtectedContract) (ContractChange, error)
+
+type IntegrationTargetID string
+type IntegrationKind uint8
+const (
+    IntegrationMergedChange IntegrationKind = iota + 1
+    IntegrationExistingBaseline
+)
+func NewIntegration(project ProjectID, target IntegrationTargetID, source SourceRevision, carrier ApprovalCarrierID, kind IntegrationKind) (Integration, error)
+func (Integration) ProjectID() ProjectID
+func (Integration) Target() IntegrationTargetID
+func (Integration) Source() SourceRevision
+func (Integration) Carrier() ApprovalCarrierID
+func (Integration) Kind() IntegrationKind
+func (Integration) IsZero() bool
+
+type PromotionContext struct {
+    Canonical CanonicalSnapshot
+    Proposed ProtectedContract
+    Proposal Proposal
+    Reference ProposalReference
+    Carrier ApprovalCarrierID
+    Policy Policy
+    Consent Consent
+    Assessment IntegrityAssessment
+    Scheduling Schedule
+    ExpectedStateRevision StateRevision
+    ExpectedSchedulingGeneration ScheduleGeneration
+}
+type PromotionInput struct {
+    Context PromotionContext
+    Integration Integration
+    Target IntegrationTargetID
+    OperationID OperationID
+    NewVersionID SuiteVersionID
+    RecordedAt time.Time
+    CorrectsVersionID SuiteVersionID
+}
+type PromotionOutcome uint8
+const (
+    PromotionBlocked PromotionOutcome = iota + 1
+    PromotionReady
+    PromotionNoChange
+    PromotionProposed
+)
+type PromotionReason uint8
+const (
+    PromotionReasonNone PromotionReason = iota
+    PromotionReasonContextMismatch
+    PromotionReasonProposalNotCurrent
+    PromotionReasonCanonicalChanged
+    PromotionReasonStateChanged
+    PromotionReasonPolicyChanged
+    PromotionReasonApprovalMissing
+    PromotionReasonAssessmentMismatch
+    PromotionReasonIntegrityNotPassed
+    PromotionReasonSchedulingBlocked
+    PromotionReasonIntegrationMissing
+    PromotionReasonIntegrationMismatch
+    PromotionReasonCanonicalPresent
+    PromotionReasonEmptyInventory
+    PromotionReasonCorrectionContextReused
+)
+func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision, error)
+func DecidePromotion(input PromotionInput) (PromotionDecision, error)
+func (PromotionDecision) Outcome() PromotionOutcome
+func (PromotionDecision) Reason() PromotionReason
+func (PromotionDecision) Effect() (PromotionEffect, bool)
+func blockedPromotion(reason PromotionReason) PromotionDecision
+
+type PromotionRecordInput struct {
+    OperationID OperationID
+    VersionID SuiteVersionID
+    Binding ApprovalBinding
+    Carrier ApprovalCarrierID
+    Source SourceRevision
+    Target IntegrationTargetID
+    RecordedAt time.Time
+    CorrectsVersionID SuiteVersionID
+}
+func NewPromotionRecord(input PromotionRecordInput) (PromotionRecord, error)
+func (PromotionRecord) OperationID() OperationID
+func (PromotionRecord) VersionID() SuiteVersionID
+func (PromotionRecord) Binding() ApprovalBinding
+func (PromotionRecord) Carrier() ApprovalCarrierID
+func (PromotionRecord) Source() SourceRevision
+func (PromotionRecord) Target() IntegrationTargetID
+func (PromotionRecord) RecordedAt() time.Time
+func (PromotionRecord) CorrectsVersionID() SuiteVersionID
+func (PromotionRecord) IsZero() bool
+
+func (PromotionEffect) ExpectedCanonicalID() SuiteVersionID
+func (PromotionEffect) ExpectedStateRevision() StateRevision
+func (PromotionEffect) ExpectedSchedulingGeneration() ScheduleGeneration
+func (PromotionEffect) Suite() Suite
+func (PromotionEffect) Version() SuiteVersion
+func (PromotionEffect) Promotion() PromotionRecord
+func (PromotionEffect) Audit() AuditEvent
+func (PromotionEffect) Publication() PublicationIntent
+func (PromotionEffect) IsZero() bool
+func (AuditEvent) Promotion() PromotionRecord
+func (AuditEvent) IsZero() bool
+func (PublicationIntent) Promotion() PromotionRecord
+func (PublicationIntent) IsZero() bool
+
+var ErrInvalidProtectedContract error
+var ErrInvalidCanonicalSnapshot error
+var ErrInvalidIntegration error
+var ErrInvalidPromotion error
+var ErrInvalidPromotionRecord error
+```
+
+##### Required semantics
+
+- A `ProtectedContract` uses an actual constructed manifest, nonzero scope digest, and exact nonblank context keys/values. Nil and empty maps compare equal. Equality compares manifest digest, scope, and explicit context only; proposal identities, baseline addressing, and governing policy authority do not imply protected-content changes. The trusted caller must supply the actual selected protected context, with D-APPROVAL-CONTEXT unresolved.
+- A constructed absent `CanonicalSnapshot` has a valid suite with no current pointer plus zero version/contract/record. An established snapshot has all three present: suite/current/version/project/suite identities match; version manifest equals protected manifest; record version/reference scope/manifest/scope/context agree. The record's previous baseline is historical and need not equal the current pointer. A zero snapshot is invalid. Absent canonical always classifies as changed, including an empty manifest; bootstrap separately forbids empty inventory.
+- `NewIntegration` requires nonblank project/target/source and a recognized kind. Merged-change requires a nonblank carrier; existing-baseline requires an empty carrier because its approval carrier is independent. These are trusted integration facts supplied by an adapter, not proof of GitHub state. A target argument supplies the expected configured integration target independently.
+- Readiness has no effects and requires nonblank requiredSource. It resolves the exact current proposal/reference/carrier; requires suite scope, proposed protected inputs, expected canonical, expected suite state revision, current governing policy revision, real current `Consent.HasApproval`, passed IntegrityOnly assessment with the exact source and complete binding, and `Schedule.CanPromote(proposal, expectedGeneration)`. Absent canonical plus empty proposed inventory is blocked with PromotionReasonEmptyInventory even when directly calling A rather than the bootstrap wrapper; an explicitly approved empty established contract is not prohibited by this rule. Valid gate rejections return PromotionBlocked with a reason and nil error. Invalid or missing structural input returns ErrInvalidPromotion; missing consent/evidence/scheduling authority is a valid rejection. Readiness never authenticates the adapter's supplied facts.
+- `DecidePromotion` first permits a structurally valid pure contract classification to return PromotionNoChange with no effect; this outcome is never approval, merge readiness, or scheduling authority. For changed contracts it requires exact confirmed integration plus every readiness gate. Merged-change carrier must match the candidate; existing-baseline is allowed only with absent canonical and source equal to proposal Origin. A merge source may differ from Origin when it is not part of explicitly covered inputs; evidence must still match that exact integrated source.
+- Successful proposed promotion needs a nonblank operation ID, a fresh new version ID different from the current version, a nonzero timestamp, and a state revision that can advance without overflow. It groups the immutable new version, proposed Suite pointer with revision +1, PromotionRecord, AuditEvent, and PublicationIntent. Both audit/publication contain the identical immutable promotion record and do not imply publication already occurred. CorrectsVersionID is optional provenance; B validates the supplied historical relation. Record constructors validate shape only, including new version differing from the binding's expected baseline and an optional nonblank corrected-version identity different from the new version; they do not authorize a promotion.
+- `ExpectedStateRevision` is the caller-supplied whole-authority concurrency fence carried by this phase's Suite snapshot. The application must bump/fence it for relevant proposal, policy, consent, and canonical changes and must fence the separate scheduling generation too. C4 must atomically recheck this complete authority snapshot, current pointer, scheduling fence, and conditional absence of new version/operation IDs before inserting all effects. This phase cannot prove globally unused IDs, current provider state, persistence atomicity, or remote publication atomicity.
+- Missing integration yields PromotionReasonIntegrationMissing; wrong project/target/carrier/kind semantics yield PromotionReasonIntegrationMismatch. A malformed nonzero integration cannot be constructed. Required effect identity/timestamp validation is not imposed on a readiness-only or no-change result.
+- B uses the shared package-private `blockedPromotion` helper for its additional valid business rejections. It enforces bootstrap mode matching: existing baseline requires IntegrationExistingBaseline, and final first-test bootstrap requires IntegrationMergedChange.
+
+`AuditEvent` and `PublicationIntent` are intentionally limited to a canonical-promotion record payload in this phase; no unimplemented generic event or transport subsystem is introduced.
+
+#### Bootstrap and corrections (B)
+
+Owned files: `bootstrap.go`, `bootstrap_test.go`, `correction.go`, `correction_test.go`. Reuse A promotion/readiness rules and C scheduling; no duplicate consent, policy, source-assessment, current-baseline, or scheduling guards.
+
+##### Bootstrap
+
+- `type BootstrapMode uint8`; nonzero constants `ExistingBaselineBootstrap`, `FirstTestBootstrap`.
+- `type BootstrapInput struct { Mode BootstrapMode; Promotion PromotionInput }`.
+- `DecideBootstrap(BootstrapInput) (PromotionDecision, error)`.
+- `ErrInvalidBootstrap` identifies malformed mode/context or correction attribution supplied to a bootstrap operation. Valid business failures use the shared `PromotionBlocked` decision.
+- Require canonical absence in `Promotion.Context.Canonical` and explicit expected absence in the current proposal binding. A still validates exact caller reference, carrier, proposal, authority snapshot, consent, assessment, and schedule.
+- Require a constructed nonempty proposed protected inventory. This proves inventory presence only; test discovery and actual test-presence eligibility remain M1 concerns.
+- Existing baseline: require `IntegrationExistingBaseline` when integration is supplied. A verifies the observed confirmed integration source equals the proposal revision's pinned `Origin()` exactly. The approval carrier remains independent; no hosting-PR integration is required or inferred. Missing integration cannot yield a baseline promotion or readiness claim. Delegate final decision to `DecidePromotion`.
+- First tests before integration: call `CheckPromotionReadiness(context, context.Proposal.Current().Origin())`. A passing decision is `PromotionReady`, with no promotion effect/version/pointer mutation. No operation/version/time metadata is needed for this readiness-only path. After integration, require `IntegrationMergedChange`, then call `DecidePromotion` using its exact confirmed integrated source and final assessment. A wrong integration kind returns `PromotionReasonIntegrationMismatch`.
+- B-specific shared reasons: `PromotionReasonCanonicalPresent`, `PromotionReasonEmptyInventory`, `PromotionReasonCorrectionContextReused`. A's existing expected-baseline/integration reasons apply to its gates, including exact pinned origin. B uses A's package-private `blockedPromotion(reason)` helper.
+
+##### Historical correction
+
+- `NewHistoricalCanonical(version SuiteVersion, record PromotionRecord) (HistoricalCanonical, error)`.
+- Immutable `HistoricalCanonical` getters: `Version() SuiteVersion`, `Record() PromotionRecord`, `IsZero() bool`.
+- `ErrInvalidHistoricalCanonical` rejects absent version/record, project/Suite mismatch, `version.ID() != record.VersionID()`, or version manifest digest differing from `record.Binding().ManifestDigest()`. The record constructor establishes its other required fields. This is consistency validation of supplied history, not authentication or durable-history completeness.
+- `type CorrectionInput struct { Promotion PromotionInput; Target HistoricalCanonical }`.
+- `DecideCorrection(CorrectionInput) (PromotionDecision, error)`.
+- `ErrInvalidCorrection` identifies missing/malformed target/current historical context, foreign target scope, or a conflicting supplied `CorrectsVersionID`.
+- Current history comes from `Promotion.Context.Canonical.Version()` and `.Record()`; do not duplicate it in the input. Established current canonical is required. Target may equal the current historical version and must have the same project/Suite. If target and current share a version ID, their manifest and all exposed promotion-record facts must agree (timestamps compare as instants); contradictory same-ID history is ErrInvalidCorrection.
+- Candidate current `ProposalID` and `Carrier()` must each differ from both supplied current and target provenance. A changed revision of the same historical proposal/carrier is insufficient. Valid reuse is a blocked decision, with a structured correction-context reason.
+- Any requested new logical version must differ from both supplied current and target version IDs; reuse of the target identity yields `ErrInvalidCorrection`, consistent with A rejecting invalid effect identity. Global version/proposal/carrier uniqueness and completeness of supplied history are later application/persistence obligations; do not claim this finite comparison checks all history.
+- Copy the promotion request, set `CorrectsVersionID` to the target version ID (accept an already matching value; reject a conflicting one), then delegate to `DecidePromotion`. A produces the grouped effect and preserves the historical target relationship in the promotion/audit facts.
+- A owns exact current-baseline binding, current governing policy, eligible fresh consent, integration, final source-bound assessment, scheduling, and no-change behavior. A no-change outcome does not create a gratuitous version.
+- No supplied historical object is edited. No pointer reset exists. Previously promoted effects remain intact after consent revocation. Historical artifact bytes may be reused in a new logical version.
+- Later additions cannot disappear implicitly through resetting to the historical pointer. An exact fresh proposal may explicitly remove such additions after current-policy approval; do not introduce a permanent append-only inventory policy.
+
+##### Required A getters / construction dependencies
+
+`CanonicalSnapshot`: `Suite`, `Version`, `Contract`, `Record`, `IsZero` (already proposed).
+
+`PromotionRecord`: `VersionID`, `Binding`, `Carrier`, `Source`, `Target`, `OperationID`, `RecordedAt`, `CorrectsVersionID`, `IsZero` (A proposed).
+
+`Integration`: constructed/zero distinction and exact integrated `Source` getter (A to freeze).
+
+A provides package-private `blockedPromotion(reason) PromotionDecision`; B does not build effects. Integration getters are `IsZero()`, `Source()`, and `Kind()` with the kind constants above. The shared reasons are frozen above.
+
+##### Parallel implementation order
+
+Prepare tests and fixtures after C0; compile only against real A declarations. Begin bootstrap absent/nonempty/readiness cycles when A has a reviewed working readiness evaluator. Add integrated-bootstrap cycles after A's promotion effect is working. HistoricalCanonical construction and correction tests require real PromotionRecord/CanonicalSnapshot; do not add fake prerequisite domain APIs. Use actual C schedule values and actual M0.02 proposal/consent/evidence in acceptance tests.
+
+
+#### Scheduling and priority (C)
+
+All declarations below live in `internal/domain/contract/scheduling.go`. Values are immutable; returned slices are copies. Facts supplied to admission and observation methods are trusted application observations, not authenticated remote evidence. M0 proves no durable concurrency or GitHub demotion safety.
+
+```go
+type ScheduleGeneration uint64 // positive; starts at 1; never wraps
+func NewSchedule(project ProjectID, suite SuiteID) (Schedule, error)
+func (s Schedule) IsZero() bool
+func (s Schedule) ProjectID() ProjectID
+func (s Schedule) SuiteID() SuiteID
+func (s Schedule) Generation() ScheduleGeneration
+func (s Schedule) Admit(proposal Proposal, contractChanging bool) (Schedule, error)
+func (s Schedule) CanPromote(proposal Proposal, expectedGeneration ScheduleGeneration) bool
+func (s Schedule) Active() (ScheduleEntry, bool)
+func (s Schedule) Entries() []ScheduleEntry // immutable admission order
+func (s Schedule) PendingTransfer() (PriorityCommand, bool)
+
+type ScheduleEntryState uint8
+const (ScheduleWaiting ScheduleEntryState = iota + 1; ScheduleActive; ScheduleIntegratedPending; ScheduleClosed; SchedulePromoted)
+func (e ScheduleEntry) ProposalID() ProposalID
+func (e ScheduleEntry) Carrier() ApprovalCarrierID
+func (e ScheduleEntry) State() ScheduleEntryState
+
+type PriorityCommandInput struct {
+    OperationID OperationID
+    SourceCommandID SourceCommandID
+    Actor Principal
+    ProjectID ProjectID
+    SuiteID SuiteID
+    ProposalID ProposalID
+    Carrier ApprovalCarrierID
+    Order CommandOrder
+}
+func NewPriorityCommand(input PriorityCommandInput) (PriorityCommand, error)
+// PriorityCommand has a getter named for each input field.
+func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Schedule, PriorityResult, error)
+type PriorityOutcome uint8
+const (PriorityRequested PriorityOutcome = iota + 1; PriorityAlreadyActive; PriorityRejected)
+type PriorityReason uint8
+const (PriorityReasonNone PriorityReason = iota; PriorityReasonUnauthorized; PriorityReasonUnknownTarget; PriorityReasonClosedTarget; PriorityReasonMergedTarget; PriorityReasonTransferPending; PriorityReasonObsoleteCommand; PriorityReasonCommandConflict)
+func (r PriorityResult) Command() PriorityCommand
+func (r PriorityResult) Outcome() PriorityOutcome
+func (r PriorityResult) Reason() PriorityReason
+func (r PriorityResult) Duplicate() bool
+func (s Schedule) Results() []PriorityResult // original outcomes, processing order
+
+type TransferResolution uint8
+const (TransferUnresolved TransferResolution = iota + 1; FormerUnmergedWithdrawn; FormerMerged)
+func (s Schedule) ResolveTransfer(request OperationID, expectedGeneration ScheduleGeneration, resolution TransferResolution) (Schedule, error)
+
+type ScheduleObservation uint8
+const (ObserveIntegrated ScheduleObservation = iota + 1; ObserveClosedUnmerged; ObservePromoted)
+func (s Schedule) Observe(proposal Proposal, expectedGeneration ScheduleGeneration, observation ScheduleObservation) (Schedule, error)
+```
+
+Errors: `ErrInvalidSchedule`, `ErrInvalidPriorityCommand`, `ErrScheduleContextMismatch`, `ErrScheduleConflict`, `ErrStaleSchedule`, `ErrScheduleGenerationExhausted`. Invalid values/context return errors and unchanged input; well-formed priority business rejections return a recorded result and nil error.
+
+##### State and fences
+
+- Entries use stable ProposalID plus carrier, not proposal revision. A different carrier for an admitted ProposalID is a conflict; distinct proposals cannot share an admitted carrier. First admitted changing proposal becomes active, later ones wait. Duplicate admission is a no-op; a proposal revision does not create another entry. Invalid/foreign proposals reject even when the supplied classification is false. False classification is an otherwise valid no-op, never a withdrawal or re-entry instruction.
+- Active selection, transfer begin/completion/suspension, active integration, and active release advance generation. Waiting admission/closure does not invalidate active eligibility; generation fences active eligibility, not all aggregate changes. Zero or mismatched generation is ineligible. Any increment at max rejects without mutation. M0.04 must serialize the whole authority aggregate, including waiting entries and receipts.
+- CanPromote checks exact project/Suite/proposal/carrier, current generation, active or integrated-pending state, and absence of a pending transfer. It grants neither consent nor promotion and does not establish integration. The proposal's exact revision remains A's independent gate.
+- ObserveIntegrated retains the active entry as integrated-pending. ObservePromoted accepts an active or integrated-pending entry and records a trusted committed-promotion observation; it does not authorize or perform canonical promotion. A separately requires exact integrated-source facts. This permits existing-baseline bootstrap without adding a requirement for the approval-hosting PR to merge or for an intermediate scheduling observation. ObserveClosedUnmerged rejects integrated/promoted entries. Closing an open waiting entry records closed; successful promotion or active closure selects the earliest remaining waiting entry. No approval operation advances this queue.
+- Repeating the same observation at the current generation is a no-op; stale observations reject. Unknown/foreign entries or impossible transitions reject. Ordinary observations of the active entry reject during transfer; use transfer reconciliation. Closing a waiting transfer target may be recorded, but then transfer completion rejects and remains pending.
+
+##### Priority and reconciliation
+
+- RequestPriority checks scope, then stable receipts before current eligibility; source/operation aliases, actor conflicts, equal-order conflicts, and immutable original results follow M0.02 command semantics. The successful request/already-active order watermark is suite-wide, so an earlier distinct command cannot undo a later decision. Rejections are remembered but do not advance the successful-order watermark. Same source plus same actor returns its original outcome and reserves an alternate operation alias; changed actor or reused operation for another source conflicts.
+- After current governing project policy authority, unknown/closed/integrated/promoted targets reject. For a new command, any pending transfer rejects before the already-active check, including a command targeting the former active entry; stable receipt replay still happens first. With no pending transfer, an already-active open target is a truthful no-op (no generation advance). A pending request is never silently replaced. Target must be an admitted open waiting entry.
+- Accepted request records former active and desired target as pending and advances generation. Neither entry can promote while pending. Consent is untouched.
+- ResolveTransfer must match the original request OperationID and current generation. TransferUnresolved is a no-op. FormerUnmergedWithdrawn is a trusted application statement that the required prior-check/publication reconciliation has been completed; the enum itself proves none of that. It changes former active to waiting, makes the still-open target active, clears pending and advances generation. Original admission order remains unchanged.
+- FormerMerged suspends/clears the requested transfer, retains former active as integrated-pending, leaves target waiting, and advances generation. The former entry can then be assessed under the new generation. No automatic target activation follows the observation; only later successful promotion advances ordinary queue order. Merged-but-unpromotable remains pending indefinitely until a separately specified recovery process. The original PriorityRequested receipt is historical acknowledgment of recording the request; it never claims that transfer completed, and remains historical on command replay.
+- Transfer replay after pending was cleared rejects as conflict (cannot move queue again); command replay still returns original request receipt. Remote adapter reconciliation remains M1 work, including changed exact inputs, former closure while transferring, target closure, stale remote publications and an in-flight merge.
+
+##### Observable tests and delivery
+
+Early real GREEN provides NewSchedule, Admit, Generation, CanPromote using actual proposals, so A may consume C without waiting for commands. Remaining small TDD cycles prove transitions, command authority/replay, and transfer fences. Tests cover isolated immutable forks without claiming one persisted winner; unknown/foreign/zero values; revised proposal stable admission; waiting/implementation-only; distinct carrier conflicts; generation overflow; approval does not mutate schedule; merge retains slot; closed-unmerged/promotion advance; priority no-op/unauthorized/closed/merged; duplicate source aliases and old order; pending disallows both; unresolved stays pending; stale resolution rejects; former-merged suspends and retains ownership. Draft/re-entry/changed-scope/multi-suite/recovery policy remain open.
+
+#### Reviewed transition examples
+
+| Input or event | Local result | What it does not establish |
+| --- | --- | --- |
+| Actual protected manifest, scope, and explicit covered context are unchanged | No new canonical effect | Consent, merge readiness, or assessment of another source |
+| Green integrated assessment, but absent/revoked consent | Blocked; canonical preserved | Evidence cannot supply authority |
+| Exact approval with an old baseline or scheduling generation | Blocked; reconcile current state | A last-writer-wins update |
+| Existing integrated baseline with approval in a separate open PR | Initial promotion can be proposed for the pinned baseline | The hosting PR's candidate is canonical |
+| Approved first-test candidate before integration | Ready for integration, no canonical effect | Completed bootstrap |
+| First-test merge with only evidence from its pre-merge source | Blocked until exact final assessment | Identical file bytes permit evidence reuse |
+| Correction reuses selected old bytes and preserves later additions | Fresh exact consent and integrated validation can propose a new version | Historical approval transfers or history is rewritten |
+| Correction explicitly includes deletion of a later addition | The exact current-baseline approval rules still apply | A blanket append-only inventory policy |
+| Priority requested while prior eligibility withdrawal is unresolved | Transfer pending; replacement cannot promote | A local flag proves a remote check was withdrawn |
+| Former active change merged during transfer | Retain that change for integration/promotion reconciliation; fence old work | Automatic release of a merged-but-unpromotable change |
+| Consent revoked after a proposed effect was actually committed | Later consent state changes; completed version/history remain | Pointer-only rollback |
+
+Nonempty manifest entries prove nonempty protected inventory, not that a file is semantically a test. Trusted discovery and approved scope establish test presence in M1. Permanent history and conditional insert requirements must be implemented by persistence; immutable domain values alone are not durable storage.
+
+D-APPROVAL-CONTEXT remains open. This phase accepts explicit covered inputs and checks them exactly; it does not decide whether every implementation push changes approval coverage. Draft/re-entry behavior, multi-suite coordination, remote check demotion and publication reconciliation, and merged-but-unpromotable recovery remain with their named M1 consumers. No timeout or automatic reassignment policy is added.
+
 Use orthogonal facts instead of a single status that incorrectly conflates consent, integration, evidence, scheduling, and canonical existence. Exact enum names are not prescribed.
 
 | Fact | Meaning and invariant |

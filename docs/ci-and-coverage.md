@@ -1,7 +1,7 @@
 # CI and coverage
 
 - **Updated:** 2026-09-30
-- **Status:** Policy accepted. M0.01 has verified real Windows/Linux Go checks, Linux race/security/coverage, and Codecov success/failure at the 90% patch threshold. Requiring the observed Codecov check on `main` still needs repository administration permission; see [M0.01 execution evidence](plan/executions/M0.01.md).
+- **Status:** Active. M0.01 verified real Windows/Linux Go checks, Linux race/security/coverage, and Codecov success/failure at the 90% patch threshold. `main` requires both `CI / Gate` and `codecov/patch` from their expected Apps.
 
 ## Accepted quality policy
 
@@ -42,7 +42,7 @@ The repository configuration is `codecov.yml`. Uploads from repository branches 
 
 The uploader searches only the explicitly named `coverage.out` file. Missing/empty reports and upload errors fail the job. Codecov's patch status is non-informational and configured to fail when its expected head report is absent. Whole-project coverage remains informational.
 
-Codecov waits for CI to succeed before reporting its final status. `CI / Gate` must therefore check completion of the upload job, not wait for the asynchronously computed Codecov patch status. The patch status becomes a separate branch requirement once it has been observed and verified.
+Codecov waits for CI to succeed before reporting its final status. `CI / Gate` must therefore check completion of the upload job, not wait for the asynchronously computed Codecov patch status. The patch status is a separate branch requirement, activated after it was observed and verified in M0.01.
 
 ## Staged activation
 
@@ -50,7 +50,7 @@ Codecov waits for CI to succeed before reporting its final status. `CI / Gate` m
 2. Completed: `infra/codecov-ci` is published as PR #1. Its Windows/Linux foundation jobs and `CI / Gate` succeeded in [the first hosted run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287204180) for revision `0d4b4ae`.
 3. Completed: `main` requires an up-to-date PR and `CI / Gate` from the observed GitHub Actions App (ID 15368), with administrator enforcement and force pushes/deletion disabled. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that separate review. The user merged PR #1; [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580) passed for merge commit `650fb81`.
 4. Verified in [PR #6](https://github.com/IgnisDevNE/SuiteWard/pull/6): the first real domain code activates Windows/Linux Go and Linux race/security/coverage. The actual Codecov report covers six domain files at 100%; a controlled real-test subset produces 6.34% and fails `codecov/patch` against 90%. The diagnostic configuration is restored exactly. Exact revisions, the coverage-argument regression repair, and both hosted observations are in the [execution record](plan/executions/M0.01.md). No empty baseline or synthetic application package was used.
-5. Administrative activation remains: require `codecov/patch` from observed Codecov App 254 in addition to `CI / Gate`. The bot lacks repository administration permission; no personal fallback is authorized by this delivery. Final PR revision checks must pass before integration.
+5. Completed after explicit user authorization: `codecov/patch` from observed Codecov App 254 is required in addition to `CI / Gate` from App 15368. A one-time personal-account exception added that check because the bot lacks repository administration permission; all other protection fields were verified unchanged. The exception grants no standing personal fallback. The bot merged PR #6 with its checkpoint history intact; all eight jobs in [the main run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36670629908) passed at `808241c606daf08cf6f217fbc58e459d4f963cba`, and Codecov recorded 100% coverage. Every subsequent PR still needs checks for its final revision.
 6. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
 
 The user continues to authorize every integration into `main`. GitHub checks and PR requirements are active, but the provider cannot distinguish a human from an agent using the same GitHub identity. Human merge authorization remains an operational rule until a separate identity/credential design is established; a green CI run alone is not that authorization.

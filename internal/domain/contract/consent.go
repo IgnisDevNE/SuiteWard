@@ -62,6 +62,7 @@ type consentKey struct {
 type consentState struct {
 	binding ApprovalBinding
 	active  bool
+	order   CommandOrder
 }
 
 func NewConsent(project ProjectID, suite SuiteID, proposal ProposalID) (Consent, error) {
@@ -78,7 +79,13 @@ func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Co
 	if c.project == "" || proposal.IsZero() || governing.ProjectID() != c.project || !c.contains(proposal.Current().Binding().Reference()) || !c.contains(command.Reference()) {
 		return c, CommandResult{}, ErrInvalidConsent
 	}
-	revision, err := proposal.Resolve(command.Reference(), command.Carrier())
+	var revision ProposalRevision
+	var err error
+	if command.Action() == ApproveConsent {
+		revision, err = proposal.Resolve(command.Reference(), command.Carrier())
+	} else {
+		revision, err = proposal.Lookup(command.Reference(), command.Carrier())
+	}
 	if err != nil {
 		reason := ConsentReasonContextMismatch
 		switch {
@@ -89,16 +96,32 @@ func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Co
 		}
 		return c.reject(command, reason)
 	}
-	if !governing.CanApprove(command.Actor()) {
+	if command.Action() == ApproveConsent {
+		if !governing.CanApprove(command.Actor()) {
+			return c.reject(command, ConsentReasonUnauthorized)
+		}
+		if revision.Binding().PolicyRevisionID() != governing.RevisionID() {
+			return c.reject(command, ConsentReasonPolicyMismatch)
+		}
+	} else if !governing.CanRevoke(command.Actor(), command.Actor().ID()) {
 		return c.reject(command, ConsentReasonUnauthorized)
 	}
-	if revision.Binding().PolicyRevisionID() != governing.RevisionID() {
-		return c.reject(command, ConsentReasonPolicyMismatch)
+	key := consentKey{command.Reference().RevisionID, command.Actor()}
+	previous := c.states[key]
+	if command.Order() <= previous.order {
+		return c.reject(command, ConsentReasonObsoleteCommand)
 	}
+	active := command.Action() == ApproveConsent
 	result := CommandResult{command: command, outcome: ConsentApproved}
+	if !active {
+		result.outcome = ConsentNoActiveApproval
+		if previous.active {
+			result.outcome = ConsentRevoked
+		}
+	}
 	next := c.record(result)
 	next.states = maps.Clone(c.states)
-	next.states[consentKey{command.Reference().RevisionID, command.Actor()}] = consentState{binding: proposal.Current().Binding(), active: true}
+	next.states[key] = consentState{binding: revision.Binding(), active: active, order: command.Order()}
 	return next, result, nil
 }
 

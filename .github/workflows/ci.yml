@@ -44,10 +44,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check documentation links
-        run: ./scripts/ci.ps1 -Mode Documents
-      - name: Check CI classification and gate behavior
-        run: ./scripts/test-ci.ps1
+      - name: Validate scripts, workflows, documentation, and delivery plan
+        run: ./scripts/check-foundation.ps1
 
   go:
     name: Go (${{ matrix.os }})

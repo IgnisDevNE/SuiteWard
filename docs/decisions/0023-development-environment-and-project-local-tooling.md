@@ -1,7 +1,7 @@
 # ADR 0023: Windows development, cross-platform CI, and project-local tooling
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted; local tool and database bootstrap implemented. See [local development](../local-development.md) for commands and remaining verification boundaries.
 - **Product:** SuiteWard
 - **Scope:** SuiteWard's own development environment and tool installation policy.
 - **Related:** [ADR 0003](0003-go-and-chi.md), [ADR 0004](0004-postgresql-pgx-sqlc.md), and the [engineering preparation plan](../engineering-plan.md).
@@ -67,9 +67,9 @@ Existing global tools are not automatically removed or replaced. In particular, 
 
 ## Open implementation details
 
-- Exact Go, PostgreSQL, generator, linter, and migration-tool versions.
-- Local directory layout, bootstrap entry points, cache reuse, and controlled toolchain-download configuration.
-- CI job names, coverage reporting, required-check activation, and the exact cross-platform test allocation.
+- Migration tooling; Go, PostgreSQL, sqlc, actionlint, and govulncheck are pinned in `dev/tools.json`.
+- Shared tool caches, if later needed; current installations and mutable caches are isolated per checkout.
+- PostgreSQL integration and sqlc freshness jobs when persistence exists; initial CI names, reporting, and activation are defined in the [CI guide](../ci-and-coverage.md).
 - Supported production operating systems and any additional Windows database integration job.
 
 These details do not reopen Windows development, Windows/Linux CI, local Podman PostgreSQL, or the preference for project-local installation.

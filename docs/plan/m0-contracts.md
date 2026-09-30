@@ -73,6 +73,10 @@ Snapshots expose no canonical setter, promotion, clock, random ID generation, or
 
 The implementation-revision approval binding decision remains open under D-APPROVAL-CONTEXT. This checkpoint does not choose it.
 
+#### CI activation repair ownership
+
+The first hosted run of real code exposed a coverage invocation defect: PowerShell split unquoted dotted options, so passing tests wrote `coverage` instead of the required `coverage.out`. M0.01-I therefore temporarily delegates `scripts/check-go.ps1`, its focused regression fixture `scripts/test-go.ps1`, and the foundation hook to `phase_domain_plan` in `task/M0.01-I-ci-fix` / `m001-ci-fix`. Root retains integration, backlog, and evidence ownership; `m001_authority` reviews the repair independently. The correction must preserve complete arguments and constrain coverage to the exact packages already discovered by `go list ./...`. A fake command-boundary regression checks invocation behavior; actual hosted Linux race/coverage remains required to prove the real compiler and upload path.
+
 ### Provider-neutral identity
 
 Use distinct internal value identities for Project, Suite, SuiteVersion, ChangeProposal, ProposalRevision, Principal, PolicyRevision, Operation, and Integration as their implemented consumers require them. GitHub PR numbers, check IDs, payloads, login names, and PostgreSQL/sqlc values do not enter domain signatures.

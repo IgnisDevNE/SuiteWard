@@ -925,7 +925,10 @@
       "owns": [
         "go.mod",
         "go.sum",
-        "docs/plan/m0-contracts.md"
+        "docs/plan/m0-contracts.md",
+        "scripts/check-go.ps1",
+        "scripts/test-go.ps1",
+        "scripts/check-foundation.ps1"
       ],
       "needs_to_start": [
         "F0.02-I",
@@ -940,6 +943,7 @@
         "Integrate the first module only with useful domain source and tests.",
         "Resolve shared declarations without broad common/ports packages or duplicate types.",
         "Inspect the first genuine coverage upload and the actual Codecov status context.",
+        "Coverage invocation preserves complete PowerShell arguments, emits coverage.out, and instruments the explicitly discovered repository packages.",
         "Keep the phase as one reviewable PR and require human merge authorization."
       ],
       "verification": [

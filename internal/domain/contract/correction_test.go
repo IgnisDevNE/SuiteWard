@@ -52,6 +52,32 @@ func lifecycleRecord(t *testing.T, input contract.PromotionRecordInput) contract
 	return record
 }
 
+func lifecycleEstablished(t *testing.T, version contract.SuiteVersion, record contract.PromotionRecord) contract.CanonicalSnapshot {
+	t.Helper()
+	suite, err := contract.NewSuite(version.ProjectID(), version.SuiteID(), version.ID(), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, err := contract.NewProtectedContract(version.Manifest(), record.Binding().ScopeDigest(), record.Binding().CoveredInputs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := contract.NewCanonicalSnapshot(suite, version, protected, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
+func lifecycleHistory(t *testing.T, version contract.SuiteVersion, record contract.PromotionRecord) contract.HistoricalCanonical {
+	t.Helper()
+	history, err := contract.NewHistoricalCanonical(version, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return history
+}
+
 func TestHistoricalCanonicalRetainsExactVersionAndProvenance(t *testing.T) {
 	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/a.go", Content: artifact.Hash([]byte("old test"))})
 	version := lifecycleVersion(t, "project", "suite", "v1", manifest)

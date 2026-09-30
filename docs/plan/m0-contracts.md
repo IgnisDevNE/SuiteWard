@@ -8,9 +8,74 @@ Each phase has a C0 checkpoint that records reviewed consumed signatures, repres
 
 C0 does not create empty production packages or a general-purpose interface framework. The first go.mod is integrated with real domain source and tests in M0.01. No artificial test package is added merely to activate coverage. Contract consumers can start implementation and tests after signatures are reviewed, then select prerequisite commits for compilation. They must not ship duplicate production declarations or fake dependency implementations to avoid integration.
 
-Task dependencies distinguish start from merge. The phase-level merge_after sequence remains F0 -> M0.01 -> M0.02 -> M0.03 -> M0.04. A phase integrator combines its tasks, verifies the result, and opens one phase PR using the authorized bot. Human approval is required for each merge.
+Task dependencies distinguish start from merge. The phase-level merge_after sequence remains F0 -> F0.01 -> F0.02 -> M0.01 -> M0.02 -> M0.03 -> M0.04. A phase integrator combines its tasks, verifies the result, and opens one phase PR using the authorized bot. Human approval is required for each merge.
 
 ## M0-C1: values and authority
+
+### Reviewed M0.01 checkpoint
+
+The following consumed contract is frozen for M0.01 on 2026-09-30, following independent review by the artifact, authority, and canonical-values workers. Later checkpoints extend it through reviewed changes. Start prerequisite F0.02-I is satisfied by main `7bcec8a684ce5e24426b198506e4bb137ab14a17`, its passing Windows/Linux foundation and evidence checks, and the preserved F0.01 checkpoint ancestry.
+
+| Task | Owner | Branch / worktree suffix | Owned declarations |
+| --- | --- | --- | --- |
+| M0.01-C0 | root; reviewed by all three workers | `phase/M0.01` / `m0.01` | This contract checkpoint |
+| M0.01-A | m001_artifact | `task/M0.01-A` / `m001-artifact` | `artifact` digest, entry, manifest and adjacent tests |
+| M0.01-B | m001_authority | `task/M0.01-B` / `m001-authority` | `ProjectID`, `PrincipalID`, principal kind/value, `PolicyRevisionID`, policy and adjacent tests |
+| M0.01-C | phase_domain_plan | `task/M0.01-C` / `m001-snapshots` | `SuiteID`, `SuiteVersionID`, `StateRevision`, suite/version snapshots and adjacent tests |
+| M0.01-I | root; independently reviewed | `phase/M0.01` / `m0.01` | `go.mod`, integration evidence, coordinated CI configuration only when real activation requires it |
+
+Worktrees reside under `D:/Repos/SuiteWard-worktrees/`; each owns tooling and caches. C0 is documentation-only. A, B, C, and I require observed TDD evidence. I delegates initial `go.mod` creation to A alongside the first real test/source checkpoint, then owns its final integration. The module is `github.com/IgnisDevNE/SuiteWard`, Go `1.27.1`, standard library only; no `go.sum` is needed without module dependencies. I observes the initial real component failure through the whole-module command before combining the passing components; this verifies composition, not an invented extra production capability. Task histories are merged intact.
+
+#### Artifact API and encoding v1
+
+`artifact.Hash(content []byte) Digest` hashes the exact bytes with SHA-256. A `Digest` is comparable, has private state, exposes `String()` as `sha256:` plus lowercase hexadecimal, and `IsZero()` for an absent value. The zero value has no identity and its string is empty; hashing an empty byte sequence yields a valid identity.
+
+`Entry` contains `Path string` and `Content Digest`. `NewManifest(entries []Entry) (Manifest, error)` validates and copies the inventory. `Manifest.Entries()` returns a defensive copy sorted by the raw UTF-8 path bytes; `Digest()` returns its identity and `IsZero()` distinguishes the unconstructed value from a valid empty inventory.
+
+The manifest digest is SHA-256 over these exact concatenated bytes:
+
+1. ASCII `suiteward.manifest.v1` followed by one NUL byte.
+2. Entry count as an unsigned 64-bit big-endian integer.
+3. For each sorted entry: UTF-8 path byte length as unsigned 64-bit big-endian, unchanged path bytes, and the raw 32-byte content digest.
+
+No JSON serialization, delimiter escaping, Unicode normalization, or line-ending conversion participates. Empty/nil content is equivalent. Nil/empty inventories are equivalent valid manifests. Sorting cannot modify the caller's input. Path identity is case-sensitive.
+
+Reject empty or invalid UTF-8 paths, NUL, backslashes, colons, absolute/leading or trailing slashes, empty slash-separated components, `.`/`..` components, exact duplicate paths, and absent content digests. Return errors recognizable with `errors.Is`: `ErrInvalidPath`, `ErrDuplicatePath`, or `ErrInvalidDigest`. Reject rather than normalize. Symlinks, device names, case collisions and filesystem extraction remain adapter work; this value validation does not claim portable filesystem safety.
+
+Independent SHA-256 golden vectors (hex digest, excluding the display prefix):
+
+| Input | Expected digest |
+| --- | --- |
+| Content `abc` | `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad` |
+| Empty manifest | `ff3f0b17ac399c212f3042c9245011cac8025a8ee5600ac4191df021339b8b15` |
+| `tests/a_test.go` with content `abc` | `706968403fd8612b8bb22f79e659287097e0165687d01bdf1b54bc0f79557fb6` |
+| Previous entry plus `tests/b_test.go` with empty content | `6840a6b34ebc7a3e9bd2b9b1b9437f9b23af4b8be0dffea6b284c9ef839506d4` |
+
+#### Authority API
+
+IDs are distinct string-based domain types, not provider IDs. Constructors reject empty or whitespace-only IDs and preserve accepted bytes without trimming or normalization. `NewPrincipal(id PrincipalID, kind PrincipalKind) (Principal, error)` accepts only `Human`, `Agent`, or `Service`, exposes `ID()` and `Kind()`, and rejects invalid input with `ErrInvalidPrincipal`.
+
+`NewPolicy(project ProjectID, revision PolicyRevisionID, owner Principal) (Policy, error)` requires nonblank identifiers and a valid human owner; invalid input returns `ErrInvalidPolicy`. It exposes `ProjectID()`, `RevisionID()`, and `OwnerID()`. Its boolean capability methods are `CanApprove(actor Principal)`, `CanAdminister(actor Principal)`, `CanRequestPriority(actor Principal)`, `CanAuthorizePolicyChange(actor Principal)`, and `CanRevoke(actor Principal, approvalAuthor PrincipalID)`.
+
+The governing policy receiver permits only its registered human owner. Unconstructed values, a different human, agents and services fail closed, including an agent/service carrying the same ID string as the owner. Revocation additionally requires the actor to be the approval author. Proposal authorship is not a disqualifier and repository administration is not an input. One eligible owner's consent suffices under the MVP, but these capability checks do not create consent or prove proposal eligibility.
+
+Evaluate a proposed policy change with the current policy's `CanAuthorizePolicyChange`; the candidate policy is never substituted as the governing receiver. Tests compare a candidate whose owner would authorize themselves with the current policy that rejects them. This introduces neither policy application nor owner-transfer/recovery behavior. Trusted application/adapters resolve external authentication and choose the governing policy; arbitrary principal construction is not authentication.
+
+#### Suite and version snapshot API
+
+`StateRevision` is an explicit unsigned 64-bit value supplied by the caller; zero is a valid initial revision. It is concurrency context, not an inferred timestamp, and this phase does not increment or persist it.
+
+`NewSuite(project ProjectID, id SuiteID, current SuiteVersionID, revision StateRevision) (Suite, error)` requires nonblank project/suite IDs. Empty `current` means no canonical version; a nonempty whitespace-only version ID is invalid. Getters are `ProjectID()`, `ID()`, `CurrentVersionID() (SuiteVersionID, bool)`, and `Revision()`. Invalid input returns `ErrInvalidSuite`.
+
+`NewSuiteVersion(project ProjectID, suite SuiteID, id SuiteVersionID, manifest artifact.Manifest) (SuiteVersion, error)` requires all IDs to be nonblank and a constructed manifest. Getters are `ProjectID()`, `SuiteID()`, `ID()`, and `Manifest()`. Invalid input returns `ErrInvalidSuiteVersion`. A valid empty manifest is representable and remains different from an absent canonical pointer. Eligibility to bootstrap/promote an empty inventory belongs to later transitions, not snapshot constructors.
+
+Snapshots expose no canonical setter, promotion, clock, random ID generation, or mutable shared inventory. Two version IDs may have the same manifest digest. Constructors represent/reconstitute supplied facts; they do not authorize their persistence as canonical state or verify that a referenced version exists. Tests preserve identity after mutating retained input entries and returned entries.
+
+The implementation-revision approval binding decision remains open under D-APPROVAL-CONTEXT. This checkpoint does not choose it.
+
+#### CI activation repair ownership
+
+The first hosted run of real code exposed a coverage invocation defect: PowerShell split unquoted dotted options, so passing tests wrote `coverage` instead of the required `coverage.out`. M0.01-I therefore temporarily delegates `scripts/check-go.ps1`, its focused regression fixture `scripts/test-go.ps1`, and the foundation hook to `phase_domain_plan` in `task/M0.01-I-ci-fix` / `m001-ci-fix`. Root retains integration, backlog, and evidence ownership; `m001_authority` reviews the repair independently. The correction must preserve complete arguments and constrain coverage to the exact packages already discovered by `go list ./...`. A fake command-boundary regression checks invocation behavior; actual hosted Linux race/coverage remains required to prove the real compiler and upload path.
 
 ### Provider-neutral identity
 
@@ -22,9 +87,9 @@ Time, generated identifiers, source references, and other nondeterministic input
 
 Artifact code consumes bytes and content values; it does not open files. A manifest records exact protected inventory, paths, and content identity. It is immutable, deterministic across input ordering, and sensitive to path, inventory, and content changes.
 
-M0.01-A must document a versioned, unambiguous canonical encoding and golden examples before consumers depend on exact bytes. A suitable technical proposal is SHA-256 with a domain/version envelope and unambiguous field boundaries, relative forward-slash paths, case-sensitive identity, and unchanged byte content. Do not silently normalize line endings or Unicode, rewrite dot segments, accept absolute paths, or merge duplicate entries.
+M0.01-C0 freezes the versioned, unambiguous canonical encoding and independently calculated golden examples above. It uses SHA-256, a manifest domain/version envelope and unambiguous field boundaries, relative forward-slash paths, case-sensitive identity, and unchanged byte content. Do not silently normalize line endings or Unicode, rewrite dot segments, accept absolute paths, or merge duplicate entries.
 
-This encoding proposal is an implementation choice to review at M0.01-C0, not a previously accepted ADR decision. Extraction/materialization, symlinks, Windows filesystem collisions, wildcard declarations, and source discovery are adapter concerns with later acceptance work. M0 must not claim those are solved by deterministic hashing.
+This encoding is a reviewed M0.01-C0 implementation choice within the ADRs, not a previously accepted ADR decision. Extraction/materialization, symlinks, Windows filesystem collisions, wildcard declarations, and source discovery are adapter concerns with later acceptance work. M0 must not claim those are solved by deterministic hashing.
 
 ### Canonical values
 

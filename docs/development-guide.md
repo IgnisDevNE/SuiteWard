@@ -1,7 +1,7 @@
 # SuiteWard development conventions
 
 - **Updated:** 2026-09-30
-- **Status:** Accepted conventions; application implementation has not started.
+- **Status:** Accepted conventions; M0 domain implementation has started.
 - **Scope:** How contributors and agents write SuiteWard code and tests.
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.

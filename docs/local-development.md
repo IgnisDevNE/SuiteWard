@@ -91,7 +91,7 @@ GitHub writes and PR publication use the authorized bot within its granted permi
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, and process environment isolation. A real database smoke check runs locally through `doctor`/`db-test`.
 
-The project has no application Go packages yet. No empty module, synthetic application coverage, or application test success is substituted for M0. SQL migrations, pgx integration tests, sqlc freshness checks, and production platform support remain separate implementation work.
+M0.01 introduces real Go domain packages and tests for artifact identity, authority, and immutable canonical snapshots. For this domain-only work, `./scripts/dev.ps1 tools` prepares the local tools and `./scripts/dev.ps1 check` runs the checks without starting a database or requiring containers. SQL migrations, pgx integration tests, sqlc freshness checks, and production platform support remain separate implementation work.
 
 This preparation was verified on the Windows host and in an isolated Ubuntu 24.04 container: fresh pinned-tool installation, repeat installation, development checks, 15 CI checks, documentation links, and actionlint passed. Two Windows checkouts ran independent PostgreSQL clusters on different ports; stopping/restarting one preserved the other's state. Wrong database credentials were rejected, a failed tool command restored the caller's environment, and conflicting ambient Go settings did not select a global SDK. These local runs do not substitute for the next PR's hosted CI run.
 

@@ -386,3 +386,94 @@ func TestConsentUnauthorizedRevocationCannotWithdrawOrPoisonOwnerOrdering(t *tes
 		}
 	}
 }
+
+func TestConsentReplayReturnsOriginalResultWithoutRestoringRevokedConsent(t *testing.T) {
+	empty, proposal, policy, input := consentFixture(t)
+	approved, original := applyConsentForTest(t, empty, proposal, policy, input)
+	revoke := subsequentConsentCommand(input, "revoke", contract.RevokeConsent, 20)
+	revoked, _ := applyConsentForTest(t, approved, proposal, policy, revoke)
+	for _, edit := range []struct {
+		name   string
+		mutate func(*contract.CommandInput)
+	}{
+		{"identical observation", func(*contract.CommandInput) {}},
+		{"edited command", func(i *contract.CommandInput) {
+			i.Action = contract.RevokeConsent
+			i.Reference.RevisionID = "unknown"
+			i.Carrier = "edited-carrier"
+			i.Order = 1000
+		}},
+		{"new operation identity", func(i *contract.CommandInput) { i.OperationID = "operation-alias" }},
+	} {
+		t.Run(edit.name, func(t *testing.T) {
+			replay := input
+			edit.mutate(&replay)
+			next, result := applyConsentForTest(t, revoked, proposal, policy, replay)
+			if !result.Duplicate() || result.Outcome() != original.Outcome() || result.Reason() != original.Reason() || result.Command() != original.Command() {
+				t.Fatal("replay did not reuse the exact original processing result")
+			}
+			if next.HasApproval(proposal, policy) || len(next.Results()) != 2 || next.Results()[0] != original {
+				t.Fatal("replay reapplied old consent or rewrote processing history")
+			}
+			if edit.name == "new operation identity" {
+				collision := subsequentConsentCommand(input, "new-source", contract.ApproveConsent, 30)
+				collision.OperationID = replay.OperationID
+				unchanged, conflict := applyConsentForTest(t, next, proposal, policy, collision)
+				if conflict.Outcome() != contract.ConsentRejected || conflict.Reason() != contract.ConsentReasonCommandConflict || unchanged.HasApproval(proposal, policy) || len(unchanged.Results()) != 2 {
+					t.Fatal("observed operation alias was reused for a different source")
+				}
+			}
+		})
+	}
+}
+
+func TestConsentReplayPreservesRejectionAfterEligibilityChanges(t *testing.T) {
+	empty, proposal, policy, input := consentFixture(t)
+	input.Reference.RevisionID = "r2"
+	rejected, original := applyConsentForTest(t, empty, proposal, policy, input)
+	if original.Reason() != contract.ConsentReasonUnknownRevision {
+		t.Fatal("expected original unknown-revision rejection")
+	}
+	updated := consentBindingInput()
+	updated.Reference.RevisionID = "r2"
+	current, err := proposal.Revise(consentRevisionForTest(t, updated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, result := applyConsentForTest(t, rejected, current, policy, input)
+	if !result.Duplicate() || result.Outcome() != original.Outcome() || result.Reason() != original.Reason() || result.Command() != original.Command() || next.HasApproval(current, policy) || len(next.Results()) != 1 {
+		t.Fatal("reobserving a rejected source command granted newly eligible consent")
+	}
+}
+
+func TestConsentIdentityConflictsPreserveOriginalReceiptAndAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*contract.CommandInput)
+	}{
+		{"operation reused for another source", func(i *contract.CommandInput) { i.SourceCommandID = "foreign-source" }},
+		{"source reused by another human", func(i *contract.CommandInput) { i.Actor = principalForTest(t, "different-human", contract.Human) }},
+		{"source reused by agent with same ID", func(i *contract.CommandInput) { i.Actor = principalForTest(t, "owner", contract.Agent) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			empty, proposal, policy, input := consentFixture(t)
+			approved, original := applyConsentForTest(t, empty, proposal, policy, input)
+			conflicting := input
+			conflicting.Action = contract.RevokeConsent
+			conflicting.Order = 20
+			tt.mutate(&conflicting)
+			for range 2 {
+				next, result := applyConsentForTest(t, approved, proposal, policy, conflicting)
+				if result.Outcome() != contract.ConsentRejected || result.Reason() != contract.ConsentReasonCommandConflict || result.Duplicate() || !next.HasApproval(proposal, policy) || len(next.Results()) != 1 || next.Results()[0] != original {
+					t.Fatal("identity conflict changed authority or replaced the original receipt")
+				}
+				approved = next
+			}
+			next, replay := applyConsentForTest(t, approved, proposal, policy, input)
+			if !replay.Duplicate() || replay.Command() != original.Command() || replay.Outcome() != original.Outcome() || !next.HasApproval(proposal, policy) || len(next.Results()) != 1 {
+				t.Fatal("identity conflict damaged a subsequent original-command replay")
+			}
+		})
+	}
+}

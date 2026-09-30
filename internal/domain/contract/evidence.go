@@ -1,5 +1,10 @@
 package contract
 
+import "errors"
+
+// ErrInvalidIntegrityEvidence identifies an incomplete or invalid observation.
+var ErrInvalidIntegrityEvidence = errors.New("invalid integrity evidence")
+
 // IntegrityOutcome describes an integrity observation, not test execution.
 type IntegrityOutcome uint8
 

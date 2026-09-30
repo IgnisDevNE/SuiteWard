@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -52,6 +53,40 @@ func TestIntegrityEvidenceKeepsCoveredInputsImmutable(t *testing.T) {
 	delete(exposed, "mode")
 	if !evidence.Binding().Equal(binding) || evidence.Binding().CoveredInputs()["dependencies"] != "lock-1" {
 		t.Error("caller mutation changed the evidence's sealed context")
+	}
+}
+
+func TestIntegrityEvidenceRejectsInvalidObservation(t *testing.T) {
+	binding := mustIntegrityBinding(t, integrityBindingInput())
+	tests := []struct {
+		name    string
+		emitter contract.PrincipalID
+		source  contract.SourceRevision
+		binding contract.ApprovalBinding
+		outcome contract.IntegrityOutcome
+	}{
+		{name: "missing emitter", source: "source-1", binding: binding, outcome: contract.IntegrityPassed},
+		{name: "blank emitter", emitter: " \t", source: "source-1", binding: binding, outcome: contract.IntegrityPassed},
+		{name: "missing source", emitter: "verifier-1", binding: binding, outcome: contract.IntegrityPassed},
+		{name: "blank source", emitter: "verifier-1", source: "\u2003", binding: binding, outcome: contract.IntegrityPassed},
+		{name: "absent binding", emitter: "verifier-1", source: "source-1", outcome: contract.IntegrityPassed},
+		{name: "zero outcome", emitter: "verifier-1", source: "source-1", binding: binding},
+		{name: "unknown outcome", emitter: "verifier-1", source: "source-1", binding: binding, outcome: 255},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := contract.NewIntegrityEvidence(tt.emitter, tt.source, tt.binding, tt.outcome)
+			if !errors.Is(err, contract.ErrInvalidIntegrityEvidence) {
+				t.Fatalf("NewIntegrityEvidence() error = %v, want ErrInvalidIntegrityEvidence", err)
+			}
+		})
+	}
+}
+
+func TestIntegrityEvidenceZeroIsAbsent(t *testing.T) {
+	var evidence contract.IntegrityEvidence
+	if !evidence.IsZero() || evidence.EmitterID() != "" || evidence.Source() != "" || !evidence.Binding().IsZero() || evidence.Outcome() != 0 {
+		t.Error("zero evidence unexpectedly describes an observation")
 	}
 }
 

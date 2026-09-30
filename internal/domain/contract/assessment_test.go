@@ -191,6 +191,94 @@ func TestIntegrityAssessmentRejectsInvalidExpectation(t *testing.T) {
 	}
 }
 
+func TestIntegrityAssessmentRemainsSeparateFromConsent(t *testing.T) {
+	input := integrityBindingInput()
+	binding := mustIntegrityBinding(t, input)
+	revision, err := contract.NewProposalRevision(binding, "candidate-source", "approval-carrier")
+	if err != nil {
+		t.Fatalf("NewProposalRevision() error = %v", err)
+	}
+	proposal, err := contract.NewProposal(revision)
+	if err != nil {
+		t.Fatalf("NewProposal() error = %v", err)
+	}
+	owner, err := contract.NewPrincipal("owner-1", contract.Human)
+	if err != nil {
+		t.Fatalf("NewPrincipal() error = %v", err)
+	}
+	policy, err := contract.NewPolicy(input.Reference.ProjectID, input.PolicyRevision, owner)
+	if err != nil {
+		t.Fatalf("NewPolicy() error = %v", err)
+	}
+	consent, err := contract.NewConsent(input.Reference.ProjectID, input.Reference.SuiteID, input.Reference.ProposalID)
+	if err != nil {
+		t.Fatalf("NewConsent() error = %v", err)
+	}
+	evidence := mustIntegrityEvidence(t, "integrated-source", binding, contract.IntegrityPassed)
+	assessment, err := contract.AssessIntegrity("integrated-source", binding, &evidence)
+	if err != nil {
+		t.Fatalf("AssessIntegrity() error = %v", err)
+	}
+	if !assessment.Passed() || consent.HasApproval(proposal, policy) || len(consent.Results()) != 0 {
+		t.Fatal("green integrity must coexist with absent consent without creating a command outcome")
+	}
+
+	approve, err := contract.NewCommand(contract.CommandInput{
+		OperationID: "approve-operation", SourceCommandID: "approve-source-command",
+		Actor: owner, Reference: binding.Reference(), Carrier: revision.Carrier(),
+		Action: contract.ApproveConsent, Order: 10,
+	})
+	if err != nil {
+		t.Fatalf("NewCommand(approve) error = %v", err)
+	}
+	approved, result, err := consent.Apply(proposal, policy, approve)
+	if err != nil || result.Outcome() != contract.ConsentApproved || !approved.HasApproval(proposal, policy) {
+		t.Fatalf("approval outcome = %v, error = %v; want active approval", result.Outcome(), err)
+	}
+	missing, err := contract.AssessIntegrity("integrated-source", binding, nil)
+	if err != nil || missing.Passed() || missing.Reason() != contract.IntegrityReasonMissing || !approved.HasApproval(proposal, policy) {
+		t.Fatal("active consent must not manufacture missing integrity evidence")
+	}
+
+	revoke, err := contract.NewCommand(contract.CommandInput{
+		OperationID: "revoke-operation", SourceCommandID: "revoke-source-command",
+		Actor: owner, Reference: binding.Reference(), Carrier: revision.Carrier(),
+		Action: contract.RevokeConsent, Order: 20,
+	})
+	if err != nil {
+		t.Fatalf("NewCommand(revoke) error = %v", err)
+	}
+	revoked, result, err := approved.Apply(proposal, policy, revoke)
+	if err != nil || result.Outcome() != contract.ConsentRevoked || revoked.HasApproval(proposal, policy) || !assessment.Passed() {
+		t.Fatalf("revocation outcome = %v, error = %v; green integrity must not restore withdrawn consent", result.Outcome(), err)
+	}
+
+	input.Reference.RevisionID = "revision-2"
+	input.CoveredInputs["dependencies"] = "lock-2"
+	changedBinding := mustIntegrityBinding(t, input)
+	changedRevision, err := contract.NewProposalRevision(changedBinding, revision.Origin(), revision.Carrier())
+	if err != nil {
+		t.Fatalf("NewProposalRevision(changed context) error = %v", err)
+	}
+	changedProposal, err := proposal.Revise(changedRevision)
+	if err != nil {
+		t.Fatalf("Revise() error = %v", err)
+	}
+	stale, err := contract.AssessIntegrity("integrated-source", changedBinding, &evidence)
+	if err != nil || stale.Passed() || stale.Reason() != contract.IntegrityReasonMismatch {
+		t.Fatalf("changed context assessment reason = %v, error = %v; want evidence mismatch", stale.Reason(), err)
+	}
+	// Use the pre-revocation state to isolate the effect of the changed context.
+	if !approved.HasApproval(proposal, policy) || approved.HasApproval(changedProposal, policy) {
+		t.Fatal("changed covered inputs inherited consent for the previous revision")
+	}
+	freshEvidence := mustIntegrityEvidence(t, "integrated-source", changedBinding, contract.IntegrityPassed)
+	fresh, err := contract.AssessIntegrity("integrated-source", changedBinding, &freshEvidence)
+	if err != nil || !fresh.Passed() || approved.HasApproval(changedProposal, policy) {
+		t.Fatal("fresh evidence must not grant the new exact revision its missing approval")
+	}
+}
+
 func mustIntegrityEvidence(t *testing.T, source contract.SourceRevision, binding contract.ApprovalBinding, outcome contract.IntegrityOutcome) contract.IntegrityEvidence {
 	t.Helper()
 	evidence, err := contract.NewIntegrityEvidence("verifier-1", source, binding, outcome)

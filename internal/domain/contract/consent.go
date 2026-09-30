@@ -134,6 +134,12 @@ func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Co
 	if command.Order() <= previous.order {
 		return c.reject(command, ConsentReasonObsoleteCommand)
 	}
+	for _, receipt := range c.results {
+		observed := receipt.command
+		if observed.Reference().RevisionID == key.revision && observed.Actor() == key.actor && observed.Order() == command.Order() {
+			return c.reject(command, ConsentReasonObsoleteCommand)
+		}
+	}
 	active := command.Action() == ApproveConsent
 	result := CommandResult{command: command, outcome: ConsentApproved}
 	if !active {

@@ -17,5 +17,6 @@ type BootstrapInput struct {
 }
 
 func DecideBootstrap(input BootstrapInput) (PromotionDecision, error) {
-	return PromotionDecision{}, nil
+	context := input.Promotion.Context
+	return CheckPromotionReadiness(context, context.Proposal.Current().Origin())
 }

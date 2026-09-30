@@ -45,11 +45,13 @@ func (r PromotionRecord) CorrectsVersionID() SuiteVersionID { return r.input.Cor
 func (r PromotionRecord) IsZero() bool                      { return r.input.Binding.IsZero() }
 
 // AuditEvent describes a proposed canonical-promotion audit fact.
-type AuditEvent struct{}
-func (a AuditEvent) Promotion() PromotionRecord {return PromotionRecord{}}
-func (a AuditEvent) IsZero() bool {return true}
+type AuditEvent struct{ promotion PromotionRecord }
+
+func (a AuditEvent) Promotion() PromotionRecord { return a.promotion }
+func (a AuditEvent) IsZero() bool               { return a.promotion.IsZero() }
 
 // PublicationIntent is a pending acknowledgment, not proof of remote delivery.
-type PublicationIntent struct{}
-func (p PublicationIntent) Promotion() PromotionRecord {return PromotionRecord{}}
-func (p PublicationIntent) IsZero() bool {return true}
+type PublicationIntent struct{ promotion PromotionRecord }
+
+func (p PublicationIntent) Promotion() PromotionRecord { return p.promotion }
+func (p PublicationIntent) IsZero() bool               { return p.promotion.IsZero() }

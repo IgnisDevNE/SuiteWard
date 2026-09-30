@@ -713,64 +713,98 @@ func TestPromotionReadinessRequiresExactSourceBoundEvidence(t *testing.T) {
 
 func promotionInput(t *testing.T) contract.PromotionInput {
 	t.Helper()
-	return contract.PromotionInput{Context:promotionContext(t),Integration:promotionIntegration(t,"integrated-source","carrier",contract.IntegrationMergedChange),Target:"main",OperationID:"promote-op",NewVersionID:"v2",RecordedAt:time.Date(2026,9,30,13,0,0,0,time.UTC),CorrectsVersionID:"v0"}
+	return contract.PromotionInput{Context: promotionContext(t), Integration: promotionIntegration(t, "integrated-source", "carrier", contract.IntegrationMergedChange), Target: "main", OperationID: "promote-op", NewVersionID: "v2", RecordedAt: time.Date(2026, 9, 30, 13, 0, 0, 0, time.UTC), CorrectsVersionID: "v0"}
 }
 
 func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
-	input:=promotionInput(t)
-	beforeSuite:=input.Context.Canonical.Suite()
-	beforeSchedule:=input.Context.Scheduling.Entries()
-	beforeConsent:=input.Context.Consent.Results()
-	decision,err:=contract.DecidePromotion(input)
-	if err!=nil||decision.Outcome()!=contract.PromotionProposed||decision.Reason()!=contract.PromotionReasonNone{t.Fatalf("promotion not proposed: outcome=%v reason=%v err=%v",decision.Outcome(),decision.Reason(),err)}
-	effect,present:=decision.Effect()
-	if !present||effect.IsZero(){t.Fatal("proposed promotion omitted grouped effect")}
-	if effect.ExpectedCanonicalID()!="v1"||effect.ExpectedStateRevision()!=10||effect.ExpectedSchedulingGeneration()!=input.Context.Scheduling.Generation(){t.Fatal("effect lost its conditional authority fences")}
-	current,exists:=effect.Suite().CurrentVersionID()
-	if !exists||current!="v2"||effect.Suite().ProjectID()!="project"||effect.Suite().ID()!="suite"||effect.Suite().Revision()!=11||effect.Version().ID()!="v2"||effect.Version().ProjectID()!="project"||effect.Version().SuiteID()!="suite"||effect.Version().Manifest().Digest()!=input.Context.Proposed.Manifest().Digest(){t.Fatal("grouped proposed version and pointer disagree")}
-	record:=effect.Promotion()
-	if record.IsZero()||record.OperationID()!=input.OperationID||record.VersionID()!=input.NewVersionID||!record.Binding().Equal(input.Context.Proposal.Current().Binding())||record.Carrier()!=input.Context.Carrier||record.Source()!=input.Integration.Source()||record.Target()!=input.Target||record.RecordedAt()!=input.RecordedAt||record.CorrectsVersionID()!=input.CorrectsVersionID{t.Fatal("effect promotion record lost exact facts")}
-	if effect.Audit().IsZero()||effect.Publication().IsZero()||!reflect.DeepEqual(record,effect.Audit().Promotion())||!reflect.DeepEqual(record,effect.Publication().Promotion()){t.Fatal("audit and publication do not describe the identical promotion")}
-	if _,err:=contract.NewCanonicalSnapshot(effect.Suite(),effect.Version(),input.Context.Proposed,record);err!=nil{t.Fatalf("proposed canonical is internally contradictory: %v",err)}
-	context:=record.Binding().CoveredInputs();context["runner"]="changed"
-	entries:=effect.Version().Manifest().Entries();entries[0].Path="changed"
-	if effect.Audit().Promotion().Binding().CoveredInputs()["runner"]!="v1"||effect.Version().Manifest().Entries()[0].Path!="a_test.go"{t.Fatal("grouped effect aliases mutable returned data")}
-	if input.Context.Canonical.Suite()!=beforeSuite||!reflect.DeepEqual(input.Context.Scheduling.Entries(),beforeSchedule)||!reflect.DeepEqual(input.Context.Consent.Results(),beforeConsent){t.Fatal("proposed effect changed input authority snapshots")}
-	promotionRevoke(t,&input.Context)
-	if effect.Promotion().OperationID()!="promote-op"||effect.Suite().Revision()!=11{t.Fatal("subsequent consent changed already produced immutable facts")}
-	if !(contract.PromotionEffect{}).IsZero()||!(contract.AuditEvent{}).IsZero()||!(contract.PublicationIntent{}).IsZero(){t.Fatal("zero effects claimed publication or history")}
+	input := promotionInput(t)
+	beforeSuite := input.Context.Canonical.Suite()
+	beforeSchedule := input.Context.Scheduling.Entries()
+	beforeConsent := input.Context.Consent.Results()
+	decision, err := contract.DecidePromotion(input)
+	if err != nil || decision.Outcome() != contract.PromotionProposed || decision.Reason() != contract.PromotionReasonNone {
+		t.Fatalf("promotion not proposed: outcome=%v reason=%v err=%v", decision.Outcome(), decision.Reason(), err)
+	}
+	effect, present := decision.Effect()
+	if !present || effect.IsZero() {
+		t.Fatal("proposed promotion omitted grouped effect")
+	}
+	if effect.ExpectedCanonicalID() != "v1" || effect.ExpectedStateRevision() != 10 || effect.ExpectedSchedulingGeneration() != input.Context.Scheduling.Generation() {
+		t.Fatal("effect lost its conditional authority fences")
+	}
+	current, exists := effect.Suite().CurrentVersionID()
+	if !exists || current != "v2" || effect.Suite().ProjectID() != "project" || effect.Suite().ID() != "suite" || effect.Suite().Revision() != 11 || effect.Version().ID() != "v2" || effect.Version().ProjectID() != "project" || effect.Version().SuiteID() != "suite" || effect.Version().Manifest().Digest() != input.Context.Proposed.Manifest().Digest() {
+		t.Fatal("grouped proposed version and pointer disagree")
+	}
+	record := effect.Promotion()
+	if record.IsZero() || record.OperationID() != input.OperationID || record.VersionID() != input.NewVersionID || !record.Binding().Equal(input.Context.Proposal.Current().Binding()) || record.Carrier() != input.Context.Carrier || record.Source() != input.Integration.Source() || record.Target() != input.Target || record.RecordedAt() != input.RecordedAt || record.CorrectsVersionID() != input.CorrectsVersionID {
+		t.Fatal("effect promotion record lost exact facts")
+	}
+	if effect.Audit().IsZero() || effect.Publication().IsZero() || !reflect.DeepEqual(record, effect.Audit().Promotion()) || !reflect.DeepEqual(record, effect.Publication().Promotion()) {
+		t.Fatal("audit and publication do not describe the identical promotion")
+	}
+	if _, err := contract.NewCanonicalSnapshot(effect.Suite(), effect.Version(), input.Context.Proposed, record); err != nil {
+		t.Fatalf("proposed canonical is internally contradictory: %v", err)
+	}
+	context := record.Binding().CoveredInputs()
+	context["runner"] = "changed"
+	entries := effect.Version().Manifest().Entries()
+	entries[0].Path = "changed"
+	if effect.Audit().Promotion().Binding().CoveredInputs()["runner"] != "v1" || effect.Version().Manifest().Entries()[0].Path != "a_test.go" {
+		t.Fatal("grouped effect aliases mutable returned data")
+	}
+	if input.Context.Canonical.Suite() != beforeSuite || !reflect.DeepEqual(input.Context.Scheduling.Entries(), beforeSchedule) || !reflect.DeepEqual(input.Context.Consent.Results(), beforeConsent) {
+		t.Fatal("proposed effect changed input authority snapshots")
+	}
+	promotionRevoke(t, &input.Context)
+	if effect.Promotion().OperationID() != "promote-op" || effect.Suite().Revision() != 11 {
+		t.Fatal("subsequent consent changed already produced immutable facts")
+	}
+	if !(contract.PromotionEffect{}).IsZero() || !(contract.AuditEvent{}).IsZero() || !(contract.PublicationIntent{}).IsZero() {
+		t.Fatal("zero effects claimed publication or history")
+	}
 }
 
 func TestPromotionNoChangeHasNoAuthorityOrEffect(t *testing.T) {
-	current:=promotionCanonical(t)
-	input:=contract.PromotionInput{Context:contract.PromotionContext{Canonical:current,Proposed:current.Contract()}}
-	decision,err:=contract.DecidePromotion(input)
-	requirePromotionDecision(t,decision,err,contract.PromotionNoChange,contract.PromotionReasonNone)
-	if current.Suite().Revision()!=10{t.Fatal("no-change moved canonical")}
-	for _,proposed:=range []contract.ProtectedContract{
-		promotionProtected(t,current.Contract().Manifest(),"new-scope",current.Contract().CoveredInputs()),
-		promotionProtected(t,current.Contract().Manifest(),"scope",map[string]string{"runner":"v2"}),
-	}{input.Context.Proposed=proposed;decision,_=contract.DecidePromotion(input);if decision.Outcome()==contract.PromotionNoChange{t.Fatal("same manifest concealed protected scope/context change")}}
+	current := promotionCanonical(t)
+	input := contract.PromotionInput{Context: contract.PromotionContext{Canonical: current, Proposed: current.Contract()}}
+	decision, err := contract.DecidePromotion(input)
+	requirePromotionDecision(t, decision, err, contract.PromotionNoChange, contract.PromotionReasonNone)
+	if current.Suite().Revision() != 10 {
+		t.Fatal("no-change moved canonical")
+	}
+	for _, proposed := range []contract.ProtectedContract{
+		promotionProtected(t, current.Contract().Manifest(), "new-scope", current.Contract().CoveredInputs()),
+		promotionProtected(t, current.Contract().Manifest(), "scope", map[string]string{"runner": "v2"}),
+	} {
+		input.Context.Proposed = proposed
+		decision, _ = contract.DecidePromotion(input)
+		if decision.Outcome() == contract.PromotionNoChange {
+			t.Fatal("same manifest concealed protected scope/context change")
+		}
+	}
 }
 
 func TestPromotionDelegatesCurrentAuthorityAndInitialEmptyGuards(t *testing.T) {
-	input:=promotionInput(t)
-	input.Context.Consent=contract.Consent{}
-	decision,err:=contract.DecidePromotion(input)
-	requirePromotionDecision(t,decision,err,contract.PromotionBlocked,contract.PromotionReasonApprovalMissing)
-	input=promotionInput(t)
-	input.Integration=contract.Integration{}
-	decision,err=contract.DecidePromotion(input)
-	requirePromotionDecision(t,decision,err,contract.PromotionBlocked,contract.PromotionReasonIntegrationMissing)
-	empty:=promotionProtected(t,promotionManifest(t),"scope",map[string]string{"runner":"v1"})
-	input=promotionInput(t)
-	input.Context=promotionContextWith(t,promotionAbsentCanonical(t),empty)
-	input.Integration=promotionIntegration(t,"candidate-source","",contract.IntegrationExistingBaseline)
-	input.Context.Assessment=promotionAssessment(t,"candidate-source",input.Context.Proposal.Current().Binding(),contract.IntegrityPassed)
-	decision,err=contract.DecidePromotion(input)
-	requirePromotionDecision(t,decision,err,contract.PromotionBlocked,contract.PromotionReasonEmptyInventory)
-	input=promotionInput(t)
-	input.Context=promotionContextWith(t,promotionCanonical(t),empty)
-	decision,err=contract.DecidePromotion(input)
-	if err!=nil||decision.Outcome()!=contract.PromotionProposed{t.Fatalf("approved established empty contract blocked: outcome=%v reason=%v err=%v",decision.Outcome(),decision.Reason(),err)}
+	input := promotionInput(t)
+	input.Context.Consent = contract.Consent{}
+	decision, err := contract.DecidePromotion(input)
+	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonApprovalMissing)
+	input = promotionInput(t)
+	input.Integration = contract.Integration{}
+	decision, err = contract.DecidePromotion(input)
+	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonIntegrationMissing)
+	empty := promotionProtected(t, promotionManifest(t), "scope", map[string]string{"runner": "v1"})
+	input = promotionInput(t)
+	input.Context = promotionContextWith(t, promotionAbsentCanonical(t), empty)
+	input.Integration = promotionIntegration(t, "candidate-source", "", contract.IntegrationExistingBaseline)
+	input.Context.Assessment = promotionAssessment(t, "candidate-source", input.Context.Proposal.Current().Binding(), contract.IntegrityPassed)
+	decision, err = contract.DecidePromotion(input)
+	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonEmptyInventory)
+	input = promotionInput(t)
+	input.Context = promotionContextWith(t, promotionCanonical(t), empty)
+	decision, err = contract.DecidePromotion(input)
+	if err != nil || decision.Outcome() != contract.PromotionProposed {
+		t.Fatalf("approved established empty contract blocked: outcome=%v reason=%v err=%v", decision.Outcome(), decision.Reason(), err)
+	}
 }

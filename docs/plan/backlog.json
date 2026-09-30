@@ -5160,7 +5160,8 @@
         "docs/tdd.md",
         "docs/plan/README.md",
         "docs/plan/backlog.json",
-        "docs/plan/phases/*.md"
+        "docs/plan/phases/*.md",
+        "docs/plan/parallel-delivery.md"
       ],
       "shared_files": [],
       "contracts": [],

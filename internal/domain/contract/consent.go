@@ -47,11 +47,12 @@ func (r CommandResult) Duplicate() bool         { return r.duplicate }
 // Consent is an immutable, project/suite/proposal-scoped processing history.
 // Callers must persist its returned state and command outcome together.
 type Consent struct {
-	project  ProjectID
-	suite    SuiteID
-	proposal ProposalID
-	results  []CommandResult
-	states   map[consentKey]consentState
+	project    ProjectID
+	suite      SuiteID
+	proposal   ProposalID
+	results    []CommandResult
+	states     map[consentKey]consentState
+	operations map[OperationID]SourceCommandID
 }
 
 type consentKey struct {
@@ -69,7 +70,10 @@ func NewConsent(project ProjectID, suite SuiteID, proposal ProposalID) (Consent,
 	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(suite)) == "" || strings.TrimSpace(string(proposal)) == "" {
 		return Consent{}, ErrInvalidConsent
 	}
-	return Consent{project: project, suite: suite, proposal: proposal, states: map[consentKey]consentState{}}, nil
+	return Consent{
+		project: project, suite: suite, proposal: proposal,
+		states: map[consentKey]consentState{}, operations: map[OperationID]SourceCommandID{},
+	}, nil
 }
 
 func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Consent, CommandResult, error) {
@@ -78,6 +82,25 @@ func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Co
 	}
 	if c.project == "" || proposal.IsZero() || governing.ProjectID() != c.project || !c.contains(proposal.Current().Binding().Reference()) || !c.contains(command.Reference()) {
 		return c, CommandResult{}, ErrInvalidConsent
+	}
+	observedSource, knownOperation := c.operations[command.OperationID()]
+	if knownOperation && observedSource != command.SourceCommandID() {
+		return c.conflict(command)
+	}
+	for _, original := range c.results {
+		if original.command.SourceCommandID() != command.SourceCommandID() {
+			continue
+		}
+		if original.command.Actor() != command.Actor() {
+			return c.conflict(command)
+		}
+		next := c
+		if !knownOperation {
+			next.operations = maps.Clone(c.operations)
+			next.operations[command.OperationID()] = command.SourceCommandID()
+		}
+		original.duplicate = true
+		return next, original, nil
 	}
 	var revision ProposalRevision
 	var err error
@@ -151,10 +174,18 @@ func (c Consent) contains(reference ProposalReference) bool {
 func (c Consent) record(result CommandResult) Consent {
 	next := c
 	next.results = append(slices.Clone(c.results), result)
+	next.operations = maps.Clone(c.operations)
+	next.operations[result.command.OperationID()] = result.command.SourceCommandID()
 	return next
 }
 
 func (c Consent) reject(command Command, reason ConsentReason) (Consent, CommandResult, error) {
 	result := CommandResult{command: command, outcome: ConsentRejected, reason: reason}
 	return c.record(result), result, nil
+}
+
+func (c Consent) conflict(command Command) (Consent, CommandResult, error) {
+	// Existing immutable identity facts determine this conflict on every retry.
+	// Do not overwrite the original receipt or append a competing identity record.
+	return c, CommandResult{command: command, outcome: ConsentRejected, reason: ConsentReasonCommandConflict}, nil
 }

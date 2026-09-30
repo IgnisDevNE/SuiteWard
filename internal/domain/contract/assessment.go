@@ -1,5 +1,10 @@
 package contract
 
+import "errors"
+
+// ErrInvalidIntegrityAssessment identifies an incomplete expected context.
+var ErrInvalidIntegrityAssessment = errors.New("invalid integrity assessment")
+
 // IntegrityReason distinguishes assessment outcomes without granting authority.
 type IntegrityReason uint8
 

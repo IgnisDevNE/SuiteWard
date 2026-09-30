@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -163,6 +164,30 @@ func TestIntegrityAssessmentRejectsMismatchedEvidence(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestIntegrityAssessmentRejectsInvalidExpectation(t *testing.T) {
+	binding := mustIntegrityBinding(t, integrityBindingInput())
+	evidence := mustIntegrityEvidence(t, "source-1", binding, contract.IntegrityPassed)
+	tests := []struct {
+		name    string
+		source  contract.SourceRevision
+		binding contract.ApprovalBinding
+	}{
+		{name: "missing source", binding: binding},
+		{name: "blank source", source: " \t\n", binding: binding},
+		{name: "absent binding", source: "source-1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, observation := range []*contract.IntegrityEvidence{nil, &evidence} {
+				_, err := contract.AssessIntegrity(tt.source, tt.binding, observation)
+				if !errors.Is(err, contract.ErrInvalidIntegrityAssessment) {
+					t.Errorf("AssessIntegrity() error = %v, want ErrInvalidIntegrityAssessment", err)
+				}
+			}
+		})
 	}
 }
 

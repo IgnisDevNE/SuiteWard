@@ -11,7 +11,12 @@ type HistoricalCanonical struct {
 }
 
 func NewHistoricalCanonical(version SuiteVersion, record PromotionRecord) (HistoricalCanonical, error) {
-	return HistoricalCanonical{}, nil
+	reference := record.Binding().Reference()
+	if version.ID() == "" || record.IsZero() || version.ProjectID() != reference.ProjectID || version.SuiteID() != reference.SuiteID ||
+		version.ID() != record.VersionID() || version.Manifest().Digest() != record.Binding().ManifestDigest() {
+		return HistoricalCanonical{}, ErrInvalidHistoricalCanonical
+	}
+	return HistoricalCanonical{version: version, record: record}, nil
 }
 
 func (h HistoricalCanonical) Version() SuiteVersion   { return h.version }

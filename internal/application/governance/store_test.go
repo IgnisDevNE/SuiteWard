@@ -97,11 +97,107 @@ func (s *referenceStore) inspect() referenceState {
 	return s.state.clone()
 }
 
-func (s *referenceStore) Load(context.Context, ReadRequest) (Snapshot, error) { return Snapshot{}, nil }
-func (s *referenceStore) CommitPromotion(context.Context, AuthorityFence, PromotionWrite) error {
+func (s *referenceStore) Load(ctx context.Context, request ReadRequest) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	state := s.state
+	suite := state.canonical.Suite()
+	if request.Reference.ProjectID != suite.ProjectID() || request.Reference.SuiteID != suite.ID() {
+		return Snapshot{}, ErrNotFound
+	}
+	proposal, found := state.proposals[request.Reference.ProposalID]
+	if !found {
+		return Snapshot{}, ErrNotFound
+	}
+	var history contract.HistoricalCanonical
+	if version, found := state.versions[request.HistoricalVersionID]; found {
+		var err error
+		history, err = contract.NewHistoricalCanonical(version, state.promotions[version.ID()])
+		if err != nil {
+			return Snapshot{}, err
+		}
+	}
+	var historicalPromotion contract.PromotionRecord
+	for _, record := range state.promotions {
+		if record.Binding().Reference() == request.Reference {
+			historicalPromotion = record
+			break
+		}
+	}
+	return Snapshot{
+		Fence:     AuthorityFence{suite.ProjectID(), suite.ID(), suite.Revision()},
+		Canonical: state.canonical, Proposal: proposal, Policy: state.policy, Consent: state.consents[request.Reference.ProposalID],
+		Scheduling: state.scheduling, Assessment: state.assessments[assessmentKey{request.Reference, request.AssessmentSource}],
+		Target: state.target, History: history, HistoricalPromotion: historicalPromotion,
+		Operation: state.operations[request.OperationID], Source: state.sources[request.SourceCommandID],
+	}, nil
+}
+
+func (s *referenceStore) checkFence(ctx context.Context, fence AuthorityFence) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	suite := s.state.canonical.Suite()
+	if fence != (AuthorityFence{suite.ProjectID(), suite.ID(), suite.Revision()}) {
+		return ErrAuthorityConflict
+	}
 	return nil
 }
-func (s *referenceStore) CommitConsent(context.Context, AuthorityFence, ConsentWrite) error {
+
+func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFence, write PromotionWrite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkFence(ctx, fence); err != nil {
+		return err
+	}
+	effect, ok := write.Receipt.Decision.Effect()
+	if !ok {
+		return ErrInvalidRequest
+	}
+	next := s.state.clone()
+	canonical, err := contract.NewCanonicalSnapshot(effect.Suite(), effect.Version(), write.Receipt.Identity.Request.Proposed, effect.Promotion())
+	if err != nil {
+		return err
+	}
+	receipt := OperationReceipt{Kind: write.Receipt.Identity.Kind, Promotion: write.Receipt}
+	next.canonical = canonical
+	next.versions[effect.Version().ID()] = effect.Version()
+	next.promotions[effect.Version().ID()] = effect.Promotion()
+	next.operations[effect.Promotion().OperationID()] = receipt
+	next.audits = append(next.audits, receipt)
+	next.publications = append(next.publications, effect.Publication())
+	next.scheduling = write.Scheduling
+	s.state = next
+	return nil
+}
+
+func (s *referenceStore) CommitConsent(ctx context.Context, fence AuthorityFence, write ConsentWrite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkFence(ctx, fence); err != nil {
+		return err
+	}
+	next := s.state.clone()
+	current := next.canonical.Suite()
+	currentID, _ := current.CurrentVersionID()
+	suite, err := contract.NewSuite(current.ProjectID(), current.ID(), currentID, current.Revision()+1)
+	if err != nil {
+		return err
+	}
+	next.canonical, err = contract.NewCanonicalSnapshot(suite, next.canonical.Version(), next.canonical.Contract(), next.canonical.Record())
+	if err != nil {
+		return err
+	}
+	receipt := OperationReceipt{Kind: OperationConsent, Consent: write.Receipt}
+	next.consents[write.Command.Reference().ProposalID] = write.Consent
+	next.operations[write.Command.OperationID()] = receipt
+	next.sources[write.Command.SourceCommandID()] = receipt
+	next.audits = append(next.audits, receipt)
+	next.acknowledgments = append(next.acknowledgments, write.Receipt)
+	s.state = next
 	return nil
 }
 

@@ -13,6 +13,24 @@ var ErrInvalidProtectedContract = errors.New("invalid protected contract")
 // IntegrationTargetID identifies the configured integration destination.
 type IntegrationTargetID string
 
+var ErrInvalidIntegration = errors.New("invalid integration")
+
+type IntegrationKind uint8
+const (
+	IntegrationMergedChange IntegrationKind = iota + 1
+	IntegrationExistingBaseline
+)
+
+// Integration preserves trusted caller observations, not remote authentication.
+type Integration struct{}
+func NewIntegration(project ProjectID, target IntegrationTargetID, source SourceRevision, carrier ApprovalCarrierID, kind IntegrationKind) (Integration, error) {return Integration{},nil}
+func (i Integration) ProjectID() ProjectID {return ""}
+func (i Integration) Target() IntegrationTargetID {return ""}
+func (i Integration) Source() SourceRevision {return ""}
+func (i Integration) Carrier() ApprovalCarrierID {return ""}
+func (i Integration) Kind() IntegrationKind {return 0}
+func (i Integration) IsZero() bool {return true}
+
 var ErrInvalidCanonicalSnapshot = errors.New("invalid canonical snapshot")
 
 type ContractChange uint8

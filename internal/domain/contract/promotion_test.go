@@ -251,3 +251,38 @@ func TestCanonicalContractClassificationUsesAllProtectedInputs(t *testing.T) {
 		t.Fatalf("absent proposed contract accepted: %v", err)
 	}
 }
+
+func promotionIntegration(t *testing.T, source contract.SourceRevision, carrier contract.ApprovalCarrierID, kind contract.IntegrationKind) contract.Integration {
+	t.Helper()
+	value,err:=contract.NewIntegration("project","main",source,carrier,kind)
+	if err!=nil {t.Fatal(err)}
+	return value
+}
+
+func TestIntegrationPreservesExactTrustedObservations(t *testing.T) {
+	merged,err:=contract.NewIntegration(" project "," main "," source "," carrier ",contract.IntegrationMergedChange)
+	if err!=nil {t.Fatal(err)}
+	if merged.IsZero()||merged.ProjectID()!=" project "||merged.Target()!=" main "||merged.Source()!=" source "||merged.Carrier()!=" carrier "||merged.Kind()!=contract.IntegrationMergedChange {t.Fatal("merged observation lost exact supplied facts")}
+	baseline:=promotionIntegration(t,"baseline","",contract.IntegrationExistingBaseline)
+	if baseline.IsZero()||baseline.Carrier()!=""||baseline.Source()!="baseline"||baseline.Kind()!=contract.IntegrationExistingBaseline {t.Fatal("baseline observation invented an approval carrier")}
+	if !(contract.Integration{}).IsZero() {t.Fatal("absent integration became confirmation")}
+}
+
+func TestIntegrationRejectsIncompleteObservations(t *testing.T) {
+	for _,test:=range []struct{name string;project contract.ProjectID;target contract.IntegrationTargetID;source contract.SourceRevision;carrier contract.ApprovalCarrierID;kind contract.IntegrationKind}{
+		{"project absent","","main","source","carrier",contract.IntegrationMergedChange},
+		{"project blank"," \t","main","source","carrier",contract.IntegrationMergedChange},
+		{"target absent","project","","source","carrier",contract.IntegrationMergedChange},
+		{"target blank","project"," ","source","carrier",contract.IntegrationMergedChange},
+		{"source absent","project","main","","carrier",contract.IntegrationMergedChange},
+		{"source blank","project","main","\n","carrier",contract.IntegrationMergedChange},
+		{"merged carrier absent","project","main","source","",contract.IntegrationMergedChange},
+		{"merged carrier blank","project","main","source","\t",contract.IntegrationMergedChange},
+		{"baseline carrier","project","main","source","carrier",contract.IntegrationExistingBaseline},
+		{"baseline blank carrier","project","main","source"," ",contract.IntegrationExistingBaseline},
+		{"kind absent","project","main","source","carrier",0},
+		{"kind unknown","project","main","source","carrier",99},
+	}{
+		t.Run(test.name,func(t *testing.T){got,err:=contract.NewIntegration(test.project,test.target,test.source,test.carrier,test.kind);if !errors.Is(err,contract.ErrInvalidIntegration)||!got.IsZero(){t.Fatalf("invalid integration accepted: %v",err)}})
+	}
+}

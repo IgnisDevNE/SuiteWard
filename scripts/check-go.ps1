@@ -17,7 +17,11 @@ try {
     go build ./...
     if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
     if ($Coverage) {
-        go test -count=1 -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+        $testArguments = @(
+            'test', '-count=1', '-race', '-covermode=atomic',
+            "-coverpkg=$($packages -join ',')", '-coverprofile=coverage.out', './...'
+        )
+        go @testArguments
         if ($LASTEXITCODE -ne 0) { throw 'Race/coverage tests failed' }
         if (-not (Test-Path -LiteralPath 'coverage.out')) { throw 'No coverage report was produced' }
         $report = @(Get-Content -LiteralPath 'coverage.out')

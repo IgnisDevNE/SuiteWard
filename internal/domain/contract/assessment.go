@@ -34,7 +34,11 @@ func AssessIntegrity(expectedSource SourceRevision, expectedBinding ApprovalBind
 		return assessment, nil
 	}
 	assessment.evidence = *evidence
-	switch evidence.Outcome() {
+	if assessment.evidence.Source() != expectedSource || !assessment.evidence.Binding().Equal(expectedBinding) {
+		assessment.reason = IntegrityReasonMismatch
+		return assessment, nil
+	}
+	switch assessment.evidence.Outcome() {
 	case IntegrityPassed:
 		assessment.reason = IntegrityReasonSatisfied
 	case IntegrityFailed:

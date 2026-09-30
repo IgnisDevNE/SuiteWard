@@ -62,7 +62,7 @@ try {
         $task['tdd'] = @{ mode = 'historical'; reason = 'Pretend a future implementation predates adoption.' }
     } 'historical TDD is restricted to completed phase F0'
     $checks++
-    foreach ($behaviorPath in @('internal/core/value.go', 'scripts/check.ps1', '.github/workflows/ci.yml')) {
+    foreach ($behaviorPath in @('internal/core/value.go', 'scripts/check.ps1', '.github/workflows/ci.yml', 'docs/example.ps1', 'docs/settings.json')) {
         Test-PlanMutation {
             param($p)
             $task = @($p['tasks'] | Where-Object { $_['id'] -ceq $futureTaskID })[0]
@@ -85,7 +85,7 @@ try {
         $task = @($candidate['tasks'] | Where-Object { $_['id'] -ceq $futureTaskID })[0]
         $task['kind'] = $kind
         $task['tdd'] = @{ mode = 'not_applicable'; reason = 'Reviewed contract, aggregation, or documentation only.' }
-        $task['owns'] = @('docs/plan/review.md', 'README.md')
+        $task['owns'] = @('docs/plan/review.md', 'README.md', 'notes.markdown', 'docs/plan/backlog.json', 'docs/plan/executions/F0.01.json')
         $task['shared_files'] = @('AGENTS.md')
         Assert-Plan $candidate
         $task['tdd']['mode'] = 'required'

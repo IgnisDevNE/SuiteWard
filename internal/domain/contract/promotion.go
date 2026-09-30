@@ -187,29 +187,70 @@ const (
 )
 
 type PromotionInput struct {
-	Context PromotionContext
-	Integration Integration
-	Target IntegrationTargetID
-	OperationID OperationID
-	NewVersionID SuiteVersionID
-	RecordedAt time.Time
+	Context           PromotionContext
+	Integration       Integration
+	Target            IntegrationTargetID
+	OperationID       OperationID
+	NewVersionID      SuiteVersionID
+	RecordedAt        time.Time
 	CorrectsVersionID SuiteVersionID
 }
 
 // PromotionEffect proposes one atomic local write and its publication intent.
-type PromotionEffect struct{}
+type PromotionEffect struct {
+	expectedCanonical SuiteVersionID
+	expectedState     StateRevision
+	expectedSchedule  ScheduleGeneration
+	suite             Suite
+	version           SuiteVersion
+	promotion         PromotionRecord
+}
 
-func (e PromotionEffect) IsZero() bool { return true }
-func (e PromotionEffect) ExpectedCanonicalID() SuiteVersionID {return ""}
-func (e PromotionEffect) ExpectedStateRevision() StateRevision {return 0}
-func (e PromotionEffect) ExpectedSchedulingGeneration() ScheduleGeneration {return 0}
-func (e PromotionEffect) Suite() Suite {return Suite{}}
-func (e PromotionEffect) Version() SuiteVersion {return SuiteVersion{}}
-func (e PromotionEffect) Promotion() PromotionRecord {return PromotionRecord{}}
-func (e PromotionEffect) Audit() AuditEvent {return AuditEvent{}}
-func (e PromotionEffect) Publication() PublicationIntent {return PublicationIntent{}}
+func (e PromotionEffect) IsZero() bool                                     { return e.promotion.IsZero() }
+func (e PromotionEffect) ExpectedCanonicalID() SuiteVersionID              { return e.expectedCanonical }
+func (e PromotionEffect) ExpectedStateRevision() StateRevision             { return e.expectedState }
+func (e PromotionEffect) ExpectedSchedulingGeneration() ScheduleGeneration { return e.expectedSchedule }
+func (e PromotionEffect) Suite() Suite                                     { return e.suite }
+func (e PromotionEffect) Version() SuiteVersion                            { return e.version }
+func (e PromotionEffect) Promotion() PromotionRecord                       { return e.promotion }
+func (e PromotionEffect) Audit() AuditEvent                                { return AuditEvent{promotion: e.promotion} }
+func (e PromotionEffect) Publication() PublicationIntent {
+	return PublicationIntent{promotion: e.promotion}
+}
 
-func DecidePromotion(input PromotionInput) (PromotionDecision,error) {return blockedPromotion(PromotionReasonNone),nil}
+// DecidePromotion proposes effects only; committing every authority fence is an
+// application obligation. No-change means only that no new canonical is needed.
+func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
+	change, err := ClassifyContractChange(input.Context.Canonical, input.Context.Proposed)
+	if err != nil {
+		return PromotionDecision{}, ErrInvalidPromotion
+	}
+	if change == ContractUnchanged {
+		return PromotionDecision{outcome: PromotionNoChange}, nil
+	}
+	if input.Integration.IsZero() {
+		return blockedPromotion(PromotionReasonIntegrationMissing), nil
+	}
+	readiness, err := CheckPromotionReadiness(input.Context, input.Integration.Source())
+	if err != nil || readiness.Outcome() != PromotionReady {
+		return readiness, err
+	}
+	record, err := NewPromotionRecord(PromotionRecordInput{OperationID: input.OperationID, VersionID: input.NewVersionID, Binding: input.Context.Proposal.Current().Binding(), Carrier: input.Context.Carrier, Source: input.Integration.Source(), Target: input.Target, RecordedAt: input.RecordedAt, CorrectsVersionID: input.CorrectsVersionID})
+	if err != nil {
+		return PromotionDecision{}, ErrInvalidPromotion
+	}
+	current := input.Context.Canonical.Suite()
+	version, err := NewSuiteVersion(current.ProjectID(), current.ID(), input.NewVersionID, input.Context.Proposed.Manifest())
+	if err != nil {
+		return PromotionDecision{}, ErrInvalidPromotion
+	}
+	suite, err := NewSuite(current.ProjectID(), current.ID(), input.NewVersionID, current.Revision()+1)
+	if err != nil {
+		return PromotionDecision{}, ErrInvalidPromotion
+	}
+	effect := PromotionEffect{expectedCanonical: record.Binding().ExpectedCanonical(), expectedState: input.Context.ExpectedStateRevision, expectedSchedule: input.Context.ExpectedSchedulingGeneration, suite: suite, version: version, promotion: record}
+	return PromotionDecision{outcome: PromotionProposed, effect: effect}, nil
+}
 
 type PromotionDecision struct {
 	outcome PromotionOutcome

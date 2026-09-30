@@ -12,7 +12,7 @@ Every task in [the backlog](plan/backlog.json) declares `tdd.mode` and `tdd.reas
 | `not_applicable` | Documentation, discovery, or decision work with no executable behavior changes. State the concrete reason; the reviewer checks its scope. |
 | `historical` | Completed F0 work from before adoption only. Preserve its real verification without asserting retrospective TDD. New work cannot use this mode. |
 
-An implementation task cannot waive TDD because it is small, difficult to test, configuration-only, or already written. Update a discovery task's scope and mode before it begins implementation. Documentation accompanying an implementation belongs to that task's evidence; it does not exempt the implementation.
+A behavior-changing task cannot waive TDD because it is small, difficult to test, configuration-only, or already written. Applicability follows the actual change, not the task's `kind` label: a documentation-only task may be non-applicable even when grouped as implementation work in the plan. Update a discovery task's scope and mode before it begins implementing behavior. Documentation accompanying behavioral implementation belongs to that task's evidence; it does not exempt the implementation.
 
 ## The worker cycle
 

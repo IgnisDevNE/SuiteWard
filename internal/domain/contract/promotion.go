@@ -16,20 +16,45 @@ type IntegrationTargetID string
 var ErrInvalidIntegration = errors.New("invalid integration")
 
 type IntegrationKind uint8
+
 const (
 	IntegrationMergedChange IntegrationKind = iota + 1
 	IntegrationExistingBaseline
 )
 
 // Integration preserves trusted caller observations, not remote authentication.
-type Integration struct{}
-func NewIntegration(project ProjectID, target IntegrationTargetID, source SourceRevision, carrier ApprovalCarrierID, kind IntegrationKind) (Integration, error) {return Integration{},nil}
-func (i Integration) ProjectID() ProjectID {return ""}
-func (i Integration) Target() IntegrationTargetID {return ""}
-func (i Integration) Source() SourceRevision {return ""}
-func (i Integration) Carrier() ApprovalCarrierID {return ""}
-func (i Integration) Kind() IntegrationKind {return 0}
-func (i Integration) IsZero() bool {return true}
+type Integration struct {
+	project ProjectID
+	target  IntegrationTargetID
+	source  SourceRevision
+	carrier ApprovalCarrierID
+	kind    IntegrationKind
+}
+
+func NewIntegration(project ProjectID, target IntegrationTargetID, source SourceRevision, carrier ApprovalCarrierID, kind IntegrationKind) (Integration, error) {
+	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(target)) == "" || strings.TrimSpace(string(source)) == "" {
+		return Integration{}, ErrInvalidIntegration
+	}
+	switch kind {
+	case IntegrationMergedChange:
+		if strings.TrimSpace(string(carrier)) == "" {
+			return Integration{}, ErrInvalidIntegration
+		}
+	case IntegrationExistingBaseline:
+		if carrier != "" {
+			return Integration{}, ErrInvalidIntegration
+		}
+	default:
+		return Integration{}, ErrInvalidIntegration
+	}
+	return Integration{project: project, target: target, source: source, carrier: carrier, kind: kind}, nil
+}
+func (i Integration) ProjectID() ProjectID        { return i.project }
+func (i Integration) Target() IntegrationTargetID { return i.target }
+func (i Integration) Source() SourceRevision      { return i.source }
+func (i Integration) Carrier() ApprovalCarrierID  { return i.carrier }
+func (i Integration) Kind() IntegrationKind       { return i.kind }
+func (i Integration) IsZero() bool                { return i.kind == 0 }
 
 var ErrInvalidCanonicalSnapshot = errors.New("invalid canonical snapshot")
 

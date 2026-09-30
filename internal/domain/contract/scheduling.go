@@ -18,6 +18,64 @@ var (
 
 type ScheduleGeneration uint64
 
+type PriorityCommandInput struct {
+	OperationID     OperationID
+	SourceCommandID SourceCommandID
+	Actor           Principal
+	ProjectID       ProjectID
+	SuiteID         SuiteID
+	ProposalID      ProposalID
+	Carrier         ApprovalCarrierID
+	Order           CommandOrder
+}
+
+type PriorityCommand struct{ input PriorityCommandInput }
+
+func NewPriorityCommand(input PriorityCommandInput) (PriorityCommand, error) {
+	return PriorityCommand{}, nil
+}
+func (c PriorityCommand) OperationID() OperationID         { return c.input.OperationID }
+func (c PriorityCommand) SourceCommandID() SourceCommandID { return c.input.SourceCommandID }
+func (c PriorityCommand) Actor() Principal                 { return c.input.Actor }
+func (c PriorityCommand) ProjectID() ProjectID             { return c.input.ProjectID }
+func (c PriorityCommand) SuiteID() SuiteID                 { return c.input.SuiteID }
+func (c PriorityCommand) ProposalID() ProposalID           { return c.input.ProposalID }
+func (c PriorityCommand) Carrier() ApprovalCarrierID       { return c.input.Carrier }
+func (c PriorityCommand) Order() CommandOrder              { return c.input.Order }
+
+type PriorityOutcome uint8
+
+const (
+	PriorityRequested PriorityOutcome = iota + 1
+	PriorityAlreadyActive
+	PriorityRejected
+)
+
+type PriorityReason uint8
+
+const (
+	PriorityReasonNone PriorityReason = iota
+	PriorityReasonUnauthorized
+	PriorityReasonUnknownTarget
+	PriorityReasonClosedTarget
+	PriorityReasonMergedTarget
+	PriorityReasonTransferPending
+	PriorityReasonObsoleteCommand
+	PriorityReasonCommandConflict
+)
+
+type PriorityResult struct {
+	command   PriorityCommand
+	outcome   PriorityOutcome
+	reason    PriorityReason
+	duplicate bool
+}
+
+func (r PriorityResult) Command() PriorityCommand { return r.command }
+func (r PriorityResult) Outcome() PriorityOutcome { return r.outcome }
+func (r PriorityResult) Reason() PriorityReason   { return r.reason }
+func (r PriorityResult) Duplicate() bool          { return r.duplicate }
+
 type ScheduleEntryState uint8
 
 type ScheduleObservation uint8
@@ -51,6 +109,8 @@ type Schedule struct {
 	suite      SuiteID
 	generation ScheduleGeneration
 	entries    []ScheduleEntry
+	pending    PriorityCommand
+	results    []PriorityResult
 }
 
 func NewSchedule(project ProjectID, suite SuiteID) (Schedule, error) {
@@ -111,6 +171,14 @@ func (s Schedule) Active() (ScheduleEntry, bool) {
 	return ScheduleEntry{}, false
 }
 func (s Schedule) Entries() []ScheduleEntry { return slices.Clone(s.entries) }
+
+func (s Schedule) PendingTransfer() (PriorityCommand, bool) {
+	return s.pending, s.pending.OperationID() != ""
+}
+func (s Schedule) Results() []PriorityResult { return slices.Clone(s.results) }
+func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Schedule, PriorityResult, error) {
+	return s, PriorityResult{}, nil
+}
 
 func (s Schedule) Observe(proposal Proposal, expectedGeneration ScheduleGeneration, observation ScheduleObservation) (Schedule, error) {
 	if err := s.checkProposal(proposal); err != nil {

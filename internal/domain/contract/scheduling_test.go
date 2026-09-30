@@ -96,6 +96,170 @@ func schedulingPair(t *testing.T) (Schedule, Proposal, Proposal) {
 	return s, a, b
 }
 
+func schedulingPolicy(t *testing.T) (Policy, Principal) {
+	t.Helper()
+	owner, err := NewPrincipal("owner", Human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewPolicy("project", "policy", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy, owner
+}
+
+func schedulingCommand(t *testing.T, actor Principal, id ProposalID, carrier ApprovalCarrierID, order CommandOrder) PriorityCommand {
+	t.Helper()
+	command, err := NewPriorityCommand(PriorityCommandInput{OperationID: OperationID(id), SourceCommandID: SourceCommandID(id), Actor: actor, ProjectID: "project", SuiteID: "suite", ProposalID: id, Carrier: carrier, Order: order})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return command
+}
+
+func TestSchedulePriorityCommand(t *testing.T) {
+	_, owner := schedulingPolicy(t)
+	input := PriorityCommandInput{OperationID: "op", SourceCommandID: "source", Actor: owner, ProjectID: "project", SuiteID: "suite", ProposalID: "proposal", Carrier: "carrier", Order: 3}
+	c, err := NewPriorityCommand(input)
+	if err != nil || c.OperationID() != input.OperationID || c.SourceCommandID() != input.SourceCommandID || c.Actor() != owner || c.ProjectID() != input.ProjectID || c.SuiteID() != input.SuiteID || c.ProposalID() != input.ProposalID || c.Carrier() != input.Carrier || c.Order() != 3 {
+		t.Fatal("priority command lost source, target or actor identity")
+	}
+	for name, mutate := range map[string]func(*PriorityCommandInput){
+		"operation": func(i *PriorityCommandInput) { i.OperationID = " \t" }, "source": func(i *PriorityCommandInput) { i.SourceCommandID = "" },
+		"actor": func(i *PriorityCommandInput) { i.Actor = Principal{} }, "project": func(i *PriorityCommandInput) { i.ProjectID = "" },
+		"suite": func(i *PriorityCommandInput) { i.SuiteID = "\n" }, "proposal": func(i *PriorityCommandInput) { i.ProposalID = "" },
+		"carrier": func(i *PriorityCommandInput) { i.Carrier = "" }, "order": func(i *PriorityCommandInput) { i.Order = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := input
+			mutate(&bad)
+			if c, err := NewPriorityCommand(bad); !errors.Is(err, ErrInvalidPriorityCommand) || c != (PriorityCommand{}) {
+				t.Fatalf("invalid command accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestSchedulePriorityRequests(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	s = schedulingAdmit(t, schedulingAdmit(t, s, a), b)
+	policy, owner := schedulingPolicy(t)
+	activeCommand := schedulingCommand(t, owner, "a", "carrier-a", 1)
+	noop, result, err := s.RequestPriority(policy, activeCommand)
+	if err != nil || result.Outcome() != PriorityAlreadyActive || result.Reason() != PriorityReasonNone || result.Duplicate() || result.Command() != activeCommand || noop.Generation() != s.Generation() || !noop.CanPromote(a, s.Generation()) {
+		t.Fatal("already-active request did not report a truthful unchanged-authority no-op")
+	}
+	command := schedulingCommand(t, owner, "b", "carrier-b", 2)
+	pending, result, err := noop.RequestPriority(policy, command)
+	if err != nil || result.Outcome() != PriorityRequested || result.Reason() != PriorityReasonNone || result.Command() != command || pending.Generation() == noop.Generation() {
+		t.Fatal("authorized waiting request did not establish pending fence")
+	}
+	if got, ok := pending.PendingTransfer(); !ok || got != command {
+		t.Fatal("pending request identity not retained")
+	}
+	if pending.CanPromote(a, pending.Generation()) || pending.CanPromote(b, pending.Generation()) || pending.CanPromote(a, s.Generation()) {
+		t.Fatal("pending transfer authorized promotion")
+	}
+	if active, ok := pending.Active(); !ok || active.ProposalID() != "a" {
+		t.Fatal("request itself activated replacement")
+	}
+	if _, ok := s.PendingTransfer(); ok || len(s.Results()) != 0 || len(noop.Results()) != 1 || len(pending.Results()) != 2 {
+		t.Fatal("request mutated earlier schedule history")
+	}
+	receipts := pending.Results()
+	receipts[0] = PriorityResult{}
+	if pending.Results()[0].Outcome() != PriorityAlreadyActive {
+		t.Fatal("receipt getter exposes backing slice")
+	}
+	newInput := activeCommand.input
+	newInput.OperationID = "again"
+	newInput.SourceCommandID = "again"
+	newInput.Order = 3
+	newCommand, err := NewPriorityCommand(newInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected, result, err := pending.RequestPriority(policy, newCommand)
+	if err != nil || result.Outcome() != PriorityRejected || result.Reason() != PriorityReasonTransferPending || rejected.Generation() != pending.Generation() {
+		t.Fatal("new command bypassed pending state with already-active no-op")
+	}
+	for _, event := range []ScheduleObservation{ObserveIntegrated, ObserveClosedUnmerged, ObservePromoted} {
+		next, err := pending.Observe(a, pending.Generation(), event)
+		if !errors.Is(err, ErrScheduleConflict) || !reflect.DeepEqual(next, pending) {
+			t.Fatal("ordinary active observation bypassed transfer reconciliation")
+		}
+	}
+	s.generation = ScheduleGeneration(math.MaxUint64)
+	next, _, err := s.RequestPriority(policy, command)
+	if !errors.Is(err, ErrScheduleGenerationExhausted) || !reflect.DeepEqual(next, s) {
+		t.Fatal("request overflow mutated entries or receipts")
+	}
+}
+
+func TestSchedulePriorityRejections(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	s = schedulingAdmit(t, schedulingAdmit(t, s, a), b)
+	policy, owner := schedulingPolicy(t)
+	for _, kind := range []PrincipalKind{Human, Agent, Service} {
+		actor, err := NewPrincipal("intruder", kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := schedulingCommand(t, actor, "b", "carrier-b", 2)
+		next, result, err := s.RequestPriority(policy, command)
+		if err != nil || result.Outcome() != PriorityRejected || result.Reason() != PriorityReasonUnauthorized || next.Generation() != s.Generation() || len(next.Results()) != 1 {
+			t.Fatal("unauthorized request not rejected and recorded without authority change")
+		}
+	}
+	for _, tc := range []struct {
+		name     string
+		schedule Schedule
+		proposal ProposalID
+		carrier  ApprovalCarrierID
+		reason   PriorityReason
+	}{
+		{"unknown", s, "unknown", "unknown", PriorityReasonUnknownTarget},
+		{"wrong carrier", s, "b", "wrong", PriorityReasonUnknownTarget},
+		{"closed", schedulingObserve(t, s, b, ObserveClosedUnmerged), "b", "carrier-b", PriorityReasonClosedTarget},
+		{"integrated", schedulingObserve(t, s, a, ObserveIntegrated), "a", "carrier-a", PriorityReasonMergedTarget},
+		{"promoted", schedulingObserve(t, s, a, ObservePromoted), "a", "carrier-a", PriorityReasonMergedTarget},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next, result, err := tc.schedule.RequestPriority(policy, schedulingCommand(t, owner, tc.proposal, tc.carrier, 2))
+			if err != nil || result.Outcome() != PriorityRejected || result.Reason() != tc.reason || next.Generation() != tc.schedule.Generation() {
+				t.Fatalf("target rejection wrong: %+v, %v", result, err)
+			}
+		})
+	}
+	command := schedulingCommand(t, owner, "b", "carrier-b", 2)
+	foreignPolicy, err := NewPolicy("other", "policy", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignProject := command.input
+	foreignProject.ProjectID = "other"
+	foreignSuite := command.input
+	foreignSuite.SuiteID = "other"
+	projectCommand, _ := NewPriorityCommand(foreignProject)
+	suiteCommand, _ := NewPriorityCommand(foreignSuite)
+	for _, tc := range []struct {
+		s       Schedule
+		policy  Policy
+		command PriorityCommand
+		want    error
+	}{
+		{Schedule{}, policy, command, ErrInvalidSchedule}, {s, policy, PriorityCommand{}, ErrInvalidPriorityCommand},
+		{s, Policy{}, command, ErrScheduleContextMismatch}, {s, foreignPolicy, command, ErrScheduleContextMismatch},
+		{s, policy, projectCommand, ErrScheduleContextMismatch}, {s, policy, suiteCommand, ErrScheduleContextMismatch},
+	} {
+		next, _, err := tc.s.RequestPriority(tc.policy, tc.command)
+		if !errors.Is(err, tc.want) || !reflect.DeepEqual(next, tc.s) {
+			t.Fatalf("invalid command context changed schedule: %v", err)
+		}
+	}
+}
+
 func schedulingAdmit(t *testing.T, s Schedule, p Proposal) Schedule {
 	t.Helper()
 	next, err := s.Admit(p, true)

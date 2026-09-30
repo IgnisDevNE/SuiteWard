@@ -34,3 +34,19 @@ func (p Policy) RevisionID() PolicyRevisionID { return p.revision }
 
 // OwnerID returns the registered human owner's identity.
 func (p Policy) OwnerID() PrincipalID { return p.owner }
+
+// CanApprove checks owner authority, not proposal eligibility or existing consent.
+func (p Policy) CanApprove(actor Principal) bool { return false }
+
+// CanAdminister checks project owner authority without bypassing governance.
+func (p Policy) CanAdminister(actor Principal) bool { return false }
+
+// CanRequestPriority checks authority for the separate scheduling operation.
+func (p Policy) CanRequestPriority(actor Principal) bool { return false }
+
+// CanAuthorizePolicyChange evaluates authority under this governing policy.
+// The caller must supply the current policy, never substitute the candidate.
+func (p Policy) CanAuthorizePolicyChange(actor Principal) bool { return false }
+
+// CanRevoke permits the registered human owner to withdraw only their own consent.
+func (p Policy) CanRevoke(actor Principal, approvalAuthor PrincipalID) bool { return false }

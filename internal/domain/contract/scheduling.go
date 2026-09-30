@@ -113,7 +113,69 @@ func (s Schedule) Active() (ScheduleEntry, bool) {
 func (s Schedule) Entries() []ScheduleEntry { return slices.Clone(s.entries) }
 
 func (s Schedule) Observe(proposal Proposal, expectedGeneration ScheduleGeneration, observation ScheduleObservation) (Schedule, error) {
-	return s, nil
+	if err := s.checkProposal(proposal); err != nil {
+		return s, err
+	}
+	if observation < ObserveIntegrated || observation > ObservePromoted {
+		return s, ErrInvalidSchedule
+	}
+	if expectedGeneration == 0 || expectedGeneration != s.generation {
+		return s, ErrStaleSchedule
+	}
+	i := s.entryIndex(proposal.Current().Binding().Reference().ProposalID, proposal.Current().Carrier())
+	if i < 0 {
+		return s, ErrScheduleConflict
+	}
+	previous := s.entries[i].state
+	active := previous == ScheduleActive || previous == ScheduleIntegratedPending
+	var desired ScheduleEntryState
+	switch observation {
+	case ObserveIntegrated:
+		if !active {
+			return s, ErrScheduleConflict
+		}
+		desired = ScheduleIntegratedPending
+	case ObserveClosedUnmerged:
+		if previous != ScheduleActive && previous != ScheduleWaiting && previous != ScheduleClosed {
+			return s, ErrScheduleConflict
+		}
+		desired = ScheduleClosed
+	case ObservePromoted:
+		if !active && previous != SchedulePromoted {
+			return s, ErrScheduleConflict
+		}
+		desired = SchedulePromoted
+	}
+	if previous == desired {
+		return s, nil
+	}
+	if active && s.generation == ScheduleGeneration(math.MaxUint64) {
+		return s, ErrScheduleGenerationExhausted
+	}
+	next := s
+	next.entries = slices.Clone(s.entries)
+	next.entries[i].state = desired
+	if active {
+		next.generation++
+		if desired != ScheduleIntegratedPending {
+			for j := range next.entries {
+				if next.entries[j].state == ScheduleWaiting {
+					next.entries[j].state = ScheduleActive
+					break
+				}
+			}
+		}
+	}
+	return next, nil
+}
+
+func (s Schedule) entryIndex(proposal ProposalID, carrier ApprovalCarrierID) int {
+	for i, entry := range s.entries {
+		if entry.proposal == proposal && entry.carrier == carrier {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s Schedule) checkProposal(proposal Proposal) error {

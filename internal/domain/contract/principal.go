@@ -1,7 +1,10 @@
 // Package contract contains provider-independent canonical contract rules.
 package contract
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ProjectID identifies a SuiteWard project, independently of its source provider.
 type ProjectID string
@@ -29,7 +32,10 @@ type Principal struct {
 
 // NewPrincipal constructs an identity already resolved by a trusted caller.
 func NewPrincipal(id PrincipalID, kind PrincipalKind) (Principal, error) {
-	return Principal{}, nil
+	if strings.TrimSpace(string(id)) == "" || (kind != Human && kind != Agent && kind != Service) {
+		return Principal{}, ErrInvalidPrincipal
+	}
+	return Principal{id: id, kind: kind}, nil
 }
 
 // ID returns the unmodified internal principal identity.

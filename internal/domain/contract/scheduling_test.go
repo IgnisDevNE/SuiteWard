@@ -85,6 +85,22 @@ func TestScheduleRejectsInvalidAdmission(t *testing.T) {
 	}
 }
 
+func TestScheduleClassificationCannotHideIdentityCollision(t *testing.T) {
+	s, a, _ := schedulingPair(t)
+	s = schedulingAdmit(t, s, a)
+	for _, proposal := range []Proposal{
+		schedulingProposal(t, "project", "suite", "a", "different", "r1"),
+		schedulingProposal(t, "project", "suite", "different", "carrier-a", "r1"),
+	} {
+		for _, changing := range []bool{false, true} {
+			next, err := s.Admit(proposal, changing)
+			if !errors.Is(err, ErrScheduleConflict) || !reflect.DeepEqual(next, s) {
+				t.Errorf("classification %v hid inconsistent admitted identity: %v", changing, err)
+			}
+		}
+	}
+}
+
 func schedulingPair(t *testing.T) (Schedule, Proposal, Proposal) {
 	t.Helper()
 	s, err := NewSchedule("project", "suite")

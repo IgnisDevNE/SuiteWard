@@ -102,7 +102,27 @@ func (s *referenceStore) inspect() referenceState {
 
 // updateAuthority models other transactional writers (proposal, policy and
 // scheduling) so concurrency tests cannot change authority outside its fence.
-func (s *referenceStore) updateAuthority(context.Context, AuthorityFence, func(*referenceState) error) error {
+func (s *referenceStore) updateAuthority(ctx context.Context, fence AuthorityFence, change func(*referenceState) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkFence(ctx, fence); err != nil {
+		return err
+	}
+	next := s.state.clone()
+	if err := change(&next); err != nil {
+		return err
+	}
+	current := s.state.canonical
+	currentID, _ := current.Suite().CurrentVersionID()
+	suite, err := contract.NewSuite(fence.ProjectID, fence.SuiteID, currentID, fence.Revision+1)
+	if err != nil {
+		return err
+	}
+	next.canonical, err = contract.NewCanonicalSnapshot(suite, current.Version(), current.Contract(), current.Record())
+	if err != nil {
+		return err
+	}
+	s.state = next
 	return nil
 }
 

@@ -88,6 +88,14 @@ type ScheduleEntryState uint8
 
 type ScheduleObservation uint8
 
+type TransferResolution uint8
+
+const (
+	TransferUnresolved TransferResolution = iota + 1
+	FormerUnmergedWithdrawn
+	FormerMerged
+)
+
 const (
 	ObserveIntegrated ScheduleObservation = iota + 1
 	ObserveClosedUnmerged
@@ -184,6 +192,9 @@ func (s Schedule) PendingTransfer() (PriorityCommand, bool) {
 	return s.pending, s.pending.OperationID() != ""
 }
 func (s Schedule) Results() []PriorityResult { return slices.Clone(s.results) }
+func (s Schedule) ResolveTransfer(request OperationID, expectedGeneration ScheduleGeneration, resolution TransferResolution) (Schedule, error) {
+	return s, nil
+}
 func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Schedule, PriorityResult, error) {
 	if command.OperationID() == "" {
 		return s, PriorityResult{}, ErrInvalidPriorityCommand

@@ -118,6 +118,133 @@ func schedulingCommand(t *testing.T, actor Principal, id ProposalID, carrier App
 	return command
 }
 
+func schedulingRequest(t *testing.T, s Schedule, command PriorityCommand) Schedule {
+	t.Helper()
+	policy, _ := schedulingPolicy(t)
+	next, result, err := s.RequestPriority(policy, command)
+	if err != nil || result.Outcome() != PriorityRequested {
+		t.Fatalf("request failed: %+v, %v", result, err)
+	}
+	return next
+}
+
+func schedulingResolve(t *testing.T, s Schedule, resolution TransferResolution) Schedule {
+	t.Helper()
+	command, ok := s.PendingTransfer()
+	if !ok {
+		t.Fatal("no pending transfer")
+	}
+	next, err := s.ResolveTransfer(command.OperationID(), s.Generation(), resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return next
+}
+
+func TestScheduleTransferResolution(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	c := schedulingProposal(t, "project", "suite", "c", "carrier-c", "r1")
+	s = schedulingAdmit(t, schedulingAdmit(t, schedulingAdmit(t, s, a), b), c)
+	_, owner := schedulingPolicy(t)
+	command := schedulingCommand(t, owner, "c", "carrier-c", 1)
+	pending := schedulingRequest(t, s, command)
+	if unresolved := schedulingResolve(t, pending, TransferUnresolved); !reflect.DeepEqual(unresolved, pending) {
+		t.Fatal("uncertain observation changed transfer")
+	}
+	completed := schedulingResolve(t, pending, FormerUnmergedWithdrawn)
+	if _, ok := completed.PendingTransfer(); ok {
+		t.Fatal("resolved transfer remains pending")
+	}
+	if !completed.CanPromote(c, completed.Generation()) || completed.CanPromote(a, completed.Generation()) || completed.CanPromote(c, pending.Generation()) {
+		t.Fatal("transfer did not fence and change active eligibility")
+	}
+	if completed.Entries()[0].State() != ScheduleWaiting || completed.Entries()[1].State() != ScheduleWaiting || completed.Entries()[2].State() != ScheduleActive {
+		t.Fatal("transfer changed admission order or wrong entry states")
+	}
+	if next := schedulingObserve(t, completed, c, ObservePromoted); !next.CanPromote(a, next.Generation()) {
+		t.Fatal("release ignored original admission order")
+	}
+	if pending.Entries()[0].State() != ScheduleActive || s.Generation() == pending.Generation() || completed.Results()[0].Outcome() != PriorityRequested {
+		t.Fatal("completion rewrote old snapshots or historical receipt")
+	}
+	merged := schedulingResolve(t, pending, FormerMerged)
+	active, ok := merged.Active()
+	if !ok || active.ProposalID() != "a" || active.State() != ScheduleIntegratedPending || !merged.CanPromote(a, merged.Generation()) || merged.CanPromote(c, merged.Generation()) || merged.Generation() == pending.Generation() {
+		t.Fatal("former merge released integrated ownership")
+	}
+	if _, ok := merged.PendingTransfer(); ok {
+		t.Fatal("former merged observation did not suspend transfer")
+	}
+	if next := schedulingObserve(t, merged, a, ObservePromoted); !next.CanPromote(b, next.Generation()) {
+		t.Fatal("former promotion silently gave requested target priority over ordinary queue")
+	}
+	closedTarget := schedulingObserve(t, pending, c, ObserveClosedUnmerged)
+	if closedTarget.Generation() != pending.Generation() {
+		t.Fatal("waiting target closure changed active fence")
+	}
+	next, err := closedTarget.ResolveTransfer(command.OperationID(), closedTarget.Generation(), FormerUnmergedWithdrawn)
+	if !errors.Is(err, ErrScheduleConflict) || !reflect.DeepEqual(next, closedTarget) {
+		t.Fatal("closed replacement became active")
+	}
+	mergedClosedTarget := schedulingResolve(t, closedTarget, FormerMerged)
+	if !mergedClosedTarget.CanPromote(a, mergedClosedTarget.Generation()) || mergedClosedTarget.Entries()[2].State() != ScheduleClosed {
+		t.Fatal("closed target prevented reconciliation of former merge")
+	}
+}
+
+func TestScheduleTransferRejectsInvalidResolution(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	s = schedulingAdmit(t, schedulingAdmit(t, s, a), b)
+	_, owner := schedulingPolicy(t)
+	command := schedulingCommand(t, owner, "b", "carrier-b", 1)
+	pending := schedulingRequest(t, s, command)
+	completed := schedulingResolve(t, pending, FormerUnmergedWithdrawn)
+	for _, tc := range []struct {
+		name       string
+		s          Schedule
+		request    OperationID
+		generation ScheduleGeneration
+		resolution TransferResolution
+		want       error
+	}{
+		{"zero schedule", Schedule{}, command.OperationID(), 1, FormerMerged, ErrInvalidSchedule},
+		{"absent request", pending, "", pending.Generation(), FormerMerged, ErrInvalidSchedule},
+		{"blank request", pending, " \t", pending.Generation(), FormerMerged, ErrInvalidSchedule},
+		{"absent resolution", pending, command.OperationID(), pending.Generation(), 0, ErrInvalidSchedule},
+		{"unknown resolution", pending, command.OperationID(), pending.Generation(), 99, ErrInvalidSchedule},
+		{"zero fence", pending, command.OperationID(), 0, FormerMerged, ErrStaleSchedule},
+		{"stale fence", pending, command.OperationID(), s.Generation(), FormerMerged, ErrStaleSchedule},
+		{"wrong request", pending, "other", pending.Generation(), FormerMerged, ErrScheduleConflict},
+		{"no pending", s, command.OperationID(), s.Generation(), FormerMerged, ErrScheduleConflict},
+		{"already completed", completed, command.OperationID(), completed.Generation(), FormerUnmergedWithdrawn, ErrScheduleConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next, err := tc.s.ResolveTransfer(tc.request, tc.generation, tc.resolution)
+			if !errors.Is(err, tc.want) || !reflect.DeepEqual(next, tc.s) {
+				t.Fatalf("invalid resolution changed state: %v", err)
+			}
+		})
+	}
+	alreadyIntegrated := schedulingRequest(t, schedulingObserve(t, s, a, ObserveIntegrated), command)
+	next, err := alreadyIntegrated.ResolveTransfer(command.OperationID(), alreadyIntegrated.Generation(), FormerUnmergedWithdrawn)
+	if !errors.Is(err, ErrScheduleConflict) || !reflect.DeepEqual(next, alreadyIntegrated) {
+		t.Fatal("contradictory unmerged observation released previously integrated entry")
+	}
+	if kept := schedulingResolve(t, alreadyIntegrated, FormerMerged); !kept.CanPromote(a, kept.Generation()) {
+		t.Fatal("merged reconciliation lost integrated entry")
+	}
+	pending.generation = ScheduleGeneration(math.MaxUint64)
+	for _, resolution := range []TransferResolution{FormerUnmergedWithdrawn, FormerMerged} {
+		next, err := pending.ResolveTransfer(command.OperationID(), pending.Generation(), resolution)
+		if !errors.Is(err, ErrScheduleGenerationExhausted) || !reflect.DeepEqual(next, pending) {
+			t.Fatalf("resolution overflow mutated schedule: %v", err)
+		}
+	}
+	if next := schedulingResolve(t, pending, TransferUnresolved); !reflect.DeepEqual(next, pending) {
+		t.Fatal("unresolved transfer needlessly incremented exhausted generation")
+	}
+}
+
 func TestSchedulePriorityCommand(t *testing.T) {
 	_, owner := schedulingPolicy(t)
 	input := PriorityCommandInput{OperationID: "op", SourceCommandID: "source", Actor: owner, ProjectID: "project", SuiteID: "suite", ProposalID: "proposal", Carrier: "carrier", Order: 3}

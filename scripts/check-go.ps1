@@ -7,8 +7,8 @@ Push-Location -LiteralPath $root
 try {
     $packages = @(go list ./...)
     if ($LASTEXITCODE -ne 0 -or $packages.Count -eq 0) { throw 'Expected real Go packages; refusing an empty verification' }
-    $sources = @(git ls-files '*.go')
-    if ($LASTEXITCODE -ne 0 -or $sources.Count -eq 0) { throw 'No tracked Go source files' }
+    $sources = @(git ls-files --cached --others --exclude-standard '*.go' | Where-Object { $_ -cnotmatch '^vendor/' } | Sort-Object -Unique)
+    if ($LASTEXITCODE -ne 0 -or $sources.Count -eq 0) { throw 'No Go source files in the checkout' }
     $unformatted = @(gofmt -l @sources)
     if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
     if ($unformatted.Count -gt 0) { throw "Run gofmt on: $($unformatted -join ', ')" }

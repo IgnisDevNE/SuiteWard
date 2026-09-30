@@ -20,14 +20,14 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 | Job | Current behavior |
 | --- | --- |
 | Inspect repository | Compare tracked files with the base revision to select foundation or Go verification. Removing an existing Go module/source cannot silently disable the Go checks. |
-| Foundation, Windows and Linux | Validate local documentation links and the CI classification/gate behavior. |
+| Foundation, Windows and Linux | Parse PowerShell scripts; validate the workflow with actionlint, documentation links, CI classification/gate behavior, development tooling safety/isolation, and the delivery graph/generated phase pages. |
 | Go, Windows and Linux | When real Go source exists: verify formatting, analyze, build, and test. A module without real packages fails. |
 | Race, security, and coverage | When Go exists: run Linux race/coverage tests, scan reachable vulnerabilities, preserve the coverage artifact, and upload the actual report. |
 | CI / Gate | Always evaluate all prerequisite results. Accept skipped Go jobs only when the successful classifier established foundation-only applicability. Failures, cancellations, missing classification, and unexpected skips fail the gate. |
 
 There is no placeholder application package and no artificial coverage upload. The PowerShell tests verify CI infrastructure behavior and are not counted as application coverage. Once Go code exists, even a documentation-only PR runs the Go jobs so required coverage contexts remain available.
 
-Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. Tool downloads and caches use the job workspace where applicable; the compiler is provisioned in the ephemeral runner environment. Local developer Go bootstrap remains a separate preparation task under [ADR 0023](decisions/0023-development-environment-and-project-local-tooling.md).
+Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. Tool downloads and caches use the job workspace where applicable; the compiler is provisioned in the ephemeral runner environment. The [local bootstrap](local-development.md) installs the same Go/scanner versions inside each checkout and reuses `scripts/check-go.ps1` for application verification.
 
 ## Codecov authentication and policy
 
@@ -57,6 +57,8 @@ The user continues to authorize every integration into `main`. GitHub checks and
 - `codecov.yml` validated against Codecov's official validation endpoint.
 
 The initial foundation checks were subsequently verified on GitHub-hosted Windows and Linux runners, as recorded above. Go build/tests, race detection, vulnerability scanning, and coverage upload remain intentionally inapplicable until application code exists. No application test result or successful coverage upload is claimed.
+
+The F0 expansion adds actionlint, parsing of all PowerShell helpers, and delivery-plan validation through `scripts/check-foundation.ps1`. These prepared workflow changes require their own bot PR and hosted verification; earlier successful main runs do not prove this new revision. See [foundation readiness](plan/readiness.md).
 
 ## References
 

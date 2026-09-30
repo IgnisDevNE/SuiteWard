@@ -6,6 +6,8 @@
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.
 
+Use the [local development guide](local-development.md) to prepare tools and the database, run verification, and keep worktree resources isolated. Versioned ADRs and project documents remain canonical when Memtrace is unavailable or inconsistent.
+
 ## Tests
 
 Use Go's standard `testing` package as the initial test framework. Use table-driven cases when several inputs exercise the same behavior; use focused standalone tests when that makes the scenario clearer. Test files live beside the package they exercise.

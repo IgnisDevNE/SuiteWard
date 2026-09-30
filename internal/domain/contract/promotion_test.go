@@ -98,3 +98,114 @@ func TestProtectedContractRejectsMissingInputs(t *testing.T) {
 		})
 	}
 }
+
+func promotionSuite(t *testing.T, project contract.ProjectID, suite contract.SuiteID, version contract.SuiteVersionID, revision contract.StateRevision) contract.Suite {
+	t.Helper()
+	value, err := contract.NewSuite(project, suite, version, revision)
+	if err != nil { t.Fatal(err) }
+	return value
+}
+
+func promotionVersion(t *testing.T, project contract.ProjectID, suite contract.SuiteID, version contract.SuiteVersionID, manifest artifact.Manifest) contract.SuiteVersion {
+	t.Helper()
+	value, err := contract.NewSuiteVersion(project, suite, version, manifest)
+	if err != nil { t.Fatal(err) }
+	return value
+}
+
+func promotionCanonicalParts(t *testing.T) (contract.Suite, contract.SuiteVersion, contract.ProtectedContract, contract.PromotionRecord) {
+	t.Helper()
+	protected := promotionProtected(t, promotionManifest(t, "old"), "scope", map[string]string{"runner":"v1"})
+	return promotionSuite(t, "project", "suite", "v1", 10), promotionVersion(t, "project", "suite", "v1", protected.Manifest()), protected, promotionRecord(t, promotionRecordInput(t))
+}
+
+func promotionCanonical(t *testing.T) contract.CanonicalSnapshot {
+	t.Helper()
+	suite, version, protected, record := promotionCanonicalParts(t)
+	value, err := contract.NewCanonicalSnapshot(suite, version, protected, record)
+	if err != nil { t.Fatal(err) }
+	return value
+}
+
+func promotionAbsentCanonical(t *testing.T) contract.CanonicalSnapshot {
+	t.Helper()
+	value, err := contract.NewCanonicalSnapshot(promotionSuite(t,"project","suite","",10), contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{})
+	if err != nil { t.Fatal(err) }
+	return value
+}
+
+func TestCanonicalSnapshotPreservesCompleteCurrentContract(t *testing.T) {
+	current := promotionCanonical(t)
+	suite, version, protected, record := promotionCanonicalParts(t)
+	if current.IsZero() || current.Suite() != suite || current.Version().ID() != version.ID() || !current.Contract().Equal(protected) || current.Record().OperationID() != record.OperationID() || !current.Record().Binding().Equal(record.Binding()) {
+		t.Fatal("canonical snapshot lost pointer, version, protected context or promotion provenance")
+	}
+	absent := promotionAbsentCanonical(t)
+	if absent.IsZero() || absent.Suite().ID() != "suite" || absent.Version().ID() != "" || !absent.Contract().IsZero() || !absent.Record().IsZero() { t.Fatal("valid absent canonical was lost") }
+	if !(contract.CanonicalSnapshot{}).IsZero() { t.Fatal("zero snapshot became a valid absent canonical") }
+	context := current.Contract().CoveredInputs()
+	context["runner"] = "changed"
+	if current.Contract().CoveredInputs()["runner"] != "v1" { t.Fatal("snapshot protected context mutated") }
+}
+
+func TestCanonicalSnapshotRejectsPartialOrContradictoryFacts(t *testing.T) {
+	suite, version, protected, record := promotionCanonicalParts(t)
+	absent := promotionSuite(t,"project","suite","",10)
+	for _, test := range []struct {name string; suite contract.Suite; version contract.SuiteVersion; protected contract.ProtectedContract; record contract.PromotionRecord}{
+		{"zero suite", contract.Suite{}, version, protected, record},
+		{"zero all", contract.Suite{}, contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{}},
+		{"pointer without version", suite, contract.SuiteVersion{}, protected, record},
+		{"pointer without protected", suite, version, contract.ProtectedContract{}, record},
+		{"pointer without record", suite, version, protected, contract.PromotionRecord{}},
+		{"absent pointer with version", absent, version, contract.ProtectedContract{}, contract.PromotionRecord{}},
+		{"absent pointer with protected", absent, contract.SuiteVersion{}, protected, contract.PromotionRecord{}},
+		{"absent pointer with record", absent, contract.SuiteVersion{}, contract.ProtectedContract{}, record},
+		{"version project", suite, promotionVersion(t,"other","suite","v1",protected.Manifest()), protected, record},
+		{"version suite", suite, promotionVersion(t,"project","other","v1",protected.Manifest()), protected, record},
+		{"version identity", suite, promotionVersion(t,"project","suite","other",protected.Manifest()), protected, record},
+		{"version content", suite, promotionVersion(t,"project","suite","v1",promotionManifest(t,"changed")), protected, record},
+		{"protected scope", suite, version, promotionProtected(t,protected.Manifest(),"changed",protected.CoveredInputs()), record},
+		{"protected context", suite, version, promotionProtected(t,protected.Manifest(),"scope",nil), record},
+	} {
+		t.Run(test.name, func(t *testing.T){
+			got, err := contract.NewCanonicalSnapshot(test.suite,test.version,test.protected,test.record)
+			if !errors.Is(err,contract.ErrInvalidCanonicalSnapshot) || !got.IsZero() { t.Fatalf("contradictory canonical facts accepted: err=%v",err) }
+		})
+	}
+	for name, change := range map[string]func(*contract.PromotionRecordInput, *contract.BindingInput){
+		"record version":func(r *contract.PromotionRecordInput,b *contract.BindingInput){ r.VersionID="other" },
+		"record project":func(r *contract.PromotionRecordInput,b *contract.BindingInput){ b.Reference.ProjectID="other" },
+		"record suite":func(r *contract.PromotionRecordInput,b *contract.BindingInput){ b.Reference.SuiteID="other" },
+		"record manifest":func(r *contract.PromotionRecordInput,b *contract.BindingInput){ b.Manifest=promotionManifest(t,"different").Digest() },
+	} {
+		t.Run(name,func(t *testing.T){
+			input:=promotionRecordInput(t)
+			b:=input.Binding
+			binding:=contract.BindingInput{Reference:b.Reference(),ExpectedCanonical:b.ExpectedCanonical(),Manifest:b.ManifestDigest(),Scope:b.ScopeDigest(),PolicyRevision:b.PolicyRevisionID(),CoveredInputs:b.CoveredInputs()}
+			change(&input,&binding)
+			var err error
+			input.Binding,err=contract.NewApprovalBinding(binding)
+			if err!=nil {t.Fatal(err)}
+			got,err:=contract.NewCanonicalSnapshot(suite,version,protected,promotionRecord(t,input))
+			if !errors.Is(err,contract.ErrInvalidCanonicalSnapshot)||!got.IsZero(){t.Fatalf("inconsistent record accepted: %v",err)}
+		})
+	}
+}
+
+func TestCanonicalContractClassificationUsesAllProtectedInputs(t *testing.T) {
+	current:=promotionCanonical(t)
+	protected:=promotionProtected(t,promotionManifest(t,"old"),"scope",map[string]string{"runner":"v1"})
+	for _, test:= range []struct{name string; current contract.CanonicalSnapshot; proposed contract.ProtectedContract; want contract.ContractChange}{
+		{"same contract",current,protected,contract.ContractUnchanged},
+		{"manifest changed",current,promotionProtected(t,promotionManifest(t,"changed"),"scope",map[string]string{"runner":"v1"}),contract.ContractChanged},
+		{"scope changed",current,promotionProtected(t,protected.Manifest(),"changed",map[string]string{"runner":"v1"}),contract.ContractChanged},
+		{"context changed",current,promotionProtected(t,protected.Manifest(),"scope",map[string]string{"runner":"v2"}),contract.ContractChanged},
+		{"context removed",current,promotionProtected(t,protected.Manifest(),"scope",nil),contract.ContractChanged},
+		{"no canonical",promotionAbsentCanonical(t),protected,contract.ContractChanged},
+		{"empty initial inventory",promotionAbsentCanonical(t),promotionProtected(t,promotionManifest(t),"scope",nil),contract.ContractChanged},
+	} {
+		t.Run(test.name,func(t *testing.T){got,err:=contract.ClassifyContractChange(test.current,test.proposed);if err!=nil||got!=test.want{t.Fatalf("change=%v err=%v, want %v",got,err,test.want)}})
+	}
+	if _,err:=contract.ClassifyContractChange(contract.CanonicalSnapshot{},protected);!errors.Is(err,contract.ErrInvalidCanonicalSnapshot){t.Fatalf("absent snapshot accepted: %v",err)}
+	if _,err:=contract.ClassifyContractChange(current,contract.ProtectedContract{});!errors.Is(err,contract.ErrInvalidProtectedContract){t.Fatalf("absent proposed contract accepted: %v",err)}
+}

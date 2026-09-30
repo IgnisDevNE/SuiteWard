@@ -13,6 +13,25 @@ var ErrInvalidProtectedContract = errors.New("invalid protected contract")
 // IntegrationTargetID identifies the configured integration destination.
 type IntegrationTargetID string
 
+var ErrInvalidCanonicalSnapshot = errors.New("invalid canonical snapshot")
+
+type ContractChange uint8
+const (
+	ContractUnchanged ContractChange = iota + 1
+	ContractChanged
+)
+
+// CanonicalSnapshot couples a pointer with its complete protected contract.
+type CanonicalSnapshot struct{}
+
+func NewCanonicalSnapshot(suite Suite, version SuiteVersion, protected ProtectedContract, record PromotionRecord) (CanonicalSnapshot, error) { return CanonicalSnapshot{}, nil }
+func (c CanonicalSnapshot) Suite() Suite { return Suite{} }
+func (c CanonicalSnapshot) Version() SuiteVersion { return SuiteVersion{} }
+func (c CanonicalSnapshot) Contract() ProtectedContract { return ProtectedContract{} }
+func (c CanonicalSnapshot) Record() PromotionRecord { return PromotionRecord{} }
+func (c CanonicalSnapshot) IsZero() bool { return true }
+func ClassifyContractChange(current CanonicalSnapshot, proposed ProtectedContract) (ContractChange, error) { return ContractUnchanged, nil }
+
 // ProtectedContract describes exact protected content, separately from authority.
 type ProtectedContract struct {
 	manifest      artifact.Manifest

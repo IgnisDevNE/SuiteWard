@@ -100,6 +100,12 @@ func (s *referenceStore) inspect() referenceState {
 	return s.state.clone()
 }
 
+// updateAuthority models other transactional writers (proposal, policy and
+// scheduling) so concurrency tests cannot change authority outside its fence.
+func (s *referenceStore) updateAuthority(context.Context, AuthorityFence, func(*referenceState) error) error {
+	return nil
+}
+
 func (s *referenceStore) Load(ctx context.Context, request ReadRequest) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -716,4 +722,86 @@ func TestReferenceStoreConsentAlias(t *testing.T) {
 	if !state.consents[f.request.Reference.ProposalID].HasApproval(f.snapshot.Proposal, f.snapshot.Policy) {
 		t.Fatal("edited replay revoked original approval")
 	}
+}
+
+func TestReferenceStoreOtherAuthorityWrites(t *testing.T) {
+	for _, name := range []string{"policy", "proposal", "waiting closure"} {
+		t.Run(name, func(t *testing.T) {
+			f, s := approvedStoreFixture(t)
+			// Admit a real waiting proposal before taking the competing snapshots.
+			ref := f.request.Reference
+			ref.ProposalID = "waiting"
+			ref.RevisionID = "waiting-1"
+			binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: ref, Manifest: f.proposed.Manifest().Digest(), Scope: f.proposed.ScopeDigest(), PolicyRevision: f.snapshot.Policy.RevisionID(), CoveredInputs: f.proposed.CoveredInputs()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision, err := contract.NewProposalRevision(binding, "waiting-source", "waiting-carrier")
+			if err != nil {
+				t.Fatal(err)
+			}
+			waiting, err := contract.NewProposal(revision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.state.scheduling, err = s.state.scheduling.Admit(waiting, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.snapshot.Scheduling = s.state.scheduling
+			write := f.promotionWrite(t)
+			before := s.inspect()
+			err = s.updateAuthority(context.Background(), f.snapshot.Fence, func(next *referenceState) error {
+				switch name {
+				case "policy":
+					policy, err := contract.NewPolicy("project", "policy-2", f.owner)
+					next.policy = policy
+					return err
+				case "proposal":
+					ref := f.request.Reference
+					ref.RevisionID = "revision-2"
+					binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: ref, Manifest: f.proposed.Manifest().Digest(), Scope: f.proposed.ScopeDigest(), PolicyRevision: f.snapshot.Policy.RevisionID(), CoveredInputs: f.proposed.CoveredInputs()})
+					if err != nil {
+						return err
+					}
+					revision, err := contract.NewProposalRevision(binding, "candidate-2", f.request.Carrier)
+					if err != nil {
+						return err
+					}
+					proposal, err := next.proposals[ref.ProposalID].Revise(revision)
+					next.proposals[ref.ProposalID] = proposal
+					return err
+				case "waiting closure":
+					schedule, err := next.scheduling.Observe(waiting, next.scheduling.Generation(), contract.ObserveClosedUnmerged)
+					next.scheduling = schedule
+					return err
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			after := s.inspect()
+			if after.canonical.Suite().Revision() != before.canonical.Suite().Revision()+1 || after.canonical.Version().ID() != before.canonical.Version().ID() || after.scheduling.Generation() != before.scheduling.Generation() {
+				t.Fatal("nonpromotion authority change did not advance only whole-authority fence")
+			}
+			if err := s.CommitPromotion(context.Background(), f.snapshot.Fence, write); !errors.Is(err, ErrAuthorityConflict) {
+				t.Fatalf("authority change failed to invalidate loaded promotion: %v", err)
+			}
+			if !reflect.DeepEqual(after, s.inspect()) {
+				t.Fatal("stale promotion changed updated authority")
+			}
+		})
+	}
+	t.Run("staging failure", func(t *testing.T) {
+		f, s := approvedStoreFixture(t)
+		before := s.inspect()
+		err := s.updateAuthority(context.Background(), f.snapshot.Fence, func(next *referenceState) error {
+			delete(next.operations, f.command.OperationID())
+			return errReferenceFailure
+		})
+		if !errors.Is(err, errReferenceFailure) || !reflect.DeepEqual(before, s.inspect()) {
+			t.Fatal("failed authority change was not discarded")
+		}
+	})
 }

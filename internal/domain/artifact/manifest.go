@@ -3,8 +3,10 @@ package artifact
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -36,7 +38,16 @@ func NewManifest(entries []Entry) (Manifest, error) {
 	// entry count and length-prefixed paths with their raw 32-byte digests.
 	encoded := []byte("suiteward.manifest.v1\x00")
 	encoded = binary.BigEndian.AppendUint64(encoded, uint64(len(ordered)))
-	for _, entry := range ordered {
+	for i, entry := range ordered {
+		if !validPath(entry.Path) {
+			return Manifest{}, fmt.Errorf("%w: %q", ErrInvalidPath, entry.Path)
+		}
+		if i > 0 && ordered[i-1].Path == entry.Path {
+			return Manifest{}, fmt.Errorf("%w: %q", ErrDuplicatePath, entry.Path)
+		}
+		if entry.Content.IsZero() {
+			return Manifest{}, fmt.Errorf("%w for %q", ErrInvalidDigest, entry.Path)
+		}
 		encoded = binary.BigEndian.AppendUint64(encoded, uint64(len(entry.Path)))
 		encoded = append(encoded, entry.Path...)
 		encoded = append(encoded, entry.Content.sum[:]...)
@@ -57,4 +68,16 @@ func (m Manifest) Digest() Digest {
 // IsZero reports whether the manifest is absent.
 func (m Manifest) IsZero() bool {
 	return m.digest.IsZero()
+}
+
+func validPath(path string) bool {
+	if !utf8.ValidString(path) || strings.ContainsAny(path, "\x00\\:") {
+		return false
+	}
+	for _, component := range strings.Split(path, "/") {
+		if component == "" || component == "." || component == ".." {
+			return false
+		}
+	}
+	return true
 }

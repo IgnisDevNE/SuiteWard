@@ -12,6 +12,7 @@ var (
 	ErrProposalContextMismatch = errors.New("proposal context mismatch")
 	ErrUnknownRevision         = errors.New("unknown proposal revision")
 	ErrSupersededRevision      = errors.New("superseded proposal revision")
+	ErrRevisionExists          = errors.New("proposal revision already exists")
 )
 
 // ProposalRevision seals inventory provenance and its separate consent carrier.
@@ -77,4 +78,8 @@ func (p Proposal) Resolve(reference ProposalReference, carrier ApprovalCarrierID
 
 func sameProposalContext(left, right ProposalReference) bool {
 	return left.ProjectID == right.ProjectID && left.SuiteID == right.SuiteID && left.ProposalID == right.ProposalID
+}
+
+func (p Proposal) Revise(next ProposalRevision) (Proposal, error) {
+	return p, nil
 }

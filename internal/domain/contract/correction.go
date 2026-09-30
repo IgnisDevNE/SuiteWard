@@ -11,6 +11,9 @@ type CorrectionInput struct {
 	Target    HistoricalCanonical
 }
 
+// DecideCorrection requires fresh context against the supplied current and
+// target history. Global identity uniqueness and durable history remain the
+// application's responsibility; this decision proposes no pointer-only reset.
 func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
 	promotion := input.Promotion
 	canonical := promotion.Context.Canonical
@@ -24,6 +27,10 @@ func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
 		(promotion.CorrectsVersionID != "" && promotion.CorrectsVersionID != target.ID()) {
 		return PromotionDecision{}, ErrInvalidCorrection
 	}
+	if target.ID() == currentID && (target.Manifest().Digest() != canonical.Version().Manifest().Digest() ||
+		!samePromotionRecord(input.Target.Record(), canonical.Record())) {
+		return PromotionDecision{}, ErrInvalidCorrection
+	}
 	revision := promotion.Context.Proposal.Current()
 	for _, historical := range []PromotionRecord{canonical.Record(), input.Target.Record()} {
 		if revision.Binding().Reference().ProposalID == historical.Binding().Reference().ProposalID || revision.Carrier() == historical.Carrier() {
@@ -34,12 +41,20 @@ func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
 	return DecidePromotion(promotion)
 }
 
+func samePromotionRecord(left, right PromotionRecord) bool {
+	return left.VersionID() == right.VersionID() && left.Binding().Equal(right.Binding()) && left.OperationID() == right.OperationID() &&
+		left.Carrier() == right.Carrier() && left.Source() == right.Source() && left.Target() == right.Target() &&
+		left.RecordedAt().Equal(right.RecordedAt()) && left.CorrectsVersionID() == right.CorrectsVersionID()
+}
+
 // HistoricalCanonical pairs a version with its immutable promotion provenance.
 type HistoricalCanonical struct {
 	version SuiteVersion
 	record  PromotionRecord
 }
 
+// NewHistoricalCanonical seals consistent supplied facts without authenticating
+// the record or proving that the complete historical ledger is available.
 func NewHistoricalCanonical(version SuiteVersion, record PromotionRecord) (HistoricalCanonical, error) {
 	reference := record.Binding().Reference()
 	if version.ID() == "" || record.IsZero() || version.ProjectID() != reference.ProjectID || version.SuiteID() != reference.SuiteID ||

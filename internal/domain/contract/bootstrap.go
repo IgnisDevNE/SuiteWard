@@ -4,6 +4,7 @@ import "errors"
 
 var ErrInvalidBootstrap = errors.New("invalid bootstrap")
 
+// BootstrapMode separates an integrated baseline from a first-test change.
 type BootstrapMode uint8
 
 const (
@@ -16,6 +17,8 @@ type BootstrapInput struct {
 	Promotion PromotionInput
 }
 
+// DecideBootstrap uses shared promotion guards without allowing pre-integration
+// readiness to establish a canonical version. Integration facts are supplied.
 func DecideBootstrap(input BootstrapInput) (PromotionDecision, error) {
 	context := input.Promotion.Context
 	if (input.Mode != ExistingBaselineBootstrap && input.Mode != FirstTestBootstrap) || context.Canonical.IsZero() ||

@@ -23,13 +23,34 @@
       ]
     },
     {
+      "id": "F0.01",
+      "milestone": "Foundation",
+      "title": "Per-task TDD and evidence enforcement",
+      "pr_title": "chore: enforce per-task TDD and reviewable evidence",
+      "outcome": "Require meaningful RED/GREEN cycles for behavior changes, explicit non-applicability for documentation, and checked phase evidence without serializing independent workers.",
+      "merge_after": [
+        "F0"
+      ],
+      "contracts": [
+        "F0.01-C1"
+      ],
+      "gates": [],
+      "exit_criteria": [
+        "Every planned task declares its TDD obligation and reason; completed F0 history is identified without invented retroactive proof.",
+        "Negative tests prove rejection of missing policy, invalid evidence, stale revisions, uncovered behavior, and failed or skipped TDD CI results.",
+        "CI validates phase evidence and revision ancestry without executing commands supplied by an evidence record.",
+        "Windows/Linux checks pass and independent reviewers verify the observed RED/GREEN records for this change.",
+        "The bot publishes one integration PR; only the user authorizes its main merge."
+      ]
+    },
+    {
       "id": "M0.01",
       "milestone": "M0",
       "title": "Immutable contract values",
       "pr_title": "feat: establish immutable contract values",
       "outcome": "Real, tested Go domain values for deterministic artifact identity, immutable canonical snapshots, and the MVP authority boundary.",
       "merge_after": [
-        "F0"
+        "F0.01"
       ],
       "contracts": [
         "M0-C1"
@@ -38,7 +59,8 @@
         "Actual domain code and tests build and pass on Windows and Linux without external services.",
         "Manifest identity is deterministic and immutable; owner/agent authorization follows the governing policy.",
         "The first genuine Codecov report and its status behavior are inspected; an observed patch context is required only after validating its behavior.",
-        "No placeholder application, artificial coverage package, or unused framework dependency is added."
+        "No placeholder application, artificial coverage package, or unused framework dependency is added.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": []
     },
@@ -59,7 +81,8 @@
         "Unknown, cross-project, superseded, or changed revisions cannot inherit consent.",
         "Duplicate and older commands do not duplicate votes or reinstate withdrawn consent.",
         "Integrity evidence is bound to its exact inputs and never grants approval authority.",
-        "External authentication and the product policy for implementation-only pushes remain explicitly outside this phase."
+        "External authentication and the product policy for implementation-only pushes remain explicitly outside this phase.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": []
     },
@@ -81,7 +104,8 @@
         "Promotion requires an eligible exact approval, governing policy, matching integrated assessment, expected canonical state, and current scheduling eligibility.",
         "Existing-baseline bootstrap and first-test bootstrap retain their distinct activation conditions.",
         "Corrections create new immutable versions and retain history.",
-        "Stale scheduling, incomplete transfers, conflicts, and merged-but-unpromotable changes preserve canonical state without claiming remote coordination."
+        "Stale scheduling, incomplete transfers, conflicts, and merged-but-unpromotable changes preserve canonical state without claiming remote coordination.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": []
     },
@@ -105,7 +129,8 @@
         "Consent, command receipt, audit, and acknowledgment intent share the applicable atomic boundary.",
         "Concurrent bootstrap/promotion and promotion-versus-revocation have consistent, reproducible outcomes.",
         "M0 tests need no database, GitHub credentials, containers, HTTP server, or test execution backend.",
-        "The milestone report distinguishes reference-model proof from PostgreSQL durability and GitHub coordination, which require real M1 validation."
+        "The milestone report distinguishes reference-model proof from PostgreSQL durability and GitHub coordination, which require real M1 validation.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-M0-COVERAGE"
@@ -126,7 +151,8 @@
       "exit_criteria": [
         "A real PostgreSQL race produces one valid promotion and preserves the winning canonical version.",
         "Pointer, promotion and audit commit or roll back together.",
-        "Canonical artifacts cannot be overwritten and missing/corrupt referenced bytes prevent success."
+        "Canonical artifacts cannot be overwritten and missing/corrupt referenced bytes prevent success.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-MIGRATIONS"
@@ -147,7 +173,8 @@
       "exit_criteria": [
         "A business change and required River job commit/roll back together.",
         "Interrupted scans and triggers received mid-run do not lose work.",
-        "Restart catch-up and bounded failures work without River Pro."
+        "Restart catch-up and bounded failures work without River Pro.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-RUNTIME",
@@ -169,7 +196,8 @@
       "exit_criteria": [
         "Existing baseline import excludes changes from its hosting PR.",
         "First-test baseline activates only after approved integration and final validation.",
-        "Candidate exclusions/declaration deletion cannot remove canonical protection."
+        "Candidate exclusions/declaration deletion cannot remove canonical protection.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-SCOPE",
@@ -191,7 +219,8 @@
       "exit_criteria": [
         "A PR never mentioned by an agent is discovered and reconciled.",
         "MCP and periodic work share the same budget and recovery path.",
-        "Revoked installation/repository access stops unauthorized work and reports status."
+        "Revoked installation/repository access stops unauthorized work and reports status.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-SYNC",
@@ -213,7 +242,8 @@
       "exit_criteria": [
         "Only the verified owner can confirm setup/repair.",
         "Required check is bound to the expected App and unrelated protection is preserved.",
-        "Drift notices are deduplicated; detection never auto-repairs."
+        "Drift notices are deduplicated; detection never auto-repairs.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-IDENTITY",
@@ -237,7 +267,8 @@
       "exit_criteria": [
         "Only eligible human approval for the exact covered revision satisfies governance.",
         "Each head receives an applicable assessment; stale checks are not reused.",
-        "Command and publication retries are idempotent, with honest processed outcomes."
+        "Command and publication retries are idempotent, with honest processed outcomes.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-APPROVAL-CONTEXT",
@@ -259,7 +290,8 @@
       "exit_criteria": [
         "At most one active contract-change proposal exists per Suite; implementation-only work does not occupy it.",
         "Priority transfer cannot grant approval or resurrect obsolete successful checks.",
-        "Integrated content is validated exactly; invalid/revoked/conflicting work preserves canon and reports recovery."
+        "Integrated content is validated exactly; invalid/revoked/conflicting work preserves canon and reports recovery.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-QUEUE",
@@ -282,7 +314,8 @@
       "exit_criteria": [
         "One kit restores two project archives without its private key in runtime.",
         "Every claimed historical canonical version is reconstructable from one archive.",
-        "Consistent snapshot coverage, incomplete work and completed encrypted-byte identity remain distinct."
+        "Consistent snapshot coverage, incomplete work and completed encrypted-byte identity remain distinct.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-ARCHIVE"
@@ -305,7 +338,8 @@
       "exit_criteria": [
         "Local and remote copies of a snapshot have the same verified encrypted-byte digest.",
         "Every PR receipt identifies actual snapshot coverage and exact retrievable bytes.",
-        "Older uncovered state reaches fallback at 29 days despite new activity/restart; no fallback or cleanup auto-merges."
+        "Older uncovered state reaches fallback at 29 days despite new activity/restart; no fallback or cleanup auto-merges.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-BACKUP-REMOTE"
@@ -328,7 +362,8 @@
       "exit_criteria": [
         "suiteward restore works without the primary service and can validate/import without GitHub.",
         "Unrelated and healthy projects remain unchanged; every claimed historical version is recoverable.",
-        "Resumption verifies owner, expected App source and protection, and prevents concurrent publishing instances."
+        "Resumption verifies owner, expected App source and protection, and prevents concurrent publishing instances.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-RESTORE"
@@ -351,7 +386,8 @@
       "exit_criteria": [
         "A fresh supported host connects repositories and governs both bootstrap cases without inbound webhooks.",
         "Local and off-host restore drills pass, including exact historical content and controlled resumption.",
-        "All M1 decision gates are accepted or explicitly bounded by reviewed supported behavior; runtime limitations are documented."
+        "All M1 decision gates are accepted or explicitly bounded by reviewed supported behavior; runtime limitations are documented.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-RELEASE"
@@ -372,7 +408,8 @@
       "exit_criteria": [
         "The owner accepts or explicitly rejects a first execution ecosystem/RunnerProfile and supported isolation contract.",
         "Decisions define source/contract/profile/environment evidence bindings and negative acceptance cases.",
-        "Unresolved required execution choices keep M2.02-M2.04 blocked rather than being silently selected."
+        "Unresolved required execution choices keep M2.02-M2.04 blocked rather than being silently selected.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": []
     },
@@ -391,7 +428,8 @@
       "exit_criteria": [
         "Candidate configuration cannot replace the trusted plan or observer.",
         "Evidence from another source/profile/environment/plan is ineligible.",
-        "Execution-required policy never succeeds with integrity-only evidence."
+        "Execution-required policy never succeeds with integrity-only evidence.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-EXECUTION"
@@ -412,7 +450,8 @@
       "exit_criteria": [
         "A known defect fails and its correction passes under the canonical plan.",
         "Candidate cannot forge a pass or access canonical data/control credentials.",
-        "Timeout/cancel/crash produce honest bound terminal outcomes and controlled cleanup."
+        "Timeout/cancel/crash produce honest bound terminal outcomes and controlled cleanup.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-EXECUTION"
@@ -434,7 +473,8 @@
       "exit_criteria": [
         "Execution-required promotion verifies the exact integrated revision under its trusted plan.",
         "Changed inputs, cancellation or backend unavailability cannot reuse stale passing evidence.",
-        "Self-hosted deployment and recovery retain the selected execution boundary."
+        "Self-hosted deployment and recovery retain the selected execution boundary.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": [
         "D-EXECUTION"
@@ -455,7 +495,8 @@
       "exit_criteria": [
         "Each accepted control has a concrete threat, independent verification and operational/recovery cost.",
         "Unselected controls remain explicit non-goals; no signing/KMS/transparency stack is silently mandated.",
-        "Future implementation phases are created only after their decisions, contracts and acceptance cases are accepted."
+        "Future implementation phases are created only after their decisions, contracts and acceptance cases are accepted.",
+        "Every task has independently reviewed TDD evidence or a justified documentation/decision-only non-applicability record; the phase evidence gate and final applicable tests pass."
       ],
       "gates": []
     }
@@ -489,7 +530,11 @@
       "constraints": [
         "Use English project artifacts and canonical versioned ADRs.",
         "Never bypass bot permissions with personal credentials; main merge needs user authorization."
-      ]
+      ],
+      "tdd": {
+        "mode": "historical",
+        "reason": "F0 was integrated before TDD adoption; passing foundation checks do not establish a RED-before-GREEN history. No retroactive evidence is claimed."
+      }
     },
     {
       "id": "F0-A",
@@ -531,7 +576,11 @@
       "constraints": [
         "Use English project artifacts and canonical versioned ADRs.",
         "Never bypass bot permissions with personal credentials; main merge needs user authorization."
-      ]
+      ],
+      "tdd": {
+        "mode": "historical",
+        "reason": "F0 was integrated before TDD adoption; passing foundation checks do not establish a RED-before-GREEN history. No retroactive evidence is claimed."
+      }
     },
     {
       "id": "F0-B",
@@ -573,7 +622,11 @@
       "constraints": [
         "Use English project artifacts and canonical versioned ADRs.",
         "Never bypass bot permissions with personal credentials; main merge needs user authorization."
-      ]
+      ],
+      "tdd": {
+        "mode": "historical",
+        "reason": "F0 was integrated before TDD adoption; passing foundation checks do not establish a RED-before-GREEN history. No retroactive evidence is claimed."
+      }
     },
     {
       "id": "F0-C",
@@ -614,7 +667,11 @@
       "constraints": [
         "Use English project artifacts and canonical versioned ADRs.",
         "Never bypass bot permissions with personal credentials; main merge needs user authorization."
-      ]
+      ],
+      "tdd": {
+        "mode": "historical",
+        "reason": "F0 was integrated before TDD adoption; passing foundation checks do not establish a RED-before-GREEN history. No retroactive evidence is claimed."
+      }
     },
     {
       "id": "F0-I",
@@ -656,7 +713,11 @@
       "constraints": [
         "Use English project artifacts and canonical versioned ADRs.",
         "Never bypass bot permissions with personal credentials; main merge needs user authorization."
-      ]
+      ],
+      "tdd": {
+        "mode": "historical",
+        "reason": "F0 was integrated before TDD adoption; passing foundation checks do not establish a RED-before-GREEN history. No retroactive evidence is claimed."
+      }
     },
     {
       "contracts": [
@@ -690,7 +751,11 @@
       "constraints": [
         "This checkpoint records reviewed signatures and examples; it does not create empty production packages or framework scaffolding.",
         "The first go.mod integrates with real artifact/domain source in the same phase PR."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "contracts": [
@@ -710,7 +775,7 @@
         "internal/domain/artifact/manifest_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -730,7 +795,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -750,7 +819,7 @@
         "internal/domain/contract/policy_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -770,7 +839,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -790,7 +863,7 @@
         "internal/domain/contract/version_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -811,7 +884,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -833,7 +910,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -857,7 +934,11 @@
         "Only change CI/configuration if evidence from genuine source activation requires it.",
         "A local fake coverage result does not qualify as Codecov activation.",
         "Changes to GitHub settings must use the authorized bot and stop at its permission boundary."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -892,7 +973,11 @@
       "constraints": [
         "May start from reviewed M0.01 signatures before that phase merges; reconcile implementation changes before integration.",
         "Do not encode an unresolved rule for implementation-only source changes into the approval policy."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "contracts": [
@@ -913,7 +998,7 @@
         "internal/domain/contract/binding_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -935,7 +1020,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -956,7 +1045,7 @@
         "internal/domain/contract/command_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -978,7 +1067,11 @@
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations.",
         "The domain consumes previously authenticated ordered envelopes; these tests do not verify real GitHub authentication."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -999,7 +1092,7 @@
         "internal/domain/contract/evidence_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -1020,7 +1113,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -1038,7 +1135,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -1057,7 +1154,11 @@
       ],
       "constraints": [
         "Phase merge order follows merge_after; task start does not require the preceding phase PR to be merged."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "contracts": [
@@ -1093,7 +1194,11 @@
       ],
       "constraints": [
         "Remote check publication, same-SHA PR coordination, and merged-but-unpromotable recovery policy remain M1 work."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "contracts": [
@@ -1115,7 +1220,7 @@
         "internal/domain/contract/audit_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1138,7 +1243,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -1160,7 +1269,7 @@
         "internal/domain/contract/correction_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1181,7 +1290,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -1201,7 +1314,7 @@
         "internal/domain/contract/scheduling_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1225,7 +1338,11 @@
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations.",
         "Do not simulate a successful remote check write as proof of real merge safety.",
         "Draft/re-entry, multi-suite coordination, and corrective recovery policy remain explicit later gates."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -1244,7 +1361,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1263,7 +1380,11 @@
       ],
       "constraints": [
         "No GitHub check-to-merge atomicity or PostgreSQL durability claim."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "contracts": [
@@ -1301,7 +1422,11 @@
       "constraints": [
         "No generic repository framework, unused ports package, or production in-memory persistence mode.",
         "A token checking only current_version is insufficient to protect policy/consent/scheduling races."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "contracts": [
@@ -1324,7 +1449,7 @@
         "internal/application/governance/bootstrap_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.04-C0"
       ],
       "needs_to_merge": [
@@ -1346,7 +1471,11 @@
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations.",
         "Application imports domain and the interfaces it consumes, never concrete adapters."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -1367,7 +1496,7 @@
         "internal/application/governance/consent_test.go"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.04-C0"
       ],
       "needs_to_merge": [
@@ -1388,7 +1517,11 @@
         "Use Go standard library only; no filesystem, network, PostgreSQL, GitHub, River, Chi, or Docker dependencies.",
         "Own behavior and its adjacent tests; do not assign all testing to a separate final task.",
         "Reviewed contracts permit a start before predecessor merge; select prerequisite commits for compilation and combined verification, rather than shipping mocks or duplicate public declarations."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "contracts": [
@@ -1413,7 +1546,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M0.04-C0"
       ],
       "needs_to_merge": [
@@ -1438,7 +1571,11 @@
         "Tests do not rely on sleeps for race ordering.",
         "No claim of PostgreSQL durability, real GitHub identity authentication, remote publication exactly-once behavior, or GitHub merge atomicity.",
         "No application source execution backend or external service needed for M0 completion."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.01-C0",
@@ -1471,7 +1608,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.01-A",
@@ -1492,7 +1633,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1510,7 +1651,11 @@
         "Apply migrations to a clean isolated PostgreSQL instance and exercise duplicate/foreign-key/immutable-history constraints.",
         "Regenerate sqlc output and require a clean diff."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.01-B",
@@ -1531,7 +1676,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1549,7 +1694,11 @@
         "Compete two promotions with the same expected baseline against real PostgreSQL.",
         "Inject failure before audit/commit and verify no partial promotion."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.01-C",
@@ -1565,7 +1714,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1585,7 +1734,11 @@
       ],
       "constraints": [
         "Do not read candidate paths as authoritative canonical storage."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.01-I",
@@ -1607,7 +1760,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1630,7 +1783,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.02-C0",
@@ -1663,7 +1820,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.02-A",
@@ -1683,7 +1844,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -1702,7 +1863,11 @@
         "Rollback a business transaction and prove no job executes.",
         "Retry after worker interruption and prove one durable business effect."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.02-B",
@@ -1719,7 +1884,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -1739,7 +1904,11 @@
         "Interrupt each pagination stage and restart.",
         "Trigger sync during active work and verify the new source is eventually observed."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.02-C",
@@ -1759,7 +1928,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -1780,7 +1949,11 @@
       ],
       "constraints": [
         "River workers invoke trusted application services; they never execute candidate test code."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.02-I",
@@ -1801,7 +1974,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -1825,7 +1998,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.03-C0",
@@ -1858,7 +2035,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.03-A",
@@ -1875,7 +2056,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -1894,7 +2075,11 @@
         "Exercise moves, deletion, exclusion, case/path normalization and the accepted symlink/submodule behavior.",
         "Repeated identical resolution yields the same inventory identity."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.03-B",
@@ -1910,7 +2095,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -1931,7 +2116,11 @@
       ],
       "constraints": [
         "A repository without tests remains awaiting a contract; do not create an artificial setup PR."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.03-C",
@@ -1947,7 +2136,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -1966,7 +2155,11 @@
         "Render a large inventory with complete paginated retrieval.",
         "Verify source/hosting-PR differences are explicit."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.03-I",
@@ -1983,7 +2176,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -2007,7 +2200,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.04-C0",
@@ -2042,7 +2239,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.04-A",
@@ -2063,7 +2264,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2082,7 +2283,11 @@
         "Exercise installation removal, repository removal, changed PR head and partial pagination.",
         "Reject arbitrary hosts and foreign project references."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.04-B",
@@ -2099,7 +2304,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2118,7 +2323,11 @@
         "Simulate primary and secondary throttling with a fake clock.",
         "Use a test installation to discover an untriggered PR after restart."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.04-C",
@@ -2135,7 +2344,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2156,7 +2365,11 @@
       ],
       "constraints": [
         "No required public webhook, tunnel or cloud relay."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.04-I",
@@ -2178,7 +2391,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2202,7 +2415,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.05-C0",
@@ -2235,7 +2452,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.05-A",
@@ -2253,7 +2474,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2272,7 +2493,11 @@
         "Try forged installation IDs, unregistered repo admins and agent credentials.",
         "Complete approved local/headless owner setup flows."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.05-B",
@@ -2290,7 +2515,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2309,7 +2534,11 @@
         "Preserve another required CI check while adding the App-bound contract check.",
         "Exercise absent branch, denied permission, changed preview and uncertain write."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.05-C",
@@ -2326,7 +2555,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2348,7 +2577,11 @@
       ],
       "constraints": [
         "Do not claim PRs remain blocked when their required-check rule is absent."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.05-I",
@@ -2369,7 +2602,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2393,7 +2626,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.06-C0",
@@ -2430,7 +2667,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.06-A",
@@ -2447,7 +2688,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2469,7 +2710,11 @@
         "Process duplicate, stale, unauthorized, edited and deleted commands.",
         "Race durable revocation against promotion and apply the accepted effective point."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.06-B",
@@ -2486,7 +2731,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2510,7 +2755,11 @@
         "Change canonical/policy/approval context and verify reassessment.",
         "Reject untrusted emitters and forged agent/CI evidence while accepting an authenticated service assessment bound to the exact source and inputs."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.06-C",
@@ -2527,7 +2776,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2551,7 +2800,11 @@
       ],
       "constraints": [
         "Publication success is not approval or canonical promotion authority."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.06-I",
@@ -2568,7 +2821,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2594,7 +2847,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.07-C0",
@@ -2629,7 +2886,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.07-A",
@@ -2649,7 +2910,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -2669,7 +2930,11 @@
         "Compete admissions, restart and close the active PR.",
         "Push implementation-only changes and prove they neither occupy nor bypass contract classification."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.07-B",
@@ -2686,7 +2951,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -2707,7 +2972,11 @@
         "Lose the demotion API response and require pending transfer until reconciliation.",
         "Find the former PR merged during transfer and defer replacement until integration is reconciled."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.07-C",
@@ -2724,7 +2993,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -2747,7 +3016,11 @@
       ],
       "constraints": [
         "No claim of an atomic GitHub merge/database transaction; M1 does not execute customer tests."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.07-I",
@@ -2764,7 +3037,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -2788,7 +3061,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.08-C0",
@@ -2823,7 +3100,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.08-A",
@@ -2844,7 +3125,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -2865,7 +3146,11 @@
         "Decrypt archives from two projects using the same kit.",
         "Reject corruption, unknown format and unsupported size."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.08-B",
@@ -2884,7 +3169,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -2904,7 +3189,11 @@
         "Modify governance state concurrently with export and verify a coherent declared point.",
         "Remove or corrupt one referenced object and prevent archive completion."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.08-C",
@@ -2923,7 +3212,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -2946,7 +3235,11 @@
       ],
       "constraints": [
         "Same-host backup volume is not independent disaster recovery; failure does not undo completed promotion."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.08-I",
@@ -2967,7 +3260,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -2991,7 +3284,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.09-C0",
@@ -3028,7 +3325,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.09-A",
@@ -3045,7 +3346,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3067,7 +3368,11 @@
         "Independently download and verify bytes.",
         "Publish without any software release or Actions run."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.09-B",
@@ -3084,7 +3389,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3107,7 +3412,11 @@
       ],
       "constraints": [
         "Apply the separately accepted escalation policy for loss of a previously verified copy."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.09-C",
@@ -3124,7 +3433,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3148,7 +3457,11 @@
       ],
       "constraints": [
         "Never auto-merge, weaken protection or create a recursive backup/promotion loop."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.09-I",
@@ -3165,7 +3478,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3190,7 +3503,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.10-C0",
@@ -3227,7 +3544,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.10-A",
@@ -3245,7 +3566,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3271,7 +3592,11 @@
       ],
       "constraints": [
         "Do not execute repository hooks, tests or archive-supplied commands."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.10-B",
@@ -3289,7 +3614,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3311,7 +3636,11 @@
         "Interrupt during guided import, resume and verify no duplicate authority.",
         "Exercise missing runtime prerequisite guidance."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.10-C",
@@ -3330,7 +3659,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3354,7 +3683,11 @@
       ],
       "constraints": [
         "Owner-identity-loss bypass and full administrative-secret archive remain outside accepted MVP recovery."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.10-I",
@@ -3374,7 +3707,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3399,7 +3732,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.11-C0",
@@ -3438,7 +3775,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M1.11-A",
@@ -3459,7 +3800,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -3480,7 +3821,11 @@
         "Install on a clean supported host and reconnect after container replacement.",
         "Verify retained canonical and backup volumes and documented configuration."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.11-B",
@@ -3497,7 +3842,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -3520,7 +3865,11 @@
       ],
       "constraints": [
         "This task adds combined evidence; it does not replace component tests required in earlier phases."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.11-C",
@@ -3542,7 +3891,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -3563,7 +3912,11 @@
         "Walk runbooks against failures from task B and verify recovery steps.",
         "Review every M1 ADR requirement against delivered evidence and explicit non-goals."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M1.11-I",
@@ -3585,7 +3938,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -3610,7 +3963,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.01-C0",
@@ -3643,7 +4000,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.01-A",
@@ -3675,7 +4036,11 @@
       ],
       "constraints": [
         "SuiteWard's Go implementation does not select Go for protected customer tests."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.01-B",
@@ -3708,7 +4073,11 @@
       ],
       "constraints": [
         "Do not claim containers alone establish a hostile multi-tenant sandbox."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.01-C",
@@ -3740,7 +4109,11 @@
       ],
       "constraints": [
         "Managed hosted execution versus customer infrastructure remains a separate future decision."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.01-I",
@@ -3757,7 +4130,7 @@
         "M2-C01"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.01-C0"
       ],
       "needs_to_merge": [
@@ -3778,7 +4151,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.02-C0",
@@ -3811,7 +4188,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.02-A",
@@ -3829,7 +4210,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -3847,7 +4228,11 @@
         "Compare identities across changed runner, source, canonical content and environment.",
         "Try candidate-provided alternate commands and reject them."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.02-B",
@@ -3864,7 +4249,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -3882,7 +4267,11 @@
         "Replay evidence for a different revision/profile and reject it.",
         "Forge reports/exit results without trusted observation and reject them."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.02-C",
@@ -3902,7 +4291,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -3920,7 +4309,11 @@
         "Disable execution backend under execution-required policy and require a visible non-success.",
         "Attempt candidate-triggered downgrade and reject it."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.02-I",
@@ -3937,7 +4330,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -3960,7 +4353,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.03-C0",
@@ -3995,7 +4392,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.03-A",
@@ -4015,7 +4416,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4033,7 +4434,11 @@
         "Attempt forbidden filesystem/credential access from the fixture.",
         "Exercise resource exhaustion and unavailable Docker runtime."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.03-B",
@@ -4050,7 +4455,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4068,7 +4473,11 @@
         "Run known failure/correction and candidate-forged reports.",
         "Modify source/manifest between preparation steps and reject mismatched materialization."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.03-C",
@@ -4085,7 +4494,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4105,7 +4514,11 @@
       ],
       "constraints": [
         "Do not remove unrelated containers or volumes during cleanup."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.03-I",
@@ -4126,7 +4539,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4149,7 +4562,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.04-C0",
@@ -4184,7 +4601,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M2.04-A",
@@ -4201,7 +4622,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4220,7 +4641,11 @@
         "Push/merge new inputs while a run is active and prevent stale success/promotion.",
         "Revoke exact approval before post-integration promotion and preserve canon."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.04-B",
@@ -4238,7 +4663,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4257,7 +4682,11 @@
         "Exercise each terminal/retry condition and verify truthful PR/MCP status.",
         "Recover runtime outage without integrity-only fallback."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.04-C",
@@ -4277,7 +4706,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4296,7 +4725,11 @@
         "Run the accepted adversarial matrix on supported hosts.",
         "Restore with an in-flight historical execution and require fresh/reconciled evidence before resumption."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M2.04-I",
@@ -4317,7 +4750,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4341,7 +4774,11 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "This task owns executable behavior, tests, or behavioral configuration. Record meaningful RED, subsequent GREEN, refactor outcome, and independent review before phase integration."
+      }
     },
     {
       "id": "M3.01-C0",
@@ -4374,7 +4811,11 @@
       ],
       "constraints": [
         "Specify only boundaries consumed by this phase; provider and generated SQL types remain outside domain contracts."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M3.01-A",
@@ -4404,7 +4845,11 @@
       "verification": [
         "Reproduce or bound each selected threat with a concrete failure/attack scenario."
       ],
-      "constraints": []
+      "constraints": [],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M3.01-B",
@@ -4436,7 +4881,11 @@
       ],
       "constraints": [
         "No implicit dependency on a managed KMS, OIDC provider or transparency service."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M3.01-C",
@@ -4468,7 +4917,11 @@
       ],
       "constraints": [
         "Future managed execution topology remains open and separate from optional hardening."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
     },
     {
       "id": "M3.01-I",
@@ -4485,7 +4938,7 @@
         "M3-C01"
       ],
       "needs_to_start": [
-        "F0-I",
+        "F0.01-I",
         "M3.01-C0"
       ],
       "needs_to_merge": [
@@ -4506,7 +4959,176 @@
       "constraints": [
         "One integration PR for this phase; obtain user merge authorization and use only the authorized bot for GitHub writes.",
         "Fakes enable independent development but do not satisfy real-adapter integration evidence."
-      ]
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task produces reviewed documentation, contracts, decisions, or aggregate verification only. Any added executable behavior requires reclassification and its own RED/GREEN evidence."
+      }
+    },
+    {
+      "id": "F0.01-A",
+      "phase": "F0.01",
+      "title": "Adopt TDD policy and classify the delivery plan",
+      "kind": "contract",
+      "lane": "policy",
+      "owns": [
+        "AGENTS.md",
+        "docs/tdd.md",
+        "docs/development-guide.md",
+        "docs/decisions/0025-test-driven-development.md",
+        "docs/decisions/README.md",
+        "docs/ci-and-coverage.md",
+        "docs/plan/backlog.json",
+        "docs/plan/README.md",
+        "docs/plan/parallel-delivery.md",
+        "docs/plan/task-evidence-template.md",
+        "docs/plan/phases/*.md",
+        ".github/pull_request_template.md"
+      ],
+      "shared_files": [],
+      "contracts": [
+        "F0.01-C1"
+      ],
+      "needs_to_start": [
+        "F0-I"
+      ],
+      "needs_to_merge": [
+        "F0-I"
+      ],
+      "gates": [],
+      "acceptance": [
+        "Review the evidence schema and ownership before dependent implementation.",
+        "Document exceptions, independent review, parallel execution, and the limits of automated proof.",
+        "Classify all tasks and preserve completed F0 as historical."
+      ],
+      "verification": [
+        "Validate generated phase pages, local links, and consistency with the accepted ADR."
+      ],
+      "constraints": [
+        "Use a separate task worktree and retain RED/GREEN commit ancestry. No product implementation or automatic main merge.",
+        "Coordinate shared ownership with the integrator; independent task cycles may run concurrently."
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task defines the reviewed rule, contracts and plan as documentation; implementation belongs to B, C and I."
+      }
+    },
+    {
+      "id": "F0.01-B",
+      "phase": "F0.01",
+      "title": "Validate and render every planned TDD obligation",
+      "kind": "implementation",
+      "lane": "planning",
+      "owns": [
+        "scripts/check-plan.ps1",
+        "scripts/test-plan.ps1"
+      ],
+      "shared_files": [],
+      "contracts": [
+        "F0.01-C1"
+      ],
+      "needs_to_start": [
+        "F0.01-A"
+      ],
+      "needs_to_merge": [
+        "F0.01-A"
+      ],
+      "gates": [],
+      "acceptance": [
+        "Reject missing/invalid task TDD metadata or an expanded historical exception.",
+        "Generated phase pages expose the rule and each task obligation."
+      ],
+      "verification": [
+        "Run plan mutation and generation checks after an observed RED rejection test."
+      ],
+      "constraints": [
+        "Use a separate task worktree and retain RED/GREEN commit ancestry. No product implementation or automatic main merge.",
+        "Coordinate shared ownership with the integrator; independent task cycles may run concurrently."
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "Behavioral validation and CI changes require observed RED/GREEN evidence and independent review."
+      }
+    },
+    {
+      "id": "F0.01-C",
+      "phase": "F0.01",
+      "title": "Validate phase evidence against Git revisions",
+      "kind": "implementation",
+      "lane": "evidence",
+      "owns": [
+        "scripts/check-tdd.ps1",
+        "scripts/test-tdd.ps1"
+      ],
+      "shared_files": [],
+      "contracts": [
+        "F0.01-C1"
+      ],
+      "needs_to_start": [
+        "F0.01-A"
+      ],
+      "needs_to_merge": [
+        "F0.01-A"
+      ],
+      "gates": [],
+      "acceptance": [
+        "Reject absent, incomplete, stale or contradictory task evidence and uncovered behavioral files.",
+        "Accept legitimate task branches, meaningful RED/GREEN relationships, and justified documentation records.",
+        "Read committed data and never execute recorded evidence commands."
+      ],
+      "verification": [
+        "Run positive/negative fixture repositories on Windows and Linux; independently examine RED/GREEN evidence."
+      ],
+      "constraints": [
+        "Use a separate task worktree and retain RED/GREEN commit ancestry. No product implementation or automatic main merge.",
+        "Coordinate shared ownership with the integrator; independent task cycles may run concurrently."
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "Behavioral validation and CI changes require observed RED/GREEN evidence and independent review."
+      }
+    },
+    {
+      "id": "F0.01-I",
+      "phase": "F0.01",
+      "title": "Require TDD evidence in CI and integrate the rule",
+      "kind": "integration",
+      "lane": "integration",
+      "owns": [
+        "scripts/ci.ps1",
+        "scripts/test-ci.ps1",
+        "scripts/check-foundation.ps1",
+        ".github/workflows/ci.yml",
+        "docs/plan/executions/F0.01.json"
+      ],
+      "shared_files": [],
+      "contracts": [
+        "F0.01-C1"
+      ],
+      "needs_to_start": [
+        "F0.01-A"
+      ],
+      "needs_to_merge": [
+        "F0.01-B",
+        "F0.01-C"
+      ],
+      "gates": [],
+      "acceptance": [
+        "CI Gate rejects a failed, skipped or absent TDD job.",
+        "PR and main push verification use the intended base/head revisions with full history.",
+        "All task evidence is reviewed and final behavior files match the recorded GREEN revisions."
+      ],
+      "verification": [
+        "Run CI gate/event regression checks RED then GREEN, project-local checks, committed phase evidence, and hosted Windows/Linux CI."
+      ],
+      "constraints": [
+        "Use a separate task worktree and retain RED/GREEN commit ancestry. No product implementation or automatic main merge.",
+        "Coordinate shared ownership with the integrator; independent task cycles may run concurrently."
+      ],
+      "tdd": {
+        "mode": "required",
+        "reason": "Behavioral validation and CI changes require observed RED/GREEN evidence and independent review."
+      }
     }
   ],
   "contracts": [
@@ -4743,6 +5365,18 @@
         "Freeze the threat/evidence inventory and comparison criteria rather than a predetermined technology choice.",
         "Assess signing, provenance, key management and transparency independently, including recovery cost.",
         "Define the acceptance contract and a separate future phase proposal for each selected control."
+      ]
+    },
+    {
+      "id": "F0.01-C1",
+      "phase": "F0.01",
+      "title": "TDD obligations and phase evidence",
+      "freeze_task": "F0.01-A",
+      "requirements": [
+        "Task tdd objects contain mode and reason; modes are required, not_applicable, or historical, with historical limited to completed F0.",
+        "A phase execution record identifies every task, changed files, exact RED/GREEN commits, commands, observed outcomes, refactor notes, and independent review.",
+        "The CI validator checks records, file coverage and Git relationships; semantic failure relevance and reviewer identity remain review responsibilities.",
+        "Workers retain RED/GREEN checkpoint commits when integrating task branches; no arbitrary evidence command is executed by CI."
       ]
     }
   ],
@@ -5045,5 +5679,11 @@
         "No speculative ready M3 implementation tasks or mandatory KMS/OIDC/transparency dependency."
       ]
     }
-  ]
+  ],
+  "tdd_policy": {
+    "document": "docs/tdd.md",
+    "historical_phases": [
+      "F0"
+    ]
+  }
 }

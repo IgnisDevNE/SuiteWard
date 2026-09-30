@@ -53,9 +53,28 @@ func (p Proposal) Current() ProposalRevision {
 func (p Proposal) IsZero() bool { return len(p.revisions) == 0 }
 
 func (p Proposal) Lookup(reference ProposalReference, carrier ApprovalCarrierID) (ProposalRevision, error) {
-	return p.Current(), nil
+	if p.IsZero() {
+		return ProposalRevision{}, ErrInvalidProposal
+	}
+	if !validProposalReference(reference) || strings.TrimSpace(string(carrier)) == "" {
+		return ProposalRevision{}, ErrInvalidReference
+	}
+	current := p.Current()
+	if !sameProposalContext(reference, current.Binding().Reference()) || carrier != current.Carrier() {
+		return ProposalRevision{}, ErrProposalContextMismatch
+	}
+	for _, revision := range p.revisions {
+		if revision.Binding().Reference().RevisionID == reference.RevisionID {
+			return revision, nil
+		}
+	}
+	return ProposalRevision{}, ErrUnknownRevision
 }
 
 func (p Proposal) Resolve(reference ProposalReference, carrier ApprovalCarrierID) (ProposalRevision, error) {
-	return p.Current(), nil
+	return p.Lookup(reference, carrier)
+}
+
+func sameProposalContext(left, right ProposalReference) bool {
+	return left.ProjectID == right.ProjectID && left.SuiteID == right.SuiteID && left.ProposalID == right.ProposalID
 }

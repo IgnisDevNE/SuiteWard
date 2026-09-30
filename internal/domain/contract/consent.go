@@ -78,6 +78,23 @@ func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Co
 	if c.project == "" || proposal.IsZero() || governing.ProjectID() != c.project || !c.contains(proposal.Current().Binding().Reference()) || !c.contains(command.Reference()) {
 		return c, CommandResult{}, ErrInvalidConsent
 	}
+	revision, err := proposal.Resolve(command.Reference(), command.Carrier())
+	if err != nil {
+		reason := ConsentReasonContextMismatch
+		switch {
+		case errors.Is(err, ErrUnknownRevision):
+			reason = ConsentReasonUnknownRevision
+		case errors.Is(err, ErrSupersededRevision):
+			reason = ConsentReasonSupersededRevision
+		}
+		return c.reject(command, reason)
+	}
+	if !governing.CanApprove(command.Actor()) {
+		return c.reject(command, ConsentReasonUnauthorized)
+	}
+	if revision.Binding().PolicyRevisionID() != governing.RevisionID() {
+		return c.reject(command, ConsentReasonPolicyMismatch)
+	}
 	result := CommandResult{command: command, outcome: ConsentApproved}
 	next := c.record(result)
 	next.states = maps.Clone(c.states)
@@ -86,7 +103,21 @@ func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Co
 }
 
 // HasApproval reports consent eligibility only; it never authorizes promotion.
-func (c Consent) HasApproval(proposal Proposal, governing Policy) bool { return len(c.states) > 0 }
+func (c Consent) HasApproval(proposal Proposal, governing Policy) bool {
+	if c.project == "" || proposal.IsZero() || governing.ProjectID() != c.project || !c.contains(proposal.Current().Binding().Reference()) {
+		return false
+	}
+	binding := proposal.Current().Binding()
+	if binding.PolicyRevisionID() != governing.RevisionID() {
+		return false
+	}
+	for key, state := range c.states {
+		if key.revision == binding.Reference().RevisionID && state.active && governing.CanApprove(key.actor) && state.binding.Equal(binding) {
+			return true
+		}
+	}
+	return false
+}
 
 func (c Consent) Results() []CommandResult { return slices.Clone(c.results) }
 
@@ -98,4 +129,9 @@ func (c Consent) record(result CommandResult) Consent {
 	next := c
 	next.results = append(slices.Clone(c.results), result)
 	return next
+}
+
+func (c Consent) reject(command Command, reason ConsentReason) (Consent, CommandResult, error) {
+	result := CommandResult{command: command, outcome: ConsentRejected, reason: reason}
+	return c.record(result), result, nil
 }

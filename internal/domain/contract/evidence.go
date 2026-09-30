@@ -1,6 +1,9 @@
 package contract
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrInvalidIntegrityEvidence identifies an incomplete or invalid observation.
 var ErrInvalidIntegrityEvidence = errors.New("invalid integrity evidence")
@@ -22,7 +25,15 @@ type IntegrityEvidence struct {
 	outcome IntegrityOutcome
 }
 
+// NewIntegrityEvidence records an observation whose provenance the caller has
+// authenticated. The emitter ID alone does not establish trust or authority.
 func NewIntegrityEvidence(emitter PrincipalID, source SourceRevision, binding ApprovalBinding, outcome IntegrityOutcome) (IntegrityEvidence, error) {
+	if strings.TrimSpace(string(emitter)) == "" || strings.TrimSpace(string(source)) == "" || binding.IsZero() {
+		return IntegrityEvidence{}, ErrInvalidIntegrityEvidence
+	}
+	if outcome != IntegrityPassed && outcome != IntegrityFailed && outcome != IntegrityUnavailable {
+		return IntegrityEvidence{}, ErrInvalidIntegrityEvidence
+	}
 	return IntegrityEvidence{emitter: emitter, source: source, binding: binding, outcome: outcome}, nil
 }
 

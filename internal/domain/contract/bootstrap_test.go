@@ -103,6 +103,15 @@ func lifecycleInput(context contract.PromotionContext) contract.PromotionInput {
 	}
 }
 
+func lifecycleIntegration(t *testing.T, source contract.SourceRevision, carrier contract.ApprovalCarrierID, kind contract.IntegrationKind) contract.Integration {
+	t.Helper()
+	integration, err := contract.NewIntegration("project", "main", source, carrier, kind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return integration
+}
+
 func TestBootstrapFirstTestsReadinessHasNoCanonicalEffect(t *testing.T) {
 	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
 	context := lifecycleContext(t, lifecycleAbsent(t), manifest, "first-tests", "first-pr", "candidate", "candidate")
@@ -208,5 +217,69 @@ func TestBootstrapEmptyInventoryCannotEstablishContract(t *testing.T) {
 	}
 	if _, ok := decision.Effect(); ok {
 		t.Fatal("empty inventory created canonical effect")
+	}
+}
+
+func TestBootstrapIntegratedPathsUseDistinctOrigins(t *testing.T) {
+	for _, mode := range []contract.BootstrapMode{contract.ExistingBaselineBootstrap, contract.FirstTestBootstrap} {
+		t.Run(map[contract.BootstrapMode]string{contract.ExistingBaselineBootstrap: "existing baseline", contract.FirstTestBootstrap: "first tests"}[mode], func(t *testing.T) {
+			origin, integrated, carrier, observedCarrier := contract.SourceRevision("pinned-baseline"), contract.SourceRevision("pinned-baseline"), contract.ApprovalCarrierID("open-hosting-pr"), contract.ApprovalCarrierID("")
+			kind := contract.IntegrationExistingBaseline
+			if mode == contract.FirstTestBootstrap {
+				origin, integrated, carrier, observedCarrier = "premerge-source", "exact-merge-source", "first-pr", "first-pr"
+				kind = contract.IntegrationMergedChange
+			}
+			manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
+			context := lifecycleContext(t, lifecycleAbsent(t), manifest, "bootstrap-proposal", carrier, origin, integrated)
+			input := lifecycleInput(context)
+			input.Integration = lifecycleIntegration(t, integrated, observedCarrier, kind)
+			decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: mode, Promotion: input})
+			if err != nil || decision.Outcome() != contract.PromotionProposed {
+				t.Fatalf("valid integrated bootstrap did not propose first canonical: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+			}
+			effect, ok := decision.Effect()
+			if !ok || effect.ExpectedCanonicalID() != "" || effect.Version().ID() != input.NewVersionID || effect.Promotion().Source() != integrated || effect.Promotion().Carrier() != carrier {
+				t.Fatal("bootstrap effect lost absence, exact integrated origin, or independent approval carrier")
+			}
+			if effect.Version().Manifest().Digest() != manifest.Digest() || effect.Promotion().CorrectsVersionID() != "" {
+				t.Fatal("bootstrap produced unrelated inventory or correction provenance")
+			}
+			if _, present := context.Canonical.Suite().CurrentVersionID(); present {
+				t.Fatal("promotion proposal mutated supplied canonical state")
+			}
+		})
+	}
+}
+
+func TestBootstrapIntegratedPathsRejectSubstitutedFacts(t *testing.T) {
+	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
+	cases := []struct {
+		name        string
+		mode        contract.BootstrapMode
+		origin      contract.SourceRevision
+		assessed    contract.SourceRevision
+		integration contract.Integration
+		reason      contract.PromotionReason
+	}{
+		{"existing integration missing", contract.ExistingBaselineBootstrap, "pinned", "pinned", contract.Integration{}, contract.PromotionReasonIntegrationMissing},
+		{"hosting merge cannot substitute baseline observation", contract.ExistingBaselineBootstrap, "pinned", "pinned", lifecycleIntegration(t, "pinned", "approval-pr", contract.IntegrationMergedChange), contract.PromotionReasonIntegrationMismatch},
+		{"existing baseline cannot substitute first-test merge", contract.FirstTestBootstrap, "pinned", "pinned", lifecycleIntegration(t, "pinned", "", contract.IntegrationExistingBaseline), contract.PromotionReasonIntegrationMismatch},
+		{"moving tip cannot replace pin", contract.ExistingBaselineBootstrap, "pinned", "new-tip", lifecycleIntegration(t, "new-tip", "", contract.IntegrationExistingBaseline), contract.PromotionReasonIntegrationMismatch},
+		{"premerge assessment cannot validate integrated source", contract.FirstTestBootstrap, "candidate", "candidate", lifecycleIntegration(t, "merge-source", "approval-pr", contract.IntegrationMergedChange), contract.PromotionReasonAssessmentMismatch},
+		{"unrelated merged carrier", contract.FirstTestBootstrap, "candidate", "merge-source", lifecycleIntegration(t, "merge-source", "unrelated-pr", contract.IntegrationMergedChange), contract.PromotionReasonIntegrationMismatch},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			context := lifecycleContext(t, lifecycleAbsent(t), manifest, "bootstrap-proposal", "approval-pr", test.origin, test.assessed)
+			input := lifecycleInput(context)
+			input.Integration = test.integration
+			decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: test.mode, Promotion: input})
+			if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != test.reason {
+				t.Fatalf("substituted bootstrap facts accepted: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+			}
+			if _, ok := decision.Effect(); ok {
+				t.Fatal("rejected bootstrap created an effect")
+			}
+		})
 	}
 }

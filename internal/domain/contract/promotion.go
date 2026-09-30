@@ -143,27 +143,30 @@ var ErrInvalidPromotion = errors.New("invalid promotion")
 
 // PromotionContext is a caller-supplied snapshot of all governing authority.
 type PromotionContext struct {
-	Canonical CanonicalSnapshot
-	Proposed ProtectedContract
-	Proposal Proposal
-	Reference ProposalReference
-	Carrier ApprovalCarrierID
-	Policy Policy
-	Consent Consent
-	Assessment IntegrityAssessment
-	Scheduling Schedule
-	ExpectedStateRevision StateRevision
+	Canonical                    CanonicalSnapshot
+	Proposed                     ProtectedContract
+	Proposal                     Proposal
+	Reference                    ProposalReference
+	Carrier                      ApprovalCarrierID
+	Policy                       Policy
+	Consent                      Consent
+	Assessment                   IntegrityAssessment
+	Scheduling                   Schedule
+	ExpectedStateRevision        StateRevision
 	ExpectedSchedulingGeneration ScheduleGeneration
 }
 
 type PromotionOutcome uint8
+
 const (
 	PromotionBlocked PromotionOutcome = iota + 1
 	PromotionReady
 	PromotionNoChange
 	PromotionProposed
 )
+
 type PromotionReason uint8
+
 const (
 	PromotionReasonNone PromotionReason = iota
 	PromotionReasonContextMismatch
@@ -183,15 +186,41 @@ const (
 )
 
 type PromotionEffect struct{}
-func (e PromotionEffect) IsZero() bool {return true}
+
+func (e PromotionEffect) IsZero() bool { return true }
 
 type PromotionDecision struct {
 	outcome PromotionOutcome
-	reason PromotionReason
-	effect PromotionEffect
+	reason  PromotionReason
+	effect  PromotionEffect
 }
-func (d PromotionDecision) Outcome() PromotionOutcome {return d.outcome}
-func (d PromotionDecision) Reason() PromotionReason {return d.reason}
-func (d PromotionDecision) Effect() (PromotionEffect,bool) {return d.effect,!d.effect.IsZero()}
-func blockedPromotion(reason PromotionReason) PromotionDecision {return PromotionDecision{outcome:PromotionBlocked,reason:reason}}
-func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision,error) {return blockedPromotion(PromotionReasonNone),nil}
+
+func (d PromotionDecision) Outcome() PromotionOutcome       { return d.outcome }
+func (d PromotionDecision) Reason() PromotionReason         { return d.reason }
+func (d PromotionDecision) Effect() (PromotionEffect, bool) { return d.effect, !d.effect.IsZero() }
+func blockedPromotion(reason PromotionReason) PromotionDecision {
+	return PromotionDecision{outcome: PromotionBlocked, reason: reason}
+}
+func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision, error) {
+	binding := context.Proposal.Current().Binding()
+	current, present := context.Canonical.Suite().CurrentVersionID()
+	if !present && len(context.Proposed.Manifest().Entries()) == 0 {
+		return blockedPromotion(PromotionReasonEmptyInventory), nil
+	}
+	if binding.ExpectedCanonical() != current {
+		return blockedPromotion(PromotionReasonCanonicalChanged), nil
+	}
+	if context.Policy.ProjectID() != context.Canonical.Suite().ProjectID() {
+		return blockedPromotion(PromotionReasonContextMismatch), nil
+	}
+	if context.Policy.RevisionID() != binding.PolicyRevisionID() {
+		return blockedPromotion(PromotionReasonPolicyChanged), nil
+	}
+	if !context.Consent.HasApproval(context.Proposal, context.Policy) {
+		return blockedPromotion(PromotionReasonApprovalMissing), nil
+	}
+	if !context.Scheduling.CanPromote(context.Proposal, context.ExpectedSchedulingGeneration) {
+		return blockedPromotion(PromotionReasonSchedulingBlocked), nil
+	}
+	return PromotionDecision{outcome: PromotionReady}, nil
+}

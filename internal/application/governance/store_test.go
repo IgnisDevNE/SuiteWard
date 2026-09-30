@@ -150,6 +150,9 @@ func (s *referenceStore) checkFence(ctx context.Context, fence AuthorityFence) e
 	if fence != (AuthorityFence{suite.ProjectID(), suite.ID(), suite.Revision()}) {
 		return ErrAuthorityConflict
 	}
+	if suite.Revision() == ^contract.StateRevision(0) {
+		return ErrAuthorityExhausted
+	}
 	return nil
 }
 
@@ -161,6 +164,35 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 	}
 	effect, ok := write.Receipt.Decision.Effect()
 	if !ok {
+		return ErrInvalidRequest
+	}
+	identity := write.Receipt.Identity
+	request := identity.Request
+	if _, exists := s.state.operations[request.OperationID]; exists {
+		return ErrOperationConflict
+	}
+	if _, exists := s.state.versions[request.NewVersionID]; exists {
+		return ErrVersionConflict
+	}
+	currentID, _ := s.state.canonical.Suite().CurrentVersionID()
+	if effect.ExpectedStateRevision() != fence.Revision || effect.ExpectedCanonicalID() != currentID || effect.ExpectedSchedulingGeneration() != s.state.scheduling.Generation() {
+		return ErrAuthorityConflict
+	}
+	record := effect.Promotion()
+	if write.Receipt.Decision.Outcome() != contract.PromotionProposed || identity.Kind < OperationPromote || identity.Kind > OperationCorrect ||
+		request.OperationID != record.OperationID() || request.NewVersionID != record.VersionID() || request.Reference != record.Binding().Reference() ||
+		request.Carrier != record.Carrier() || request.AssessmentSource != record.Source() || request.Integration.Source() != record.Source() || request.Integration.Target() != record.Target() ||
+		request.Integration.ProjectID() != fence.ProjectID || record.Target() != s.state.target || !request.RecordedAt.Equal(record.RecordedAt()) ||
+		!identity.Binding.Equal(record.Binding()) || identity.CorrectsVersionID != record.CorrectsVersionID() ||
+		effect.Suite().ProjectID() != fence.ProjectID || effect.Suite().ID() != fence.SuiteID || effect.Suite().Revision() != fence.Revision+1 {
+		return ErrInvalidRequest
+	}
+	proposal := s.state.proposals[request.Reference.ProposalID]
+	if proposal.IsZero() || !proposal.Current().Binding().Equal(identity.Binding) {
+		return ErrInvalidRequest
+	}
+	expectedSchedule, err := s.state.scheduling.Observe(proposal, s.state.scheduling.Generation(), contract.ObservePromoted)
+	if err != nil || !reflect.DeepEqual(expectedSchedule, write.Scheduling) {
 		return ErrInvalidRequest
 	}
 	next := s.state.clone()
@@ -207,6 +239,44 @@ func (s *referenceStore) CommitConsent(ctx context.Context, fence AuthorityFence
 	if err := s.checkFence(ctx, fence); err != nil {
 		return err
 	}
+	command := write.Command
+	if _, exists := s.state.operations[command.OperationID()]; exists {
+		return ErrOperationConflict
+	}
+	original, knownSource := s.state.sources[command.SourceCommandID()]
+	if write.Alias != knownSource {
+		return ErrOperationConflict
+	}
+	proposal := s.state.proposals[command.Reference().ProposalID]
+	consent := s.state.consents[command.Reference().ProposalID]
+	expectedConsent, result, err := consent.Apply(proposal, s.state.policy, command)
+	if err != nil || result.Reason() == contract.ConsentReasonCommandConflict {
+		return ErrInvalidRequest
+	}
+	if !reflect.DeepEqual(expectedConsent, write.Consent) {
+		return ErrInvalidRequest
+	}
+	if write.Alias {
+		originalCommand := original.Consent.Result.Command()
+		if original.Kind != OperationConsent || originalCommand.Actor() != command.Actor() || originalCommand.Reference().ProjectID != command.Reference().ProjectID || originalCommand.Reference().SuiteID != command.Reference().SuiteID || originalCommand.Reference().ProposalID != command.Reference().ProposalID {
+			return ErrOperationConflict
+		}
+		if !result.Duplicate() || !reflect.DeepEqual(write.Receipt, original.Consent) {
+			return ErrInvalidRequest
+		}
+	} else {
+		var promoted contract.SuiteVersionID
+		for _, record := range s.state.promotions {
+			if record.Binding().Reference() == command.Reference() {
+				promoted = record.VersionID()
+				break
+			}
+		}
+		expectedReceipt := ConsentReceipt{Result: result, EvaluatedReference: proposal.Current().Binding().Reference(), PolicyRevisionID: s.state.policy.RevisionID(), CurrentApprovalEligible: expectedConsent.HasApproval(proposal, s.state.policy), PromotedVersionID: promoted}
+		if result.Duplicate() || !reflect.DeepEqual(expectedReceipt, write.Receipt) {
+			return ErrInvalidRequest
+		}
+	}
 	next := s.state.clone()
 	current := next.canonical.Suite()
 	currentID, _ := current.CurrentVersionID()
@@ -224,6 +294,13 @@ func (s *referenceStore) CommitConsent(ctx context.Context, fence AuthorityFence
 		return errReferenceFailure
 	}
 	next.operations[write.Command.OperationID()] = receipt
+	if write.Alias {
+		if s.failAt == "alias" {
+			return errReferenceFailure
+		}
+		s.state = next
+		return nil
+	}
 	next.sources[write.Command.SourceCommandID()] = receipt
 	if s.failAt == "receipt" {
 		return errReferenceFailure
@@ -472,4 +549,171 @@ func TestReferenceStoreFaultAtomicity(t *testing.T) {
 			t.Fatal("failed load mutated authority")
 		}
 	})
+}
+
+// approvedStoreFixture seeds consent through the same atomic boundary used by
+// application calls, so its receipt indexes are complete for replay scenarios.
+func approvedStoreFixture(t *testing.T) (storeFixture, *referenceStore) {
+	t.Helper()
+	f := newStoreFixture(t)
+	s := newReferenceStore(t, f.snapshot)
+	if err := s.CommitConsent(context.Background(), f.snapshot.Fence, f.consentWrite(t)); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	f.snapshot, err = s.Load(context.Background(), ReadRequest{Reference: f.request.Reference, AssessmentSource: f.request.AssessmentSource})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f, s
+}
+
+func TestReferenceStoreCommitValidation(t *testing.T) {
+	t.Run("consent overflow", func(t *testing.T) {
+		f := newStoreFixture(t)
+		suite, err := contract.NewSuite("project", "suite", "", ^contract.StateRevision(0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.snapshot.Canonical, err = contract.NewCanonicalSnapshot(suite, contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.snapshot.Fence.Revision = suite.Revision()
+		s := newReferenceStore(t, f.snapshot)
+		before := s.inspect()
+		if err := s.CommitConsent(context.Background(), f.snapshot.Fence, f.consentWrite(t)); !errors.Is(err, ErrAuthorityExhausted) {
+			t.Fatalf("overflow accepted: %v", err)
+		}
+		if !reflect.DeepEqual(before, s.inspect()) {
+			t.Fatal("overflow mutated authority")
+		}
+	})
+	for _, tc := range []struct {
+		name   string
+		mutate func(*storeFixture, *referenceStore, *PromotionWrite)
+		want   error
+	}{
+		{"operation collision", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
+			s.state.operations[f.request.OperationID] = OperationReceipt{Kind: OperationConsent}
+		}, ErrOperationConflict},
+		{"version collision", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
+			s.state.versions[f.request.NewVersionID] = f.snapshot.Canonical.Version()
+		}, ErrVersionConflict},
+		{"wrong effect revision", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
+			f.snapshot.Fence.Revision--
+			*w = f.promotionWrite(t)
+		}, ErrAuthorityConflict},
+		{"stale schedule", func(f *storeFixture, s *referenceStore, w *PromotionWrite) { w.Scheduling = f.snapshot.Scheduling }, ErrInvalidRequest},
+		{"wrong operation identity", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
+			w.Receipt.Identity.Request.OperationID = "other-operation"
+		}, ErrInvalidRequest},
+		{"wrong version identity", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
+			w.Receipt.Identity.Request.NewVersionID = "other-version"
+		}, ErrInvalidRequest},
+		{"wrong binding identity", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
+			w.Receipt.Identity.Binding = contract.ApprovalBinding{}
+		}, ErrInvalidRequest},
+		{"wrong kind", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
+			w.Receipt.Identity.Kind = OperationConsent
+		}, ErrInvalidRequest},
+	} {
+		t.Run("promotion/"+tc.name, func(t *testing.T) {
+			f, s := approvedStoreFixture(t)
+			originalFence := f.snapshot.Fence
+			write := f.promotionWrite(t)
+			// A stale real effect is generated from a real prior snapshot, not a
+			// mutable duplicate of the domain's sealed effect type.
+			if tc.name == "wrong effect revision" {
+				write = f.promotionWrite(t)
+				current := s.state.canonical
+				suite, err := contract.NewSuite("project", "suite", "", current.Suite().Revision()+1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.state.canonical, err = contract.NewCanonicalSnapshot(suite, current.Version(), current.Contract(), current.Record())
+				if err != nil {
+					t.Fatal(err)
+				}
+				originalFence.Revision++
+			} else {
+				tc.mutate(&f, s, &write)
+			}
+			before := s.inspect()
+			if err := s.CommitPromotion(context.Background(), originalFence, write); !errors.Is(err, tc.want) {
+				t.Fatalf("invalid commit accepted: got %v want %v", err, tc.want)
+			}
+			if !reflect.DeepEqual(before, s.inspect()) {
+				t.Fatal("invalid promotion mutated stored state")
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*storeFixture, *referenceStore, *ConsentWrite)
+		want   error
+	}{
+		{"operation collision", func(f *storeFixture, s *referenceStore, w *ConsentWrite) {
+			s.state.operations[f.command.OperationID()] = OperationReceipt{Kind: OperationPromote}
+		}, ErrOperationConflict},
+		{"source collision", func(f *storeFixture, s *referenceStore, w *ConsentWrite) {
+			s.state.sources[f.command.SourceCommandID()] = OperationReceipt{Kind: OperationConsent}
+		}, ErrOperationConflict},
+		{"wrong aggregate", func(f *storeFixture, s *referenceStore, w *ConsentWrite) { w.Consent = f.snapshot.Consent }, ErrInvalidRequest},
+		{"wrong outcome", func(f *storeFixture, s *referenceStore, w *ConsentWrite) { w.Receipt.Result = contract.CommandResult{} }, ErrInvalidRequest},
+		{"wrong policy acknowledgment", func(f *storeFixture, s *referenceStore, w *ConsentWrite) {
+			w.Receipt.PolicyRevisionID = "another-policy"
+		}, ErrInvalidRequest},
+		{"false eligibility acknowledgment", func(f *storeFixture, s *referenceStore, w *ConsentWrite) { w.Receipt.CurrentApprovalEligible = false }, ErrInvalidRequest},
+		{"unknown alias", func(f *storeFixture, s *referenceStore, w *ConsentWrite) { w.Alias = true }, ErrOperationConflict},
+	} {
+		t.Run("consent/"+tc.name, func(t *testing.T) {
+			f := newStoreFixture(t)
+			s := newReferenceStore(t, f.snapshot)
+			write := f.consentWrite(t)
+			tc.mutate(&f, s, &write)
+			before := s.inspect()
+			if err := s.CommitConsent(context.Background(), f.snapshot.Fence, write); !errors.Is(err, tc.want) {
+				t.Fatalf("invalid commit accepted: got %v want %v", err, tc.want)
+			}
+			if !reflect.DeepEqual(before, s.inspect()) {
+				t.Fatal("invalid consent mutated stored state")
+			}
+		})
+	}
+}
+
+func TestReferenceStoreConsentAlias(t *testing.T) {
+	f, s := approvedStoreFixture(t)
+	original := s.inspect()
+	alias, err := contract.NewCommand(contract.CommandInput{OperationID: "alias-1", SourceCommandID: f.command.SourceCommandID(), Actor: f.owner, Reference: f.request.Reference, Carrier: f.command.Carrier(), Action: contract.RevokeConsent, Order: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, result, err := f.snapshot.Consent.Apply(f.snapshot.Proposal, f.snapshot.Policy, alias)
+	if err != nil || !result.Duplicate() {
+		t.Fatalf("fixture replay failed: %v", err)
+	}
+	write := ConsentWrite{Command: alias, Consent: next, Receipt: original.sources[alias.SourceCommandID()].Consent, Alias: true}
+	s.failAt = "alias"
+	if err := s.CommitConsent(context.Background(), f.snapshot.Fence, write); !errors.Is(err, errReferenceFailure) {
+		t.Fatalf("alias failure not surfaced: %v", err)
+	}
+	if !reflect.DeepEqual(original, s.inspect()) {
+		t.Fatal("failed alias reserved identity")
+	}
+	s.failAt = ""
+	if err := s.CommitConsent(context.Background(), f.snapshot.Fence, write); err != nil {
+		t.Fatal(err)
+	}
+	state := s.inspect()
+	if len(state.operations) != 2 || len(state.sources) != 1 || len(state.audits) != 1 || len(state.acknowledgments) != 1 || state.canonical.Suite().Revision() != f.snapshot.Fence.Revision+1 {
+		t.Fatal("alias lost reservation or duplicated terminal effects")
+	}
+	if !reflect.DeepEqual(state.consents[f.request.Reference.ProposalID], next) || !reflect.DeepEqual(state.operations[alias.OperationID()], original.sources[alias.SourceCommandID()]) {
+		t.Fatal("alias lost domain state or changed original receipt")
+	}
+	if !state.consents[f.request.Reference.ProposalID].HasApproval(f.snapshot.Proposal, f.snapshot.Policy) {
+		t.Fatal("edited replay revoked original approval")
+	}
 }

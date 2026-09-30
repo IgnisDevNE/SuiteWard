@@ -1154,7 +1154,10 @@
       "kind": "integration",
       "lane": "integration",
       "owns": [
-        "docs/plan/m0-contracts.md"
+        "docs/plan/m0-contracts.md",
+        "docs/ci-and-coverage.md",
+        "docs/plan/executions/M0.02.json",
+        "docs/plan/executions/M0.02.md"
       ],
       "needs_to_start": [
         "F0.02-I",

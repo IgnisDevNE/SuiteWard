@@ -109,6 +109,10 @@ try {
     $valid = New-EvidenceRevision {}
     Invoke-TddCheck -RepoRoot $repo -BaseRevision $base -HeadRevision $valid
     $checks++
+    # A PR base can advance independently. Its unrelated changes are outside
+    # this phase's diff, which starts at the common ancestor.
+    Invoke-TddCheck -RepoRoot $repo -BaseRevision $detached -HeadRevision $valid
+    $checks++
 
     Assert-TddRejection { Invoke-TddCheck -RepoRoot $repo -HeadRevision $valid } 'BaseRevision is required'
     $checks++

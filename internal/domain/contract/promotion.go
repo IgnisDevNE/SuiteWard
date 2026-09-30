@@ -13,6 +13,58 @@ var ErrInvalidProtectedContract = errors.New("invalid protected contract")
 // IntegrationTargetID identifies the configured integration destination.
 type IntegrationTargetID string
 
+var ErrInvalidCanonicalSnapshot = errors.New("invalid canonical snapshot")
+
+type ContractChange uint8
+
+const (
+	ContractUnchanged ContractChange = iota + 1
+	ContractChanged
+)
+
+// CanonicalSnapshot couples a pointer with its complete protected contract.
+type CanonicalSnapshot struct {
+	suite     Suite
+	version   SuiteVersion
+	protected ProtectedContract
+	record    PromotionRecord
+}
+
+func NewCanonicalSnapshot(suite Suite, version SuiteVersion, protected ProtectedContract, record PromotionRecord) (CanonicalSnapshot, error) {
+	if suite.ID() == "" || suite.ProjectID() == "" {
+		return CanonicalSnapshot{}, ErrInvalidCanonicalSnapshot
+	}
+	current, present := suite.CurrentVersionID()
+	if !present {
+		if version.ID() != "" || !protected.IsZero() || !record.IsZero() {
+			return CanonicalSnapshot{}, ErrInvalidCanonicalSnapshot
+		}
+	} else if version.ID() != current || version.ProjectID() != suite.ProjectID() || version.SuiteID() != suite.ID() || protected.IsZero() || record.IsZero() ||
+		version.Manifest().Digest() != protected.Manifest().Digest() || record.VersionID() != current || record.Binding().Reference().ProjectID != suite.ProjectID() || record.Binding().Reference().SuiteID != suite.ID() || !protected.matches(record.Binding()) {
+		return CanonicalSnapshot{}, ErrInvalidCanonicalSnapshot
+	}
+	return CanonicalSnapshot{suite: suite, version: version, protected: protected, record: record}, nil
+}
+func (c CanonicalSnapshot) Suite() Suite                { return c.suite }
+func (c CanonicalSnapshot) Version() SuiteVersion       { return c.version }
+func (c CanonicalSnapshot) Contract() ProtectedContract { return c.protected }
+func (c CanonicalSnapshot) Record() PromotionRecord     { return c.record }
+func (c CanonicalSnapshot) IsZero() bool                { return c.suite.ID() == "" }
+
+// ClassifyContractChange compares protected content without granting readiness.
+func ClassifyContractChange(current CanonicalSnapshot, proposed ProtectedContract) (ContractChange, error) {
+	if current.IsZero() {
+		return 0, ErrInvalidCanonicalSnapshot
+	}
+	if proposed.IsZero() {
+		return 0, ErrInvalidProtectedContract
+	}
+	if current.Contract().Equal(proposed) {
+		return ContractUnchanged, nil
+	}
+	return ContractChanged, nil
+}
+
 // ProtectedContract describes exact protected content, separately from authority.
 type ProtectedContract struct {
 	manifest      artifact.Manifest
@@ -39,3 +91,7 @@ func (p ProtectedContract) Equal(other ProtectedContract) bool {
 	return !p.IsZero() && !other.IsZero() && p.manifest.Digest() == other.manifest.Digest() && p.scope == other.scope && maps.Equal(p.coveredInputs, other.coveredInputs)
 }
 func (p ProtectedContract) IsZero() bool { return p.manifest.IsZero() }
+
+func (p ProtectedContract) matches(binding ApprovalBinding) bool {
+	return !p.IsZero() && !binding.IsZero() && p.manifest.Digest() == binding.ManifestDigest() && p.scope == binding.ScopeDigest() && maps.Equal(p.coveredInputs, binding.CoveredInputs())
+}

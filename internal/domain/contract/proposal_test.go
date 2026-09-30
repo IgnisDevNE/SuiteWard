@@ -155,3 +155,120 @@ func TestProposalRejectsMissingUnknownAndForeignReferences(t *testing.T) {
 		}
 	}
 }
+
+func TestProposalRevisePreservesHistoryAndRejectsSupersededResolution(t *testing.T) {
+	first := mustProposalRevision(t, proposalBindingInput(), "source-1", "carrier-1")
+	original := mustProposal(t, first)
+	input := proposalBindingInput()
+	input.Reference.RevisionID = "revision-2"
+	input.CoveredInputs["runner"] = "runner-2"
+	second := mustProposalRevision(t, input, "source-2", first.Carrier())
+	revised, err := original.Revise(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !revised.Current().Binding().Equal(second.Binding()) || revised.Current().Origin() != second.Origin() {
+		t.Fatal("new revision did not become the exact current snapshot")
+	}
+	if !original.Current().Binding().Equal(first.Binding()) {
+		t.Fatal("revision changed the receiver's immutable snapshot")
+	}
+	if _, err := original.Lookup(second.Binding().Reference(), second.Carrier()); !errors.Is(err, contract.ErrUnknownRevision) {
+		t.Fatalf("original snapshot learned a later revision: %v", err)
+	}
+	historic, err := revised.Lookup(first.Binding().Reference(), first.Carrier())
+	if err != nil || !historic.Binding().Equal(first.Binding()) || historic.Origin() != first.Origin() {
+		t.Fatalf("supersession rewrote or discarded history: %v", err)
+	}
+	if got, err := revised.Resolve(first.Binding().Reference(), first.Carrier()); !errors.Is(err, contract.ErrSupersededRevision) || !got.IsZero() {
+		t.Fatalf("superseded reference resolved implicitly: %v", err)
+	}
+	if got, err := revised.Resolve(second.Binding().Reference(), second.Carrier()); err != nil || !got.Binding().Equal(second.Binding()) {
+		t.Fatalf("current exact revision did not resolve: %v", err)
+	}
+}
+
+func TestProposalReviseRejectsInvalidContextAndReusedIDs(t *testing.T) {
+	first := mustProposalRevision(t, proposalBindingInput(), "source-1", "carrier-1")
+	initial := mustProposal(t, first)
+	input := proposalBindingInput()
+	input.Reference.RevisionID = "revision-2"
+	second := mustProposalRevision(t, input, "source-2", first.Carrier())
+	proposal, err := initial.Revise(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		change func(*contract.BindingInput, *contract.ApprovalCarrierID)
+		want   error
+	}{
+		{"foreign project", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) { i.Reference.ProjectID = "project-2" }, contract.ErrProposalContextMismatch},
+		{"foreign suite", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) { i.Reference.SuiteID = "suite-2" }, contract.ErrProposalContextMismatch},
+		{"foreign proposal", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) { i.Reference.ProposalID = "proposal-2" }, contract.ErrProposalContextMismatch},
+		{"foreign carrier", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) { *c = "carrier-2" }, contract.ErrProposalContextMismatch},
+		{"current ID", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) { i.Reference.RevisionID = "revision-2" }, contract.ErrRevisionExists},
+		{"historical ID", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) { i.Reference.RevisionID = "revision-1" }, contract.ErrRevisionExists},
+		{"rebound historical ID", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) {
+			i.Reference.RevisionID = "revision-1"
+			i.CoveredInputs["runner"] = "replacement"
+		}, contract.ErrRevisionExists},
+		{"context before reuse", func(i *contract.BindingInput, c *contract.ApprovalCarrierID) {
+			i.Reference.ProjectID = "project-2"
+			i.Reference.RevisionID = "revision-1"
+		}, contract.ErrProposalContextMismatch},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			input := proposalBindingInput()
+			input.Reference.RevisionID = "revision-3"
+			carrier := first.Carrier()
+			tt.change(&input, &carrier)
+			next := mustProposalRevision(t, input, "next-source", carrier)
+			got, err := proposal.Revise(next)
+			if !errors.Is(err, tt.want) || !got.IsZero() {
+				t.Fatalf("invalid revision returned present=%v error=%v, want %v", !got.IsZero(), err, tt.want)
+			}
+			if !proposal.Current().Binding().Equal(second.Binding()) {
+				t.Fatal("rejected revision changed the receiver")
+			}
+		})
+	}
+	if got, err := initial.Revise(first); !errors.Is(err, contract.ErrRevisionExists) || !got.IsZero() {
+		t.Fatalf("identical revision ID was recycled: %v", err)
+	}
+	if got, err := initial.Revise(contract.ProposalRevision{}); !errors.Is(err, contract.ErrInvalidProposal) || !got.IsZero() {
+		t.Fatalf("absent next revision was accepted: %v", err)
+	}
+	var absent contract.Proposal
+	if got, err := absent.Revise(first); !errors.Is(err, contract.ErrInvalidProposal) || !got.IsZero() {
+		t.Fatalf("absent receiver accepted a revision: %v", err)
+	}
+}
+
+func TestProposalRevisionBranchesDoNotShareMutableHistory(t *testing.T) {
+	proposal := mustProposal(t, mustProposalRevision(t, proposalBindingInput(), "source", "carrier"))
+	for _, id := range []contract.ProposalRevisionID{"revision-2", "revision-3"} {
+		input := proposalBindingInput()
+		input.Reference.RevisionID = id
+		var err error
+		proposal, err = proposal.Revise(mustProposalRevision(t, input, "source", "carrier"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	input := proposalBindingInput()
+	input.Reference.RevisionID = "revision-4-a"
+	firstBranch, err := proposal.Revise(mustProposalRevision(t, input, "source-a", "carrier"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Reference.RevisionID = "revision-4-b"
+	secondBranch, err := proposal.Revise(mustProposalRevision(t, input, "source-b", "carrier"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBranch.Current().Binding().Reference().RevisionID != "revision-4-a" || secondBranch.Current().Binding().Reference().RevisionID != "revision-4-b" || proposal.Current().Binding().Reference().RevisionID != "revision-3" {
+		t.Fatal("forked revisions modified another immutable history snapshot")
+	}
+}

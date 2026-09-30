@@ -2,6 +2,7 @@ package contract
 
 import (
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -12,6 +13,7 @@ var (
 	ErrProposalContextMismatch = errors.New("proposal context mismatch")
 	ErrUnknownRevision         = errors.New("unknown proposal revision")
 	ErrSupersededRevision      = errors.New("superseded proposal revision")
+	ErrRevisionExists          = errors.New("proposal revision already exists")
 )
 
 // ProposalRevision seals inventory provenance and its separate consent carrier.
@@ -72,9 +74,32 @@ func (p Proposal) Lookup(reference ProposalReference, carrier ApprovalCarrierID)
 }
 
 func (p Proposal) Resolve(reference ProposalReference, carrier ApprovalCarrierID) (ProposalRevision, error) {
-	return p.Lookup(reference, carrier)
+	revision, err := p.Lookup(reference, carrier)
+	if err != nil {
+		return ProposalRevision{}, err
+	}
+	if reference.RevisionID != p.Current().Binding().Reference().RevisionID {
+		return ProposalRevision{}, ErrSupersededRevision
+	}
+	return revision, nil
 }
 
 func sameProposalContext(left, right ProposalReference) bool {
 	return left.ProjectID == right.ProjectID && left.SuiteID == right.SuiteID && left.ProposalID == right.ProposalID
+}
+
+func (p Proposal) Revise(next ProposalRevision) (Proposal, error) {
+	if p.IsZero() || next.IsZero() {
+		return Proposal{}, ErrInvalidProposal
+	}
+	current := p.Current()
+	if !sameProposalContext(next.Binding().Reference(), current.Binding().Reference()) || next.Carrier() != current.Carrier() {
+		return Proposal{}, ErrProposalContextMismatch
+	}
+	for _, revision := range p.revisions {
+		if revision.Binding().Reference().RevisionID == next.Binding().Reference().RevisionID {
+			return Proposal{}, ErrRevisionExists
+		}
+	}
+	return Proposal{revisions: append(slices.Clone(p.revisions), next)}, nil
 }

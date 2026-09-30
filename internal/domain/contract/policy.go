@@ -1,6 +1,9 @@
 package contract
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // PolicyRevisionID identifies one immutable governing policy revision.
 type PolicyRevisionID string
@@ -17,7 +20,10 @@ type Policy struct {
 
 // NewPolicy constructs a policy snapshot, without authorizing its adoption.
 func NewPolicy(project ProjectID, revision PolicyRevisionID, owner Principal) (Policy, error) {
-	return Policy{}, nil
+	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(revision)) == "" || owner.kind != Human {
+		return Policy{}, ErrInvalidPolicy
+	}
+	return Policy{project: project, revision: revision, owner: owner.id}, nil
 }
 
 // ProjectID returns the internal project identity governed by the policy.

@@ -13,6 +13,49 @@ var ErrInvalidProtectedContract = errors.New("invalid protected contract")
 // IntegrationTargetID identifies the configured integration destination.
 type IntegrationTargetID string
 
+var ErrInvalidIntegration = errors.New("invalid integration")
+
+type IntegrationKind uint8
+
+const (
+	IntegrationMergedChange IntegrationKind = iota + 1
+	IntegrationExistingBaseline
+)
+
+// Integration preserves trusted caller observations, not remote authentication.
+type Integration struct {
+	project ProjectID
+	target  IntegrationTargetID
+	source  SourceRevision
+	carrier ApprovalCarrierID
+	kind    IntegrationKind
+}
+
+func NewIntegration(project ProjectID, target IntegrationTargetID, source SourceRevision, carrier ApprovalCarrierID, kind IntegrationKind) (Integration, error) {
+	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(target)) == "" || strings.TrimSpace(string(source)) == "" {
+		return Integration{}, ErrInvalidIntegration
+	}
+	switch kind {
+	case IntegrationMergedChange:
+		if strings.TrimSpace(string(carrier)) == "" {
+			return Integration{}, ErrInvalidIntegration
+		}
+	case IntegrationExistingBaseline:
+		if carrier != "" {
+			return Integration{}, ErrInvalidIntegration
+		}
+	default:
+		return Integration{}, ErrInvalidIntegration
+	}
+	return Integration{project: project, target: target, source: source, carrier: carrier, kind: kind}, nil
+}
+func (i Integration) ProjectID() ProjectID        { return i.project }
+func (i Integration) Target() IntegrationTargetID { return i.target }
+func (i Integration) Source() SourceRevision      { return i.source }
+func (i Integration) Carrier() ApprovalCarrierID  { return i.carrier }
+func (i Integration) Kind() IntegrationKind       { return i.kind }
+func (i Integration) IsZero() bool                { return i.kind == 0 }
+
 var ErrInvalidCanonicalSnapshot = errors.New("invalid canonical snapshot")
 
 type ContractChange uint8
@@ -94,4 +137,116 @@ func (p ProtectedContract) IsZero() bool { return p.manifest.IsZero() }
 
 func (p ProtectedContract) matches(binding ApprovalBinding) bool {
 	return !p.IsZero() && !binding.IsZero() && p.manifest.Digest() == binding.ManifestDigest() && p.scope == binding.ScopeDigest() && maps.Equal(p.coveredInputs, binding.CoveredInputs())
+}
+
+var ErrInvalidPromotion = errors.New("invalid promotion")
+
+// PromotionContext is a caller-supplied snapshot of all governing authority.
+type PromotionContext struct {
+	Canonical                    CanonicalSnapshot
+	Proposed                     ProtectedContract
+	Proposal                     Proposal
+	Reference                    ProposalReference
+	Carrier                      ApprovalCarrierID
+	Policy                       Policy
+	Consent                      Consent
+	Assessment                   IntegrityAssessment
+	Scheduling                   Schedule
+	ExpectedStateRevision        StateRevision
+	ExpectedSchedulingGeneration ScheduleGeneration
+}
+
+type PromotionOutcome uint8
+
+const (
+	PromotionBlocked PromotionOutcome = iota + 1
+	PromotionReady
+	PromotionNoChange
+	PromotionProposed
+)
+
+type PromotionReason uint8
+
+const (
+	PromotionReasonNone PromotionReason = iota
+	PromotionReasonContextMismatch
+	PromotionReasonProposalNotCurrent
+	PromotionReasonCanonicalChanged
+	PromotionReasonStateChanged
+	PromotionReasonPolicyChanged
+	PromotionReasonApprovalMissing
+	PromotionReasonAssessmentMismatch
+	PromotionReasonIntegrityNotPassed
+	PromotionReasonSchedulingBlocked
+	PromotionReasonIntegrationMissing
+	PromotionReasonIntegrationMismatch
+	PromotionReasonCanonicalPresent
+	PromotionReasonEmptyInventory
+	PromotionReasonCorrectionContextReused
+)
+
+type PromotionEffect struct{}
+
+func (e PromotionEffect) IsZero() bool { return true }
+
+type PromotionDecision struct {
+	outcome PromotionOutcome
+	reason  PromotionReason
+	effect  PromotionEffect
+}
+
+func (d PromotionDecision) Outcome() PromotionOutcome       { return d.outcome }
+func (d PromotionDecision) Reason() PromotionReason         { return d.reason }
+func (d PromotionDecision) Effect() (PromotionEffect, bool) { return d.effect, !d.effect.IsZero() }
+func blockedPromotion(reason PromotionReason) PromotionDecision {
+	return PromotionDecision{outcome: PromotionBlocked, reason: reason}
+}
+func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision, error) {
+	if context.Canonical.IsZero() || context.Proposed.IsZero() || context.Proposal.IsZero() || !validProposalReference(context.Reference) ||
+		strings.TrimSpace(string(context.Carrier)) == "" || context.Policy.RevisionID() == "" || strings.TrimSpace(string(requiredSource)) == "" {
+		return PromotionDecision{}, ErrInvalidPromotion
+	}
+	revision, err := context.Proposal.Resolve(context.Reference, context.Carrier)
+	if errors.Is(err, ErrProposalContextMismatch) {
+		return blockedPromotion(PromotionReasonContextMismatch), nil
+	}
+	if err != nil {
+		return blockedPromotion(PromotionReasonProposalNotCurrent), nil
+	}
+	binding := revision.Binding()
+	if context.Reference.ProjectID != context.Canonical.Suite().ProjectID() || context.Reference.SuiteID != context.Canonical.Suite().ID() || !context.Proposed.matches(binding) {
+		return blockedPromotion(PromotionReasonContextMismatch), nil
+	}
+	current, present := context.Canonical.Suite().CurrentVersionID()
+	if !present && len(context.Proposed.Manifest().Entries()) == 0 {
+		return blockedPromotion(PromotionReasonEmptyInventory), nil
+	}
+	if binding.ExpectedCanonical() != current {
+		return blockedPromotion(PromotionReasonCanonicalChanged), nil
+	}
+	if context.ExpectedStateRevision != context.Canonical.Suite().Revision() {
+		return blockedPromotion(PromotionReasonStateChanged), nil
+	}
+	if context.Policy.ProjectID() != context.Canonical.Suite().ProjectID() {
+		return blockedPromotion(PromotionReasonContextMismatch), nil
+	}
+	if context.Policy.RevisionID() != binding.PolicyRevisionID() {
+		return blockedPromotion(PromotionReasonPolicyChanged), nil
+	}
+	if !context.Consent.HasApproval(context.Proposal, context.Policy) {
+		return blockedPromotion(PromotionReasonApprovalMissing), nil
+	}
+	if context.Assessment.Assurance() != IntegrityOnly {
+		return blockedPromotion(PromotionReasonIntegrityNotPassed), nil
+	}
+	if context.Assessment.Source() != requiredSource || !context.Assessment.Binding().Equal(binding) || context.Assessment.Reason() == IntegrityReasonMismatch {
+		return blockedPromotion(PromotionReasonAssessmentMismatch), nil
+	}
+	if !context.Assessment.Passed() {
+		return blockedPromotion(PromotionReasonIntegrityNotPassed), nil
+	}
+	if !context.Scheduling.CanPromote(context.Proposal, context.ExpectedSchedulingGeneration) {
+		return blockedPromotion(PromotionReasonSchedulingBlocked), nil
+	}
+	return PromotionDecision{outcome: PromotionReady}, nil
 }

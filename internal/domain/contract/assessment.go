@@ -1,5 +1,6 @@
 package contract
 
+// IntegrityReason distinguishes assessment outcomes without granting authority.
 type IntegrityReason uint8
 
 const (
@@ -10,24 +11,50 @@ const (
 	IntegrityReasonUnavailable
 )
 
+// AssuranceLevel identifies the guarantee described by an assessment.
 type AssuranceLevel uint8
 
 const IntegrityOnly AssuranceLevel = 1
 
-type IntegrityAssessment struct{}
-
-func AssessIntegrity(expectedSource SourceRevision, expectedBinding ApprovalBinding, evidence *IntegrityEvidence) (IntegrityAssessment, error) {
-	return IntegrityAssessment{}, nil
+// IntegrityAssessment preserves expected context and the observed evidence.
+type IntegrityAssessment struct {
+	source    SourceRevision
+	binding   ApprovalBinding
+	evidence  IntegrityEvidence
+	reason    IntegrityReason
+	assurance AssuranceLevel
 }
 
-func (a IntegrityAssessment) Source() SourceRevision { return "" }
+func AssessIntegrity(expectedSource SourceRevision, expectedBinding ApprovalBinding, evidence *IntegrityEvidence) (IntegrityAssessment, error) {
+	assessment := IntegrityAssessment{
+		source: expectedSource, binding: expectedBinding,
+		reason: IntegrityReasonMissing, assurance: IntegrityOnly,
+	}
+	if evidence == nil || evidence.IsZero() {
+		return assessment, nil
+	}
+	assessment.evidence = *evidence
+	switch evidence.Outcome() {
+	case IntegrityPassed:
+		assessment.reason = IntegrityReasonSatisfied
+	case IntegrityFailed:
+		assessment.reason = IntegrityReasonFailed
+	case IntegrityUnavailable:
+		assessment.reason = IntegrityReasonUnavailable
+	}
+	return assessment, nil
+}
 
-func (a IntegrityAssessment) Binding() ApprovalBinding { return ApprovalBinding{} }
+func (a IntegrityAssessment) Source() SourceRevision { return a.source }
 
-func (a IntegrityAssessment) Evidence() (IntegrityEvidence, bool) { return IntegrityEvidence{}, false }
+func (a IntegrityAssessment) Binding() ApprovalBinding { return a.binding }
 
-func (a IntegrityAssessment) Passed() bool { return false }
+func (a IntegrityAssessment) Evidence() (IntegrityEvidence, bool) {
+	return a.evidence, !a.evidence.IsZero()
+}
 
-func (a IntegrityAssessment) Reason() IntegrityReason { return 0 }
+func (a IntegrityAssessment) Passed() bool { return a.reason == IntegrityReasonSatisfied }
 
-func (a IntegrityAssessment) Assurance() AssuranceLevel { return 0 }
+func (a IntegrityAssessment) Reason() IntegrityReason { return a.reason }
+
+func (a IntegrityAssessment) Assurance() AssuranceLevel { return a.assurance }

@@ -2,6 +2,7 @@ package contract
 
 import (
 	"errors"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -127,13 +128,15 @@ type Schedule struct {
 	entries    []ScheduleEntry
 	pending    PriorityCommand
 	results    []PriorityResult
+	operations map[OperationID]SourceCommandID
+	order      CommandOrder
 }
 
 func NewSchedule(project ProjectID, suite SuiteID) (Schedule, error) {
 	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(suite)) == "" {
 		return Schedule{}, ErrInvalidSchedule
 	}
-	return Schedule{project: project, suite: suite, generation: 1}, nil
+	return Schedule{project: project, suite: suite, generation: 1, operations: map[OperationID]SourceCommandID{}}, nil
 }
 func (s Schedule) IsZero() bool                   { return s.project == "" }
 func (s Schedule) ProjectID() ProjectID           { return s.project }
@@ -236,8 +239,35 @@ func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Sc
 	if governing.ProjectID() != s.project || command.ProjectID() != s.project || command.SuiteID() != s.suite {
 		return s, PriorityResult{}, ErrScheduleContextMismatch
 	}
+	observedSource, knownOperation := s.operations[command.OperationID()]
+	if knownOperation && observedSource != command.SourceCommandID() {
+		return s.priorityConflict(command)
+	}
+	for _, original := range s.results {
+		if original.command.SourceCommandID() != command.SourceCommandID() {
+			continue
+		}
+		if original.command.Actor() != command.Actor() {
+			return s.priorityConflict(command)
+		}
+		next := s
+		if !knownOperation {
+			next.operations = maps.Clone(s.operations)
+			next.operations[command.OperationID()] = command.SourceCommandID()
+		}
+		original.duplicate = true
+		return next, original, nil
+	}
 	if !governing.CanRequestPriority(command.Actor()) {
 		return s.rejectPriority(command, PriorityReasonUnauthorized)
+	}
+	if command.Order() <= s.order {
+		return s.rejectPriority(command, PriorityReasonObsoleteCommand)
+	}
+	for _, original := range s.results {
+		if original.command.Order() == command.Order() {
+			return s.rejectPriority(command, PriorityReasonObsoleteCommand)
+		}
 	}
 	i := s.entryIndex(command.ProposalID(), command.Carrier())
 	if i < 0 {
@@ -270,7 +300,16 @@ func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Sc
 func (s Schedule) recordPriority(result PriorityResult) Schedule {
 	next := s
 	next.results = append(slices.Clone(s.results), result)
+	next.operations = maps.Clone(s.operations)
+	next.operations[result.command.OperationID()] = result.command.SourceCommandID()
+	if result.outcome != PriorityRejected {
+		next.order = result.command.Order()
+	}
 	return next
+}
+
+func (s Schedule) priorityConflict(command PriorityCommand) (Schedule, PriorityResult, error) {
+	return s, PriorityResult{command: command, outcome: PriorityRejected, reason: PriorityReasonCommandConflict}, nil
 }
 
 func (s Schedule) rejectPriority(command PriorityCommand, reason PriorityReason) (Schedule, PriorityResult, error) {

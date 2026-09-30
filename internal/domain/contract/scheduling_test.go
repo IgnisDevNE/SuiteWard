@@ -118,6 +118,112 @@ func schedulingCommand(t *testing.T, actor Principal, id ProposalID, carrier App
 	return command
 }
 
+func schedulingCommandWith(t *testing.T, command PriorityCommand, mutate func(*PriorityCommandInput)) PriorityCommand {
+	t.Helper()
+	input := command.input
+	mutate(&input)
+	result, err := NewPriorityCommand(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestSchedulePriorityReplay(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	s = schedulingAdmit(t, schedulingAdmit(t, s, a), b)
+	policy, owner := schedulingPolicy(t)
+	command := schedulingCommand(t, owner, "b", "carrier-b", 10)
+	pending := schedulingRequest(t, s, command)
+	completed := schedulingResolve(t, pending, FormerUnmergedWithdrawn)
+	edited := schedulingCommandWith(t, command, func(i *PriorityCommandInput) { i.ProposalID = "a"; i.Carrier = "carrier-a"; i.Order = 99 })
+	for _, observed := range []PriorityCommand{command, edited} {
+		next, result, err := completed.RequestPriority(policy, observed)
+		if err != nil || !result.Duplicate() || result.Command() != command || result.Outcome() != PriorityRequested || !reflect.DeepEqual(next, completed) {
+			t.Fatal("replayed historical request moved queue or replaced original receipt")
+		}
+	}
+	alias := schedulingCommandWith(t, edited, func(i *PriorityCommandInput) { i.OperationID = "alias" })
+	aliased, result, err := completed.RequestPriority(policy, alias)
+	if err != nil || !result.Duplicate() || result.Command() != command || len(aliased.Results()) != len(completed.Results()) || aliased.Generation() != completed.Generation() {
+		t.Fatal("source alias did not reuse original immutable receipt")
+	}
+	changedActor, _ := NewPrincipal("other", Human)
+	changedKind, _ := NewPrincipal("owner", Agent)
+	for _, collision := range []PriorityCommand{
+		schedulingCommandWith(t, command, func(i *PriorityCommandInput) { i.SourceCommandID = "different" }),
+		schedulingCommandWith(t, alias, func(i *PriorityCommandInput) { i.SourceCommandID = "different" }),
+		schedulingCommandWith(t, command, func(i *PriorityCommandInput) { i.Actor = changedActor }),
+		schedulingCommandWith(t, command, func(i *PriorityCommandInput) { i.OperationID = "new-actor"; i.Actor = changedKind }),
+	} {
+		next, result, err := aliased.RequestPriority(policy, collision)
+		if err != nil || result.Outcome() != PriorityRejected || result.Reason() != PriorityReasonCommandConflict || result.Duplicate() || !reflect.DeepEqual(next, aliased) {
+			t.Fatal("command identity collision replaced established history")
+		}
+	}
+	// The alias map must not mutate the earlier value: that operation remains new there.
+	newAtEarlier := schedulingCommandWith(t, alias, func(i *PriorityCommandInput) { i.SourceCommandID = "different" })
+	_, result, err = completed.RequestPriority(policy, newAtEarlier)
+	if err != nil || result.Reason() == PriorityReasonCommandConflict {
+		t.Fatal("alias reservation mutated earlier schedule")
+	}
+	newOwner, _ := NewPrincipal("new-owner", Human)
+	newPolicy, _ := NewPolicy("project", "new-policy", newOwner)
+	if next, result, err := aliased.RequestPriority(newPolicy, command); err != nil || !result.Duplicate() || result.Outcome() != PriorityRequested || !reflect.DeepEqual(next, aliased) {
+		t.Fatal("current authority rewrote already-recorded command result")
+	}
+	if aliased.Results()[0].Duplicate() {
+		t.Fatal("returning duplicate mutated original receipt")
+	}
+}
+
+func TestSchedulePriorityOrdering(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	s = schedulingAdmit(t, schedulingAdmit(t, s, a), b)
+	policy, owner := schedulingPolicy(t)
+	command := schedulingCommand(t, owner, "b", "carrier-b", 10)
+	completed := schedulingResolve(t, schedulingRequest(t, s, command), FormerUnmergedWithdrawn)
+	for _, order := range []CommandOrder{9, 10} {
+		older := schedulingCommandWith(t, schedulingCommand(t, owner, "a", "carrier-a", order), func(i *PriorityCommandInput) { i.OperationID = "older"; i.SourceCommandID = "older" })
+		next, result, err := completed.RequestPriority(policy, older)
+		if err != nil || result.Reason() != PriorityReasonObsoleteCommand || result.Outcome() != PriorityRejected || next.Generation() != completed.Generation() || !next.CanPromote(b, next.Generation()) {
+			t.Fatal("older/equal command undid later priority decision")
+		}
+	}
+	noopCommand := schedulingCommandWith(t, command, func(i *PriorityCommandInput) { i.OperationID = "noop"; i.SourceCommandID = "noop"; i.Order = 12 })
+	noop, result, err := completed.RequestPriority(policy, noopCommand)
+	if err != nil || result.Outcome() != PriorityAlreadyActive {
+		t.Fatal("current active request not accepted as no-op")
+	}
+	older := schedulingCommand(t, owner, "a", "carrier-a", 11)
+	if next, result, err := noop.RequestPriority(policy, older); err != nil || result.Reason() != PriorityReasonObsoleteCommand || next.Generation() != noop.Generation() {
+		t.Fatal("successful no-op failed to fence older commands")
+	}
+	unknown := schedulingCommand(t, owner, "unknown", "unknown", 100)
+	rejected, result, err := s.RequestPriority(policy, unknown)
+	if err != nil || result.Reason() != PriorityReasonUnknownTarget {
+		t.Fatal("setup rejection failed")
+	}
+	sameOrder := schedulingCommandWith(t, command, func(i *PriorityCommandInput) { i.Order = 100 })
+	if _, result, err := rejected.RequestPriority(policy, sameOrder); err != nil || result.Reason() != PriorityReasonObsoleteCommand {
+		t.Fatal("distinct command reused rejected command order")
+	}
+	lowOrder := schedulingCommandWith(t, command, func(i *PriorityCommandInput) { i.Order = 1 })
+	if next, result, err := rejected.RequestPriority(policy, lowOrder); err != nil || result.Outcome() != PriorityRequested || next.Generation() == rejected.Generation() {
+		t.Fatal("rejected command advanced successful-order watermark")
+	}
+	unknownProposal := schedulingProposal(t, "project", "suite", "unknown", "unknown", "r1")
+	laterAdmitted := schedulingAdmit(t, rejected, unknownProposal)
+	if next, result, err := laterAdmitted.RequestPriority(policy, unknown); err != nil || !result.Duplicate() || result.Reason() != PriorityReasonUnknownTarget || !reflect.DeepEqual(next, laterAdmitted) {
+		t.Fatal("original rejection changed to success after later admission")
+	}
+	// Retrying the original request after suspension is still historical, not a new transfer.
+	merged := schedulingResolve(t, schedulingRequest(t, s, command), FormerMerged)
+	if next, result, err := merged.RequestPriority(policy, command); err != nil || !result.Duplicate() || result.Outcome() != PriorityRequested || !reflect.DeepEqual(next, merged) {
+		t.Fatal("historical replay revived suspended transfer")
+	}
+}
+
 func schedulingRequest(t *testing.T, s Schedule, command PriorityCommand) Schedule {
 	t.Helper()
 	policy, _ := schedulingPolicy(t)

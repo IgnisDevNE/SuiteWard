@@ -111,7 +111,14 @@ jobs:
           go-version-file: .go-version
           cache: false
       - name: Race tests and real coverage report
-        run: ./scripts/check-go.ps1 -Coverage
+        run: |
+          ./scripts/check-go.ps1 -Coverage
+          Write-Host 'Controlled negative Codecov probe: full checks ran above; this report measures only the named real test subset.'
+          $probePackages = @(go list ./...)
+          if ($LASTEXITCODE -ne 0 -or $probePackages.Count -eq 0) { throw 'No repository packages for coverage probe.' }
+          $probeArgs = @('test', '-count=1', '-run', '^TestHashKnownContent$', '-covermode=atomic', "-coverpkg=$($probePackages -join ',')", '-coverprofile=coverage.out', './...')
+          go @probeArgs
+          if ($LASTEXITCODE -ne 0) { throw 'Controlled coverage subset did not run successfully.' }
       - name: Check reachable known vulnerabilities
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0

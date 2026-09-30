@@ -4,6 +4,17 @@ import "errors"
 
 var ErrInvalidHistoricalCanonical = errors.New("invalid historical canonical")
 
+var ErrInvalidCorrection = errors.New("invalid correction")
+
+type CorrectionInput struct {
+	Promotion PromotionInput
+	Target    HistoricalCanonical
+}
+
+func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
+	return PromotionDecision{}, nil
+}
+
 // HistoricalCanonical pairs a version with its immutable promotion provenance.
 type HistoricalCanonical struct {
 	version SuiteVersion

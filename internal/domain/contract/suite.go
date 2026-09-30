@@ -1,29 +1,38 @@
 package contract
 
+// SuiteID identifies a suite independently of its source provider.
 type SuiteID string
 
+// SuiteVersionID identifies a logical version, rather than its content digest.
 type SuiteVersionID string
 
+// StateRevision is caller-supplied concurrency context, including an initial zero.
 type StateRevision uint64
 
-type Suite struct{}
+// Suite is an immutable snapshot of a suite's canonical reference.
+type Suite struct {
+	project  ProjectID
+	id       SuiteID
+	current  SuiteVersionID
+	revision StateRevision
+}
 
 func NewSuite(project ProjectID, id SuiteID, current SuiteVersionID, revision StateRevision) (Suite, error) {
-	return Suite{}, nil
+	return Suite{project: project, id: id, current: current, revision: revision}, nil
 }
 
 func (s Suite) ProjectID() ProjectID {
-	return ""
+	return s.project
 }
 
 func (s Suite) ID() SuiteID {
-	return ""
+	return s.id
 }
 
 func (s Suite) CurrentVersionID() (SuiteVersionID, bool) {
-	return "", false
+	return s.current, s.current != ""
 }
 
 func (s Suite) Revision() StateRevision {
-	return 0
+	return s.revision
 }

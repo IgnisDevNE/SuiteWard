@@ -43,3 +43,13 @@ func (r PromotionRecord) Target() IntegrationTargetID       { return r.input.Tar
 func (r PromotionRecord) RecordedAt() time.Time             { return r.input.RecordedAt }
 func (r PromotionRecord) CorrectsVersionID() SuiteVersionID { return r.input.CorrectsVersionID }
 func (r PromotionRecord) IsZero() bool                      { return r.input.Binding.IsZero() }
+
+// AuditEvent describes a proposed canonical-promotion audit fact.
+type AuditEvent struct{}
+func (a AuditEvent) Promotion() PromotionRecord {return PromotionRecord{}}
+func (a AuditEvent) IsZero() bool {return true}
+
+// PublicationIntent is a pending acknowledgment, not proof of remote delivery.
+type PublicationIntent struct{}
+func (p PublicationIntent) Promotion() PromotionRecord {return PromotionRecord{}}
+func (p PublicationIntent) IsZero() bool {return true}

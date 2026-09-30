@@ -4,6 +4,7 @@ import (
 	"errors"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -185,9 +186,30 @@ const (
 	PromotionReasonCorrectionContextReused
 )
 
+type PromotionInput struct {
+	Context PromotionContext
+	Integration Integration
+	Target IntegrationTargetID
+	OperationID OperationID
+	NewVersionID SuiteVersionID
+	RecordedAt time.Time
+	CorrectsVersionID SuiteVersionID
+}
+
+// PromotionEffect proposes one atomic local write and its publication intent.
 type PromotionEffect struct{}
 
 func (e PromotionEffect) IsZero() bool { return true }
+func (e PromotionEffect) ExpectedCanonicalID() SuiteVersionID {return ""}
+func (e PromotionEffect) ExpectedStateRevision() StateRevision {return 0}
+func (e PromotionEffect) ExpectedSchedulingGeneration() ScheduleGeneration {return 0}
+func (e PromotionEffect) Suite() Suite {return Suite{}}
+func (e PromotionEffect) Version() SuiteVersion {return SuiteVersion{}}
+func (e PromotionEffect) Promotion() PromotionRecord {return PromotionRecord{}}
+func (e PromotionEffect) Audit() AuditEvent {return AuditEvent{}}
+func (e PromotionEffect) Publication() PublicationIntent {return PublicationIntent{}}
+
+func DecidePromotion(input PromotionInput) (PromotionDecision,error) {return blockedPromotion(PromotionReasonNone),nil}
 
 type PromotionDecision struct {
 	outcome PromotionOutcome

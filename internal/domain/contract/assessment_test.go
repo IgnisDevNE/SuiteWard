@@ -3,6 +3,7 @@ package contract_test
 import (
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -92,6 +93,76 @@ func TestIntegrityAssessmentKeepsSnapshotImmutable(t *testing.T) {
 	retained, present = assessment.Evidence()
 	if !assessment.Passed() || assessment.Source() != "source-1" || !assessment.Binding().Equal(binding) || !present || retained.Source() != "source-1" || retained.Outcome() != contract.IntegrityPassed || !retained.Binding().Equal(binding) {
 		t.Error("caller mutation changed the assessment's expected or observed facts")
+	}
+}
+
+func TestIntegrityAssessmentRejectsMismatchedEvidence(t *testing.T) {
+	expected := mustIntegrityBinding(t, integrityBindingInput())
+	changes := []struct {
+		name   string
+		change func(*contract.BindingInput, *contract.SourceRevision)
+	}{
+		{name: "source revision", change: func(_ *contract.BindingInput, source *contract.SourceRevision) { *source = "source-2" }},
+		{name: "project", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			input.Reference.ProjectID = "project-2"
+		}},
+		{name: "suite", change: func(input *contract.BindingInput, _ *contract.SourceRevision) { input.Reference.SuiteID = "suite-2" }},
+		{name: "proposal", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			input.Reference.ProposalID = "proposal-2"
+		}},
+		{name: "proposal revision", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			input.Reference.RevisionID = "revision-2"
+		}},
+		{name: "canonical version", change: func(input *contract.BindingInput, _ *contract.SourceRevision) { input.ExpectedCanonical = "version-2" }},
+		{name: "canonical absence", change: func(input *contract.BindingInput, _ *contract.SourceRevision) { input.ExpectedCanonical = "" }},
+		{name: "manifest", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			input.Manifest = artifact.Hash([]byte("manifest-2"))
+		}},
+		{name: "scope", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			input.Scope = artifact.Hash([]byte("scope-2"))
+		}},
+		{name: "governing policy", change: func(input *contract.BindingInput, _ *contract.SourceRevision) { input.PolicyRevision = "policy-2" }},
+		{name: "covered input changed", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			input.CoveredInputs["dependencies"] = "lock-2"
+		}},
+		{name: "covered input added", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			input.CoveredInputs["new-input"] = "new-value"
+		}},
+		{name: "covered input removed", change: func(input *contract.BindingInput, _ *contract.SourceRevision) {
+			delete(input.CoveredInputs, "dependencies")
+		}},
+	}
+	for _, change := range changes {
+		for _, outcome := range []struct {
+			name  string
+			value contract.IntegrityOutcome
+		}{
+			{name: "passed", value: contract.IntegrityPassed},
+			{name: "failed", value: contract.IntegrityFailed},
+			{name: "unavailable", value: contract.IntegrityUnavailable},
+		} {
+			t.Run(change.name+"/"+outcome.name, func(t *testing.T) {
+				input := integrityBindingInput()
+				source := contract.SourceRevision("source-1")
+				change.change(&input, &source)
+				observedBinding := mustIntegrityBinding(t, input)
+				evidence := mustIntegrityEvidence(t, source, observedBinding, outcome.value)
+				assessment, err := contract.AssessIntegrity("source-1", expected, &evidence)
+				if err != nil {
+					t.Fatalf("AssessIntegrity() error = %v", err)
+				}
+				if assessment.Passed() || assessment.Reason() != contract.IntegrityReasonMismatch {
+					t.Errorf("mismatched evidence produced (passed %t, reason %v), want (false, mismatch)", assessment.Passed(), assessment.Reason())
+				}
+				if assessment.Source() != "source-1" || !assessment.Binding().Equal(expected) || assessment.Assurance() != contract.IntegrityOnly {
+					t.Error("mismatch changed the expected assessment context or assurance")
+				}
+				stored, present := assessment.Evidence()
+				if !present || stored.Source() != source || !stored.Binding().Equal(observedBinding) || stored.Outcome() != outcome.value {
+					t.Error("mismatch did not preserve the actual supplied evidence")
+				}
+			})
+		}
 	}
 }
 

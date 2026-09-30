@@ -13,7 +13,24 @@ type CorrectionInput struct {
 
 func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
 	promotion := input.Promotion
-	promotion.CorrectsVersionID = input.Target.Version().ID()
+	canonical := promotion.Context.Canonical
+	if canonical.IsZero() || input.Target.IsZero() || promotion.Context.Proposal.IsZero() {
+		return PromotionDecision{}, ErrInvalidCorrection
+	}
+	currentID, present := canonical.Suite().CurrentVersionID()
+	target := input.Target.Version()
+	if !present || target.ProjectID() != canonical.Suite().ProjectID() || target.SuiteID() != canonical.Suite().ID() ||
+		promotion.NewVersionID == currentID || promotion.NewVersionID == target.ID() ||
+		(promotion.CorrectsVersionID != "" && promotion.CorrectsVersionID != target.ID()) {
+		return PromotionDecision{}, ErrInvalidCorrection
+	}
+	revision := promotion.Context.Proposal.Current()
+	for _, historical := range []PromotionRecord{canonical.Record(), input.Target.Record()} {
+		if revision.Binding().Reference().ProposalID == historical.Binding().Reference().ProposalID || revision.Carrier() == historical.Carrier() {
+			return blockedPromotion(PromotionReasonCorrectionContextReused), nil
+		}
+	}
+	promotion.CorrectsVersionID = target.ID()
 	return DecidePromotion(promotion)
 }
 

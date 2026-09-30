@@ -17,8 +17,12 @@ var (
 	ErrScheduleGenerationExhausted = errors.New("schedule generation exhausted")
 )
 
+// ScheduleGeneration fences active eligibility, not every aggregate mutation.
+// The application must also serialize waiting entries and command receipts.
 type ScheduleGeneration uint64
 
+// PriorityCommandInput carries authenticated facts and stable source ordering
+// supplied by a trusted caller. Construction does not authenticate those facts.
 type PriorityCommandInput struct {
 	OperationID     OperationID
 	SourceCommandID SourceCommandID
@@ -30,6 +34,7 @@ type PriorityCommandInput struct {
 	Order           CommandOrder
 }
 
+// PriorityCommand requests scheduling priority without granting consent.
 type PriorityCommand struct{ input PriorityCommandInput }
 
 func NewPriorityCommand(input PriorityCommandInput) (PriorityCommand, error) {
@@ -73,6 +78,8 @@ const (
 	PriorityReasonCommandConflict
 )
 
+// PriorityResult is a historical processing receipt. PriorityRequested records
+// the request, never successful remote withdrawal or completed transfer.
 type PriorityResult struct {
 	command   PriorityCommand
 	outcome   PriorityOutcome
@@ -87,8 +94,11 @@ func (r PriorityResult) Duplicate() bool          { return r.duplicate }
 
 type ScheduleEntryState uint8
 
+// ScheduleObservation is a trusted application fact, not a promotion decision.
 type ScheduleObservation uint8
 
+// TransferResolution is trusted reconciliation supplied by the application.
+// Its value does not prove remote check withdrawal or the absence of a merge.
 type TransferResolution uint8
 
 const (
@@ -111,6 +121,7 @@ const (
 	SchedulePromoted
 )
 
+// ScheduleEntry retains stable proposal/carrier identity and admission order.
 type ScheduleEntry struct {
 	proposal ProposalID
 	carrier  ApprovalCarrierID
@@ -121,6 +132,9 @@ func (e ScheduleEntry) ProposalID() ProposalID     { return e.proposal }
 func (e ScheduleEntry) Carrier() ApprovalCarrierID { return e.carrier }
 func (e ScheduleEntry) State() ScheduleEntryState  { return e.state }
 
+// Schedule is immutable local scheduling state for one project and Suite.
+// Independent copies do not elect a durable winner; the application must commit
+// the returned state and its authority context together.
 type Schedule struct {
 	project    ProjectID
 	suite      SuiteID
@@ -142,6 +156,9 @@ func (s Schedule) IsZero() bool                   { return s.project == "" }
 func (s Schedule) ProjectID() ProjectID           { return s.project }
 func (s Schedule) SuiteID() SuiteID               { return s.suite }
 func (s Schedule) Generation() ScheduleGeneration { return s.generation }
+
+// Admit accepts a trusted classification. An implementation-only observation
+// does not consume a position or withdraw a previously admitted entry.
 func (s Schedule) Admit(proposal Proposal, contractChanging bool) (Schedule, error) {
 	if err := s.checkProposal(proposal); err != nil {
 		return s, err
@@ -173,6 +190,9 @@ func (s Schedule) Admit(proposal Proposal, contractChanging bool) (Schedule, err
 	next.entries = append(slices.Clone(s.entries), entry)
 	return next, nil
 }
+
+// CanPromote checks local priority only. The caller independently checks the
+// exact proposal revision, consent, integrated assessment and canonical state.
 func (s Schedule) CanPromote(proposal Proposal, expectedGeneration ScheduleGeneration) bool {
 	if s.IsZero() || proposal.IsZero() || expectedGeneration == 0 || expectedGeneration != s.generation || s.pending.OperationID() != "" {
 		return false
@@ -195,6 +215,10 @@ func (s Schedule) PendingTransfer() (PriorityCommand, bool) {
 	return s.pending, s.pending.OperationID() != ""
 }
 func (s Schedule) Results() []PriorityResult { return slices.Clone(s.results) }
+
+// ResolveTransfer consumes an exact pending request and current generation.
+// The application must first reconcile remote publications and current target
+// inputs. A local activation alone never establishes readiness for integration.
 func (s Schedule) ResolveTransfer(request OperationID, expectedGeneration ScheduleGeneration, resolution TransferResolution) (Schedule, error) {
 	if s.IsZero() || strings.TrimSpace(string(request)) == "" || resolution < TransferUnresolved || resolution > FormerMerged {
 		return s, ErrInvalidSchedule
@@ -229,6 +253,9 @@ func (s Schedule) ResolveTransfer(request OperationID, expectedGeneration Schedu
 	}
 	return next, nil
 }
+
+// RequestPriority records a command under the supplied current governing policy.
+// Replayed source commands return their original historical outcome.
 func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Schedule, PriorityResult, error) {
 	if command.OperationID() == "" {
 		return s, PriorityResult{}, ErrInvalidPriorityCommand
@@ -317,6 +344,9 @@ func (s Schedule) rejectPriority(command PriorityCommand, reason PriorityReason)
 	return s.recordPriority(result), result, nil
 }
 
+// Observe records trusted integration, closure, or committed promotion facts.
+// It never performs or authorizes the promotion it observes. Existing-baseline
+// promotion can be observed without merging its independent approval carrier.
 func (s Schedule) Observe(proposal Proposal, expectedGeneration ScheduleGeneration, observation ScheduleObservation) (Schedule, error) {
 	if err := s.checkProposal(proposal); err != nil {
 		return s, err

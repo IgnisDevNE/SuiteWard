@@ -175,3 +175,113 @@ func TestConsentRejectsForeignOrAbsentContextWithoutHistory(t *testing.T) {
 		})
 	}
 }
+
+func TestConsentRejectsIneligibleApprovalsWithRecordedReasons(t *testing.T) {
+	tests := []struct {
+		name   string
+		edit   func(*contract.CommandInput, *contract.Policy)
+		reason contract.ConsentReason
+	}{
+		{"unregistered human", func(i *contract.CommandInput, _ *contract.Policy) {
+			i.Actor = principalForTest(t, "repo-admin", contract.Human)
+		}, contract.ConsentReasonUnauthorized},
+		{"agent using owner identity", func(i *contract.CommandInput, _ *contract.Policy) {
+			i.Actor = principalForTest(t, "owner", contract.Agent)
+		}, contract.ConsentReasonUnauthorized},
+		{"service using owner identity", func(i *contract.CommandInput, _ *contract.Policy) {
+			i.Actor = principalForTest(t, "owner", contract.Service)
+		}, contract.ConsentReasonUnauthorized},
+		{"unknown revision", func(i *contract.CommandInput, _ *contract.Policy) { i.Reference.RevisionID = "unknown" }, contract.ConsentReasonUnknownRevision},
+		{"wrong carrier", func(i *contract.CommandInput, _ *contract.Policy) { i.Carrier = "another-carrier" }, contract.ConsentReasonContextMismatch},
+		{"different governing revision", func(_ *contract.CommandInput, p *contract.Policy) {
+			var err error
+			*p, err = contract.NewPolicy("project", "new-policy", principalForTest(t, "owner", contract.Human))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, contract.ConsentReasonPolicyMismatch},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state, proposal, policy, input := consentFixture(t)
+			tt.edit(&input, &policy)
+			next, result := applyConsentForTest(t, state, proposal, policy, input)
+			if result.Outcome() != contract.ConsentRejected || result.Reason() != tt.reason || result.Duplicate() || next.HasApproval(proposal, policy) {
+				t.Errorf("outcome %d reason %d; want rejection reason %d without approval", result.Outcome(), result.Reason(), tt.reason)
+			}
+			if len(next.Results()) != 1 || next.Results()[0] != result || len(state.Results()) != 0 {
+				t.Error("in-scope rejection was not retained immutably")
+			}
+		})
+	}
+}
+
+func TestConsentEligibilityRequiresExactCurrentFacts(t *testing.T) {
+	empty, proposal, policy, input := consentFixture(t)
+	approved, _ := applyConsentForTest(t, empty, proposal, policy, input)
+	changes := []struct {
+		name string
+		edit func(*contract.BindingInput)
+	}{
+		{"project", func(i *contract.BindingInput) { i.Reference.ProjectID = "other-project" }},
+		{"suite", func(i *contract.BindingInput) { i.Reference.SuiteID = "other-suite" }},
+		{"proposal", func(i *contract.BindingInput) { i.Reference.ProposalID = "other-proposal" }},
+		{"revision", func(i *contract.BindingInput) { i.Reference.RevisionID = "r2" }},
+		{"baseline", func(i *contract.BindingInput) { i.ExpectedCanonical = "v2" }},
+		{"absent baseline", func(i *contract.BindingInput) { i.ExpectedCanonical = "" }},
+		{"manifest", func(i *contract.BindingInput) { i.Manifest = artifact.Hash([]byte("changed-manifest")) }},
+		{"scope", func(i *contract.BindingInput) { i.Scope = artifact.Hash([]byte("changed-scope")) }},
+		{"policy", func(i *contract.BindingInput) { i.PolicyRevision = "policy-2" }},
+		{"covered inputs", func(i *contract.BindingInput) { i.CoveredInputs["runner"] = "runner-2" }},
+	}
+	for _, tt := range changes {
+		t.Run(tt.name, func(t *testing.T) {
+			binding := consentBindingInput()
+			tt.edit(&binding)
+			if approved.HasApproval(consentProposalForTest(t, binding), policy) {
+				t.Fatal("changed current facts inherited prior exact consent")
+			}
+		})
+	}
+	for _, change := range []struct {
+		name     string
+		project  contract.ProjectID
+		revision contract.PolicyRevisionID
+		owner    contract.PrincipalID
+	}{
+		{"foreign policy", "foreign", "policy", "owner"},
+		{"changed policy revision", "project", "changed-policy", "owner"},
+		{"changed authorized owner", "project", "policy", "other-owner"},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			changed, err := contract.NewPolicy(change.project, change.revision, principalForTest(t, change.owner, contract.Human))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if approved.HasApproval(proposal, changed) {
+				t.Fatal("a changed governing policy retained approval eligibility")
+			}
+		})
+	}
+	if approved.HasApproval(contract.Proposal{}, policy) || approved.HasApproval(proposal, contract.Policy{}) || (contract.Consent{}).HasApproval(proposal, policy) {
+		t.Fatal("absent inputs must not establish approval eligibility")
+	}
+}
+
+func TestConsentRejectsSupersededApprovalWithoutRedirecting(t *testing.T) {
+	state, proposal, policy, input := consentFixture(t)
+	updated := consentBindingInput()
+	updated.Reference.RevisionID = "r2"
+	current, err := proposal.Revise(consentRevisionForTest(t, updated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, result := applyConsentForTest(t, state, current, policy, input)
+	if result.Outcome() != contract.ConsentRejected || result.Reason() != contract.ConsentReasonSupersededRevision || next.HasApproval(current, policy) {
+		t.Fatal("a superseded reference was not rejected with its exact reason")
+	}
+	approved, _ := applyConsentForTest(t, state, proposal, policy, input)
+	if approved.HasApproval(current, policy) {
+		t.Fatal("superseding a revision transferred its historical approval")
+	}
+}

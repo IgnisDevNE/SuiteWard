@@ -285,3 +285,104 @@ func TestConsentRejectsSupersededApprovalWithoutRedirecting(t *testing.T) {
 		t.Fatal("superseding a revision transferred its historical approval")
 	}
 }
+
+func subsequentConsentCommand(input contract.CommandInput, source string, action contract.ConsentAction, order contract.CommandOrder) contract.CommandInput {
+	input.OperationID = contract.OperationID("operation-" + source)
+	input.SourceCommandID = contract.SourceCommandID(source)
+	input.Action = action
+	input.Order = order
+	return input
+}
+
+func TestConsentRevocationTombstoneFencesOlderCommands(t *testing.T) {
+	for _, initiallyApproved := range []bool{false, true} {
+		t.Run(map[bool]string{false: "without prior approval", true: "with prior approval"}[initiallyApproved], func(t *testing.T) {
+			state, proposal, policy, input := consentFixture(t)
+			if initiallyApproved {
+				state, _ = applyConsentForTest(t, state, proposal, policy, input)
+			}
+			beforeRevoke := state
+			revoke := subsequentConsentCommand(input, "revoke", contract.RevokeConsent, 20)
+			revoked, result := applyConsentForTest(t, state, proposal, policy, revoke)
+			want := contract.ConsentNoActiveApproval
+			if initiallyApproved {
+				want = contract.ConsentRevoked
+			}
+			if result.Outcome() != want || result.Reason() != contract.ConsentReasonNone || revoked.HasApproval(proposal, policy) {
+				t.Fatalf("revocation outcome %d reason %d; want %d without active consent", result.Outcome(), result.Reason(), want)
+			}
+			if beforeRevoke.HasApproval(proposal, policy) != initiallyApproved {
+				t.Fatal("revoking consent mutated an earlier state")
+			}
+			delayed := subsequentConsentCommand(input, "delayed-approve", contract.ApproveConsent, 15)
+			stillRevoked, oldResult := applyConsentForTest(t, revoked, proposal, policy, delayed)
+			if oldResult.Outcome() != contract.ConsentRejected || oldResult.Reason() != contract.ConsentReasonObsoleteCommand || stillRevoked.HasApproval(proposal, policy) {
+				t.Fatal("older approval undid the revocation tombstone")
+			}
+			newer := subsequentConsentCommand(input, "explicit-reapprove", contract.ApproveConsent, 21)
+			reapproved, newerResult := applyConsentForTest(t, stillRevoked, proposal, policy, newer)
+			if newerResult.Outcome() != contract.ConsentApproved || !reapproved.HasApproval(proposal, policy) {
+				t.Fatal("a new explicit eligible command did not restore consent")
+			}
+			for _, order := range []contract.CommandOrder{18, 21} {
+				lateRevoke := subsequentConsentCommand(input, "late-revoke", contract.RevokeConsent, order)
+				unchanged, staleResult := applyConsentForTest(t, reapproved, proposal, policy, lateRevoke)
+				if staleResult.Outcome() != contract.ConsentRejected || staleResult.Reason() != contract.ConsentReasonObsoleteCommand || !unchanged.HasApproval(proposal, policy) {
+					t.Fatal("an older or equal-order distinct revoke withdrew newer consent")
+				}
+			}
+		})
+	}
+}
+
+func TestConsentRevokesHistoricalOwnConsentWithoutWithdrawingCurrentRevision(t *testing.T) {
+	empty, original, policy, input := consentFixture(t)
+	approved, _ := applyConsentForTest(t, empty, original, policy, input)
+	updated := consentBindingInput()
+	updated.Reference.RevisionID = "r2"
+	updated.PolicyRevision = "policy-2"
+	current, err := original.Revise(consentRevisionForTest(t, updated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPolicy, err := contract.NewPolicy("project", "policy-2", input.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newApproval := subsequentConsentCommand(input, "approve-r2", contract.ApproveConsent, 30)
+	newApproval.Reference.RevisionID = "r2"
+	currentApproved, _ := applyConsentForTest(t, approved, current, currentPolicy, newApproval)
+	revoke := subsequentConsentCommand(input, "revoke-historical-r1", contract.RevokeConsent, 20)
+	next, result := applyConsentForTest(t, currentApproved, current, currentPolicy, revoke)
+	if result.Outcome() != contract.ConsentRevoked || result.Reason() != contract.ConsentReasonNone {
+		t.Fatalf("historical revocation outcome %d reason %d; want own-consent withdrawal", result.Outcome(), result.Reason())
+	}
+	if next.HasApproval(original, policy) || !next.HasApproval(current, currentPolicy) {
+		t.Fatal("historical revocation affected the wrong exact revision's consent")
+	}
+	if !currentApproved.HasApproval(original, policy) || !currentApproved.HasApproval(current, currentPolicy) {
+		t.Fatal("historical revocation mutated its retained previous state")
+	}
+}
+
+func TestConsentUnauthorizedRevocationCannotWithdrawOrPoisonOwnerOrdering(t *testing.T) {
+	for _, actor := range []contract.Principal{
+		principalForTest(t, "owner", contract.Agent),
+		principalForTest(t, "owner", contract.Service),
+		principalForTest(t, "other-human", contract.Human),
+	} {
+		empty, proposal, policy, input := consentFixture(t)
+		approved, _ := applyConsentForTest(t, empty, proposal, policy, input)
+		unauthorized := subsequentConsentCommand(input, "unauthorized-revoke", contract.RevokeConsent, 1000)
+		unauthorized.Actor = actor
+		unchanged, result := applyConsentForTest(t, approved, proposal, policy, unauthorized)
+		if result.Outcome() != contract.ConsentRejected || result.Reason() != contract.ConsentReasonUnauthorized || !unchanged.HasApproval(proposal, policy) {
+			t.Fatal("unauthorized revocation changed the owner's consent")
+		}
+		ownerRevoke := subsequentConsentCommand(input, "owner-revoke", contract.RevokeConsent, 20)
+		revoked, ownerResult := applyConsentForTest(t, unchanged, proposal, policy, ownerRevoke)
+		if ownerResult.Outcome() != contract.ConsentRevoked || revoked.HasApproval(proposal, policy) {
+			t.Fatal("unauthorized ordering information prevented the owner's later withdrawal")
+		}
+	}
+}

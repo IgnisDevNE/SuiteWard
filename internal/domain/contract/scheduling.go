@@ -20,6 +20,14 @@ type ScheduleGeneration uint64
 
 type ScheduleEntryState uint8
 
+type ScheduleObservation uint8
+
+const (
+	ObserveIntegrated ScheduleObservation = iota + 1
+	ObserveClosedUnmerged
+	ObservePromoted
+)
+
 const (
 	ScheduleWaiting ScheduleEntryState = iota + 1
 	ScheduleActive
@@ -103,6 +111,10 @@ func (s Schedule) Active() (ScheduleEntry, bool) {
 	return ScheduleEntry{}, false
 }
 func (s Schedule) Entries() []ScheduleEntry { return slices.Clone(s.entries) }
+
+func (s Schedule) Observe(proposal Proposal, expectedGeneration ScheduleGeneration, observation ScheduleObservation) (Schedule, error) {
+	return s, nil
+}
 
 func (s Schedule) checkProposal(proposal Proposal) error {
 	if s.IsZero() || proposal.IsZero() {

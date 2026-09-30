@@ -96,6 +96,127 @@ func schedulingPair(t *testing.T) (Schedule, Proposal, Proposal) {
 	return s, a, b
 }
 
+func schedulingAdmit(t *testing.T, s Schedule, p Proposal) Schedule {
+	t.Helper()
+	next, err := s.Admit(p, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return next
+}
+
+func schedulingObserve(t *testing.T, s Schedule, p Proposal, event ScheduleObservation) Schedule {
+	t.Helper()
+	next, err := s.Observe(p, s.Generation(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return next
+}
+
+func TestScheduleObservations(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	c := schedulingProposal(t, "project", "suite", "c", "carrier-c", "r1")
+	s = schedulingAdmit(t, schedulingAdmit(t, schedulingAdmit(t, s, a), b), c)
+	integrated := schedulingObserve(t, s, a, ObserveIntegrated)
+	active, ok := integrated.Active()
+	if !ok || active.ProposalID() != "a" || active.State() != ScheduleIntegratedPending || !integrated.CanPromote(a, integrated.Generation()) || integrated.CanPromote(a, s.Generation()) || integrated.CanPromote(b, integrated.Generation()) {
+		t.Fatal("integration did not retain active pending ownership with a new fence")
+	}
+	if again := schedulingObserve(t, integrated, a, ObserveIntegrated); !reflect.DeepEqual(again, integrated) {
+		t.Fatal("repeated integration was not a no-op")
+	}
+	promoted := schedulingObserve(t, integrated, a, ObservePromoted)
+	if !promoted.CanPromote(b, promoted.Generation()) || promoted.CanPromote(a, promoted.Generation()) || promoted.CanPromote(b, integrated.Generation()) || promoted.Entries()[0].State() != SchedulePromoted {
+		t.Fatal("committed promotion did not advance to earliest waiting entry")
+	}
+	if again := schedulingObserve(t, promoted, a, ObservePromoted); !reflect.DeepEqual(again, promoted) {
+		t.Fatal("repeated promotion changed queue")
+	}
+	closed := schedulingObserve(t, promoted, b, ObserveClosedUnmerged)
+	if !closed.CanPromote(c, closed.Generation()) || closed.Entries()[1].State() != ScheduleClosed {
+		t.Fatal("closed-unmerged active did not advance queue")
+	}
+	if again := schedulingObserve(t, closed, b, ObserveClosedUnmerged); !reflect.DeepEqual(again, closed) {
+		t.Fatal("repeated closure changed queue")
+	}
+	empty := schedulingObserve(t, closed, c, ObserveClosedUnmerged)
+	if _, ok := empty.Active(); ok {
+		t.Fatal("closed queue retained an active entry")
+	}
+	if kept := schedulingAdmit(t, empty, b); !reflect.DeepEqual(kept, empty) {
+		t.Fatal("admission silently reopened closed proposal")
+	}
+	d := schedulingProposal(t, "project", "suite", "d", "carrier-d", "r1")
+	if reopened := schedulingAdmit(t, empty, d); !reopened.CanPromote(d, reopened.Generation()) {
+		t.Fatal("new proposal did not take free position")
+	}
+	waitingClosed := schedulingObserve(t, s, b, ObserveClosedUnmerged)
+	if waitingClosed.Generation() != s.Generation() || !waitingClosed.CanPromote(a, s.Generation()) {
+		t.Fatal("waiting closure invalidated active authority")
+	}
+	after := schedulingObserve(t, waitingClosed, a, ObservePromoted)
+	if !after.CanPromote(c, after.Generation()) {
+		t.Fatal("promotion failed to skip closed waiting entry")
+	}
+	if s.Entries()[0].State() != ScheduleActive || s.Entries()[1].State() != ScheduleWaiting {
+		t.Fatal("observation mutated earlier snapshot")
+	}
+}
+
+func TestScheduleObservationsRejectInvalidTransitions(t *testing.T) {
+	s, a, b := schedulingPair(t)
+	s = schedulingAdmit(t, schedulingAdmit(t, s, a), b)
+	unknown := schedulingProposal(t, "project", "suite", "unknown", "carrier-unknown", "r1")
+	wrongCarrier := schedulingProposal(t, "project", "suite", "a", "other-carrier", "r1")
+	foreign := schedulingProposal(t, "other", "suite", "a", "carrier-a", "r1")
+	integrated := schedulingObserve(t, s, a, ObserveIntegrated)
+	closed := schedulingObserve(t, s, b, ObserveClosedUnmerged)
+	promoted := schedulingObserve(t, s, a, ObservePromoted)
+	for _, tc := range []struct {
+		name       string
+		s          Schedule
+		p          Proposal
+		generation ScheduleGeneration
+		event      ScheduleObservation
+		want       error
+	}{
+		{"zero schedule", Schedule{}, a, 0, ObserveIntegrated, ErrInvalidSchedule},
+		{"zero proposal", s, Proposal{}, s.Generation(), ObserveIntegrated, ErrInvalidSchedule},
+		{"foreign", s, foreign, s.Generation(), ObserveIntegrated, ErrScheduleContextMismatch},
+		{"unknown", s, unknown, s.Generation(), ObserveIntegrated, ErrScheduleConflict},
+		{"wrong carrier", s, wrongCarrier, s.Generation(), ObserveIntegrated, ErrScheduleConflict},
+		{"absent event", s, a, s.Generation(), 0, ErrInvalidSchedule},
+		{"unknown event", s, a, s.Generation(), 99, ErrInvalidSchedule},
+		{"zero generation", s, a, 0, ObserveIntegrated, ErrStaleSchedule},
+		{"old generation", integrated, a, s.Generation(), ObserveIntegrated, ErrStaleSchedule},
+		{"waiting integrated", s, b, s.Generation(), ObserveIntegrated, ErrScheduleConflict},
+		{"waiting promoted", s, b, s.Generation(), ObservePromoted, ErrScheduleConflict},
+		{"merged closure", integrated, a, integrated.Generation(), ObserveClosedUnmerged, ErrScheduleConflict},
+		{"closed integration", closed, b, closed.Generation(), ObserveIntegrated, ErrScheduleConflict},
+		{"closed promotion", closed, b, closed.Generation(), ObservePromoted, ErrScheduleConflict},
+		{"promoted closure", promoted, a, promoted.Generation(), ObserveClosedUnmerged, ErrScheduleConflict},
+		{"promoted integration", promoted, a, promoted.Generation(), ObserveIntegrated, ErrScheduleConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next, err := tc.s.Observe(tc.p, tc.generation, tc.event)
+			if !errors.Is(err, tc.want) || !reflect.DeepEqual(next, tc.s) {
+				t.Fatalf("invalid observation changed state: %v", err)
+			}
+		})
+	}
+	s.generation = ScheduleGeneration(math.MaxUint64)
+	for _, event := range []ScheduleObservation{ObserveIntegrated, ObservePromoted, ObserveClosedUnmerged} {
+		next, err := s.Observe(a, s.Generation(), event)
+		if !errors.Is(err, ErrScheduleGenerationExhausted) || !reflect.DeepEqual(next, s) {
+			t.Fatalf("overflow during %v mutated schedule: %v", event, err)
+		}
+	}
+	if next := schedulingObserve(t, s, b, ObserveClosedUnmerged); next.Generation() != s.Generation() {
+		t.Fatal("waiting closure needlessly increments exhausted generation")
+	}
+}
+
 func TestScheduleAdmissionAndEligibility(t *testing.T) {
 	s, a, b := schedulingPair(t)
 	if s.IsZero() || s.ProjectID() != "project" || s.SuiteID() != "suite" || s.Generation() != 1 {

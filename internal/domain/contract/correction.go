@@ -12,7 +12,9 @@ type CorrectionInput struct {
 }
 
 func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
-	return PromotionDecision{}, nil
+	promotion := input.Promotion
+	promotion.CorrectsVersionID = input.Target.Version().ID()
+	return DecidePromotion(promotion)
 }
 
 // HistoricalCanonical pairs a version with its immutable promotion provenance.

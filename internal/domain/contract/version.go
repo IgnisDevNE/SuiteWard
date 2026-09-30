@@ -1,6 +1,13 @@
 package contract
 
-import "github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+import (
+	"errors"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+)
+
+// ErrInvalidSuiteVersion identifies invalid version snapshot input.
+var ErrInvalidSuiteVersion = errors.New("invalid suite version")
 
 // SuiteVersion is an immutable logical version that may share artifact content.
 type SuiteVersion struct {

@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -85,6 +86,34 @@ func TestSuiteVersionEmptyInventoryDiffersFromAbsentCanonical(t *testing.T) {
 	}
 	if current, present := recorded.CurrentVersionID(); !present || current != version.ID() {
 		t.Error("supplied canonical reference was confused with the empty inventory")
+	}
+}
+
+func TestSuiteVersionRejectsInvalidInput(t *testing.T) {
+	manifest := mustManifest(t, nil)
+	tests := []struct {
+		name     string
+		project  contract.ProjectID
+		suite    contract.SuiteID
+		id       contract.SuiteVersionID
+		manifest artifact.Manifest
+	}{
+		{name: "empty project", suite: "suite-1", id: "version-1", manifest: manifest},
+		{name: "blank project", project: " \n", suite: "suite-1", id: "version-1", manifest: manifest},
+		{name: "empty suite", project: "project-1", id: "version-1", manifest: manifest},
+		{name: "blank suite", project: "project-1", suite: "\t", id: "version-1", manifest: manifest},
+		{name: "empty version", project: "project-1", suite: "suite-1", manifest: manifest},
+		{name: "blank version", project: "project-1", suite: "suite-1", id: "\u2003", manifest: manifest},
+		{name: "absent manifest", project: "project-1", suite: "suite-1", id: "version-1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := contract.NewSuiteVersion(tt.project, tt.suite, tt.id, tt.manifest)
+			if !errors.Is(err, contract.ErrInvalidSuiteVersion) {
+				t.Fatalf("NewSuiteVersion() error = %v, want ErrInvalidSuiteVersion", err)
+			}
+		})
 	}
 }
 

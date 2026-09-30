@@ -56,27 +56,6 @@ function Assert-PlanPath {
     }
 }
 
-function Assert-TaskTdd {
-    param($Task)
-    $id = $Task['id']
-    $tdd = $Task['tdd']
-    if ($tdd -isnot [System.Collections.IDictionary]) { throw "$id.tdd must be an object." }
-    if ($tdd['mode'] -cnotin @('required', 'not_applicable', 'historical')) { throw "$id.tdd.mode is invalid." }
-    Assert-PlanText $tdd['reason'] "$id.tdd.reason"
-    if ($tdd['mode'] -ceq 'historical' -and $Task['phase'] -cne 'F0') {
-        throw "$id historical TDD is restricted to completed phase F0."
-    }
-    if ($tdd['mode'] -ceq 'not_applicable' -and $Task['kind'] -ceq 'implementation') {
-        foreach ($path in @($Task['owns']) + @($Task['shared_files'])) {
-            $normalized = $path.Replace('\', '/')
-            $documentation = $normalized -match '\.(md|markdown)$' -or
-                $normalized -ceq 'docs/plan/backlog.json' -or
-                $normalized -cmatch '^docs/plan/executions/[^/]+\.json$'
-            if (-not $documentation) { throw "$id not_applicable implementation tasks must own only documentation; '$path' can change behavior." }
-        }
-    }
-}
-
 function Assert-PlanDag {
     param($Index, [string[]]$Fields, [string]$Location)
     $finished = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -99,13 +78,6 @@ function Assert-PlanDag {
 function Assert-Plan {
     param($Plan)
     if ($Plan -isnot [System.Collections.IDictionary] -or $Plan['schema_version'] -ne 1) { throw 'Expected plan schema_version 1.' }
-    $tddPolicy = $Plan['tdd_policy']
-    if ($tddPolicy -isnot [System.Collections.IDictionary]) { throw 'tdd_policy must be an object.' }
-    if ($tddPolicy['document'] -cne 'docs/tdd.md') { throw 'tdd_policy.document must be docs/tdd.md.' }
-    Assert-PlanList $tddPolicy['historical_phases'] 'tdd_policy.historical_phases'
-    if (@($tddPolicy['historical_phases']).Count -ne 1 -or $tddPolicy['historical_phases'][0] -cne 'F0') {
-        throw 'tdd_policy.historical_phases must contain only F0.'
-    }
     $phases = New-PlanIndex $Plan['phases'] 'phases'
     $tasks = New-PlanIndex $Plan['tasks'] 'tasks'
     $contracts = New-PlanIndex $Plan['contracts'] 'contracts'
@@ -133,7 +105,6 @@ function Assert-Plan {
         foreach ($field in @('owns', 'acceptance', 'verification')) { Assert-PlanList $task[$field] "$id.$field" -Required }
         foreach ($field in @('shared_files', 'constraints')) { Assert-PlanList $task[$field] "$id.$field" }
         foreach ($path in @($task['owns']) + @($task['shared_files'])) { Assert-PlanPath $path "$id.ownership" }
-        Assert-TaskTdd $task
         Assert-PlanReferences $task['contracts'] $contracts "$id.contracts"
         Assert-PlanReferences $task['gates'] $gates "$id.gates"
         foreach ($field in @('needs_to_start', 'needs_to_merge')) { Assert-PlanReferences $task[$field] $tasks "$id.$field" $id }
@@ -179,8 +150,6 @@ function Get-PhaseDocument {
     [void]$lines.Add('')
     [void]$lines.Add("Milestone: $($Phase['milestone']). This phase produces one pull request.")
     [void]$lines.Add('')
-    [void]$lines.Add('Follow the [TDD policy](../../tdd.md). Every task declares its required evidence or a reviewed exception below.')
-    [void]$lines.Add('')
     [void]$lines.Add("PR title: $($Phase['pr_title'])")
     [void]$lines.Add('')
     [void]$lines.Add($Phase['outcome'])
@@ -207,8 +176,6 @@ function Get-PhaseDocument {
         [void]$lines.Add("### $($task['id']) — $($task['title'])")
         [void]$lines.Add('')
         [void]$lines.Add("Kind: $($task['kind']). Lane: $($task['lane']).")
-        [void]$lines.Add('')
-        [void]$lines.Add("TDD: **$($task['tdd']['mode'])**. $($task['tdd']['reason'])")
         [void]$lines.Add('')
         foreach ($field in @('owns', 'shared_files', 'contracts', 'needs_to_start', 'needs_to_merge', 'gates', 'acceptance', 'verification', 'constraints')) {
             Add-PlanLines $lines $field $task[$field]

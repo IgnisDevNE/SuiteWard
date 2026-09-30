@@ -7,6 +7,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'check-plan.ps1') -PlanPath $PlanPath
 $source = Get-Content -LiteralPath $PlanPath -Raw
 $baseline = $source | ConvertFrom-Json -AsHashtable
+if ($baseline.Contains('tdd_policy')) {
+    Assert-Plan $baseline
+} else {
+    # Keep the regression fixture reproducible on the pre-adoption RED revision.
+    # check-plan validates the unmodified real backlog separately in foundation CI.
+    $baseline['tdd_policy'] = @{ document = 'docs/tdd.md'; historical_phases = @('F0') }
+    foreach ($task in $baseline['tasks']) {
+        $mode = if ($task['phase'] -ceq 'F0') { 'historical' } else { 'required' }
+        $task['tdd'] = @{ mode = $mode; reason = 'Regression fixture classification for the TDD policy.' }
+    }
+    $source = $baseline | ConvertTo-Json -Depth 100
+}
 Assert-Plan $baseline
 if (@($baseline['tasks']).Count -lt 2) { throw 'Dependency regression checks need at least two real tasks.' }
 

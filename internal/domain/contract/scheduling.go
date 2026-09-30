@@ -193,7 +193,38 @@ func (s Schedule) PendingTransfer() (PriorityCommand, bool) {
 }
 func (s Schedule) Results() []PriorityResult { return slices.Clone(s.results) }
 func (s Schedule) ResolveTransfer(request OperationID, expectedGeneration ScheduleGeneration, resolution TransferResolution) (Schedule, error) {
-	return s, nil
+	if s.IsZero() || strings.TrimSpace(string(request)) == "" || resolution < TransferUnresolved || resolution > FormerMerged {
+		return s, ErrInvalidSchedule
+	}
+	if expectedGeneration == 0 || expectedGeneration != s.generation {
+		return s, ErrStaleSchedule
+	}
+	if s.pending.OperationID() == "" || s.pending.OperationID() != request {
+		return s, ErrScheduleConflict
+	}
+	if resolution == TransferUnresolved {
+		return s, nil
+	}
+	active, _ := s.Active()
+	former := s.entryIndex(active.proposal, active.carrier)
+	target := s.entryIndex(s.pending.ProposalID(), s.pending.Carrier())
+	if resolution == FormerUnmergedWithdrawn && (active.state != ScheduleActive || s.entries[target].state != ScheduleWaiting) {
+		return s, ErrScheduleConflict
+	}
+	if s.generation == ScheduleGeneration(math.MaxUint64) {
+		return s, ErrScheduleGenerationExhausted
+	}
+	next := s
+	next.entries = slices.Clone(s.entries)
+	next.pending = PriorityCommand{}
+	next.generation++
+	if resolution == FormerMerged {
+		next.entries[former].state = ScheduleIntegratedPending
+	} else {
+		next.entries[former].state = ScheduleWaiting
+		next.entries[target].state = ScheduleActive
+	}
+	return next, nil
 }
 func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Schedule, PriorityResult, error) {
 	if command.OperationID() == "" {

@@ -44,13 +44,31 @@
       ]
     },
     {
+      "id": "F0.02",
+      "milestone": "Foundation",
+      "title": "Restore TDD checkpoint ancestry",
+      "pr_title": "docs: restore TDD checkpoint ancestry after squash integration",
+      "outcome": "Preserve the original observed TDD checkpoints in main history after the squash of PR 4, with no validator or implementation change.",
+      "merge_after": [
+        "F0.01"
+      ],
+      "contracts": [],
+      "gates": [],
+      "exit_criteria": [
+        "The ancestry merge alone has the same tree as the squash commit; original F0.01 evidence is unchanged.",
+        "All six original RED/GREEN checkpoints are ancestors of the final main revision.",
+        "The recovery phase contains documentation only and has independently reviewed non-applicability evidence.",
+        "The user authorizes a merge commit that retains original ancestry; final main Windows/Linux and TDD checks pass before product implementation."
+      ]
+    },
+    {
       "id": "M0.01",
       "milestone": "M0",
       "title": "Immutable contract values",
       "pr_title": "feat: establish immutable contract values",
       "outcome": "Real, tested Go domain values for deterministic artifact identity, immutable canonical snapshots, and the MVP authority boundary.",
       "merge_after": [
-        "F0.01"
+        "F0.02"
       ],
       "contracts": [
         "M0-C1"
@@ -775,7 +793,7 @@
         "internal/domain/artifact/manifest_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -819,7 +837,7 @@
         "internal/domain/contract/policy_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -863,7 +881,7 @@
         "internal/domain/contract/version_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -910,7 +928,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.01-C0"
       ],
       "needs_to_merge": [
@@ -998,7 +1016,7 @@
         "internal/domain/contract/binding_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -1045,7 +1063,7 @@
         "internal/domain/contract/command_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -1092,7 +1110,7 @@
         "internal/domain/contract/evidence_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -1135,7 +1153,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.02-C0"
       ],
       "needs_to_merge": [
@@ -1220,7 +1238,7 @@
         "internal/domain/contract/audit_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1269,7 +1287,7 @@
         "internal/domain/contract/correction_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1314,7 +1332,7 @@
         "internal/domain/contract/scheduling_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1361,7 +1379,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.03-C0"
       ],
       "needs_to_merge": [
@@ -1449,7 +1467,7 @@
         "internal/application/governance/bootstrap_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.04-C0"
       ],
       "needs_to_merge": [
@@ -1496,7 +1514,7 @@
         "internal/application/governance/consent_test.go"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.04-C0"
       ],
       "needs_to_merge": [
@@ -1546,7 +1564,7 @@
         "docs/plan/m0-contracts.md"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M0.04-C0"
       ],
       "needs_to_merge": [
@@ -1633,7 +1651,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1676,7 +1694,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1714,7 +1732,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1760,7 +1778,7 @@
         "M1-C01"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.01-C0"
       ],
       "needs_to_merge": [
@@ -1844,7 +1862,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -1884,7 +1902,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -1928,7 +1946,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -1974,7 +1992,7 @@
         "M1-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.02-C0"
       ],
       "needs_to_merge": [
@@ -2056,7 +2074,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -2095,7 +2113,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -2136,7 +2154,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -2176,7 +2194,7 @@
         "M1-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.03-C0"
       ],
       "needs_to_merge": [
@@ -2264,7 +2282,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2304,7 +2322,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2344,7 +2362,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2391,7 +2409,7 @@
         "M1-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.04-C0"
       ],
       "needs_to_merge": [
@@ -2474,7 +2492,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2515,7 +2533,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2555,7 +2573,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2602,7 +2620,7 @@
         "M1-C05"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.05-C0"
       ],
       "needs_to_merge": [
@@ -2688,7 +2706,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2731,7 +2749,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2776,7 +2794,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2821,7 +2839,7 @@
         "M1-C06"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.06-C0"
       ],
       "needs_to_merge": [
@@ -2910,7 +2928,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -2951,7 +2969,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -2993,7 +3011,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -3037,7 +3055,7 @@
         "M1-C07"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.07-C0"
       ],
       "needs_to_merge": [
@@ -3125,7 +3143,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -3169,7 +3187,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -3212,7 +3230,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -3260,7 +3278,7 @@
         "M1-C08"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.08-C0"
       ],
       "needs_to_merge": [
@@ -3346,7 +3364,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3389,7 +3407,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3433,7 +3451,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3478,7 +3496,7 @@
         "M1-C09"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.09-C0"
       ],
       "needs_to_merge": [
@@ -3566,7 +3584,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3614,7 +3632,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3659,7 +3677,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3707,7 +3725,7 @@
         "M1-C10"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.10-C0"
       ],
       "needs_to_merge": [
@@ -3800,7 +3818,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -3842,7 +3860,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -3891,7 +3909,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -3938,7 +3956,7 @@
         "M1-C11"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M1.11-C0"
       ],
       "needs_to_merge": [
@@ -4130,7 +4148,7 @@
         "M2-C01"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.01-C0"
       ],
       "needs_to_merge": [
@@ -4210,7 +4228,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -4249,7 +4267,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -4291,7 +4309,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -4330,7 +4348,7 @@
         "M2-C02"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.02-C0"
       ],
       "needs_to_merge": [
@@ -4416,7 +4434,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4455,7 +4473,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4494,7 +4512,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4539,7 +4557,7 @@
         "M2-C03"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.03-C0"
       ],
       "needs_to_merge": [
@@ -4622,7 +4640,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4663,7 +4681,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4706,7 +4724,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4750,7 +4768,7 @@
         "M2-C04"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M2.04-C0"
       ],
       "needs_to_merge": [
@@ -4938,7 +4956,7 @@
         "M3-C01"
       ],
       "needs_to_start": [
-        "F0.01-I",
+        "F0.02-I",
         "M3.01-C0"
       ],
       "needs_to_merge": [
@@ -5128,6 +5146,84 @@
       "tdd": {
         "mode": "required",
         "reason": "Behavioral validation and CI changes require observed RED/GREEN evidence and independent review."
+      }
+    },
+    {
+      "id": "F0.02-A",
+      "phase": "F0.02",
+      "title": "Document and verify the ancestry-preserving recovery",
+      "kind": "contract",
+      "lane": "policy",
+      "owns": [
+        "AGENTS.md",
+        ".github/pull_request_template.md",
+        "docs/tdd.md",
+        "docs/plan/README.md",
+        "docs/plan/backlog.json",
+        "docs/plan/phases/*.md"
+      ],
+      "shared_files": [],
+      "contracts": [],
+      "needs_to_start": [
+        "F0.01-A"
+      ],
+      "needs_to_merge": [
+        "F0.01-A"
+      ],
+      "gates": [],
+      "acceptance": [
+        "Record the actual squash and the requirement to preserve original checkpoint commits.",
+        "Keep original evidence and implementation unchanged; direct new implementation to the recovered foundation.",
+        "Make the merge method explicit in contributor and PR guidance."
+      ],
+      "verification": [
+        "Compare the ancestry merge tree with c0f173deb6d2bd7ef577b6e8ce5d6acbee391a82.",
+        "Check every F0.01 checkpoint ancestor and compare its behavioral files; validate documentation and generated plan pages."
+      ],
+      "constraints": [
+        "Do not rewrite main, relax the validator, replace evidence SHAs, or claim a replay was the original observation."
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "Only policy, plan and documentation change. A real merge retains existing verified commits; no executable behavior is introduced or modified."
+      }
+    },
+    {
+      "id": "F0.02-I",
+      "phase": "F0.02",
+      "title": "Integrate recovery with original checkpoint ancestry",
+      "kind": "integration",
+      "lane": "integration",
+      "owns": [
+        "docs/plan/executions/F0.02.json"
+      ],
+      "shared_files": [],
+      "contracts": [],
+      "needs_to_start": [
+        "F0.02-A"
+      ],
+      "needs_to_merge": [
+        "F0.02-A",
+        "F0.01-B",
+        "F0.01-C"
+      ],
+      "gates": [],
+      "acceptance": [
+        "Publish one draft recovery PR through the bot and record independent review.",
+        "Integrate only after explicit user authorization, using a merge commit rather than squash or rebase.",
+        "Verify all original checkpoints against exact final main, beyond the documentation-only recovery check."
+      ],
+      "verification": [
+        "Run the phase evidence check against the squash baseline and hosted Windows/Linux checks.",
+        "After authorized merge, inspect final main CI and ancestry of the original six recorded checkpoints."
+      ],
+      "constraints": [
+        "The documentation-only phase check alone cannot detect another squash; original checkpoint ancestry must be checked explicitly.",
+        "No automatic main merge or personal-account repository writes."
+      ],
+      "tdd": {
+        "mode": "not_applicable",
+        "reason": "This task records and integrates the documented ancestry repair; the original implementation and TDD validator remain byte-identical."
       }
     }
   ],

@@ -27,4 +27,6 @@ All GitHub writes use the authorized bot, within its granted permissions. Verify
 
 The user authorizes each merge into `main`. Passing CI, a prepared PR, or a bot capability does not grant that authorization. Comments and messages to other people require explicit authorization beyond preparing a PR.
 
+Use **Create a merge commit** for phase PRs. Squash and rebase replace the checkpoint commits referenced by TDD evidence. Verify those checkpoints remain ancestors of the resulting main revision; a green documentation-only recovery PR does not establish that preservation by itself.
+
 Report behavior changed, checks and exact revision tested, remaining limitations, and any blocked publication honestly. Follow [task evidence](docs/plan/task-evidence-template.md).

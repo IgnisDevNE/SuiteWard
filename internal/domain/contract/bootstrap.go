@@ -25,5 +25,13 @@ func DecideBootstrap(input BootstrapInput) (PromotionDecision, error) {
 	if _, present := context.Canonical.Suite().CurrentVersionID(); present {
 		return blockedPromotion(PromotionReasonCanonicalPresent), nil
 	}
-	return CheckPromotionReadiness(context, context.Proposal.Current().Origin())
+	if input.Mode == FirstTestBootstrap && input.Promotion.Integration.IsZero() {
+		return CheckPromotionReadiness(context, context.Proposal.Current().Origin())
+	}
+	if !input.Promotion.Integration.IsZero() &&
+		((input.Mode == ExistingBaselineBootstrap && input.Promotion.Integration.Kind() != IntegrationExistingBaseline) ||
+			(input.Mode == FirstTestBootstrap && input.Promotion.Integration.Kind() != IntegrationMergedChange)) {
+		return blockedPromotion(PromotionReasonIntegrationMismatch), nil
+	}
+	return DecidePromotion(input.Promotion)
 }

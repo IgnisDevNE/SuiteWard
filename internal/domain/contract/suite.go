@@ -1,6 +1,9 @@
 package contract
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrInvalidSuite identifies invalid suite snapshot input.
 var ErrInvalidSuite = errors.New("invalid suite")
@@ -22,7 +25,14 @@ type Suite struct {
 	revision StateRevision
 }
 
+// NewSuite reconstitutes supplied state; it does not authorize canonical promotion.
 func NewSuite(project ProjectID, id SuiteID, current SuiteVersionID, revision StateRevision) (Suite, error) {
+	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(id)) == "" {
+		return Suite{}, ErrInvalidSuite
+	}
+	if current != "" && strings.TrimSpace(string(current)) == "" {
+		return Suite{}, ErrInvalidSuite
+	}
 	return Suite{project: project, id: id, current: current, revision: revision}, nil
 }
 

@@ -1,5 +1,10 @@
 package contract
 
+import "errors"
+
+// ErrInvalidSuite identifies invalid suite snapshot input.
+var ErrInvalidSuite = errors.New("invalid suite")
+
 // SuiteID identifies a suite independently of its source provider.
 type SuiteID string
 

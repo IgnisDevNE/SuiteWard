@@ -32,7 +32,15 @@ type PriorityCommandInput struct {
 type PriorityCommand struct{ input PriorityCommandInput }
 
 func NewPriorityCommand(input PriorityCommandInput) (PriorityCommand, error) {
-	return PriorityCommand{}, nil
+	for _, id := range []string{string(input.OperationID), string(input.SourceCommandID), string(input.ProjectID), string(input.SuiteID), string(input.ProposalID), string(input.Carrier)} {
+		if strings.TrimSpace(id) == "" {
+			return PriorityCommand{}, ErrInvalidPriorityCommand
+		}
+	}
+	if input.Actor.ID() == "" || input.Order == 0 {
+		return PriorityCommand{}, ErrInvalidPriorityCommand
+	}
+	return PriorityCommand{input: input}, nil
 }
 func (c PriorityCommand) OperationID() OperationID         { return c.input.OperationID }
 func (c PriorityCommand) SourceCommandID() SourceCommandID { return c.input.SourceCommandID }
@@ -155,7 +163,7 @@ func (s Schedule) Admit(proposal Proposal, contractChanging bool) (Schedule, err
 	return next, nil
 }
 func (s Schedule) CanPromote(proposal Proposal, expectedGeneration ScheduleGeneration) bool {
-	if s.IsZero() || proposal.IsZero() || expectedGeneration == 0 || expectedGeneration != s.generation {
+	if s.IsZero() || proposal.IsZero() || expectedGeneration == 0 || expectedGeneration != s.generation || s.pending.OperationID() != "" {
 		return false
 	}
 	ref := proposal.Current().Binding().Reference()
@@ -177,7 +185,55 @@ func (s Schedule) PendingTransfer() (PriorityCommand, bool) {
 }
 func (s Schedule) Results() []PriorityResult { return slices.Clone(s.results) }
 func (s Schedule) RequestPriority(governing Policy, command PriorityCommand) (Schedule, PriorityResult, error) {
-	return s, PriorityResult{}, nil
+	if command.OperationID() == "" {
+		return s, PriorityResult{}, ErrInvalidPriorityCommand
+	}
+	if s.IsZero() {
+		return s, PriorityResult{}, ErrInvalidSchedule
+	}
+	if governing.ProjectID() != s.project || command.ProjectID() != s.project || command.SuiteID() != s.suite {
+		return s, PriorityResult{}, ErrScheduleContextMismatch
+	}
+	if !governing.CanRequestPriority(command.Actor()) {
+		return s.rejectPriority(command, PriorityReasonUnauthorized)
+	}
+	i := s.entryIndex(command.ProposalID(), command.Carrier())
+	if i < 0 {
+		return s.rejectPriority(command, PriorityReasonUnknownTarget)
+	}
+	state := s.entries[i].state
+	if state == ScheduleClosed {
+		return s.rejectPriority(command, PriorityReasonClosedTarget)
+	}
+	if state == ScheduleIntegratedPending || state == SchedulePromoted {
+		return s.rejectPriority(command, PriorityReasonMergedTarget)
+	}
+	if s.pending.OperationID() != "" {
+		return s.rejectPriority(command, PriorityReasonTransferPending)
+	}
+	result := PriorityResult{command: command, outcome: PriorityAlreadyActive}
+	if state == ScheduleActive {
+		return s.recordPriority(result), result, nil
+	}
+	if s.generation == ScheduleGeneration(math.MaxUint64) {
+		return s, PriorityResult{}, ErrScheduleGenerationExhausted
+	}
+	result.outcome = PriorityRequested
+	next := s.recordPriority(result)
+	next.pending = command
+	next.generation++
+	return next, result, nil
+}
+
+func (s Schedule) recordPriority(result PriorityResult) Schedule {
+	next := s
+	next.results = append(slices.Clone(s.results), result)
+	return next
+}
+
+func (s Schedule) rejectPriority(command PriorityCommand, reason PriorityReason) (Schedule, PriorityResult, error) {
+	result := PriorityResult{command: command, outcome: PriorityRejected, reason: reason}
+	return s.recordPriority(result), result, nil
 }
 
 func (s Schedule) Observe(proposal Proposal, expectedGeneration ScheduleGeneration, observation ScheduleObservation) (Schedule, error) {
@@ -196,6 +252,9 @@ func (s Schedule) Observe(proposal Proposal, expectedGeneration ScheduleGenerati
 	}
 	previous := s.entries[i].state
 	active := previous == ScheduleActive || previous == ScheduleIntegratedPending
+	if active && s.pending.OperationID() != "" {
+		return s, ErrScheduleConflict
+	}
 	var desired ScheduleEntryState
 	switch observation {
 	case ObserveIntegrated:

@@ -1,6 +1,9 @@
 package contract
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrInvalidIntegrityAssessment identifies an incomplete expected context.
 var ErrInvalidIntegrityAssessment = errors.New("invalid integrity assessment")
@@ -30,7 +33,12 @@ type IntegrityAssessment struct {
 	assurance AssuranceLevel
 }
 
+// AssessIntegrity compares exact context before interpreting the observation.
+// Its result supplies integrity evidence, never consent or promotion authority.
 func AssessIntegrity(expectedSource SourceRevision, expectedBinding ApprovalBinding, evidence *IntegrityEvidence) (IntegrityAssessment, error) {
+	if strings.TrimSpace(string(expectedSource)) == "" || expectedBinding.IsZero() {
+		return IntegrityAssessment{}, ErrInvalidIntegrityAssessment
+	}
 	assessment := IntegrityAssessment{
 		source: expectedSource, binding: expectedBinding,
 		reason: IntegrityReasonMissing, assurance: IntegrityOnly,

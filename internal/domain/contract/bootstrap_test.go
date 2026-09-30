@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -143,5 +144,69 @@ func TestBootstrapFirstTestsReadinessRequiresRealAuthority(t *testing.T) {
 				t.Fatal("blocked bootstrap returned a canonical effect")
 			}
 		})
+	}
+}
+
+func TestBootstrapRejectsMalformedLifecycleInput(t *testing.T) {
+	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
+	context := lifecycleContext(t, lifecycleAbsent(t), manifest, "first-tests", "first-pr", "candidate", "candidate")
+	cases := []struct {
+		name   string
+		change func(*contract.BootstrapInput)
+	}{
+		{"absent mode", func(i *contract.BootstrapInput) { i.Mode = 0 }},
+		{"unknown mode", func(i *contract.BootstrapInput) { i.Mode = 99 }},
+		{"absent canonical snapshot", func(i *contract.BootstrapInput) { i.Promotion.Context.Canonical = contract.CanonicalSnapshot{} }},
+		{"absent proposal", func(i *contract.BootstrapInput) { i.Promotion.Context.Proposal = contract.Proposal{} }},
+		{"absent proposed inventory", func(i *contract.BootstrapInput) { i.Promotion.Context.Proposed = contract.ProtectedContract{} }},
+		{"correction attribution", func(i *contract.BootstrapInput) { i.Promotion.CorrectsVersionID = "old-version" }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			input := contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: contract.PromotionInput{Context: context}}
+			test.change(&input)
+			decision, err := contract.DecideBootstrap(input)
+			if !errors.Is(err, contract.ErrInvalidBootstrap) {
+				t.Fatalf("invalid bootstrap returned outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+			}
+			if _, ok := decision.Effect(); ok {
+				t.Fatal("invalid bootstrap created an effect")
+			}
+		})
+	}
+}
+
+func TestBootstrapRequiresAbsentCanonicalEvenWithFreshApproval(t *testing.T) {
+	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/existing.go", Content: artifact.Hash([]byte("existing test"))})
+	version := lifecycleVersion(t, "project", "suite", "existing-version", manifest)
+	record := lifecycleRecord(t, lifecycleRecordInput(t, version, "old-proposal", "old-pr"))
+	canonical := lifecycleEstablished(t, version, record)
+	proposed := lifecycleManifest(t, artifact.Entry{Path: "tests/new.go", Content: artifact.Hash([]byte("new test"))})
+	context := lifecycleContext(t, canonical, proposed, "fresh-proposal", "fresh-pr", "candidate", "candidate")
+	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: lifecycleInput(context)})
+	if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != contract.PromotionReasonCanonicalPresent {
+		t.Fatalf("bootstrap replaced established canonical: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+	}
+	if _, ok := decision.Effect(); ok {
+		t.Fatal("bootstrap proposed an effect over existing canonical")
+	}
+	// The same approved contract still expects the existing baseline if its
+	// caller instead supplies an absent canonical snapshot.
+	context.Canonical = lifecycleAbsent(t)
+	context.ExpectedStateRevision = context.Canonical.Suite().Revision()
+	decision, err = contract.DecideBootstrap(contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: lifecycleInput(context)})
+	if err != nil || decision.Reason() != contract.PromotionReasonCanonicalChanged {
+		t.Fatalf("expected-present approval became initial authority: reason=%v error=%v", decision.Reason(), err)
+	}
+}
+
+func TestBootstrapEmptyInventoryCannotEstablishContract(t *testing.T) {
+	context := lifecycleContext(t, lifecycleAbsent(t), lifecycleManifest(t), "empty-proposal", "empty-pr", "candidate", "candidate")
+	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: lifecycleInput(context)})
+	if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != contract.PromotionReasonEmptyInventory {
+		t.Fatalf("empty inventory became a ready initial contract: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+	}
+	if _, ok := decision.Effect(); ok {
+		t.Fatal("empty inventory created canonical effect")
 	}
 }

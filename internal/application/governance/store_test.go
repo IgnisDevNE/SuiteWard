@@ -106,6 +106,9 @@ func (s *referenceStore) Load(ctx context.Context, request ReadRequest) (Snapsho
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
+	if s.failAt == "load" {
+		return Snapshot{}, errReferenceFailure
+	}
 	state := s.state
 	suite := state.canonical.Suite()
 	if request.Reference.ProjectID != suite.ProjectID() || request.Reference.SuiteID != suite.ID() {
@@ -166,13 +169,34 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 		return err
 	}
 	receipt := OperationReceipt{Kind: write.Receipt.Identity.Kind, Promotion: write.Receipt}
-	next.canonical = canonical
 	next.versions[effect.Version().ID()] = effect.Version()
+	if s.failAt == "version" {
+		return errReferenceFailure
+	}
+	next.canonical = canonical
+	if s.failAt == "pointer" {
+		return errReferenceFailure
+	}
 	next.promotions[effect.Version().ID()] = effect.Promotion()
+	if s.failAt == "promotion" {
+		return errReferenceFailure
+	}
 	next.operations[effect.Promotion().OperationID()] = receipt
+	if s.failAt == "receipt" {
+		return errReferenceFailure
+	}
 	next.audits = append(next.audits, receipt)
-	next.publications = append(next.publications, effect.Publication())
+	if s.failAt == "audit" {
+		return errReferenceFailure
+	}
 	next.scheduling = write.Scheduling
+	if s.failAt == "schedule" {
+		return errReferenceFailure
+	}
+	next.publications = append(next.publications, effect.Publication())
+	if s.failAt == "publication" {
+		return errReferenceFailure
+	}
 	s.state = next
 	return nil
 }
@@ -196,10 +220,22 @@ func (s *referenceStore) CommitConsent(ctx context.Context, fence AuthorityFence
 	}
 	receipt := OperationReceipt{Kind: OperationConsent, Consent: write.Receipt}
 	next.consents[write.Command.Reference().ProposalID] = write.Consent
+	if s.failAt == "consent" {
+		return errReferenceFailure
+	}
 	next.operations[write.Command.OperationID()] = receipt
 	next.sources[write.Command.SourceCommandID()] = receipt
+	if s.failAt == "receipt" {
+		return errReferenceFailure
+	}
 	next.audits = append(next.audits, receipt)
+	if s.failAt == "audit" {
+		return errReferenceFailure
+	}
 	next.acknowledgments = append(next.acknowledgments, write.Receipt)
+	if s.failAt == "acknowledgment" {
+		return errReferenceFailure
+	}
 	s.state = next
 	return nil
 }

@@ -16,9 +16,12 @@ import (
 
 // referenceStore is a test model, not a production persistence option.
 type referenceStore struct {
-	mu    sync.Mutex
-	state referenceState
+	mu     sync.Mutex
+	state  referenceState
+	failAt string
 }
+
+var errReferenceFailure = errors.New("injected reference store failure")
 
 type assessmentKey struct {
 	reference contract.ProposalReference
@@ -103,6 +106,9 @@ func (s *referenceStore) Load(ctx context.Context, request ReadRequest) (Snapsho
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
+	if s.failAt == "load" {
+		return Snapshot{}, errReferenceFailure
+	}
 	state := s.state
 	suite := state.canonical.Suite()
 	if request.Reference.ProjectID != suite.ProjectID() || request.Reference.SuiteID != suite.ID() {
@@ -163,13 +169,34 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 		return err
 	}
 	receipt := OperationReceipt{Kind: write.Receipt.Identity.Kind, Promotion: write.Receipt}
-	next.canonical = canonical
 	next.versions[effect.Version().ID()] = effect.Version()
+	if s.failAt == "version" {
+		return errReferenceFailure
+	}
+	next.canonical = canonical
+	if s.failAt == "pointer" {
+		return errReferenceFailure
+	}
 	next.promotions[effect.Version().ID()] = effect.Promotion()
+	if s.failAt == "promotion" {
+		return errReferenceFailure
+	}
 	next.operations[effect.Promotion().OperationID()] = receipt
+	if s.failAt == "receipt" {
+		return errReferenceFailure
+	}
 	next.audits = append(next.audits, receipt)
-	next.publications = append(next.publications, effect.Publication())
+	if s.failAt == "audit" {
+		return errReferenceFailure
+	}
 	next.scheduling = write.Scheduling
+	if s.failAt == "schedule" {
+		return errReferenceFailure
+	}
+	next.publications = append(next.publications, effect.Publication())
+	if s.failAt == "publication" {
+		return errReferenceFailure
+	}
 	s.state = next
 	return nil
 }
@@ -193,10 +220,22 @@ func (s *referenceStore) CommitConsent(ctx context.Context, fence AuthorityFence
 	}
 	receipt := OperationReceipt{Kind: OperationConsent, Consent: write.Receipt}
 	next.consents[write.Command.Reference().ProposalID] = write.Consent
+	if s.failAt == "consent" {
+		return errReferenceFailure
+	}
 	next.operations[write.Command.OperationID()] = receipt
 	next.sources[write.Command.SourceCommandID()] = receipt
+	if s.failAt == "receipt" {
+		return errReferenceFailure
+	}
 	next.audits = append(next.audits, receipt)
+	if s.failAt == "audit" {
+		return errReferenceFailure
+	}
 	next.acknowledgments = append(next.acknowledgments, write.Receipt)
+	if s.failAt == "acknowledgment" {
+		return errReferenceFailure
+	}
 	s.state = next
 	return nil
 }
@@ -373,4 +412,64 @@ func TestReferenceStorePromotionCommit(t *testing.T) {
 	if err != nil || loaded.Operation.Kind != OperationPromote || loaded.History.Version().ID() != f.request.NewVersionID || loaded.HistoricalPromotion.VersionID() != f.request.NewVersionID {
 		t.Fatalf("promotion history or receipt missing: %+v %v", loaded, err)
 	}
+}
+
+func TestReferenceStoreFaultAtomicity(t *testing.T) {
+	for _, point := range []string{"version", "pointer", "promotion", "receipt", "audit", "schedule", "publication"} {
+		t.Run("promotion/"+point, func(t *testing.T) {
+			f := newStoreFixture(t)
+			f.snapshot.Consent = f.consentWrite(t).Consent
+			s := newReferenceStore(t, f.snapshot)
+			before := s.inspect()
+			s.failAt = point
+			write := f.promotionWrite(t)
+			if err := s.CommitPromotion(context.Background(), f.snapshot.Fence, write); !errors.Is(err, errReferenceFailure) {
+				t.Fatalf("failure at %s not surfaced: %v", point, err)
+			}
+			if !reflect.DeepEqual(before, s.inspect()) {
+				t.Fatalf("failure at %s leaked partial promotion effects", point)
+			}
+			s.failAt = ""
+			if err := s.CommitPromotion(context.Background(), f.snapshot.Fence, write); err != nil {
+				t.Fatal(err)
+			}
+			if state := s.inspect(); len(state.operations) != 1 || len(state.publications) != 1 {
+				t.Fatal("failed commit consumed identity or duplicated publication")
+			}
+		})
+	}
+	for _, point := range []string{"consent", "receipt", "audit", "acknowledgment"} {
+		t.Run("consent/"+point, func(t *testing.T) {
+			f := newStoreFixture(t)
+			s := newReferenceStore(t, f.snapshot)
+			before := s.inspect()
+			s.failAt = point
+			write := f.consentWrite(t)
+			if err := s.CommitConsent(context.Background(), f.snapshot.Fence, write); !errors.Is(err, errReferenceFailure) {
+				t.Fatalf("failure at %s not surfaced: %v", point, err)
+			}
+			if !reflect.DeepEqual(before, s.inspect()) {
+				t.Fatalf("failure at %s leaked consent, audit or acknowledgment", point)
+			}
+			s.failAt = ""
+			if err := s.CommitConsent(context.Background(), f.snapshot.Fence, write); err != nil {
+				t.Fatal(err)
+			}
+			if state := s.inspect(); len(state.operations) != 1 || len(state.acknowledgments) != 1 {
+				t.Fatal("failed commit consumed identity or duplicated acknowledgment")
+			}
+		})
+	}
+	t.Run("load", func(t *testing.T) {
+		f := newStoreFixture(t)
+		s := newReferenceStore(t, f.snapshot)
+		before := s.inspect()
+		s.failAt = "load"
+		if got, err := s.Load(context.Background(), ReadRequest{Reference: f.request.Reference}); !errors.Is(err, errReferenceFailure) || !reflect.DeepEqual(got, Snapshot{}) {
+			t.Fatalf("load failure returned authority: %v", err)
+		}
+		if !reflect.DeepEqual(before, s.inspect()) {
+			t.Fatal("failed load mutated authority")
+		}
+	})
 }

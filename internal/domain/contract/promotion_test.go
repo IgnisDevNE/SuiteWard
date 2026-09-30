@@ -550,3 +550,69 @@ func TestPromotionReadinessRequiresActualCurrentConsent(t *testing.T) {
 	decision, err = contract.CheckPromotionReadiness(context, "integrated-source")
 	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonContextMismatch)
 }
+
+func promotionCopyBindingInput(binding contract.ApprovalBinding) contract.BindingInput {
+	return contract.BindingInput{Reference:binding.Reference(),ExpectedCanonical:binding.ExpectedCanonical(),Manifest:binding.ManifestDigest(),Scope:binding.ScopeDigest(),PolicyRevision:binding.PolicyRevisionID(),CoveredInputs:binding.CoveredInputs()}
+}
+
+func promotionAssessment(t *testing.T, source contract.SourceRevision, binding contract.ApprovalBinding, outcome contract.IntegrityOutcome) contract.IntegrityAssessment {
+	t.Helper()
+	var evidence *contract.IntegrityEvidence
+	if outcome!=0 {value,err:=contract.NewIntegrityEvidence("emitter",source,binding,outcome);if err!=nil{t.Fatal(err)};evidence=&value}
+	value,err:=contract.AssessIntegrity(source,binding,evidence)
+	if err!=nil {t.Fatal(err)}
+	return value
+}
+
+func TestPromotionReadinessRejectsInvalidStructure(t *testing.T) {
+	for name,change:=range map[string]func(*contract.PromotionContext){
+		"canonical":func(c *contract.PromotionContext){c.Canonical=contract.CanonicalSnapshot{}},
+		"protected":func(c *contract.PromotionContext){c.Proposed=contract.ProtectedContract{}},
+		"proposal":func(c *contract.PromotionContext){c.Proposal=contract.Proposal{}},
+		"reference project":func(c *contract.PromotionContext){c.Reference.ProjectID=""},
+		"reference suite":func(c *contract.PromotionContext){c.Reference.SuiteID="\t"},
+		"reference proposal":func(c *contract.PromotionContext){c.Reference.ProposalID=""},
+		"reference revision":func(c *contract.PromotionContext){c.Reference.RevisionID=" "},
+		"carrier":func(c *contract.PromotionContext){c.Carrier=""},
+		"blank carrier":func(c *contract.PromotionContext){c.Carrier=" \n"},
+		"policy":func(c *contract.PromotionContext){c.Policy=contract.Policy{}},
+	}{t.Run(name,func(t *testing.T){c:=promotionContext(t);change(&c);decision,err:=contract.CheckPromotionReadiness(c,"integrated-source");if !errors.Is(err,contract.ErrInvalidPromotion)||decision.Outcome()!=0{t.Fatalf("invalid structure accepted: outcome=%v err=%v",decision.Outcome(),err)}})}
+	for _,source:=range []contract.SourceRevision{""," \n"}{decision,err:=contract.CheckPromotionReadiness(promotionContext(t),source);if !errors.Is(err,contract.ErrInvalidPromotion)||decision.Outcome()!=0{t.Fatalf("invalid required source accepted: %v",err)}}
+}
+
+func TestPromotionReadinessRequiresExactCurrentContext(t *testing.T) {
+	for _,test:=range []struct{name string;change func(*contract.PromotionContext);reason contract.PromotionReason}{
+		{"wrong reference project",func(c *contract.PromotionContext){c.Reference.ProjectID="other"},contract.PromotionReasonContextMismatch},
+		{"wrong reference suite",func(c *contract.PromotionContext){c.Reference.SuiteID="other"},contract.PromotionReasonContextMismatch},
+		{"wrong reference proposal",func(c *contract.PromotionContext){c.Reference.ProposalID="other"},contract.PromotionReasonContextMismatch},
+		{"wrong carrier",func(c *contract.PromotionContext){c.Carrier="other"},contract.PromotionReasonContextMismatch},
+		{"unknown revision",func(c *contract.PromotionContext){c.Reference.RevisionID="unknown"},contract.PromotionReasonProposalNotCurrent},
+		{"superseded revision",func(c *contract.PromotionContext){input:=promotionCopyBindingInput(c.Proposal.Current().Binding());input.Reference.RevisionID="r2";revision,err:=contract.NewProposalRevision(promotionBinding(t,input),"new-origin",c.Carrier);if err!=nil{t.Fatal(err)};c.Proposal,err=c.Proposal.Revise(revision);if err!=nil{t.Fatal(err)}},contract.PromotionReasonProposalNotCurrent},
+		{"foreign actual proposal",func(c *contract.PromotionContext){input:=promotionCopyBindingInput(c.Proposal.Current().Binding());input.Reference.ProjectID="other";c.Proposal=promotionProposal(t,input,"candidate-source",c.Carrier);c.Reference=input.Reference},contract.PromotionReasonContextMismatch},
+		{"proposed manifest",func(c *contract.PromotionContext){c.Proposed=promotionProtected(t,promotionManifest(t,"other"),"scope",c.Proposed.CoveredInputs())},contract.PromotionReasonContextMismatch},
+		{"proposed scope",func(c *contract.PromotionContext){c.Proposed=promotionProtected(t,c.Proposed.Manifest(),"other",c.Proposed.CoveredInputs())},contract.PromotionReasonContextMismatch},
+		{"proposed context",func(c *contract.PromotionContext){c.Proposed=promotionProtected(t,c.Proposed.Manifest(),"scope",map[string]string{"runner":"v2"})},contract.PromotionReasonContextMismatch},
+		{"proposed context removed",func(c *contract.PromotionContext){c.Proposed=promotionProtected(t,c.Proposed.Manifest(),"scope",nil)},contract.PromotionReasonContextMismatch},
+		{"state fence",func(c *contract.PromotionContext){c.ExpectedStateRevision++},contract.PromotionReasonStateChanged},
+		{"absent baseline against established",func(c *contract.PromotionContext){input:=promotionCopyBindingInput(c.Proposal.Current().Binding());input.ExpectedCanonical="";c.Proposal=promotionProposal(t,input,"candidate-source",c.Carrier)},contract.PromotionReasonCanonicalChanged},
+		{"established baseline against absence",func(c *contract.PromotionContext){c.Canonical=promotionAbsentCanonical(t)},contract.PromotionReasonCanonicalChanged},
+	}{t.Run(test.name,func(t *testing.T){c:=promotionContext(t);test.change(&c);decision,err:=contract.CheckPromotionReadiness(c,"integrated-source");requirePromotionDecision(t,decision,err,contract.PromotionBlocked,test.reason)})}
+}
+
+func TestPromotionReadinessRequiresExactSourceBoundEvidence(t *testing.T) {
+	for _,test:=range []struct{name string;change func(*contract.PromotionContext);reason contract.PromotionReason}{
+		{"absent assessment",func(c *contract.PromotionContext){c.Assessment=contract.IntegrityAssessment{}},contract.PromotionReasonIntegrityNotPassed},
+		{"missing evidence",func(c *contract.PromotionContext){c.Assessment=promotionAssessment(t,"integrated-source",c.Proposal.Current().Binding(),0)},contract.PromotionReasonIntegrityNotPassed},
+		{"failed evidence",func(c *contract.PromotionContext){c.Assessment=promotionAssessment(t,"integrated-source",c.Proposal.Current().Binding(),contract.IntegrityFailed)},contract.PromotionReasonIntegrityNotPassed},
+		{"unavailable evidence",func(c *contract.PromotionContext){c.Assessment=promotionAssessment(t,"integrated-source",c.Proposal.Current().Binding(),contract.IntegrityUnavailable)},contract.PromotionReasonIntegrityNotPassed},
+		{"premerge source",func(c *contract.PromotionContext){c.Assessment=promotionAssessment(t,"candidate-source",c.Proposal.Current().Binding(),contract.IntegrityPassed)},contract.PromotionReasonAssessmentMismatch},
+		{"different assessment binding",func(c *contract.PromotionContext){input:=promotionCopyBindingInput(c.Proposal.Current().Binding());input.Reference.RevisionID="other";c.Assessment=promotionAssessment(t,"integrated-source",promotionBinding(t,input),contract.IntegrityPassed)},contract.PromotionReasonAssessmentMismatch},
+		{"mismatched observed evidence",func(c *contract.PromotionContext){evidence,err:=contract.NewIntegrityEvidence("emitter","wrong-source",c.Proposal.Current().Binding(),contract.IntegrityPassed);if err!=nil{t.Fatal(err)};c.Assessment,err=contract.AssessIntegrity("integrated-source",c.Proposal.Current().Binding(),&evidence);if err!=nil{t.Fatal(err)}},contract.PromotionReasonAssessmentMismatch},
+		{"absent schedule",func(c *contract.PromotionContext){c.Scheduling=contract.Schedule{}},contract.PromotionReasonSchedulingBlocked},
+		{"zero scheduling fence",func(c *contract.PromotionContext){c.ExpectedSchedulingGeneration=0},contract.PromotionReasonSchedulingBlocked},
+	}{t.Run(test.name,func(t *testing.T){c:=promotionContext(t);test.change(&c);decision,err:=contract.CheckPromotionReadiness(c,"integrated-source");requirePromotionDecision(t,decision,err,contract.PromotionBlocked,test.reason)})}
+	c:=promotionContext(t)
+	c.Assessment=promotionAssessment(t,"candidate-source",c.Proposal.Current().Binding(),contract.IntegrityPassed)
+	decision,err:=contract.CheckPromotionReadiness(c,"candidate-source")
+	requirePromotionDecision(t,decision,err,contract.PromotionReady,contract.PromotionReasonNone)
+}

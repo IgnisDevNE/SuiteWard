@@ -1,6 +1,6 @@
 # SuiteWard development conventions
 
-- **Updated:** 2026-09-26
+- **Updated:** 2026-09-30
 - **Status:** Accepted conventions; application implementation has not started.
 - **Scope:** How contributors and agents write SuiteWard code and tests.
 
@@ -9,6 +9,10 @@ These conventions complement the [project structure decision](decisions/0024-sin
 Use the [local development guide](local-development.md) to prepare tools and the database, run verification, and keep worktree resources isolated. Versioned ADRs and project documents remain canonical when Memtrace is unavailable or inconsistent.
 
 ## Tests
+
+Follow [mandatory task-level TDD](tdd.md), accepted in [ADR 0025](decisions/0025-test-driven-development.md). Before implementing each behavior, write its test and observe a meaningful failure; record the RED revision, then implement and record the same command passing at GREEN. Refactor when useful and rerun the relevant suite. Bug fixes start with a reproducer. Include failure, security, boundary, and invariant scenarios relevant to the task; a green happy path alone is insufficient.
+
+This rule also applies to infrastructure scripts and configuration that changes behavior. Documentation, discovery, and decision tasks can record a justified `not_applicable` only while they change no executable behavior. Each task carries its own evidence and independent review into the phase PR. Passing CI or achieving coverage does not establish that tests preceded implementation.
 
 Use Go's standard `testing` package as the initial test framework. Use table-driven cases when several inputs exercise the same behavior; use focused standalone tests when that makes the scenario clearer. Test files live beside the package they exercise.
 

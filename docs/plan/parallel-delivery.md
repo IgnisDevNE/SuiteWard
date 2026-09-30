@@ -24,19 +24,23 @@ Phase-level decision gates define what must be settled before the phase is compl
 
 ## Dispatch and ownership
 
-Before dispatch, the integrator records the task ID, assignee, worktree/branch, reviewed contract revision, owned files, and evidence for completed start prerequisites. A task is ready when these prerequisites and its own decision gates are satisfied. A planned dependency is not satisfied merely because its task exists in the backlog.
+Before dispatch, the integrator records the task ID, assignee, worktree/branch, reviewed contract revision, owned files, TDD mode, and evidence for completed start prerequisites. A task is ready when these prerequisites and its own decision gates are satisfied. A planned dependency is not satisfied merely because its task exists in the backlog.
 
 Ownership lists are initial boundaries, not a mandate to create all listed files. Rename or narrow them at the checkpoint when actual consumers justify a better layout. The integrator coordinates overlaps, particularly `go.mod`, `go.sum`, migrations and sqlc configuration, composition, and CI. Temporarily delegate a shared file to one worker rather than allowing simultaneous uncoordinated edits.
 
 Each task owns its tests, failures, documentation, and observability needed for its behavior. Do not defer all tests to the integration lane. Scope changes require updating the backlog and notifying affected workers. Record a newly discovered dependency rather than hiding a wait in chat.
 
+Apply [task-level TDD](../tdd.md) in each worker's own worktree. Workers record observed RED and GREEN checkpoints before handing over their task. Preserve those commits when integrating; a squash that removes the referenced checkpoints invalidates the evidence's ancestry. The phase still has one PR, whose final revision must pass all applicable checks. RED checkpoints are reviewed history, not permission to publish a failing final tree.
+
 Use independent checkout-local databases, cache directories, credentials, ports, and temporary data. Workers must not share customer owner credentials or manufacture human approval. Memtrace Fleet may assist after its scope and worktree behavior are validated; local task assignments and versioned contracts remain sufficient to coordinate safely.
 
 ## Completion and review
 
-A task is complete when its acceptance scenarios and applicable negative cases pass, the reviewer resolves material findings, actual merge dependencies are integrated, and evidence identifies the exact tested commit. Use [the evidence template](task-evidence-template.md). Contract changes must be reviewed by affected consumers before completion.
+A task is complete when its acceptance scenarios and applicable negative cases pass, the reviewer resolves material findings, actual merge dependencies are integrated, and evidence identifies the exact tested commit. Use [the evidence template](task-evidence-template.md) and the phase's machine-readable execution record. For implementation, the reviewer checks meaningful RED before the behavior change, the matching GREEN result, coverage of the intended failure/invariant scenarios, and the final task files. For non-implementation work, the reviewer checks the concrete `not_applicable` reason and file scope. Contract changes must be reviewed by affected consumers before completion.
 
 The phase integrator verifies the full exit criteria, all task results, current base compatibility, and applicable Windows/Linux CI. Persistence, GitHub, backup, restore, and execution claims require their real-component checks as those components arrive. Coverage percentages do not substitute for authority and concurrency scenarios.
+
+Require an accepted review by someone other than the task author and run `./scripts/check-tdd.ps1 -BaseRevision <base> -HeadRevision HEAD` for the integration range. Every phase task must be represented, and every changed file must be assigned to the task evidence. Resolve missing or stale evidence before integration; do not invent earlier test runs or convert an implementation task to `not_applicable` to pass the gate. The completed F0 baseline predates this rule and remains explicitly historical; its future changes follow the same rule as new work.
 
 Publish the phase PR through the bot. A green gate is evidence, not merge authority: the user authorizes integration into `main`. Verify the resulting main run and record the PR/merge revision. Only then mark the phase integrated. Local readiness, publication, CI success, and merge are separate states.
 

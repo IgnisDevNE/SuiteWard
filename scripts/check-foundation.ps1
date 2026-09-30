@@ -23,5 +23,6 @@ try {
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
     & (Join-Path $PSScriptRoot 'check-plan.ps1')
     & (Join-Path $PSScriptRoot 'test-plan.ps1')
+    & (Join-Path $PSScriptRoot 'test-tdd.ps1')
     Write-Host 'Foundation scripts, workflows, documentation, and delivery plan are valid.'
 } finally { Pop-Location }

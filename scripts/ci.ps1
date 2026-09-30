@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Inspect', 'Documents', 'Gate', 'Library')]
+    [ValidateSet('Inspect', 'Documents', 'Gate', 'Tdd', 'Library')]
     [string]$Mode = 'Documents',
     [string]$Root = (Split-Path $PSScriptRoot -Parent)
 )
@@ -25,7 +25,7 @@ function Get-RepositoryMode {
 
 function Assert-CiGate {
     param($Results)
-    foreach ($required in @('inspect', 'foundation')) {
+    foreach ($required in @('inspect', 'foundation', 'tdd')) {
         if ($Results.$required.result -ne 'success') { throw "$required did not succeed" }
     }
     $hasGo = $Results.inspect.outputs.go
@@ -34,6 +34,20 @@ function Assert-CiGate {
     foreach ($required in @('go', 'coverage')) {
         if ($Results.$required.result -ne $expected) { throw "$required must be $expected" }
     }
+}
+
+function Get-TddRevisionRange {
+    param([string]$EventName, $Event, [string]$CurrentRevision, [string]$ParentRevision)
+    switch ($EventName) {
+        'pull_request' { $base = $Event.pull_request.base.sha; $head = $Event.pull_request.head.sha }
+        'push' { $base = $Event.before; $head = $Event.after }
+        'workflow_dispatch' { $base = $ParentRevision; $head = $CurrentRevision }
+        default { throw "Unsupported TDD event '$EventName'; use check-tdd.ps1 with explicit base/head locally." }
+    }
+    foreach ($revision in @($base, $head)) {
+        if ($revision -cnotmatch '^[a-f0-9]{40}$' -or $revision -match '^0+$') { throw 'TDD evidence requires an exact, nonzero event base and head commit.' }
+    }
+    return [pscustomobject]@{ Base = $base; Head = $head }
 }
 
 if ($Mode -eq 'Library') { return }
@@ -85,6 +99,16 @@ try {
             }
         }
         Write-Output "Validated $($files.Count) documents and $linkCount local links."
+    } elseif ($Mode -eq 'Tdd') {
+        $event = if ($env:GITHUB_EVENT_PATH) { Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json } else { $null }
+        $head = ''; $parent = ''
+        if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $revisions = (git rev-list --parents -n 1 HEAD) -split ' '
+            if ($LASTEXITCODE -ne 0 -or $revisions.Count -lt 2) { throw 'Cannot determine the manual verification range.' }
+            $head = $revisions[0]; $parent = $revisions[1]
+        }
+        $range = Get-TddRevisionRange -EventName $env:GITHUB_EVENT_NAME -Event $event -CurrentRevision $head -ParentRevision $parent
+        & (Join-Path $PSScriptRoot 'check-tdd.ps1') -RepoRoot $Root -BaseRevision $range.Base -HeadRevision $range.Head
     } elseif ($Mode -eq 'Gate') {
         if (-not $env:NEEDS_JSON) { throw 'Missing CI job results' }
         Assert-CiGate -Results ($env:NEEDS_JSON | ConvertFrom-Json)

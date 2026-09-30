@@ -94,3 +94,64 @@ func TestProposalOriginDoesNotImplicitlySelectCoveredInputs(t *testing.T) {
 		t.Fatal("an explicitly covered source change must change the binding")
 	}
 }
+
+func TestProposalExactReferenceResolution(t *testing.T) {
+	initial := mustProposalRevision(t, proposalBindingInput(), "baseline-source", "carrier-1")
+	proposal := mustProposal(t, initial)
+	for name, resolve := range map[string]func(contract.ProposalReference, contract.ApprovalCarrierID) (contract.ProposalRevision, error){"lookup": proposal.Lookup, "resolve": proposal.Resolve} {
+		t.Run(name, func(t *testing.T) {
+			got, err := resolve(initial.Binding().Reference(), initial.Carrier())
+			if err != nil || !got.Binding().Equal(initial.Binding()) || got.Origin() != initial.Origin() || got.Carrier() != initial.Carrier() {
+				t.Fatalf("exact reference lost its immutable target: %v", err)
+			}
+		})
+	}
+}
+
+func TestProposalRejectsMissingUnknownAndForeignReferences(t *testing.T) {
+	initial := mustProposalRevision(t, proposalBindingInput(), "source-1", "carrier-1")
+	proposal := mustProposal(t, initial)
+	cases := []struct {
+		name   string
+		change func(*contract.ProposalReference, *contract.ApprovalCarrierID)
+		want   error
+	}{
+		{"omitted", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { *r = contract.ProposalReference{} }, contract.ErrInvalidReference},
+		{"missing revision", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { r.RevisionID = "" }, contract.ErrInvalidReference},
+		{"blank revision", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { r.RevisionID = "\u2003" }, contract.ErrInvalidReference},
+		{"missing carrier", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { *c = "" }, contract.ErrInvalidReference},
+		{"blank carrier", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { *c = " \t" }, contract.ErrInvalidReference},
+		{"foreign project", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { r.ProjectID = "project-2" }, contract.ErrProposalContextMismatch},
+		{"foreign suite", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { r.SuiteID = "suite-2" }, contract.ErrProposalContextMismatch},
+		{"foreign proposal", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { r.ProposalID = "proposal-2" }, contract.ErrProposalContextMismatch},
+		{"foreign carrier", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { *c = "carrier-2" }, contract.ErrProposalContextMismatch},
+		{"unknown revision", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) { r.RevisionID = "revision-99" }, contract.ErrUnknownRevision},
+		{"context before existence", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) {
+			r.ProjectID = "project-2"
+			r.RevisionID = "revision-99"
+		}, contract.ErrProposalContextMismatch},
+		{"validity before context", func(r *contract.ProposalReference, c *contract.ApprovalCarrierID) {
+			r.ProjectID = "project-2"
+			r.RevisionID = ""
+		}, contract.ErrInvalidReference},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			ref, carrier := initial.Binding().Reference(), initial.Carrier()
+			tt.change(&ref, &carrier)
+			for name, resolve := range map[string]func(contract.ProposalReference, contract.ApprovalCarrierID) (contract.ProposalRevision, error){"lookup": proposal.Lookup, "resolve": proposal.Resolve} {
+				got, err := resolve(ref, carrier)
+				if !errors.Is(err, tt.want) || !got.IsZero() {
+					t.Errorf("%s returned present=%v error=%v, want %v", name, !got.IsZero(), err, tt.want)
+				}
+			}
+		})
+	}
+	var absent contract.Proposal
+	for name, resolve := range map[string]func(contract.ProposalReference, contract.ApprovalCarrierID) (contract.ProposalRevision, error){"lookup": absent.Lookup, "resolve": absent.Resolve} {
+		got, err := resolve(initial.Binding().Reference(), initial.Carrier())
+		if !errors.Is(err, contract.ErrInvalidProposal) || !got.IsZero() {
+			t.Errorf("%s on absent proposal error=%v, want ErrInvalidProposal", name, err)
+		}
+	}
+}

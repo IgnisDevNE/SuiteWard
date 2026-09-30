@@ -7,6 +7,13 @@ import (
 
 var ErrInvalidProposal = errors.New("invalid proposal")
 
+var (
+	ErrInvalidReference        = errors.New("invalid proposal reference")
+	ErrProposalContextMismatch = errors.New("proposal context mismatch")
+	ErrUnknownRevision         = errors.New("unknown proposal revision")
+	ErrSupersededRevision      = errors.New("superseded proposal revision")
+)
+
 // ProposalRevision seals inventory provenance and its separate consent carrier.
 type ProposalRevision struct {
 	binding ApprovalBinding
@@ -44,3 +51,11 @@ func (p Proposal) Current() ProposalRevision {
 }
 
 func (p Proposal) IsZero() bool { return len(p.revisions) == 0 }
+
+func (p Proposal) Lookup(reference ProposalReference, carrier ApprovalCarrierID) (ProposalRevision, error) {
+	return p.Current(), nil
+}
+
+func (p Proposal) Resolve(reference ProposalReference, carrier ApprovalCarrierID) (ProposalRevision, error) {
+	return p.Current(), nil
+}

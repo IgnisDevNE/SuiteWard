@@ -1,6 +1,18 @@
 package contract
 
-import "slices"
+import (
+	"errors"
+	"slices"
+)
+
+var (
+	ErrInvalidSchedule             = errors.New("invalid schedule")
+	ErrInvalidPriorityCommand      = errors.New("invalid priority command")
+	ErrScheduleContextMismatch     = errors.New("schedule context mismatch")
+	ErrScheduleConflict            = errors.New("schedule conflict")
+	ErrStaleSchedule               = errors.New("stale schedule generation")
+	ErrScheduleGenerationExhausted = errors.New("schedule generation exhausted")
+)
 
 type ScheduleGeneration uint64
 

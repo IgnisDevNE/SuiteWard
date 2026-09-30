@@ -1,6 +1,9 @@
 package contract
 
 import (
+	"errors"
+	"math"
+	"reflect"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -24,6 +27,62 @@ func schedulingProposal(t *testing.T, project ProjectID, suite SuiteID, id Propo
 		t.Fatal(err)
 	}
 	return proposal
+}
+
+func TestScheduleRejectsInvalidAdmission(t *testing.T) {
+	for _, ids := range [][2]string{{"", "suite"}, {" \t", "suite"}, {"project", ""}, {"project", "\n"}} {
+		if s, err := NewSchedule(ProjectID(ids[0]), SuiteID(ids[1])); !errors.Is(err, ErrInvalidSchedule) || !s.IsZero() {
+			t.Errorf("invalid IDs accepted: %q => %+v, %v", ids, s, err)
+		}
+	}
+	s, a, _ := schedulingPair(t)
+	for _, tc := range []struct {
+		name     string
+		schedule Schedule
+		proposal Proposal
+		want     error
+	}{
+		{"zero schedule", Schedule{}, a, ErrInvalidSchedule},
+		{"zero proposal", s, Proposal{}, ErrInvalidSchedule},
+		{"foreign project", s, schedulingProposal(t, "other", "suite", "a", "carrier-a", "r1"), ErrScheduleContextMismatch},
+		{"foreign suite", s, schedulingProposal(t, "project", "other", "a", "carrier-a", "r1"), ErrScheduleContextMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, changing := range []bool{false, true} {
+				next, err := tc.schedule.Admit(tc.proposal, changing)
+				if !errors.Is(err, tc.want) || !reflect.DeepEqual(next, tc.schedule) || tc.schedule.CanPromote(tc.proposal, tc.schedule.Generation()) {
+					t.Fatalf("invalid admission changed schedule or became eligible: %v", err)
+				}
+			}
+		})
+	}
+	s, err := s.Admit(a, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []Proposal{
+		schedulingProposal(t, "project", "suite", "a", "other-carrier", "r1"),
+		schedulingProposal(t, "project", "suite", "other", "carrier-a", "r1"),
+	} {
+		next, err := s.Admit(p, true)
+		if !errors.Is(err, ErrScheduleConflict) || !reflect.DeepEqual(next, s) || s.CanPromote(p, s.Generation()) {
+			t.Errorf("identity collision not rejected unchanged: %v", err)
+		}
+	}
+	kept, err := s.Admit(a, false)
+	if err != nil || !kept.CanPromote(a, kept.Generation()) {
+		t.Fatal("false classification withdrew existing active entry")
+	}
+	full, a, _ := schedulingPair(t)
+	full.generation = ScheduleGeneration(math.MaxUint64)
+	next, err := full.Admit(a, true)
+	if !errors.Is(err, ErrScheduleGenerationExhausted) || !reflect.DeepEqual(next, full) {
+		t.Fatal("generation overflow changed state")
+	}
+	spaced, err := NewSchedule(" project ", " suite ")
+	if err != nil || spaced.ProjectID() != " project " || spaced.SuiteID() != " suite " {
+		t.Fatal("accepted ID bytes were normalized")
+	}
 }
 
 func schedulingPair(t *testing.T) (Schedule, Proposal, Proposal) {

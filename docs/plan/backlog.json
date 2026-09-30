@@ -1428,7 +1428,9 @@
       "kind": "contract",
       "lane": "contracts",
       "owns": [
-        "docs/plan/m0-contracts.md"
+        "docs/plan/m0-contracts.md",
+        "docs/plan/backlog.json",
+        "docs/plan/phases/M0.04.md"
       ],
       "needs_to_start": [
         "M0.03-C0"
@@ -1558,9 +1560,7 @@
         "M0-C4"
       ],
       "shared_files": [],
-      "gates": [
-        "D-M0-COVERAGE"
-      ],
+      "gates": [],
       "id": "M0.04-I",
       "phase": "M0.04",
       "title": "Integrate the atomic boundary and prove M0 invariants",
@@ -1570,7 +1570,11 @@
         "internal/application/governance/transaction.go",
         "internal/application/governance/store_test.go",
         "internal/application/governance/scenarios_test.go",
-        "docs/plan/m0-contracts.md"
+        "docs/plan/executions/M0.04.json",
+        "docs/plan/executions/M0.04.md",
+        "docs/ci-and-coverage.md",
+        "codecov.yml",
+        "scripts/test-ci.ps1"
       ],
       "needs_to_start": [
         "F0.02-I",

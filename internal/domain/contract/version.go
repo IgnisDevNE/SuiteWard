@@ -2,6 +2,7 @@ package contract
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -17,7 +18,11 @@ type SuiteVersion struct {
 	manifest artifact.Manifest
 }
 
+// NewSuiteVersion reconstitutes supplied facts without approving their promotion.
 func NewSuiteVersion(project ProjectID, suite SuiteID, id SuiteVersionID, manifest artifact.Manifest) (SuiteVersion, error) {
+	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(suite)) == "" || strings.TrimSpace(string(id)) == "" || manifest.IsZero() {
+		return SuiteVersion{}, ErrInvalidSuiteVersion
+	}
 	return SuiteVersion{project: project, suite: suite, id: id, manifest: manifest}, nil
 }
 

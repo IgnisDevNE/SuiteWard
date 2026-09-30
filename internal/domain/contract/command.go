@@ -1,6 +1,9 @@
 package contract
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // OperationID identifies a stable internally normalized processing operation.
 type OperationID string
@@ -39,7 +42,19 @@ type Command struct {
 }
 
 func NewCommand(input CommandInput) (Command, error) {
-	return Command{}, nil
+	for _, id := range []string{
+		string(input.OperationID), string(input.SourceCommandID),
+		string(input.Reference.ProjectID), string(input.Reference.SuiteID),
+		string(input.Reference.ProposalID), string(input.Reference.RevisionID), string(input.Carrier),
+	} {
+		if strings.TrimSpace(id) == "" {
+			return Command{}, ErrInvalidCommand
+		}
+	}
+	if input.Actor.ID() == "" || (input.Action != ApproveConsent && input.Action != RevokeConsent) || input.Order == 0 {
+		return Command{}, ErrInvalidCommand
+	}
+	return Command{input: input}, nil
 }
 
 func (c Command) OperationID() OperationID         { return c.input.OperationID }

@@ -351,3 +351,75 @@ func TestCorrectionAcceptsCurrentTargetAndMatchingAttribution(t *testing.T) {
 		t.Fatal("current target relation was lost")
 	}
 }
+
+func lifecycleCopyRecord(record contract.PromotionRecord) contract.PromotionRecordInput {
+	return contract.PromotionRecordInput{
+		OperationID: record.OperationID(), VersionID: record.VersionID(), Binding: record.Binding(), Carrier: record.Carrier(),
+		Source: record.Source(), Target: record.Target(), RecordedAt: record.RecordedAt(), CorrectsVersionID: record.CorrectsVersionID(),
+	}
+}
+
+func lifecycleAlterBinding(t *testing.T, binding contract.ApprovalBinding, change func(*contract.BindingInput)) contract.ApprovalBinding {
+	t.Helper()
+	input := contract.BindingInput{Reference: binding.Reference(), ExpectedCanonical: binding.ExpectedCanonical(), Manifest: binding.ManifestDigest(),
+		Scope: binding.ScopeDigest(), PolicyRevision: binding.PolicyRevisionID(), CoveredInputs: binding.CoveredInputs()}
+	change(&input)
+	next, err := contract.NewApprovalBinding(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return next
+}
+
+func TestCorrectionSameVersionRejectsContradictoryHistory(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*contract.SuiteVersion, *contract.PromotionRecordInput)
+	}{
+		{"manifest", func(version *contract.SuiteVersion, record *contract.PromotionRecordInput) {
+			manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/different.go", Content: artifact.Hash([]byte("contradictory version"))})
+			*version = lifecycleVersion(t, version.ProjectID(), version.SuiteID(), version.ID(), manifest)
+			record.Binding = lifecycleAlterBinding(t, record.Binding, func(b *contract.BindingInput) { b.Manifest = manifest.Digest() })
+		}},
+		{"exact binding", func(_ *contract.SuiteVersion, r *contract.PromotionRecordInput) {
+			r.Binding = lifecycleAlterBinding(t, r.Binding, func(b *contract.BindingInput) { b.Reference.RevisionID = "other-revision" })
+		}},
+		{"operation", func(_ *contract.SuiteVersion, r *contract.PromotionRecordInput) { r.OperationID = "other-operation" }},
+		{"carrier", func(_ *contract.SuiteVersion, r *contract.PromotionRecordInput) { r.Carrier = "other-carrier" }},
+		{"source", func(_ *contract.SuiteVersion, r *contract.PromotionRecordInput) { r.Source = "other-source" }},
+		{"integration target", func(_ *contract.SuiteVersion, r *contract.PromotionRecordInput) { r.Target = "other-target" }},
+		{"recorded instant", func(_ *contract.SuiteVersion, r *contract.PromotionRecordInput) {
+			r.RecordedAt = r.RecordedAt.Add(time.Second)
+		}},
+		{"corrected historical version", func(_ *contract.SuiteVersion, r *contract.PromotionRecordInput) { r.CorrectsVersionID = "v1" }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			input := lifecycleCorrection(t, false)
+			current := input.Promotion.Context.Canonical
+			version := current.Version()
+			record := lifecycleCopyRecord(current.Record())
+			test.change(&version, &record)
+			input.Target = lifecycleHistory(t, version, lifecycleRecord(t, record))
+			decision, err := contract.DecideCorrection(input)
+			if !errors.Is(err, contract.ErrInvalidCorrection) {
+				t.Fatalf("same logical version accepted contradictory history: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+			}
+			if _, ok := decision.Effect(); ok {
+				t.Fatal("contradictory history produced an effect")
+			}
+		})
+	}
+}
+
+func TestCorrectionSameVersionAcceptsTimestampAtSameInstant(t *testing.T) {
+	input := lifecycleCorrection(t, false)
+	current := input.Promotion.Context.Canonical
+	record := lifecycleCopyRecord(current.Record())
+	record.RecordedAt = record.RecordedAt.In(time.FixedZone("same instant", -3*60*60))
+	input.Target = lifecycleHistory(t, current.Version(), lifecycleRecord(t, record))
+	decision, err := contract.DecideCorrection(input)
+	if err != nil || decision.Outcome() != contract.PromotionProposed {
+		t.Fatalf("same instant was treated as conflicting immutable history: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+	}
+}

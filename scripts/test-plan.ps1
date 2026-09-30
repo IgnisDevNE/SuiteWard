@@ -151,7 +151,12 @@ try {
         if (-not $rendered.Contains('[TDD policy](../../tdd.md)')) { throw "Phase $($phase['id']) omits its TDD policy link." }
         foreach ($task in $baseline['tasks'] | Where-Object { $_['phase'] -ceq $phase['id'] }) {
             $tddLine = "TDD: **$($task['tdd']['mode'])**. $($task['tdd']['reason'])"
-            if (-not $rendered.Contains($tddLine)) { throw "Phase $($phase['id']) omits TDD mode/reason for task $($task['id'])." }
+            $taskHeading = "### $($task['id']) — $($task['title'])"
+            $taskStart = $rendered.IndexOf($taskHeading, [StringComparison]::Ordinal)
+            if ($taskStart -lt 0) { throw "Phase $($phase['id']) omits task $($task['id'])." }
+            $taskEnd = $rendered.IndexOf("`n### ", $taskStart + $taskHeading.Length, [StringComparison]::Ordinal)
+            $taskDocument = if ($taskEnd -lt 0) { $rendered.Substring($taskStart) } else { $rendered.Substring($taskStart, $taskEnd - $taskStart) }
+            if (-not $taskDocument.Contains($tddLine)) { throw "Phase $($phase['id']) omits TDD mode/reason for task $($task['id'])." }
         }
     }
     $checks++

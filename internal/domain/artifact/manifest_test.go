@@ -1,6 +1,7 @@
 package artifact_test
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
@@ -90,6 +91,94 @@ func TestManifestAbsentIsDifferentFromEmptyInventory(t *testing.T) {
 	empty := newManifest(t, nil)
 	if empty.IsZero() || empty.Digest() == absent.Digest() {
 		t.Fatal("a constructed empty inventory must differ from an absent manifest")
+	}
+}
+
+func TestManifestRejectsInvalidPathsWithoutRewriting(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"empty", ""},
+		{"absolute", "/tests/a.go"},
+		{"trailing slash", "tests/"},
+		{"empty component", "tests//a.go"},
+		{"dot", "."},
+		{"dot prefix", "./tests/a.go"},
+		{"dot middle", "tests/./a.go"},
+		{"dot suffix", "tests/."},
+		{"parent", ".."},
+		{"parent prefix", "../tests/a.go"},
+		{"parent middle", "tests/../a.go"},
+		{"parent suffix", "tests/.."},
+		{"backslash", `tests\a.go`},
+		{"drive absolute", "C:/tests/a.go"},
+		{"drive relative", "C:tests/a.go"},
+		{"colon", "tests/a:b.go"},
+		{"nul", "tests/a\x00.go"},
+		{"invalid utf8", "tests/\xff.go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := artifact.Entry{Path: tt.path, Content: artifact.Hash([]byte("test"))}
+			manifest, err := artifact.NewManifest([]artifact.Entry{entry})
+			if !errors.Is(err, artifact.ErrInvalidPath) {
+				t.Fatalf("NewManifest(%q) error = %v, want ErrInvalidPath", tt.path, err)
+			}
+			if !manifest.IsZero() {
+				t.Fatal("rejected inventory must not return a constructed manifest")
+			}
+		})
+	}
+}
+
+func TestManifestRejectsDuplicatePaths(t *testing.T) {
+	for _, content := range []string{"same", "different"} {
+		t.Run(content, func(t *testing.T) {
+			entries := []artifact.Entry{
+				{Path: "tests/a.go", Content: artifact.Hash([]byte("same"))},
+				{Path: "tests/b.go", Content: artifact.Hash(nil)},
+				{Path: "tests/a.go", Content: artifact.Hash([]byte(content))},
+			}
+			manifest, err := artifact.NewManifest(entries)
+			if !errors.Is(err, artifact.ErrDuplicatePath) {
+				t.Fatalf("duplicate inventory error = %v, want ErrDuplicatePath", err)
+			}
+			if !manifest.IsZero() {
+				t.Fatal("duplicate inventory must not return a constructed manifest")
+			}
+		})
+	}
+}
+
+func TestManifestRejectsAbsentContentIdentity(t *testing.T) {
+	manifest, err := artifact.NewManifest([]artifact.Entry{{Path: "tests/a.go"}})
+	if !errors.Is(err, artifact.ErrInvalidDigest) {
+		t.Fatalf("absent content identity error = %v, want ErrInvalidDigest", err)
+	}
+	if !manifest.IsZero() {
+		t.Fatal("absent content identity must not return a constructed manifest")
+	}
+}
+
+func TestManifestAcceptsDistinctExactPaths(t *testing.T) {
+	paths := []string{"tests/A.go", "tests/a.go", "tests/caf\u00e9.go", "tests/cafe\u0301.go", ".tests/a..go", "tests/CON"}
+	entries := make([]artifact.Entry, len(paths))
+	for i, path := range paths {
+		entries[i] = artifact.Entry{Path: path, Content: artifact.Hash(nil)}
+	}
+	manifest := newManifest(t, entries)
+	if len(manifest.Entries()) != len(paths) {
+		t.Fatal("distinct exact paths were collapsed")
+	}
+	got := make([]string, 0, len(paths))
+	for _, entry := range manifest.Entries() {
+		got = append(got, entry.Path)
+	}
+	want := slices.Clone(paths)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatal("manifest paths were normalized or not sorted by their exact bytes")
 	}
 }
 

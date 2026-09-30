@@ -2,8 +2,15 @@ package artifact
 
 import (
 	"encoding/binary"
+	"errors"
 	"slices"
 	"strings"
+)
+
+var (
+	ErrInvalidPath   = errors.New("invalid manifest path")
+	ErrDuplicatePath = errors.New("duplicate manifest path")
+	ErrInvalidDigest = errors.New("absent content digest")
 )
 
 // Entry binds an exact relative path to its content identity.

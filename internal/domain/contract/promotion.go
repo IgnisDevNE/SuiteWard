@@ -231,15 +231,31 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	if input.Integration.IsZero() {
 		return blockedPromotion(PromotionReasonIntegrationMissing), nil
 	}
+	if strings.TrimSpace(string(input.Target)) == "" {
+		return PromotionDecision{}, ErrInvalidPromotion
+	}
 	readiness, err := CheckPromotionReadiness(input.Context, input.Integration.Source())
 	if err != nil || readiness.Outcome() != PromotionReady {
 		return readiness, err
+	}
+	current := input.Context.Canonical.Suite()
+	if input.Integration.ProjectID() != current.ProjectID() || input.Integration.Target() != input.Target {
+		return blockedPromotion(PromotionReasonIntegrationMismatch), nil
+	}
+	if input.Integration.Kind() == IntegrationMergedChange {
+		if input.Integration.Carrier() != input.Context.Carrier {
+			return blockedPromotion(PromotionReasonIntegrationMismatch), nil
+		}
+	} else if _, present := current.CurrentVersionID(); present || input.Integration.Source() != input.Context.Proposal.Current().Origin() {
+		return blockedPromotion(PromotionReasonIntegrationMismatch), nil
+	}
+	if current.Revision() == ^StateRevision(0) {
+		return PromotionDecision{}, ErrInvalidPromotion
 	}
 	record, err := NewPromotionRecord(PromotionRecordInput{OperationID: input.OperationID, VersionID: input.NewVersionID, Binding: input.Context.Proposal.Current().Binding(), Carrier: input.Context.Carrier, Source: input.Integration.Source(), Target: input.Target, RecordedAt: input.RecordedAt, CorrectsVersionID: input.CorrectsVersionID})
 	if err != nil {
 		return PromotionDecision{}, ErrInvalidPromotion
 	}
-	current := input.Context.Canonical.Suite()
 	version, err := NewSuiteVersion(current.ProjectID(), current.ID(), input.NewVersionID, input.Context.Proposed.Manifest())
 	if err != nil {
 		return PromotionDecision{}, ErrInvalidPromotion

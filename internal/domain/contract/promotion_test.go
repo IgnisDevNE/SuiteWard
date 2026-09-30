@@ -808,3 +808,150 @@ func TestPromotionDelegatesCurrentAuthorityAndInitialEmptyGuards(t *testing.T) {
 		t.Fatalf("approved established empty contract blocked: outcome=%v reason=%v err=%v", decision.Outcome(), decision.Reason(), err)
 	}
 }
+
+func TestPromotionRequiresExactConfirmedIntegration(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*contract.PromotionInput)
+		reason contract.PromotionReason
+	}{
+		{"foreign project", func(i *contract.PromotionInput) {
+			value, err := contract.NewIntegration("other", "main", "integrated-source", "carrier", contract.IntegrationMergedChange)
+			if err != nil {
+				t.Fatal(err)
+			}
+			i.Integration = value
+		}, contract.PromotionReasonIntegrationMismatch},
+		{"different target", func(i *contract.PromotionInput) {
+			value, err := contract.NewIntegration("project", "other", "integrated-source", "carrier", contract.IntegrationMergedChange)
+			if err != nil {
+				t.Fatal(err)
+			}
+			i.Integration = value
+		}, contract.PromotionReasonIntegrationMismatch},
+		{"different configured target", func(i *contract.PromotionInput) { i.Target = "other" }, contract.PromotionReasonIntegrationMismatch},
+		{"different carrier", func(i *contract.PromotionInput) {
+			i.Integration = promotionIntegration(t, "integrated-source", "other", contract.IntegrationMergedChange)
+		}, contract.PromotionReasonIntegrationMismatch},
+		{"assessment only premerge", func(i *contract.PromotionInput) {
+			i.Context.Assessment = promotionAssessment(t, "candidate-source", i.Context.Proposal.Current().Binding(), contract.IntegrityPassed)
+		}, contract.PromotionReasonAssessmentMismatch},
+		{"baseline when canonical exists", func(i *contract.PromotionInput) {
+			i.Integration = promotionIntegration(t, "candidate-source", "", contract.IntegrationExistingBaseline)
+			i.Context.Assessment = promotionAssessment(t, "candidate-source", i.Context.Proposal.Current().Binding(), contract.IntegrityPassed)
+		}, contract.PromotionReasonIntegrationMismatch},
+		{"baseline source differs from pinned origin", func(i *contract.PromotionInput) {
+			i.Context = promotionContextWith(t, promotionAbsentCanonical(t), i.Context.Proposed)
+			i.Integration = promotionIntegration(t, "integrated-source", "", contract.IntegrationExistingBaseline)
+		}, contract.PromotionReasonIntegrationMismatch},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := promotionInput(t)
+			test.change(&input)
+			decision, err := contract.DecidePromotion(input)
+			requirePromotionDecision(t, decision, err, contract.PromotionBlocked, test.reason)
+		})
+	}
+	input := promotionInput(t)
+	input.Context = promotionContextWith(t, promotionAbsentCanonical(t), input.Context.Proposed)
+	input.Integration = promotionIntegration(t, "candidate-source", "", contract.IntegrationExistingBaseline)
+	input.Context.Assessment = promotionAssessment(t, "candidate-source", input.Context.Proposal.Current().Binding(), contract.IntegrityPassed)
+	input.NewVersionID = "v1"
+	input.CorrectsVersionID = ""
+	decision, err := contract.DecidePromotion(input)
+	if err != nil || decision.Outcome() != contract.PromotionProposed {
+		t.Fatalf("exact independently hosted baseline could not promote: outcome=%v reason=%v err=%v", decision.Outcome(), decision.Reason(), err)
+	}
+	effect, present := decision.Effect()
+	if !present || effect.ExpectedCanonicalID() != "" || effect.Promotion().Carrier() != "carrier" || effect.Promotion().Source() != "candidate-source" {
+		t.Fatal("baseline effect conflated independent approval carrier and integrated source")
+	}
+}
+
+func TestPromotionRejectsInvalidEffectIdentityAndExhaustedFence(t *testing.T) {
+	for name, change := range map[string]func(*contract.PromotionInput){
+		"canonical absent":       func(i *contract.PromotionInput) { i.Context.Canonical = contract.CanonicalSnapshot{} },
+		"protected absent":       func(i *contract.PromotionInput) { i.Context.Proposed = contract.ProtectedContract{} },
+		"proposal absent":        func(i *contract.PromotionInput) { i.Context.Proposal = contract.Proposal{} },
+		"operation absent":       func(i *contract.PromotionInput) { i.OperationID = "" },
+		"operation blank":        func(i *contract.PromotionInput) { i.OperationID = " " },
+		"version absent":         func(i *contract.PromotionInput) { i.NewVersionID = "" },
+		"version blank":          func(i *contract.PromotionInput) { i.NewVersionID = "\n" },
+		"current version reused": func(i *contract.PromotionInput) { i.NewVersionID = "v1" },
+		"target absent":          func(i *contract.PromotionInput) { i.Target = "" },
+		"target blank":           func(i *contract.PromotionInput) { i.Target = "\t" },
+		"timestamp absent":       func(i *contract.PromotionInput) { i.RecordedAt = time.Time{} },
+		"correction blank":       func(i *contract.PromotionInput) { i.CorrectsVersionID = "\t" },
+		"self correction":        func(i *contract.PromotionInput) { i.CorrectsVersionID = i.NewVersionID },
+		"exhausted state fence": func(i *contract.PromotionInput) {
+			c := i.Context.Canonical
+			value, err := contract.NewCanonicalSnapshot(promotionSuite(t, "project", "suite", "v1", ^contract.StateRevision(0)), c.Version(), c.Contract(), c.Record())
+			if err != nil {
+				t.Fatal(err)
+			}
+			i.Context.Canonical = value
+			i.Context.ExpectedStateRevision = ^contract.StateRevision(0)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := promotionInput(t)
+			change(&input)
+			decision, err := contract.DecidePromotion(input)
+			if !errors.Is(err, contract.ErrInvalidPromotion) || decision.Outcome() != 0 {
+				t.Fatalf("invalid effect accepted: outcome=%v reason=%v err=%v", decision.Outcome(), decision.Reason(), err)
+			}
+			if effect, present := decision.Effect(); present || !effect.IsZero() {
+				t.Fatal("invalid effect escaped")
+			}
+		})
+	}
+}
+
+func TestPromotionComposesActualPriorityTransferFences(t *testing.T) {
+	input := promotionInput(t)
+	oldSchedule := input.Context.Scheduling
+	oldGeneration := oldSchedule.Generation()
+	binding := promotionCopyBindingInput(input.Context.Proposal.Current().Binding())
+	binding.Reference.ProposalID = "waiting-proposal"
+	other := promotionProposal(t, binding, "other-source", "other-carrier")
+	schedule, err := oldSchedule.Admit(other, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := contract.NewPrincipal("owner", contract.Human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := contract.NewPriorityCommand(contract.PriorityCommandInput{OperationID: "priority-op", SourceCommandID: "priority-source", Actor: owner, ProjectID: "project", SuiteID: "suite", ProposalID: "waiting-proposal", Carrier: "other-carrier", Order: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, result, err := schedule.RequestPriority(input.Context.Policy, command)
+	if err != nil || result.Outcome() != contract.PriorityRequested {
+		t.Fatalf("real priority request failed: %v %v", result, err)
+	}
+	input.Context.Scheduling = schedule
+	input.Context.ExpectedSchedulingGeneration = schedule.Generation()
+	decision, err := contract.DecidePromotion(input)
+	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonSchedulingBlocked)
+	input.Context.ExpectedSchedulingGeneration = oldGeneration
+	decision, err = contract.DecidePromotion(input)
+	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonSchedulingBlocked)
+	pendingGeneration := schedule.Generation()
+	schedule, err = schedule.ResolveTransfer("priority-op", pendingGeneration, contract.FormerMerged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Context.Scheduling = schedule
+	input.Context.ExpectedSchedulingGeneration = pendingGeneration
+	decision, err = contract.DecidePromotion(input)
+	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonSchedulingBlocked)
+	input.Context.ExpectedSchedulingGeneration = schedule.Generation()
+	decision, err = contract.DecidePromotion(input)
+	if err != nil || decision.Outcome() != contract.PromotionProposed {
+		t.Fatalf("reconciled former merged proposal not eligible under fresh fence: outcome=%v reason=%v err=%v", decision.Outcome(), decision.Reason(), err)
+	}
+	if !oldSchedule.CanPromote(input.Context.Proposal, oldGeneration) || oldSchedule.Generation() != oldGeneration {
+		t.Fatal("transfer mutated older schedule snapshot")
+	}
+}

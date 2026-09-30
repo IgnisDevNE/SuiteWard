@@ -16,7 +16,7 @@ With four agent slots, use up to three workers and one coordinator/reviewer when
 
 A reviewed C0 contract checkpoint freezes only the next consumers' signatures, examples, errors, invariants, and file ownership. It is a deliverable, not automatic approval of every future product choice. It can precede implementation and need not wait for the preceding phase PR to merge. Workers can then implement separate behavior and tests against that agreement.
 
-F0 is the initial foundation exception: complete its environment/GitHub integration before starting product implementation. Early M0 contract/document preparation can proceed, but product implementation tasks also require F0-I. This does not serialize later phase development behind every preceding PR.
+F0 establishes the initial environment/GitHub foundation; F0.01 adds the accepted TDD rule and evidence enforcement before product implementation starts. Early M0 contract/document preparation can proceed, but product implementation tasks require F0.01-I. This does not serialize later phase development behind every preceding PR.
 
 Consumers may use small boundary fakes in tests and select prerequisite commits for compilation. They must not ship duplicate declarations, dummy production dependencies, or a framework of unused interfaces. Later-phase work reconciles changes before integration. Combined checks use the actual implementations, even if isolated task development used fakes.
 

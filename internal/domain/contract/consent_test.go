@@ -477,3 +477,57 @@ func TestConsentIdentityConflictsPreserveOriginalReceiptAndAuthority(t *testing.
 		})
 	}
 }
+
+func TestConsentRejectedReceiptOrderIsAmbiguousWithoutAdvancingWatermark(t *testing.T) {
+	empty, proposal, policy, input := consentFixture(t)
+	wrongCarrier := input
+	wrongCarrier.Carrier = "another-carrier"
+	wrongCarrier.Order = 100
+	rejected, first := applyConsentForTest(t, empty, proposal, policy, wrongCarrier)
+	if first.Reason() != contract.ConsentReasonContextMismatch {
+		t.Fatal("expected a remembered carrier rejection")
+	}
+	tied := subsequentConsentCommand(input, "equal-order", contract.ApproveConsent, 100)
+	unchanged, tieResult := applyConsentForTest(t, rejected, proposal, policy, tied)
+	if tieResult.Outcome() != contract.ConsentRejected || tieResult.Reason() != contract.ConsentReasonObsoleteCommand || unchanged.HasApproval(proposal, policy) {
+		t.Fatal("equal-order distinct command ignored an earlier rejected receipt")
+	}
+	eligible := subsequentConsentCommand(input, "lower-order-eligible", contract.ApproveConsent, 20)
+	approved, result := applyConsentForTest(t, unchanged, proposal, policy, eligible)
+	if result.Outcome() != contract.ConsentApproved || !approved.HasApproval(proposal, policy) {
+		t.Fatal("rejection incorrectly advanced the successful authority watermark")
+	}
+	if len(approved.Results()) != 3 || approved.Results()[0].Command().Order() != 100 || approved.Results()[2].Command().Order() != 20 {
+		t.Fatal("original results were not retained in processing order")
+	}
+}
+
+func TestConsentUnauthorizedActorCannotReserveHumanOwnersOrder(t *testing.T) {
+	empty, proposal, policy, input := consentFixture(t)
+	unauthorized := input
+	unauthorized.Actor = principalForTest(t, input.Actor.ID(), contract.Agent)
+	rejected, result := applyConsentForTest(t, empty, proposal, policy, unauthorized)
+	if result.Reason() != contract.ConsentReasonUnauthorized {
+		t.Fatal("expected unauthorized agent rejection")
+	}
+	ownerCommand := subsequentConsentCommand(input, "human-owner", contract.ApproveConsent, input.Order)
+	approved, ownerResult := applyConsentForTest(t, rejected, proposal, policy, ownerCommand)
+	if ownerResult.Outcome() != contract.ConsentApproved || !approved.HasApproval(proposal, policy) {
+		t.Fatal("an agent sharing an ID reserved the human owner's ordering slot")
+	}
+}
+
+func TestConsentRepeatedExplicitApprovalRemainsOneRevocableConsent(t *testing.T) {
+	empty, proposal, policy, input := consentFixture(t)
+	first, _ := applyConsentForTest(t, empty, proposal, policy, input)
+	again := subsequentConsentCommand(input, "new-explicit-approval", contract.ApproveConsent, 11)
+	second, result := applyConsentForTest(t, first, proposal, policy, again)
+	if result.Outcome() != contract.ConsentApproved || result.Duplicate() || !second.HasApproval(proposal, policy) || len(second.Results()) != 2 {
+		t.Fatal("new explicit approval did not preserve one active consent and both outcomes")
+	}
+	revoke := subsequentConsentCommand(input, "revoke-all-own-consent", contract.RevokeConsent, 12)
+	revoked, _ := applyConsentForTest(t, second, proposal, policy, revoke)
+	if revoked.HasApproval(proposal, policy) {
+		t.Fatal("repeated approval required multiple withdrawals from the same author")
+	}
+}

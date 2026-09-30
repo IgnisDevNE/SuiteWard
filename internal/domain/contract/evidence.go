@@ -1,5 +1,6 @@
 package contract
 
+// IntegrityOutcome describes an integrity observation, not test execution.
 type IntegrityOutcome uint8
 
 const (
@@ -8,18 +9,24 @@ const (
 	IntegrityUnavailable
 )
 
-type IntegrityEvidence struct{}
-
-func NewIntegrityEvidence(emitter PrincipalID, source SourceRevision, binding ApprovalBinding, outcome IntegrityOutcome) (IntegrityEvidence, error) {
-	return IntegrityEvidence{}, nil
+// IntegrityEvidence is immutable attribution and context, not authentication.
+type IntegrityEvidence struct {
+	emitter PrincipalID
+	source  SourceRevision
+	binding ApprovalBinding
+	outcome IntegrityOutcome
 }
 
-func (e IntegrityEvidence) EmitterID() PrincipalID { return "" }
+func NewIntegrityEvidence(emitter PrincipalID, source SourceRevision, binding ApprovalBinding, outcome IntegrityOutcome) (IntegrityEvidence, error) {
+	return IntegrityEvidence{emitter: emitter, source: source, binding: binding, outcome: outcome}, nil
+}
 
-func (e IntegrityEvidence) Source() SourceRevision { return "" }
+func (e IntegrityEvidence) EmitterID() PrincipalID { return e.emitter }
 
-func (e IntegrityEvidence) Binding() ApprovalBinding { return ApprovalBinding{} }
+func (e IntegrityEvidence) Source() SourceRevision { return e.source }
 
-func (e IntegrityEvidence) Outcome() IntegrityOutcome { return 0 }
+func (e IntegrityEvidence) Binding() ApprovalBinding { return e.binding }
 
-func (e IntegrityEvidence) IsZero() bool { return true }
+func (e IntegrityEvidence) Outcome() IntegrityOutcome { return e.outcome }
+
+func (e IntegrityEvidence) IsZero() bool { return e.binding.IsZero() }

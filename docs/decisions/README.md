@@ -1,6 +1,6 @@
 # Architecture decision records
 
-- **Updated:** 2026-09-26
+- **Updated:** 2026-09-30
 - **Product:** SuiteWard
 - **State:** Accepted planning decisions; implementation and release validation remain pending.
 
@@ -32,6 +32,7 @@
 | [0022](0022-contract-change-pr-priority.md) | Contract-change PR priority | One active contract-changing PR per suite, waiting checks, human `/suiteward prioritize`, confirmed demotion before replacement readiness, and post-integration reconciliation. |
 | [0023](0023-development-environment-and-project-local-tooling.md) | Development environment and project-local tooling | Native Windows development, Windows/Linux CI, local PostgreSQL in Podman, pinned project-local tools, and isolated worktree resources. |
 | [0024](0024-single-module-project-structure.md) | Single-module project structure | `cmd/` entry points, internal domain/application/adapter boundaries, capability grouping, and dependency rules for parallel implementation. |
+| [0025](0025-test-driven-development.md) | Mandatory task-level test-driven development | Behavioral RED before implementation, GREEN and optional refactoring, independently reviewed evidence, bounded CI validation, and explicit non-implementation exceptions. |
 
 Naming, English as the project language, initial audience, and product positioning are recorded in the [project baseline](../project-baseline.md). They do not each need an architecture decision record.
 
@@ -74,4 +75,3 @@ Define the concrete owner-verification and credential-separation experience: how
 ADR 0022 settles the visible priority-queue behavior for concurrent contract changes. Its implementation still needs validation for in-flight GitHub merges, same-SHA PRs, and recovery from an integrated but unpromotable active PR. The queue does not make GitHub and PostgreSQL atomic.
 
 The logical archive, guided restore, Release destination, and 29-day contingency clock for state awaiting its first remote coverage are settled in ADRs 0019 through 0021. Exact backup naming, capacity handling, the remaining App permission matrix, and concrete configuration semantics remain on the planning/implementation backlog. Execution-profile selection is deferred to M2; administrative identity-loss recovery and strict integration coordination remain open.
-

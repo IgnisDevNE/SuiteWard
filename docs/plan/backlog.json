@@ -1383,7 +1383,9 @@
       "kind": "integration",
       "lane": "integration",
       "owns": [
-        "docs/plan/m0-contracts.md"
+        "docs/plan/backlog.json",
+        "docs/plan/phases/M0.03.md",
+        "docs/plan/executions/M0.03.json"
       ],
       "needs_to_start": [
         "F0.02-I",

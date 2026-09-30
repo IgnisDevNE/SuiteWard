@@ -13,7 +13,7 @@
         "outcome": "accepted",
         "author": "root",
         "reviewer": "m001_artifact, m001_authority, phase_domain_plan",
-        "notes": "All three consuming workers independently accepted dc848d3878743108fbce58afc5f4a640693f97f6 against ADRs 0007, 0012 and 0024. No implementation-revision approval policy or owner-transfer policy was selected."
+        "notes": "All three consuming workers independently accepted dc848d3878743108fbce58afc5f4a640693f97f6 against ADRs 0007, 0012 and 0024. No implementation-revision approval policy or owner-transfer policy was selected. The activation repair ownership addendum at 9dba2992afb72f47af811bae17b9f59d8c9871c0 was independently reviewed by m001_authority, with no product policy change."
       },
       "task_id": "M0.01-C0"
     },
@@ -256,13 +256,29 @@
             "exit_code": 1,
             "output": "TestHashKnownContent/abc: Hash returned empty instead of sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad; TestDigestAbsentIsDifferentFromEmptyContent and exact-byte distinction assertions failed. Real module/source compiled; failure was missing hashing behavior."
           }
+        },
+        {
+          "scenario": "Coverage invocation preserves the exact coverage.out filename and passes only discovered project packages as one explicit argument, using the real PowerShell parser with isolated command fakes.",
+          "red": {
+            "revision": "1a23f8df6a1fcf93ed58deea7a165043e82a2dea",
+            "command": "./scripts/test-go.ps1",
+            "exit_code": 1,
+            "output": "Coverage verification rejected a successful Go run: No coverage report was produced Requested profile: 'D:\\Repos\\SuiteWard-worktrees\\m001-ci-fix\\.cache\\go-tests\\5913d046bd304d92b4490fa37b9fea30\\coverage'."
+          },
+          "green": {
+            "revision": "4c454e991b3c98de4a808272883c2500888660b7",
+            "command": "./scripts/test-go.ps1",
+            "exit_code": 0,
+            "output": "Passed 2 Go coverage invocation checks. These verify argument handling, not application coverage."
+          },
+          "refactor": "No refactoring needed. The minimal fix uses an argument array and the existing go list result. The regression runs without Go in foundation checks; real Linux CI remains required to validate Go's race/coverage invocation."
         }
       ],
       "review": {
         "outcome": "accepted",
-        "author": "root",
+        "author": "root and phase_domain_plan",
         "reviewer": "m001_authority",
-        "notes": "Independently reran whole-module GREEN at ca9e6daa53ce5f466fb109a030bd75177e5e5b35 and reviewed the initial behavioral RED log. Verified go.mod binding, all component file bindings and ancestry, real dependency composition and standard-library-only scope. This accepts local implementation; hosted Windows/Linux, real Codecov upload and negative proof are recorded separately when observed."
+        "notes": "Independently reran whole-module GREEN at ca9e6daa53ce5f466fb109a030bd75177e5e5b35 and reviewed the initial behavioral RED log. Verified go.mod binding, all component file bindings and ancestry, real dependency composition and standard-library-only scope. This accepts local implementation; hosted Windows/Linux, real Codecov upload and negative proof are recorded separately when observed. Independently replayed coverage repair RED 1a23f8df6a1fcf93ed58deea7a165043e82a2dea and GREEN 4c454e991b3c98de4a808272883c2500888660b7 with the exact regression command (exit 1/0), reviewed all three final scripts and accepted without findings. The script-local command fixture is explicitly separate from native hosted coverage evidence."
       },
       "task_id": "M0.01-I",
       "mode": "required",
@@ -271,7 +287,13 @@
         "README.md",
         "docs/development-guide.md",
         "docs/local-development.md",
-        "docs/plan/executions/M0.01.json"
+        "docs/plan/executions/M0.01.json",
+        "scripts/check-go.ps1",
+        "scripts/test-go.ps1",
+        "scripts/check-foundation.ps1",
+        "docs/plan/backlog.json",
+        "docs/plan/phases/M0.01.md",
+        "docs/plan/executions/M0.01.md"
       ]
     }
   ]

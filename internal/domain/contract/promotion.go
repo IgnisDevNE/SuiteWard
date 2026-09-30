@@ -202,13 +202,30 @@ func blockedPromotion(reason PromotionReason) PromotionDecision {
 	return PromotionDecision{outcome: PromotionBlocked, reason: reason}
 }
 func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision, error) {
-	binding := context.Proposal.Current().Binding()
+	if context.Canonical.IsZero() || context.Proposed.IsZero() || context.Proposal.IsZero() || !validProposalReference(context.Reference) ||
+		strings.TrimSpace(string(context.Carrier)) == "" || context.Policy.RevisionID() == "" || strings.TrimSpace(string(requiredSource)) == "" {
+		return PromotionDecision{}, ErrInvalidPromotion
+	}
+	revision, err := context.Proposal.Resolve(context.Reference, context.Carrier)
+	if errors.Is(err, ErrProposalContextMismatch) {
+		return blockedPromotion(PromotionReasonContextMismatch), nil
+	}
+	if err != nil {
+		return blockedPromotion(PromotionReasonProposalNotCurrent), nil
+	}
+	binding := revision.Binding()
+	if context.Reference.ProjectID != context.Canonical.Suite().ProjectID() || context.Reference.SuiteID != context.Canonical.Suite().ID() || !context.Proposed.matches(binding) {
+		return blockedPromotion(PromotionReasonContextMismatch), nil
+	}
 	current, present := context.Canonical.Suite().CurrentVersionID()
 	if !present && len(context.Proposed.Manifest().Entries()) == 0 {
 		return blockedPromotion(PromotionReasonEmptyInventory), nil
 	}
 	if binding.ExpectedCanonical() != current {
 		return blockedPromotion(PromotionReasonCanonicalChanged), nil
+	}
+	if context.ExpectedStateRevision != context.Canonical.Suite().Revision() {
+		return blockedPromotion(PromotionReasonStateChanged), nil
 	}
 	if context.Policy.ProjectID() != context.Canonical.Suite().ProjectID() {
 		return blockedPromotion(PromotionReasonContextMismatch), nil
@@ -218,6 +235,15 @@ func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevi
 	}
 	if !context.Consent.HasApproval(context.Proposal, context.Policy) {
 		return blockedPromotion(PromotionReasonApprovalMissing), nil
+	}
+	if context.Assessment.Assurance() != IntegrityOnly {
+		return blockedPromotion(PromotionReasonIntegrityNotPassed), nil
+	}
+	if context.Assessment.Source() != requiredSource || !context.Assessment.Binding().Equal(binding) || context.Assessment.Reason() == IntegrityReasonMismatch {
+		return blockedPromotion(PromotionReasonAssessmentMismatch), nil
+	}
+	if !context.Assessment.Passed() {
+		return blockedPromotion(PromotionReasonIntegrityNotPassed), nil
 	}
 	if !context.Scheduling.CanPromote(context.Proposal, context.ExpectedSchedulingGeneration) {
 		return blockedPromotion(PromotionReasonSchedulingBlocked), nil

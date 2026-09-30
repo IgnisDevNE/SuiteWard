@@ -47,6 +47,18 @@ jobs:
       - name: Validate scripts, workflows, documentation, and delivery plan
         run: ./scripts/check-foundation.ps1
 
+  tdd:
+    name: TDD evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require reviewed task evidence for the exact change
+        run: ./scripts/ci.ps1 -Mode Tdd
+
   go:
     name: Go (${{ matrix.os }})
     needs: inspect
@@ -126,7 +138,7 @@ jobs:
 
   gate:
     name: CI / Gate
-    needs: [inspect, foundation, go, coverage]
+    needs: [inspect, foundation, tdd, go, coverage]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

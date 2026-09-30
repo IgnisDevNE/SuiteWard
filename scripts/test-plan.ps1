@@ -7,6 +7,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'check-plan.ps1') -PlanPath $PlanPath
 $source = Get-Content -LiteralPath $PlanPath -Raw
 $baseline = $source | ConvertFrom-Json -AsHashtable
+if ($baseline.Contains('tdd_policy')) {
+    Assert-Plan $baseline
+} else {
+    # Keep the regression fixture reproducible on the pre-adoption RED revision.
+    # check-plan validates the unmodified real backlog separately in foundation CI.
+    $baseline['tdd_policy'] = @{ document = 'docs/tdd.md'; historical_phases = @('F0') }
+    foreach ($task in $baseline['tasks']) {
+        $mode = if ($task['phase'] -ceq 'F0') { 'historical' } else { 'required' }
+        $task['tdd'] = @{ mode = $mode; reason = 'Regression fixture classification for the TDD policy.' }
+    }
+    $source = $baseline | ConvertTo-Json -Depth 100
+}
 Assert-Plan $baseline
 if (@($baseline['tasks']).Count -lt 2) { throw 'Dependency regression checks need at least two real tasks.' }
 
@@ -33,6 +45,65 @@ function Test-PlanMutation {
 }
 
 try {
+    Test-PlanMutation { param($p) $p.Remove('tdd_policy') } 'tdd_policy must be an object'
+    $checks++
+    Test-PlanMutation { param($p) $p['tdd_policy'] = 'optional' } 'tdd_policy must be an object'
+    $checks++
+    Test-PlanMutation { param($p) $p['tdd_policy']['document'] = 'docs/other-policy.md' } 'tdd_policy.document must be docs/tdd.md'
+    $checks++
+    foreach ($historicalPhases in @(@(), @('F0', 'M0.01'), @('M0.01'))) {
+        Test-PlanMutation { param($p) $p['tdd_policy']['historical_phases'] = $historicalPhases } 'tdd_policy.historical_phases must contain only F0'
+        $checks++
+    }
+    Test-PlanMutation { param($p) $p['tasks'][0].Remove('tdd') } 'tdd must be an object'
+    $checks++
+    Test-PlanMutation { param($p) $p['tasks'][0]['tdd'] = 'required' } 'tdd must be an object'
+    $checks++
+    foreach ($mode in @($null, '', 'optional', 'Required')) {
+        Test-PlanMutation { param($p) $p['tasks'][0]['tdd']['mode'] = $mode } 'tdd.mode is invalid'
+        $checks++
+    }
+    foreach ($reason in @($null, '', '   ', 42)) {
+        Test-PlanMutation { param($p) $p['tasks'][0]['tdd']['reason'] = $reason } 'tdd.reason must be a nonempty string'
+        $checks++
+    }
+    $futureTaskID = @($baseline['tasks'] | Where-Object { $_['phase'] -cne 'F0' -and $_['kind'] -ceq 'implementation' })[0]['id']
+    Test-PlanMutation {
+        param($p)
+        $task = @($p['tasks'] | Where-Object { $_['id'] -ceq $futureTaskID })[0]
+        $task['tdd'] = @{ mode = 'historical'; reason = 'Pretend a future implementation predates adoption.' }
+    } 'historical TDD is restricted to completed phase F0'
+    $checks++
+    foreach ($behaviorPath in @('internal/core/value.go', 'scripts/check.ps1', '.github/workflows/ci.yml', 'docs/example.ps1', 'docs/settings.json')) {
+        Test-PlanMutation {
+            param($p)
+            $task = @($p['tasks'] | Where-Object { $_['id'] -ceq $futureTaskID })[0]
+            $task['tdd'] = @{ mode = 'not_applicable'; reason = 'Claim behavior has no TDD obligation.' }
+            $task['owns'] = @($behaviorPath)
+            $task['shared_files'] = @()
+        } 'not_applicable implementation tasks must own only documentation'
+        $checks++
+    }
+    Test-PlanMutation {
+        param($p)
+        $task = @($p['tasks'] | Where-Object { $_['id'] -ceq $futureTaskID })[0]
+        $task['tdd'] = @{ mode = 'not_applicable'; reason = 'Hide behavior behind a documentation task.' }
+        $task['owns'] = @('docs/review.md')
+        $task['shared_files'] = @('scripts/check.ps1')
+    } 'not_applicable implementation tasks must own only documentation'
+    $checks++
+    foreach ($kind in @('contract', 'integration', 'implementation')) {
+        $candidate = $source | ConvertFrom-Json -AsHashtable
+        $task = @($candidate['tasks'] | Where-Object { $_['id'] -ceq $futureTaskID })[0]
+        $task['kind'] = $kind
+        $task['tdd'] = @{ mode = 'not_applicable'; reason = 'Reviewed contract, aggregation, or documentation only.' }
+        $task['owns'] = @('docs/plan/review.md', 'README.md', 'notes.markdown', 'docs/plan/backlog.json', 'docs/plan/executions/F0.01.json')
+        $task['shared_files'] = @('AGENTS.md')
+        Assert-Plan $candidate
+        $task['tdd']['mode'] = 'required'
+        Assert-Plan $candidate
+        $checks++
+    }
     Test-PlanMutation { param($p) $p['tasks'] += $p['tasks'][0].Clone() } 'Duplicate tasks ID'
     $checks++
     Test-PlanMutation { param($p) $p['tasks'][0]['needs_to_start'] = @('missing-' + [Guid]::NewGuid().ToString('N')) } 'references unknown ID'
@@ -86,6 +157,20 @@ try {
     [IO.File]::WriteAllText($copy, $source, [Text.UTF8Encoding]::new($false))
     Invoke-PlanCheck $copy -WriteDocs
     Invoke-PlanCheck $copy
+    $checks++
+    foreach ($phase in $baseline['phases']) {
+        $rendered = Get-PhaseDocument $baseline $phase
+        if (-not $rendered.Contains('[TDD policy](../../tdd.md)')) { throw "Phase $($phase['id']) omits its TDD policy link." }
+        foreach ($task in $baseline['tasks'] | Where-Object { $_['phase'] -ceq $phase['id'] }) {
+            $tddLine = "TDD: **$($task['tdd']['mode'])**. $($task['tdd']['reason'])"
+            $taskHeading = "### $($task['id']) — $($task['title'])"
+            $taskStart = $rendered.IndexOf($taskHeading, [StringComparison]::Ordinal)
+            if ($taskStart -lt 0) { throw "Phase $($phase['id']) omits task $($task['id'])." }
+            $taskEnd = $rendered.IndexOf("`n### ", $taskStart + $taskHeading.Length, [StringComparison]::Ordinal)
+            $taskDocument = if ($taskEnd -lt 0) { $rendered.Substring($taskStart) } else { $rendered.Substring($taskStart, $taskEnd - $taskStart) }
+            if (-not $taskDocument.Contains($tddLine)) { throw "Phase $($phase['id']) omits TDD mode/reason for task $($task['id'])." }
+        }
+    }
     $checks++
     $document = Join-Path $scratch "phases/$($baseline['phases'][0]['id']).md"
     $expected = [IO.File]::ReadAllText($document)

@@ -1,6 +1,6 @@
 # Delivery plan
 
-This plan defines 21 phases and 104 tasks. **Each phase produces one integration PR.** A milestone spans several phases. Task branches/worktrees contribute reviewed commits to the phase; a task does not require a separate PR.
+This plan defines 22 phases and 108 tasks. **Each phase produces one integration PR.** A milestone spans several phases. Task branches/worktrees contribute reviewed commits to the phase; a task does not require a separate PR.
 
 Start with [foundation readiness](readiness.md), [parallel delivery](parallel-delivery.md), and [open decisions](decisions.md). The [canonical backlog](backlog.json) contains ownership, contracts, start and integration dependencies, acceptance scenarios, and verification for every task. The phase pages below are generated from it and checked in CI. They describe planned work, not completed implementation.
 
@@ -9,7 +9,8 @@ Start with [foundation readiness](readiness.md), [parallel delivery](parallel-de
 | Phase / PR | Outcome | Must merge after |
 | --- | --- | --- |
 | [F0: Development environment, GitHub foundation, and delivery plan](phases/F0.md) | An isolated Windows/Linux development workflow, checked GitHub CI configuration, and an executable phase/task plan. | None |
-| [M0.01: Immutable contract values](phases/M0.01.md) | Real, tested Go domain values for deterministic artifact identity, immutable canonical snapshots, and the MVP authority boundary. | F0 |
+| [F0.01: Per-task TDD and evidence enforcement](phases/F0.01.md) | Require meaningful RED/GREEN cycles, justified documentation exceptions, and checked phase evidence. | F0 |
+| [M0.01: Immutable contract values](phases/M0.01.md) | Real, tested Go domain values for deterministic artifact identity, immutable canonical snapshots, and the MVP authority boundary. | F0.01 |
 | [M0.02: Exact proposals and human consent](phases/M0.02.md) | Immutable proposal revisions, explicit approval bindings, ordered consent/revocation rules, and source-bound integrity assessments. | M0.01 |
 | [M0.03: Guarded canonical transitions](phases/M0.03.md) | Pure domain decisions for canonical promotion, both bootstrap paths, corrective history, and local scheduling fences. | M0.02 |
 | [M0.04: Atomic application coordination and milestone proof](phases/M0.04.md) | Application use cases coordinate domain outcomes through a consumed atomic boundary, proven with a test-only reference store and deterministic race/retry scenarios. | M0.03 |
@@ -58,7 +59,7 @@ flowchart LR
     T --> A
 ```
 
-F0 finishes the engineering environment, GitHub foundation, and this plan. Product source starts only after F0-I records integrated foundation. C0 contract/document preparation may start sooner. M0 then proves domain and application invariants without services; M1 delivers durable integrity governance, required checks, backups, and guided recovery. M2 adds canonical execution after selecting the first customer profile and isolation policy. M3 selects hardening from demonstrated threats; it does not pre-authorize a signing or cloud stack.
+F0 established the engineering environment, GitHub foundation, and this plan. F0.01 adds the accepted [TDD policy](../tdd.md) and its evidence gate before product source starts. Product implementation requires F0.01-I; C0 contract/document preparation may start sooner. M0 then proves domain and application invariants without services; M1 delivers durable integrity governance, required checks, backups, and guided recovery. M2 adds canonical execution after selecting the first customer profile and isolation policy. M3 selects hardening from demonstrated threats; it does not pre-authorize a signing or cloud stack.
 
 For M0.01, the artifact, authority, and immutable snapshot lanes start together after C0. M0.02 contract preparation can overlap those implementations. Each later phase distinguishes needs_to_start from needs_to_merge; phase merge ordering is not a blanket development start barrier. Use reviewed interfaces and small test fakes to reduce blocking, then prove the actual components together.
 
@@ -70,6 +71,8 @@ The plan does not select managed hosting or hosted execution versus customer inf
 
 ## Maintaining and executing the plan
 
-Edit backlog.json, then run `./scripts/check-plan.ps1 -WriteDocs`. Default `./scripts/check-plan.ps1` checks references, ownership, dependency cycles, contract ownership, and generated-page freshness. `./scripts/test-plan.ps1` exercises rejection of malformed plans. Update this roadmap and decision register when phase outcomes or gates change.
+Edit backlog.json, then run `./scripts/check-plan.ps1 -WriteDocs`. Default `./scripts/check-plan.ps1` checks references, ownership, dependency cycles, contract ownership, TDD obligations, and generated-page freshness. `./scripts/test-plan.ps1` exercises rejection of malformed plans. Every future task declares required TDD or justified documentation/decision-only non-applicability. F0 remains historical: no retroactive TDD proof is claimed. Update this roadmap and decision register when phase outcomes or gates change.
+
+Before publishing, commit `docs/plan/executions/<phase>.json` and run `./scripts/check-tdd.ps1 -BaseRevision <base-commit> -HeadRevision HEAD`. The evidence record covers every changed file and every task in the phase. Retain worker checkpoint commits when integrating branches so the recorded RED/GREEN revisions remain reachable. Passing this structural check complements independent review; it cannot establish the truth or relevance of an asserted test result.
 
 At dispatch, record assignee, worktree, contract revision, ownership, and evidence that start prerequisites are satisfied. Use the [task evidence template](task-evidence-template.md). Neither an existing task entry nor a green CI run proves completion or grants merge authority. Publish through the authorized bot; the user authorizes each merge.

@@ -10,6 +10,9 @@ import (
 
 var ErrInvalidProtectedContract = errors.New("invalid protected contract")
 
+// IntegrationTargetID identifies the configured integration destination.
+type IntegrationTargetID string
+
 // ProtectedContract describes exact protected content, separately from authority.
 type ProtectedContract struct {
 	manifest      artifact.Manifest

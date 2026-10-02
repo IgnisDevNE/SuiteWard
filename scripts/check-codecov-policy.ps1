@@ -16,10 +16,12 @@ function Assert-CodecovRevision {
 
 function Get-CodecovField {
     param($Object, [string]$Name)
-    if ($null -eq $Object -or $null -eq $Object.PSObject.Properties[$Name] -or $null -eq $Object.$Name) {
+    if ($Object -isnot [pscustomobject] -or $null -eq $Object.PSObject.Properties[$Name] -or $null -eq $Object.$Name) {
         throw "Codecov report is missing '$Name'."
     }
-    return $Object.$Name
+    # Preserve arrays so the schema checks can reject them. PowerShell's
+    # pipeline would otherwise unwrap a single-element array into a scalar.
+    return ,$Object.$Name
 }
 
 function ConvertTo-CodecovCount {
@@ -38,8 +40,10 @@ function ConvertTo-CodecovCount {
 function ConvertFrom-CodecovReport {
     param($Report, [string]$Revision)
     Assert-CodecovRevision $Revision
-    if ((Get-CodecovField $Report 'commitid') -cne $Revision) { throw 'Codecov report commit does not match the requested revision.' }
-    if ((Get-CodecovField $Report 'state') -cne 'complete') { throw 'Codecov report is not complete.' }
+    $commit = Get-CodecovField $Report 'commitid'
+    $state = Get-CodecovField $Report 'state'
+    if ($commit -isnot [string] -or $commit -cne $Revision) { throw 'Codecov report commit does not match the requested revision.' }
+    if ($state -isnot [string] -or $state -cne 'complete') { throw 'Codecov report is not complete.' }
     $top = Get-CodecovField $Report 'totals'
     $nested = Get-CodecovField (Get-CodecovField $Report 'report') 'totals'
     $counts = @{}

@@ -169,6 +169,64 @@ func TestPromoteRejectsMalformedHistoricalReceipt(t *testing.T) {
 	}
 }
 
+func TestPromotionRejectsNilStore(t *testing.T) {
+	f := newStoreFixture(t)
+	for name, call := range map[string]func() (PromoteResult, error){
+		"promote": func() (PromoteResult, error) { return Promote(context.Background(), nil, f.request) },
+		"bootstrap": func() (PromoteResult, error) {
+			return Bootstrap(context.Background(), nil, BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: f.request})
+		},
+		"correct": func() (PromoteResult, error) {
+			return Correct(context.Background(), nil, CorrectionRequest{Promotion: f.request, TargetVersionID: "version"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if value := recover(); value != nil {
+					t.Errorf("nil store panicked instead of returning ErrInvalidRequest: %v", value)
+				}
+			}()
+			result, err := call()
+			if !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("nil store error: %v", err)
+			}
+			requireZeroPromotionResult(t, result)
+		})
+	}
+}
+
+func TestPromotionRejectsMalformedReceiptEnvelope(t *testing.T) {
+	for name, change := range map[string]func(*OperationReceipt){
+		"absent kind with payload":       func(r *OperationReceipt) { r.Kind = 0 },
+		"consent without command":        func(r *OperationReceipt) { *r = OperationReceipt{Kind: OperationConsent} },
+		"consent with promotion payload": func(r *OperationReceipt) { r.Kind = OperationConsent },
+		"integration carrier contradicts record": func(r *OperationReceipt) {
+			i := r.Promotion.Identity.Request.Integration
+			var err error
+			r.Promotion.Identity.Request.Integration, err = contract.NewIntegration(i.ProjectID(), i.Target(), i.Source(), "contradictory", i.Kind())
+			if err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, store := approvedStoreFixture(t)
+			if _, err := Promote(context.Background(), store, f.request); err != nil {
+				t.Fatal(err)
+			}
+			before := store.inspect()
+			result, err := Promote(context.Background(), changedPromotionLoad{Store: store, change: func(s *Snapshot) { change(&s.Operation) }}, f.request)
+			if !errors.Is(err, ErrInvalidSnapshot) {
+				t.Fatalf("malformed receipt envelope accepted: outcome=%v error=%v", result.Decision.Outcome(), err)
+			}
+			requireZeroPromotionResult(t, result)
+			if !reflect.DeepEqual(before, store.inspect()) {
+				t.Fatal("malformed receipt changed history")
+			}
+		})
+	}
+}
+
 // changedPromotionLoad exercises defensive handling at the Store boundary,
 // while all state and commit behavior still use the shared reference store.
 type changedPromotionLoad struct {

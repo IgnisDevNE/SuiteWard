@@ -45,9 +45,18 @@ func ProcessConsent(ctx context.Context, store Store, request ConsentRequest) (C
 	if snapshot.Source.Kind != 0 || result.Reason() == contract.ConsentReasonCommandConflict {
 		return ConsentResponse{}, ErrInvalidSnapshot
 	}
+	var promoted contract.SuiteVersionID
+	if record := snapshot.HistoricalPromotion; !record.IsZero() {
+		revision, err := snapshot.Proposal.Lookup(record.Binding().Reference(), record.Carrier())
+		if err != nil || record.Binding().Reference() != command.Reference() || !revision.Binding().Equal(record.Binding()) {
+			return ConsentResponse{}, ErrInvalidSnapshot
+		}
+		promoted = record.VersionID()
+	}
 	receipt := ConsentReceipt{
 		Result: result, EvaluatedReference: snapshot.Proposal.Current().Binding().Reference(),
 		PolicyRevisionID: snapshot.Policy.RevisionID(), CurrentApprovalEligible: next.HasApproval(snapshot.Proposal, snapshot.Policy),
+		PromotedVersionID: promoted,
 	}
 	if err := store.CommitConsent(ctx, snapshot.Fence, ConsentWrite{Command: command, Consent: next, Receipt: receipt}); err != nil {
 		return ConsentResponse{}, err

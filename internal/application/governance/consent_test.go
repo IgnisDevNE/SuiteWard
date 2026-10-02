@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -265,4 +266,96 @@ func TestProcessConsentHistoricalReplayNeedsNoCurrentAuthority(t *testing.T) {
 	alias := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "alias" })
 	response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: alias})
 	if !errors.Is(err, ErrInvalidSnapshot) || response != (ConsentResponse{}) || store.commits != 0 { t.Fatalf("alias without current aggregate = %+v, %v", response, err) }
+}
+
+func consentRevisionForTest(t *testing.T, protected contract.ProtectedContract, reference contract.ProposalReference, baseline contract.SuiteVersionID, carrier contract.ApprovalCarrierID) contract.ProposalRevision {
+	t.Helper()
+	binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: baseline, Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "policy-1", CoveredInputs: protected.CoveredInputs()})
+	if err != nil { t.Fatal(err) }
+	revision, err := contract.NewProposalRevision(binding, "candidate-2", carrier)
+	return mustValue(t, revision, err)
+}
+
+func TestProcessConsentAcknowledgesExactHistoricalPromotion(t *testing.T) {
+	f, store := approvedStoreFixture(t)
+	promoted, err := Promote(context.Background(), store, f.request)
+	if err != nil || !promoted.Committed { t.Fatalf("initial promotion = %+v, %v", promoted, err) }
+
+	// A newer revision in the original proposal has independent current consent.
+	currentReference := f.command.Reference()
+	currentReference.RevisionID = "revision-2"
+	currentProposal, err := f.snapshot.Proposal.Revise(consentRevisionForTest(t, f.proposed, currentReference, "version-1", f.command.Carrier()))
+	if err != nil { t.Fatal(err) }
+	state := store.inspect()
+	fence := AuthorityFence{ProjectID: "project", SuiteID: "suite", Revision: state.canonical.Suite().Revision()}
+	if err := store.updateAuthority(context.Background(), fence, func(s *referenceState) error { s.proposals[currentReference.ProposalID] = currentProposal; return nil }); err != nil { t.Fatal(err) }
+	currentCommand := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "approve-current"; c.SourceCommandID = "comment-current"; c.Reference = currentReference; c.Order = 2 })
+	processConsentForTest(t, store, currentCommand)
+
+	// A separate, fully approved proposal promotes another canonical version.
+	manifest, err := artifact.NewManifest([]artifact.Entry{{Path: "tests/contract.txt", Content: artifact.Hash([]byte("updated test"))}})
+	if err != nil { t.Fatal(err) }
+	protected, err := contract.NewProtectedContract(manifest, f.proposed.ScopeDigest(), f.proposed.CoveredInputs())
+	if err != nil { t.Fatal(err) }
+	laterReference := contract.ProposalReference{ProjectID: "project", SuiteID: "suite", ProposalID: "later-proposal", RevisionID: "later-revision"}
+	laterProposal, err := contract.NewProposal(consentRevisionForTest(t, protected, laterReference, "version-1", "later-carrier"))
+	if err != nil { t.Fatal(err) }
+	laterConsent, err := contract.NewConsent("project", "suite", laterReference.ProposalID)
+	if err != nil { t.Fatal(err) }
+	evidence, err := contract.NewIntegrityEvidence("verifier", "later-merged", laterProposal.Current().Binding(), contract.IntegrityPassed)
+	if err != nil { t.Fatal(err) }
+	assessment, err := contract.AssessIntegrity("later-merged", laterProposal.Current().Binding(), &evidence)
+	if err != nil { t.Fatal(err) }
+	fence.Revision = store.inspect().canonical.Suite().Revision()
+	if err := store.updateAuthority(context.Background(), fence, func(s *referenceState) error {
+		s.proposals[laterReference.ProposalID] = laterProposal
+		s.consents[laterReference.ProposalID] = laterConsent
+		s.assessments[assessmentKey{laterReference, "later-merged"}] = assessment
+		var err error
+		s.scheduling, err = s.scheduling.Admit(laterProposal, true)
+		return err
+	}); err != nil { t.Fatal(err) }
+	laterCommand := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "approve-later"; c.SourceCommandID = "comment-later"; c.Reference = laterReference; c.Carrier = "later-carrier" })
+	processConsentForTest(t, store, laterCommand)
+	integration, err := contract.NewIntegration("project", "default", "later-merged", "later-carrier", contract.IntegrationMergedChange)
+	if err != nil { t.Fatal(err) }
+	laterRequest := PromoteRequest{OperationID: "promote-later", Reference: laterReference, Carrier: "later-carrier", Proposed: protected, AssessmentSource: "later-merged", Integration: integration, NewVersionID: "version-2", RecordedAt: f.request.RecordedAt}
+	promoted, err = Promote(context.Background(), store, laterRequest)
+	if err != nil || !promoted.Committed { t.Fatalf("later promotion = %+v, %v", promoted, err) }
+	before := store.inspect()
+
+	revoke := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "revoke-history"; c.SourceCommandID = "comment-revoke-history"; c.Action = contract.RevokeConsent; c.Order = 3 })
+	response := processConsentForTest(t, store, revoke)
+	if response.Receipt.Result.Outcome() != contract.ConsentRevoked || response.Receipt.Result.Command().Reference() != f.command.Reference() || response.Receipt.PromotedVersionID != "version-1" || response.Receipt.EvaluatedReference != currentReference || !response.Receipt.CurrentApprovalEligible { t.Fatalf("historical acknowledgment = %+v", response.Receipt) }
+	after := store.inspect()
+	if after.canonical.Version().ID() != "version-2" || !reflect.DeepEqual(before.versions, after.versions) || !reflect.DeepEqual(before.promotions, after.promotions) || !reflect.DeepEqual(before.scheduling, after.scheduling) || !reflect.DeepEqual(before.publications, after.publications) { t.Fatal("revocation changed canonical history or scheduling") }
+	if after.acknowledgments[len(after.acknowledgments)-1] != response.Receipt { t.Fatal("historical acknowledgment was not committed") }
+	noOp := changedConsentCommand(t, revoke, func(c *contract.CommandInput) { c.OperationID = "noop-history"; c.SourceCommandID = "comment-noop-history"; c.Order++ })
+	response = processConsentForTest(t, store, noOp)
+	if response.Receipt.Result.Outcome() != contract.ConsentNoActiveApproval || response.Receipt.PromotedVersionID != "version-1" || !response.Receipt.CurrentApprovalEligible { t.Fatal("no-op historical revoke lost current or historical facts") }
+}
+
+func TestProcessConsentRejectsWrongHistoricalPromotion(t *testing.T) {
+	for _, changed := range []string{"reference", "binding", "carrier"} {
+		t.Run(changed, func(t *testing.T) {
+			f, actual := approvedStoreFixture(t)
+			promoted, err := Promote(context.Background(), actual, f.request)
+			if err != nil || !promoted.Committed { t.Fatal(err) }
+			before := actual.inspect()
+			record := before.canonical.Record()
+			binding, carrier := record.Binding(), record.Carrier()
+			if changed == "carrier" { carrier = "wrong-carrier" } else {
+				ref := binding.Reference()
+				baseline := binding.ExpectedCanonical()
+				if changed == "reference" { ref.RevisionID = "different" } else { baseline = "different-baseline" }
+				binding = consentRevisionForTest(t, f.proposed, ref, baseline, carrier).Binding()
+			}
+			wrong, err := contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: record.OperationID(), VersionID: record.VersionID(), Binding: binding, Carrier: carrier, Source: record.Source(), Target: record.Target(), RecordedAt: record.RecordedAt()})
+			if err != nil { t.Fatal(err) }
+			store := &consentStoreProbe{Store: actual, changeSnapshot: func(s *Snapshot) { s.HistoricalPromotion = wrong }}
+			revoke := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "revoke"; c.SourceCommandID = "revoke-comment"; c.Action = contract.RevokeConsent; c.Order = 2 })
+			response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: revoke})
+			if !errors.Is(err, ErrInvalidSnapshot) || response != (ConsentResponse{}) || store.commits != 0 || !reflect.DeepEqual(before, actual.inspect()) { t.Fatalf("wrong history = %+v, %v, commits=%d", response, err, store.commits) }
+		})
+	}
 }

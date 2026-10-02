@@ -11,12 +11,12 @@
         "docs/plan/phases/M0.04.md"
       ],
       "cycles": [],
-      "reason": "Reviewed concrete application/store signatures, exact whole-authority revision mapping, receipt-first identity lookup, conditional commit effects, result durability semantics and ownership. Documentation/planning only; no executable behavior or coverage-policy selection.",
+      "reason": "Reviewed concrete application/store signatures, exact whole-authority revision mapping, receipt-first identity lookup, conditional commit effects, result durability semantics and ownership, then recorded the owner's accepted coverage decision. Documentation/planning only; no executable behavior.",
       "review": {
         "author": "root",
         "reviewer": "m001_artifact, m001_authority, phase_domain_plan",
         "outcome": "accepted",
-        "notes": "All three consumers independently accepted concrete C0 6ad360414ecd0150b138bb6e9cd4563d616fb500 and result-semantics clarification 39e095e31b2a3af649a72a2f1915efdc37c1233a before dependent implementation. check-plan -WriteDocs and foundation checks passed. D-M0-COVERAGE remains open and blocks final phase integration; draft publication may collect real hosted evidence."
+        "notes": "All three consumers independently accepted concrete C0 6ad360414ecd0150b138bb6e9cd4563d616fb500 and result-semantics clarification 39e095e31b2a3af649a72a2f1915efdc37c1233a before dependent implementation. check-plan -WriteDocs and foundation checks passed. The owner accepted target:auto with 0.25 percentage-point tolerance plus an independent 99% absolute floor on 2026-10-02, retaining patch 90% and critical scenarios. Decision record 8d7f4caf707143a65a4d03f916cc3a3c88da5e31 was independently reviewed by m001_artifact; acceptance of the decision does not claim activation of new required project contexts."
       }
     },
     {
@@ -237,7 +237,10 @@
         "internal/application/governance/store_test.go",
         "internal/application/governance/scenarios_test.go",
         "docs/plan/executions/M0.04.json",
-        "docs/plan/executions/M0.04.md"
+        "docs/plan/executions/M0.04.md",
+        "codecov.yml",
+        "scripts/test-ci.ps1",
+        "docs/ci-and-coverage.md"
       ],
       "cycles": [
         {
@@ -335,13 +338,29 @@
             "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.210s"
           },
           "refactor": "Corrected an earlier regression expectation after independent review: ErrNotFound for missing scope applies only when no stable identity was found. The missing-scope test now uses unknown identity IDs, while new known-identity tests reproduce the actual defect. All TestReferenceStore passed. The first GREEN was baec4cc277de7cbb222bff6c403e6906164921b8 (0.156s); final GREEN includes all owned source and scenario tests. Later channel-controlled application scenarios are aggregate verification of already TDD-proven behavior, not invented additional RED cycles. All six original cycle commands passed after the completed scenarios; TestGovernanceApplication passed at the final merged checkpoint."
+        },
+        {
+          "scenario": "Require non-informational project coverage with an actual-base-relative 0.25 percentage-point tolerance and independent 99% absolute floor, preserve fixed 90% patch with zero tolerance, and fail all three statuses on an absent head report.",
+          "red": {
+            "revision": "7bdc1b8ca4ed2a8838e1eeb74518e82be0227ea1",
+            "command": "./scripts/test-ci.ps1",
+            "exit_code": 1,
+            "output": "project/default must block a coverage violation; missing/informational status cannot enforce the accepted policy."
+          },
+          "green": {
+            "revision": "4b884f5db11399f27a69df59499519958e4e16a6",
+            "command": "./scripts/test-ci.ps1",
+            "exit_code": 0,
+            "output": "Passed 39 CI behavior checks. These verify CI infrastructure, not application coverage."
+          },
+          "refactor": "First GREEN f1c79ee5b70afb6e5a39cef225c89078dbedcc6f passed 36 checks after the YAML changed. Independent review added higher/lower actual project-base examples and lower-base fixed-patch rejection as supplemental regression of the already correct policy, reaching 39 checks without invented RED. The official Codecov validator returned HTTP 200 Valid and normalized the exact intended thresholds. The local declaration/boundary tests do not emulate or prove Codecov service enforcement; hosted observation and required-context activation remain pending. No Go application code or CI/Gate dependency changed."
         }
       ],
       "review": {
         "author": "phase_domain_plan",
-        "reviewer": "root",
+        "reviewer": "root, m001_authority",
         "outcome": "accepted",
-        "notes": "Root independently inspected and replayed I1-I6 compiled behavioral RED/GREEN pairs, then reviewed final scenario files at f3ef75e7686b41fd0e10ae032886618d99c15f9d and tested the combined application at 5ccd06f9747a4ad41d1816fdb36cd4062dbd91a5. Accepted explicit conditional identity reservations, source aliases, whole-authority fences, staged fault rollback, receipt-first loading, controlled concurrent use cases, exact historical acknowledgment and correction. The reference store proves a local model only; no PostgreSQL, provider, execution, durability or exactly-once delivery claim."
+        "notes": "Root independently inspected and replayed I1-I6 compiled behavioral RED/GREEN pairs, then reviewed final scenario files at f3ef75e7686b41fd0e10ae032886618d99c15f9d and tested the combined application at 5ccd06f9747a4ad41d1816fdb36cd4062dbd91a5. Accepted explicit conditional identity reservations, source aliases, whole-authority fences, staged fault rollback, receipt-first loading, controlled concurrent use cases, exact historical acknowledgment and correction. The reference store proves a local model only; no PostgreSQL, provider, execution, durability or exactly-once delivery claim. Root independently replayed I7's original informational-policy RED and GREEN and accepted dynamic-base supplemental tests. m001_authority independently reviewed the YAML, missing-report/non-informational semantics and unchanged CI wait direction, requesting a fixed-patch lower-base regression that passed in the final GREEN. The owner accepted the numeric policy; new required-context activation remains separate and pending."
       }
     }
   ]

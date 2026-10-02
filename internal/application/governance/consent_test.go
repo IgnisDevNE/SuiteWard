@@ -124,3 +124,78 @@ func TestProcessConsentFailureHasNoAcknowledgment(t *testing.T) {
 	response, err = ProcessConsent(ctx, actual, ConsentRequest{Command: f.command})
 	if !errors.Is(err, context.Canceled) || response != (ConsentResponse{}) { t.Fatalf("canceled = %+v, %v", response, err) }
 }
+
+func changedConsentCommand(t *testing.T, original contract.Command, change func(*contract.CommandInput)) contract.Command {
+	t.Helper()
+	input := contract.CommandInput{OperationID: original.OperationID(), SourceCommandID: original.SourceCommandID(), Actor: original.Actor(), Reference: original.Reference(), Carrier: original.Carrier(), Action: original.Action(), Order: original.Order()}
+	change(&input)
+	command, err := contract.NewCommand(input)
+	return mustValue(t, command, err)
+}
+
+func processConsentForTest(t *testing.T, store Store, command contract.Command) ConsentResponse {
+	t.Helper()
+	response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: command})
+	if err != nil || !response.Committed { t.Fatalf("process consent = %+v, %v", response, err) }
+	return response
+}
+
+func TestProcessConsentReplaysOriginalOutcome(t *testing.T) {
+	f := newStoreFixture(t)
+	actual := newReferenceStore(t, f.snapshot)
+	approved := processConsentForTest(t, actual, f.command)
+	revoke := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "revoke"; c.SourceCommandID = "comment-revoke"; c.Action = contract.RevokeConsent; c.Order = 20 })
+	processConsentForTest(t, actual, revoke)
+	before := actual.inspect()
+	store := &consentStoreProbe{Store: actual}
+	// The same authenticated source is immutable even when its observed body changes.
+	edited := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.Action = contract.RevokeConsent; c.Order = 99; c.Reference.RevisionID = "unknown"; c.Carrier = "edited-carrier" })
+	response := processConsentForTest(t, store, edited)
+	if !response.Duplicate || response.Receipt != approved.Receipt || store.commits != 0 || !reflect.DeepEqual(before, actual.inspect()) {
+		t.Fatal("pure replay changed original acknowledgment, consent or stored state")
+	}
+	if actual.inspect().consents[f.command.Reference().ProposalID].HasApproval(f.snapshot.Proposal, f.snapshot.Policy) { t.Fatal("historical approved result revived revoked consent") }
+
+	alias := changedConsentCommand(t, edited, func(c *contract.CommandInput) { c.OperationID = "alias" })
+	response = processConsentForTest(t, store, alias)
+	after := actual.inspect()
+	if !response.Duplicate || response.Receipt != approved.Receipt || store.commits != 1 || after.canonical.Suite().Revision() != before.canonical.Suite().Revision()+1 || len(after.operations) != len(before.operations)+1 || len(after.sources) != len(before.sources) || len(after.audits) != len(before.audits) || len(after.acknowledgments) != len(before.acknowledgments) {
+		t.Fatal("alias must reserve identity without repeating the original audit or acknowledgment")
+	}
+	if after.operations[alias.OperationID()].Consent != approved.Receipt { t.Fatal("alias lost original receipt") }
+	conflicting := changedConsentCommand(t, alias, func(c *contract.CommandInput) { c.SourceCommandID = "unrelated" })
+	_, result, err := after.consents[alias.Reference().ProposalID].Apply(f.snapshot.Proposal, f.snapshot.Policy, conflicting)
+	if err != nil || result.Reason() != contract.ConsentReasonCommandConflict { t.Fatal("domain operation alias was not persisted with global alias") }
+	response = processConsentForTest(t, store, alias)
+	if !response.Duplicate || store.commits != 1 || !reflect.DeepEqual(after, actual.inspect()) { t.Fatal("known alias wrote again") }
+}
+
+func TestProcessConsentReplaysRejectedReceiptAfterPolicyChange(t *testing.T) {
+	f := newStoreFixture(t)
+	actual := newReferenceStore(t, f.snapshot)
+	other, err := contract.NewPrincipal("other", contract.Human)
+	if err != nil { t.Fatal(err) }
+	command := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.Actor = other })
+	original := processConsentForTest(t, actual, command)
+	if original.Receipt.Result.Reason() != contract.ConsentReasonUnauthorized { t.Fatal("fixture must reject original actor") }
+	policy, err := contract.NewPolicy("project", "policy-2", other)
+	if err != nil { t.Fatal(err) }
+	state := actual.inspect()
+	fence := AuthorityFence{ProjectID: "project", SuiteID: "suite", Revision: state.canonical.Suite().Revision()}
+	if err := actual.updateAuthority(context.Background(), fence, func(s *referenceState) error { s.policy = policy; return nil }); err != nil { t.Fatal(err) }
+	before := actual.inspect()
+	replayed := processConsentForTest(t, actual, command)
+	if !replayed.Duplicate || replayed.Receipt != original.Receipt || !reflect.DeepEqual(before, actual.inspect()) { t.Fatal("replay reevaluated an immutable rejected receipt") }
+}
+
+func TestProcessConsentAliasFailureCanRetry(t *testing.T) {
+	f, store := approvedStoreFixture(t)
+	before := store.inspect()
+	alias := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "alias" })
+	store.failAt = "alias"
+	response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: alias})
+	if !errors.Is(err, errReferenceFailure) || response != (ConsentResponse{}) || !reflect.DeepEqual(before, store.inspect()) { t.Fatalf("alias failure = %+v, %v", response, err) }
+	store.failAt = ""
+	response = processConsentForTest(t, store, alias)
+	if !response.Duplicate || len(store.inspect().acknowledgments) != 1 { t.Fatal("alias retry duplicated original acknowledgment") }
+}

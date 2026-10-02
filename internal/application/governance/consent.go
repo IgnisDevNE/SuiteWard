@@ -69,25 +69,39 @@ func checkConsentIndexes(snapshot Snapshot, command contract.Command) error {
 	for _, receipt := range []OperationReceipt{snapshot.Operation, snapshot.Source} {
 		switch receipt.Kind {
 		case 0:
-			if receipt.Consent != (ConsentReceipt{}) || !emptyConsentIndexPromotion(receipt.Promotion) { return ErrInvalidSnapshot }
+			if receipt.Consent != (ConsentReceipt{}) || !emptyConsentIndexPromotion(receipt.Promotion) {
+				return ErrInvalidSnapshot
+			}
 		case OperationConsent:
-			if !emptyConsentIndexPromotion(receipt.Promotion) || !validConsentReceipt(receipt.Consent) { return ErrInvalidSnapshot }
+			if !emptyConsentIndexPromotion(receipt.Promotion) || !validConsentReceipt(receipt.Consent) {
+				return ErrInvalidSnapshot
+			}
 		case OperationPromote, OperationBootstrap, OperationCorrect:
-			if receipt.Consent != (ConsentReceipt{}) || receipt.Promotion.Identity.Kind != receipt.Kind || receipt.Promotion.Decision.Outcome() != contract.PromotionProposed { return ErrInvalidSnapshot }
+			if receipt.Consent != (ConsentReceipt{}) || receipt.Promotion.Identity.Kind != receipt.Kind || receipt.Promotion.Decision.Outcome() != contract.PromotionProposed {
+				return ErrInvalidSnapshot
+			}
 		default:
 			return ErrInvalidSnapshot
 		}
 	}
-	if snapshot.Source.Kind != 0 && snapshot.Source.Kind != OperationConsent { return ErrInvalidSnapshot }
+	if snapshot.Source.Kind != 0 && snapshot.Source.Kind != OperationConsent {
+		return ErrInvalidSnapshot
+	}
 	for _, receipt := range []OperationReceipt{snapshot.Operation, snapshot.Source} {
-		if receipt.Kind == 0 { continue }
-		if receipt.Kind != OperationConsent { return ErrOperationConflict }
+		if receipt.Kind == 0 {
+			continue
+		}
+		if receipt.Kind != OperationConsent {
+			return ErrOperationConflict
+		}
 		original := receipt.Consent.Result.Command()
 		if original.SourceCommandID() != command.SourceCommandID() || original.Actor() != command.Actor() || !sameConsentAggregate(original.Reference(), command.Reference()) {
 			return ErrOperationConflict
 		}
 	}
-	if snapshot.Operation.Kind != 0 && (snapshot.Source.Kind == 0 || snapshot.Operation.Consent != snapshot.Source.Consent) { return ErrInvalidSnapshot }
+	if snapshot.Operation.Kind != 0 && (snapshot.Source.Kind == 0 || snapshot.Operation.Consent != snapshot.Source.Consent) {
+		return ErrInvalidSnapshot
+	}
 	return nil
 }
 

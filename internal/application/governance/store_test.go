@@ -194,6 +194,22 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 	}
 	identity := write.Receipt.Identity
 	request := identity.Request
+	switch identity.Kind {
+	case OperationPromote:
+		if identity.BootstrapMode != 0 || identity.CorrectsVersionID != "" {
+			return ErrInvalidRequest
+		}
+	case OperationBootstrap:
+		if (identity.BootstrapMode != contract.ExistingBaselineBootstrap && identity.BootstrapMode != contract.FirstTestBootstrap) || identity.CorrectsVersionID != "" {
+			return ErrInvalidRequest
+		}
+	case OperationCorrect:
+		if identity.BootstrapMode != 0 || identity.CorrectsVersionID == "" {
+			return ErrInvalidRequest
+		}
+	default:
+		return ErrInvalidRequest
+	}
 	if _, exists := s.state.operations[request.OperationID]; exists {
 		return ErrOperationConflict
 	}

@@ -167,6 +167,26 @@ func TestGovernanceApplicationPromotionRevocationRace(t *testing.T) {
 			if len(state.operations) != 2 || len(state.audits) != 2 || state.canonical.Suite().Revision() != f.snapshot.Fence.Revision+2 {
 				t.Fatal("race committed more than one terminal contender")
 			}
+			if first == "promotion" {
+				reconciled, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: revoke})
+				if err != nil || !reconciled.Committed || reconciled.Duplicate || reconciled.Receipt.PromotedVersionID != f.request.NewVersionID || reconciled.Receipt.CurrentApprovalEligible {
+					t.Fatalf("fresh revoke lost exact historical promotion: %+v %v", reconciled, err)
+				}
+				after := store.inspect()
+				if !reflect.DeepEqual(state.versions, after.versions) || !reflect.DeepEqual(state.promotions, after.promotions) || !reflect.DeepEqual(state.publications, after.publications) || !reflect.DeepEqual(state.scheduling, after.scheduling) || after.canonical.Version().ID() != state.canonical.Version().ID() {
+					t.Fatal("reconciled revoke rewrote completed promotion")
+				}
+			} else {
+				reconciled, err := Promote(context.Background(), store, f.request)
+				if err != nil || reconciled.Committed || reconciled.Decision.Reason() != contract.PromotionReasonApprovalMissing || !reflect.DeepEqual(state, store.inspect()) {
+					t.Fatalf("fresh promotion did not observe revoked authority: %+v %v", reconciled, err)
+				}
+			}
+			beforeReplay := store.inspect()
+			replayed, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: f.command})
+			if err != nil || !replayed.Committed || !replayed.Duplicate || replayed.Receipt != approved.Receipt || !reflect.DeepEqual(beforeReplay, store.inspect()) {
+				t.Fatal("later authority changed original consent acknowledgment", err)
+			}
 		})
 	}
 }

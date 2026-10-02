@@ -202,6 +202,214 @@ func TestGovernanceApplicationHistoricalPromotionReplay(t *testing.T) {
 	}
 }
 
+func TestGovernanceApplicationCompetingPromotions(t *testing.T) {
+	for _, kind := range []string{"promotion", "bootstrap"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newStoreFixture(t)
+			store := newReferenceStore(t, f.snapshot)
+			if _, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: f.command}); err != nil {
+				t.Fatal(err)
+			}
+			other := f.request
+			other.OperationID = "competing-operation"
+			other.NewVersionID = "competing-version"
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			release := make(chan struct{})
+			gates := []*commitBarrierStore{{Store: store, reached: make(chan struct{}, 1), release: release}, {Store: store, reached: make(chan struct{}, 1), release: release}}
+			type outcome struct {
+				result PromoteResult
+				err    error
+			}
+			done := make(chan outcome, 2)
+			for i, request := range []PromoteRequest{f.request, other} {
+				go func() {
+					var result PromoteResult
+					var err error
+					if kind == "bootstrap" {
+						result, err = Bootstrap(ctx, gates[i], BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: request})
+					} else {
+						result, err = Promote(ctx, gates[i], request)
+					}
+					done <- outcome{result, err}
+				}()
+			}
+			waitForCommit(t, ctx, gates[0])
+			waitForCommit(t, ctx, gates[1])
+			close(release)
+			success, conflict := 0, 0
+			for range 2 {
+				out := <-done
+				if out.err == nil && out.result.Committed && !out.result.Duplicate {
+					success++
+				} else if errors.Is(out.err, ErrAuthorityConflict) && reflect.DeepEqual(out.result, PromoteResult{}) {
+					conflict++
+				} else {
+					t.Fatalf("unexpected competing result: %+v", out)
+				}
+			}
+			state := store.inspect()
+			if success != 1 || conflict != 1 || len(state.versions) != 1 || len(state.promotions) != 1 || len(state.publications) != 1 || len(state.operations) != 2 || len(state.audits) != 2 {
+				t.Fatal("competing use cases did not leave exactly one durable winner")
+			}
+		})
+	}
+}
+
+func scenarioProposal(t *testing.T, f storeFixture, id contract.ProposalID, revisionID contract.ProposalRevisionID, carrier contract.ApprovalCarrierID) contract.Proposal {
+	t.Helper()
+	ref := f.request.Reference
+	ref.ProposalID = id
+	ref.RevisionID = revisionID
+	current, _ := f.snapshot.Canonical.Suite().CurrentVersionID()
+	binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: ref, ExpectedCanonical: current, Manifest: f.proposed.Manifest().Digest(), Scope: f.proposed.ScopeDigest(), PolicyRevision: f.snapshot.Policy.RevisionID(), CoveredInputs: f.proposed.CoveredInputs()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := contract.NewProposalRevision(binding, "scenario-source", carrier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := contract.NewProposal(revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proposal
+}
+
+func TestGovernanceApplicationAuthorityChanges(t *testing.T) {
+	for _, change := range []string{"policy", "proposal", "transfer", "waiting closure"} {
+		t.Run(change, func(t *testing.T) {
+			f := newStoreFixture(t)
+			store := newReferenceStore(t, f.snapshot)
+			if _, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: f.command}); err != nil {
+				t.Fatal(err)
+			}
+			waiting := scenarioProposal(t, f, "waiting", "waiting-1", "waiting-carrier")
+			before := store.inspect()
+			fence := AuthorityFence{"project", "suite", before.canonical.Suite().Revision()}
+			if err := store.updateAuthority(context.Background(), fence, func(next *referenceState) error {
+				var err error
+				next.scheduling, err = next.scheduling.Admit(waiting, true)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			gate := &commitBarrierStore{Store: store, reached: make(chan struct{}, 1), release: make(chan struct{})}
+			type outcome struct {
+				result PromoteResult
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() { result, err := Promote(ctx, gate, f.request); done <- outcome{result, err} }()
+			waitForCommit(t, ctx, gate)
+			before = store.inspect()
+			fence.Revision = before.canonical.Suite().Revision()
+			var revised contract.Proposal
+			if change == "proposal" {
+				revised = scenarioProposal(t, f, f.request.Reference.ProposalID, "new-revision", f.request.Carrier)
+			}
+			var priority contract.PriorityCommand
+			if change == "transfer" {
+				var err error
+				priority, err = contract.NewPriorityCommand(contract.PriorityCommandInput{OperationID: "priority-op", SourceCommandID: "priority-source", Actor: f.owner, ProjectID: "project", SuiteID: "suite", ProposalID: "waiting", Carrier: "waiting-carrier", Order: 1})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := store.updateAuthority(context.Background(), fence, func(next *referenceState) error {
+				var err error
+				switch change {
+				case "policy":
+					next.policy, err = contract.NewPolicy("project", "policy-new", f.owner)
+				case "proposal":
+					next.proposals[f.request.Reference.ProposalID], err = next.proposals[f.request.Reference.ProposalID].Revise(revised.Current())
+				case "transfer":
+					next.scheduling, _, err = next.scheduling.RequestPriority(next.policy, priority)
+				case "waiting closure":
+					next.scheduling, err = next.scheduling.Observe(waiting, next.scheduling.Generation(), contract.ObserveClosedUnmerged)
+				}
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			after := store.inspect()
+			close(gate.release)
+			out := <-done
+			if !errors.Is(out.err, ErrAuthorityConflict) || !reflect.DeepEqual(out.result, PromoteResult{}) || !reflect.DeepEqual(after, store.inspect()) {
+				t.Fatalf("stale use case committed after %s changed: %+v", change, out)
+			}
+			if after.canonical.Version().ID() != before.canonical.Version().ID() || after.canonical.Suite().Revision() != before.canonical.Suite().Revision()+1 {
+				t.Fatal("authority mutation failed whole-snapshot fence")
+			}
+			if change == "waiting closure" && after.scheduling.Generation() != before.scheduling.Generation() {
+				t.Fatal("waiting-only mutation incorrectly changed active generation")
+			}
+		})
+	}
+}
+
+func TestGovernanceApplicationMergedQueueHold(t *testing.T) {
+	f := newStoreFixture(t)
+	store := newReferenceStore(t, f.snapshot)
+	waiting := scenarioProposal(t, f, "waiting", "waiting-1", "waiting-carrier")
+	if err := store.updateAuthority(context.Background(), f.snapshot.Fence, func(next *referenceState) error {
+		var err error
+		next.scheduling, err = next.scheduling.Admit(waiting, true)
+		if err != nil {
+			return err
+		}
+		next.scheduling, err = next.scheduling.Observe(f.snapshot.Proposal, next.scheduling.Generation(), contract.ObserveIntegrated)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := store.inspect()
+	result, err := Promote(context.Background(), store, f.request)
+	if err != nil || result.Committed || result.Duplicate || result.Decision.Reason() != contract.PromotionReasonApprovalMissing {
+		t.Fatalf("merged unapproved proposal did not remain blocked: %+v %v", result, err)
+	}
+	after := store.inspect()
+	active, present := after.scheduling.Active()
+	if !present || active.ProposalID() != f.request.Reference.ProposalID || active.State() != contract.ScheduleIntegratedPending || !reflect.DeepEqual(before, after) {
+		t.Fatal("merged-but-unpromotable proposal released queue or wrote effects")
+	}
+}
+
+func TestGovernanceApplicationPublicationFailure(t *testing.T) {
+	f := newStoreFixture(t)
+	store := newReferenceStore(t, f.snapshot)
+	if _, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: f.command}); err != nil {
+		t.Fatal(err)
+	}
+	before := store.inspect()
+	store.failAt = "publication"
+	if result, err := Promote(context.Background(), store, f.request); !errors.Is(err, errReferenceFailure) || !reflect.DeepEqual(result, PromoteResult{}) || !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("failed local intent persistence returned committed success or partial effects")
+	}
+	store.failAt = ""
+	first, err := Promote(context.Background(), store, f.request)
+	if err != nil || !first.Committed {
+		t.Fatal("retry could not commit complete local promotion", err)
+	}
+	committed := store.inspect()
+	// This is an external delivery failure simulation, not an implemented worker
+	// or a proof of exactly-once publication. Durable intent remains recoverable.
+	deliver := func(contract.PublicationIntent) error { return errReferenceFailure }
+	if err := deliver(committed.publications[0]); !errors.Is(err, errReferenceFailure) {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(committed, store.inspect()) {
+		t.Fatal("external delivery failure rewrote durable intent")
+	}
+	if replay, err := Promote(context.Background(), store, f.request); err != nil || !replay.Committed || !replay.Duplicate || len(store.inspect().publications) != 1 {
+		t.Fatal("retry duplicated intent after simulated delivery failure", err)
+	}
+}
+
 func TestReferenceStorePromotionRevocationOrder(t *testing.T) {
 	for _, first := range []string{"promotion", "revocation"} {
 		t.Run(first+" wins", func(t *testing.T) {

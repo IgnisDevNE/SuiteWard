@@ -137,6 +137,7 @@ foreach ($case in @(
     @{Name='absolute floor accepts exactly 99 independently of base';Policy=$floor;Base=100;Head=99;Pass=$true},
     @{Name='absolute floor stops accumulated decreases';Policy=$floor;Base=99.1;Head=98.999;Pass=$false},
     @{Name='patch retains exactly 90 percent';Policy=$patch;Base=100;Head=90;Pass=$true},
+    @{Name='patch rejects below 90 independently of a lower base';Policy=$patch;Base=80;Head=89.999;Pass=$false},
     @{Name='patch has no tolerance below 90 percent';Policy=$patch;Base=100;Head=89.999;Pass=$false}
 )) {
     $passed = Test-CoveragePolicyDecision -Policy $case.Policy -BaseCoverage $case.Base -HeadCoverage $case.Head

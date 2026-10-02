@@ -1,3 +1,4 @@
+param([ValidateSet('Report', 'All')][string]$Scope = 'All')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'check-codecov-policy.ps1') -Mode Library
@@ -62,7 +63,12 @@ foreach ($case in @(
     @{ Name = 'numeric strings'; Mutate = { param($r) $r.totals.lines = '100'; $r.report.totals.lines = '100' } },
     @{ Name = 'boolean count'; Mutate = { param($r) $r.totals.partials = $false; $r.report.totals.partials = $false } },
     @{ Name = 'missing count'; Mutate = { param($r) $r.totals.PSObject.Properties.Remove('misses') } },
-    @{ Name = 'null count'; Mutate = { param($r) $r.totals.hits = $null; $r.report.totals.hits = $null } }
+    @{ Name = 'null count'; Mutate = { param($r) $r.totals.hits = $null; $r.report.totals.hits = $null } },
+    @{ Name = 'array-valued count'; Mutate = { param($r) $r.totals.hits = @(99); $r.report.totals.hits = @(99) } },
+    @{ Name = 'array-valued identity'; Mutate = { param($r) $r.commitid = @($r.commitid) } },
+    @{ Name = 'array-valued state'; Mutate = { param($r) $r.state = @('complete') } },
+    @{ Name = 'array-valued nested report'; Mutate = { param($r) $r.report = @($r.report) } },
+    @{ Name = 'array-valued totals'; Mutate = { param($r) $r.totals = @($r.totals) } }
 )) {
     $baseReport = New-Report $baseRevision 99 100
     $headReport = New-Report $headRevision 99 100
@@ -74,6 +80,9 @@ Assert-Rejected { Test-Policy $null (New-Report $headRevision 99 100) } 'missing
 $checks++
 Assert-Rejected { Assert-CodecovProjectPolicy -BaseRevision $headRevision -HeadRevision $headRevision -BaseReport (New-Report $headRevision 100 100) -HeadReport (New-Report $headRevision 100 100) } 'identical base and head'
 $checks++
+Assert-Rejected { Test-Policy (New-Report $baseRevision 99 100) @(New-Report $headRevision 99 100) } 'array-valued outer report'
+$checks++
+if ($Scope -eq 'Report') { Write-Output "Passed $checks Codecov report policy checks."; return }
 
 function New-HttpResponse {
     param([int]$StatusCode, $Report)

@@ -137,11 +137,13 @@ func (s *referenceStore) Load(ctx context.Context, request ReadRequest) (Snapsho
 	}
 	state := s.state
 	suite := state.canonical.Suite()
-	if request.Reference.ProjectID != suite.ProjectID() || request.Reference.SuiteID != suite.ID() {
-		return Snapshot{}, ErrNotFound
-	}
+	operation, knownOperation := state.operations[request.OperationID]
+	source, knownSource := state.sources[request.SourceCommandID]
 	proposal, found := state.proposals[request.Reference.ProposalID]
-	if !found {
+	if request.Reference.ProjectID != suite.ProjectID() || request.Reference.SuiteID != suite.ID() || !found {
+		if knownOperation || knownSource {
+			return Snapshot{Operation: operation, Source: source}, nil
+		}
 		return Snapshot{}, ErrNotFound
 	}
 	var history contract.HistoricalCanonical
@@ -164,7 +166,7 @@ func (s *referenceStore) Load(ctx context.Context, request ReadRequest) (Snapsho
 		Canonical: state.canonical, Proposal: proposal, Policy: state.policy, Consent: state.consents[request.Reference.ProposalID],
 		Scheduling: state.scheduling, Assessment: state.assessments[assessmentKey{request.Reference, request.AssessmentSource}],
 		Target: state.target, History: history, HistoricalPromotion: historicalPromotion,
-		Operation: state.operations[request.OperationID], Source: state.sources[request.SourceCommandID],
+		Operation: operation, Source: source,
 	}, nil
 }
 

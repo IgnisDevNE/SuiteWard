@@ -298,7 +298,7 @@ func scenarioProposal(t *testing.T, f storeFixture, id contract.ProposalID, revi
 }
 
 func TestGovernanceApplicationAuthorityChanges(t *testing.T) {
-	for _, change := range []string{"policy", "proposal", "transfer", "waiting closure"} {
+	for _, change := range []string{"policy", "proposal", "transfer", "waiting closure", "receipt alias"} {
 		t.Run(change, func(t *testing.T) {
 			f := newStoreFixture(t)
 			store := newReferenceStore(t, f.snapshot)
@@ -339,20 +339,33 @@ func TestGovernanceApplicationAuthorityChanges(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err := store.updateAuthority(context.Background(), fence, func(next *referenceState) error {
-				var err error
-				switch change {
-				case "policy":
-					next.policy, err = contract.NewPolicy("project", "policy-new", f.owner)
-				case "proposal":
-					next.proposals[f.request.Reference.ProposalID], err = next.proposals[f.request.Reference.ProposalID].Revise(revised.Current())
-				case "transfer":
-					next.scheduling, _, err = next.scheduling.RequestPriority(next.policy, priority)
-				case "waiting closure":
-					next.scheduling, err = next.scheduling.Observe(waiting, next.scheduling.Generation(), contract.ObserveClosedUnmerged)
+			var err error
+			if change == "receipt alias" {
+				alias, createErr := contract.NewCommand(contract.CommandInput{OperationID: "approval-alias", SourceCommandID: f.command.SourceCommandID(), Actor: f.owner, Reference: f.request.Reference, Carrier: f.request.Carrier, Action: contract.RevokeConsent, Order: 2})
+				if createErr != nil {
+					t.Fatal(createErr)
 				}
-				return err
-			})
+				result, applyErr := ProcessConsent(context.Background(), store, ConsentRequest{Command: alias})
+				err = applyErr
+				if err == nil && (!result.Committed || !result.Duplicate || result.Receipt != before.sources[f.command.SourceCommandID()].Consent) {
+					t.Fatal("new source alias changed original acknowledgment")
+				}
+			} else {
+				err = store.updateAuthority(context.Background(), fence, func(next *referenceState) error {
+					var err error
+					switch change {
+					case "policy":
+						next.policy, err = contract.NewPolicy("project", "policy-new", f.owner)
+					case "proposal":
+						next.proposals[f.request.Reference.ProposalID], err = next.proposals[f.request.Reference.ProposalID].Revise(revised.Current())
+					case "transfer":
+						next.scheduling, _, err = next.scheduling.RequestPriority(next.policy, priority)
+					case "waiting closure":
+						next.scheduling, err = next.scheduling.Observe(waiting, next.scheduling.Generation(), contract.ObserveClosedUnmerged)
+					}
+					return err
+				})
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -365,8 +378,11 @@ func TestGovernanceApplicationAuthorityChanges(t *testing.T) {
 			if after.canonical.Version().ID() != before.canonical.Version().ID() || after.canonical.Suite().Revision() != before.canonical.Suite().Revision()+1 {
 				t.Fatal("authority mutation failed whole-snapshot fence")
 			}
-			if change == "waiting closure" && after.scheduling.Generation() != before.scheduling.Generation() {
+			if (change == "waiting closure" || change == "receipt alias") && after.scheduling.Generation() != before.scheduling.Generation() {
 				t.Fatal("waiting-only mutation incorrectly changed active generation")
+			}
+			if change == "receipt alias" && (len(after.operations) != len(before.operations)+1 || !reflect.DeepEqual(before.acknowledgments, after.acknowledgments) || !reflect.DeepEqual(before.audits, after.audits) || !after.consents[f.request.Reference.ProposalID].HasApproval(after.proposals[f.request.Reference.ProposalID], after.policy)) {
+				t.Fatal("alias duplicated terminal effects or changed consent")
 			}
 		})
 	}

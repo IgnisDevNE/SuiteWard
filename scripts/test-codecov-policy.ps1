@@ -74,4 +74,128 @@ Assert-Rejected { Test-Policy $null (New-Report $headRevision 99 100) } 'missing
 $checks++
 Assert-Rejected { Assert-CodecovProjectPolicy -BaseRevision $headRevision -HeadRevision $headRevision -BaseReport (New-Report $headRevision 100 100) -HeadReport (New-Report $headRevision 100 100) } 'identical base and head'
 $checks++
+
+function New-HttpResponse {
+    param([int]$StatusCode, $Report)
+    return [pscustomobject]@{ StatusCode = $StatusCode; Content = ($Report | ConvertTo-Json -Depth 10 -Compress) }
+}
+function New-Transport {
+    param([object[]]$Responses)
+    $state = [pscustomobject]@{ Calls = [Collections.Generic.List[string]]::new(); Pauses = [Collections.Generic.List[int]]::new(); Responses = $Responses }
+    $fetch = {
+        param($uri)
+        $index = [Math]::Min($state.Calls.Count, $state.Responses.Count - 1)
+        $state.Calls.Add([string]$uri)
+        $response = $state.Responses[$index]
+        if ($response -is [Exception]) { throw $response }
+        return $response
+    }.GetNewClosure()
+    $pause = { param($seconds) $state.Pauses.Add($seconds) }.GetNewClosure()
+    return [pscustomobject]@{ State = $state; Fetch = $fetch; Pause = $pause }
+}
+
+$pending = New-Report $headRevision 99 100
+$pending.state = 'pending'
+$complete = New-HttpResponse 200 (New-Report $headRevision 99 100)
+$transport = New-Transport @((New-HttpResponse 200 $pending), $complete)
+$observed = Wait-CodecovReport -Revision $headRevision -Fetch $transport.Fetch -Pause $transport.Pause
+if ($null -eq $observed -or $observed.commitid -cne $headRevision -or $transport.State.Calls.Count -ne 2 -or $transport.State.Pauses.Count -ne 1) {
+    throw 'Pending Codecov report must be retried once and return the exact completed report.'
+}
+if ($transport.State.Calls[0] -cne "https://api.codecov.io/api/v2/github/IgnisDevNE/repos/SuiteWard/commits/$headRevision/") { throw 'Codecov endpoint scope changed.' }
+$checks++
+
+foreach ($transient in @(404, 408, 429, 500, 503)) {
+    $transport = New-Transport @((New-HttpResponse $transient $null), $complete)
+    Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause | Out-Null
+    if ($transport.State.Calls.Count -ne 2) { throw "HTTP $transient did not retry." }
+    $checks++
+}
+foreach ($errorValue in @([Net.Http.HttpRequestException]::new('Network unavailable'), [Threading.Tasks.TaskCanceledException]::new('Request timed out'))) {
+    $transport = New-Transport @($errorValue, $complete)
+    Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause | Out-Null
+    if ($transport.State.Calls.Count -ne 2) { throw 'Transient transport failure did not retry.' }
+    $checks++
+}
+foreach ($terminal in @(401, 403, 400, 418, 302)) {
+    $transport = New-Transport @((New-HttpResponse $terminal $null), $complete)
+    Assert-Rejected { Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause } "terminal HTTP $terminal"
+    if ($transport.State.Calls.Count -ne 1 -or $transport.State.Pauses.Count -ne 0) { throw 'Terminal response retried.' }
+    $checks++
+}
+foreach ($stateName in @('error', 'skipped', 'unknown')) {
+    $bad = New-Report $headRevision 99 100
+    $bad.state = $stateName
+    $transport = New-Transport @((New-HttpResponse 200 $bad), $complete)
+    Assert-Rejected { Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause } "terminal state $stateName"
+    if ($transport.State.Calls.Count -ne 1) { throw 'Terminal report state retried.' }
+    $checks++
+}
+foreach ($badResponse in @(
+    [pscustomobject]@{ StatusCode = 200; Content = '{broken' },
+    (New-HttpResponse 200 (New-Report $baseRevision 99 100)),
+    (New-HttpResponse 200 ([pscustomobject]@{ commitid = $headRevision; state = 'complete' }))
+)) {
+    $transport = New-Transport @($badResponse, $complete)
+    Assert-Rejected { Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause } 'corrupt report envelope'
+    if ($transport.State.Calls.Count -ne 1) { throw 'Corrupt report was retried or replaced.' }
+    $checks++
+}
+foreach ($unavailable in @((New-HttpResponse 404 $null), (New-HttpResponse 200 $pending), [Net.Http.HttpRequestException]::new('offline'))) {
+    $transport = New-Transport @($unavailable)
+    Assert-Rejected { Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause } 'bounded report exhaustion'
+    if ($transport.State.Calls.Count -ne 12 -or $transport.State.Pauses.Count -ne 11 -or @($transport.State.Pauses | Where-Object { $_ -ne 10 }).Count) { throw 'Retry bound or pause duration changed.' }
+    $checks++
+}
+$transport = New-Transport @((New-HttpResponse 404 $null))
+Assert-Rejected { Invoke-CodecovProjectPolicy -Repository 'IgnisDevNE/SuiteWard' -BaseRevision $baseRevision -HeadRevision $headRevision -Fetch $transport.Fetch -Pause $transport.Pause } 'missing baseline cannot use head as a substitute'
+if ($transport.State.Calls.Count -ne 12 -or @($transport.State.Calls | Where-Object { $_ -notlike "*/$baseRevision/" }).Count) { throw 'Baseline failure fetched or substituted another revision.' }
+$checks++
+$transport = New-Transport @((New-HttpResponse 200 (New-Report $baseRevision 99 100)), $complete)
+$observed = Invoke-CodecovProjectPolicy -Repository 'IgnisDevNE/SuiteWard' -BaseRevision $baseRevision -HeadRevision $headRevision -Fetch $transport.Fetch -Pause $transport.Pause
+if (-not $observed.Passed -or $observed.Base.Revision -cne $baseRevision -or $observed.Head.Revision -cne $headRevision -or $transport.State.Calls.Count -ne 2) { throw 'Policy did not use both exact completed reports.' }
+$checks++
+$transport = New-Transport @($complete)
+foreach ($badRevision in @('', 'main', ('0' * 40), ('c' * 39))) {
+    Assert-Rejected { Wait-CodecovReport $badRevision $transport.Fetch $transport.Pause } 'invalid requested revision'
+    $checks++
+}
+Assert-Rejected { Invoke-CodecovProjectPolicy -Repository 'other/repo' -BaseRevision $baseRevision -HeadRevision $headRevision -Fetch $transport.Fetch -Pause $transport.Pause } 'foreign repository'
+if ($transport.State.Calls.Count -ne 0) { throw 'Invalid scope attempted a network request.' }
+$checks++
+
+$event = [pscustomobject]@{ pull_request = [pscustomobject]@{ base = [pscustomobject]@{ sha = $baseRevision }; head = [pscustomobject]@{ sha = $headRevision } } }
+$range = Get-CodecovRevisionRange -EventName 'pull_request' -Event $event -CurrentRevision ('c' * 40) -EventRevision ('c' * 40)
+if ($range.Base -cne $baseRevision -or $range.Head -cne $headRevision) { throw 'Coverage attributed to synthetic merge instead of PR event pair.' }
+$checks++
+$range = Get-CodecovRevisionRange -EventName 'push' -Event ([pscustomobject]@{ before = $baseRevision; after = $headRevision }) -ParentRevision ('c' * 40)
+if ($range.Base -cne $baseRevision -or $range.Head -cne $headRevision) { throw 'Push comparison did not retain event before/after.' }
+$checks++
+$range = Get-CodecovRevisionRange -EventName 'workflow_dispatch' -CurrentRevision $headRevision -ParentRevision $baseRevision -EventRevision $headRevision
+if ($range.Base -cne $baseRevision -or $range.Head -cne $headRevision) { throw 'Manual coverage range changed.' }
+$checks++
+Assert-Rejected { Get-CodecovRevisionRange -EventName 'workflow_dispatch' -CurrentRevision $headRevision -ParentRevision $baseRevision -EventRevision ('c' * 40) } 'manual checkout does not match event'
+$checks++
+Assert-Rejected { Get-CodecovRevisionRange -EventName 'push' -Event ([pscustomobject]@{ before = $headRevision; after = $headRevision }) } 'same source compared with itself'
+$checks++
+Assert-Rejected { Get-CodecovRevisionRange -EventName 'push' -Event ([pscustomobject]@{ before = ('0' * 40); after = $headRevision }) } 'absent push baseline'
+$checks++
+Assert-Rejected { Get-CodecovRevisionRange -EventName 'unknown' } 'unsupported coverage event'
+$checks++
+
+# Configuration wiring is behavior: the upload and check must bind the same
+# measured source and a policy failure must reach the existing required gate.
+$workflow = (Get-Content -Raw (Join-Path $PSScriptRoot '../.github/workflows/ci.yml')).Replace("`r", '')
+$coverageJob = [regex]::Match($workflow, '(?ms)^  coverage:\n(?<body>.*?)^  gate:').Groups['body'].Value
+if ($coverageJob.IndexOf('run: ./scripts/check-codecov-policy.ps1') -le $coverageJob.IndexOf('uses: codecov/codecov-action@')) { throw 'Project policy must run in the coverage job after upload.' }
+$checks++
+foreach ($setting in @('ref: ${{ github.event.pull_request.head.sha || github.sha }}', 'override_commit: ${{ github.event.pull_request.head.sha || github.sha }}')) {
+    if (-not $coverageJob.Contains($setting)) { throw "Coverage source binding missing: $setting" }
+    $checks++
+}
+if ($coverageJob -match 'continue-on-error:\s*true' -or $workflow -notmatch 'needs: \[inspect, foundation, tdd, go, coverage\]') { throw 'Project policy failure must block CI / Gate.' }
+$checks++
+$foundation = Get-Content -Raw (Join-Path $PSScriptRoot 'check-foundation.ps1')
+if (-not $foundation.Contains("'test-codecov-policy.ps1'")) { throw 'Foundation must run the Codecov policy regressions on both platforms.' }
+$checks++
 Write-Output "Passed $checks Codecov project policy checks."

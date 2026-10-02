@@ -71,5 +71,20 @@ function Assert-CodecovProjectPolicy {
     return [pscustomobject]@{ Base = $base; Head = $head; Passed = $true }
 }
 
+function Get-CodecovRevisionRange {
+    param([string]$EventName, $Event, [string]$CurrentRevision, [string]$ParentRevision, [string]$EventRevision)
+    return $null
+}
+
+function Wait-CodecovReport {
+    param([string]$Revision, [scriptblock]$Fetch, [scriptblock]$Pause)
+    return $null
+}
+
+function Invoke-CodecovProjectPolicy {
+    param([string]$Repository, [string]$BaseRevision, [string]$HeadRevision, [scriptblock]$Fetch, [scriptblock]$Pause)
+    return $null
+}
+
 if ($Mode -eq 'Library') { return }
 throw 'The Codecov transport adapter is not implemented yet.'

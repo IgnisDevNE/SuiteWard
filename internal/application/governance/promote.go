@@ -18,7 +18,7 @@ func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) 
 	if !validPromoteRequest(request) {
 		return PromoteResult{}, ErrInvalidRequest
 	}
-	snapshot, err := store.Load(ctx, ReadRequest{Reference: request.Reference, OperationID: request.OperationID, AssessmentSource: request.AssessmentSource})
+	snapshot, err := store.Load(ctx, ReadRequest{Reference: request.Reference, OperationID: request.OperationID, AssessmentSource: request.AssessmentSource, HistoricalVersionID: identity.CorrectsVersionID})
 	if err != nil {
 		return PromoteResult{}, err
 	}
@@ -28,6 +28,15 @@ func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) 
 	if !validPromotionSnapshot(snapshot, request.Reference) {
 		return PromoteResult{}, ErrInvalidSnapshot
 	}
+	if identity.Kind == OperationCorrect {
+		if snapshot.History.IsZero() {
+			return PromoteResult{}, ErrNotFound
+		}
+		version := snapshot.History.Version()
+		if version.ID() != identity.CorrectsVersionID || version.ProjectID() != request.Reference.ProjectID || version.SuiteID() != request.Reference.SuiteID {
+			return PromoteResult{}, ErrInvalidSnapshot
+		}
+	}
 	input := contract.PromotionInput{
 		Context: contract.PromotionContext{
 			Canonical: snapshot.Canonical, Proposed: request.Proposed, Proposal: snapshot.Proposal,
@@ -36,11 +45,13 @@ func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) 
 			ExpectedStateRevision: snapshot.Fence.Revision, ExpectedSchedulingGeneration: snapshot.Scheduling.Generation(),
 		},
 		Integration: request.Integration, Target: snapshot.Target, OperationID: request.OperationID,
-		NewVersionID: request.NewVersionID, RecordedAt: request.RecordedAt,
+		NewVersionID: request.NewVersionID, RecordedAt: request.RecordedAt, CorrectsVersionID: identity.CorrectsVersionID,
 	}
 	var decision contract.PromotionDecision
 	if identity.Kind == OperationBootstrap {
 		decision, err = contract.DecideBootstrap(contract.BootstrapInput{Mode: identity.BootstrapMode, Promotion: input})
+	} else if identity.Kind == OperationCorrect {
+		decision, err = contract.DecideCorrection(contract.CorrectionInput{Promotion: input, Target: snapshot.History})
 	} else {
 		decision, err = contract.DecidePromotion(input)
 	}

@@ -2,6 +2,7 @@ package governance
 
 import (
 	"context"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -16,5 +17,8 @@ func Bootstrap(ctx context.Context, store Store, request BootstrapRequest) (Prom
 
 // Correct proposes a fresh canonical with attribution to a stored version.
 func Correct(ctx context.Context, store Store, request CorrectionRequest) (PromoteResult, error) {
-	return PromoteResult{}, nil
+	if strings.TrimSpace(string(request.TargetVersionID)) == "" {
+		return PromoteResult{}, ErrInvalidRequest
+	}
+	return runPromotion(ctx, store, PromotionIdentity{Kind: OperationCorrect, Request: request.Promotion, CorrectsVersionID: request.TargetVersionID})
 }

@@ -3,6 +3,7 @@ package governance
 import (
 	"context"
 	"maps"
+	"reflect"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -15,7 +16,7 @@ func Promote(ctx context.Context, store Store, request PromoteRequest) (PromoteR
 
 func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) (PromoteResult, error) {
 	request := identity.Request
-	if !validPromoteRequest(request) {
+	if store == nil || !validPromoteRequest(request) {
 		return PromoteResult{}, ErrInvalidRequest
 	}
 	snapshot, err := store.Load(ctx, ReadRequest{Reference: request.Reference, OperationID: request.OperationID, AssessmentSource: request.AssessmentSource, HistoricalVersionID: identity.CorrectsVersionID})
@@ -77,16 +78,22 @@ func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) 
 // current proposal, policy, configured target, or canonical pointer.
 func replayPromotion(stored OperationReceipt, wanted PromotionIdentity) (PromoteResult, bool, error) {
 	if stored.Kind == 0 {
+		if !reflect.DeepEqual(stored, OperationReceipt{}) {
+			return PromoteResult{}, false, ErrInvalidSnapshot
+		}
 		return PromoteResult{}, false, nil
 	}
 	if stored.Kind < OperationPromote || stored.Kind > OperationConsent {
 		return PromoteResult{}, false, ErrInvalidSnapshot
 	}
 	if stored.Kind == OperationConsent {
+		if !reflect.DeepEqual(stored.Promotion, PromotionReceipt{}) || stored.Consent.Result.Command().OperationID() == "" || stored.Consent.Result.Outcome() == 0 {
+			return PromoteResult{}, false, ErrInvalidSnapshot
+		}
 		return PromoteResult{}, false, ErrOperationConflict
 	}
 	receipt := stored.Promotion
-	if stored.Kind != receipt.Identity.Kind || !validPromotionReceipt(receipt) {
+	if stored.Consent != (ConsentReceipt{}) || stored.Kind != receipt.Identity.Kind || !validPromotionReceipt(receipt) {
 		return PromoteResult{}, false, ErrInvalidSnapshot
 	}
 	if !samePromotionIdentity(receipt.Identity, wanted) {
@@ -115,6 +122,10 @@ func validPromotionReceipt(receipt PromotionReceipt) bool {
 	if !record.Binding().Equal(id.Binding) || record.OperationID() != r.OperationID || record.VersionID() != r.NewVersionID || record.Carrier() != r.Carrier ||
 		record.Source() != r.AssessmentSource || record.Source() != r.Integration.Source() || record.Target() != r.Integration.Target() ||
 		r.Integration.ProjectID() != r.Reference.ProjectID || !record.RecordedAt().Equal(r.RecordedAt) || record.CorrectsVersionID() != id.CorrectsVersionID {
+		return false
+	}
+	if (r.Integration.Kind() == contract.IntegrationMergedChange && r.Integration.Carrier() != r.Carrier) ||
+		(r.Integration.Kind() == contract.IntegrationExistingBaseline && id.Binding.ExpectedCanonical() != "") {
 		return false
 	}
 	switch id.Kind {

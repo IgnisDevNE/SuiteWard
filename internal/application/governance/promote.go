@@ -10,6 +10,11 @@ import (
 
 // Promote coordinates a domain decision with the stored authority boundary.
 func Promote(ctx context.Context, store Store, request PromoteRequest) (PromoteResult, error) {
+	return runPromotion(ctx, store, PromotionIdentity{Kind: OperationPromote, Request: request})
+}
+
+func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) (PromoteResult, error) {
+	request := identity.Request
 	if !validPromoteRequest(request) {
 		return PromoteResult{}, ErrInvalidRequest
 	}
@@ -17,13 +22,13 @@ func Promote(ctx context.Context, store Store, request PromoteRequest) (PromoteR
 	if err != nil {
 		return PromoteResult{}, err
 	}
-	if result, found, err := replayPromotion(snapshot.Operation, PromotionIdentity{Kind: OperationPromote, Request: request}); found || err != nil {
+	if result, found, err := replayPromotion(snapshot.Operation, identity); found || err != nil {
 		return result, err
 	}
 	if !validPromotionSnapshot(snapshot, request.Reference) {
 		return PromoteResult{}, ErrInvalidSnapshot
 	}
-	decision, err := contract.DecidePromotion(contract.PromotionInput{
+	input := contract.PromotionInput{
 		Context: contract.PromotionContext{
 			Canonical: snapshot.Canonical, Proposed: request.Proposed, Proposal: snapshot.Proposal,
 			Reference: request.Reference, Carrier: request.Carrier, Policy: snapshot.Policy, Consent: snapshot.Consent,
@@ -32,7 +37,13 @@ func Promote(ctx context.Context, store Store, request PromoteRequest) (PromoteR
 		},
 		Integration: request.Integration, Target: snapshot.Target, OperationID: request.OperationID,
 		NewVersionID: request.NewVersionID, RecordedAt: request.RecordedAt,
-	})
+	}
+	var decision contract.PromotionDecision
+	if identity.Kind == OperationBootstrap {
+		decision, err = contract.DecideBootstrap(contract.BootstrapInput{Mode: identity.BootstrapMode, Promotion: input})
+	} else {
+		decision, err = contract.DecidePromotion(input)
+	}
 	if err != nil {
 		return PromoteResult{}, err
 	}
@@ -43,7 +54,8 @@ func Promote(ctx context.Context, store Store, request PromoteRequest) (PromoteR
 	if err != nil {
 		return PromoteResult{}, err
 	}
-	receipt := PromotionReceipt{Identity: PromotionIdentity{Kind: OperationPromote, Request: request, Binding: snapshot.Proposal.Current().Binding()}, Decision: decision}
+	identity.Binding = snapshot.Proposal.Current().Binding()
+	receipt := PromotionReceipt{Identity: identity, Decision: decision}
 	if err := store.CommitPromotion(ctx, snapshot.Fence, PromotionWrite{Receipt: receipt, Scheduling: scheduling}); err != nil {
 		return PromoteResult{}, err
 	}

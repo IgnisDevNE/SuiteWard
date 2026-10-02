@@ -199,3 +199,70 @@ func TestProcessConsentAliasFailureCanRetry(t *testing.T) {
 	response = processConsentForTest(t, store, alias)
 	if !response.Duplicate || len(store.inspect().acknowledgments) != 1 { t.Fatal("alias retry duplicated original acknowledgment") }
 }
+
+func TestProcessConsentConflictsBeforeWriting(t *testing.T) {
+	for name, change := range map[string]func(*contract.CommandInput){
+		"operation reused for another source": func(c *contract.CommandInput) { c.SourceCommandID = "different-source" },
+		"source reused by another actor": func(c *contract.CommandInput) { c.OperationID = "other-op"; c.Actor, _ = contract.NewPrincipal("someone-else", contract.Human) },
+		"source reused by another actor kind": func(c *contract.CommandInput) { c.OperationID = "other-op"; c.Actor, _ = contract.NewPrincipal("owner", contract.Agent) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, actual := approvedStoreFixture(t)
+			before := actual.inspect()
+			store := &consentStoreProbe{Store: actual}
+			command := changedConsentCommand(t, f.command, change)
+			for range 2 {
+				response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: command})
+				if !errors.Is(err, ErrOperationConflict) || response != (ConsentResponse{}) || store.commits != 0 || !reflect.DeepEqual(before, actual.inspect()) { t.Fatalf("collision = %+v, %v, commits=%d", response, err, store.commits) }
+			}
+			processConsentForTest(t, actual, f.command)
+		})
+	}
+	t.Run("promotion owns operation", func(t *testing.T) {
+		f, actual := approvedStoreFixture(t)
+		if err := actual.CommitPromotion(context.Background(), f.snapshot.Fence, f.promotionWrite(t)); err != nil { t.Fatal(err) }
+		before := actual.inspect()
+		store := &consentStoreProbe{Store: actual}
+		command := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = f.request.OperationID; c.SourceCommandID = "another-source" })
+		response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: command})
+		if !errors.Is(err, ErrOperationConflict) || response != (ConsentResponse{}) || store.commits != 0 || !reflect.DeepEqual(before, actual.inspect()) { t.Fatalf("cross-kind collision = %+v, %v, commits=%d", response, err, store.commits) }
+	})
+}
+
+func TestProcessConsentRejectsMalformedReceipt(t *testing.T) {
+	for name, mutate := range map[string]func(*Snapshot){
+		"missing source": func(s *Snapshot) { s.Source = OperationReceipt{} },
+		"absent kind with payload": func(s *Snapshot) { s.Source.Kind = 0 },
+		"unknown kind": func(s *Snapshot) { s.Source.Kind = 99 },
+		"zero result": func(s *Snapshot) { s.Source.Consent.Result = contract.CommandResult{} },
+		"missing evaluated revision": func(s *Snapshot) { s.Source.Consent.EvaluatedReference.RevisionID = ""; s.Operation = s.Source },
+		"foreign evaluated proposal": func(s *Snapshot) { s.Source.Consent.EvaluatedReference.ProposalID = "other"; s.Operation = s.Source },
+		"missing policy revision": func(s *Snapshot) { s.Source.Consent.PolicyRevisionID = ""; s.Operation = s.Source },
+		"mixed payloads": func(s *Snapshot) { s.Source.Promotion.Identity.Kind = OperationPromote; s.Operation = s.Source },
+		"disagreeing indexes": func(s *Snapshot) { s.Operation.Consent.CurrentApprovalEligible = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, actual := approvedStoreFixture(t)
+			before := actual.inspect()
+			store := &consentStoreProbe{Store: actual, changeSnapshot: mutate}
+			response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: f.command})
+			if !errors.Is(err, ErrInvalidSnapshot) || response != (ConsentResponse{}) || store.commits != 0 || !reflect.DeepEqual(before, actual.inspect()) { t.Fatalf("malformed receipt = %+v, %v, commits=%d", response, err, store.commits) }
+		})
+	}
+}
+
+func TestProcessConsentHistoricalReplayNeedsNoCurrentAuthority(t *testing.T) {
+	f, actual := approvedStoreFixture(t)
+	original := actual.inspect().sources[f.command.SourceCommandID()].Consent
+	store := &consentStoreProbe{Store: actual, changeSnapshot: func(s *Snapshot) {
+		s.Canonical = contract.CanonicalSnapshot{}
+		s.Proposal = contract.Proposal{}
+		s.Policy = contract.Policy{}
+		s.Consent = contract.Consent{}
+	}}
+	response := processConsentForTest(t, store, f.command)
+	if !response.Duplicate || response.Receipt != original || store.commits != 0 { t.Fatal("historical replay reevaluated absent current authority") }
+	alias := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "alias" })
+	response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: alias})
+	if !errors.Is(err, ErrInvalidSnapshot) || response != (ConsentResponse{}) || store.commits != 0 { t.Fatalf("alias without current aggregate = %+v, %v", response, err) }
+}

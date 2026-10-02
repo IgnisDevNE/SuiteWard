@@ -24,6 +24,21 @@ func ProcessConsent(ctx context.Context, store Store, request ConsentRequest) (C
 	if err != nil {
 		return ConsentResponse{}, fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
 	}
+	if result.Duplicate() {
+		original := snapshot.Source.Consent
+		if snapshot.Source.Kind != OperationConsent || original.Result.Duplicate() ||
+			original.Result.Command() != result.Command() || original.Result.Outcome() != result.Outcome() || original.Result.Reason() != result.Reason() {
+			return ConsentResponse{}, ErrInvalidSnapshot
+		}
+		if snapshot.Operation.Kind == 0 {
+			if err := store.CommitConsent(ctx, snapshot.Fence, ConsentWrite{Command: command, Consent: next, Receipt: original, Alias: true}); err != nil {
+				return ConsentResponse{}, err
+			}
+		} else if snapshot.Operation.Kind != OperationConsent || snapshot.Operation.Consent != original {
+			return ConsentResponse{}, ErrInvalidSnapshot
+		}
+		return ConsentResponse{Receipt: original, Committed: true, Duplicate: true}, nil
+	}
 	receipt := ConsentReceipt{
 		Result: result, EvaluatedReference: snapshot.Proposal.Current().Binding().Reference(),
 		PolicyRevisionID: snapshot.Policy.RevisionID(), CurrentApprovalEligible: next.HasApproval(snapshot.Proposal, snapshot.Policy),

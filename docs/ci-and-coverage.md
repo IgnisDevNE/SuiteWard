@@ -1,7 +1,7 @@
 # CI and coverage
 
-- **Updated:** 2026-09-30
-- **Status:** Active. M0.01 verified real Windows/Linux Go checks, Linux race/security/coverage, and Codecov success/failure at the 90% patch threshold. `main` requires both `CI / Gate` and `codecov/patch` from their expected Apps.
+- **Updated:** 2026-10-02
+- **Status:** Active CI and patch enforcement; the accepted M0 project-coverage policy is configured, with hosted verification and activation of its two required project contexts pending. `main` currently requires `CI / Gate` and `codecov/patch` from their expected Apps.
 
 ## Accepted quality policy
 
@@ -9,7 +9,15 @@ Build and tests must pass on Windows and Linux. Formatting (`gofmt`) and static 
 
 When persistence is implemented, its task must add real PostgreSQL integration checks and verify that sqlc-generated code matches the versioned SQL. Those checks are not currently implemented because neither persistence nor generated code exists.
 
-Codecov must require 90% coverage of executable lines added or changed by a PR, with no percentage-point tolerance. Whole-project coverage is informational during M0; the project-wide non-regression policy will be selected at M0 completion. Exclude only the dedicated sqlc output directory, `internal/adapters/postgres/internal/dbgen/`, from the current coverage scope.
+On 2026-10-02 the owner accepted the M0 total-coverage policy after reviewing the actual hosted reports: previous main 642/644 lines (99.68%) and draft M0.04 821/825 lines (99.51%). The repository declares three non-informational Codecov statuses, each failing when the expected head report is absent:
+
+| Configuration status | Rule |
+| --- | --- |
+| `project/default` | Compare whole-project coverage with the actual PR base (`target: auto`); allow a decrease of at most 0.25 percentage points. |
+| `project/floor` | Require at least 99% whole-project coverage, with zero tolerance. This limits accumulated decreases across successive PRs. |
+| `patch/default` | Require 90% coverage of executable lines added or changed by the PR, with zero tolerance. |
+
+Both project statuses must pass independently. A permitted decrease against the base does not waive the absolute floor, patch coverage or critical scenarios. Exclude only the dedicated sqlc output directory, `internal/adapters/postgres/internal/dbgen/`, from the coverage scope. Go statement coverage and hosted Codecov line coverage are different metrics; use comparable hosted reports for the project policy.
 
 Critical governance scenarios remain required regardless of the coverage percentage. Follow the [development guide](development-guide.md) and the invariant/approval/promotion ADRs.
 
@@ -40,9 +48,9 @@ The organization already had the Codecov GitHub App installed and tokenless publ
 
 The repository configuration is `codecov.yml`. Uploads from repository branches use GitHub OIDC with `id-token: write` limited to the coverage job. The pinned Codecov Action handles public fork PRs through its tokenless flow. Workflows do not use `pull_request_target` to run candidate code and do not retain checkout credentials.
 
-The uploader searches only the explicitly named `coverage.out` file. Missing/empty reports and upload errors fail the job. Codecov's patch status is non-informational and configured to fail when its expected head report is absent. Whole-project coverage remains informational.
+The uploader searches only the explicitly named `coverage.out` file. Missing/empty reports and upload errors fail the job. Patch and both named project statuses are non-informational and configured to fail when the expected head report is absent. `scripts/test-ci.ps1` checks the declared policy's missing-report and numeric boundaries, including changes in the actual base. These local regression checks do not emulate Codecov or establish hosted enforcement; the official YAML validator and observed hosted checks supply separate evidence.
 
-Codecov waits for CI to succeed before reporting its final status. `CI / Gate` must therefore check completion of the upload job, not wait for the asynchronously computed Codecov patch status. The patch status is a separate branch requirement, activated after it was observed and verified in M0.01.
+Codecov waits for CI to succeed before reporting its final statuses. `CI / Gate` therefore checks completion of the upload job and must not wait for Codecov's asynchronous results, which would create a circular dependency. Patch is already a separate branch requirement; both project contexts require the same separate activation after their exact names and Codecov App identity are observed.
 
 ## Staged activation
 
@@ -51,7 +59,8 @@ Codecov waits for CI to succeed before reporting its final status. `CI / Gate` m
 3. Completed: `main` requires an up-to-date PR and `CI / Gate` from the observed GitHub Actions App (ID 15368), with administrator enforcement and force pushes/deletion disabled. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that separate review. The user merged PR #1; [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580) passed for merge commit `650fb81`.
 4. Verified in [PR #6](https://github.com/IgnisDevNE/SuiteWard/pull/6): the first real domain code activates Windows/Linux Go and Linux race/security/coverage. The actual Codecov report covers six domain files at 100%; a controlled real-test subset produces 6.34% and fails `codecov/patch` against 90%. The diagnostic configuration is restored exactly. Exact revisions, the coverage-argument regression repair, and both hosted observations are in the [execution record](plan/executions/M0.01.md). No empty baseline or synthetic application package was used.
 5. Completed after explicit user authorization: `codecov/patch` from observed Codecov App 254 is required in addition to `CI / Gate` from App 15368. A one-time personal-account exception added that check because the bot lacks repository administration permission; all other protection fields were verified unchanged. The exception grants no standing personal fallback. The bot merged PR #6 with its checkpoint history intact; all eight jobs in [the main run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36670629908) passed at `808241c606daf08cf6f217fbc58e459d4f963cba`, and Codecov recorded 100% coverage. Every subsequent PR still needs checks for its final revision.
-6. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
+6. M0.04: the owner accepted `target: auto` with 0.25 percentage-point tolerance plus a separate 99% absolute project floor, while retaining patch 90% with zero tolerance and critical scenarios. Both project statuses are configured to fail rather than report informational success. Observe the resulting hosted contexts (expected `codecov/project` and `codecov/project/floor`) and verify Codecov App 254 before adding them as required checks. Activation is pending: the authorized bot has no repository-administration permission, and the earlier personal-account exception grants no authority for this change. Preserve the existing `CI / Gate` and `codecov/patch` requirements and other protection settings.
+7. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
 
 The user continues to authorize every integration into `main`. GitHub checks and PR requirements are active, but the provider cannot distinguish a human from an agent using the same GitHub identity. Human merge authorization remains an operational rule until a separate identity/credential design is established; a green CI run alone is not that authorization.
 

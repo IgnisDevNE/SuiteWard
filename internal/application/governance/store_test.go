@@ -864,6 +864,9 @@ func TestReferenceStoreReadIsolation(t *testing.T) {
 	for _, field := range []string{"project", "suite", "proposal"} {
 		t.Run("missing "+field, func(t *testing.T) {
 			read := read
+			// Unknown identities have no historical receipt to reconcile first.
+			read.OperationID = "unknown-operation"
+			read.SourceCommandID = "unknown-source"
 			switch field {
 			case "project":
 				read.Reference.ProjectID = "another-project"
@@ -910,6 +913,50 @@ func TestReferenceStoreReadIsolation(t *testing.T) {
 			t.Fatal("canceled operations changed authority")
 		}
 	})
+}
+
+func TestReferenceStoreReceiptsPrecedeAuthority(t *testing.T) {
+	for _, missing := range []string{"project", "suite", "proposal", "deleted aggregate"} {
+		for _, lookup := range []string{"operation", "source"} {
+			t.Run(missing+"/"+lookup, func(t *testing.T) {
+				f, s := approvedStoreFixture(t)
+				original := s.inspect().operations[f.command.OperationID()]
+				read := ReadRequest{Reference: f.request.Reference}
+				if lookup == "operation" {
+					read.OperationID = f.command.OperationID()
+				} else {
+					read.SourceCommandID = f.command.SourceCommandID()
+				}
+				switch missing {
+				case "project":
+					read.Reference.ProjectID = "other-project"
+				case "suite":
+					read.Reference.SuiteID = "other-suite"
+				case "proposal":
+					read.Reference.ProposalID = "missing-proposal"
+				case "deleted aggregate":
+					delete(s.state.proposals, f.request.Reference.ProposalID)
+				}
+				before := s.inspect()
+				got, err := s.Load(context.Background(), read)
+				if err != nil {
+					t.Fatalf("current authority hid stable %s receipt: %v", lookup, err)
+				}
+				want := Snapshot{}
+				if lookup == "operation" {
+					want.Operation = original
+				} else {
+					want.Source = original
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatal("receipt-only lookup lost identity or fabricated current authority")
+				}
+				if !reflect.DeepEqual(before, s.inspect()) {
+					t.Fatal("historical lookup mutated stored state")
+				}
+			})
+		}
+	}
 }
 
 func TestReferenceStoreReceiptDiscriminators(t *testing.T) {

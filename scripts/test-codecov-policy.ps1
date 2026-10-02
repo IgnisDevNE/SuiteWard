@@ -54,6 +54,8 @@ $checks++
 foreach ($case in @(
     @{ Name = 'different source revision'; Mutate = { param($r) $r.commitid = 'c' * 40 } },
     @{ Name = 'pending report'; Mutate = { param($r) $r.state = 'pending' } },
+    @{ Name = 'null state is not completed evidence'; Mutate = { param($r) $r.state = $null } },
+    @{ Name = 'missing completed-report state'; Mutate = { param($r) $r.PSObject.Properties.Remove('state') } },
     @{ Name = 'missing nested report'; Mutate = { param($r) $r.report = $null } },
     @{ Name = 'inconsistent top and nested counts'; Mutate = { param($r) $r.totals.hits = 98 } },
     @{ Name = 'zero lines'; Mutate = { param($r) $r.totals.lines = 0; $r.report.totals.lines = 0 } },
@@ -114,6 +116,32 @@ if ($null -eq $observed -or $observed.commitid -cne $headRevision -or $transport
 if ($transport.State.Calls[0] -cne "https://api.codecov.io/api/v2/github/IgnisDevNE/repos/SuiteWard/commits/$headRevision/") { throw 'Codecov endpoint scope changed.' }
 $checks++
 
+$unprocessed = New-Report $headRevision 99 100
+$unprocessed.state = $null
+$transport = New-Transport @((New-HttpResponse 200 $unprocessed), $complete)
+$observed = Wait-CodecovReport -Revision $headRevision -Fetch $transport.Fetch -Pause $transport.Pause
+if ($null -eq $observed -or $observed.state -cne 'complete' -or $observed.commitid -cne $headRevision -or $transport.State.Calls.Count -ne 2 -or $transport.State.Pauses.Count -ne 1) {
+    throw 'Present null Codecov state must retry until the exact completed report arrives.'
+}
+$checks++
+
+foreach ($mutate in @(
+    { param($r) $r.PSObject.Properties.Remove('state') },
+    { param($r) $r.state = @('pending') },
+    { param($r) $r.state = @($null) },
+    { param($r) $r.state = $false },
+    { param($r) $r.state = 0 },
+    { param($r) $r.state = '' },
+    { param($r) $r.state = $null; $r.commitid = 'c' * 40 }
+)) {
+    $bad = New-Report $headRevision 99 100
+    & $mutate $bad
+    $transport = New-Transport @((New-HttpResponse 200 $bad), $complete)
+    Assert-Rejected { Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause } 'malformed or foreign unprocessed report'
+    if ($transport.State.Calls.Count -ne 1 -or $transport.State.Pauses.Count -ne 0) { throw 'Malformed or foreign report was retried.' }
+    $checks++
+}
+
 foreach ($transient in @(404, 408, 429, 500, 503)) {
     $transport = New-Transport @((New-HttpResponse $transient $null), $complete)
     Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause | Out-Null
@@ -150,7 +178,7 @@ foreach ($badResponse in @(
     if ($transport.State.Calls.Count -ne 1) { throw 'Corrupt report was retried or replaced.' }
     $checks++
 }
-foreach ($unavailable in @((New-HttpResponse 404 $null), (New-HttpResponse 200 $pending), [Net.Http.HttpRequestException]::new('offline'))) {
+foreach ($unavailable in @((New-HttpResponse 404 $null), (New-HttpResponse 200 $pending), (New-HttpResponse 200 $unprocessed), [Net.Http.HttpRequestException]::new('offline'))) {
     $transport = New-Transport @($unavailable)
     Assert-Rejected { Wait-CodecovReport $headRevision $transport.Fetch $transport.Pause } 'bounded report exhaustion'
     if ($transport.State.Calls.Count -ne 12 -or $transport.State.Pauses.Count -ne 11 -or @($transport.State.Pauses | Where-Object { $_ -ne 10 }).Count) { throw 'Retry bound or pause duration changed.' }

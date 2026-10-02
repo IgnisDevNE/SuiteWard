@@ -825,3 +825,73 @@ func TestReferenceStoreOtherAuthorityWrites(t *testing.T) {
 		}
 	})
 }
+
+func TestReferenceStoreReadIsolation(t *testing.T) {
+	f, s := approvedStoreFixture(t)
+	read := ReadRequest{Reference: f.request.Reference, OperationID: f.command.OperationID(), SourceCommandID: f.command.SourceCommandID(), AssessmentSource: f.request.AssessmentSource}
+	t.Run("exact stored source", func(t *testing.T) {
+		read := read
+		read.AssessmentSource = "unassessed"
+		snapshot, err := s.Load(context.Background(), read)
+		if err != nil || snapshot.Assessment.Assurance() != 0 || snapshot.Proposal.IsZero() || snapshot.Operation.Kind != OperationConsent {
+			t.Fatal("missing exact assessment was substituted or hid receipts")
+		}
+	})
+	t.Run("unknown revision preserves global receipts", func(t *testing.T) {
+		read := read
+		read.Reference.RevisionID = "unknown"
+		snapshot, err := s.Load(context.Background(), read)
+		if err != nil || snapshot.Operation.Consent.Result.Command().Reference() != f.request.Reference || !reflect.DeepEqual(snapshot.Operation, snapshot.Source) || snapshot.Assessment.Assurance() != 0 {
+			t.Fatal("unknown revision changed historical receipt lookup")
+		}
+	})
+	for _, field := range []string{"project", "suite", "proposal"} {
+		t.Run("missing "+field, func(t *testing.T) {
+			read := read
+			switch field {
+			case "project":
+				read.Reference.ProjectID = "another-project"
+			case "suite":
+				read.Reference.SuiteID = "another-suite"
+			case "proposal":
+				read.Reference.ProposalID = "absent"
+			}
+			if got, err := s.Load(context.Background(), read); !errors.Is(err, ErrNotFound) || !reflect.DeepEqual(got, Snapshot{}) {
+				t.Fatal("missing/foreign aggregate returned stored authority")
+			}
+		})
+	}
+	t.Run("copied inspection", func(t *testing.T) {
+		before := s.inspect()
+		exposed := s.inspect()
+		delete(exposed.operations, f.command.OperationID())
+		delete(exposed.sources, f.command.SourceCommandID())
+		delete(exposed.proposals, f.request.Reference.ProposalID)
+		delete(exposed.consents, f.request.Reference.ProposalID)
+		exposed.audits[0] = OperationReceipt{}
+		exposed.acknowledgments[0] = ConsentReceipt{}
+		if !reflect.DeepEqual(before, s.inspect()) {
+			t.Fatal("inspection aliases internal mutable containers")
+		}
+	})
+	t.Run("cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		before := s.inspect()
+		if got, err := s.Load(ctx, read); !errors.Is(err, context.Canceled) || !reflect.DeepEqual(got, Snapshot{}) {
+			t.Fatal("canceled Load returned authority")
+		}
+		if err := s.CommitPromotion(ctx, f.snapshot.Fence, f.promotionWrite(t)); !errors.Is(err, context.Canceled) {
+			t.Fatal("canceled promotion not rejected")
+		}
+		if err := s.CommitConsent(ctx, f.snapshot.Fence, ConsentWrite{}); !errors.Is(err, context.Canceled) {
+			t.Fatal("canceled consent not rejected")
+		}
+		if err := s.updateAuthority(ctx, f.snapshot.Fence, func(*referenceState) error { t.Fatal("canceled authority callback ran"); return nil }); !errors.Is(err, context.Canceled) {
+			t.Fatal("canceled authority write not rejected")
+		}
+		if !reflect.DeepEqual(before, s.inspect()) {
+			t.Fatal("canceled operations changed authority")
+		}
+	})
+}

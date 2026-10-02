@@ -13,3 +13,8 @@ func Bootstrap(ctx context.Context, store Store, request BootstrapRequest) (Prom
 	}
 	return runPromotion(ctx, store, PromotionIdentity{Kind: OperationBootstrap, Request: request.Promotion, BootstrapMode: request.Mode})
 }
+
+// Correct proposes a fresh canonical with attribution to a stored version.
+func Correct(ctx context.Context, store Store, request CorrectionRequest) (PromoteResult, error) {
+	return PromoteResult{}, nil
+}

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -15,6 +16,157 @@ func approvedPromotionFixture(t *testing.T) storeFixture {
 	f := newStoreFixture(t)
 	f.snapshot.Consent = f.consentWrite(t).Consent
 	return f
+}
+
+func TestPromoteReplaysOriginalReceiptBeforeCurrentAuthority(t *testing.T) {
+	f, store := approvedStoreFixture(t)
+	original, err := Promote(context.Background(), store, f.request)
+	if err != nil || !original.Committed {
+		t.Fatalf("setup: %+v %v", original, err)
+	}
+	state := store.inspect()
+	err = store.updateAuthority(context.Background(), AuthorityFence{"project", "suite", state.canonical.Suite().Revision()}, func(s *referenceState) error {
+		policy, err := contract.NewPolicy("project", "policy-2", f.owner)
+		if err != nil {
+			return err
+		}
+		s.policy = policy
+		s.consents[f.request.Reference.ProposalID] = contract.Consent{}
+		s.target = "another-target"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := store.inspect()
+	retry := f.request
+	retry.RecordedAt = retry.RecordedAt.Add(time.Hour)
+	result, err := Promote(context.Background(), store, retry)
+	if err != nil || !result.Committed || !result.Duplicate || !reflect.DeepEqual(result.Decision, original.Decision) {
+		t.Fatalf("historical outcome was reevaluated: %+v %v", result, err)
+	}
+	if !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("replay changed authority or publication")
+	}
+}
+
+func changedProtected(t *testing.T, p contract.ProtectedContract, part string) contract.ProtectedContract {
+	t.Helper()
+	manifest, scope, covered := p.Manifest(), p.ScopeDigest(), p.CoveredInputs()
+	switch part {
+	case "manifest":
+		var err error
+		manifest, err = artifact.NewManifest([]artifact.Entry{{Path: "tests/other.txt", Content: artifact.Hash([]byte("other"))}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	case "scope":
+		scope = artifact.Hash([]byte("different scope"))
+	case "context":
+		covered["runner"] = "v2"
+	}
+	value, err := contract.NewProtectedContract(manifest, scope, covered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func TestPromoteRejectsOperationIdentityConflicts(t *testing.T) {
+	changes := map[string]func(*PromoteRequest){
+		"revision":          func(r *PromoteRequest) { r.Reference.RevisionID = "revision-2" },
+		"carrier":           func(r *PromoteRequest) { r.Carrier = "carrier-2" },
+		"version":           func(r *PromoteRequest) { r.NewVersionID = "version-2" },
+		"assessment source": func(r *PromoteRequest) { r.AssessmentSource = "merged-2" },
+	}
+	for _, part := range []string{"manifest", "scope", "context"} {
+		changes[part] = func(r *PromoteRequest) { r.Proposed = changedProtected(t, r.Proposed, part) }
+	}
+	for _, part := range []string{"project", "target", "source", "carrier", "kind"} {
+		changes["integration "+part] = func(r *PromoteRequest) {
+			i := r.Integration
+			project, target, source, carrier, kind := i.ProjectID(), i.Target(), i.Source(), i.Carrier(), i.Kind()
+			switch part {
+			case "project":
+				project = "other"
+			case "target":
+				target = "other"
+			case "source":
+				source = "other"
+			case "carrier":
+				carrier = "other"
+			case "kind":
+				kind, carrier = contract.IntegrationExistingBaseline, ""
+			}
+			var err error
+			r.Integration, err = contract.NewIntegration(project, target, source, carrier, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			f, store := approvedStoreFixture(t)
+			if _, err := Promote(context.Background(), store, f.request); err != nil {
+				t.Fatal(err)
+			}
+			before := store.inspect()
+			change(&f.request)
+			result, err := Promote(context.Background(), store, f.request)
+			if !errors.Is(err, ErrOperationConflict) {
+				t.Fatalf("changed identity adopted old operation: %+v %v", result, err)
+			}
+			requireZeroPromotionResult(t, result)
+			if !reflect.DeepEqual(before, store.inspect()) {
+				t.Fatal("conflict changed original receipt")
+			}
+		})
+	}
+	t.Run("consent operation", func(t *testing.T) {
+		f, store := approvedStoreFixture(t)
+		f.request.OperationID = f.command.OperationID()
+		before := store.inspect()
+		result, err := Promote(context.Background(), store, f.request)
+		if !errors.Is(err, ErrOperationConflict) {
+			t.Fatalf("consent operation reused: %+v %v", result, err)
+		}
+		requireZeroPromotionResult(t, result)
+		if !reflect.DeepEqual(before, store.inspect()) {
+			t.Fatal("kind conflict changed authority")
+		}
+	})
+}
+
+func TestPromoteRejectsMalformedHistoricalReceipt(t *testing.T) {
+	for name, change := range map[string]func(*OperationReceipt){
+		"kind":       func(r *OperationReceipt) { r.Kind = OperationKind(99) },
+		"inner kind": func(r *OperationReceipt) { r.Promotion.Identity.Kind = OperationCorrect },
+		"binding":    func(r *OperationReceipt) { r.Promotion.Identity.Binding = contract.ApprovalBinding{} },
+		"reference":  func(r *OperationReceipt) { r.Promotion.Identity.Request.Reference.RevisionID = "contradictory" },
+		"content": func(r *OperationReceipt) {
+			r.Promotion.Identity.Request.Proposed = changedProtected(t, r.Promotion.Identity.Request.Proposed, "scope")
+		},
+		"version":   func(r *OperationReceipt) { r.Promotion.Identity.Request.NewVersionID = "contradictory" },
+		"timestamp": func(r *OperationReceipt) { r.Promotion.Identity.Request.RecordedAt = time.Time{} },
+		"decision":  func(r *OperationReceipt) { r.Promotion.Decision = contract.PromotionDecision{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, store := approvedStoreFixture(t)
+			if _, err := Promote(context.Background(), store, f.request); err != nil {
+				t.Fatal(err)
+			}
+			before := store.inspect()
+			result, err := Promote(context.Background(), changedPromotionLoad{Store: store, change: func(s *Snapshot) { change(&s.Operation) }}, f.request)
+			if !errors.Is(err, ErrInvalidSnapshot) {
+				t.Fatalf("malformed historical receipt accepted: %+v %v", result, err)
+			}
+			requireZeroPromotionResult(t, result)
+			if !reflect.DeepEqual(before, store.inspect()) {
+				t.Fatal("malformed replay wrote authority")
+			}
+		})
+	}
 }
 
 // changedPromotionLoad exercises defensive handling at the Store boundary,

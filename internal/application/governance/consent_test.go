@@ -691,3 +691,43 @@ func TestProcessConsentRejectedCarrierStillAcknowledgesHistory(t *testing.T) {
 		t.Fatalf("wrong carrier conflated command and historical context: %+v", response)
 	}
 }
+
+func TestProcessConsentRejectsInconsistentStoredHistories(t *testing.T) {
+	for _, corruption := range []string{"source outcome differs from aggregate", "source absent from aggregate history", "malformed promotion operation", "promotion stored as source command"} {
+		t.Run(corruption, func(t *testing.T) {
+			f, actual := approvedStoreFixture(t)
+			before := actual.inspect()
+			alias := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.OperationID = "alias" })
+			emptyConsent, err := contract.NewConsent("project", "suite", f.command.Reference().ProposalID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			observedRevoke := changedConsentCommand(t, f.command, func(c *contract.CommandInput) { c.Action = contract.RevokeConsent })
+			_, revokedResult, err := emptyConsent.Apply(f.snapshot.Proposal, f.snapshot.Policy, observedRevoke)
+			if err != nil || revokedResult.Outcome() != contract.ConsentNoActiveApproval {
+				t.Fatalf("alternate original outcome fixture: %+v, %v", revokedResult, err)
+			}
+			promotion := OperationReceipt{Kind: OperationPromote, Promotion: f.promotionWrite(t).Receipt}
+			store := &consentStoreProbe{Store: actual, changeSnapshot: func(s *Snapshot) {
+				switch corruption {
+				case "source outcome differs from aggregate":
+					// Both original results are well-formed, but they cannot describe
+					// the same immutable source observation in one stored snapshot.
+					s.Source.Consent.Result = revokedResult
+					s.Source.Consent.CurrentApprovalEligible = false
+				case "source absent from aggregate history":
+					s.Consent = emptyConsent
+				case "malformed promotion operation":
+					s.Operation = promotion
+					s.Operation.Promotion.Decision = contract.PromotionDecision{}
+				case "promotion stored as source command":
+					s.Source = promotion
+				}
+			}}
+			response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: alias})
+			if !errors.Is(err, ErrInvalidSnapshot) || response != (ConsentResponse{}) || store.commits != 0 || !reflect.DeepEqual(before, actual.inspect()) {
+				t.Fatalf("inconsistent stored history = %+v, %v, commits=%d", response, err, store.commits)
+			}
+		})
+	}
+}

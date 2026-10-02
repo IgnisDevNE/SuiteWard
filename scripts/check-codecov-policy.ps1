@@ -83,6 +83,10 @@ function Get-CodecovRevisionRange {
         if ($CurrentRevision -cne $EventRevision) { throw 'Manual coverage checkout does not match the event revision.' }
     }
     $range = Get-TddRevisionRange -EventName $EventName -Event $Event -CurrentRevision $CurrentRevision -ParentRevision $ParentRevision
+    foreach ($revision in @($range.Base, $range.Head)) {
+        if ($revision -isnot [string]) { throw 'Codecov event revisions must be scalar strings.' }
+        Assert-CodecovRevision $revision
+    }
     if ($range.Base -ceq $range.Head) { throw 'Codecov comparison requires distinct base and head commits.' }
     return $range
 }

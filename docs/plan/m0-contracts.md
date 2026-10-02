@@ -764,6 +764,8 @@ Promotion replay compares its immutable kind, scope, original stored binding, pr
 
 ConsentReceipt.CurrentApprovalEligible describes the current proposal revision under the processing-time governing policy, identified by EvaluatedReference and PolicyRevisionID. It does not assert that a historical revoked revision was eligible or that the PR could merge. PromotedVersionID names the exact historical promotion of the command reference. A no-op revoke, ordered rejection, or other new terminal command receives one receipt, audit, and pending acknowledgment; a pure replay or identity conflict does not. A missing or malformed load fails without writes.
 
+For both result types, Committed means that the returned outcome is durable, not necessarily that this invocation wrote it. A first successful commit reports Committed=true and Duplicate=false. A matching historical replay reports true/true without writing; a consent source replay with a new operation alias reports true/true only after the alias commits. Provisional promotion decisions report false/false. Errors return a zero result.
+
 The first I checkpoint must implement and behaviorally test these shared declarations and a usable reference-store slice. A and B then consume that reviewed checkpoint on separate task branches. I later adds the complete store failure and concurrency scenarios without replacing A/B tests. Any concrete field adjustment required by a consumer must be reviewed by all three owners and amended here before that consumer implements against it. The open D-M0-COVERAGE gate blocks phase integration, not this evidence-producing I checkpoint.
 
 ### Reference-model proof

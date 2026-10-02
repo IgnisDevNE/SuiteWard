@@ -1,7 +1,7 @@
 # CI and coverage
 
 - **Updated:** 2026-10-02
-- **Status:** Active CI and patch enforcement; the accepted M0 project-coverage policy is configured, with hosted verification and activation of its two required project contexts pending. `main` currently requires `CI / Gate` and `codecov/patch` from their expected Apps.
+- **Status:** Active CI and patch enforcement. The accepted project policy is implemented inside the coverage job; its first hosted enforcement run is pending. `main` requires `CI / Gate` and `codecov/patch` from their expected Apps.
 
 ## Accepted quality policy
 
@@ -17,7 +17,7 @@ On 2026-10-02 the owner accepted the M0 total-coverage policy after reviewing th
 | `project/floor` | Require at least 99% whole-project coverage, with zero tolerance. This limits accumulated decreases across successive PRs. |
 | `patch/default` | Require 90% coverage of executable lines added or changed by the PR, with zero tolerance. |
 
-Both project statuses must pass independently. A permitted decrease against the base does not waive the absolute floor, patch coverage or critical scenarios. Exclude only the dedicated sqlc output directory, `internal/adapters/postgres/internal/dbgen/`, from the coverage scope. Go statement coverage and hosted Codecov line coverage are different metrics; use comparable hosted reports for the project policy.
+Both project rules must pass independently. A permitted decrease against the base does not waive the absolute floor, patch coverage or critical scenarios. Exclude only the dedicated sqlc output directory, `internal/adapters/postgres/internal/dbgen/`, from the coverage scope. Go statement coverage and hosted Codecov line coverage are different metrics; the project checker uses the actual Codecov line counts.
 
 Critical governance scenarios remain required regardless of the coverage percentage. Follow the [development guide](development-guide.md) and the invariant/approval/promotion ADRs.
 
@@ -30,10 +30,10 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 | Job | Current behavior |
 | --- | --- |
 | Inspect repository | Compare tracked files with the base revision to select foundation or Go verification. Removing an existing Go module/source cannot silently disable the Go checks. |
-| Foundation, Windows and Linux | Parse PowerShell scripts; validate the workflow with actionlint, documentation links, CI classification/gate behavior, coverage argument handling, development tooling safety/isolation, and the delivery graph/generated phase pages. |
+| Foundation, Windows and Linux | Parse PowerShell scripts; validate the workflow with actionlint, documentation links, CI classification/gate behavior, Codecov policy and retrieval failures, coverage argument handling, development tooling safety/isolation, and the delivery graph/generated phase pages. |
 | TDD evidence | F0.01 adds validation of task modes, execution-record structure, complete changed-file accounting, distinct author/reviewer declarations, RED/GREEN Git ancestry, and final task-file binding for PRs and `main` pushes. It is a required prerequisite of `CI / Gate`. |
 | Go, Windows and Linux | When real Go source exists: verify formatting, analyze, build, and test. A module without real packages fails. |
-| Race, security, and coverage | When Go exists: run Linux race/coverage tests, scan reachable vulnerabilities, preserve the coverage artifact, and upload the actual report. |
+| Race, security, and coverage | When Go exists: test the exact event head, run Linux race/coverage and vulnerability checks, preserve and upload the actual report with the same head attribution, then enforce both project rules from completed Codecov reports. |
 | CI / Gate | Always evaluate all prerequisite results. Accept skipped Go jobs only when the successful classifier established foundation-only applicability. Failures, cancellations, missing classification, and unexpected skips fail the gate. |
 
 There is no placeholder application package and no artificial coverage upload. The PowerShell tests verify CI infrastructure behavior and are not counted as application coverage. Once Go code exists, even a documentation-only PR runs the Go jobs so required coverage contexts remain available.
@@ -50,7 +50,13 @@ The repository configuration is `codecov.yml`. Uploads from repository branches 
 
 The uploader searches only the explicitly named `coverage.out` file. Missing/empty reports and upload errors fail the job. Patch and both named project statuses are non-informational and configured to fail when the expected head report is absent. `scripts/test-ci.ps1` checks the declared policy's missing-report and numeric boundaries, including changes in the actual base. These local regression checks do not emulate Codecov or establish hosted enforcement; the official YAML validator and observed hosted checks supply separate evidence.
 
-Codecov waits for CI to succeed before reporting its final statuses. `CI / Gate` therefore checks completion of the upload job and must not wait for Codecov's asynchronous results, which would create a circular dependency. Patch is already a separate branch requirement; both project contexts require the same separate activation after their exact names and Codecov App identity are observed.
+The Developer plan did not emit either configured project context despite correct effective YAML and a complete report. The published Codecov plan/tier mapping and notifier eligibility explain this observed limitation; see the [reviewed enforcement checkpoint](plan/m0-contracts.md). Project declarations remain in the YAML for portability. They are not treated as delivered checks or added as nonexistent branch requirements.
+
+`scripts/check-codecov-policy.ps1` enforces the two project rules in the coverage job, which is already required by `CI / Gate`. It reads only the public SuiteWard commit endpoint. PR comparisons use event head/base; pushes use after/before; manual runs use the event checkout and its first parent. Coverage checkout and upload attribution use that exact head. A missing baseline fails rather than substituting another commit.
+
+The checker requires the requested commit identity, `state: complete`, and consistent integral line/hit/miss/partial counts in both report envelopes. Hits are the numerator; partial lines remain in the denominator. Exact integer cross-products enforce both rules, without trusting rounded display percentages. Missing reports, pending processing and transient failures have at most 12 requests per report, each with a 15-second timeout and 10-second pauses. Corrupt reports and terminal HTTP/state failures reject. Regression tests exercise boundaries, malformed arrays/scalars, wrong identities, event binding and bounded transport failures.
+
+Codecov waits for CI before sending final statuses. The checker therefore never waits for `ci_passed` or any Codecov status: report processing supplies the measurements while CI is still running. Native `codecov/patch` stays a separate required branch check. No paid-plan change, new administration grant or personal-account exception is used. A fresh hosted run must establish report availability before CI completion independently of local fixture tests.
 
 ## Staged activation
 
@@ -59,7 +65,7 @@ Codecov waits for CI to succeed before reporting its final statuses. `CI / Gate`
 3. Completed: `main` requires an up-to-date PR and `CI / Gate` from the observed GitHub Actions App (ID 15368), with administrator enforcement and force pushes/deletion disabled. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that separate review. The user merged PR #1; [the main-branch run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36287285580) passed for merge commit `650fb81`.
 4. Verified in [PR #6](https://github.com/IgnisDevNE/SuiteWard/pull/6): the first real domain code activates Windows/Linux Go and Linux race/security/coverage. The actual Codecov report covers six domain files at 100%; a controlled real-test subset produces 6.34% and fails `codecov/patch` against 90%. The diagnostic configuration is restored exactly. Exact revisions, the coverage-argument regression repair, and both hosted observations are in the [execution record](plan/executions/M0.01.md). No empty baseline or synthetic application package was used.
 5. Completed after explicit user authorization: `codecov/patch` from observed Codecov App 254 is required in addition to `CI / Gate` from App 15368. A one-time personal-account exception added that check because the bot lacks repository administration permission; all other protection fields were verified unchanged. The exception grants no standing personal fallback. The bot merged PR #6 with its checkpoint history intact; all eight jobs in [the main run](https://github.com/IgnisDevNE/SuiteWard/actions/runs/36670629908) passed at `808241c606daf08cf6f217fbc58e459d4f963cba`, and Codecov recorded 100% coverage. Every subsequent PR still needs checks for its final revision.
-6. M0.04: the owner accepted `target: auto` with 0.25 percentage-point tolerance plus a separate 99% absolute project floor, while retaining patch 90% with zero tolerance and critical scenarios. Both project statuses are configured to fail rather than report informational success. Observe the resulting hosted contexts (expected `codecov/project` and `codecov/project/floor`) and verify Codecov App 254 before adding them as required checks. Activation is pending: the authorized bot has no repository-administration permission, and the earlier personal-account exception grants no authority for this change. Preserve the existing `CI / Gate` and `codecov/patch` requirements and other protection settings.
+6. M0.04: the owner accepted a maximum 0.25 percentage-point decrease plus an independent 99% project floor, retaining patch 90% with zero tolerance and critical scenarios. At `b8d0547c876965681548622add64cbb699903b10`, all eight CI jobs and patch passed, but Codecov did not emit either configured project status. A reviewed adapter now enforces those same rules from exact Codecov reports inside the existing required `CI / Gate`; its first hosted run is pending. Existing branch protections remain unchanged. See the [phase execution record](plan/executions/M0.04.md).
 7. Add and prove PostgreSQL integration and generated-code checks in the same delivery that introduces persistence. They must become applicable requirements before that capability is considered complete.
 
 The user continues to authorize every integration into `main`. GitHub checks and PR requirements are active, but the provider cannot distinguish a human from an agent using the same GitHub identity. Human merge authorization remains an operational rule until a separate identity/credential design is established; a green CI run alone is not that authorization.
@@ -79,6 +85,8 @@ The F0 expansion adds actionlint, parsing of all PowerShell helpers, and deliver
 
 - [Codecov status checks](https://docs.codecov.com/docs/commit-status)
 - [Codecov YAML configuration and validation](https://docs.codecov.com/docs/codecov-yaml)
+- [Codecov commit report endpoint](https://docs.codecov.com/reference/repos_commits_retrieve)
+- [Codecov line coverage and partial lines](https://docs.codecov.com/docs/about-code-coverage)
 - [Pinned Codecov Action](https://github.com/codecov/codecov-action/tree/v7.1.1)
 - [GitHub required-check behavior](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)
 - [Go vulnerability checking](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)

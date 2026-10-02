@@ -410,6 +410,81 @@ func TestGovernanceApplicationPublicationFailure(t *testing.T) {
 	}
 }
 
+func TestGovernanceApplicationCorrectionReconcilesRevocation(t *testing.T) {
+	store, request := correctionFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	gate := &commitBarrierStore{Store: store, reached: make(chan struct{}, 1), release: make(chan struct{})}
+	type outcome struct {
+		result PromoteResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() { result, err := Correct(ctx, gate, request); done <- outcome{result, err} }()
+	waitForCommit(t, ctx, gate)
+	owner, err := contract.NewPrincipal(store.inspect().policy.OwnerID(), contract.Human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandInput := contract.CommandInput{OperationID: "revoke-correction", SourceCommandID: "source-revoke-correction", Actor: owner, Reference: request.Promotion.Reference, Carrier: request.Promotion.Carrier, Action: contract.RevokeConsent, Order: 2}
+	revoke, err := contract.NewCommand(commandInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: revoke}); err != nil || !result.Committed {
+		t.Fatal("correction revocation failed", err)
+	}
+	before := store.inspect()
+	close(gate.release)
+	stale := <-done
+	if !errors.Is(stale.err, ErrAuthorityConflict) || !reflect.DeepEqual(stale.result, PromoteResult{}) || !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("stale correction committed despite revocation")
+	}
+	blocked, err := Correct(context.Background(), store, request)
+	if err != nil || blocked.Committed || blocked.Decision.Reason() != contract.PromotionReasonApprovalMissing || !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("fresh correction did not evaluate revoked consent", err)
+	}
+	commandInput.OperationID = "reapprove-correction"
+	commandInput.SourceCommandID = "source-reapprove-correction"
+	commandInput.Action = contract.ApproveConsent
+	commandInput.Order = 3
+	approve, err := contract.NewCommand(commandInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: approve}); err != nil || !result.Committed {
+		t.Fatal("fresh correction approval failed", err)
+	}
+	approved := store.inspect()
+	// Byte identity does not let evidence for a previous integrated source pass.
+	otherSource := request
+	otherSource.Promotion.AssessmentSource = "unassessed-correction-source"
+	otherSource.Promotion.Integration, err = contract.NewIntegration("project", approved.target, otherSource.Promotion.AssessmentSource, request.Promotion.Carrier, contract.IntegrationMergedChange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := Correct(context.Background(), store, otherSource); err != nil || result.Committed || result.Decision.Outcome() != contract.PromotionBlocked || !reflect.DeepEqual(approved, store.inspect()) {
+		t.Fatal("correction reused evidence from another source", err)
+	}
+	result, err := Correct(context.Background(), store, request)
+	if err != nil || !result.Committed || result.Duplicate {
+		t.Fatal("fresh authorized correction failed", err)
+	}
+	after := store.inspect()
+	target := before.versions[request.TargetVersionID]
+	if after.canonical.Version().ID() == target.ID() || after.canonical.Version().Manifest().Digest() != target.Manifest().Digest() || after.canonical.Record().CorrectsVersionID() != target.ID() {
+		t.Fatal("correction did not create distinct version with historical bytes and attribution")
+	}
+	for id, version := range before.versions {
+		if !reflect.DeepEqual(version, after.versions[id]) || !reflect.DeepEqual(before.promotions[id], after.promotions[id]) {
+			t.Fatal("correction rewrote immutable history")
+		}
+	}
+	if len(after.versions) != len(before.versions)+1 || len(after.publications) != len(before.publications)+1 {
+		t.Fatal("failed/stale correction reserved versions or duplicated intents")
+	}
+}
+
 func TestReferenceStorePromotionRevocationOrder(t *testing.T) {
 	for _, first := range []string{"promotion", "revocation"} {
 		t.Run(first+" wins", func(t *testing.T) {

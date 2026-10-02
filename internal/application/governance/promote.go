@@ -2,6 +2,7 @@ package governance
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -15,6 +16,9 @@ func Promote(ctx context.Context, store Store, request PromoteRequest) (PromoteR
 	snapshot, err := store.Load(ctx, ReadRequest{Reference: request.Reference, OperationID: request.OperationID, AssessmentSource: request.AssessmentSource})
 	if err != nil {
 		return PromoteResult{}, err
+	}
+	if result, found, err := replayPromotion(snapshot.Operation, PromotionIdentity{Kind: OperationPromote, Request: request}); found || err != nil {
+		return result, err
 	}
 	if !validPromotionSnapshot(snapshot, request.Reference) {
 		return PromoteResult{}, ErrInvalidSnapshot
@@ -44,6 +48,63 @@ func Promote(ctx context.Context, store Store, request PromoteRequest) (PromoteR
 		return PromoteResult{}, err
 	}
 	return PromoteResult{Decision: decision, Committed: true}, nil
+}
+
+// Replay validates the original receipt against itself, never against the
+// current proposal, policy, configured target, or canonical pointer.
+func replayPromotion(stored OperationReceipt, wanted PromotionIdentity) (PromoteResult, bool, error) {
+	if stored.Kind == 0 {
+		return PromoteResult{}, false, nil
+	}
+	if stored.Kind < OperationPromote || stored.Kind > OperationConsent {
+		return PromoteResult{}, false, ErrInvalidSnapshot
+	}
+	if stored.Kind == OperationConsent {
+		return PromoteResult{}, false, ErrOperationConflict
+	}
+	receipt := stored.Promotion
+	if stored.Kind != receipt.Identity.Kind || !validPromotionReceipt(receipt) {
+		return PromoteResult{}, false, ErrInvalidSnapshot
+	}
+	if !samePromotionIdentity(receipt.Identity, wanted) {
+		return PromoteResult{}, false, ErrOperationConflict
+	}
+	return PromoteResult{Decision: receipt.Decision, Committed: true, Duplicate: true}, true, nil
+}
+
+func samePromotionIdentity(left, right PromotionIdentity) bool {
+	a, b := left.Request, right.Request
+	return left.Kind == right.Kind && left.BootstrapMode == right.BootstrapMode && left.CorrectsVersionID == right.CorrectsVersionID &&
+		a.OperationID == b.OperationID && a.Reference == b.Reference && a.Carrier == b.Carrier && a.Proposed.Equal(b.Proposed) &&
+		a.AssessmentSource == b.AssessmentSource && a.Integration == b.Integration && a.NewVersionID == b.NewVersionID
+}
+
+func validPromotionReceipt(receipt PromotionReceipt) bool {
+	id := receipt.Identity
+	r := id.Request
+	effect, present := receipt.Decision.Effect()
+	if !validPromoteRequest(r) || !present || receipt.Decision.Outcome() != contract.PromotionProposed || id.Binding.IsZero() ||
+		id.Binding.Reference() != r.Reference || id.Binding.ManifestDigest() != r.Proposed.Manifest().Digest() || id.Binding.ScopeDigest() != r.Proposed.ScopeDigest() ||
+		!maps.Equal(id.Binding.CoveredInputs(), r.Proposed.CoveredInputs()) {
+		return false
+	}
+	record := effect.Promotion()
+	if !record.Binding().Equal(id.Binding) || record.OperationID() != r.OperationID || record.VersionID() != r.NewVersionID || record.Carrier() != r.Carrier ||
+		record.Source() != r.AssessmentSource || record.Source() != r.Integration.Source() || record.Target() != r.Integration.Target() ||
+		r.Integration.ProjectID() != r.Reference.ProjectID || !record.RecordedAt().Equal(r.RecordedAt) || record.CorrectsVersionID() != id.CorrectsVersionID {
+		return false
+	}
+	switch id.Kind {
+	case OperationPromote:
+		return id.BootstrapMode == 0 && id.CorrectsVersionID == ""
+	case OperationBootstrap:
+		return id.CorrectsVersionID == "" && ((id.BootstrapMode == contract.ExistingBaselineBootstrap && r.Integration.Kind() == contract.IntegrationExistingBaseline) ||
+			(id.BootstrapMode == contract.FirstTestBootstrap && r.Integration.Kind() == contract.IntegrationMergedChange))
+	case OperationCorrect:
+		return id.BootstrapMode == 0 && id.CorrectsVersionID != ""
+	default:
+		return false
+	}
 }
 
 func validPromoteRequest(request PromoteRequest) bool {

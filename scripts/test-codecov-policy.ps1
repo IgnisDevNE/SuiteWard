@@ -191,6 +191,21 @@ Assert-Rejected { Get-CodecovRevisionRange -EventName 'push' -Event ([pscustomob
 $checks++
 Assert-Rejected { Get-CodecovRevisionRange -EventName 'unknown' } 'unsupported coverage event'
 $checks++
+foreach ($eventName in @('pull_request', 'push')) {
+    foreach ($field in @('base', 'head')) {
+        foreach ($values in @(@($baseRevision), @($baseRevision, $headRevision))) {
+            $baseValue = if ($field -eq 'base') { ,$values } else { $baseRevision }
+            $headValue = if ($field -eq 'head') { ,$values } else { $headRevision }
+            $arrayEvent = if ($eventName -eq 'push') {
+                [pscustomobject]@{ before = $baseValue; after = $headValue }
+            } else {
+                [pscustomobject]@{ pull_request = [pscustomobject]@{ base = [pscustomobject]@{ sha = $baseValue }; head = [pscustomobject]@{ sha = $headValue } } }
+            }
+            Assert-Rejected { Get-CodecovRevisionRange -EventName $eventName -Event $arrayEvent } "$eventName $field SHA must be a scalar"
+            $checks++
+        }
+    }
+}
 
 # Configuration wiring is behavior: the upload and check must bind the same
 # measured source and a policy failure must reach the existing required gate.

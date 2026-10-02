@@ -1,0 +1,348 @@
+{
+  "schema_version": 1,
+  "phase": "M0.04",
+  "tasks": [
+    {
+      "task_id": "M0.04-C0",
+      "mode": "not_applicable",
+      "files": [
+        "docs/plan/backlog.json",
+        "docs/plan/m0-contracts.md",
+        "docs/plan/phases/M0.04.md"
+      ],
+      "cycles": [],
+      "reason": "Reviewed concrete application/store signatures, exact whole-authority revision mapping, receipt-first identity lookup, conditional commit effects, result durability semantics and ownership. Documentation/planning only; no executable behavior or coverage-policy selection.",
+      "review": {
+        "author": "root",
+        "reviewer": "m001_artifact, m001_authority, phase_domain_plan",
+        "outcome": "accepted",
+        "notes": "All three consumers independently accepted concrete C0 6ad360414ecd0150b138bb6e9cd4563d616fb500 and result-semantics clarification 39e095e31b2a3af649a72a2f1915efdc37c1233a before dependent implementation. check-plan -WriteDocs and foundation checks passed. D-M0-COVERAGE remains open and blocks final phase integration; draft publication may collect real hosted evidence."
+      }
+    },
+    {
+      "task_id": "M0.04-A",
+      "mode": "required",
+      "files": [
+        "internal/application/governance/promote.go",
+        "internal/application/governance/promote_test.go",
+        "internal/application/governance/bootstrap.go",
+        "internal/application/governance/bootstrap_test.go"
+      ],
+      "cycles": [
+        {
+          "scenario": "Commit stored authority and scheduling with grouped promotion effects",
+          "red": {
+            "revision": "a4c6e7897755516734f0fa700211d9b8246e0daa",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestPromoteCommitsStoredAuthorityAndQueueTogether -count=1",
+            "exit_code": 1,
+            "output": "promotion was not committed; compiled stub returned zero result"
+          },
+          "green": {
+            "revision": "f271a9d9605866d03a24b41be504bff6ec5311dc",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestPromoteCommitsStoredAuthorityAndQueueTogether -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+          },
+          "refactor": "No behavioral refactor after GREEN; subsequent common-coordinator changes verified by final all-A and module tests."
+        },
+        {
+          "scenario": "Reject malformed requests and incoherent stored authority before writes",
+          "red": {
+            "revision": "926cffbd4b888eb5a6d9dc67d29e378a2c6219fb",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestPromote -count=1",
+            "exit_code": 1,
+            "output": "11 malformed request variants reached Load; 11 malformed authority variants not rejected"
+          },
+          "green": {
+            "revision": "7516c6e3ff72d5386c2831903b3f6c236d4264e3",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestPromote -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+          },
+          "refactor": "No behavioral refactor after GREEN; subsequent common-coordinator changes verified by final all-A and module tests."
+        },
+        {
+          "scenario": "Replay exact durable promotion receipt before current authority and reject identity conflicts",
+          "red": {
+            "revision": "73213f063735178f6ae542a46c0dc3ce4fd75544",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestPromote(Replays|RejectsOperation|RejectsMalformedHistorical)' -count=1",
+            "exit_code": 1,
+            "output": "historical outcome reevaluated as no-change; changed identities and malformed historical receipts accepted"
+          },
+          "green": {
+            "revision": "21bb4335d756e7f91411ba6ac745611545ca6ca5",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestPromote(Replays|RejectsOperation|RejectsMalformedHistorical)' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+          },
+          "refactor": "No behavioral refactor after GREEN; subsequent common-coordinator changes verified by final all-A and module tests."
+        },
+        {
+          "scenario": "Coordinate both bootstrap modes, premerge readiness and exact mode replay",
+          "red": {
+            "revision": "e1bac3716f9219192f365ab393832b34e02ea843",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestBootstrap -count=1",
+            "exit_code": 1,
+            "output": "both modes returned no commit; premerge readiness absent; invalid bootstrap mode did not fail"
+          },
+          "green": {
+            "revision": "33c31ab849487744397c8cd9041aec6e390519b7",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestBootstrap -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+          },
+          "refactor": "Shared runPromotion coordinator extracted while implementing bootstrap; final all-A tests and complete module tests passed."
+        },
+        {
+          "scenario": "Load immutable correction history and commit a fresh attributed version",
+          "red": {
+            "revision": "227b936823cd7378a7485343e27d273524ce66cc",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestCorrect -count=1",
+            "exit_code": 1,
+            "output": "correction not committed; empty correction target accepted"
+          },
+          "green": {
+            "revision": "1473a3e7d4f492ecdf0aa001eaf51fb8ce48667f",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestCorrect -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+          },
+          "refactor": "No behavioral refactor after GREEN; subsequent common-coordinator changes verified by final all-A and module tests."
+        },
+        {
+          "scenario": "Reject nil stores and malformed receipt envelopes across promotion use cases",
+          "red": {
+            "revision": "95972dc664b91dd7b9fbcf2d984455a5fa2c69df",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestPromotionRejects' -count=1",
+            "exit_code": 1,
+            "output": "three nil-store cases panic; absent-kind payload, malformed consent receipt and contradictory integration carrier not rejected as invalid snapshot"
+          },
+          "green": {
+            "revision": "1ba0d866e9989d41636fbc036dccbff37aa8517c",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestPromotionRejects' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+          },
+          "refactor": "Initial GREEN c02dbab03c63f740d5a6f5f724e0d55bc1642236; later checkpoint adds only aggregate fault/history/collision regressions and binds all final owned files. Original RED command rerun at final GREEN."
+        }
+      ],
+      "review": {
+        "author": "m001_artifact",
+        "reviewer": "root, m001_authority",
+        "outcome": "accepted",
+        "notes": "Root independently inspected and replayed each of the six original RED/GREEN cycles and accepted final aggregate A source/tests. Final A6 command rerun at 1ba0d866 binds all final files. m001_authority independently accepted the final four source/test files without findings. The earlier author-worktree check encountered an inherited B formatting issue; the complete merged check passed at 5ccd06f9747a4ad41d1816fdb36cd4062dbd91a5."
+      }
+    },
+    {
+      "task_id": "M0.04-B",
+      "mode": "required",
+      "files": [
+        "internal/application/governance/consent.go",
+        "internal/application/governance/consent_test.go"
+      ],
+      "cycles": [
+        {
+          "scenario": "Commit original approval with domain consent, original receipt, audit, acknowledgment and whole-authority fence together, without promotion or scheduling changes.",
+          "red": {
+            "revision": "657930ca289c73ac263e751452e58df997f92eb0",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestProcessConsentCommitsOriginalApproval -count=1",
+            "exit_code": 1,
+            "output": "TestProcessConsentCommitsOriginalApproval failed: original command returned zero response with Committed=false; want committed original outcome. Compiled package ran 0.156s."
+          },
+          "green": {
+            "revision": "d298b10a43e1d41516c962fe8c788c405c0be76f",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestProcessConsentCommitsOriginalApproval -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.188s"
+          },
+          "refactor": "No refactoring. Initial test construction had compilation errors corrected before the recorded behavioral RED. The real early reference store supported original commands; alias and fault proofs were not claimed yet."
+        },
+        {
+          "scenario": "Reject invalid request and loaded authority before committing. Return no successful response or acknowledgment on injected staged failures, cancellation or conditional-commit conflict.",
+          "red": {
+            "revision": "f13b95c612d3b14c83c0effb70d5ae95d459184e",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(RejectsInvalidContext|FailureHasNoAcknowledgment)' -count=1",
+            "exit_code": 1,
+            "output": "Eight compiled invalid-context cases failed: zero command reached Load; zero canonical committed; foreign/different fence reached Commit; zero proposal/policy/consent errors were not classified as ErrInvalidSnapshot. Package ran 0.175s."
+          },
+          "green": {
+            "revision": "efff4b1b729f9725ac3598a9c399d9977d689175",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(RejectsInvalidContext|FailureHasNoAcknowledgment)' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.180s"
+          },
+          "refactor": "No refactoring. Consumes reviewed real I fault injection and commit behavior merged at 52978c0af97f76ad5cfedc66c2121b7dd16fd7dc."
+        },
+        {
+          "scenario": "Replay original outcomes after revocation or policy changes; reserve new operation aliases atomically without duplicating original audits or acknowledgments; retry failed alias reservation.",
+          "red": {
+            "revision": "5ad15668c0ff5ecf17cecbc9d0a29be47195bc62",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(Replays|AliasFailure)' -count=1",
+            "exit_code": 1,
+            "output": "Three compiled tests failed with operation identity conflict: known original replay after revoke, rejected receipt replay after policy change, and new-alias failure/retry. Package ran 0.289s."
+          },
+          "green": {
+            "revision": "ce901f511582f16503b67acbb90a91c1169ea13c",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(Replays|AliasFailure)' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.243s"
+          },
+          "refactor": "No refactoring. Global collision preflight and malformed-receipt handling remained the next cycle."
+        },
+        {
+          "scenario": "Preflight shared operation/source identities and receipt integrity before current authority; reject actor/kind/source collisions without Commit; permit pure historical replay with absent current authority while requiring complete aggregate for aliases.",
+          "red": {
+            "revision": "05fbe1c1fc8cfb995c0ff0e954423dd26c5bc897",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(ConflictsBeforeWriting|RejectsMalformedReceipt|HistoricalReplayNeedsNoCurrentAuthority)' -count=1",
+            "exit_code": 1,
+            "output": "Four collision cases reached Commit; malformed evaluated revision/proposal/policy and mixed payloads were accepted; pure historical replay failed when current authority was absent. Compiled package ran 0.176s."
+          },
+          "green": {
+            "revision": "4f7d0212308f7671903cf6c1dbce4aad31707fba",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(ConflictsBeforeWriting|RejectsMalformedReceipt|HistoricalReplayNeedsNoCurrentAuthority)' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.201s"
+          },
+          "refactor": "No refactoring. Real foreign-scope lookup capability was supplied afterward by reviewed I6 phase0f05da027ef31d743712d08ae7e9c6e606f95d14; final supplemental acceptance uses that real store."
+        },
+        {
+          "scenario": "Bind acknowledgment to the exact historical promotion while reporting the current proposal's consent eligibility; reject inconsistent supplied historical reference/binding/carrier and preserve canonical versions, history and scheduling after revoke.",
+          "red": {
+            "revision": "4bafd41d2c31f8e16cab7968bc4245d03d928d73",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(AcknowledgesExactHistoricalPromotion|RejectsWrongHistoricalPromotion)' -count=1",
+            "exit_code": 1,
+            "output": "Exact historical acknowledgment failed Commit with invalid governance request; three substituted historical reference/binding/carrier cases reached Commit instead of ErrInvalidSnapshot. Compiled package ran 0.208s."
+          },
+          "green": {
+            "revision": "3bf216eb090b7594ac36bc974ec0c0cdf8e1fabe",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestProcessConsent(AcknowledgesExactHistoricalPromotion|RejectsWrongHistoricalPromotion)' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.343s"
+          },
+          "refactor": "Initial GREEN 4918e36504c3c1655facaf99d6c6d4d59876a023 passed the same command (0.217s). Final owned-file checkpoint fe449f727e79b63ea81d509c7aed3293189e602e formats source/tests and adds supplemental acceptance of existing behavior: foreign scope identity conflicts, ordered no-op/revoke/reapproval, unauthorized revoke, scoped rejections/replay, actual intervening policy fence, overflow and rejected-carrier history acknowledgment. ./scripts/dev.ps1 go test ./internal/application/governance -run TestProcessConsent -count=1 passed (0.166s). Initial historical test getter typo was corrected before the recorded behavioral RED. Follow-up final test-only checkpoint 3bf216eb090b7594ac36bc974ec0c0cdf8e1fabe adds four public-entry characterization cases for inconsistent stored histories; first run passed0.469s and all TestProcessConsent passed0.174s. Existing defenses required no behavior changes or new RED. Original B5 command passed0.343s at this final file binding."
+        }
+      ],
+      "review": {
+        "author": "m001_authority",
+        "reviewer": "root, m001_artifact",
+        "outcome": "accepted",
+        "notes": "Root independently inspected and replayed all five original behavioral RED/GREEN pairs and accepted final source/tests at fe449f727e79b63ea81d509c7aed3293189e602e. m001_artifact independently reviewed final source and incremental tests without findings. The exact B5 command passed again at the final file checkpoint. Final supplemental checkpoint 3bf216eb090b7594ac36bc974ec0c0cdf8e1fabe adds four meaningful inconsistent-store/index rejection scenarios through public ProcessConsent; root independently reviewed the test-only change and passing command. No new behavior or invented RED is asserted."
+      }
+    },
+    {
+      "task_id": "M0.04-I",
+      "mode": "required",
+      "files": [
+        "internal/application/governance/transaction.go",
+        "internal/application/governance/store_test.go",
+        "internal/application/governance/scenarios_test.go",
+        "docs/plan/executions/M0.04.json",
+        "docs/plan/executions/M0.04.md"
+      ],
+      "cycles": [
+        {
+          "scenario": "Coherent authority loading and both atomic valid commit types advance the whole-authority fence; stale reuse cannot mutate stored state.",
+          "red": {
+            "revision": "b709c85aa515805f41ce04719ad9a1545210135b",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestReferenceStore(AuthorityFence|PromotionCommit)$' -count=1",
+            "exit_code": 1,
+            "output": "TestReferenceStoreAuthorityFence: coherent stored authority missing: revision=0 err=<nil>\nTestReferenceStorePromotionCommit: promotion effects were not committed together: current=\"\" revision=7 versions=0 receipts=0 publications=0\nFAIL github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.200s"
+          },
+          "green": {
+            "revision": "b6dda6fcaa79823e23dc32fcd322a1531fab2810",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestReferenceStore(AuthorityFence|PromotionCommit)$' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.152s"
+          },
+          "refactor": "None; bounded early checkpoint before validation, alias, and fault/race cycles."
+        },
+        {
+          "scenario": "Each injected promotion/consent write-stage failure and Load failure discards all staged state and leaves retry identities free.",
+          "red": {
+            "revision": "ded6458cedc37652f6698cef1d6c6a0754620de0",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreFaultAtomicity -count=1",
+            "exit_code": 1,
+            "output": "All 12 subtests failed: failure at version/pointer/promotion/receipt/audit/schedule/publication/consent/acknowledgment not surfaced: <nil>; load failure returned authority: <nil>."
+          },
+          "green": {
+            "revision": "dbc22d493ee0d8467a74c37ded1473b9bec3b224",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreFaultAtomicity -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.155s"
+          },
+          "refactor": "No refactoring; full application package regression passed."
+        },
+        {
+          "scenario": "Atomic conditional operation/version reservations, consistent effect/receipt/schedule writes, whole-authority exhaustion, and source-alias persistence without duplicate audit or acknowledgment.",
+          "red": {
+            "revision": "5f81522d80d5eb5db09e339e44d8b80e4c7223f9",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestReferenceStore(CommitValidation|ConsentAlias)$' -count=1",
+            "exit_code": 1,
+            "output": "consent overflow: overflow accepted: <nil>\npromotion operation/version collision, wrong effect revision, stale schedule, wrong operation/version/binding/kind identities: invalid commit accepted\nconsent operation/source collision, wrong aggregate/outcome/policy/eligibility and unknown alias: invalid commit accepted\nTestReferenceStoreConsentAlias: alias failure not surfaced: <nil>"
+          },
+          "green": {
+            "revision": "53b3ee60c76f52af00933bad3283cbff6d937c8e",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run 'TestReferenceStore(CommitValidation|ConsentAlias)$' -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.184s"
+          },
+          "refactor": "None; full application package regression passed. New approvedStoreFixture seeds approval via CommitConsent with complete receipt indexes."
+        },
+        {
+          "scenario": "Other policy, proposal, and waiting-queue writers advance the whole-authority fence even without changing canonical ID or schedule generation, rejecting a previously loaded promotion; failed staged updates remain invisible.",
+          "red": {
+            "revision": "aeb82bfe6bd9a1dc71d645b09b7d4a89cf9c0f7d",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreOtherAuthorityWrites -count=1",
+            "exit_code": 1,
+            "output": "policy/proposal/waiting_closure: nonpromotion authority change did not advance only whole-authority fence\nstaging_failure: failed authority change was not discarded"
+          },
+          "green": {
+            "revision": "a921a3ac0667d0aad116c393dfcfb1d49e8619ff",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreOtherAuthorityWrites -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.170s"
+          },
+          "refactor": "None; full package regression passed. Later concurrent scenarios compose existing behavior with channels and are recorded separately."
+        },
+        {
+          "scenario": "Promotion receipt discriminators reject bootstrap metadata on Promote, missing/unknown bootstrap mode, and corrections without a target; valid first-test mode is preserved.",
+          "red": {
+            "revision": "9ed3d0d1986bfd1b7f200147ec055c7d27efcbff",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreReceiptDiscriminators -count=1",
+            "exit_code": 1,
+            "output": "Four subtests failed: promote_with_bootstrap_metadata, bootstrap_without_mode, bootstrap_unknown_mode, correction_without_target: inconsistent receipt discriminator accepted: <nil>"
+          },
+          "green": {
+            "revision": "9d277462d9a1f78852fdc0e30db1569df46348cd",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreReceiptDiscriminators -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.515s"
+          },
+          "refactor": "No refactoring; full package regression passed."
+        },
+        {
+          "scenario": "Stable global operation/source receipts remain available before foreign or missing current aggregate checks; receipt-only reads cannot fabricate authority.",
+          "red": {
+            "revision": "9d359c160cf90066981299f4eec8278e9a9694c5",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreReceiptsPrecedeAuthority -count=1",
+            "exit_code": 1,
+            "output": "Eight subtests failed for project/Suite/proposal/deleted aggregate and operation/source lookup: current authority hid stable receipt: governance aggregate not found"
+          },
+          "green": {
+            "revision": "15e997e8e49aad6caf9a03a408d7bece05a066ba",
+            "command": "./scripts/dev.ps1 go test ./internal/application/governance -run TestReferenceStoreReceiptsPrecedeAuthority -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/application/governance 0.210s"
+          },
+          "refactor": "Corrected an earlier regression expectation after independent review: ErrNotFound for missing scope applies only when no stable identity was found. The missing-scope test now uses unknown identity IDs, while new known-identity tests reproduce the actual defect. All TestReferenceStore passed. The first GREEN was baec4cc277de7cbb222bff6c403e6906164921b8 (0.156s); final GREEN includes all owned source and scenario tests. Later channel-controlled application scenarios are aggregate verification of already TDD-proven behavior, not invented additional RED cycles. All six original cycle commands passed after the completed scenarios; TestGovernanceApplication passed at the final merged checkpoint."
+        }
+      ],
+      "review": {
+        "author": "phase_domain_plan",
+        "reviewer": "root",
+        "outcome": "accepted",
+        "notes": "Root independently inspected and replayed I1-I6 compiled behavioral RED/GREEN pairs, then reviewed final scenario files at f3ef75e7686b41fd0e10ae032886618d99c15f9d and tested the combined application at 5ccd06f9747a4ad41d1816fdb36cd4062dbd91a5. Accepted explicit conditional identity reservations, source aliases, whole-authority fences, staged fault rollback, receipt-first loading, controlled concurrent use cases, exact historical acknowledgment and correction. The reference store proves a local model only; no PostgreSQL, provider, execution, durability or exactly-once delivery claim."
+      }
+    }
+  ]
+}

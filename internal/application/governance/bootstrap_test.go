@@ -141,3 +141,142 @@ func TestBootstrapInvalidModeAndStoreFailure(t *testing.T) {
 	}
 	requireZeroPromotionResult(t, result)
 }
+
+// appendApprovedCandidate uses real immutable constructors and transactional
+// fixture writers; it does not fabricate an already-active competing proposal.
+func appendApprovedCandidate(t *testing.T, store *referenceStore, id string, protected contract.ProtectedContract) PromoteRequest {
+	t.Helper()
+	state := store.inspect()
+	ref := contract.ProposalReference{ProjectID: "project", SuiteID: "suite", ProposalID: contract.ProposalID(id), RevisionID: "revision-1"}
+	baseline, _ := state.canonical.Suite().CurrentVersionID()
+	binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: ref, ExpectedCanonical: baseline, Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: state.policy.RevisionID(), CoveredInputs: protected.CoveredInputs()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	carrier := contract.ApprovalCarrierID("carrier-" + id)
+	source := contract.SourceRevision("merged-" + id)
+	revision, err := contract.NewProposalRevision(binding, contract.SourceRevision("candidate-"+id), carrier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := contract.NewProposal(revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consent, err := contract.NewConsent("project", "suite", ref.ProposalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.updateAuthority(context.Background(), AuthorityFence{"project", "suite", state.canonical.Suite().Revision()}, func(s *referenceState) error {
+		s.proposals[ref.ProposalID] = proposal
+		s.consents[ref.ProposalID] = consent
+		var err error
+		s.scheduling, err = s.scheduling.Admit(proposal, true)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addAssessment(t, store, ref, source, binding)
+	owner, err := contract.NewPrincipal(state.policy.OwnerID(), contract.Human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID("approve-" + id), SourceCommandID: contract.SourceCommandID("comment-" + id), Actor: owner, Reference: ref, Carrier: carrier, Action: contract.ApproveConsent, Order: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Load(context.Background(), ReadRequest{Reference: ref, AssessmentSource: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := storeFixture{snapshot: snapshot, command: command}
+	if err = store.CommitConsent(context.Background(), snapshot.Fence, f.consentWrite(t)); err != nil {
+		t.Fatal(err)
+	}
+	integration, err := contract.NewIntegration("project", state.target, source, carrier, contract.IntegrationMergedChange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return PromoteRequest{OperationID: contract.OperationID("promote-" + id), Reference: ref, Carrier: carrier, Proposed: protected, AssessmentSource: source, Integration: integration, NewVersionID: contract.SuiteVersionID("version-" + id), RecordedAt: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}
+}
+
+func correctionFixture(t *testing.T) (*referenceStore, CorrectionRequest) {
+	t.Helper()
+	f, store := approvedStoreFixture(t)
+	if result, err := Promote(context.Background(), store, f.request); err != nil || !result.Committed {
+		t.Fatalf("initial promotion: %+v %v", result, err)
+	}
+	second := appendApprovedCandidate(t, store, "second", changedProtected(t, f.proposed, "context"))
+	if result, err := Promote(context.Background(), store, second); err != nil || !result.Committed {
+		t.Fatalf("second promotion: %+v %v", result, err)
+	}
+	correction := appendApprovedCandidate(t, store, "correction", f.proposed)
+	return store, CorrectionRequest{Promotion: correction, TargetVersionID: f.request.NewVersionID}
+}
+
+func TestCorrectLoadsHistoryCommitsFreshVersionAndReplays(t *testing.T) {
+	store, request := correctionFixture(t)
+	before := store.inspect()
+	result, err := Correct(context.Background(), store, request)
+	if err != nil || !result.Committed || result.Duplicate {
+		t.Fatalf("correction not committed: %+v %v", result, err)
+	}
+	effect, ok := result.Decision.Effect()
+	if !ok || effect.Promotion().CorrectsVersionID() != request.TargetVersionID || effect.Version().ID() != request.Promotion.NewVersionID {
+		t.Fatal("correction lost fresh version or target attribution")
+	}
+	after := store.inspect()
+	if len(after.versions) != len(before.versions)+1 || len(after.publications) != len(before.publications)+1 || after.canonical.Version().ID() != request.Promotion.NewVersionID {
+		t.Fatal("correction effects incomplete")
+	}
+	for id, version := range before.versions {
+		if !reflect.DeepEqual(version, after.versions[id]) || !reflect.DeepEqual(before.promotions[id], after.promotions[id]) {
+			t.Fatal("correction replaced immutable history")
+		}
+	}
+	request.Promotion.RecordedAt = request.Promotion.RecordedAt.Add(time.Hour)
+	replay, err := Correct(context.Background(), store, request)
+	if err != nil || !replay.Committed || !replay.Duplicate || !reflect.DeepEqual(result.Decision, replay.Decision) || !reflect.DeepEqual(after, store.inspect()) {
+		t.Fatalf("correction replay reevaluated: %+v %v", replay, err)
+	}
+	request.TargetVersionID = "version-second"
+	result, err = Correct(context.Background(), store, request)
+	if !errors.Is(err, ErrOperationConflict) {
+		t.Fatalf("changed correction target adopted old receipt: %+v %v", result, err)
+	}
+	requireZeroPromotionResult(t, result)
+}
+
+func TestCorrectRejectsMissingAndInconsistentHistory(t *testing.T) {
+	store, request := correctionFixture(t)
+	for _, target := range []contract.SuiteVersionID{"", " \n"} {
+		invalid := request
+		invalid.TargetVersionID = target
+		result, err := Correct(context.Background(), store, invalid)
+		if !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("empty target accepted: %+v %v", result, err)
+		}
+		requireZeroPromotionResult(t, result)
+	}
+	unknown := request
+	unknown.TargetVersionID = "unknown"
+	before := store.inspect()
+	result, err := Correct(context.Background(), store, unknown)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing history not reported: %+v %v", result, err)
+	}
+	requireZeroPromotionResult(t, result)
+	other, err := contract.NewHistoricalCanonical(before.versions["version-second"], before.promotions["version-second"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = Correct(context.Background(), changedPromotionLoad{Store: store, change: func(s *Snapshot) { s.History = other }}, request)
+	if !errors.Is(err, ErrInvalidSnapshot) {
+		t.Fatalf("wrong stored history accepted: %+v %v", result, err)
+	}
+	requireZeroPromotionResult(t, result)
+	if !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("invalid correction changed state")
+	}
+}

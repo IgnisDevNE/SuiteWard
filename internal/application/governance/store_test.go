@@ -895,3 +895,42 @@ func TestReferenceStoreReadIsolation(t *testing.T) {
 		}
 	})
 }
+
+func TestReferenceStoreReceiptDiscriminators(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind OperationKind
+		mode contract.BootstrapMode
+	}{
+		{"promote with bootstrap metadata", OperationPromote, contract.FirstTestBootstrap},
+		{"bootstrap without mode", OperationBootstrap, 0},
+		{"bootstrap unknown mode", OperationBootstrap, 99},
+		{"correction without target", OperationCorrect, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, s := approvedStoreFixture(t)
+			before := s.inspect()
+			write := f.promotionWrite(t)
+			write.Receipt.Identity.Kind = tc.kind
+			write.Receipt.Identity.BootstrapMode = tc.mode
+			if err := s.CommitPromotion(context.Background(), f.snapshot.Fence, write); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("inconsistent receipt discriminator accepted: %v", err)
+			}
+			if !reflect.DeepEqual(before, s.inspect()) {
+				t.Fatal("invalid discriminator wrote a receipt or effects")
+			}
+		})
+	}
+	t.Run("valid first-test discriminator", func(t *testing.T) {
+		f, s := approvedStoreFixture(t)
+		write := f.promotionWrite(t)
+		write.Receipt.Identity.Kind = OperationBootstrap
+		write.Receipt.Identity.BootstrapMode = contract.FirstTestBootstrap
+		if err := s.CommitPromotion(context.Background(), f.snapshot.Fence, write); err != nil {
+			t.Fatal(err)
+		}
+		if receipt := s.inspect().operations[f.request.OperationID]; receipt.Kind != OperationBootstrap || receipt.Promotion.Identity.BootstrapMode != contract.FirstTestBootstrap {
+			t.Fatal("committed receipt lost operation mode")
+		}
+	})
+}

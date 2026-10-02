@@ -121,15 +121,18 @@ function Wait-CodecovReport {
                 if ($response.Content -isnot [string]) { throw 'Codecov HTTP body must be JSON text.' }
                 $body = ConvertFrom-Json -InputObject $response.Content -Depth 32 -NoEnumerate
                 $commit = Get-CodecovField $body 'commitid'
-                $state = Get-CodecovField $body 'state'
                 if ($commit -isnot [string] -or $commit -cne $Revision) { throw 'Codecov response belongs to a different commit.' }
-                if ($state -isnot [string]) { throw 'Codecov response has a malformed state.' }
+                if ($null -eq $body.PSObject.Properties['state']) { throw "Codecov report is missing 'state'." }
+                # Codecov permits a present null state before report processing.
+                # Keep missing fields and malformed shapes terminal.
+                $state = $body.state
+                if ($null -ne $state -and $state -isnot [string]) { throw 'Codecov response has a malformed state.' }
                 if ($state -ceq 'complete') {
                     ConvertFrom-CodecovReport $body $Revision | Out-Null
                     return $body
                 }
-                if ($state -cne 'pending') { throw "Codecov report has terminal or unsupported state '$state'." }
-                $lastReason = 'report is pending'
+                if ($null -ne $state -and $state -cne 'pending') { throw "Codecov report has terminal or unsupported state '$state'." }
+                $lastReason = 'report processing is incomplete'
             } elseif ($status -in @(404, 408, 429) -or ($status -ge 500 -and $status -le 599)) {
                 $lastReason = "HTTP $status"
             } else {

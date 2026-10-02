@@ -131,6 +131,8 @@ foreach ($entry in @(@{Name='project/default';Policy=$ratchet}, @{Name='project/
 foreach ($case in @(
     @{Name='ratchet allows exactly 0.25 percentage points';Policy=$ratchet;Base=99.75;Head=99.5;Pass=$true},
     @{Name='ratchet rejects a larger decrease';Policy=$ratchet;Base=99.75;Head=99.499;Pass=$false},
+    @{Name='ratchet follows a higher actual base';Policy=$ratchet;Base=100;Head=99.6;Pass=$false},
+    @{Name='ratchet follows a lower actual base independently of floor';Policy=$ratchet;Base=99;Head=98.75;Pass=$true},
     @{Name='observed M0 report satisfies tolerance';Policy=$ratchet;Base=99.68;Head=99.51;Pass=$true},
     @{Name='absolute floor accepts exactly 99 independently of base';Policy=$floor;Base=100;Head=99;Pass=$true},
     @{Name='absolute floor stops accumulated decreases';Policy=$floor;Base=99.1;Head=98.999;Pass=$false},

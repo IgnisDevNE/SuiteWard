@@ -3,6 +3,7 @@ package governance
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -17,6 +18,12 @@ func ProcessConsent(ctx context.Context, store Store, request ConsentRequest) (C
 	if err != nil {
 		return ConsentResponse{}, err
 	}
+	if err := checkConsentIndexes(snapshot, command); err != nil {
+		return ConsentResponse{}, err
+	}
+	if snapshot.Operation.Kind != 0 {
+		return ConsentResponse{Receipt: snapshot.Operation.Consent, Committed: true, Duplicate: true}, nil
+	}
 	if !validConsentSnapshot(snapshot, command.Reference()) {
 		return ConsentResponse{}, ErrInvalidSnapshot
 	}
@@ -30,14 +37,13 @@ func ProcessConsent(ctx context.Context, store Store, request ConsentRequest) (C
 			original.Result.Command() != result.Command() || original.Result.Outcome() != result.Outcome() || original.Result.Reason() != result.Reason() {
 			return ConsentResponse{}, ErrInvalidSnapshot
 		}
-		if snapshot.Operation.Kind == 0 {
-			if err := store.CommitConsent(ctx, snapshot.Fence, ConsentWrite{Command: command, Consent: next, Receipt: original, Alias: true}); err != nil {
-				return ConsentResponse{}, err
-			}
-		} else if snapshot.Operation.Kind != OperationConsent || snapshot.Operation.Consent != original {
-			return ConsentResponse{}, ErrInvalidSnapshot
+		if err := store.CommitConsent(ctx, snapshot.Fence, ConsentWrite{Command: command, Consent: next, Receipt: original, Alias: true}); err != nil {
+			return ConsentResponse{}, err
 		}
 		return ConsentResponse{Receipt: original, Committed: true, Duplicate: true}, nil
+	}
+	if snapshot.Source.Kind != 0 || result.Reason() == contract.ConsentReasonCommandConflict {
+		return ConsentResponse{}, ErrInvalidSnapshot
 	}
 	receipt := ConsentReceipt{
 		Result: result, EvaluatedReference: snapshot.Proposal.Current().Binding().Reference(),
@@ -47,6 +53,53 @@ func ProcessConsent(ctx context.Context, store Store, request ConsentRequest) (C
 		return ConsentResponse{}, err
 	}
 	return ConsentResponse{Receipt: receipt, Committed: true}, nil
+}
+
+// Indexed identities are checked before evaluating any current authority.
+func checkConsentIndexes(snapshot Snapshot, command contract.Command) error {
+	for _, receipt := range []OperationReceipt{snapshot.Operation, snapshot.Source} {
+		switch receipt.Kind {
+		case 0:
+			if receipt.Consent != (ConsentReceipt{}) || !emptyConsentIndexPromotion(receipt.Promotion) { return ErrInvalidSnapshot }
+		case OperationConsent:
+			if !emptyConsentIndexPromotion(receipt.Promotion) || !validConsentReceipt(receipt.Consent) { return ErrInvalidSnapshot }
+		case OperationPromote, OperationBootstrap, OperationCorrect:
+			if receipt.Consent != (ConsentReceipt{}) || receipt.Promotion.Identity.Kind != receipt.Kind || receipt.Promotion.Decision.Outcome() != contract.PromotionProposed { return ErrInvalidSnapshot }
+		default:
+			return ErrInvalidSnapshot
+		}
+	}
+	if snapshot.Source.Kind != 0 && snapshot.Source.Kind != OperationConsent { return ErrInvalidSnapshot }
+	for _, receipt := range []OperationReceipt{snapshot.Operation, snapshot.Source} {
+		if receipt.Kind == 0 { continue }
+		if receipt.Kind != OperationConsent { return ErrOperationConflict }
+		original := receipt.Consent.Result.Command()
+		if original.SourceCommandID() != command.SourceCommandID() || original.Actor() != command.Actor() || !sameConsentAggregate(original.Reference(), command.Reference()) {
+			return ErrOperationConflict
+		}
+	}
+	if snapshot.Operation.Kind != 0 && (snapshot.Source.Kind == 0 || snapshot.Operation.Consent != snapshot.Source.Consent) { return ErrInvalidSnapshot }
+	return nil
+}
+
+func validConsentReceipt(receipt ConsentReceipt) bool {
+	result := receipt.Result
+	return result.Command().OperationID() != "" && result.Outcome() >= contract.ConsentApproved && result.Outcome() <= contract.ConsentRejected &&
+		!result.Duplicate() && result.Reason() != contract.ConsentReasonCommandConflict && sameConsentAggregate(result.Command().Reference(), receipt.EvaluatedReference) &&
+		strings.TrimSpace(string(receipt.EvaluatedReference.RevisionID)) != "" && strings.TrimSpace(string(receipt.PolicyRevisionID)) != "" &&
+		(receipt.PromotedVersionID == "" || strings.TrimSpace(string(receipt.PromotedVersionID)) != "")
+}
+
+func sameConsentAggregate(a, b contract.ProposalReference) bool {
+	return a.ProjectID == b.ProjectID && a.SuiteID == b.SuiteID && a.ProposalID == b.ProposalID
+}
+
+func emptyConsentIndexPromotion(receipt PromotionReceipt) bool {
+	identity := receipt.Identity
+	request := identity.Request
+	return identity.Kind == 0 && identity.BootstrapMode == 0 && identity.CorrectsVersionID == "" && identity.Binding.IsZero() &&
+		receipt.Decision.Outcome() == 0 && request.OperationID == "" && request.Reference == (contract.ProposalReference{}) && request.Carrier == "" &&
+		request.Proposed.IsZero() && request.AssessmentSource == "" && request.Integration.IsZero() && request.NewVersionID == "" && request.RecordedAt.IsZero()
 }
 
 func validConsentSnapshot(snapshot Snapshot, reference contract.ProposalReference) bool {

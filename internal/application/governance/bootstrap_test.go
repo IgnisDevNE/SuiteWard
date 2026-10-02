@@ -280,3 +280,89 @@ func TestCorrectRejectsMissingAndInconsistentHistory(t *testing.T) {
 		t.Fatal("invalid correction changed state")
 	}
 }
+
+func TestBootstrapAndCorrectionFailuresRollBackEveryEffect(t *testing.T) {
+	for _, kind := range []string{"bootstrap", "correction"} {
+		for _, point := range []string{"load", "version", "pointer", "promotion", "receipt", "audit", "schedule", "publication"} {
+			t.Run(kind+"/"+point, func(t *testing.T) {
+				var store *referenceStore
+				var call func() (PromoteResult, error)
+				if kind == "bootstrap" {
+					f, s := approvedStoreFixture(t)
+					store = s
+					call = func() (PromoteResult, error) {
+						return Bootstrap(context.Background(), store, BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: f.request})
+					}
+				} else {
+					s, request := correctionFixture(t)
+					store = s
+					call = func() (PromoteResult, error) { return Correct(context.Background(), store, request) }
+				}
+				before := store.inspect()
+				store.failAt = point
+				result, err := call()
+				if !errors.Is(err, errReferenceFailure) {
+					t.Fatalf("failure not surfaced: %v", err)
+				}
+				requireZeroPromotionResult(t, result)
+				if !reflect.DeepEqual(before, store.inspect()) {
+					t.Fatal("failure exposed partial canonical/history/audit/receipt/queue/publication")
+				}
+				store.failAt = ""
+				result, err = call()
+				if err != nil || !result.Committed || result.Duplicate {
+					t.Fatalf("same identity retry after rollback failed: %+v %v", result, err)
+				}
+			})
+		}
+	}
+}
+
+func TestCorrectRevalidatesLoadedConsentEvidenceAndFreshVersion(t *testing.T) {
+	for _, gate := range []string{"consent", "evidence", "current version", "target version"} {
+		t.Run(gate, func(t *testing.T) {
+			store, request := correctionFixture(t)
+			var wantReason contract.PromotionReason
+			var wantError error
+			switch gate {
+			case "consent", "evidence":
+				state := store.inspect()
+				err := store.updateAuthority(context.Background(), AuthorityFence{"project", "suite", state.canonical.Suite().Revision()}, func(s *referenceState) error {
+					if gate == "consent" {
+						s.consents[request.Promotion.Reference.ProposalID] = contract.Consent{}
+					} else {
+						delete(s.assessments, assessmentKey{request.Promotion.Reference, request.Promotion.AssessmentSource})
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if gate == "consent" {
+					wantReason = contract.PromotionReasonApprovalMissing
+				} else {
+					wantReason = contract.PromotionReasonIntegrityNotPassed
+				}
+			case "current version":
+				request.Promotion.NewVersionID = "version-second"
+				wantError = contract.ErrInvalidCorrection
+			case "target version":
+				request.Promotion.NewVersionID = request.TargetVersionID
+				wantError = contract.ErrInvalidCorrection
+			}
+			before := store.inspect()
+			result, err := Correct(context.Background(), store, request)
+			if wantError != nil {
+				if !errors.Is(err, wantError) {
+					t.Fatalf("fresh version rule bypassed: %v", err)
+				}
+				requireZeroPromotionResult(t, result)
+			} else if err != nil || result.Committed || result.Duplicate || result.Decision.Outcome() != contract.PromotionBlocked || result.Decision.Reason() != wantReason {
+				t.Fatalf("loaded authority bypassed: %+v %v", result, err)
+			}
+			if !reflect.DeepEqual(before, store.inspect()) {
+				t.Fatal("invalid correction changed authority")
+			}
+		})
+	}
+}

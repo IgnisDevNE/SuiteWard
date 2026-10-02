@@ -402,3 +402,79 @@ func TestPromoteCommitsStoredAuthorityAndQueueTogether(t *testing.T) {
 		t.Fatal("application mutated its supplied immutable authority values")
 	}
 }
+
+// Aggregate regressions below compose already proven application and Store
+// behavior; they are not presented as new implementation RED checkpoints.
+func TestPromoteGlobalReceiptSurvivesMissingAggregateAndRejectsForeignScope(t *testing.T) {
+	f, store := approvedStoreFixture(t)
+	original, err := Promote(context.Background(), store, f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{"project", "suite", "proposal"} {
+		request := f.request
+		switch part {
+		case "project":
+			request.Reference.ProjectID = "other"
+		case "suite":
+			request.Reference.SuiteID = "other"
+		case "proposal":
+			request.Reference.ProposalID = "missing"
+		}
+		result, err := Promote(context.Background(), store, request)
+		if !errors.Is(err, ErrOperationConflict) {
+			t.Fatalf("%s global identity conflict hidden: %v", part, err)
+		}
+		requireZeroPromotionResult(t, result)
+	}
+	state := store.inspect()
+	err = store.updateAuthority(context.Background(), AuthorityFence{"project", "suite", state.canonical.Suite().Revision()}, func(s *referenceState) error {
+		delete(s.proposals, f.request.Reference.ProposalID)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := store.inspect()
+	result, err := Promote(context.Background(), store, f.request)
+	if err != nil || !result.Committed || !result.Duplicate || !reflect.DeepEqual(original.Decision, result.Decision) {
+		t.Fatalf("missing live aggregate erased durable replay: %+v %v", result, err)
+	}
+	if !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("historical replay wrote state")
+	}
+}
+
+func TestPromoteDomainErrorAndHistoricalVersionCollisionLeaveNoEffects(t *testing.T) {
+	for name, change := range map[string]func(*PromoteRequest){
+		"absent version":   func(r *PromoteRequest) { r.NewVersionID = "" },
+		"blank version":    func(r *PromoteRequest) { r.NewVersionID = " " },
+		"absent timestamp": func(r *PromoteRequest) { r.RecordedAt = time.Time{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, store := approvedStoreFixture(t)
+			before := store.inspect()
+			change(&f.request)
+			result, err := Promote(context.Background(), store, f.request)
+			if !errors.Is(err, contract.ErrInvalidPromotion) {
+				t.Fatalf("domain error hidden: %v", err)
+			}
+			requireZeroPromotionResult(t, result)
+			if !reflect.DeepEqual(before, store.inspect()) {
+				t.Fatal("malformed effect wrote state")
+			}
+		})
+	}
+	store, correction := correctionFixture(t)
+	request := correction.Promotion
+	request.NewVersionID = correction.TargetVersionID
+	before := store.inspect()
+	result, err := Promote(context.Background(), store, request)
+	if !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("historical logical version reused: %+v %v", result, err)
+	}
+	requireZeroPromotionResult(t, result)
+	if !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("version collision reserved identities or changed history")
+	}
+}

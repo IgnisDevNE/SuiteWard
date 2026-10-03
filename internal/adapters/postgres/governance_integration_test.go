@@ -768,3 +768,71 @@ func TestPostgresGovernanceCommitsAndReplaysExactOutcomes(t *testing.T) {
 		t.Fatalf("changed operation identity adopted original result: %v", err)
 	}
 }
+
+func TestPostgresExistingHistoryAndUnrepresentableFactsCannotCreateEffects(t *testing.T) {
+	t.Run("existing version identity", func(t *testing.T) {
+		pool, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: fixture.command}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := governance.Promote(t.Context(), store, fixture.request); err != nil {
+			t.Fatal(err)
+		}
+		current, err := store.Load(t.Context(), governance.ReadRequest{Reference: fixture.request.Reference})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := fixture.request
+		request.OperationID = "different-operation"
+		write := governance.PromotionWrite{Receipt: governance.PromotionReceipt{Identity: governance.PromotionIdentity{Kind: governance.OperationPromote, Request: request}}}
+		if err := store.CommitPromotion(t.Context(), current.Fence, write); !errors.Is(err, governance.ErrVersionConflict) {
+			t.Fatalf("existing immutable version identity reused: %v", err)
+		}
+		if pgCount(t, pool, "suite_versions") != 1 || pgCount(t, pool, "operation_receipts") != 2 {
+			t.Fatal("existing version conflict created effects")
+		}
+	})
+	t.Run("unrepresentable historical timestamp", func(t *testing.T) {
+		pool, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: fixture.command}); err != nil {
+			t.Fatal(err)
+		}
+		request := fixture.request
+		request.RecordedAt = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+		if _, err := governance.Promote(t.Context(), store, request); !errors.Is(err, governance.ErrInvalidRequest) {
+			t.Fatalf("unrepresentable historical time committed: %v", err)
+		}
+		current, err := store.Load(t.Context(), governance.ReadRequest{Reference: fixture.request.Reference})
+		if err != nil || current.Fence.Revision != 1 || current.Canonical.Version().ID() != "" || pgCount(t, pool, "suite_versions") != 0 || pgCount(t, pool, "operation_receipts") != 1 {
+			t.Fatalf("rejected historical encoding created authority or effects: %+v, %v", current, err)
+		}
+	})
+	t.Run("unrepresentable consent operation", func(t *testing.T) {
+		pool, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+			t.Fatal(err)
+		}
+		command := pgValue(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(string([]byte{'o', 0xff})), SourceCommandID: "new-source", Actor: fixture.owner, Reference: fixture.request.Reference, Carrier: "carrier", Action: contract.ApproveConsent, Order: 1}))
+		if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: command}); !errors.Is(err, governance.ErrInvalidRequest) {
+			t.Fatalf("unrepresentable consent identity committed: %v", err)
+		}
+		current, err := store.Load(t.Context(), governance.ReadRequest{Reference: fixture.request.Reference})
+		if err != nil || current.Fence.Revision != 0 || len(current.Consent.Results()) != 0 {
+			t.Fatalf("rejected consent encoding changed authority: %+v, %v", current, err)
+		}
+		for _, table := range []string{"operation_receipts", "consent_sources", "audit_events", "consent_acknowledgments"} {
+			if pgCount(t, pool, table) != 0 {
+				t.Fatalf("rejected consent identity created %s", table)
+			}
+		}
+	})
+}

@@ -1,10 +1,21 @@
 package artifact_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
+
+func TestParseDigestRoundTripAndRejectsNoncanonicalIdentity(t *testing.T) {
+	want := artifact.Hash([]byte("exact content"))
+	got, err := artifact.ParseDigest(want.String())
+	if err != nil || got != want { t.Fatalf("valid digest did not reconstruct: got=%v err=%v", got, err) }
+	for _, input := range []string{"", strings.ToUpper(want.String()), " "+want.String(), want.String()+" ", "sha256:"+strings.Repeat("0",63), "sha256:"+strings.Repeat("g",64), "sha512:"+strings.Repeat("0",64)} {
+		if _, err := artifact.ParseDigest(input); !errors.Is(err,artifact.ErrInvalidDigest) { t.Fatalf("accepted noncanonical digest %q: %v", input,err) }
+	}
+}
 
 func TestHashKnownContent(t *testing.T) {
 	tests := []struct {

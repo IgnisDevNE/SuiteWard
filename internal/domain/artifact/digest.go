@@ -5,6 +5,9 @@ import (
 	"encoding/hex"
 )
 
+// ParseDigest reconstructs an exact qualified content identity.
+func ParseDigest(string) (Digest, error) { return Digest{}, ErrInvalidDigest }
+
 // Digest identifies exact content bytes. Its zero value has no identity.
 type Digest struct {
 	sum   [32]byte

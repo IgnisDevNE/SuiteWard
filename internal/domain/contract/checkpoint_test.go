@@ -115,35 +115,82 @@ func TestStateCheckpointRejectsMalformedVersionAndJSON(t *testing.T) {
 func checkpointJSONChange(t *testing.T, encoded []byte, path string, value any) []byte {
 	t.Helper()
 	var root any
-	if err:=json.Unmarshal(encoded,&root);err!=nil{t.Fatal(err)}
-	parts:=strings.Split(path,"/");node:=root
-	for _,part:=range parts[:len(parts)-1]{switch value:=node.(type){case map[string]any:node=value[part];case []any:index,err:=strconv.Atoi(part);if err!=nil{t.Fatal(err)};node=value[index];default:t.Fatalf("invalid fixture path %s",path)}}
-	key:=parts[len(parts)-1]
-	switch target:=node.(type){case map[string]any:target[key]=value;case []any:index,err:=strconv.Atoi(key);if err!=nil{t.Fatal(err)};target[index]=value;default:t.Fatalf("invalid fixture path %s",path)}
-	changed,err:=json.Marshal(root);if err!=nil{t.Fatal(err)};return changed
+	if err := json.Unmarshal(encoded, &root); err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(path, "/")
+	node := root
+	for _, part := range parts[:len(parts)-1] {
+		switch value := node.(type) {
+		case map[string]any:
+			node = value[part]
+		case []any:
+			index, err := strconv.Atoi(part)
+			if err != nil {
+				t.Fatal(err)
+			}
+			node = value[index]
+		default:
+			t.Fatalf("invalid fixture path %s", path)
+		}
+	}
+	key := parts[len(parts)-1]
+	switch target := node.(type) {
+	case map[string]any:
+		target[key] = value
+	case []any:
+		index, err := strconv.Atoi(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target[index] = value
+	default:
+		t.Fatalf("invalid fixture path %s", path)
+	}
+	changed, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return changed
 }
 
 func TestStateCheckpointRejectsCorruptPersistedFacts(t *testing.T) {
-	encoded,err:=EncodeStateCheckpoint(checkpointFixture(t));if err!=nil{t.Fatal(err)}
-	invalid:=map[string]any{
-		"canonical/Suite/Project":"", "canonical/Version/Manifest/Digest":"", "canonical/Protected/Scope":"", "canonical/Record/Binding/Manifest":"",
-		"history/Version/Manifest/Digest":"", "history/Record/Binding/Manifest":"",
-		"protected/Manifest/Entries/0/Content":"", "protected/Manifest/Entries/0/Path":"", "protected/Manifest/Digest":"", "protected/Scope":"", "protected/Covered/runner":"",
-		"proposal/Revisions":[]any{}, "proposal/Revisions/0/Binding/Manifest":"", "proposal/Revisions/0/Binding/Scope":"", "proposal/Revisions/0/Origin":"", "proposal/Revisions/1/Binding/Reference/ProposalID":"foreign", "proposal/Revisions/1/Binding/Reference/RevisionID":"r1",
-		"policy/Owner":"", "policy/Revision":"", "command/Actor/Kind":0, "command/OperationID":"",
-		"result/Command/Actor/Kind":0, "result/Outcome":0, "result/Reason":ConsentReasonUnauthorized,
-		"consent/Project":"", "consent/Results/0/Command/Actor/Kind":0, "consent/Results/0/Duplicate":true, "consent/Results/0/Command/Reference/SuiteID":"foreign", "consent/States/0/Actor/Kind":0, "consent/States/0/Binding/Manifest":"", "consent/States/0/Order":9, "consent/States":[]any{}, "consent/Operations":nil, "consent/Operations/approve":"wrong-source", "consent/Operations/extra":"unknown-source",
-		"scheduling/Project":"", "scheduling/Generation":0, "scheduling/Entries/0/State":0, "scheduling/Entries/1/State":ScheduleActive,
-		"scheduling/Results/0/Command/Actor/Kind":0, "scheduling/Results/0/Outcome":0, "scheduling/Results/0/Reason":PriorityReasonUnauthorized, "scheduling/Results/0/Duplicate":true, "scheduling/Results/0/Command/Project":"foreign", "scheduling/Order":9, "scheduling/Operations":nil, "scheduling/Pending/Actor/Kind":0, "scheduling/Pending/Project":"foreign", "scheduling/Pending/Proposal":"unknown", "scheduling/Pending/OperationID":"wrong-operation",
-		"assessment/Binding/Manifest":"", "assessment/Evidence/Binding/Manifest":"", "assessment/Evidence/Emitter":"", "assessment/Source":"", "assessment/Reason":IntegrityReasonFailed,
-		"integration/Kind":0,
-		"decision/Outcome":0, "decision/Effect":nil, "decision/Effect/Suite/Project":"", "decision/Effect/Version/Manifest/Digest":"", "decision/Effect/Record/Binding/Manifest":"", "decision/Effect/ExpectedState":9,
+	encoded, err := EncodeStateCheckpoint(checkpointFixture(t))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for path,value:=range invalid{t.Run(path,func(t *testing.T){if _,err:=RestoreStateCheckpoint(checkpointJSONChange(t,encoded,path,value));!errors.Is(err,ErrInvalidCheckpoint){t.Fatalf("corrupt persisted fact accepted: %v",err)}})}
+	invalid := map[string]any{
+		"canonical/Suite/Project": "", "canonical/Version/Manifest/Digest": "", "canonical/Protected/Scope": "", "canonical/Record/Binding/Manifest": "",
+		"history/Version/Manifest/Digest": "", "history/Record/Binding/Manifest": "",
+		"protected/Manifest/Entries/0/Content": "", "protected/Manifest/Entries/0/Path": "", "protected/Manifest/Digest": "", "protected/Scope": "", "protected/Covered/runner": "",
+		"proposal/Revisions": []any{}, "proposal/Revisions/0/Binding/Manifest": "", "proposal/Revisions/0/Binding/Scope": "", "proposal/Revisions/0/Origin": "", "proposal/Revisions/1/Binding/Reference/ProposalID": "foreign", "proposal/Revisions/1/Binding/Reference/RevisionID": "r1",
+		"policy/Owner": "", "policy/Revision": "", "command/Actor/Kind": 0, "command/OperationID": "",
+		"result/Command/Actor/Kind": 0, "result/Outcome": 0, "result/Reason": ConsentReasonUnauthorized,
+		"consent/Project": "", "consent/Results/0/Command/Actor/Kind": 0, "consent/Results/0/Duplicate": true, "consent/Results/0/Command/Reference/SuiteID": "foreign", "consent/States/0/Actor/Kind": 0, "consent/States/0/Binding/Manifest": "", "consent/States/0/Order": 9, "consent/States": []any{}, "consent/Operations": nil, "consent/Operations/approve": "wrong-source", "consent/Operations/extra": "unknown-source",
+		"scheduling/Project": "", "scheduling/Generation": 0, "scheduling/Entries/0/State": 0, "scheduling/Entries/1/State": ScheduleActive,
+		"scheduling/Results/0/Command/Actor/Kind": 0, "scheduling/Results/0/Outcome": 0, "scheduling/Results/0/Reason": PriorityReasonUnauthorized, "scheduling/Results/0/Duplicate": true, "scheduling/Results/0/Command/Project": "foreign", "scheduling/Order": 9, "scheduling/Operations": nil, "scheduling/Pending/Actor/Kind": 0, "scheduling/Pending/Project": "foreign", "scheduling/Pending/Proposal": "unknown", "scheduling/Pending/OperationID": "wrong-operation",
+		"assessment/Binding/Manifest": "", "assessment/Evidence/Binding/Manifest": "", "assessment/Evidence/Emitter": "", "assessment/Source": "", "assessment/Reason": IntegrityReasonFailed,
+		"integration/Kind": 0,
+		"decision/Outcome": 0, "decision/Effect": nil, "decision/Effect/Suite/Project": "", "decision/Effect/Version/Manifest/Digest": "", "decision/Effect/Record/Binding/Manifest": "", "decision/Effect/ExpectedState": 9,
+	}
+	for path, value := range invalid {
+		t.Run(path, func(t *testing.T) {
+			if _, err := RestoreStateCheckpoint(checkpointJSONChange(t, encoded, path, value)); !errors.Is(err, ErrInvalidCheckpoint) {
+				t.Fatalf("corrupt persisted fact accepted: %v", err)
+			}
+		})
+	}
 }
 
 func TestStateCheckpointEmptyAndUnbaselinedValues(t *testing.T) {
-	for _,value:=range []StateCheckpoint{{},{Canonical:checkpointValue(NewCanonicalSnapshot(checkpointValue(NewSuite("project","suite","",0)),SuiteVersion{},ProtectedContract{},PromotionRecord{})),Consent:checkpointValue(NewConsent("project","suite","proposal")),Scheduling:checkpointValue(NewSchedule("project","suite"))}}{
-		encoded,err:=EncodeStateCheckpoint(value);if err!=nil{t.Fatal(err)};got,err:=RestoreStateCheckpoint(encoded);if err!=nil||!reflect.DeepEqual(got,value){t.Fatalf("empty state changed: %+v %v",got,err)}
+	for _, value := range []StateCheckpoint{{}, {Canonical: checkpointValue(NewCanonicalSnapshot(checkpointValue(NewSuite("project", "suite", "", 0)), SuiteVersion{}, ProtectedContract{}, PromotionRecord{})), Consent: checkpointValue(NewConsent("project", "suite", "proposal")), Scheduling: checkpointValue(NewSchedule("project", "suite"))}} {
+		encoded, err := EncodeStateCheckpoint(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := RestoreStateCheckpoint(encoded)
+		if err != nil || !reflect.DeepEqual(got, value) {
+			t.Fatalf("empty state changed: %+v %v", got, err)
+		}
 	}
 }

@@ -76,6 +76,9 @@ func EncodeStateCheckpoint(state StateCheckpoint) ([]byte, error) {
 }
 
 func RestoreStateCheckpoint(encoded []byte) (StateCheckpoint, error) {
+	if err := validateCheckpointJSON(encoded); err != nil {
+		return StateCheckpoint{}, fmt.Errorf("%w: %v", ErrInvalidCheckpoint, err)
+	}
 	var data checkpointData
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
@@ -93,4 +96,52 @@ func RestoreStateCheckpoint(encoded []byte) (StateCheckpoint, error) {
 		return StateCheckpoint{}, fmt.Errorf("%w: %v", ErrInvalidCheckpoint, err)
 	}
 	return state, nil
+}
+
+func validateCheckpointJSON(encoded []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := checkpointJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return ErrInvalidCheckpoint
+	}
+	return nil
+}
+
+func checkpointJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, compound := token.(json.Delim)
+	if !compound {
+		return nil
+	}
+	if delimiter == '{' {
+		keys := map[string]bool{}
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name := key.(string)
+			if keys[name] {
+				return ErrInvalidCheckpoint
+			}
+			keys[name] = true
+			if err := checkpointJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	} else {
+		for decoder.More() {
+			if err := checkpointJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = decoder.Token()
+	return err
 }

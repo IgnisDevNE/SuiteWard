@@ -20,6 +20,10 @@ func (s *Store) lockAuthority(ctx context.Context, fence governance.AuthorityFen
 		return nil, nil, authorityState{}, storageError(err)
 	}
 	queries := dbgen.New(tx)
+	if err := requireSchemaReady(ctx, tx); err != nil {
+		tx.Rollback(context.Background())
+		return nil, nil, authorityState{}, err
+	}
 	row, err := queries.LockAuthority(ctx, dbgen.LockAuthorityParams{ProjectID: string(fence.ProjectID), SuiteID: string(fence.SuiteID)})
 	if err != nil {
 		tx.Rollback(context.Background())

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,9 @@ type receiptPayload struct {
 }
 
 func decodePayload(encoded []byte, value any) error {
+	if err := validatePayloadFields(encoded, reflect.TypeOf(value)); err != nil {
+		return governance.ErrInvalidSnapshot
+	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
@@ -69,6 +73,74 @@ func decodePayload(encoded []byte, value any) error {
 		return governance.ErrInvalidSnapshot
 	}
 	return nil
+}
+
+// Field spellings are exact at this private persistence boundary. Raw domain
+// checkpoints validate their own fields and preserve case-sensitive dictionaries.
+func validatePayloadFields(encoded []byte, typ reflect.Type) error {
+	if bytes.Equal(bytes.TrimSpace(encoded), []byte("null")) {
+		return nil
+	}
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ == reflect.TypeFor[json.RawMessage]() || typ == reflect.TypeFor[time.Time]() {
+		return nil
+	}
+	if typ.Kind() == reflect.Slice {
+		var elements []json.RawMessage
+		if err := json.Unmarshal(encoded, &elements); err != nil {
+			return err
+		}
+		for _, element := range elements {
+			if err := validatePayloadFields(element, typ.Elem()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if typ.Kind() != reflect.Struct {
+		return nil
+	}
+	fields := map[string]reflect.Type{}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
+		if name == "" {
+			name = field.Name
+		}
+		fields[name] = field.Type
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if token != json.Delim('{') {
+		return governance.ErrInvalidSnapshot
+	}
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		name := token.(string)
+		field, known := fields[name]
+		if !known || seen[name] {
+			return governance.ErrInvalidSnapshot
+		}
+		seen[name] = true
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return err
+		}
+		if err := validatePayloadFields(raw, field); err != nil {
+			return err
+		}
+	}
+	_, err = decoder.Token()
+	return err
 }
 func encodeAuthority(state authorityState) ([]byte, error) {
 	base, err := contract.EncodeStateCheckpoint(contract.StateCheckpoint{Canonical: state.canonical, Policy: state.policy, Scheduling: state.scheduling})
@@ -113,7 +185,7 @@ func decodeAuthority(encoded []byte, project, suite, current, revision string) (
 	state := authorityState{canonical: canonical, policy: base.Policy, scheduling: base.Scheduling, target: payload.Target, proposals: map[contract.ProposalID]contract.Proposal{}, consents: map[contract.ProposalID]contract.Consent{}, assessments: map[assessmentKey]contract.IntegrityAssessment{}}
 	for _, encoded := range payload.Proposals {
 		checkpoint, err := contract.RestoreStateCheckpoint(encoded)
-		if err != nil || checkpoint.Proposal.IsZero() {
+		if err != nil || checkpoint.Proposal.IsZero() || reflect.DeepEqual(checkpoint.Consent, contract.Consent{}) {
 			return authorityState{}, governance.ErrInvalidSnapshot
 		}
 		ref := checkpoint.Proposal.Current().Binding().Reference()
@@ -131,6 +203,22 @@ func decodeAuthority(encoded []byte, project, suite, current, revision string) (
 			return authorityState{}, governance.ErrInvalidSnapshot
 		}
 		state.assessments[key] = assessment
+	}
+	for _, entry := range state.scheduling.Entries() {
+		proposal := state.proposals[entry.ProposalID()]
+		if proposal.IsZero() || proposal.Current().Carrier() != entry.Carrier() {
+			return authorityState{}, governance.ErrInvalidSnapshot
+		}
+	}
+	for key, assessment := range state.assessments {
+		proposal := state.proposals[key.reference.ProposalID]
+		if proposal.IsZero() {
+			return authorityState{}, governance.ErrInvalidSnapshot
+		}
+		revision, err := proposal.Lookup(key.reference, proposal.Current().Carrier())
+		if err != nil || !revision.Binding().Equal(assessment.Binding()) {
+			return authorityState{}, governance.ErrInvalidSnapshot
+		}
 	}
 	return state, nil
 }

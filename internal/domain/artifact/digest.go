@@ -11,15 +11,12 @@ func ParseDigest(value string) (Digest, error) {
 	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
 		return Digest{}, ErrInvalidDigest
 	}
-	for _, c := range value[7:] {
-		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
-			return Digest{}, ErrInvalidDigest
-		}
-	}
-	var sum [32]byte
-	if _, err := hex.Decode(sum[:], []byte(value[7:])); err != nil {
+	decoded, err := hex.DecodeString(value[7:])
+	if err != nil || hex.EncodeToString(decoded) != value[7:] {
 		return Digest{}, ErrInvalidDigest
 	}
+	var sum [32]byte
+	copy(sum[:], decoded)
 	return Digest{sum: sum, valid: true}, nil
 }
 

@@ -28,6 +28,32 @@ func TestCheckpointRejectsInvalidSurrogateEscapes(t *testing.T) {
 	}
 }
 
+func TestCheckpointRejectsMissingPriorityCommandAndNonrepresentableUnicode(t *testing.T) {
+	fixture := checkpointFixture(t)
+	t.Run("missing priority receipt command", func(t *testing.T) {
+		encoded, err := EncodeStateCheckpoint(StateCheckpoint{Scheduling: fixture.Scheduling})
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed := checkpointJSONChange(t, encoded, "scheduling/Results/0/Command", nil)
+		if _, err := RestoreStateCheckpoint(changed); !errors.Is(err, ErrInvalidCheckpoint) {
+			t.Fatalf("priority receipt without its command became usable history: %v", err)
+		}
+	})
+	t.Run("truncated Unicode escape", func(t *testing.T) {
+		if _, err := RestoreStateCheckpoint([]byte(`{"version":1,"protected":{"Covered":{"runner":"\u00`)); !errors.Is(err, ErrInvalidCheckpoint) {
+			t.Fatalf("truncated Unicode identity became usable state: %v", err)
+		}
+	})
+	t.Run("invalid UTF-8 dictionary identity", func(t *testing.T) {
+		key := "runner-" + string([]byte{0xff})
+		protected := checkpointValue(NewProtectedContract(fixture.Protected.Manifest(), fixture.Protected.ScopeDigest(), map[string]string{key: "v1"}))
+		if encoded, err := EncodeStateCheckpoint(StateCheckpoint{Protected: protected}); encoded != nil || !errors.Is(err, ErrInvalidCheckpoint) {
+			t.Fatalf("invalid UTF-8 dictionary identity silently normalized: %q, %v", encoded, err)
+		}
+	})
+}
+
 func TestCheckpointRejectsIncompleteJSONAndDuplicateDictionaryKeys(t *testing.T) {
 	for _, encoded := range []string{
 		`{"version":1,`,

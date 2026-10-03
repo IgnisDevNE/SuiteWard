@@ -233,20 +233,57 @@ func TestPostgresContentAvailabilityPreventsPromotionLoadAndReplay(t *testing.T)
 	}
 }
 
-func pgNextProposal(t *testing.T,fixture governanceFixture) (governanceFixture,contract.Command,governance.PromoteRequest) {
-	t.Helper();reference:=fixture.request.Reference;reference.ProposalID="second";reference.RevisionID="second-r1"
-	manifest:=pgValue(artifact.NewManifest([]artifact.Entry{{Path:"tests/second.txt",Content:artifact.Hash([]byte("second content"))}}));protected:=pgValue(contract.NewProtectedContract(manifest,fixture.request.Proposed.ScopeDigest(),fixture.request.Proposed.CoveredInputs()))
-	binding:=pgValue(contract.NewApprovalBinding(contract.BindingInput{Reference:reference,ExpectedCanonical:"v1",Manifest:manifest.Digest(),Scope:protected.ScopeDigest(),PolicyRevision:"policy",CoveredInputs:protected.CoveredInputs()}));proposal:=pgValue(contract.NewProposal(pgValue(contract.NewProposalRevision(binding,"second-origin","second-carrier"))));consent:=pgValue(contract.NewConsent("project","suite","second"));evidence:=pgValue(contract.NewIntegrityEvidence("checker","second-integrated",binding,contract.IntegrityPassed));assessment:=pgValue(contract.AssessIntegrity("second-integrated",binding,&evidence))
-	fixture.authority.Proposals=append(fixture.authority.Proposals,postgres.TrustedProposal{Proposal:proposal,Consent:consent,Assessments:[]contract.IntegrityAssessment{assessment}});fixture.authority.Scheduling=pgValue(fixture.authority.Scheduling.Admit(proposal,true))
-	command:=pgValue(contract.NewCommand(contract.CommandInput{OperationID:"second-approve",SourceCommandID:"second-source-approve",Actor:fixture.owner,Reference:reference,Carrier:"second-carrier",Action:contract.ApproveConsent,Order:1}));request:=fixture.request;request.OperationID="second-promote";request.Reference=reference;request.Carrier="second-carrier";request.Proposed=protected;request.AssessmentSource="second-integrated";request.Integration=pgValue(contract.NewIntegration("project","main","second-integrated","second-carrier",contract.IntegrationMergedChange));request.NewVersionID="v2"
-	return fixture,command,request
+func pgNextProposal(t *testing.T, fixture governanceFixture) (governanceFixture, contract.Command, governance.PromoteRequest) {
+	t.Helper()
+	reference := fixture.request.Reference
+	reference.ProposalID = "second"
+	reference.RevisionID = "second-r1"
+	manifest := pgValue(artifact.NewManifest([]artifact.Entry{{Path: "tests/second.txt", Content: artifact.Hash([]byte("second content"))}}))
+	protected := pgValue(contract.NewProtectedContract(manifest, fixture.request.Proposed.ScopeDigest(), fixture.request.Proposed.CoveredInputs()))
+	binding := pgValue(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: "v1", Manifest: manifest.Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "policy", CoveredInputs: protected.CoveredInputs()}))
+	proposal := pgValue(contract.NewProposal(pgValue(contract.NewProposalRevision(binding, "second-origin", "second-carrier"))))
+	consent := pgValue(contract.NewConsent("project", "suite", "second"))
+	evidence := pgValue(contract.NewIntegrityEvidence("checker", "second-integrated", binding, contract.IntegrityPassed))
+	assessment := pgValue(contract.AssessIntegrity("second-integrated", binding, &evidence))
+	fixture.authority.Proposals = append(fixture.authority.Proposals, postgres.TrustedProposal{Proposal: proposal, Consent: consent, Assessments: []contract.IntegrityAssessment{assessment}})
+	fixture.authority.Scheduling = pgValue(fixture.authority.Scheduling.Admit(proposal, true))
+	command := pgValue(contract.NewCommand(contract.CommandInput{OperationID: "second-approve", SourceCommandID: "second-source-approve", Actor: fixture.owner, Reference: reference, Carrier: "second-carrier", Action: contract.ApproveConsent, Order: 1}))
+	request := fixture.request
+	request.OperationID = "second-promote"
+	request.Reference = reference
+	request.Carrier = "second-carrier"
+	request.Proposed = protected
+	request.AssessmentSource = "second-integrated"
+	request.Integration = pgValue(contract.NewIntegration("project", "main", "second-integrated", "second-carrier", contract.IntegrationMergedChange))
+	request.NewVersionID = "v2"
+	return fixture, command, request
 }
 func TestPostgresPromotionsTranslateUniqueConflicts(t *testing.T) {
-	for _,identity:=range []string{"version","exact reference"}{t.Run(identity,func(t *testing.T){pool,store,_:=newGovernanceDatabase(t);fixture,command,request:=pgNextProposal(t,pgGovernanceFixture(t));pgInitializeAndApprove(t,store,fixture);if result,err:=governance.Promote(t.Context(),store,fixture.request);err!=nil||!result.Committed{t.Fatalf("first promotion: %+v %v",result,err)};if result,err:=governance.ProcessConsent(t.Context(),store,governance.ConsentRequest{Command:command});err!=nil||!result.Committed{t.Fatalf("second approval: %+v %v",result,err)}
-		body:=`NEW.proposal_id='proposal'; NEW.proposal_revision_id='r1';`;if identity=="version"{body=`NEW.version_id='v1'; NEW.expected_version_id=NULL;`};schemaExec(t,pool,`CREATE FUNCTION conflict_identity() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN `+body+` RETURN NEW; END $$; CREATE TRIGGER conflict_identity BEFORE INSERT ON promotions FOR EACH ROW EXECUTE FUNCTION conflict_identity()`)
-		result,err:=governance.Promote(t.Context(),store,request);if !errors.Is(err,governance.ErrVersionConflict)||result.Committed{t.Fatalf("real duplicate %s lost stable version conflict: %+v %v",identity,result,err)}
-		if pgCount(t,pool,"suite_versions")!=1||pgCount(t,pool,"promotions")!=1||pgCount(t,pool,"operation_receipts")!=3{t.Fatal("unique conflict left staged second effects")}
-	})}
+	for _, identity := range []string{"version", "exact reference"} {
+		t.Run(identity, func(t *testing.T) {
+			pool, store, _ := newGovernanceDatabase(t)
+			fixture, command, request := pgNextProposal(t, pgGovernanceFixture(t))
+			pgInitializeAndApprove(t, store, fixture)
+			if result, err := governance.Promote(t.Context(), store, fixture.request); err != nil || !result.Committed {
+				t.Fatalf("first promotion: %+v %v", result, err)
+			}
+			if result, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: command}); err != nil || !result.Committed {
+				t.Fatalf("second approval: %+v %v", result, err)
+			}
+			body := `NEW.proposal_id='proposal'; NEW.proposal_revision_id='r1';`
+			if identity == "version" {
+				body = `NEW.version_id='v1'; NEW.expected_version_id=NULL;`
+			}
+			schemaExec(t, pool, `CREATE FUNCTION conflict_identity() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN `+body+` RETURN NEW; END $$; CREATE TRIGGER conflict_identity BEFORE INSERT ON promotions FOR EACH ROW EXECUTE FUNCTION conflict_identity()`)
+			result, err := governance.Promote(t.Context(), store, request)
+			if !errors.Is(err, governance.ErrVersionConflict) || result.Committed {
+				t.Fatalf("real duplicate %s lost stable version conflict: %+v %v", identity, result, err)
+			}
+			if pgCount(t, pool, "suite_versions") != 1 || pgCount(t, pool, "promotions") != 1 || pgCount(t, pool, "operation_receipts") != 3 {
+				t.Fatal("unique conflict left staged second effects")
+			}
+		})
+	}
 }
 
 type pgVerifier struct{ absent artifact.Digest }

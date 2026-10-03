@@ -281,7 +281,7 @@ func storageError(err error) error {
 		switch databaseError.ConstraintName {
 		case "suites_pkey":
 			return governance.ErrAuthorityConflict
-		case "suite_versions_pkey", "promotions_scope_revision_key", "promotions_scope_version_key":
+		case "suite_versions_pkey", "promotions_reference_key", "promotions_version_key":
 			return governance.ErrVersionConflict
 		case "operation_receipts_pkey", "consent_sources_pkey":
 			return governance.ErrOperationConflict

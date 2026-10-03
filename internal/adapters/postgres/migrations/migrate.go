@@ -16,7 +16,7 @@ import (
 // ErrForwardOnly rejects a schema downgrade.
 var ErrForwardOnly = errors.New("schema migrations are forward only")
 
-const supportedVersion int64 = 1
+const supportedVersion int64 = 2
 
 //go:embed *.sql
 var migrationFiles embed.FS

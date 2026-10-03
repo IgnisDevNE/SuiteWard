@@ -141,6 +141,55 @@ CREATE TRIGGER fixture_fail_publication BEFORE INSERT ON publication_intents FOR
 	}
 }
 
+func TestComposedHistoricalReplayVerifiesOriginalBytes(t *testing.T) {
+	_, store, objects, root := composedStore(t)
+	fixture, command, second := pgNextProposal(t, pgGovernanceFixture(t))
+	if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"protected", "second content"} {
+		if err := objects.Put(t.Context(), artifact.Hash([]byte(content)), bytes.NewBufferString(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, transition := range []struct {
+		command governance.ConsentRequest
+		request governance.PromoteRequest
+	}{{governance.ConsentRequest{Command: fixture.command}, fixture.request}, {governance.ConsentRequest{Command: command}, second}} {
+		if _, err := governance.ProcessConsent(t.Context(), store, transition.command); err != nil {
+			t.Fatal(err)
+		}
+		if result, err := governance.Promote(t.Context(), store, transition.request); err != nil || !result.Committed {
+			t.Fatalf("real two-version transition failed: %+v, %v", result, err)
+		}
+	}
+	oldDigest := artifact.Hash([]byte("protected"))
+	oldObject := filepath.Join(root, "sha256-"+strings.TrimPrefix(oldDigest.String(), "sha256:"))
+	for _, missing := range []bool{false, true} {
+		if missing {
+			if err := os.Remove(oldObject); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(oldObject, []byte("corrupt historical content"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		current, err := store.Load(t.Context(), governance.ReadRequest{Reference: second.Reference})
+		if err != nil || current.Canonical.Version().ID() != "v2" {
+			t.Fatalf("old missing/corrupt bytes rejected intact current v2: %+v, %v", current, err)
+		}
+		want := error(filesystem.ErrCorruptArtifact)
+		if missing {
+			want = os.ErrNotExist
+		}
+		if _, err := governance.Promote(t.Context(), store, fixture.request); !errors.Is(err, want) {
+			t.Fatalf("old v1 receipt relied on healthy v2 bytes: %v", err)
+		}
+		if _, err := store.Load(t.Context(), governance.ReadRequest{Reference: second.Reference, HistoricalVersionID: "v1"}); !errors.Is(err, want) {
+			t.Fatalf("old v1 history relied on healthy v2 bytes: %v", err)
+		}
+	}
+}
+
 type promotionReadBarrier struct {
 	governance.Store
 	ready   chan struct{}

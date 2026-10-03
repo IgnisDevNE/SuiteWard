@@ -70,7 +70,15 @@ function Invoke-GeneratedQueryVerification {
 
 function Invoke-LocalPersistenceVerification {
     param($Context, [scriptblock]$Verify)
-    & $Verify
+    $identity=Join-Path $Context.State 'database-url.txt'
+    if (-not (Test-Path -LiteralPath $identity -PathType Leaf)) { throw 'Start this checkout database with dev.ps1 db-start before persistence verification.' }
+    $database=[IO.File]::ReadAllText($identity).Trim()
+    if ([string]::IsNullOrWhiteSpace($database)) { throw 'Checkout database identity is blank; no real adapter result can be claimed.' }
+    $saved=[Environment]::GetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL','Process')
+    try {
+        [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL',$database,'Process')
+        & $Verify
+    } finally { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL',$saved,'Process') }
 }
 if ($Mode -eq 'Library') { return }
 $root=Split-Path $PSScriptRoot -Parent

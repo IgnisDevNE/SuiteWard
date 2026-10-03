@@ -1,7 +1,7 @@
 #Requires -Version 7.2
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('setup', 'tools', 'doctor', 'check', 'go', 'sqlc', 'actionlint', 'govulncheck', 'db-start', 'db-stop', 'db-status', 'db-test')]
+    [ValidateSet('setup', 'tools', 'doctor', 'check', 'persistence', 'go', 'sqlc', 'actionlint', 'govulncheck', 'db-start', 'db-stop', 'db-status', 'db-test')]
     [string]$Command = 'doctor',
     [string]$PodmanConnection = '',
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -39,6 +39,14 @@ try {
                 Assert-ToolVersion $context 'go'
                 Invoke-ToolConfigScope $context { & (Join-Path $PSScriptRoot 'check-go.ps1') }
             } else { Write-Host 'Foundation checks passed. Application Go tests are not applicable yet.' }
+        }
+        'persistence' {
+            . (Join-Path $PSScriptRoot 'check-persistence.ps1') -Mode Library
+            Invoke-LocalPersistenceVerification $context {
+                & (Join-Path $PSScriptRoot 'check-persistence.ps1') -Mode Generated
+                Assert-ToolVersion $context 'go'
+                Invoke-ToolConfigScope $context { & (Join-Path $PSScriptRoot 'check-go.ps1') -Integration }
+            }
         }
         'db-start' { Start-DevDatabase $context }
         'db-test' { Test-DevDatabase $context }

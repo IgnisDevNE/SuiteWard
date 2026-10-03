@@ -18,9 +18,9 @@ Resolved on 2026-09-30: `ignisdevne[bot]`, App 5028495, installation 163660443. 
 
 ## D-M0-COVERAGE: Coverage policy after the first real domain milestone
 
-Status: open. Owner: project owner and integrator. Blocks phase completion: M0.04.
+Status: accepted. Owner: project owner and integrator. Applies to phase completion: M0.04.
 
-Select the post-M0 project-wide coverage non-regression policy using genuine reports; retain the accepted 90% patch target and critical scenario requirements.
+Accepted on 2026-10-02: independent 99% project floor, maximum 0.25 percentage-point decrease against the exact base, and unchanged 90% patch with zero tolerance. Both project rules are enforced through the existing CI / Gate using complete exact-revision Codecov reports; native patch stays required. M0.04 hosted enforcement and checkpoint-preserving merge were verified. See [CI policy](../ci-and-coverage.md).
 
 - Use observed coverage behavior and report limits.
 - Record the selected policy and required contexts without changing it solely to pass a failing change.
@@ -39,9 +39,9 @@ Define which source and execution/context inputs are covered by an approval, how
 
 ## D-MIGRATIONS: Migration tooling and database change discipline
 
-Status: open. Owner: project owner and integrator. Blocks phase completion: M1.01.
+Status: accepted. Owner: project owner and integrator. Applies to phase completion: M1.01.
 
-Integrator selects and pins migration tooling within the accepted PostgreSQL/pgx/sqlc stack, migration ordering, upgrade checks and shared-file ownership; no renewed product approval is required for routine implementation choices.
+Accepted implementation choice on 2026-10-02: Goose v3.28.0 embedded Provider, pgx v5.11.0 and existing sqlc v1.31.1. Sequential transactional forward-only migrations use session locking and real fresh/repeat/concurrent/populated 1-to-2 upgrade checks. A owns migrations/query/generator/module files; the integrator coordinates shared changes. See [ADR 0026](../decisions/0026-versioned-postgresql-migrations.md) and [M1-C01](../contracts/m1-01.md). Actual adapter behavior remains subject to TDD, independent review and hosted checks.
 
 - Fresh-install and supported upgrade scenarios are defined.
 - Tool choice and migration ownership are versioned.

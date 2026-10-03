@@ -22,6 +22,7 @@ try {
     & (Join-Path $PSScriptRoot 'test-ci.ps1')
     & (Join-Path $PSScriptRoot 'test-codecov-policy.ps1')
     & (Join-Path $PSScriptRoot 'test-go.ps1')
+    & (Join-Path $PSScriptRoot 'test-persistence.ps1')
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
     & (Join-Path $PSScriptRoot 'check-plan.ps1')
     & (Join-Path $PSScriptRoot 'test-plan.ps1')

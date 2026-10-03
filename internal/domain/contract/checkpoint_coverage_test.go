@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"bytes"
 	"errors"
 	"reflect"
 	"testing"
@@ -8,6 +9,24 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
+
+func TestCheckpointRejectsInvalidSurrogateEscapes(t *testing.T) {
+	encoded, err := EncodeStateCheckpoint(StateCheckpoint{Protected: checkpointFixture(t).Protected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, escaped := range []string{`"\ud800"`, `"\udc00"`, `"\ud800x"`, `"\ud800\ud800"`} {
+		t.Run(escaped, func(t *testing.T) {
+			changed := bytes.Replace(encoded, []byte(`"v1"`), []byte(escaped), 1)
+			if bytes.Equal(changed, encoded) {
+				t.Fatal("fixture did not change its covered-input identity")
+			}
+			if _, err := RestoreStateCheckpoint(changed); !errors.Is(err, ErrInvalidCheckpoint) {
+				t.Fatalf("invalid Unicode surrogate identity silently normalized: %v", err)
+			}
+		})
+	}
+}
 
 func TestCheckpointRejectsIncompleteJSONAndDuplicateDictionaryKeys(t *testing.T) {
 	for _, encoded := range []string{

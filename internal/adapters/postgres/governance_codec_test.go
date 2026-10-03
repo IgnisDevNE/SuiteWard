@@ -364,6 +364,25 @@ func TestStoredPromotionEncodingRejectsUnrepresentableTime(t *testing.T) {
 	}
 }
 
+func TestStoredEncodingPropagatesExactStringRejection(t *testing.T) {
+	fixture := newCodecFixture(t)
+	lossy := string([]byte{0xff})
+	assessment := codecValue(contract.AssessIntegrity(contract.SourceRevision(lossy), fixture.input.Context.Proposal.Current().Binding(), nil))
+	fixture.state.assessments = map[assessmentKey]contract.IntegrityAssessment{{fixture.input.Context.Reference, contract.SourceRevision(lossy)}: assessment}
+	if _, err := encodeAuthority(fixture.state); !errors.Is(err, contract.ErrInvalidCheckpoint) {
+		t.Fatalf("authority encoder suppressed an unrepresentable assessment source: %v", err)
+	}
+	command := codecValue(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(lossy), SourceCommandID: "another-source", Actor: fixture.command.Actor(), Reference: fixture.command.Reference(), Carrier: fixture.command.Carrier(), Action: contract.RevokeConsent, Order: 2}))
+	_, result, err := fixture.state.consents["proposal"].Apply(fixture.input.Context.Proposal, fixture.state.policy, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.consent.Consent.Result = result
+	if _, err := encodeReceipt(fixture.consent, command.OperationID()); !errors.Is(err, contract.ErrInvalidCheckpoint) {
+		t.Fatalf("receipt encoder suppressed an unrepresentable original command identity: %v", err)
+	}
+}
+
 func codecValue[T any](value T, err error) T {
 	if err != nil {
 		panic(err)

@@ -78,4 +78,70 @@ Assert-Throws { Get-TddRevisionRange -EventName 'workflow_dispatch' -CurrentRevi
 $checks++
 Assert-Throws { Get-TddRevisionRange -EventName 'unknown' } 'unsupported TDD event'
 $checks++
+
+# Inspect the scalar status declarations used by this repository. This is a
+# local policy regression check, not a YAML parser or Codecov service emulator;
+# Codecov's validator and hosted checks verify its interpretation separately.
+$coverageYaml = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../codecov.yml')).Replace("`r", '')
+function Get-CoveragePolicy {
+    param([string]$Group, [string]$Name)
+    $groupPattern = '(?m)^    ' + [regex]::Escape($Group) + ':\n(?<body>(?:^      [^\n]*\n|^\n)*)'
+    $groupBody = [regex]::Match($coverageYaml, $groupPattern).Groups['body'].Value
+    $statusPattern = '(?m)^      ' + [regex]::Escape($Name) + ':\n(?<body>(?:^        [^\n]*\n)*)'
+    $statusBody = [regex]::Match($groupBody, $statusPattern).Groups['body'].Value
+    $policy = @{}
+    foreach ($field in [regex]::Matches($statusBody, '(?m)^        (?<key>[a-z_]+):[ ]*(?<value>[^\n]*)$')) {
+        $key = $field.Groups['key'].Value
+        if ($policy.ContainsKey($key)) { throw "Duplicate coverage policy field: $Group/$Name/$key" }
+        $policy[$key] = $field.Groups['value'].Value.Trim().Trim('"', "'")
+    }
+    return $policy
+}
+
+function Convert-CoverageNumber {
+    param([string]$Value)
+    return [decimal]::Parse($Value.TrimEnd('%'), [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Test-CoveragePolicyDecision {
+    param([hashtable]$Policy, [Nullable[decimal]]$HeadCoverage, [decimal]$BaseCoverage)
+    if ($Policy['informational'] -eq 'true') { return $true }
+    if ($null -eq $HeadCoverage) { return $Policy['if_not_found'] -ne 'failure' }
+    $target = if ($Policy['target'] -eq 'auto') { $BaseCoverage } else { Convert-CoverageNumber $Policy['target'] }
+    return $HeadCoverage -ge ($target - (Convert-CoverageNumber $Policy['threshold']))
+}
+
+$ratchet = Get-CoveragePolicy 'project' 'default'
+$floor = Get-CoveragePolicy 'project' 'floor'
+$patch = Get-CoveragePolicy 'patch' 'default'
+foreach ($entry in @(@{Name='project/default';Policy=$ratchet}, @{Name='project/floor';Policy=$floor}, @{Name='patch/default';Policy=$patch})) {
+    $policy = $entry.Policy
+    if ($policy['informational'] -ne 'false') { throw "$($entry.Name) must block a coverage violation; missing/informational status cannot enforce the accepted policy." }
+    if ($policy['if_not_found'] -ne 'failure') { throw "$($entry.Name) must fail when the head coverage report is absent." }
+    foreach ($key in @('target', 'threshold')) {
+        if (-not $policy.ContainsKey($key)) { throw "$($entry.Name) must declare $key explicitly." }
+    }
+    foreach ($filter in @('paths', 'flags', 'branches', 'only_pulls')) {
+        if ($policy.ContainsKey($filter)) { throw "$($entry.Name) must not narrow the accepted coverage scope or reporting events." }
+    }
+    if (Test-CoveragePolicyDecision -Policy $policy -HeadCoverage $null -BaseCoverage 100) { throw "$($entry.Name) accepted an absent report." }
+    $checks++
+}
+
+foreach ($case in @(
+    @{Name='ratchet allows exactly 0.25 percentage points';Policy=$ratchet;Base=99.75;Head=99.5;Pass=$true},
+    @{Name='ratchet rejects a larger decrease';Policy=$ratchet;Base=99.75;Head=99.499;Pass=$false},
+    @{Name='ratchet follows a higher actual base';Policy=$ratchet;Base=100;Head=99.6;Pass=$false},
+    @{Name='ratchet follows a lower actual base independently of floor';Policy=$ratchet;Base=99;Head=98.75;Pass=$true},
+    @{Name='observed M0 report satisfies tolerance';Policy=$ratchet;Base=99.68;Head=99.51;Pass=$true},
+    @{Name='absolute floor accepts exactly 99 independently of base';Policy=$floor;Base=100;Head=99;Pass=$true},
+    @{Name='absolute floor stops accumulated decreases';Policy=$floor;Base=99.1;Head=98.999;Pass=$false},
+    @{Name='patch retains exactly 90 percent';Policy=$patch;Base=100;Head=90;Pass=$true},
+    @{Name='patch rejects below 90 independently of a lower base';Policy=$patch;Base=80;Head=89.999;Pass=$false},
+    @{Name='patch has no tolerance below 90 percent';Policy=$patch;Base=100;Head=89.999;Pass=$false}
+)) {
+    $passed = Test-CoveragePolicyDecision -Policy $case.Policy -BaseCoverage $case.Base -HeadCoverage $case.Head
+    if ($passed -ne $case.Pass) { throw "Coverage policy changed: $($case.Name); expected pass=$($case.Pass), actual=$passed." }
+    $checks++
+}
 Write-Output "Passed $checks CI behavior checks. These verify CI infrastructure, not application coverage."

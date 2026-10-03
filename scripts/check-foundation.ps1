@@ -20,6 +20,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Workflow validation failed.' }
     & (Join-Path $PSScriptRoot 'ci.ps1') -Mode Documents
     & (Join-Path $PSScriptRoot 'test-ci.ps1')
+    & (Join-Path $PSScriptRoot 'test-codecov-policy.ps1')
     & (Join-Path $PSScriptRoot 'test-go.ps1')
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
     & (Join-Path $PSScriptRoot 'check-plan.ps1')

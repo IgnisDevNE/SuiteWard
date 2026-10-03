@@ -9,7 +9,14 @@ coverage:
     project:
       default:
         target: auto
-        informational: true
+        threshold: 0.25%
+        if_not_found: failure
+        informational: false
+      floor:
+        target: 99%
+        threshold: 0%
+        if_not_found: failure
+        informational: false
     patch:
       default:
         target: 90%

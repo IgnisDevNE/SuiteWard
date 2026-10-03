@@ -606,6 +606,180 @@ Promotion atomically records:
 
 Consent operations atomically record their command receipt, consent change/no-op outcome, audit, and required acknowledgment intent. Application publication failures cannot roll back a committed revoke or permit a blocked promotion.
 
+### Consumed signatures and authority fence
+
+The application package `internal/application/governance` owns one small boundary consumed by the implemented use cases. The I task authors the shared declarations in `transaction.go`; A and B consume those declarations and own their own use-case code. The reviewed shape is:
+
+```go
+type AuthorityFence struct {
+    ProjectID contract.ProjectID
+    SuiteID contract.SuiteID
+    Revision contract.StateRevision
+}
+type OperationKind uint8
+const (
+    OperationPromote OperationKind = iota + 1
+    OperationBootstrap
+    OperationCorrect
+    OperationConsent
+)
+type ReadRequest struct {
+    Reference contract.ProposalReference
+    OperationID contract.OperationID
+    SourceCommandID contract.SourceCommandID // consent only
+    AssessmentSource contract.SourceRevision // exact stored assessment selection
+    HistoricalVersionID contract.SuiteVersionID // correction only
+}
+type Snapshot struct {
+    Fence AuthorityFence
+    Canonical contract.CanonicalSnapshot
+    Proposal contract.Proposal
+    Policy contract.Policy
+    Consent contract.Consent
+    Scheduling contract.Schedule
+    Assessment contract.IntegrityAssessment
+    Target contract.IntegrationTargetID
+    History contract.HistoricalCanonical // correction target, if requested
+    HistoricalPromotion contract.PromotionRecord // exact ReadRequest.Reference
+    Operation OperationReceipt // Suite-wide lookup by operation ID
+    Source OperationReceipt // Suite-wide original consent lookup by source command ID
+}
+type PromoteRequest struct {
+    OperationID contract.OperationID
+    Reference contract.ProposalReference
+    Carrier contract.ApprovalCarrierID
+    Proposed contract.ProtectedContract
+    AssessmentSource contract.SourceRevision
+    Integration contract.Integration // zero only for first-test pre-merge readiness
+    NewVersionID contract.SuiteVersionID
+    RecordedAt time.Time
+}
+type BootstrapRequest struct {
+    Mode contract.BootstrapMode
+    Promotion PromoteRequest
+}
+type CorrectionRequest struct {
+    Promotion PromoteRequest
+    TargetVersionID contract.SuiteVersionID
+}
+type PromotionIdentity struct {
+    Kind OperationKind // ordinary, bootstrap, or correction
+    Request PromoteRequest
+    BootstrapMode contract.BootstrapMode // otherwise zero
+    CorrectsVersionID contract.SuiteVersionID // otherwise empty
+    Binding contract.ApprovalBinding // original exact approved binding
+}
+type PromotionReceipt struct {
+    Identity PromotionIdentity
+    Decision contract.PromotionDecision // committed PromotionProposed only
+}
+type ConsentReceipt struct {
+    Result contract.CommandResult // original, never replaced on replay
+    EvaluatedReference contract.ProposalReference // current revision when processed
+    PolicyRevisionID contract.PolicyRevisionID
+    CurrentApprovalEligible bool
+    PromotedVersionID contract.SuiteVersionID // exact command revision, if promoted
+}
+type OperationReceipt struct {
+    Kind OperationKind // zero means absent; exactly one payload populated
+    Promotion PromotionReceipt
+    Consent ConsentReceipt
+}
+type PromotionWrite struct {
+    Receipt PromotionReceipt
+    Scheduling contract.Schedule // ObservePromoted result
+}
+type ConsentWrite struct {
+    Command contract.Command // observed command, including a possible new alias
+    Consent contract.Consent // returned aggregate, or original on source replay
+    Receipt ConsentReceipt // new original or original reused by alias
+    Alias bool // new operation for existing source; no new audit/ack
+}
+type PromoteResult struct {
+    Decision contract.PromotionDecision
+    Committed bool
+    Duplicate bool
+}
+type ConsentRequest struct { Command contract.Command }
+type ConsentResponse struct {
+    Receipt ConsentReceipt
+    Committed bool
+    Duplicate bool
+}
+type Store interface {
+    Load(context.Context, ReadRequest) (Snapshot, error)
+    CommitPromotion(context.Context, AuthorityFence, PromotionWrite) error
+    CommitConsent(context.Context, AuthorityFence, ConsentWrite) error
+}
+
+func Promote(context.Context, Store, PromoteRequest) (PromoteResult, error)
+func Bootstrap(context.Context, Store, BootstrapRequest) (PromoteResult, error)
+func Correct(context.Context, Store, CorrectionRequest) (PromoteResult, error)
+func ProcessConsent(context.Context, Store, ConsentRequest) (ConsentResponse, error)
+var (
+    ErrInvalidRequest error
+    ErrInvalidSnapshot error
+    ErrAuthorityConflict error
+    ErrOperationConflict error
+    ErrVersionConflict error
+    ErrAuthorityExhausted error
+    ErrNotFound error
+)
+```
+
+`ReadRequest` identifies one project and Suite, the relevant proposal, a stable operation identity, and an optional historical correction target. `Snapshot` is one coherent observation of the canonical pointer and protected contract, current proposal and policy, consent, scheduling, stored integrity assessment, configured integration target, applicable historical promotion, and existing operation/source receipts. It also carries the `AuthorityFence`. Request values may carry trusted integration observations, exact source references, proposed content, and authenticated command facts, but cannot substitute their own policy, canonical, consent, schedule, stored assessment, or historical promotion for the loaded authority. M0 tests control those trusted inputs; GitHub authentication remains M1 work.
+
+The `AuthorityFence` is an opaque, Suite-scoped whole-authority revision. Every committed change to canonical, proposal, policy, consent, scheduling entries or receipts, and operation/source aliases advances it, even when the canonical ID and scheduling generation do not change. A successful `Load` cannot promise a lock across the caller's decision. Each conditional commit must compare the loaded fence against the current entire authority state and reject a stale or mismatched scope. The promotion write additionally checks the domain effect's expected canonical version, Suite revision, and scheduling generation. An implementation that compares only the pointer or generation fails the contract. Initial absence has an explicit fence value; a racing first bootstrap cannot both win. The M0 reference store models this contract without choosing PostgreSQL isolation or locking.
+
+`PromotionWrite` contains only an actual `PromotionProposed` effect and its matching new schedule from `Schedule.Observe(..., ObservePromoted)`, plus a stable committed outcome. The commit reserves its operation and new logical version identities, stores the immutable version and promotion history, advances the pointer and whole-authority fence, records audit, and persists one publication intent as one all-or-nothing change. If scheduling observation fails, including generation exhaustion, nothing commits. A stored promotion receipt binds its operation to the exact project, Suite, proposal revision/binding, carrier, integrated source and kind, target, new version, correction target if any, and resulting effect. An operation replay with the same immutable request identity returns that recorded result; a changed identity conflicts and cannot adopt the old result. `PromotionBlocked`, pre-merge readiness, and `PromotionNoChange` are provisional decisions with no committed promotion receipt or queue advancement. In particular, no-change does not release an active contract-changing position or certify merge readiness.
+
+`ConsentWrite` preserves the canonical pointer, version history, and schedule. It commits the returned domain `Consent`, whole-authority fence, and, for a newly processed command, the immutable original `CommandResult`, audit, and pending acknowledgment intent together. Its acknowledgment records the authenticated source command and actor, exact revision, processing-time consent eligibility under the governing policy, and an exact historical promoted version when applicable. That eligibility is a consent fact, not overall merge or promotion readiness. The historical promotion lookup is by exact proposal revision rather than just the current canonical record. Later policy or canonical changes cannot rewrite an old acknowledgment.
+
+An exact known command/operation replay returns its original receipt without a new audit, acknowledgment, or authority mutation. A repeated source command from the same actor with a *new* operation ID can return `Duplicate=true` while reserving a new operation-to-source alias in the returned `Consent`; that alias and the advanced whole-authority fence commit together, reusing the original receipt and acknowledgment. An operation/source/actor collision that the domain rejects leaves the original records intact and does not manufacture a competing acknowledgment. A no-op revoke, ordered rejection, or another newly processed terminal command still gets its own receipt, audit, and pending acknowledgment. Processing order uses the domain's stable source order, not arrival time. Caller response reports committed success only after commit succeeds; a conflict is surfaced for explicit fresh-load reconciliation rather than silently regenerating IDs or source order.
+
+The first I checkpoint supplies these actual shared types and a behaviorally tested reference-store slice before A and B start executable use-case work. Later I cycles extend the same store and cross-use-case scenarios. The task branches remain separate, and neither consumer creates a duplicate production port. A correction names a historical version to load from the store and calls `DecideCorrection`; a caller-supplied historical object cannot authorize it. `Bootstrap` uses the domain's distinct existing-baseline and first-test modes. Both share the same promotion commit boundary.
+
+| Controlled schedule | Required result |
+| --- | --- |
+| Two loads see absent canonical; one bootstrap commits first | The other loses the whole-authority comparison; exactly one version, pointer, record, audit, receipt, and intent exist. |
+| Two incompatible promotions read the same baseline | At most one commits; the loser cannot overwrite the winner or release its queue entry. |
+| Revoke commits between promotion load and commit | The whole-authority fence changes even though the pointer does not; the stale promotion cannot commit. |
+| Promotion commits before a later revoke | The version and its immutable history remain; the revoke records its own outcome and truthful already-promoted acknowledgment. |
+| Policy, proposal, waiting-entry, or receipt alias changes after load | The stale operation conflicts even when pointer and active scheduling generation are unchanged. |
+| An injected failure occurs at any staged promotion or consent effect | No subset becomes visible; retry sees either the old complete state or the committed complete state. |
+| Publication fails after commit | The canonical or consent outcome and pending intent survive for later delivery; no remote exactly-once claim follows. |
+| Transfer remains pending or merged change cannot promote | Canonical state stays put and the waiting queue does not advance automatically. |
+
+The task-only reference store uses private staged copies and one atomic state replacement. Its fault points cover receipt and alias reservation, version, pointer, promotion, audit, schedule, and publication or acknowledgment intent. Deterministic channel barriers or controllers order loads and commits; sleeps are not evidence of a race. The store is test-only and never becomes a production persistence mode. Its `_test.go` implementation is not counted in Go package coverage, so its meaningful RED/GREEN and race scenarios remain required independently of the coverage percentage.
+
+`D-M0-COVERAGE` was accepted by the project owner on 2026-10-02 using the genuine hosted M0.04 report (821/825 lines, 99.51%, versus 642/644 lines, 99.68%, on main). Project coverage may decrease by at most 0.25 percentage points against the comparison base per PR and must independently remain at or above 99%. The absolute floor bounds cumulative decreases. The 90% patch target with zero tolerance, critical scenarios, and existing generated-code exclusion remain in force. I implements and tests the enforcement; the integrator must verify the actual hosted result before main integration.
+
+#### Coverage enforcement adapter checkpoint
+
+At `b8d0547c876965681548622add64cbb699903b10`, all eight CI jobs and `codecov/patch` passed. Codecov processed the correct effective YAML and a complete 821/825-line report but emitted neither configured project context. The organization UI reports the free Developer plan. Codecov's [published plan mapping](https://github.com/codecov/umbrella/blob/71e6ec2d84c6e6ae4184a1744e51c05a9ec5aee7/apps/codecov-api/core/management/commands/codecovPlans-Jan25.csv) associates its current Developer plan with a [tier](https://github.com/codecov/umbrella/blob/71e6ec2d84c6e6ae4184a1744e51c05a9ec5aee7/apps/codecov-api/core/management/commands/codecovTiers-Jan25.csv) that [suppresses project notifications](https://github.com/codecov/umbrella/blob/71e6ec2d84c6e6ae4184a1744e51c05a9ec5aee7/apps/worker/services/notification/__init__.py), consistent with this observation. This is a delivery-infrastructure limitation, not a reason to weaken the accepted coverage policy or purchase a plan.
+
+I therefore owns `scripts/check-codecov-policy.ps1`, `scripts/test-codecov-policy.ps1`, the foundation test hook, and the coverage-job wiring, in addition to its existing files. The coverage job uploads its actual report, then verifies the two project rules against Codecov's complete reports before the already-required `CI / Gate` can pass. Native `codecov/patch` remains separately required. The project YAML declarations remain for portability; nonexistent service contexts are not added as branch requirements. No new repository administrator grant or personal-account exception is needed for this implementation.
+
+The checker is scoped to the public `IgnisDevNE/SuiteWard` API endpoint and accepts only distinct, exact, nonzero 40-character head/base commit IDs. For PRs, head and base come from the event's head/base SHAs; pushes use `after`/`before`; manual runs use the checked-out event revision and its first parent, with the checkout verified against `GITHUB_SHA`. Missing or invalid event context and missing baselines fail closed. The coverage checkout and uploader are explicitly bound to that head, while the Go matrix retains its normal merge-checkout verification. Reuse the reviewed `Get-TddRevisionRange` mapping rather than inventing an alternate revision resolver.
+
+Each fetched report must bind the requested commit, have `state: complete`, contain consistent top-level and report totals, and have positive integral lines and nonnegative integral hits, misses, and partials that sum to lines. Use exact integer cross-products for the 99% floor and 0.25-point decrease, not rounded display percentages or Go statement coverage. A report with `ci_passed: false` can still supply measured coverage: the checker must never wait for Codecov statuses or CI completion, which would create a circular dependency. Report absence, incomplete processing and transient transport failures have bounded retries (at most 12 attempts, 15-second request timeouts and 10-second pauses); corrupt identities/schema and terminal failures reject without accepting a substitute report. Network errors, missing reports and exhaustion cannot turn into success.
+
+Behavioral RED/GREEN tests cover exact event attribution, both numeric boundaries, rounded-percentage spoofing, invalid or mismatched envelopes/counts, missing base, retries and exhaustion, and workflow ordering. Fixture tests establish local behavior; a real hosted run must separately establish that report processing completes before CI and that the actual Codecov API is accepted. Test-only injected fetch/pause functions do not add a configurable production URL or execute instructions from report content.
+
+The field shapes above are a consumed application API, not authenticated domain facts. I defines non-nil error sentinels and validates malformed store snapshots and receipt kinds. A and B validate request scope and loaded facts. ReadRequest.Reference selects the exact project, Suite, proposal, and revision; AssessmentSource selects stored assessment evidence for the integrated source or the first-test proposal origin. Neither a caller-supplied assessment nor a caller-supplied historical correction target can replace a store lookup. History is the requested immutable correction target; HistoricalPromotion is the record bound to the command's exact revision, even if a newer canonical version exists.
+
+AuthorityFence.Revision must equal Snapshot.Canonical.Suite().Revision(). M0-C3 already uses this Suite revision as whole-authority context. Promotion, consent, source or operation aliases, policy, proposal, and scheduling writes all advance that same counter, including changes that leave the canonical pointer and active scheduling generation unchanged. A non-promotion write reconstructs a same-pointer canonical snapshot with the unchanged protected version and record and revision plus one. If the revision cannot advance, the entire write fails. The store additionally checks the promotion effect's expected pointer, revision, and scheduling generation; none replaces the whole-authority comparison.
+
+The operation namespace is shared across consent and promotion kinds within one project and Suite. Load checks the requested operation ID and, for consent, source command ID against Suite-wide receipts before current authority is evaluated. It loads the proposal aggregate by project, Suite, and proposal ID; an unknown or superseded requested revision is not a load failure for consent. The domain must be able to record its UnknownRevision or SupersededRevision rejection, and a known-source replay with an edited revision must still return the original historical receipt first. A missing proposal aggregate may produce ErrNotFound without effects. A receipt from a different kind, scope, source, or actor conflicts without new effects. An edited observation of a known source in another proposal also conflicts rather than acquiring fresh authority; its original approval and acknowledgment remain intact. Within the same proposal, a source replay from the same actor returns the original receipt even when the edited action, revision, or order differs. A new operation alias for that source commits the global reservation and, when Consent.Apply returns an updated aggregate, that aggregate too, without a second audit or acknowledgment. The operation and source indexes are committed under the same whole-authority fence so concurrent first observations cannot produce two originals.
+
+Promotion replay compares its immutable kind, scope, original stored binding, protected content, carrier, assessment source, integrated source and kind, target, logical version, bootstrap mode, and correction target before accepting the recorded receipt. The stored binding must be self-consistent with the recorded reference and content; a later Snapshot.Proposal.Current() is not the replay baseline. RecordedAt is original processing metadata; a retry with a later timestamp returns the original record unchanged. Successful promotion and newly processed consent outcomes are durable receipts. PromotionBlocked, pre-merge readiness, and PromotionNoChange remain provisional, so no receipt or queue advancement is inferred from them. A successful application result is returned only after conditional commit; a replay of an already committed operation returns the historical result before current policy, consent, or canonical state is reevaluated. A stale fence or identity conflict is returned for explicit reconciliation, without regenerating an ID or source order.
+
+ConsentReceipt.CurrentApprovalEligible describes the current proposal revision under the processing-time governing policy, identified by EvaluatedReference and PolicyRevisionID. It does not assert that a historical revoked revision was eligible or that the PR could merge. PromotedVersionID names the exact historical promotion of the command reference. A no-op revoke, ordered rejection, or other new terminal command receives one receipt, audit, and pending acknowledgment; a pure replay or identity conflict does not. A missing or malformed load fails without writes.
+
+For both result types, Committed means that the returned outcome is durable, not necessarily that this invocation wrote it. A first successful commit reports Committed=true and Duplicate=false. A matching historical replay reports true/true without writing; a consent source replay with a new operation alias reports true/true only after the alias commits. Provisional promotion decisions report false/false. Errors return a zero result.
+
+The first I checkpoint must implement and behaviorally test these shared declarations and a usable reference-store slice. A and B then consume that reviewed checkpoint on separate task branches. I later adds the complete store failure and concurrency scenarios without replacing A/B tests. Any concrete field adjustment required by a consumer must be reviewed by all three owners and amended here before that consumer implements against it. The selected D-M0-COVERAGE policy and its verified hosted enforcement govern phase integration; they did not prevent this evidence-producing I checkpoint.
+
 ### Reference-model proof
 
 Use a test-only in-memory store implementing actual consumers' boundary semantics. Do not ship a production nonpersistent mode. Concurrent tests use explicit barriers or scheduling controls, not sleeps.

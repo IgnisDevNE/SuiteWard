@@ -90,6 +90,9 @@ func (s *Store) InitializeTrusted(ctx context.Context, input TrustedAuthority) e
 		return storageError(err)
 	}
 	defer tx.Rollback(context.Background())
+	if err := requireSchemaReady(ctx, tx); err != nil {
+		return err
+	}
 	err = dbgen.New(tx).InsertInitialAuthority(ctx, dbgen.InsertInitialAuthorityParams{ProjectID: string(suite.ProjectID()), SuiteID: string(suite.ID()), AuthorityRevision: strconv.FormatUint(uint64(suite.Revision()), 10), GovernancePayload: encoded})
 	if err != nil {
 		return storageError(err)
@@ -103,6 +106,9 @@ func (s *Store) Load(ctx context.Context, request governance.ReadRequest) (gover
 		return governance.Snapshot{}, storageError(err)
 	}
 	defer tx.Rollback(context.Background())
+	if err := requireSchemaReady(ctx, tx); err != nil {
+		return governance.Snapshot{}, err
+	}
 	queries := dbgen.New(tx)
 	operation, err := s.findReceipt(ctx, queries, string(request.OperationID), false)
 	if err != nil {
@@ -152,6 +158,17 @@ func (s *Store) Load(ctx context.Context, request governance.ReadRequest) (gover
 		return governance.Snapshot{}, storageError(err)
 	}
 	return snapshot, nil
+}
+
+func requireSchemaReady(ctx context.Context, tx pgx.Tx) error {
+	var version int64
+	if err := tx.QueryRow(ctx, "SELECT COALESCE(max(version_id),0) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil {
+		return fmt.Errorf("%w: %w", ErrSchemaNotReady, err)
+	}
+	if version != 2 {
+		return ErrSchemaNotReady
+	}
+	return nil
 }
 
 func (s *Store) findReceipt(ctx context.Context, queries *dbgen.Queries, id string, source bool) (governance.OperationReceipt, error) {

@@ -62,7 +62,7 @@ type receiptPayload struct {
 }
 
 func decodePayload(encoded []byte, value any) error {
-	if !utf8.Valid(encoded) {
+	if !utf8.Valid(encoded) || !validPayloadUnicodeEscapes(encoded) {
 		return governance.ErrInvalidSnapshot
 	}
 	if err := validatePayloadFields(encoded, reflect.TypeOf(value)); err != nil {
@@ -77,6 +77,43 @@ func decodePayload(encoded []byte, value any) error {
 		return governance.ErrInvalidSnapshot
 	}
 	return nil
+}
+
+// Reject unpaired UTF-16 escapes before encoding/json can replace an identity.
+func validPayloadUnicodeEscapes(encoded []byte) bool {
+	for i := 0; i < len(encoded); i++ {
+		if encoded[i] != '"' {
+			continue
+		}
+		for i++; i < len(encoded) && encoded[i] != '"'; i++ {
+			if encoded[i] != '\\' {
+				continue
+			}
+			if i+1 >= len(encoded) || encoded[i+1] != 'u' {
+				i++
+				continue
+			}
+			if i+6 > len(encoded) {
+				return false
+			}
+			code, err := strconv.ParseUint(string(encoded[i+2:i+6]), 16, 16)
+			if err != nil || code >= 0xdc00 && code <= 0xdfff {
+				return false
+			}
+			if code >= 0xd800 && code <= 0xdbff {
+				if i+12 > len(encoded) || encoded[i+6] != '\\' || encoded[i+7] != 'u' {
+					return false
+				}
+				low, err := strconv.ParseUint(string(encoded[i+8:i+12]), 16, 16)
+				if err != nil || low < 0xdc00 || low > 0xdfff {
+					return false
+				}
+				i += 6
+			}
+			i += 5
+		}
+	}
+	return true
 }
 
 func encodePayload(value any) ([]byte, error) {

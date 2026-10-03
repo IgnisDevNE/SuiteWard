@@ -3,7 +3,25 @@ package artifact
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 )
+
+// ParseDigest reconstructs an exact qualified content identity.
+func ParseDigest(value string) (Digest, error) {
+	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
+		return Digest{}, ErrInvalidDigest
+	}
+	for _, c := range value[7:] {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+			return Digest{}, ErrInvalidDigest
+		}
+	}
+	var sum [32]byte
+	if _, err := hex.Decode(sum[:], []byte(value[7:])); err != nil {
+		return Digest{}, ErrInvalidDigest
+	}
+	return Digest{sum: sum, valid: true}, nil
+}
 
 // Digest identifies exact content bytes. Its zero value has no identity.
 type Digest struct {

@@ -9,12 +9,13 @@ New-Item -ItemType Directory -Path $fixtureScripts -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'check-go.ps1') -Destination (Join-Path $fixtureScripts 'check-go.ps1')
 
 $fixturePackages = @('example.test/project/artifact', 'example.test/project/contract')
-$invocation = [pscustomobject]@{ TestArguments = @(); ProfilePath = '' }
+$invocation = [pscustomobject]@{ TestArguments = @(); ProfilePath = ''; Commands=@{} }
 
 # Script-local command fakes exercise PowerShell's real argument parsing without
 # requiring Go or producing an application coverage report in foundation CI.
 function go {
     Set-Variable -Name LASTEXITCODE -Value 0 -Scope 1
+    $invocation.Commands[$args[0]]=@($args)
     switch ($args[0]) {
         'list' { $fixturePackages }
         'vet' { }
@@ -65,6 +66,10 @@ try {
         if (-not $rejected) { throw 'Required PostgreSQL verification ran without a connection instead of failing closed.' }
         $env:SUITEWARD_TEST_DATABASE_URL = 'postgresql://fixture:fixture@127.0.0.1:5432/fixture'
         & (Join-Path $fixtureScripts 'check-go.ps1') -Coverage -Integration
+        foreach($command in @('list','vet','build')) {
+            $arguments=$invocation.Commands[$command]
+            if($arguments.Count -ne 3 -or $arguments[1] -cne '-tags=integration' -or $arguments[2] -cne './...'){throw "Integration $command must receive the complete build tag as one argument."}
+        }
         if (@($invocation.TestArguments | Where-Object { $_ -ceq '-tags=integration' }).Count -ne 1) {
             throw 'The real coverage invocation must include PostgreSQL integration-tagged tests exactly once.'
         }

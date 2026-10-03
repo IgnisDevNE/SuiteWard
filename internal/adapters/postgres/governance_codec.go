@@ -124,7 +124,7 @@ func encodePayload(value any) ([]byte, error) {
 }
 
 func validPayloadStrings(value reflect.Value) bool {
-	if value.Type() == reflect.TypeFor[json.RawMessage]() || value.Type() == reflect.TypeFor[time.Time]() {
+	if value.Type() == reflect.TypeFor[json.RawMessage]() || value.Type() == reflect.TypeFor[[]json.RawMessage]() || value.Type() == reflect.TypeFor[time.Time]() {
 		return true
 	}
 	switch value.Kind() {
@@ -141,12 +141,6 @@ func validPayloadStrings(value reflect.Value) bool {
 				return false
 			}
 		}
-	case reflect.Slice:
-		for i := 0; i < value.Len(); i++ {
-			if !validPayloadStrings(value.Index(i)) {
-				return false
-			}
-		}
 	}
 	return true
 }
@@ -160,19 +154,7 @@ func validatePayloadFields(encoded []byte, typ reflect.Type) error {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
-	if typ == reflect.TypeFor[json.RawMessage]() || typ == reflect.TypeFor[time.Time]() {
-		return nil
-	}
-	if typ.Kind() == reflect.Slice {
-		var elements []json.RawMessage
-		if err := json.Unmarshal(encoded, &elements); err != nil {
-			return err
-		}
-		for _, element := range elements {
-			if err := validatePayloadFields(element, typ.Elem()); err != nil {
-				return err
-			}
-		}
+	if typ == reflect.TypeFor[json.RawMessage]() || typ == reflect.TypeFor[[]json.RawMessage]() || typ == reflect.TypeFor[time.Time]() {
 		return nil
 	}
 	if typ.Kind() != reflect.Struct {

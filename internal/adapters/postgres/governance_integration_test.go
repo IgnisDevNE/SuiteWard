@@ -347,6 +347,159 @@ func TestPostgresTrustedInitializationRequiresCompleteScopedFacts(t *testing.T) 
 	}
 }
 
+func TestPostgresEveryStagedSQLFailureRollsBackAuthority(t *testing.T) {
+	for _, kind := range []string{"promotion", "consent", "initialize"} {
+		tables := []string{"suites", "operation_receipts", "audit_events"}
+		if kind == "promotion" {
+			tables = append(tables, "suite_versions", "promotions", "publication_intents")
+		} else if kind == "consent" {
+			tables = append(tables, "consent_sources", "consent_acknowledgments")
+		} else {
+			tables = []string{"suites"}
+		}
+		for _, table := range tables {
+			t.Run(kind+"/"+table, func(t *testing.T) {
+				pool, store, _ := newGovernanceDatabase(t)
+				fixture := pgGovernanceFixture(t)
+				if kind == "promotion" {
+					pgInitializeAndApprove(t, store, fixture)
+				} else if kind == "consent" {
+					if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+						t.Fatal(err)
+					}
+				}
+				event := "INSERT"
+				if table == "suites" && kind != "initialize" {
+					event = "UPDATE"
+				}
+				schemaExec(t, pool, `CREATE FUNCTION fail_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected SQL stage failure'; END $$; CREATE TRIGGER fail_write BEFORE `+event+` ON `+table+` FOR EACH ROW EXECUTE FUNCTION fail_write()`)
+				var err error
+				switch kind {
+				case "promotion":
+					_, err = governance.Promote(t.Context(), store, fixture.request)
+				case "consent":
+					_, err = governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: fixture.command})
+				case "initialize":
+					err = store.InitializeTrusted(t.Context(), fixture.authority)
+				}
+				if err == nil {
+					t.Fatal("SQL stage failure reported success")
+				}
+				wantReceipts, wantRevision := 0, 0
+				if kind == "promotion" {
+					wantReceipts, wantRevision = 1, 1
+				}
+				for table, want := range map[string]int{"suite_versions": 0, "promotions": 0, "publication_intents": 0, "operation_receipts": wantReceipts, "audit_events": wantReceipts, "consent_sources": wantReceipts, "consent_acknowledgments": wantReceipts} {
+					if count := pgCount(t, pool, table); count != want {
+						t.Fatalf("SQL failure left partial %s=%d want%d", table, count, want)
+					}
+				}
+				if kind == "initialize" {
+					if pgCount(t, pool, "suites") != 0 {
+						t.Fatal("failed initialization left Suite")
+					}
+				} else {
+					snapshot, err := store.Load(t.Context(), governance.ReadRequest{Reference: fixture.request.Reference})
+					if err != nil || snapshot.Fence.Revision != contract.StateRevision(wantRevision) {
+						t.Fatalf("SQL failure advanced authority: %+v %v", snapshot, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPostgresRevisionExhaustionAndOperationalErrorsHaveNoEffects(t *testing.T) {
+	t.Run("revision exhausted", func(t *testing.T) {
+		pool, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		fixture.authority.Canonical = pgValue(contract.NewCanonicalSnapshot(pgValue(contract.NewSuite("project", "suite", "", ^contract.StateRevision(0))), contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{}))
+		if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: fixture.command}); !errors.Is(err, governance.ErrAuthorityExhausted) {
+			t.Fatalf("uint64 authority wrap: %v", err)
+		}
+		if pgCount(t, pool, "operation_receipts") != 0 {
+			t.Fatal("exhausted authority created effects")
+		}
+	})
+	t.Run("closed pool", func(t *testing.T) {
+		pool, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		pool.Close()
+		calls := []func() error{func() error { return store.InitializeTrusted(t.Context(), fixture.authority) }, func() error {
+			_, err := store.Load(t.Context(), governance.ReadRequest{Reference: fixture.request.Reference})
+			return err
+		}, func() error {
+			return store.CommitConsent(t.Context(), governance.AuthorityFence{}, governance.ConsentWrite{Command: fixture.command})
+		}, func() error {
+			return store.CommitPromotion(t.Context(), governance.AuthorityFence{}, governance.PromotionWrite{Receipt: governance.PromotionReceipt{Identity: governance.PromotionIdentity{Request: fixture.request}}})
+		}}
+		for _, call := range calls {
+			if err := call(); err == nil {
+				t.Fatal("closed connection pool reported successful storage")
+			}
+		}
+	})
+	t.Run("missing schema", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		pool := pgValue(pgxpool.New(t.Context(), database.url))
+		defer pool.Close()
+		store := pgValue(postgres.NewStore(pool, &pgVerifier{}))
+		if _, err := store.Load(t.Context(), governance.ReadRequest{Reference: pgGovernanceFixture(t).request.Reference}); !errors.Is(err, postgres.ErrSchemaNotReady) {
+			t.Fatalf("missing migrations did not fail closed: %v", err)
+		}
+	})
+}
+
+func TestPostgresTrustedInitializationRejectsMalformedOrProcessedInputs(t *testing.T) {
+	for _, part := range []string{"zero canonical", "zero proposal", "processed consent", "duplicate proposal", "duplicate assessment", "foreign policy", "foreign schedule", "empty target"} {
+		t.Run(part, func(t *testing.T) {
+			pool, store, _ := newGovernanceDatabase(t)
+			fixture := pgGovernanceFixture(t)
+			switch part {
+			case "zero canonical":
+				fixture.authority.Canonical = contract.CanonicalSnapshot{}
+			case "zero proposal":
+				fixture.authority.Proposals[0].Proposal = contract.Proposal{}
+			case "processed consent":
+				next, _, err := fixture.authority.Proposals[0].Consent.Apply(fixture.authority.Proposals[0].Proposal, fixture.authority.Policy, fixture.command)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture.authority.Proposals[0].Consent = next
+			case "duplicate proposal":
+				fixture.authority.Proposals = append(fixture.authority.Proposals, fixture.authority.Proposals[0])
+			case "duplicate assessment":
+				fixture.authority.Proposals[0].Assessments = append(fixture.authority.Proposals[0].Assessments, fixture.authority.Proposals[0].Assessments[0])
+			case "foreign policy":
+				fixture.authority.Policy = pgValue(contract.NewPolicy("foreign", "policy", fixture.owner))
+			case "foreign schedule":
+				fixture.authority.Scheduling = pgValue(contract.NewSchedule("project", "foreign"))
+			case "empty target":
+				fixture.authority.Target = ""
+			}
+			if err := store.InitializeTrusted(t.Context(), fixture.authority); !errors.Is(err, governance.ErrInvalidRequest) {
+				t.Fatalf("malformed initial %s accepted: %v", part, err)
+			}
+			if pgCount(t, pool, "suites") != 0 {
+				t.Fatal("invalid input persisted authority")
+			}
+		})
+	}
+	t.Run("insert only", func(t *testing.T) {
+		_, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InitializeTrusted(t.Context(), fixture.authority); !errors.Is(err, governance.ErrAuthorityConflict) {
+			t.Fatalf("initial authority overwritten: %v", err)
+		}
+	})
+}
+
 type pgVerifier struct{ absent artifact.Digest }
 
 func (v *pgVerifier) Verify(_ context.Context, d artifact.Digest) error {

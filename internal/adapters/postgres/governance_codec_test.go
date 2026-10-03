@@ -383,6 +383,22 @@ func TestStoredEncodingPropagatesExactStringRejection(t *testing.T) {
 	}
 }
 
+func TestStoredAuthorityRejectsLossyTargetEncoding(t *testing.T) {
+	fixture := newCodecFixture(t)
+	fixture.state.target = contract.IntegrationTargetID(string([]byte{'t', 0xff}))
+	encoded, err := encodeAuthority(fixture.state)
+	if err != nil {
+		return
+	}
+	restored, err := decodeAuthority(encoded, "project", "suite", "", "0")
+	if err != nil {
+		t.Fatalf("authority encoder emitted an unreadable target: %v", err)
+	}
+	if restored.target != fixture.state.target {
+		t.Fatalf("stored integration target lost exact identity: original %q, restored %q; encoding must reject unrepresentable target bytes", fixture.state.target, restored.target)
+	}
+}
+
 func codecValue[T any](value T, err error) T {
 	if err != nil {
 		panic(err)

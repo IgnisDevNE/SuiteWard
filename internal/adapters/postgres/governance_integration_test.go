@@ -322,12 +322,29 @@ func TestPostgresGovernanceRejectsIncompleteMigrationSequence(t *testing.T) {
 }
 
 func TestPostgresTrustedInitializationRequiresCompleteScopedFacts(t *testing.T) {
-	for _,part:=range []string{"absent consent","unknown scheduled proposal","unknown assessed proposal"}{t.Run(part,func(t *testing.T){pool,store,_:=newGovernanceDatabase(t);fixture:=pgGovernanceFixture(t)
-		switch part{case "absent consent":fixture.authority.Proposals[0].Consent=contract.Consent{}
-		case "unknown scheduled proposal":fixture.authority.Proposals=nil
-		case "unknown assessed proposal":reference:=fixture.request.Reference;reference.ProposalID="unknown";binding:=pgValue(contract.NewApprovalBinding(contract.BindingInput{Reference:reference,Manifest:fixture.request.Proposed.Manifest().Digest(),Scope:fixture.request.Proposed.ScopeDigest(),PolicyRevision:"policy",CoveredInputs:fixture.request.Proposed.CoveredInputs()}));fixture.authority.Proposals[0].Assessments=[]contract.IntegrityAssessment{pgValue(contract.AssessIntegrity("integrated",binding,nil))}}
-		if err:=store.InitializeTrusted(t.Context(),fixture.authority);!errors.Is(err,governance.ErrInvalidRequest){t.Fatalf("incomplete trusted facts accepted (%s): %v",part,err)};if pgCount(t,pool,"suites")!=0{t.Fatal("invalid initialization left authority")}
-	})}
+	for _, part := range []string{"absent consent", "unknown scheduled proposal", "unknown assessed proposal"} {
+		t.Run(part, func(t *testing.T) {
+			pool, store, _ := newGovernanceDatabase(t)
+			fixture := pgGovernanceFixture(t)
+			switch part {
+			case "absent consent":
+				fixture.authority.Proposals[0].Consent = contract.Consent{}
+			case "unknown scheduled proposal":
+				fixture.authority.Proposals = nil
+			case "unknown assessed proposal":
+				reference := fixture.request.Reference
+				reference.ProposalID = "unknown"
+				binding := pgValue(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, Manifest: fixture.request.Proposed.Manifest().Digest(), Scope: fixture.request.Proposed.ScopeDigest(), PolicyRevision: "policy", CoveredInputs: fixture.request.Proposed.CoveredInputs()}))
+				fixture.authority.Proposals[0].Assessments = []contract.IntegrityAssessment{pgValue(contract.AssessIntegrity("integrated", binding, nil))}
+			}
+			if err := store.InitializeTrusted(t.Context(), fixture.authority); !errors.Is(err, governance.ErrInvalidRequest) {
+				t.Fatalf("incomplete trusted facts accepted (%s): %v", part, err)
+			}
+			if pgCount(t, pool, "suites") != 0 {
+				t.Fatal("invalid initialization left authority")
+			}
+		})
+	}
 }
 
 type pgVerifier struct{ absent artifact.Digest }

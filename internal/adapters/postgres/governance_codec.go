@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -113,7 +114,7 @@ func decodeAuthority(encoded []byte, project, suite, current, revision string) (
 	state := authorityState{canonical: canonical, policy: base.Policy, scheduling: base.Scheduling, target: payload.Target, proposals: map[contract.ProposalID]contract.Proposal{}, consents: map[contract.ProposalID]contract.Consent{}, assessments: map[assessmentKey]contract.IntegrityAssessment{}}
 	for _, encoded := range payload.Proposals {
 		checkpoint, err := contract.RestoreStateCheckpoint(encoded)
-		if err != nil || checkpoint.Proposal.IsZero() {
+		if err != nil || checkpoint.Proposal.IsZero() || reflect.DeepEqual(checkpoint.Consent, contract.Consent{}) {
 			return authorityState{}, governance.ErrInvalidSnapshot
 		}
 		ref := checkpoint.Proposal.Current().Binding().Reference()
@@ -131,6 +132,22 @@ func decodeAuthority(encoded []byte, project, suite, current, revision string) (
 			return authorityState{}, governance.ErrInvalidSnapshot
 		}
 		state.assessments[key] = assessment
+	}
+	for _, entry := range state.scheduling.Entries() {
+		proposal := state.proposals[entry.ProposalID()]
+		if proposal.IsZero() || proposal.Current().Carrier() != entry.Carrier() {
+			return authorityState{}, governance.ErrInvalidSnapshot
+		}
+	}
+	for key, assessment := range state.assessments {
+		proposal := state.proposals[key.reference.ProposalID]
+		if proposal.IsZero() {
+			return authorityState{}, governance.ErrInvalidSnapshot
+		}
+		revision, err := proposal.Lookup(key.reference, proposal.Current().Carrier())
+		if err != nil || !revision.Binding().Equal(assessment.Binding()) {
+			return authorityState{}, governance.ErrInvalidSnapshot
+		}
 	}
 	return state, nil
 }

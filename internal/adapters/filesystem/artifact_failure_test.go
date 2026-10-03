@@ -26,7 +26,7 @@ func TestNewStoreRejectsUnsafeRoots(t *testing.T) {
 	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, root := range []string{file, filepath.Join(file, "child")} {
+	for _, root := range []string{file, filepath.Join(file, "child"), filepath.Join(parent, "invalid\x00root")} {
 		if store, err := NewStore(root); err == nil || store != nil {
 			t.Errorf("non-directory root accepted: %v, %v", store, err)
 		}
@@ -111,6 +111,19 @@ func TestCancellationPreventsArtifactSuccess(t *testing.T) {
 		}
 		if err := store.Put(ctx, digest, bytes.NewReader(content)); !errors.Is(err, context.Canceled) {
 			t.Fatalf("post-close cancellation published object: %v", err)
+		}
+		assertNoObjects(t, store.root)
+	})
+	t.Run("between streamed chunks", func(t *testing.T) {
+		store := newTestStore(t, t.TempDir())
+		ctx, cancel := context.WithCancel(context.Background())
+		original := store.io.openFile
+		store.io.openFile = func(root *os.Root, name string, flags int, mode fs.FileMode) (artifactFile, error) {
+			file, err := original(root, name, flags, mode)
+			return &faultFile{artifactFile: file, written: cancel}, err
+		}
+		if err := store.Put(ctx, digest, bytes.NewReader(content)); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation between chunks published object: %v", err)
 		}
 		assertNoObjects(t, store.root)
 	})
@@ -288,6 +301,7 @@ type faultFile struct {
 	operation string
 	synced    func()
 	closed    func()
+	written   func()
 	read      func()
 }
 
@@ -296,7 +310,11 @@ func (f *faultFile) Write(p []byte) (int, error) {
 		n, _ := f.artifactFile.Write(p[:len(p)/2])
 		return n, f.failure
 	}
-	return f.artifactFile.Write(p)
+	n, err := f.artifactFile.Write(p)
+	if f.written != nil {
+		f.written()
+	}
+	return n, err
 }
 
 func (f *faultFile) Read(p []byte) (int, error) {

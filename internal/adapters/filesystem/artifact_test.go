@@ -192,16 +192,34 @@ func runConcurrentPuts(t *testing.T, root string, digest artifact.Digest, conten
 	t.Helper()
 	const writers = 16
 	start := make(chan struct{})
+	ready := make(chan struct{}, writers)
+	publish := make(chan struct{})
 	results := make(chan error, writers)
 	for range writers {
 		store := newTestStore(t, root)
+		link := store.io.link
+		store.io.link = func(root *os.Root, old, name string) error {
+			ready <- struct{}{}
+			<-publish
+			return link(root, old, name)
+		}
 		go func() {
 			<-start
 			results <- store.Put(context.Background(), digest, bytes.NewReader(content))
 		}()
 	}
 	close(start)
+	completed := 0
 	for range writers {
+		select {
+		case <-ready:
+		case err := <-results:
+			completed++
+			t.Errorf("writer failed before competing publication: %v", err)
+		}
+	}
+	close(publish)
+	for range writers - completed {
 		if err := <-results; err != nil {
 			t.Errorf("concurrent content-addressed Put: %v", err)
 		}

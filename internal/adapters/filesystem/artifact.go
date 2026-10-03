@@ -47,12 +47,22 @@ type artifactFile interface {
 
 // NewStore creates the instance-owned local volume when it is absent.
 func NewStore(root string) (*Store, error) {
+	if strings.TrimSpace(root) == "" {
+		return nil, fmt.Errorf("blank artifact root: %w", fs.ErrInvalid)
+	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve artifact root: %w", err)
 	}
-	if err := os.MkdirAll(abs, 0o700); err != nil {
-		return nil, fmt.Errorf("create artifact root: %w", err)
+	info, err := os.Lstat(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(abs, 0o700); err != nil {
+			return nil, fmt.Errorf("create artifact root: %w", err)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect artifact root: %w", err)
+	} else if !info.IsDir() || info.Mode()&fs.ModeSymlink != 0 {
+		return nil, fmt.Errorf("artifact root must be a directory without a symlink: %w", fs.ErrInvalid)
 	}
 	return &Store{root: abs, io: artifactIO{
 		openRoot: os.OpenRoot,
@@ -65,10 +75,16 @@ func NewStore(root string) (*Store, error) {
 
 // Put validates every supplied byte stream and atomically publishes without
 // replacing an existing object. A duplicate revalidates the existing bytes.
-func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Reader) error {
+func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Reader) (result error) {
 	name, err := objectName(digest)
 	if err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if content == nil {
+		return fmt.Errorf("nil artifact source: %w", fs.ErrInvalid)
 	}
 	root, err := s.io.openRoot(s.root)
 	if err != nil {
@@ -80,15 +96,25 @@ func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Read
 	if err != nil {
 		return fmt.Errorf("create artifact stage: %w", err)
 	}
-	defer s.io.remove(root, stage)
+	defer func() {
+		if err := s.io.remove(root, stage); err != nil {
+			result = errors.Join(result, fmt.Errorf("clean artifact stage: %w", err))
+		}
+	}()
 	hash := sha256.New()
-	_, writeErr := io.Copy(io.MultiWriter(file, hash), content)
+	_, writeErr := io.Copy(io.MultiWriter(file, hash), contextReader{ctx, content})
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
 	closeErr := file.Close()
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return fmt.Errorf("write artifact stage: %w", err)
 	}
 	if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != digest.String() {
 		return ErrDigestMismatch
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := s.io.link(root, stage, name); err != nil {
 		if errors.Is(err, fs.ErrExist) {
@@ -100,9 +126,12 @@ func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Read
 }
 
 // Read returns independent bytes only after validating their exact identity.
-func (s *Store) Read(_ context.Context, digest artifact.Digest) ([]byte, error) {
+func (s *Store) Read(ctx context.Context, digest artifact.Digest) ([]byte, error) {
 	name, err := objectName(digest)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	root, err := s.io.openRoot(s.root)
@@ -110,11 +139,18 @@ func (s *Store) Read(_ context.Context, digest artifact.Digest) ([]byte, error) 
 		return nil, fmt.Errorf("open artifact root: %w", err)
 	}
 	defer root.Close()
+	info, err := s.io.lstat(root, name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect artifact object: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, ErrCorruptArtifact
+	}
 	file, err := s.io.openFile(root, name, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open artifact object: %w", err)
 	}
-	content, readErr := io.ReadAll(file)
+	content, readErr := io.ReadAll(contextReader{ctx, file})
 	closeErr := file.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
 		return nil, fmt.Errorf("read artifact object: %w", err)
@@ -136,4 +172,20 @@ func objectName(digest artifact.Digest) (string, error) {
 		return "", artifact.ErrInvalidDigest
 	}
 	return "sha256-" + strings.TrimPrefix(digest.String(), "sha256:"), nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.reader.Read(p)
+	if cancelled := r.ctx.Err(); cancelled != nil {
+		return n, cancelled
+	}
+	return n, err
 }

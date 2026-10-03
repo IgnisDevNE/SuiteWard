@@ -22,6 +22,9 @@ Assert-PersistenceRejection { Assert-GeneratedQueriesCurrent -Before @{} -After 
 $checks++
 Assert-PersistenceRejection { Assert-GeneratedQueriesCurrent -Before @{'models.go'='invalid'} -After @{'models.go'='invalid'} } 'invalid digest inventory'
 $checks++
+$caseBaseline=@{'Models.go'=('a'*64)}
+Assert-PersistenceRejection { Assert-GeneratedQueriesCurrent -Before $caseBaseline -After @{'models.go'=('a'*64)} } 'case-only file identity change'
+$checks++
 $base=[IO.Path]::GetFullPath((Join-Path (Split-Path $PSScriptRoot -Parent) '.cache/persistence-tests'))
 $fixture=Join-Path $base ([Guid]::NewGuid().ToString('N'))
 $output=Join-Path $fixture 'internal/adapters/postgres/internal/dbgen'

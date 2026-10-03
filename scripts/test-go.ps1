@@ -57,7 +57,25 @@ try {
     if ($coverageArguments.Count -ne 1 -or $coverageArguments[0] -cne '-coverpkg=example.test/project/artifact,example.test/project/contract') {
         throw 'Coverage must receive the discovered module packages as one explicit argument, without a wildcard or extra packages.'
     }
-    Write-Output 'Passed 2 Go coverage invocation checks. These verify argument handling, not application coverage.'
+    $savedDatabase = [Environment]::GetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', 'Process')
+    try {
+        Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue
+        $rejected = $false
+        try { & (Join-Path $fixtureScripts 'check-go.ps1') -Coverage -Integration } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Required PostgreSQL verification ran without a connection instead of failing closed.' }
+        $env:SUITEWARD_TEST_DATABASE_URL = 'postgresql://fixture:fixture@127.0.0.1:5432/fixture'
+        & (Join-Path $fixtureScripts 'check-go.ps1') -Coverage -Integration
+        if (@($invocation.TestArguments | Where-Object { $_ -ceq '-tags=integration' }).Count -ne 1) {
+            throw 'The real coverage invocation must include PostgreSQL integration-tagged tests exactly once.'
+        }
+        foreach ($required in @('-race', '-count=1', '-covermode=atomic')) {
+            if ($required -cnotin $invocation.TestArguments) { throw "Integration coverage lost required argument $required." }
+        }
+    } finally {
+        if ($null -eq $savedDatabase) { Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue }
+        else { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', $savedDatabase, 'Process') }
+    }
+    Write-Output 'Passed 7 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $scratch).Path
     if ($resolved -ne [IO.Path]::GetFullPath($scratch) -or -not $resolved.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {

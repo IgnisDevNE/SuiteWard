@@ -1,4 +1,4 @@
-param([switch]$Coverage)
+param([switch]$Coverage, [switch]$Integration)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

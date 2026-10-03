@@ -235,7 +235,9 @@ func (d *scheduleData) restore() (Schedule, error) {
 			return Schedule{}, checkpointProblem("pending priority context")
 		}
 		index := s.entryIndex(pending.ProposalID(), pending.Carrier())
-		if index < 0 || s.entries[index].state != ScheduleWaiting {
+		// A waiting target may close while reconciliation of its former active
+		// entry is still pending; closure does not complete that transfer.
+		if index < 0 || (s.entries[index].state != ScheduleWaiting && s.entries[index].state != ScheduleClosed) {
 			return Schedule{}, checkpointProblem("pending priority target")
 		}
 		found := false

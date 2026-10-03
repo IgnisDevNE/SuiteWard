@@ -21,9 +21,9 @@ func TestIndependentCoveredInputKeysRemainCaseSensitive(t *testing.T) {
 }
 
 func TestReviewAmbiguousCaseVariantVersion(t *testing.T) {
-	if _, err := RestoreStateCheckpoint([]byte(`{"version":99,"Version":1}`)); !errors.Is(err, ErrInvalidCheckpoint) {
+	for _,input:=range []string{`{"version":99,"Version":1}`,`{"version":99,"verſion":1}`} { if _, err := RestoreStateCheckpoint([]byte(input)); !errors.Is(err, ErrInvalidCheckpoint) {
 		t.Fatalf("unsupported version hidden by case-variant duplicate: %v", err)
-	}
+	} }
 }
 
 func TestReviewStandaloneApprovedReceiptCannotClaimAgentApproval(t *testing.T) {

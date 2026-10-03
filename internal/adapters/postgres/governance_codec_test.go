@@ -298,6 +298,9 @@ func TestStoredPayloadsRejectMalformedEnvelopes(t *testing.T) {
 	}{
 		{"empty", nil}, {"object truncation", []byte(`{`)}, {"value truncation", []byte(`{"version":`)}, {"field truncation", []byte(`{"version":1,`)}, {"unclosed object", []byte(`{"version":1`)},
 		{"wrong object shape", []byte(`[]`)}, {"scalar", []byte(`1`)}, {"unknown field", []byte(`{"unsupported":1}`)},
+		{"truncated Unicode escape", []byte(`{"target":"\u12`)},
+		{"invalid Unicode hex", []byte(`{"target":"\uZZZZ"}`)},
+		{"invalid surrogate pair hex", []byte(`{"target":"\ud800\uZZZZ"}`)},
 		{"duplicate field", bytes.Replace(authority, []byte(`"version":1`), []byte(`"version":1,"version":1`), 1)},
 		{"wrong version type", bytes.Replace(authority, []byte(`"version":1`), []byte(`"version":"1"`), 1)},
 		{"wrong proposals shape", bytes.Replace(authority, []byte(`"proposals":[`), []byte(`"proposals":{`), 1)},

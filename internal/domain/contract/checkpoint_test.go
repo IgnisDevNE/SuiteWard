@@ -237,3 +237,47 @@ func TestCheckpointPreservesValidEscapedIdentities(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckpointRejectsNonrepresentableConsentIdentitiesWithoutMutation(t *testing.T) {
+	for _, duplicate := range []bool{true, false} {
+		name := "rejected original receipt"
+		if duplicate {
+			name = "duplicate operation alias"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := checkpointFixture(t)
+			original := StateCheckpoint{Proposal: fixture.Proposal, Consent: fixture.Consent}
+			before, err := EncodeStateCheckpoint(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			invalidID := string([]byte{'i', 0xff})
+			input := CommandInput{OperationID: "rejected-operation", SourceCommandID: "rejected-source", Actor: checkpointValue(NewPrincipal(PrincipalID(invalidID), Human)), Reference: fixture.Proposal.Current().Binding().Reference(), Carrier: fixture.Proposal.Current().Carrier(), Action: ApproveConsent, Order: 9}
+			if duplicate {
+				input.OperationID = OperationID(invalidID)
+				input.SourceCommandID = fixture.Command.SourceCommandID()
+				input.Actor = fixture.Command.Actor()
+				input.Reference = fixture.Command.Reference()
+			}
+			command := checkpointValue(NewCommand(input))
+			next, result, err := fixture.Consent.Apply(fixture.Proposal, fixture.Policy, command)
+			if err != nil || result.Duplicate() != duplicate {
+				t.Fatalf("constructor-valid consent command did not produce expected history: %+v, %v", result, err)
+			}
+			if duplicate {
+				if result.Command() != fixture.CommandResult.Command() || !reflect.DeepEqual(next.Results(), fixture.Consent.Results()) {
+					t.Fatal("duplicate alias changed the original immutable receipt")
+				}
+			} else if result.Outcome() != ConsentRejected || result.Reason() != ConsentReasonUnauthorized || len(next.Results()) != len(fixture.Consent.Results())+1 {
+				t.Fatalf("nonowner command did not retain its rejected receipt: %+v", result)
+			}
+			if encoded, err := EncodeStateCheckpoint(StateCheckpoint{Proposal: fixture.Proposal, Consent: next}); encoded != nil || !errors.Is(err, ErrInvalidCheckpoint) {
+				t.Fatalf("nonrepresentable consent identity silently normalized: %q, %v", encoded, err)
+			}
+			after, err := EncodeStateCheckpoint(original)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("failed encoding or immutable consent application changed original state: %v", err)
+			}
+		})
+	}
+}

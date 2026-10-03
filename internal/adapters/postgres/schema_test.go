@@ -15,7 +15,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/internal/dbgen"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 )
 
@@ -181,6 +183,35 @@ func seedSchemaHistory(t *testing.T, connection *pgx.Conn) {
 	schemaExec(t, transaction, "UPDATE suites SET current_version_id='version',authority_revision=authority_revision+1 WHERE suite_id='suite'")
 	if err := transaction.Commit(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPostgresGeneratedCAS(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	schemaExec(t, database.conn, "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','suite',0,'{}')")
+	queries := dbgen.New(database.conn)
+	arguments := dbgen.CASAuthorityParams{ProjectID: "project", SuiteID: "suite", ExpectedRevision: "0", NewRevision: "1", GovernancePayload: []byte(`{"next":true}`)}
+	rows, err := queries.CASAuthority(t.Context(), arguments)
+	if err != nil || rows != 1 {
+		t.Fatalf("exact nullable-baseline CAS changed %d rows, error %v; want one", rows, err)
+	}
+	rows, err = queries.CASAuthority(t.Context(), arguments)
+	if err != nil || rows != 0 {
+		t.Fatalf("stale revision CAS changed %d rows, error %v; want zero", rows, err)
+	}
+	arguments.ExpectedRevision = "1"
+	arguments.NewRevision = "2"
+	arguments.ExpectedCurrent = pgtype.Text{String: "wrong", Valid: true}
+	rows, err = queries.CASAuthority(t.Context(), arguments)
+	if err != nil || rows != 0 {
+		t.Fatalf("wrong canonical CAS changed %d rows, error %v; want zero", rows, err)
+	}
+	var revision, payload string
+	if err := database.conn.QueryRow(t.Context(), "SELECT authority_revision::text,governance_payload::text FROM suites WHERE project_id='project' AND suite_id='suite'").Scan(&revision, &payload); err != nil || revision != "1" || payload != `{"next": true}` {
+		t.Fatalf("CAS authority result revision=%q payload=%q error=%v", revision, payload, err)
 	}
 }
 

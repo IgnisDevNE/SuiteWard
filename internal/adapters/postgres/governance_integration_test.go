@@ -286,6 +286,16 @@ func TestPostgresPromotionsTranslateUniqueConflicts(t *testing.T) {
 	}
 }
 
+func TestPostgresGovernanceRejectsIncompleteMigrationSequence(t *testing.T) {
+	database:=newSchemaDatabase(t);if err:=migrations.UpTo(t.Context(),database.url,1);err!=nil{t.Fatal(err)};pool,err:=pgxpool.New(t.Context(),database.url);if err!=nil{t.Fatal(err)};defer pool.Close();store:=pgValue(postgres.NewStore(pool,&pgVerifier{}));fixture:=pgGovernanceFixture(t)
+	if err:=store.InitializeTrusted(t.Context(),fixture.authority);!errors.Is(err,postgres.ErrSchemaNotReady){t.Fatalf("migration1 accepted authority write without immutable/revision guards: %v",err)}
+	if pgCount(t,pool,"suites")!=0{t.Fatal("incomplete schema authority write left effects")}
+	if _,err:=store.Load(t.Context(),governance.ReadRequest{Reference:fixture.request.Reference});!errors.Is(err,postgres.ErrSchemaNotReady){t.Fatalf("incomplete schema load: %v",err)}
+	if err:=store.CommitConsent(t.Context(),governance.AuthorityFence{ProjectID:"project",SuiteID:"suite"},governance.ConsentWrite{Command:fixture.command});!errors.Is(err,postgres.ErrSchemaNotReady){t.Fatalf("incomplete schema consent: %v",err)}
+	if err:=store.CommitPromotion(t.Context(),governance.AuthorityFence{ProjectID:"project",SuiteID:"suite"},governance.PromotionWrite{Receipt:governance.PromotionReceipt{Identity:governance.PromotionIdentity{Kind:governance.OperationPromote,Request:fixture.request}}});!errors.Is(err,postgres.ErrSchemaNotReady){t.Fatalf("incomplete schema promotion: %v",err)}
+	if err:=migrations.Up(t.Context(),database.url);err!=nil{t.Fatal(err)};if err:=store.InitializeTrusted(t.Context(),fixture.authority);err!=nil{t.Fatalf("completed supported sequence remained unavailable: %v",err)}
+}
+
 type pgVerifier struct{ absent artifact.Digest }
 
 func (v *pgVerifier) Verify(_ context.Context, d artifact.Digest) error {

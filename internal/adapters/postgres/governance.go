@@ -23,6 +23,8 @@ type ArtifactVerifier interface {
 	Verify(context.Context, artifact.Digest) error
 }
 
+var ErrSchemaNotReady = errors.New("PostgreSQL governance schema not ready")
+
 type Store struct {
 	pool     *pgxpool.Pool
 	verifier ArtifactVerifier

@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 // StateCheckpoint carries supplied immutable facts for persistence. Restoration
@@ -66,6 +69,9 @@ func EncodeStateCheckpoint(state StateCheckpoint) ([]byte, error) {
 	if state.Command.OperationID() != "" {
 		data.Command = commandDataOf(state.Command)
 	}
+	if !validCheckpointStrings(reflect.ValueOf(data)) {
+		return nil, ErrInvalidCheckpoint
+	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidCheckpoint, err)
@@ -77,6 +83,9 @@ func EncodeStateCheckpoint(state StateCheckpoint) ([]byte, error) {
 }
 
 func RestoreStateCheckpoint(encoded []byte) (StateCheckpoint, error) {
+	if !utf8.Valid(encoded) {
+		return StateCheckpoint{}, ErrInvalidCheckpoint
+	}
 	if err := validateCheckpointJSON(encoded); err != nil {
 		return StateCheckpoint{}, fmt.Errorf("%w: %v", ErrInvalidCheckpoint, err)
 	}
@@ -97,6 +106,41 @@ func RestoreStateCheckpoint(encoded []byte) (StateCheckpoint, error) {
 		return StateCheckpoint{}, fmt.Errorf("%w: %v", ErrInvalidCheckpoint, err)
 	}
 	return state, nil
+}
+
+func validCheckpointStrings(value reflect.Value) bool {
+	if value.Type() == reflect.TypeFor[time.Time]() {
+		return true
+	}
+	switch value.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if value.IsNil() {
+			return true
+		}
+		return validCheckpointStrings(value.Elem())
+	case reflect.String:
+		return utf8.ValidString(value.String())
+	case reflect.Struct:
+		for i := 0; i < value.NumField(); i++ {
+			if !validCheckpointStrings(value.Field(i)) {
+				return false
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < value.Len(); i++ {
+			if !validCheckpointStrings(value.Index(i)) {
+				return false
+			}
+		}
+	case reflect.Map:
+		iterator := value.MapRange()
+		for iterator.Next() {
+			if !validCheckpointStrings(iterator.Key()) || !validCheckpointStrings(iterator.Value()) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validateCheckpointJSON(encoded []byte) error {

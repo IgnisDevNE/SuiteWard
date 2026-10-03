@@ -130,7 +130,11 @@ func checkpointJSONValue(decoder *json.Decoder, exactKeys bool) error {
 			rawName := key.(string)
 			name := rawName
 			if !exactKeys {
-				name = strings.ToLower(rawName)
+				for known := range keys {
+					if strings.EqualFold(known, rawName) {
+						return ErrInvalidCheckpoint
+					}
+				}
 			}
 			if keys[name] {
 				return ErrInvalidCheckpoint

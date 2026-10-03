@@ -281,3 +281,99 @@ func TestCheckpointRejectsNonrepresentableConsentIdentitiesWithoutMutation(t *te
 		})
 	}
 }
+
+func TestCheckpointClosedPendingTransferRoundTrip(t *testing.T) {
+	for _, formerIntegrated := range []bool{false, true} {
+		name := "former active"
+		if formerIntegrated {
+			name = "former integrated"
+		}
+		t.Run(name, func(t *testing.T) {
+			schedule, former, target := schedulingPair(t)
+			schedule = schedulingAdmit(t, schedulingAdmit(t, schedule, former), target)
+			if formerIntegrated {
+				schedule = schedulingObserve(t, schedule, former, ObserveIntegrated)
+			}
+			_, owner := schedulingPolicy(t)
+			command := schedulingCommand(t, owner, target.Current().Binding().Reference().ProposalID, target.Current().Carrier(), 1)
+			pending := schedulingRequest(t, schedule, command)
+			closed := schedulingObserve(t, pending, target, ObserveClosedUnmerged)
+			if closed.Generation() != pending.Generation() || closed.CanPromote(former, closed.Generation()) || closed.CanPromote(target, closed.Generation()) {
+				t.Fatal("target closure changed the active fence or completed priority transfer")
+			}
+			encoded, err := EncodeStateCheckpoint(StateCheckpoint{Scheduling: closed})
+			if err != nil {
+				t.Fatalf("encode legal closed pending target: %v", err)
+			}
+			restored, err := RestoreStateCheckpoint(encoded)
+			if err != nil || !reflect.DeepEqual(restored.Scheduling, closed) {
+				t.Fatalf("closed pending transfer lost immutable facts: %+v, %v", restored.Scheduling, err)
+			}
+			if request, present := restored.Scheduling.PendingTransfer(); !present || request != command {
+				t.Fatal("restoration lost the exact pending transfer")
+			}
+			unresolved := schedulingResolve(t, restored.Scheduling, TransferUnresolved)
+			if !reflect.DeepEqual(unresolved, closed) {
+				t.Fatal("unresolved reconciliation changed closed pending state")
+			}
+			withdrawn, err := restored.Scheduling.ResolveTransfer(command.OperationID(), restored.Scheduling.Generation(), FormerUnmergedWithdrawn)
+			if !errors.Is(err, ErrScheduleConflict) || !reflect.DeepEqual(withdrawn, closed) {
+				t.Fatalf("closed target became active through withdrawal: %v", err)
+			}
+			merged := schedulingResolve(t, restored.Scheduling, FormerMerged)
+			want := schedulingResolve(t, closed, FormerMerged)
+			active, present := merged.Active()
+			if !reflect.DeepEqual(merged, want) || !present || active.ProposalID() != former.Current().Binding().Reference().ProposalID || active.State() != ScheduleIntegratedPending || merged.Entries()[1].State() != ScheduleClosed || !merged.CanPromote(former, merged.Generation()) || merged.CanPromote(target, merged.Generation()) {
+				t.Fatal("restoration prevented reconciliation or activated the closed target")
+			}
+			if _, present := merged.PendingTransfer(); present {
+				t.Fatal("completed former-merge reconciliation remains pending")
+			}
+			encoded, err = EncodeStateCheckpoint(StateCheckpoint{Scheduling: merged})
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, err := RestoreStateCheckpoint(encoded)
+			if err != nil || !reflect.DeepEqual(after.Scheduling, merged) {
+				t.Fatalf("reconciled transfer did not remain durable: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckpointRejectsInvalidPendingTransferContext(t *testing.T) {
+	schedule, former, target := schedulingPair(t)
+	schedule = schedulingAdmit(t, schedulingAdmit(t, schedule, former), target)
+	_, owner := schedulingPolicy(t)
+	command := schedulingCommand(t, owner, target.Current().Binding().Reference().ProposalID, target.Current().Carrier(), 1)
+	pending := schedulingRequest(t, schedule, command)
+	encoded, err := EncodeStateCheckpoint(StateCheckpoint{Scheduling: pending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := checkpointJSONChange(t, encoded, "scheduling/Entries/1/State", ScheduleClosed)
+	for path, value := range map[string]any{
+		"scheduling/Pending/Project": "foreign", "scheduling/Pending/Suite": "foreign", "scheduling/Pending/Proposal": "unknown", "scheduling/Pending/Carrier": "unknown",
+		"scheduling/Pending/OperationID": "unrecorded", "scheduling/Pending/Order": 2,
+	} {
+		t.Run(path, func(t *testing.T) {
+			if _, err := RestoreStateCheckpoint(checkpointJSONChange(t, closed, path, value)); !errors.Is(err, ErrInvalidCheckpoint) {
+				t.Fatalf("invalid closed pending context accepted: %v", err)
+			}
+		})
+	}
+	for _, state := range []ScheduleEntryState{ScheduleActive, ScheduleIntegratedPending, SchedulePromoted} {
+		formerState := ScheduleWaiting
+		if state == SchedulePromoted {
+			formerState = ScheduleActive
+		}
+		changed := checkpointJSONChange(t, encoded, "scheduling/Entries/0/State", formerState)
+		changed = checkpointJSONChange(t, changed, "scheduling/Entries/1/State", state)
+		if _, err := RestoreStateCheckpoint(changed); !errors.Is(err, ErrInvalidCheckpoint) {
+			t.Fatalf("illegal pending target state %v accepted: %v", state, err)
+		}
+	}
+	if _, err := RestoreStateCheckpoint(checkpointJSONChange(t, closed, "scheduling/Entries/0/State", ScheduleWaiting)); !errors.Is(err, ErrInvalidCheckpoint) {
+		t.Fatalf("closed pending transfer without former active entry accepted: %v", err)
+	}
+}

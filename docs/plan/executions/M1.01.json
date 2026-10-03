@@ -1,0 +1,606 @@
+{
+  "schema_version": 1,
+  "phase": "M1.01",
+  "tasks": [
+    {
+      "task_id": "M1.01-C0",
+      "mode": "not_applicable",
+      "files": [
+        "docs/contracts/m1-01.md",
+        "docs/decisions/0026-versioned-postgresql-migrations.md",
+        "docs/decisions/README.md",
+        "docs/plan/backlog.json",
+        "docs/plan/decisions.md",
+        "docs/plan/phases/M1.01.md"
+      ],
+      "cycles": [],
+      "reason": "Frozen consumed SQL identity, immutable authority and history constraints, atomic compare-and-swap and receipt semantics, migration ordering and immutable content-addressed artifact boundaries. Recorded the authorized integrator migration choice and coordinated ownership. Documentation, ADR and planning changes only; no executable behavior.",
+      "review": {
+        "author": "root",
+        "reviewer": "m101_schema, m101_postgres, m101_artifact",
+        "outcome": "accepted",
+        "notes": "Root reported all three affected consumers independently accepted C0 and froze checkpoint 4894fb2356844e673944efb93355b4017e460f9f before dependent implementation. Accepted Goose v3.28.0, pgx v5.11.0 and existing sqlc v1.31.1, global operation/source identities, reciprocal deferred promotion effects, forward-only migration discipline and scoped adapter ownership. Behavioral implementation and real adapter evidence belong to the required downstream tasks."
+      }
+    },
+    {
+      "task_id": "M1.01-A",
+      "mode": "required",
+      "files": [
+        "go.mod",
+        "go.sum",
+        "internal/adapters/postgres/internal/dbgen/db.go",
+        "internal/adapters/postgres/internal/dbgen/models.go",
+        "internal/adapters/postgres/internal/dbgen/persistence.sql.go",
+        "internal/adapters/postgres/migrations/00001_storage.sql",
+        "internal/adapters/postgres/migrations/00002_immutable_history.sql",
+        "internal/adapters/postgres/migrations/migrate.go",
+        "internal/adapters/postgres/migrations/migrate_test.go",
+        "internal/adapters/postgres/queries/persistence.sql",
+        "internal/adapters/postgres/schema_test.go",
+        "sqlc.yaml"
+      ],
+      "cycles": [
+        {
+          "scenario": "Fresh PostgreSQL migrations create the required relations and enforce identities, scope, payload, digest, and uint64 revision constraints.",
+          "red": {
+            "revision": "2961e030e55495a795322893dca7421177cdb79f",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresSchemaFreshConstraints -count=1",
+            "exit_code": 1,
+            "output": "TestPostgresSchemaFreshConstraints: fresh migration created 0 required tables; want 8"
+          },
+          "green": {
+            "revision": "daa0a67a17bb332c32012b9dfa35e67be1192253",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresSchemaFreshConstraints -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
+          },
+          "refactor": "No production refactoring needed. Supplemental regression checks cover generated query round trips, deferred effect rollback, populated upgrade failure, invalid configuration, cancellation, and formatting; all applicable tests passed at the final GREEN revision."
+        },
+        {
+          "scenario": "Migration application is serialized, repeatable, transactionally rolls back a failed body, and rejects a downgrade.",
+          "red": {
+            "revision": "d8f3c481efa42592eeb6bf2a7e2a4d688f77bfe1",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresMigrationsLifecycle -count=1",
+            "exit_code": 1,
+            "output": "conflicting preexisting relation did not reject migration; downgrade must fail closed; got <nil>; concurrent migration did not establish version history"
+          },
+          "green": {
+            "revision": "daa0a67a17bb332c32012b9dfa35e67be1192253",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresMigrationsLifecycle -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
+          },
+          "refactor": "No production refactoring needed. Supplemental regression checks cover generated query round trips, deferred effect rollback, populated upgrade failure, invalid configuration, cancellation, and formatting; all applicable tests passed at the final GREEN revision."
+        },
+        {
+          "scenario": "A populated migration-1 installation upgrades without lost history and immutable rows reject UPDATE, DELETE, and TRUNCATE; every Suite mutation advances its exact revision.",
+          "red": {
+            "revision": "66da291cb695f1968649d60c74b1cbac498de5ba",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresSchemaImmutableHistory -count=1",
+            "exit_code": 1,
+            "output": "immutable history mutation was accepted: UPDATE suite_versions SET project_id=project_id; expected PostgreSQL 23514/suites_revision_advance rejection; got <nil>; populated migration 2 cannot downgrade: <nil>"
+          },
+          "green": {
+            "revision": "daa0a67a17bb332c32012b9dfa35e67be1192253",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresSchemaImmutableHistory -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres 0.168s"
+          },
+          "refactor": "No production refactoring needed; final integration test formatting and supplemental scope/kind/transactional rollback scenarios passed."
+        },
+        {
+          "scenario": "Generated nullable-baseline CAS changes exactly one intended authority row and stale revision or wrong canonical pointer changes zero rows.",
+          "red": {
+            "revision": "a92935bd0c4bca1de0404a66184c897178b12f58",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresGeneratedCAS -count=1",
+            "exit_code": 1,
+            "output": "exact nullable-baseline CAS changed 0 rows, error <nil>; want one"
+          },
+          "green": {
+            "revision": "daa0a67a17bb332c32012b9dfa35e67be1192253",
+            "command": "./scripts/dev.ps1 go test -tags=integration ./internal/adapters/postgres -run TestPostgresGeneratedCAS -count=1",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres 0.137s"
+          },
+          "refactor": "Temporary executable API declarations were replaced by sqlc 1.31.1 output. All generated methods are exercised by real PostgreSQL round-trip regression checks; regeneration leaves a clean diff."
+        }
+      ],
+      "review": {
+        "author": "m101_schema",
+        "reviewer": "phase_integrator",
+        "outcome": "accepted",
+        "notes": "Root independently inspected migrations 1/2, immutable history guards, fenced CAS, relational constraints and sqlc. Replayed all four RED checkpoints against its own PostgreSQL 18.6 and each matching GREEN plus the full real integration suite; all expected failures and final successful results reproduced. Final checkpoint daa0a67 accepted."
+      }
+    },
+    {
+      "task_id": "M1.01-B",
+      "mode": "required",
+      "files": [
+        "internal/domain/artifact/digest.go",
+        "internal/domain/artifact/digest_test.go",
+        "internal/domain/contract/checkpoint.go",
+        "internal/domain/contract/checkpoint_values.go",
+        "internal/domain/contract/checkpoint_governance.go",
+        "internal/domain/contract/checkpoint_test.go",
+        "internal/domain/contract/checkpoint_review_test.go",
+        "internal/domain/contract/checkpoint_coverage_test.go",
+        "internal/adapters/postgres/governance.go",
+        "internal/adapters/postgres/governance_codec.go",
+        "internal/adapters/postgres/governance_integration_test.go",
+        "internal/adapters/postgres/governance_codec_test.go",
+        "internal/adapters/postgres/promotion.go",
+        "internal/adapters/postgres/transaction.go",
+        "internal/adapters/postgres/transaction_validation_test.go"
+      ],
+      "cycles": [
+        {
+          "scenario": "Exact qualified digests and immutable domain checkpoints preserve historical facts and aliases",
+          "red": {
+            "revision": "661561f54717ff8900f5a3a246ae98a0f4cb4335",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/artifact ./internal/domain/contract -run 'TestParseDigestRoundTripAndRejectsNoncanonicalIdentity|TestStateCheckpoint' -count=1",
+            "exit_code": 1,
+            "output": "valid digest did not reconstruct: absent content digest; encode usable historical state: invalid domain checkpoint"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/artifact ./internal/domain/contract -run 'TestParseDigestRoundTripAndRejectsNoncanonicalIdentity|TestStateCheckpoint' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 3bc0638b1d04509e69772d9c6ad5e33a0ae564bf. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Duplicate checkpoint JSON keys are rejected",
+          "red": {
+            "revision": "b2b9884140fe9f7639f2c7104c9d5c87c041bc99",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestStateCheckpoint' -count=1",
+            "exit_code": 1,
+            "output": "accepted malformed checkpoint {\"version\":1,\"version\":1}: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestStateCheckpoint' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 04cd5a140298182217a6602bbb90e92c7edcfa26. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Paired checkpoint proposal and consent scopes must match",
+          "red": {
+            "revision": "12fdede087f6554c35345bca76e37b6c2dd8138c",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestStateCheckpointRejectsPairedForeignConsent' -count=1",
+            "exit_code": 1,
+            "output": "paired foreign consent accepted: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestStateCheckpointRejectsPairedForeignConsent' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "DELAYED RED archive: original compiled failure was observed before implementing the scope check, but the PowerShell throw skipped the trailing Git checkpoint command. After GREEN d278037 the author archived the original pre-fix tree plus exact original added test via a temporary Git index without mutating production, then preserved ancestry with merge 2c7e7b. Independent replay proves the meaningful RED and preserved ancestry, not original observation timing; that timing relies on author observation/log. Archive created 22:13:13-0300 after fix d278037 at 22:10:29-0300. This is not a timely RED checkpoint. Original observed GREEN checkpoint: 2c7e7b53f6b82397c3a2dfa6e1739cd3c446dc51. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Paired consent bindings and carriers match included immutable proposal history",
+          "red": {
+            "revision": "e888ec6a4223d5b3878bc36424565160fd7e2671",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestStateCheckpointRejectsPairedConsentBindingMismatch' -count=1",
+            "exit_code": 1,
+            "output": "paired historical fact mismatch accepted (consent/Results/0/Command/Carrier): <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestStateCheckpointRejectsPairedConsentBindingMismatch' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 0f63f18ad6994b55ee6248833ceeb0f3368fcd73. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Historical successful actors and receipt orders remain valid; semantic field aliases cannot hide unsupported versions",
+          "red": {
+            "revision": "8a74ebafe380de53f1dbebc8095f0b52e7721e9c",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestReview' -count=1",
+            "exit_code": 1,
+            "output": "unsupported version hidden by case-variant duplicate; approved receipt accepted restricted agent actor; accepted consent/priority reused rejected command order"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestReview' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 0391fbcb40f0592c4d736bccb46b7d941a9ba04e. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Covered input dictionary identities retain case-sensitive keys",
+          "red": {
+            "revision": "a82207600fd8bc4c3ab617ee4d4c4c6c2cb00f6f",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestIndependentCoveredInputKeysRemainCaseSensitive' -count=1",
+            "exit_code": 1,
+            "output": "valid case-distinct dictionary keys rejected: invalid domain checkpoint"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestIndependentCoveredInputKeysRemainCaseSensitive' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 5b893da659c9dce3cf6c9ff641e7ae296fe5ad01. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Unicode semantic field aliases cannot hide an unsupported checkpoint version",
+          "red": {
+            "revision": "3f679f23b0d26a63d20958815d133872ef460bab",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestReviewAmbiguousCaseVariantVersion' -count=1",
+            "exit_code": 1,
+            "output": "unsupported version hidden by case-variant duplicate: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run 'TestReviewAmbiguousCaseVariantVersion' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 779304c2d5122eedf9bf05670d39fe6135247648. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Real PostgreSQL initialization, application consent/promotion, exact replay and immutable history are durable",
+          "red": {
+            "revision": "3f3bd8f3d7587bab21f178c7b48436f6f93d2e93",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresGovernanceCommitsAndReplaysExactOutcomes' -count=1",
+            "exit_code": 1,
+            "output": "initialize valid unbaselined authority: governance aggregate not found"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresGovernanceCommitsAndReplaysExactOutcomes' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: c9639d4c06b805d311bf1e299dd7ab6606d4955a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Durable receipts bind the reserved operation while races, SQL failures, revocation and missing bytes preserve authority",
+          "red": {
+            "revision": "9a8f7d97c5a08fc2a2ec13b4df3fca59e6ec50d1",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgres(Promotion|Revalidates|RejectsReceipt|Content)' -count=1",
+            "exit_code": 1,
+            "output": "unbound copied receipt accepted as operation: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgres(Promotion|Revalidates|RejectsReceipt|Content)' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: b7138cc7d111d70cabfd99f66f96a6466560ef58. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Real promotion version/reference uniqueness failures retain stable conflict categories and rollback",
+          "red": {
+            "revision": "717406c8ac4d2e20090cf331c7b2ff5d82a7e6c9",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresPromotionsTranslateUniqueConflicts' -count=1",
+            "exit_code": 1,
+            "output": "duplicate key promotions_version_key/promotions_reference_key SQLSTATE23505 returned storage error instead of ErrVersionConflict"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresPromotionsTranslateUniqueConflicts' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 13b4a934f35471d11653ce4a10e52059ca277bf7. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Governance operations fail closed before the complete supported migration sequence",
+          "red": {
+            "revision": "f490cefa1e4c4acc65f37b1f73c2ce79cedc2cf5",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresGovernanceRejectsIncompleteMigrationSequence' -count=1",
+            "exit_code": 1,
+            "output": "migration1 accepted authority write without immutable/revision guards: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresGovernanceRejectsIncompleteMigrationSequence' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 157905d8f1c1e35e026f6dacbb72f0b73750841a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Trusted initialization includes complete scoped consent, scheduling and assessments",
+          "red": {
+            "revision": "23315bb930e3411ce30197cdd8d0fe89d2a4ff66",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresTrustedInitializationRequiresCompleteScopedFacts' -count=1",
+            "exit_code": 1,
+            "output": "incomplete trusted facts accepted: absent consent; unknown scheduled proposal; unknown assessed proposal"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test -tags integration ./internal/adapters/postgres -run 'TestPostgresTrustedInitializationRequiresCompleteScopedFacts' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: f32e93b4f893281796fc0e8dd6826f4a2de18a6f. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Private PostgreSQL envelopes reject exact, case and Unicode field aliases hiding unsupported versions",
+          "red": {
+            "revision": "091bd79b086422451b934caf0da99b5e904678d2",
+            "command": "./scripts/dev.ps1 go test ./internal/adapters/postgres -run TestStoredAuthorityRejectsVersionAliases -count=1",
+            "exit_code": 1,
+            "output": "unsupported authority version hidden by Version/VERSION/verſion alias was accepted: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/adapters/postgres -run TestStoredAuthorityRejectsVersionAliases -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 58eac15d623b3915079ecd2eefe38e0c1ff45436. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Checkpoint persistence rejects invalid UTF-8 identities and covered inputs instead of silently normalizing them",
+          "red": {
+            "revision": "91e5be5be6688118c7c96a4d8a49d41b0d4104a9",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run TestCheckpointRejectsLossyIdentityAndCoveredInputEncoding -count=1",
+            "exit_code": 1,
+            "output": "unrepresentable covered-input bytes were silently normalized: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run TestCheckpointRejectsLossyIdentityAndCoveredInputEncoding -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No refactoring needed. Original observed GREEN checkpoint: 7e0c35b231a472bbfd60b5afe3732ae58640fb0a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Stored outer target, reserved operation and evaluated-policy identities reject lossy UTF-8 encoding and decoding",
+          "red": {
+            "revision": "5b903f833c77de0891c2089b443a3fe69f922b2c",
+            "command": "./scripts/dev.ps1 go test ./internal/adapters/postgres -run 'TestStored.*(Lossy|InvalidUTF8)' -count=1",
+            "exit_code": 1,
+            "output": "target, reserved alias operation and evaluated policy invalid UTF-8 silently changed to replacement characters; raw invalid UTF-8 decoded without rejection"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/adapters/postgres -run 'TestStored.*(Lossy|InvalidUTF8)' -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "Later optional private codec refactor82c9d0c treats only consumed []RawMessage slices as opaque and retains actual domain restoration; TestStored rerun passed. Original observed GREEN checkpoint: 4aa2e6ce19c068424bf890c69eb374e2a08a99cb. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Checkpoint restoration rejects malformed surrogate escapes without changing valid Unicode or literal escape identities",
+          "red": {
+            "revision": "38937e3053862d745bd29c8e6dd232ac0c2afbde",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run TestCheckpointRejectsInvalidSurrogateEscapes -count=1",
+            "exit_code": 1,
+            "output": "lone high/low, incomplete and repeated-high surrogate identities silently normalized: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/domain/contract -run TestCheckpointRejectsInvalidSurrogateEscapes -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "No refactoring needed; valid controls are supplemental postimplementation characterization, not manufactured RED. Original observed GREEN checkpoint: 213923b6268f76c0f97606aea26be65b648284a0. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        },
+        {
+          "scenario": "Stored outer target and policy identities reject malformed surrogate escapes while preserving valid pairs and literal text",
+          "red": {
+            "revision": "205b071aae04dec745c78d2c27dabf85f82b9e84",
+            "command": "./scripts/dev.ps1 go test ./internal/adapters/postgres -run TestStoredPayloadsRejectUnpairedSurrogateEscapes -count=1",
+            "exit_code": 1,
+            "output": "unpaired high/low and malformed surrogate pair targets and evaluated policy identities silently replaced: <nil>"
+          },
+          "green": {
+            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "command": "./scripts/dev.ps1 go test ./internal/adapters/postgres -run TestStoredPayloadsRejectUnpairedSurrogateEscapes -count=1",
+            "exit_code": 0,
+            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+          },
+          "refactor": "Optional82c9d0c narrows private codec slice handling to actual []RawMessage consumers, retaining strict domain restore; TestStored passed. Original observed GREEN checkpoint: 101d5f75bda6ef810d51359283526a4deb9c782c. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+        }
+      ],
+      "review": {
+        "author": "m101_postgres, m101_schema, m101_artifact",
+        "reviewer": "root, m101_artifact, m101_schema (cross-reviewed scopes)",
+        "outcome": "accepted",
+        "notes": "Root independently replayed four initial real PostgreSQL RED/GREEN cycles and accepted final Store locks, authority redecisions, exact receipt/source bindings, raw-content verification and statement/deferred-commit rollback through34ae50cf5743c3aa0a1910492af2088921f3cd57. C independently replayed domain defect cycles and accepted final domain restoration, copy/dictionary identity, UTF-8/Unicode controls and test-only supplements through34ae; A independently replayed three outer-codec defect cycles and accepted final strict codec plus equivalent consumed-shape refactor82c9d0c1d851b83e1ea2a00992eb73f354e3fd04. B independently reviewed separately delegated A/C characterization commits before preserving their ancestry. All17 matching GREEN commands rerun at34ae and final15files bind there; full own checks/real PostgreSQL passed. Root actual composed Linux race/PostgreSQL/filesystem suite, generation and vulnerability checks passed atf746ac6203d31d1b097934386abfecf7d70dd814. IMPORTANT: paired-scope RED12fdede087f6554c35345bca76e37b6c2dd8138c was archived after the implementation fix; preserved pre-fix production plus original test independently reproduces the behavioral difference, but does not prove the timing of the author-reported original preimplementation observation. No timely archival claim or retrospective TDD certification is made. Missing priority command characterization rejects a zero-value principal; it does not cover the private nil receiver guard."
+      }
+    },
+    {
+      "task_id": "M1.01-C",
+      "mode": "required",
+      "files": [
+        "internal/adapters/filesystem/artifact.go",
+        "internal/adapters/filesystem/artifact_test.go",
+        "internal/adapters/filesystem/artifact_failure_test.go"
+      ],
+      "cycles": [
+        {
+          "scenario": "Exact content identity and immutable real-filesystem publication preserve bytes under duplicate/concurrent puts, reject mismatch/corruption, and hide/clean interrupted partial stages.",
+          "red": {
+            "revision": "4ac04704601bd5c465f4656e8e125cf3f2fd1245",
+            "command": "./scripts/dev.ps1 go test -count=1 ./internal/adapters/filesystem",
+            "exit_code": 1,
+            "output": "Tests compiled. TestArtifactsRoundTrip: Put verified bytes: artifact publication is not implemented. TestPutRejectsInvalidAndMismatchedIdentity: absent digest returned unimplemented rather than invalid digest. Concurrent puts did not publish the expected object. TestPartialWriteIsInvisibleAndAborted: Put did not stage the partial source. TestMissingAndCorruptObjectsPreventSuccess: missing verification returned unimplemented rather than fs.ErrNotExist. FAIL."
+          },
+          "green": {
+            "revision": "b65ee37b7a1bda354cc208971ff6ec48e73ad964",
+            "command": "./scripts/dev.ps1 go test -count=1 ./internal/adapters/filesystem",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem 0.384s; ./scripts/dev.ps1 go test -count=1 ./... also passed all four Go packages."
+          },
+          "refactor": "No refactoring needed in the first cycle. A subsequent cycle completes root, cancellation and operational-failure protections."
+        },
+        {
+          "scenario": "Unsafe roots/objects, cooperative cancellation, and write/flush/close/publication/cleanup/read failures cannot yield unverified success or replace immutable bytes; postpublication cleanup failures preserve causes and permit safe retry.",
+          "red": {
+            "revision": "3a8c51fef1cd629c973afb8e084103e175726248",
+            "command": "./scripts/dev.ps1 go test -count=1 ./internal/adapters/filesystem -run 'Test(NewStore|Nonregular|Cancellation|PutOperational|SyncAndClose|Cleanup|ReadAndVerify|NilSource)'",
+            "exit_code": 1,
+            "output": "Tests compiled. Blank root accepted. Directory objects returned an operational error rather than corruption. Cancelled Put/Read succeeded; cancellation at EOF/close published. Sync failures were ignored and publication preceded flush. Cleanup failures were hidden/lost. Lstat failure was ignored. Nil source panicked instead of returning invalid input. FAIL. Two actual symlink cases skipped for Windows ERROR_PRIVILEGE_NOT_HELD; this host limitation is not RED."
+          },
+          "green": {
+            "revision": "ca625acfb16bc812225e757e6ddbcb14cac38214",
+            "command": "./scripts/dev.ps1 go test -count=1 ./internal/adapters/filesystem -run 'Test(NewStore|Nonregular|Cancellation|PutOperational|SyncAndClose|Cleanup|ReadAndVerify|NilSource)'",
+            "exit_code": 0,
+            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem 0.314s. Full filesystem suite with real file operations and per-store fault wrappers passed; 98.8% statement coverage, with Put/Read/Verify/contextReader at 100%. Two Windows symlink cases skip because host privilege is unavailable."
+          },
+          "refactor": "No production refactoring needed. Strengthened the existing real-FS race test by holding every independently staged writer at the link boundary before releasing all publishers together, without sleeps. Added invalid-root and between-chunk cancellation regression cases; reran both the focused command and entire filesystem suite at the final GREEN."
+        }
+      ],
+      "review": {
+        "author": "m101_artifact",
+        "reviewer": "root_integrator",
+        "outcome": "accepted",
+        "notes": "Root integrator independently replayed both compiled RED/GREEN pairs, reviewed the final source and real-filesystem/fault cases at ca625acfb16bc812225e757e6ddbcb14cac38214, and reported no findings. Local complete checks pass at that exact revision. Actual Linux symlink/race verification remains integrator-owned and is not claimed from Windows skips. Root subsequently reported actual owned Linux/race verification with both symlink cases passing and no skips, resolving the local Windows privilege limitation; this evidence was run by the integrator."
+      }
+    },
+    {
+      "task_id": "M1.01-I",
+      "mode": "required",
+      "files": [
+        "docs/verification/m1-01.md",
+        "docs/plan/executions/M1.01.json",
+        "docs/plan/executions/M1.01.md",
+        "docs/ci-and-coverage.md",
+        "docs/local-development.md",
+        "internal/adapters/postgres/integration_test.go",
+        "scripts/check-persistence.ps1",
+        "scripts/test-persistence.ps1",
+        "scripts/check-foundation.ps1",
+        "scripts/check-go.ps1",
+        "scripts/test-go.ps1",
+        "scripts/test-ci.ps1",
+        "scripts/dev.ps1",
+        ".github/workflows/ci.yml"
+      ],
+      "cycles": [
+        {
+          "green": {
+            "output": "Same recorded command passed: Go10, persistence19 and CI48 meaningful infrastructure checks at the final owned-file checkpoint.",
+            "revision": "669092de5d29b3ac8035b2b912ba8857d9e9a40c",
+            "exit_code": 0,
+            "command": "./scripts/test-go.ps1"
+          },
+          "refactor": "No production refactoring beyond the reviewed corrections. Aggregate real PostgreSQL/filesystem scenarios verify existing implemented behavior; their initial compilation correction is not RED. All original matching commands rerun at this final checkpoint, plus separate real generation/adapter checks.",
+          "scenario": "Fail closed when required real PostgreSQL verification has no database identity and retain integration tags in coverage.",
+          "red": {
+            "output": "Required PostgreSQL verification ran without a connection instead of failing closed.",
+            "revision": "2aa80b33aa6c9d97cafde5dcc06bab0ed49938af",
+            "exit_code": 1,
+            "command": "./scripts/test-go.ps1"
+          }
+        },
+        {
+          "green": {
+            "output": "Same recorded command passed: Go10, persistence19 and CI48 meaningful infrastructure checks at the final owned-file checkpoint.",
+            "revision": "669092de5d29b3ac8035b2b912ba8857d9e9a40c",
+            "exit_code": 0,
+            "command": "./scripts/test-persistence.ps1"
+          },
+          "refactor": "No production refactoring beyond the reviewed corrections. Aggregate real PostgreSQL/filesystem scenarios verify existing implemented behavior; their initial compilation correction is not RED. All original matching commands rerun at this final checkpoint, plus separate real generation/adapter checks.",
+          "scenario": "Fresh generation rejects changed, added, removed, empty, malformed or orphan output without mutating versioned generated files.",
+          "red": {
+            "output": "Generation freshness accepted changed generated content. Initial RED42f88375e727018f718144fc0816322542edfa36 also preserved; supplemental RED adds actual private-generation fixtures before implementation.",
+            "revision": "dc9c0404fac0e3fe9c4703b87e1cdfe3a91bb547",
+            "exit_code": 1,
+            "command": "./scripts/test-persistence.ps1"
+          }
+        },
+        {
+          "green": {
+            "output": "Same recorded command passed: Go10, persistence19 and CI48 meaningful infrastructure checks at the final owned-file checkpoint.",
+            "revision": "669092de5d29b3ac8035b2b912ba8857d9e9a40c",
+            "exit_code": 0,
+            "command": "./scripts/test-persistence.ps1"
+          },
+          "refactor": "No production refactoring beyond the reviewed corrections. Aggregate real PostgreSQL/filesystem scenarios verify existing implemented behavior; their initial compilation correction is not RED. All original matching commands rerun at this final checkpoint, plus separate real generation/adapter checks.",
+          "scenario": "Select only this checkout database and restore ambient process state after success or failure; reject blank or absent owned identity.",
+          "red": {
+            "output": "Persistence did not select its own checkout database.",
+            "revision": "b0be6bd03b5f2ccbb6b3a996bb297aaac24c0088",
+            "exit_code": 1,
+            "command": "./scripts/test-persistence.ps1"
+          }
+        },
+        {
+          "green": {
+            "output": "Same recorded command passed: Go10, persistence19 and CI48 meaningful infrastructure checks at the final owned-file checkpoint.",
+            "revision": "669092de5d29b3ac8035b2b912ba8857d9e9a40c",
+            "exit_code": 0,
+            "command": "./scripts/test-ci.ps1"
+          },
+          "refactor": "No production refactoring beyond the reviewed corrections. Aggregate real PostgreSQL/filesystem scenarios verify existing implemented behavior; their initial compilation correction is not RED. All original matching commands rerun at this final checkpoint, plus separate real generation/adapter checks.",
+          "scenario": "Required CI coverage uses a healthy pinned real PostgreSQL service, integration-tagged race tests and complete fresh generation on all Go runners.",
+          "red": {
+            "output": "Required real PostgreSQL coverage verification is absent: services:",
+            "revision": "21c91d9bc79d1158696668becae5ea604acb8822",
+            "exit_code": 1,
+            "command": "./scripts/test-ci.ps1"
+          }
+        },
+        {
+          "green": {
+            "output": "Same recorded command passed: Go10, persistence19 and CI48 meaningful infrastructure checks at the final owned-file checkpoint.",
+            "revision": "669092de5d29b3ac8035b2b912ba8857d9e9a40c",
+            "exit_code": 0,
+            "command": "./scripts/test-persistence.ps1"
+          },
+          "refactor": "No production refactoring beyond the reviewed corrections. Aggregate real PostgreSQL/filesystem scenarios verify existing implemented behavior; their initial compilation correction is not RED. All original matching commands rerun at this final checkpoint, plus separate real generation/adapter checks.",
+          "scenario": "Complete generated-file inventory uses exact case-sensitive path identity.",
+          "red": {
+            "output": "Generation freshness accepted case-only file identity change.",
+            "revision": "2ca7d7191e5b130227e4c046164e28d095ae3e44",
+            "exit_code": 1,
+            "command": "./scripts/test-persistence.ps1"
+          }
+        },
+        {
+          "green": {
+            "output": "Same recorded command passed: Go10, persistence19 and CI48 meaningful infrastructure checks at the final owned-file checkpoint.",
+            "revision": "669092de5d29b3ac8035b2b912ba8857d9e9a40c",
+            "exit_code": 0,
+            "command": "./scripts/test-persistence.ps1"
+          },
+          "refactor": "No production refactoring beyond the reviewed corrections. Aggregate real PostgreSQL/filesystem scenarios verify existing implemented behavior; their initial compilation correction is not RED. All original matching commands rerun at this final checkpoint, plus separate real generation/adapter checks.",
+          "scenario": "Private sqlc regeneration uses portable relative output and schema/query paths while preserving tracked baseline.",
+          "red": {
+            "output": "Staged sqlc output must use a portable relative path within its private directory.",
+            "revision": "dded835518f04c7829cb7e061b20616794a63d87",
+            "exit_code": 1,
+            "command": "./scripts/test-persistence.ps1"
+          }
+        },
+        {
+          "green": {
+            "output": "Same recorded command passed: Go10, persistence19 and CI48 meaningful infrastructure checks at the final owned-file checkpoint.",
+            "revision": "669092de5d29b3ac8035b2b912ba8857d9e9a40c",
+            "exit_code": 0,
+            "command": "./scripts/test-go.ps1"
+          },
+          "refactor": "No production refactoring beyond the reviewed corrections. Aggregate real PostgreSQL/filesystem scenarios verify existing implemented behavior; their initial compilation correction is not RED. All original matching commands rerun at this final checkpoint, plus separate real generation/adapter checks.",
+          "scenario": "Integration list, vet and build receive the complete build tag as one native argument.",
+          "red": {
+            "output": "Integration list must receive the complete build tag as one argument.",
+            "revision": "fe1631eee2c67cf618d93add0e437fd9b4712a55",
+            "exit_code": 1,
+            "command": "./scripts/test-go.ps1"
+          }
+        }
+      ],
+      "review": {
+        "reviewer": "m101_schema",
+        "author": "root",
+        "notes": "m101_schema independently replayed every original infrastructure RED/GREEN transition, reviewed final scripts, verified real clean sqlc generation and independently replayed all composed real adapters at669092de5d29b3ac8035b2b912ba8857d9e9a40c, including healthy-current-v2/original-v1 corruption distinction. Accepted without remaining findings. Aggregate tests verify existing implementation; no invented RED or new adapter implementation by I.",
+        "outcome": "accepted"
+      }
+    }
+  ]
+}

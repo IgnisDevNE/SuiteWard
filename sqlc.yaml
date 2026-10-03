@@ -1,0 +1,11 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "internal/adapters/postgres/migrations"
+    queries: "internal/adapters/postgres/queries"
+    gen:
+      go:
+        package: "dbgen"
+        out: "internal/adapters/postgres/internal/dbgen"
+        sql_package: "pgx/v5"
+        emit_empty_slices: true

@@ -144,4 +144,17 @@ foreach ($case in @(
     if ($passed -ne $case.Pass) { throw "Coverage policy changed: $($case.Name); expected pass=$($case.Pass), actual=$passed." }
     $checks++
 }
+$workflow=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/ci.yml')).Replace("`r",'')
+$coverageJob=[regex]::Match($workflow,'(?ms)^  coverage:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
+foreach($required in @('services:', 'postgres:', 'postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722', 'pg_isready', 'SUITEWARD_TEST_DATABASE_URL:', './scripts/check-go.ps1 -Coverage -Integration')) {
+    if(-not $coverageJob.Contains($required)){throw "Required real PostgreSQL coverage verification is absent: $required"}
+    $checks++
+}
+$goJob=[regex]::Match($workflow,'(?ms)^  go:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
+foreach($job in @($goJob,$coverageJob)) {
+    if(-not $job.Contains('./scripts/check-persistence.ps1 -Mode Generated')){throw 'CI must verify fresh sqlc output on both native Go runners and the real PostgreSQL coverage runner.'}
+    $checks++
+}
+if(-not (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Contains("'test-persistence.ps1'")){throw 'Foundation must execute the persistence infrastructure behavior checks.'}
+$checks++
 Write-Output "Passed $checks CI behavior checks. These verify CI infrastructure, not application coverage."

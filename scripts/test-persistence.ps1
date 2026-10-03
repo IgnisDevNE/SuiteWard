@@ -38,7 +38,7 @@ try {
         param($Config,$Destination)
         $state.Calls++
         $configText=Get-Content -LiteralPath $Config -Raw
-        if(-not $configText.Contains($Destination.Replace('\','/'))){throw 'Staged configuration does not bind the actual private output directory.'}
+        if(-not $configText.Contains('out: "dbgen"')){throw 'Staged sqlc output must use a portable relative path within its private directory.'}
         Set-Content -LiteralPath (Join-Path $Destination 'models.go') -Value $original -Encoding utf8NoBOM
     }
     if($state.Calls -ne 1){throw 'Generation verification did not invoke the actual generator.'}

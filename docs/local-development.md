@@ -10,11 +10,12 @@ From the checkout, using PowerShell 7:
 ./scripts/dev.ps1 setup
 ./scripts/dev.ps1 doctor
 ./scripts/dev.ps1 check
+./scripts/dev.ps1 persistence
 ```
 
 From another shell, prefix each command with `pwsh -NoProfile -File`. Scripts locate the checkout from their own path, so they also work when invoked from another directory.
 
-`setup` installs the pinned local tools and starts this checkout's PostgreSQL. `doctor` verifies tool versions, selected Go installation, an authenticated database transaction, and Windows/Linux access to the published TCP port. `check` runs offline infrastructure checks, documentation link validation, workflow validation, and the same portable Go verification as CI once application code exists. Domain tests and `check` do not require Podman.
+`setup` installs the pinned local tools and starts this checkout's PostgreSQL. `doctor` verifies tool versions, selected Go installation, an authenticated database transaction, and Windows/Linux access to the published TCP port. `check` runs offline infrastructure checks, documentation link validation, workflow validation, and portable Go verification. Domain tests and `check` do not require Podman. `persistence` separately verifies the actual PostgreSQL adapter and generated queries using this checkout's database; missing or blank database identity fails rather than skipping adapter verification.
 
 Existing host prerequisites are Git, PowerShell 7, and a running Podman engine/machine. The bootstrap does not install host components, edit shell profiles, change machine-wide environment variables, restart Podman, or change its default connection. No additional package manager or Compose provider is required.
 
@@ -28,7 +29,7 @@ Existing host prerequisites are Git, PowerShell 7, and a running Podman engine/m
 | govulncheck | 1.8.0 | Exact Go module version, verified using the public Go checksum database. |
 | PostgreSQL | 18.6, Debian trixie | Official image pinned to an immutable multiarchitecture digest. |
 
-The declarations and original checksum sources live in `dev/tools.json`. Review version, checksum, CI, and compatibility changes together. No download uses a floating `latest` version. `gofmt`, `go vet`, and the standard test runner are included with Go. Migration tooling remains a separate decision; sqlc configuration is introduced with actual persistence SQL.
+The declarations and original checksum sources live in `dev/tools.json`. Review version, checksum, CI, and compatibility changes together. No download uses a floating `latest` version. `gofmt`, `go vet`, and the standard test runner are included with Go. [ADR 0026](decisions/0026-versioned-postgresql-migrations.md) selects embedded Goose migrations with pgx; exact dependencies are versioned in `go.mod`/`go.sum`. `sqlc.yaml` consumes the real persistence SQL.
 
 ```powershell
 ./scripts/dev.ps1 tools             # Install tools without a database
@@ -38,7 +39,7 @@ The declarations and original checksum sources live in `dev/tools.json`. Review 
 ./scripts/dev.ps1 govulncheck ./... # Once real Go packages exist
 ```
 
-The wrapper prioritizes the checkout SDK and scopes Go installation/cache paths to the process. `GOENV=off`, `GOTOOLCHAIN=local`, and `GOWORK=off` prevent a user's persisted Go settings, toolchain download, or ancestor workspace from silently changing the selected toolchain. During tool execution only, the OS configuration directory (`APPDATA` on Windows, `XDG_CONFIG_HOME` on Linux) points to `.cache/tool-config`, keeping Go telemetry/configuration local too. Podman uses its existing host configuration. The wrapper restores the caller's environment on completion or failure. Dependencies for the application still belong in its eventual `go.mod` and `go.sum`.
+The wrapper prioritizes the checkout SDK and scopes Go installation/cache paths to the process. `GOENV=off`, `GOTOOLCHAIN=local`, and `GOWORK=off` prevent a user's persisted Go settings, toolchain download, or ancestor workspace from silently changing the selected toolchain. During tool execution only, the OS configuration directory (`APPDATA` on Windows, `XDG_CONFIG_HOME` on Linux) points to `.cache/tool-config`, keeping Go telemetry/configuration local too. Podman uses its existing host configuration. The wrapper restores the caller's environment on completion or failure. Application dependencies belong in `go.mod` and `go.sum`.
 
 ## Local state and installation recovery
 
@@ -91,7 +92,11 @@ GitHub writes and PR publication use the authorized bot within its granted permi
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, and process environment isolation. A real database smoke check runs locally through `doctor`/`db-test`.
 
-M0.01 introduces real Go domain packages and tests for artifact identity, authority, and immutable canonical snapshots. For this domain-only work, `./scripts/dev.ps1 tools` prepares the local tools and `./scripts/dev.ps1 check` runs the checks without starting a database or requiring containers. SQL migrations, pgx integration tests, sqlc freshness checks, and production platform support remain separate implementation work.
+M0 introduces domain/application packages for artifact identity, authority and immutable canonical snapshots. `./scripts/dev.ps1 tools` and `./scripts/dev.ps1 check` still support service-free development. M1.01 adds the real PostgreSQL and filesystem adapters; run `./scripts/dev.ps1 persistence` before claiming their integration succeeds. The wrapper loads the ignored `database-url.txt` only into the verification process and restores any caller value even after failure. Each database fixture owns a unique schema and cleans only that schema, preserving other tests/checkouts.
+
+`scripts/check-persistence.ps1 -Mode Generated` installs/checks the pinned local sqlc executable, regenerates into a fresh owned staging directory and compares complete, case-sensitive filenames and SHA-256 contents with the versioned output. It leaves tracked files untouched and rejects stale, missing, added or orphan output and generator failures. After intentional SQL changes, regenerate with `./scripts/dev.ps1 sqlc generate`, review and commit the output, then verify freshness. Fresh staging is necessary because in-place regeneration could leave obsolete files undetected.
+
+Integration tests use the `integration` build tag. `scripts/check-go.ps1 -Integration` requires an explicitly supplied `SUITEWARD_TEST_DATABASE_URL`; `-Coverage -Integration` retains race detection and produces the real combined coverage report. Linux CI provides an isolated PostgreSQL service. Native Windows integration uses each worktree's Podman database. This phase does not introduce a production CLI, GitHub installation flow, execution backend or restore command.
 
 This preparation was verified on the Windows host and in an isolated Ubuntu 24.04 container: fresh pinned-tool installation, repeat installation, development checks, 15 CI checks, documentation links, and actionlint passed. Two Windows checkouts ran independent PostgreSQL clusters on different ports; stopping/restarting one preserved the other's state. Wrong database credentials were rejected, a failed tool command restored the caller's environment, and conflicting ambient Go settings did not select a global SDK. These local runs do not substitute for the next PR's hosted CI run.
 

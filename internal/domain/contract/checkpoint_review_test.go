@@ -1,11 +1,22 @@
 package contract
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
+
+func TestCheckpointRejectsLossyIdentityAndCoveredInputEncoding(t *testing.T) {
+	fixture:=checkpointFixture(t)
+	protected:=checkpointValue(NewProtectedContract(fixture.Protected.Manifest(),fixture.Protected.ScopeDigest(),map[string]string{"runner":string([]byte{0xff})}))
+	if _,err:=EncodeStateCheckpoint(StateCheckpoint{Protected:protected});!errors.Is(err,ErrInvalidCheckpoint){t.Fatalf("lossy covered-input encoding accepted: %v",err)}
+	command:=checkpointValue(NewCommand(CommandInput{OperationID:"operation",SourceCommandID:SourceCommandID(string([]byte{0xff})),Actor:fixture.Command.Actor(),Reference:fixture.Command.Reference(),Carrier:fixture.Command.Carrier(),Action:ApproveConsent,Order:1}))
+	if _,err:=EncodeStateCheckpoint(StateCheckpoint{Command:command});!errors.Is(err,ErrInvalidCheckpoint){t.Fatalf("lossy source identity encoding accepted: %v",err)}
+	encoded,err:=EncodeStateCheckpoint(StateCheckpoint{Protected:fixture.Protected});if err!=nil{t.Fatal(err)};encoded=bytes.Replace(encoded,[]byte(`"v1"`),[]byte{'"',0xff,'"'},1)
+	if _,err:=RestoreStateCheckpoint(encoded);!errors.Is(err,ErrInvalidCheckpoint){t.Fatalf("invalid UTF-8 persisted facts normalized instead of rejected: %v",err)}
+}
 
 func TestIndependentCoveredInputKeysRemainCaseSensitive(t *testing.T) {
 	manifest := checkpointValue(artifact.NewManifest(nil))

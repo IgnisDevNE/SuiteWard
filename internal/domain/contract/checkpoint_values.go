@@ -538,6 +538,22 @@ func (d checkpointData) restore() (StateCheckpoint, error) {
 	if !s.Proposal.IsZero() && s.Consent.project != "" && !s.Consent.contains(s.Proposal.Current().Binding().Reference()) {
 		return StateCheckpoint{}, checkpointProblem("proposal consent scope")
 	}
+	if !s.Proposal.IsZero() && s.Consent.project != "" {
+		for _, state := range s.Consent.states {
+			revision, err := s.Proposal.Lookup(state.binding.Reference(), s.Proposal.Current().Carrier())
+			if err != nil || !revision.Binding().Equal(state.binding) {
+				return StateCheckpoint{}, checkpointProblem("proposal consent binding")
+			}
+		}
+		for _, result := range s.Consent.results {
+			if result.Outcome() == ConsentRejected {
+				continue
+			}
+			if _, err := s.Proposal.Lookup(result.Command().Reference(), result.Command().Carrier()); err != nil {
+				return StateCheckpoint{}, checkpointProblem("proposal consent carrier")
+			}
+		}
+	}
 	return s, nil
 }
 

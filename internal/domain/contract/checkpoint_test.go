@@ -191,9 +191,14 @@ func TestStateCheckpointRejectsPairedForeignConsent(t *testing.T) {
 }
 
 func TestStateCheckpointRejectsPairedConsentBindingMismatch(t *testing.T) {
-	encoded,err:=EncodeStateCheckpoint(checkpointFixture(t));if err!=nil{t.Fatal(err)}
-	for path,value:=range map[string]any{"consent/States/0/Binding/Scope":artifact.Hash([]byte("different scope")).String(),"consent/Results/0/Command/Carrier":"different-carrier"}{
-		if _,err:=RestoreStateCheckpoint(checkpointJSONChange(t,encoded,path,value));!errors.Is(err,ErrInvalidCheckpoint){t.Fatalf("paired historical fact mismatch accepted (%s): %v",path,err)}
+	encoded, err := EncodeStateCheckpoint(checkpointFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, value := range map[string]any{"consent/States/0/Binding/Scope": artifact.Hash([]byte("different scope")).String(), "consent/Results/0/Command/Carrier": "different-carrier"} {
+		if _, err := RestoreStateCheckpoint(checkpointJSONChange(t, encoded, path, value)); !errors.Is(err, ErrInvalidCheckpoint) {
+			t.Fatalf("paired historical fact mismatch accepted (%s): %v", path, err)
+		}
 	}
 }
 

@@ -500,6 +500,174 @@ func TestPostgresTrustedInitializationRejectsMalformedOrProcessedInputs(t *testi
 	})
 }
 
+var errCapturedWrite = errors.New("captured application write without committing")
+
+type capturePromotion struct {
+	governance.Store
+	fence governance.AuthorityFence
+	write governance.PromotionWrite
+}
+
+func (s *capturePromotion) CommitPromotion(_ context.Context, f governance.AuthorityFence, w governance.PromotionWrite) error {
+	s.fence = f
+	s.write = w
+	return errCapturedWrite
+}
+
+type captureConsent struct {
+	governance.Store
+	fence governance.AuthorityFence
+	write governance.ConsentWrite
+}
+
+func (s *captureConsent) CommitConsent(_ context.Context, f governance.AuthorityFence, w governance.ConsentWrite) error {
+	s.fence = f
+	s.write = w
+	return errCapturedWrite
+}
+func TestPostgresCommitRejectsCallerForgedEffects(t *testing.T) {
+	t.Run("promotion", func(t *testing.T) {
+		pool, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		pgInitializeAndApprove(t, store, fixture)
+		capture := &capturePromotion{Store: store}
+		if _, err := governance.Promote(t.Context(), capture, fixture.request); !errors.Is(err, errCapturedWrite) {
+			t.Fatal(err)
+		}
+		changes := map[string]func(*governance.PromotionWrite){"kind": func(w *governance.PromotionWrite) { w.Receipt.Identity.Kind = 99 }, "ordinary bootstrap flag": func(w *governance.PromotionWrite) { w.Receipt.Identity.BootstrapMode = contract.FirstTestBootstrap }, "ordinary correction flag": func(w *governance.PromotionWrite) { w.Receipt.Identity.CorrectsVersionID = "missing" }, "bootstrap correction flag": func(w *governance.PromotionWrite) {
+			w.Receipt.Identity.Kind = governance.OperationBootstrap
+			w.Receipt.Identity.CorrectsVersionID = "missing"
+		}, "correction bootstrap flag": func(w *governance.PromotionWrite) {
+			w.Receipt.Identity.Kind = governance.OperationCorrect
+			w.Receipt.Identity.BootstrapMode = contract.FirstTestBootstrap
+		}, "correction without target": func(w *governance.PromotionWrite) { w.Receipt.Identity.Kind = governance.OperationCorrect }, "binding": func(w *governance.PromotionWrite) { w.Receipt.Identity.Binding = contract.ApprovalBinding{} }, "scheduling": func(w *governance.PromotionWrite) { w.Scheduling = contract.Schedule{} }, "decision": func(w *governance.PromotionWrite) { w.Receipt.Decision = contract.PromotionDecision{} }, "operation": func(w *governance.PromotionWrite) { w.Receipt.Identity.Request.OperationID = "" }, "proposed": func(w *governance.PromotionWrite) { w.Receipt.Identity.Request.Proposed = contract.ProtectedContract{} }, "version": func(w *governance.PromotionWrite) { w.Receipt.Identity.Request.NewVersionID = "" }}
+		for name, change := range changes {
+			t.Run(name, func(t *testing.T) {
+				write := capture.write
+				change(&write)
+				if err := store.CommitPromotion(t.Context(), capture.fence, write); !errors.Is(err, governance.ErrInvalidRequest) {
+					t.Fatalf("forged effect accepted or wrong category: %v", err)
+				}
+				if pgCount(t, pool, "promotions") != 0 {
+					t.Fatal("forged effect created authority")
+				}
+			})
+		}
+		if err := store.CommitPromotion(t.Context(), capture.fence, capture.write); err != nil {
+			t.Fatal(err)
+		}
+		current, err := store.Load(t.Context(), governance.ReadRequest{Reference: fixture.request.Reference})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CommitPromotion(t.Context(), current.Fence, capture.write); !errors.Is(err, governance.ErrOperationConflict) {
+			t.Fatalf("existing operation was written twice: %v", err)
+		}
+	})
+	t.Run("consent", func(t *testing.T) {
+		pool, store, _ := newGovernanceDatabase(t)
+		fixture := pgGovernanceFixture(t)
+		if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
+			t.Fatal(err)
+		}
+		capture := &captureConsent{Store: store}
+		if _, err := governance.ProcessConsent(t.Context(), capture, governance.ConsentRequest{Command: fixture.command}); !errors.Is(err, errCapturedWrite) {
+			t.Fatal(err)
+		}
+		for name, change := range map[string]func(*governance.ConsentWrite){"zero command": func(w *governance.ConsentWrite) { w.Command = contract.Command{} }, "consent": func(w *governance.ConsentWrite) { w.Consent = contract.Consent{} }, "receipt": func(w *governance.ConsentWrite) { w.Receipt = governance.ConsentReceipt{} }, "alias without original": func(w *governance.ConsentWrite) { w.Alias = true }} {
+			t.Run(name, func(t *testing.T) {
+				write := capture.write
+				change(&write)
+				if err := store.CommitConsent(t.Context(), capture.fence, write); !errors.Is(err, governance.ErrInvalidRequest) {
+					t.Fatalf("forged consent persisted: %v", err)
+				}
+				if pgCount(t, pool, "operation_receipts") != 0 {
+					t.Fatal("forged consent reserved identity")
+				}
+			})
+		}
+		if err := store.CommitConsent(t.Context(), capture.fence, capture.write); err != nil {
+			t.Fatal(err)
+		}
+		current, err := store.Load(t.Context(), governance.ReadRequest{Reference: fixture.request.Reference})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CommitConsent(t.Context(), current.Fence, capture.write); !errors.Is(err, governance.ErrOperationConflict) {
+			t.Fatalf("consent operation persisted twice: %v", err)
+		}
+	})
+}
+
+func TestPostgresApplicationBootstrapModesPersistExactHistory(t *testing.T) {
+	for _, mode := range []contract.BootstrapMode{contract.FirstTestBootstrap, contract.ExistingBaselineBootstrap} {
+		t.Run(string(rune('0'+mode)), func(t *testing.T) {
+			_, store, _ := newGovernanceDatabase(t)
+			fixture := pgGovernanceFixture(t)
+			if mode == contract.ExistingBaselineBootstrap {
+				fixture.request.AssessmentSource = "origin"
+				fixture.request.Integration = pgValue(contract.NewIntegration("project", "main", "origin", "", contract.IntegrationExistingBaseline))
+				binding := fixture.authority.Proposals[0].Proposal.Current().Binding()
+				evidence := pgValue(contract.NewIntegrityEvidence("checker", "origin", binding, contract.IntegrityPassed))
+				fixture.authority.Proposals[0].Assessments = []contract.IntegrityAssessment{pgValue(contract.AssessIntegrity("origin", binding, &evidence))}
+			}
+			pgInitializeAndApprove(t, store, fixture)
+			result, err := governance.Bootstrap(t.Context(), store, governance.BootstrapRequest{Mode: mode, Promotion: fixture.request})
+			if err != nil || !result.Committed {
+				t.Fatalf("bootstrap mode: %+v %v", result, err)
+			}
+			replay, err := governance.Bootstrap(t.Context(), store, governance.BootstrapRequest{Mode: mode, Promotion: fixture.request})
+			if err != nil || !replay.Duplicate || !reflect.DeepEqual(replay.Decision, result.Decision) {
+				t.Fatalf("bootstrap replay changed history: %+v %v", replay, err)
+			}
+		})
+	}
+}
+
+func TestPostgresCorrectCreatesFreshVersionAndPreservesHistory(t *testing.T) {
+	pool, store, _ := newGovernanceDatabase(t)
+	fixture, secondCommand, secondRequest := pgNextProposal(t, pgGovernanceFixture(t))
+	reference := fixture.request.Reference
+	reference.ProposalID = "correction"
+	reference.RevisionID = "correction-r1"
+	protected := fixture.request.Proposed
+	binding := pgValue(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: "v2", Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "policy", CoveredInputs: protected.CoveredInputs()}))
+	proposal := pgValue(contract.NewProposal(pgValue(contract.NewProposalRevision(binding, "correction-origin", "correction-carrier"))))
+	consent := pgValue(contract.NewConsent("project", "suite", "correction"))
+	evidence := pgValue(contract.NewIntegrityEvidence("checker", "correction-integrated", binding, contract.IntegrityPassed))
+	fixture.authority.Proposals = append(fixture.authority.Proposals, postgres.TrustedProposal{Proposal: proposal, Consent: consent, Assessments: []contract.IntegrityAssessment{pgValue(contract.AssessIntegrity("correction-integrated", binding, &evidence))}})
+	fixture.authority.Scheduling = pgValue(fixture.authority.Scheduling.Admit(proposal, true))
+	pgInitializeAndApprove(t, store, fixture)
+	if result, err := governance.Promote(t.Context(), store, fixture.request); err != nil || !result.Committed {
+		t.Fatalf("initial promotion: %+v %v", result, err)
+	}
+	if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: secondCommand}); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := governance.Promote(t.Context(), store, secondRequest); err != nil || !result.Committed {
+		t.Fatalf("second promotion: %+v %v", result, err)
+	}
+	command := pgValue(contract.NewCommand(contract.CommandInput{OperationID: "correct-approve", SourceCommandID: "correct-source", Actor: fixture.owner, Reference: reference, Carrier: "correction-carrier", Action: contract.ApproveConsent, Order: 1}))
+	if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: command}); err != nil {
+		t.Fatal(err)
+	}
+	request := fixture.request
+	request.OperationID = "correct"
+	request.Reference = reference
+	request.Carrier = "correction-carrier"
+	request.AssessmentSource = "correction-integrated"
+	request.Integration = pgValue(contract.NewIntegration("project", "main", "correction-integrated", "correction-carrier", contract.IntegrationMergedChange))
+	request.NewVersionID = "v3"
+	result, err := governance.Correct(t.Context(), store, governance.CorrectionRequest{Promotion: request, TargetVersionID: "v1"})
+	if err != nil || !result.Committed {
+		t.Fatalf("fresh corrective transition: %+v %v", result, err)
+	}
+	snapshot, err := store.Load(t.Context(), governance.ReadRequest{Reference: reference, HistoricalVersionID: "v1"})
+	if err != nil || snapshot.Canonical.Version().ID() != "v3" || snapshot.Canonical.Record().CorrectsVersionID() != "v1" || snapshot.History.Version().ID() != "v1" || snapshot.Canonical.Version().Manifest().Digest() != snapshot.History.Version().Manifest().Digest() || pgCount(t, pool, "suite_versions") != 3 {
+		t.Fatalf("correction mutated history instead of creating new logical version: %+v %v", snapshot, err)
+	}
+}
+
 type pgVerifier struct{ absent artifact.Digest }
 
 func (v *pgVerifier) Verify(_ context.Context, d artifact.Digest) error {

@@ -33,6 +33,7 @@ type Store struct {
 type artifactIO struct {
 	openRoot func(string) (*os.Root, error)
 	openFile func(*os.Root, string, int, fs.FileMode) (artifactFile, error)
+	lstat    func(*os.Root, string) (fs.FileInfo, error)
 	link     func(*os.Root, string, string) error
 	remove   func(*os.Root, string) error
 }
@@ -58,7 +59,7 @@ func NewStore(root string) (*Store, error) {
 		openFile: func(root *os.Root, name string, flag int, mode fs.FileMode) (artifactFile, error) {
 			return root.OpenFile(name, flag, mode)
 		},
-		link: (*os.Root).Link, remove: (*os.Root).Remove,
+		lstat: (*os.Root).Lstat, link: (*os.Root).Link, remove: (*os.Root).Remove,
 	}}, nil
 }
 

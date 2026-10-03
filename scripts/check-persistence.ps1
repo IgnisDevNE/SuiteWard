@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 
 function Assert-GeneratedQueriesCurrent {
-    param([hashtable]$Before, [hashtable]$After)
+    param([Collections.IDictionary]$Before, [Collections.IDictionary]$After)
     if ($null -eq $Before -or $null -eq $After -or $Before.Count -eq 0) { throw 'Expected a nonempty versioned generated query baseline.' }
     foreach ($inventory in @($Before,$After)) {
         foreach ($entry in $inventory.GetEnumerator()) {
@@ -13,13 +13,13 @@ function Assert-GeneratedQueriesCurrent {
     }
     if ($Before.Count -ne $After.Count) { throw 'Generated query file inventory differs; regenerate and commit the exact output.' }
     foreach ($entry in $Before.GetEnumerator()) {
-        if (-not $After.ContainsKey($entry.Key) -or $After[$entry.Key] -cne $entry.Value) { throw "Generated queries are stale: $($entry.Key)." }
+        if (@($After.Keys) -cnotcontains $entry.Key -or $After[$entry.Key] -cne $entry.Value) { throw "Generated queries are stale: $($entry.Key)." }
     }
 }
 
 function Get-GeneratedQueryInventory {
     param([string]$Directory)
-    $inventory=@{}
+    $inventory=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     if (Test-Path -LiteralPath $Directory) {
         foreach ($file in Get-ChildItem -LiteralPath $Directory -Recurse -File) {
             if ($file.LinkType) { throw 'Generated query output must not contain file links.' }

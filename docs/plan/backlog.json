@@ -1619,7 +1619,12 @@
       "kind": "contract",
       "lane": "contracts",
       "owns": [
-        "docs/contracts/m1-01.md"
+        "docs/contracts/m1-01.md",
+        "docs/decisions/0026-versioned-postgresql-migrations.md",
+        "docs/decisions/README.md",
+        "docs/plan/backlog.json",
+        "docs/plan/phases/M1.01.md",
+        "docs/plan/decisions.md"
       ],
       "shared_files": [],
       "contracts": [
@@ -1661,6 +1666,8 @@
         "internal/adapters/postgres/schema_test.go"
       ],
       "shared_files": [
+        "go.mod",
+        "go.sum",
         "sqlc.yaml",
         "internal/adapters/postgres/internal/dbgen/**"
       ],
@@ -1701,12 +1708,12 @@
       "owns": [
         "internal/adapters/postgres/governance*.go",
         "internal/adapters/postgres/promotion*.go",
-        "internal/adapters/postgres/transaction*.go"
+        "internal/adapters/postgres/transaction*.go",
+        "internal/domain/contract/checkpoint*.go",
+        "internal/domain/artifact/digest.go",
+        "internal/domain/artifact/digest_test.go"
       ],
-      "shared_files": [
-        "go.mod",
-        "go.sum"
-      ],
+      "shared_files": [],
       "contracts": [
         "M1-C01"
       ],
@@ -1782,13 +1789,21 @@
       "kind": "integration",
       "lane": "integration",
       "owns": [
-        "docs/contracts/m1-01.md",
-        "docs/verification/m1-01.md"
+        "docs/verification/m1-01.md",
+        "docs/plan/executions/M1.01.json",
+        "docs/plan/executions/M1.01.md",
+        "docs/ci-and-coverage.md",
+        "docs/local-development.md",
+        "internal/adapters/postgres/integration_test.go",
+        "scripts/check-persistence.ps1",
+        "scripts/test-persistence.ps1",
+        "scripts/check-foundation.ps1",
+        "scripts/check-go.ps1",
+        "scripts/test-go.ps1",
+        "scripts/test-ci.ps1",
+        "scripts/dev.ps1"
       ],
       "shared_files": [
-        "go.mod",
-        "go.sum",
-        "sqlc.yaml",
         ".github/workflows/ci.yml"
       ],
       "contracts": [
@@ -5545,12 +5560,12 @@
     {
       "id": "D-MIGRATIONS",
       "topic": "Migration tooling and database change discipline",
-      "status": "open",
+      "status": "accepted",
       "owner": "project owner and integrator",
       "blocks": [
         "M1.01"
       ],
-      "required_decision": "Integrator selects and pins migration tooling within the accepted PostgreSQL/pgx/sqlc stack, migration ordering, upgrade checks and shared-file ownership; no renewed product approval is required for routine implementation choices.",
+      "required_decision": "Accepted implementation choice on 2026-10-02: Goose v3.28.0 embedded Provider, pgx v5.11.0 and existing sqlc v1.31.1; sequential transactional forward-only migrations with session locking, fresh/repeat/concurrent/populated 1-to-2 upgrade checks, and coordinated A ownership of migrations/query/generator/module files. See ADR 0026 and M1-C01. Real behavior and CI evidence remain required.",
       "acceptance": [
         "Fresh-install and supported upgrade scenarios are defined.",
         "Tool choice and migration ownership are versioned."

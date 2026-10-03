@@ -446,6 +446,34 @@ func TestStoredPayloadsRejectInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestStoredPayloadsRejectUnpairedSurrogateEscapes(t *testing.T) {
+	fixture := newCodecFixture(t)
+	for _, escape := range []string{`\ud800`, `\udc00`, `\ud800x`, `\ud800\ud800`} {
+		t.Run(escape, func(t *testing.T) {
+			authority := codecValue(encodeAuthority(fixture.state))
+			authority = bytes.Replace(authority, []byte(`"target":"main"`), []byte(`"target":"main`+escape+`"`), 1)
+			if _, err := decodeAuthority(authority, "project", "suite", "", "0"); !errors.Is(err, governance.ErrInvalidSnapshot) {
+				t.Errorf("unpaired surrogate authority target was silently replaced: %v", err)
+			}
+			receipt := codecValue(encodeReceipt(fixture.consent, "approve"))
+			receipt = bytes.Replace(receipt, []byte(`"PolicyRevision":"policy"`), []byte(`"PolicyRevision":"policy`+escape+`"`), 1)
+			if _, err := decodeReceipt(receipt, int16(governance.OperationConsent), "project", "suite", "approve"); !errors.Is(err, governance.ErrInvalidSnapshot) {
+				t.Errorf("unpaired surrogate evaluated policy identity was silently replaced: %v", err)
+			}
+		})
+	}
+	// Legal surrogate pairs and literal replacement characters remain exact values.
+	for _, tt := range []struct{ literal, escaped string }{{"main𝄞", `main\ud834\udd1e`}, {"main�", `main\ufffd`}} {
+		fixture.state.target = contract.IntegrationTargetID(tt.literal)
+		authority := codecValue(encodeAuthority(fixture.state))
+		authority = bytes.Replace(authority, []byte(tt.literal), []byte(tt.escaped), 1)
+		restored, err := decodeAuthority(authority, "project", "suite", "", "0")
+		if err != nil || restored.target != fixture.state.target {
+			t.Fatalf("legal escaped target changed identity: %q, %v", restored.target, err)
+		}
+	}
+}
+
 func codecValue[T any](value T, err error) T {
 	if err != nil {
 		panic(err)

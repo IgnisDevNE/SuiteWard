@@ -324,7 +324,7 @@ func (d *resultData) restore() (CommandResult, error) {
 		if d.Reason == ConsentReasonNone {
 			return CommandResult{}, ErrInvalidCheckpoint
 		}
-	} else if d.Reason != ConsentReasonNone || (d.Outcome == ConsentApproved) != (c.Action() == ApproveConsent) {
+	} else if d.Reason != ConsentReasonNone || c.Actor().Kind() != Human || (d.Outcome == ConsentApproved) != (c.Action() == ApproveConsent) {
 		return CommandResult{}, ErrInvalidCheckpoint
 	}
 	return CommandResult{command: c, outcome: d.Outcome, reason: d.Reason, duplicate: d.Duplicate}, nil

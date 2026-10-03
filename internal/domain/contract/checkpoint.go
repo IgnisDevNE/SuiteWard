@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // StateCheckpoint carries supplied immutable facts for persistence. Restoration
@@ -126,7 +127,7 @@ func checkpointJSONValue(decoder *json.Decoder) error {
 			if err != nil {
 				return err
 			}
-			name := key.(string)
+			name := strings.ToLower(key.(string))
 			if keys[name] {
 				return ErrInvalidCheckpoint
 			}

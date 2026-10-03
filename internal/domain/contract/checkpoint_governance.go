@@ -38,6 +38,7 @@ func (d *consentData) restore() (Consent, error) {
 		order  CommandOrder
 	}
 	facts := map[consentKey]stateFact{}
+	orders := map[consentKey]map[CommandOrder]bool{}
 	sources := map[SourceCommandID]Command{}
 	for _, raw := range d.Results {
 		r, err := raw.restore()
@@ -51,10 +52,17 @@ func (d *consentData) restore() (Consent, error) {
 		sources[command.SourceCommandID()] = command
 		c.results = append(c.results, r)
 		c.operations[command.OperationID()] = command.SourceCommandID()
+		key := consentKey{command.Reference().RevisionID, command.Actor()}
+		if orders[key] == nil {
+			orders[key] = map[CommandOrder]bool{}
+		}
+		if r.Outcome() != ConsentRejected && orders[key][command.Order()] {
+			return Consent{}, checkpointProblem("consent reused receipt order")
+		}
+		orders[key][command.Order()] = true
 		if r.Outcome() == ConsentRejected {
 			continue
 		}
-		key := consentKey{command.Reference().RevisionID, command.Actor()}
 		previous := facts[key]
 		if command.Actor().Kind() != Human || command.Order() <= previous.order || (r.Outcome() == ConsentRevoked && !previous.active) || (r.Outcome() == ConsentNoActiveApproval && previous.active) {
 			return Consent{}, checkpointProblem("consent result")
@@ -189,6 +197,7 @@ func (d *scheduleData) restore() (Schedule, error) {
 	}
 	sources := map[SourceCommandID]PriorityCommand{}
 	var order CommandOrder
+	orders := map[CommandOrder]bool{}
 	for _, raw := range d.Results {
 		r, err := raw.restore()
 		if err != nil {
@@ -199,11 +208,12 @@ func (d *scheduleData) restore() (Schedule, error) {
 			return Schedule{}, checkpointProblem("priority receipt")
 		}
 		if r.Outcome() != PriorityRejected {
-			if command.Order() <= order || s.entryIndex(command.ProposalID(), command.Carrier()) < 0 {
+			if command.Order() <= order || orders[command.Order()] || s.entryIndex(command.ProposalID(), command.Carrier()) < 0 {
 				return Schedule{}, checkpointProblem("priority order or entry")
 			}
 			order = command.Order()
 		}
+		orders[command.Order()] = true
 		sources[command.SourceCommandID()] = command
 		s.results = append(s.results, r)
 		s.operations[command.OperationID()] = command.SourceCommandID()

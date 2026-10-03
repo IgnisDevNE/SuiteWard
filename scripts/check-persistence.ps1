@@ -53,7 +53,8 @@ function Invoke-GeneratedQueryVerification {
             if ($value -cne $expected[$key]) { throw "Unsupported sqlc $key path; use the reviewed persistence layout." }
             $observed[$key]++
             $absolute=if($key -eq 'out'){$output}else{Join-Path $rootPath $expected[$key]}
-            $match.Groups['indent'].Value+$key+': "'+$absolute.Replace('\','/')+'"'
+            $relative=[IO.Path]::GetRelativePath($scratch,$absolute).Replace('\','/')
+            $match.Groups['indent'].Value+$key+': "'+$relative+'"'
         })
         if (@($observed.Values | Where-Object {$_ -ne 1}).Count) { throw 'Expected exactly one schema, queries and Go output path in sqlc configuration.' }
         $staged=Join-Path $scratch 'sqlc.yaml'

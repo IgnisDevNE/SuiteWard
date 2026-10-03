@@ -51,6 +51,28 @@ try {
     $cache=Join-Path $fixture '.cache/generated-query-checks'
     if((Test-Path -LiteralPath $cache) -and @(Get-ChildItem -LiteralPath $cache -Force).Count){throw 'Generation verification did not clean its own temporary output.'}
     $checks++
+    $context=[pscustomobject]@{State=(Join-Path $fixture '.local/dev')}
+    New-Item -ItemType Directory -Path $context.State -Force | Out-Null
+    $savedDatabase=[Environment]::GetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL','Process')
+    $owned='postgresql://test-only@127.0.0.1:1/owned-fixture'
+    try {
+        [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL','unrelated-caller-value','Process')
+        Set-Content -LiteralPath (Join-Path $context.State 'database-url.txt') -Value $owned -Encoding utf8NoBOM
+        Invoke-LocalPersistenceVerification $context {
+            if([Environment]::GetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL','Process') -cne $owned){throw 'Persistence did not select its own checkout database.'}
+        }
+        if([Environment]::GetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL','Process') -cne 'unrelated-caller-value'){throw 'Persistence leaked its database selection.'}
+        $checks+=2
+        Assert-PersistenceRejection { Invoke-LocalPersistenceVerification $context { throw 'actual verification failed' } } 'failed local verification'
+        if([Environment]::GetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL','Process') -cne 'unrelated-caller-value'){throw 'Failed persistence verification leaked its database selection.'}
+        $checks+=2
+        Set-Content -LiteralPath (Join-Path $context.State 'database-url.txt') -Value ' ' -Encoding utf8NoBOM
+        Assert-PersistenceRejection { Invoke-LocalPersistenceVerification $context {} } 'blank checkout database identity'
+        $checks++
+        Remove-Item -LiteralPath (Join-Path $context.State 'database-url.txt')
+        Assert-PersistenceRejection { Invoke-LocalPersistenceVerification $context {} } 'absent checkout database identity'
+        $checks++
+    } finally { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL',$savedDatabase,'Process') }
 } finally {
     $resolved=[IO.Path]::GetFullPath($fixture)
     if(-not $resolved.StartsWith($base+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing cleanup outside owned persistence fixture.'}

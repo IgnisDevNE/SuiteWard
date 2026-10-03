@@ -68,6 +68,10 @@ function Invoke-GeneratedQueryVerification {
     }
 }
 
+function Invoke-LocalPersistenceVerification {
+    param($Context, [scriptblock]$Verify)
+    & $Verify
+}
 if ($Mode -eq 'Library') { return }
 $root=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'dev-env.ps1')

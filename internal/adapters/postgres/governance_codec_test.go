@@ -463,7 +463,7 @@ func TestStoredPayloadsRejectUnpairedSurrogateEscapes(t *testing.T) {
 		})
 	}
 	// Legal surrogate pairs and literal replacement characters remain exact values.
-	for _, tt := range []struct{ literal, escaped string }{{"main𝄞", `main\ud834\udd1e`}, {"main�", `main\ufffd`}} {
+	for _, tt := range []struct{ literal, escaped string }{{"main𝄞", `main\ud834\udd1e`}, {"main�", `main\ufffd`}, {`main\ud800`, `main\\ud800`}} {
 		fixture.state.target = contract.IntegrationTargetID(tt.literal)
 		authority := codecValue(encodeAuthority(fixture.state))
 		authority = bytes.Replace(authority, []byte(tt.literal), []byte(tt.escaped), 1)

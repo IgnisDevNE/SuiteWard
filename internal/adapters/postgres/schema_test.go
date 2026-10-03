@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -59,6 +60,127 @@ func TestPostgresSchemaFreshConstraints(t *testing.T) {
 	var revision string
 	if err := database.conn.QueryRow(t.Context(), "SELECT authority_revision::text FROM suites WHERE suite_id='maximum'").Scan(&revision); err != nil || revision != "18446744073709551615" {
 		t.Fatalf("full uint64 revision round trip = %q, error %v", revision, err)
+	}
+}
+
+func TestPostgresMigrationsLifecycle(t *testing.T) {
+	t.Run("repeat and concurrent", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		var workers sync.WaitGroup
+		failures := make(chan error, 4)
+		for range 4 {
+			workers.Go(func() { failures <- migrations.UpTo(t.Context(), database.url, 1) })
+		}
+		workers.Wait()
+		close(failures)
+		for err := range failures {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+			t.Fatal(err)
+		}
+		var applications int
+		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FROM goose_db_version WHERE version_id=1 AND is_applied").Scan(&applications); err != nil {
+			t.Fatalf("concurrent migration did not establish version history: %v", err)
+		}
+		if applications != 1 {
+			t.Fatalf("migration 1 applied %d times; want exactly one", applications)
+		}
+	})
+	t.Run("failed body rolls back", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		schemaExec(t, database.conn, "CREATE TABLE suite_versions(conflicting_fixture boolean)")
+		if err := migrations.UpTo(t.Context(), database.url, 1); err == nil {
+			t.Fatal("conflicting preexisting relation did not reject migration")
+		}
+		var absent bool
+		if err := database.conn.QueryRow(t.Context(), "SELECT to_regclass('suites') IS NULL").Scan(&absent); err != nil || !absent {
+			t.Fatalf("failed migration left staged authority table: absent=%v error=%v", absent, err)
+		}
+		var applications int
+		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FROM goose_db_version WHERE version_id=1 AND is_applied").Scan(&applications); err != nil || applications != 0 {
+			t.Fatalf("failed migration advanced version history: applications=%d error=%v", applications, err)
+		}
+		schemaExec(t, database.conn, "DROP TABLE suite_versions")
+		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+			t.Fatalf("failed migration cannot recover after its fixture is removed: %v", err)
+		}
+	})
+	t.Run("downgrade rejected", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err := migrations.UpTo(t.Context(), database.url, 0); !errors.Is(err, migrations.ErrForwardOnly) {
+			t.Fatalf("downgrade must fail closed; got %v", err)
+		}
+	})
+}
+
+func TestPostgresSchemaImmutableHistory(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+		t.Fatal(err)
+	}
+	seedSchemaHistory(t, database.conn)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"suite_versions", "operation_receipts", "consent_sources", "promotions", "audit_events", "publication_intents", "consent_acknowledgments"} {
+		t.Run(table, func(t *testing.T) {
+			for _, statement := range []string{
+				"UPDATE " + table + " SET project_id=project_id",
+				"DELETE FROM " + table,
+				"TRUNCATE " + table + " CASCADE",
+			} {
+				_, err := database.conn.Exec(t.Context(), statement)
+				if err == nil {
+					t.Fatalf("immutable history mutation was accepted: %s", statement)
+				}
+				schemaRequireError(t, err, "23514", "immutable_history")
+			}
+		})
+	}
+	t.Run("authority requires exact next revision", func(t *testing.T) {
+		for _, assignment := range []string{"governance_payload='{}'", "authority_revision=authority_revision+2"} {
+			_, err := database.conn.Exec(t.Context(), "UPDATE suites SET "+assignment+" WHERE suite_id='suite'")
+			schemaRequireError(t, err, "23514", "suites_revision_advance")
+		}
+		_, err := database.conn.Exec(t.Context(), "UPDATE suites SET suite_id='changed',authority_revision=authority_revision+1 WHERE suite_id='suite'")
+		schemaRequireError(t, err, "23514", "suites_identity_immutable")
+		schemaExec(t, database.conn, "UPDATE suites SET authority_revision=authority_revision+1,governance_payload='{\"updated\":true}' WHERE suite_id='suite'")
+		_, err = database.conn.Exec(t.Context(), "UPDATE suites SET authority_revision=authority_revision+1 WHERE suite_id='maximum'")
+		schemaRequireError(t, err, "23514", "suites_revision_check")
+	})
+	var versions, promotions int
+	if err := database.conn.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM suite_versions),(SELECT count(*) FROM promotions)").Scan(&versions, &promotions); err != nil || versions != 1 || promotions != 1 {
+		t.Fatalf("populated upgrade or rejected mutations lost history: versions=%d promotions=%d error=%v", versions, promotions, err)
+	}
+	if err := migrations.UpTo(t.Context(), database.url, 1); !errors.Is(err, migrations.ErrForwardOnly) {
+		t.Fatalf("populated migration 2 cannot downgrade: %v", err)
+	}
+}
+
+func seedSchemaHistory(t *testing.T, connection *pgx.Conn) {
+	t.Helper()
+	transaction, err := connection.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transaction.Rollback(context.Background())
+	schemaExec(t, transaction, "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','suite',0,'{}'),('project','maximum',18446744073709551615,'{}')")
+	schemaExec(t, transaction, "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('project','suite','version',$1,'{}')", schemaDigest)
+	schemaExec(t, transaction, "INSERT INTO operation_receipts(operation_id,project_id,suite_id,kind,receipt_payload) VALUES ('promotion','project','suite',2,'{}'),('consent','project','suite',4,'{}')")
+	schemaExec(t, transaction, "INSERT INTO consent_sources(source_command_id,project_id,suite_id,operation_id) VALUES ('source','project','suite','consent')")
+	schemaExec(t, transaction, "INSERT INTO promotions(operation_id,project_id,suite_id,operation_kind,version_id,proposal_id,proposal_revision_id,carrier_id,source_revision,target_id,recorded_at,promotion_payload) VALUES ('promotion','project','suite',2,'version','proposal','revision','carrier','source','target',now(),'{}')")
+	schemaExec(t, transaction, "INSERT INTO audit_events(operation_id,project_id,suite_id,event_kind,event_payload) VALUES ('promotion','project','suite',2,'{}'),('consent','project','suite',4,'{}')")
+	schemaExec(t, transaction, "INSERT INTO publication_intents(operation_id,project_id,suite_id,publication_payload) VALUES ('promotion','project','suite','{}')")
+	schemaExec(t, transaction, "INSERT INTO consent_acknowledgments(operation_id,project_id,suite_id,acknowledgment_payload) VALUES ('consent','project','suite','{}')")
+	schemaExec(t, transaction, "UPDATE suites SET current_version_id='version',authority_revision=authority_revision+1 WHERE suite_id='suite'")
+	if err := transaction.Commit(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -212,5 +213,27 @@ func TestStateCheckpointEmptyAndUnbaselinedValues(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(got, value) {
 			t.Fatalf("empty state changed: %+v %v", got, err)
 		}
+	}
+}
+
+func TestCheckpointPreservesValidEscapedIdentities(t *testing.T) {
+	encoded, err := EncodeStateCheckpoint(StateCheckpoint{Protected: checkpointFixture(t).Protected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for escaped, want := range map[string]string{
+		`"\ud834\udd1e"`: "𝄞",
+		`"\ufffd"`:       "�",
+		`"\\ud800"`:      `\ud800`,
+		`"\u0076\u0031"`: "v1",
+		`"x\\y\"z"`:      `x\y"z`,
+	} {
+		t.Run(escaped, func(t *testing.T) {
+			changed := bytes.Replace(encoded, []byte(`"v1"`), []byte(escaped), 1)
+			got, err := RestoreStateCheckpoint(changed)
+			if err != nil || got.Protected.CoveredInputs()["runner"] != want {
+				t.Fatalf("valid escaped identity changed: got %q, want %q, error %v", got.Protected.CoveredInputs()["runner"], want, err)
+			}
+		})
 	}
 }

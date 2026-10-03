@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -83,7 +84,7 @@ func EncodeStateCheckpoint(state StateCheckpoint) ([]byte, error) {
 }
 
 func RestoreStateCheckpoint(encoded []byte) (StateCheckpoint, error) {
-	if !utf8.Valid(encoded) {
+	if !utf8.Valid(encoded) || !validCheckpointUnicodeEscapes(encoded) {
 		return StateCheckpoint{}, ErrInvalidCheckpoint
 	}
 	if err := validateCheckpointJSON(encoded); err != nil {
@@ -106,6 +107,44 @@ func RestoreStateCheckpoint(encoded []byte) (StateCheckpoint, error) {
 		return StateCheckpoint{}, fmt.Errorf("%w: %v", ErrInvalidCheckpoint, err)
 	}
 	return state, nil
+}
+
+// encoding/json replaces unpaired UTF-16 escapes with U+FFFD. Reject them before
+// decoding so malformed identities cannot silently become different identities.
+func validCheckpointUnicodeEscapes(encoded []byte) bool {
+	for i := 0; i < len(encoded); i++ {
+		if encoded[i] != '"' {
+			continue
+		}
+		for i++; i < len(encoded) && encoded[i] != '"'; i++ {
+			if encoded[i] != '\\' {
+				continue
+			}
+			if i+1 >= len(encoded) || encoded[i+1] != 'u' {
+				i++
+				continue
+			}
+			if i+6 > len(encoded) {
+				return false
+			}
+			code, err := strconv.ParseUint(string(encoded[i+2:i+6]), 16, 16)
+			if err != nil || code >= 0xdc00 && code <= 0xdfff {
+				return false
+			}
+			if code >= 0xd800 && code <= 0xdbff {
+				if i+12 > len(encoded) || encoded[i+6] != '\\' || encoded[i+7] != 'u' {
+					return false
+				}
+				low, err := strconv.ParseUint(string(encoded[i+8:i+12]), 16, 16)
+				if err != nil || low < 0xdc00 || low > 0xdfff {
+					return false
+				}
+				i += 6
+			}
+			i += 5
+		}
+	}
+	return true
 }
 
 func validCheckpointStrings(value reflect.Value) bool {

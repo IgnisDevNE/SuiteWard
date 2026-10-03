@@ -147,7 +147,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 3bc0638b1d04509e69772d9c6ad5e33a0ae564bf. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 3bc0638b1d04509e69772d9c6ad5e33a0ae564bf. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Duplicate checkpoint JSON keys are rejected",
@@ -163,7 +163,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 04cd5a140298182217a6602bbb90e92c7edcfa26. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 04cd5a140298182217a6602bbb90e92c7edcfa26. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Paired checkpoint proposal and consent scopes must match",
@@ -179,7 +179,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "DELAYED RED archive: original compiled failure was observed before implementing the scope check, but the PowerShell throw skipped the trailing Git checkpoint command. After GREEN d278037 the author archived the original pre-fix tree plus exact original added test via a temporary Git index without mutating production, then preserved ancestry with merge 2c7e7b. Independent replay proves the meaningful RED and preserved ancestry, not original observation timing; that timing relies on author observation/log. Archive created 22:13:13-0300 after fix d278037 at 22:10:29-0300. This is not a timely RED checkpoint. Original observed GREEN checkpoint: 2c7e7b53f6b82397c3a2dfa6e1739cd3c446dc51. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "DELAYED RED archive: original compiled failure was observed before implementing the scope check, but the PowerShell throw skipped the trailing Git checkpoint command. After GREEN d278037 the author archived the original pre-fix tree plus exact original added test via a temporary Git index without mutating production, then preserved ancestry with merge 2c7e7b. Independent replay proves the meaningful RED and preserved ancestry, not original observation timing; that timing relies on author observation/log. Archive created 22:13:13-0300 after fix d278037 at 22:10:29-0300. This is not a timely RED checkpoint. Original observed GREEN checkpoint: 2c7e7b53f6b82397c3a2dfa6e1739cd3c446dc51. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Paired consent bindings and carriers match included immutable proposal history",
@@ -195,7 +195,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 0f63f18ad6994b55ee6248833ceeb0f3368fcd73. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 0f63f18ad6994b55ee6248833ceeb0f3368fcd73. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Historical successful actors and receipt orders remain valid; semantic field aliases cannot hide unsupported versions",
@@ -211,7 +211,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 0391fbcb40f0592c4d736bccb46b7d941a9ba04e. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 0391fbcb40f0592c4d736bccb46b7d941a9ba04e. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Covered input dictionary identities retain case-sensitive keys",
@@ -227,7 +227,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 5b893da659c9dce3cf6c9ff641e7ae296fe5ad01. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 5b893da659c9dce3cf6c9ff641e7ae296fe5ad01. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Unicode semantic field aliases cannot hide an unsupported checkpoint version",
@@ -243,7 +243,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 779304c2d5122eedf9bf05670d39fe6135247648. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 779304c2d5122eedf9bf05670d39fe6135247648. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Real PostgreSQL initialization, application consent/promotion, exact replay and immutable history are durable",
@@ -259,7 +259,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: c9639d4c06b805d311bf1e299dd7ab6606d4955a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: c9639d4c06b805d311bf1e299dd7ab6606d4955a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Durable receipts bind the reserved operation while races, SQL failures, revocation and missing bytes preserve authority",
@@ -275,7 +275,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: b7138cc7d111d70cabfd99f66f96a6466560ef58. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: b7138cc7d111d70cabfd99f66f96a6466560ef58. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Real promotion version/reference uniqueness failures retain stable conflict categories and rollback",
@@ -291,7 +291,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 13b4a934f35471d11653ce4a10e52059ca277bf7. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 13b4a934f35471d11653ce4a10e52059ca277bf7. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Governance operations fail closed before the complete supported migration sequence",
@@ -307,7 +307,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 157905d8f1c1e35e026f6dacbb72f0b73750841a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 157905d8f1c1e35e026f6dacbb72f0b73750841a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Trusted initialization includes complete scoped consent, scheduling and assessments",
@@ -323,7 +323,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: f32e93b4f893281796fc0e8dd6826f4a2de18a6f. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: f32e93b4f893281796fc0e8dd6826f4a2de18a6f. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Private PostgreSQL envelopes reject exact, case and Unicode field aliases hiding unsupported versions",
@@ -339,7 +339,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 58eac15d623b3915079ecd2eefe38e0c1ff45436. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No behavior-changing refactor in this cycle; later optional digest simplification at 985ede726c368808ec0c24335802bd2fd3ca3235 reran the original parsing command successfully. Original observed GREEN checkpoint: 58eac15d623b3915079ecd2eefe38e0c1ff45436. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Checkpoint persistence rejects invalid UTF-8 identities and covered inputs instead of silently normalizing them",
@@ -355,7 +355,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No refactoring needed. Original observed GREEN checkpoint: 7e0c35b231a472bbfd60b5afe3732ae58640fb0a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No refactoring needed. Original observed GREEN checkpoint: 7e0c35b231a472bbfd60b5afe3732ae58640fb0a. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Stored outer target, reserved operation and evaluated-policy identities reject lossy UTF-8 encoding and decoding",
@@ -371,7 +371,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "Later optional private codec refactor82c9d0c treats only consumed []RawMessage slices as opaque and retains actual domain restoration; TestStored rerun passed. Original observed GREEN checkpoint: 4aa2e6ce19c068424bf890c69eb374e2a08a99cb. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "Later optional private codec refactor82c9d0c treats only consumed []RawMessage slices as opaque and retains actual domain restoration; TestStored rerun passed. Original observed GREEN checkpoint: 4aa2e6ce19c068424bf890c69eb374e2a08a99cb. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Checkpoint restoration rejects malformed surrogate escapes without changing valid Unicode or literal escape identities",
@@ -387,7 +387,7 @@
             "exit_code": 0,
             "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
           },
-          "refactor": "No refactoring needed; valid controls are supplemental postimplementation characterization, not manufactured RED. Original observed GREEN checkpoint: 213923b6268f76c0f97606aea26be65b648284a0. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "No refactoring needed; valid controls are supplemental postimplementation characterization, not manufactured RED. Original observed GREEN checkpoint: 213923b6268f76c0f97606aea26be65b648284a0. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement."
         },
         {
           "scenario": "Stored outer target and policy identities reject malformed surrogate escapes while preserving valid pairs and literal text",
@@ -398,19 +398,19 @@
             "output": "unpaired high/low and malformed surrogate pair targets and evaluated policy identities silently replaced: <nil>"
           },
           "green": {
-            "revision": "34ae50cf5743c3aa0a1910492af2088921f3cd57",
+            "revision": "a901fb8deb64065f581ca4316e508d79b9323094",
             "command": "./scripts/dev.ps1 go test ./internal/adapters/postgres -run TestStoredPayloadsRejectUnpairedSurrogateEscapes -count=1",
             "exit_code": 0,
-            "output": "Exact matching command rerun at final committed task revision; exit0. Original GREEN checkpoint retained in refactor notes."
+            "output": "Exact matching StoredSurrogate command rerun at final committed a901 test-only revision; exit0. Other17 recorded replays remain actual34ae observations."
           },
-          "refactor": "Optional82c9d0c narrows private codec slice handling to actual []RawMessage consumers, retaining strict domain restore; TestStored passed. Original observed GREEN checkpoint: 101d5f75bda6ef810d51359283526a4deb9c782c. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; all task files bind to that final ancestor."
+          "refactor": "Optional82c9d0c narrows private codec slice handling to actual []RawMessage consumers, retaining strict domain restore; TestStored passed. Original observed GREEN checkpoint: 101d5f75bda6ef810d51359283526a4deb9c782c. Final identical command replay passed at 34ae50cf5743c3aa0a1910492af2088921f3cd57 after reviewed supplemental tests and optional refactors; that replay binds the files as they existed at34ae before the later test-only coverage supplement. Test-only a901 supplements actual duplicate Consent.Apply operation-map and actual rejected receipt encoding coverage; no production code changed, no manufactured RED. Final identical StoredSurrogate command replay at a901 exit0 binds every current task file."
         }
       ],
       "review": {
         "author": "m101_postgres, m101_schema, m101_artifact",
         "reviewer": "root, m101_artifact, m101_schema (cross-reviewed scopes)",
         "outcome": "accepted",
-        "notes": "Root independently replayed four initial real PostgreSQL RED/GREEN cycles and accepted final Store locks, authority redecisions, exact receipt/source bindings, raw-content verification and statement/deferred-commit rollback through34ae50cf5743c3aa0a1910492af2088921f3cd57. C independently replayed domain defect cycles and accepted final domain restoration, copy/dictionary identity, UTF-8/Unicode controls and test-only supplements through34ae; A independently replayed three outer-codec defect cycles and accepted final strict codec plus equivalent consumed-shape refactor82c9d0c1d851b83e1ea2a00992eb73f354e3fd04. B independently reviewed separately delegated A/C characterization commits before preserving their ancestry. All17 matching GREEN commands rerun at34ae and final15files bind there; full own checks/real PostgreSQL passed. Root actual composed Linux race/PostgreSQL/filesystem suite, generation and vulnerability checks passed atf746ac6203d31d1b097934386abfecf7d70dd814. IMPORTANT: paired-scope RED12fdede087f6554c35345bca76e37b6c2dd8138c was archived after the implementation fix; preserved pre-fix production plus original test independently reproduces the behavioral difference, but does not prove the timing of the author-reported original preimplementation observation. No timely archival claim or retrospective TDD certification is made. Missing priority command characterization rejects a zero-value principal; it does not cover the private nil receiver guard."
+        "notes": "Root independently replayed four initial real PostgreSQL RED/GREEN cycles and accepted final Store locks, authority redecisions, exact receipt/source bindings, raw-content verification and statement/deferred-commit rollback through34ae50cf5743c3aa0a1910492af2088921f3cd57. C independently replayed domain defect cycles and accepted final domain restoration, copy/dictionary identity, UTF-8/Unicode controls and test-only supplements through34ae; A independently replayed three outer-codec defect cycles and accepted final strict codec plus equivalent consumed-shape refactor82c9d0c1d851b83e1ea2a00992eb73f354e3fd04. B independently reviewed separately delegated A/C characterization commits before preserving their ancestry. All17 matching GREEN commands and full own real PostgreSQL checks passed at34ae. Subsequent test-only characterization a901fb8deb64065f581ca4316e508d79b9323094 was independently accepted and replayed by A: actual duplicate aliases and retained rejected-receipt actors with invalid UTF-8 fail encoding while leaving the original immutable consent unchanged. Full contract and own project checks passed at a901; the final matching StoredSurrogate GREEN command was rerun there, binding all15 final files. No production changes or manufactured RED. Root actual composed Linux race/PostgreSQL/filesystem suite, generation and vulnerability checks passed atf746ac6203d31d1b097934386abfecf7d70dd814. IMPORTANT: paired-scope RED12fdede087f6554c35345bca76e37b6c2dd8138c was archived after the implementation fix; preserved pre-fix production plus original test independently reproduces the behavioral difference, but does not prove the timing of the author-reported original preimplementation observation. No timely archival claim or retrospective TDD certification is made. Missing priority command characterization rejects a zero-value principal; it does not cover the private nil receiver guard."
       }
     },
     {
@@ -431,12 +431,12 @@
             "output": "Tests compiled. TestArtifactsRoundTrip: Put verified bytes: artifact publication is not implemented. TestPutRejectsInvalidAndMismatchedIdentity: absent digest returned unimplemented rather than invalid digest. Concurrent puts did not publish the expected object. TestPartialWriteIsInvisibleAndAborted: Put did not stage the partial source. TestMissingAndCorruptObjectsPreventSuccess: missing verification returned unimplemented rather than fs.ErrNotExist. FAIL."
           },
           "green": {
-            "revision": "b65ee37b7a1bda354cc208971ff6ec48e73ad964",
+            "revision": "e713282e8e48367ffc9ab4525f0c24b879834761",
             "command": "./scripts/dev.ps1 go test -count=1 ./internal/adapters/filesystem",
             "exit_code": 0,
-            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem 0.384s; ./scripts/dev.ps1 go test -count=1 ./... also passed all four Go packages."
+            "output": "Matching original filesystem command passed at the final task revision. Windows skips privilege-dependent symlink and Linux-only constructor cases; actual nonprivileged Linux proof is recorded separately in the independent review."
           },
-          "refactor": "No refactoring needed in the first cycle. A subsequent cycle completes root, cancellation and operational-failure protections."
+          "refactor": "No refactoring needed in the first cycle. A subsequent cycle completes root, cancellation and operational-failure protections. Original recorded final GREEN: b65ee37b7a1bda354cc208971ff6ec48e73ad964. After independently reviewed test-only constructor failure characterization, the identical command passed at e713282e8e48367ffc9ab4525f0c24b879834761; production remains byte-identical."
         },
         {
           "scenario": "Unsafe roots/objects, cooperative cancellation, and write/flush/close/publication/cleanup/read failures cannot yield unverified success or replace immutable bytes; postpublication cleanup failures preserve causes and permit safe retry.",
@@ -447,19 +447,19 @@
             "output": "Tests compiled. Blank root accepted. Directory objects returned an operational error rather than corruption. Cancelled Put/Read succeeded; cancellation at EOF/close published. Sync failures were ignored and publication preceded flush. Cleanup failures were hidden/lost. Lstat failure was ignored. Nil source panicked instead of returning invalid input. FAIL. Two actual symlink cases skipped for Windows ERROR_PRIVILEGE_NOT_HELD; this host limitation is not RED."
           },
           "green": {
-            "revision": "ca625acfb16bc812225e757e6ddbcb14cac38214",
+            "revision": "e713282e8e48367ffc9ab4525f0c24b879834761",
             "command": "./scripts/dev.ps1 go test -count=1 ./internal/adapters/filesystem -run 'Test(NewStore|Nonregular|Cancellation|PutOperational|SyncAndClose|Cleanup|ReadAndVerify|NilSource)'",
             "exit_code": 0,
-            "output": "ok github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem 0.314s. Full filesystem suite with real file operations and per-store fault wrappers passed; 98.8% statement coverage, with Put/Read/Verify/contextReader at 100%. Two Windows symlink cases skip because host privilege is unavailable."
+            "output": "Matching original filesystem command passed at the final task revision. Windows skips privilege-dependent symlink and Linux-only constructor cases; actual nonprivileged Linux proof is recorded separately in the independent review."
           },
-          "refactor": "No production refactoring needed. Strengthened the existing real-FS race test by holding every independently staged writer at the link boundary before releasing all publishers together, without sleeps. Added invalid-root and between-chunk cancellation regression cases; reran both the focused command and entire filesystem suite at the final GREEN."
+          "refactor": "No production refactoring needed. Strengthened the existing real-FS race test by holding every independently staged writer at the link boundary before releasing all publishers together, without sleeps. Added invalid-root and between-chunk cancellation regression cases; reran both the focused command and entire filesystem suite at the final GREEN. Original recorded final GREEN: ca625acfb16bc812225e757e6ddbcb14cac38214. After independently reviewed test-only constructor failure characterization, the identical command passed at e713282e8e48367ffc9ab4525f0c24b879834761; production remains byte-identical."
         }
       ],
       "review": {
         "author": "m101_artifact",
         "reviewer": "root_integrator",
         "outcome": "accepted",
-        "notes": "Root integrator independently replayed both compiled RED/GREEN pairs, reviewed the final source and real-filesystem/fault cases at ca625acfb16bc812225e757e6ddbcb14cac38214, and reported no findings. Local complete checks pass at that exact revision. Actual Linux symlink/race verification remains integrator-owned and is not claimed from Windows skips. Root subsequently reported actual owned Linux/race verification with both symlink cases passing and no skips, resolving the local Windows privilege limitation; this evidence was run by the integrator."
+        "notes": "Root integrator independently replayed both compiled RED/GREEN pairs, reviewed the final source and real-filesystem/fault cases at ca625acfb16bc812225e757e6ddbcb14cac38214, and reported no findings. Local complete checks pass at that exact revision. Actual Linux symlink/race verification remains integrator-owned and is not claimed from Windows skips. Root subsequently reported actual owned Linux/race verification with both symlink cases passing and no skips, resolving the local Windows privilege limitation; this evidence was run by the integrator. Root accepted separately authored test-only supplement e713282e8e48367ffc9ab4525f0c24b879834761 after inspecting isolated t.Chdir/cleanup, real directory permission denial, preserved errors and absent created roots. Actual isolated Linux UID1000 focused race tests passed both new constructor cases without skips at combined4b9eca0bae3dcdbfe0965bbbc31a754ba9ace1e8; the complete portable and real PostgreSQL/filesystem race/coverage suite, fresh sqlc generation and vulnerability scan also passed there. Original matching task commands and own full project checks passed at e713, binding all final C behavioral files. No production changes, exclusions or manufactured RED."
       }
     },
     {

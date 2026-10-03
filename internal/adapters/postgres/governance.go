@@ -169,11 +169,14 @@ func (s *Store) findReceipt(ctx context.Context, queries *dbgen.Queries, id stri
 	if err != nil {
 		return governance.OperationReceipt{}, storageError(err)
 	}
-	receipt, err := decodeReceipt(row.ReceiptPayload, row.Kind, row.ProjectID, row.SuiteID)
+	receipt, err := decodeReceipt(row.ReceiptPayload, row.Kind, row.ProjectID, row.SuiteID, row.OperationID)
 	if err != nil {
 		return governance.OperationReceipt{}, err
 	}
 	if receipt.Kind == governance.OperationConsent {
+		if source && receipt.Consent.Result.Command().OperationID() != contract.OperationID(row.OperationID) {
+			return governance.OperationReceipt{}, governance.ErrInvalidSnapshot
+		}
 		if source && string(receipt.Consent.Result.Command().SourceCommandID()) != id {
 			return governance.OperationReceipt{}, governance.ErrInvalidSnapshot
 		}
@@ -226,7 +229,7 @@ func (s *Store) snapshot(ctx context.Context, queries *dbgen.Queries, state auth
 		return governance.Snapshot{}, storageError(err)
 	}
 	if err == nil {
-		receipt, err := decodeReceipt(row.PromotionPayload, row.OperationKind, row.ProjectID, row.SuiteID)
+		receipt, err := decodeReceipt(row.PromotionPayload, row.OperationKind, row.ProjectID, row.SuiteID, row.OperationID)
 		if err != nil {
 			return governance.Snapshot{}, err
 		}

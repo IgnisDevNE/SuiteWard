@@ -122,7 +122,7 @@ func (s *Store) CommitConsent(ctx context.Context, fence governance.AuthorityFen
 	}
 	state.consents[request.Reference.ProposalID] = next
 	receipt := governance.OperationReceipt{Kind: governance.OperationConsent, Consent: write.Receipt}
-	encoded, err := encodeReceipt(receipt)
+	encoded, err := encodeReceipt(receipt, write.Command.OperationID())
 	if err != nil {
 		return governance.ErrInvalidRequest
 	}

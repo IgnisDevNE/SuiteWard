@@ -54,6 +54,7 @@ type consentPayload struct {
 type receiptPayload struct {
 	Version   int
 	Kind      governance.OperationKind
+	Operation contract.OperationID
 	Promotion *promotionPayload
 	Consent   *consentPayload
 }
@@ -133,8 +134,8 @@ func decodeAuthority(encoded []byte, project, suite, current, revision string) (
 	}
 	return state, nil
 }
-func encodeReceipt(receipt governance.OperationReceipt) ([]byte, error) {
-	payload := receiptPayload{Version: 1, Kind: receipt.Kind}
+func encodeReceipt(receipt governance.OperationReceipt, operation contract.OperationID) ([]byte, error) {
+	payload := receiptPayload{Version: 1, Kind: receipt.Kind, Operation: operation}
 	if receipt.Kind == governance.OperationConsent {
 		r := receipt.Consent
 		domain, err := contract.EncodeStateCheckpoint(contract.StateCheckpoint{CommandResult: r.Result})
@@ -154,12 +155,12 @@ func encodeReceipt(receipt governance.OperationReceipt) ([]byte, error) {
 	}
 	return json.Marshal(payload)
 }
-func decodeReceipt(encoded []byte, kind int16, project, suite string) (governance.OperationReceipt, error) {
+func decodeReceipt(encoded []byte, kind int16, project, suite, operation string) (governance.OperationReceipt, error) {
 	var payload receiptPayload
 	if err := decodePayload(encoded, &payload); err != nil {
 		return governance.OperationReceipt{}, err
 	}
-	if payload.Version != 1 || int16(payload.Kind) != kind {
+	if payload.Version != 1 || int16(payload.Kind) != kind || string(payload.Operation) != operation || strings.TrimSpace(operation) == "" {
 		return governance.OperationReceipt{}, governance.ErrInvalidSnapshot
 	}
 	receipt := governance.OperationReceipt{Kind: payload.Kind}

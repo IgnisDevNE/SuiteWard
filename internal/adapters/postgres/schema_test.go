@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -60,6 +61,62 @@ func TestPostgresSchemaFreshConstraints(t *testing.T) {
 	if err := database.conn.QueryRow(t.Context(), "SELECT authority_revision::text FROM suites WHERE suite_id='maximum'").Scan(&revision); err != nil || revision != "18446744073709551615" {
 		t.Fatalf("full uint64 revision round trip = %q, error %v", revision, err)
 	}
+}
+
+func TestPostgresMigrationsLifecycle(t *testing.T) {
+	t.Run("repeat and concurrent", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		var workers sync.WaitGroup
+		failures := make(chan error, 4)
+		for range 4 {
+			workers.Go(func() { failures <- migrations.UpTo(t.Context(), database.url, 1) })
+		}
+		workers.Wait()
+		close(failures)
+		for err := range failures {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+			t.Fatal(err)
+		}
+		var applications int
+		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FROM goose_db_version WHERE version_id=1 AND is_applied").Scan(&applications); err != nil {
+			t.Fatalf("concurrent migration did not establish version history: %v", err)
+		}
+		if applications != 1 {
+			t.Fatalf("migration 1 applied %d times; want exactly one", applications)
+		}
+	})
+	t.Run("failed body rolls back", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		schemaExec(t, database.conn, "CREATE TABLE suite_versions(conflicting_fixture boolean)")
+		if err := migrations.UpTo(t.Context(), database.url, 1); err == nil {
+			t.Fatal("conflicting preexisting relation did not reject migration")
+		}
+		var absent bool
+		if err := database.conn.QueryRow(t.Context(), "SELECT to_regclass('suites') IS NULL").Scan(&absent); err != nil || !absent {
+			t.Fatalf("failed migration left staged authority table: absent=%v error=%v", absent, err)
+		}
+		var applications int
+		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FROM goose_db_version WHERE version_id=1 AND is_applied").Scan(&applications); err != nil || applications != 0 {
+			t.Fatalf("failed migration advanced version history: applications=%d error=%v", applications, err)
+		}
+		schemaExec(t, database.conn, "DROP TABLE suite_versions")
+		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+			t.Fatalf("failed migration cannot recover after its fixture is removed: %v", err)
+		}
+	})
+	t.Run("downgrade rejected", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err := migrations.UpTo(t.Context(), database.url, 0); !errors.Is(err, migrations.ErrForwardOnly) {
+			t.Fatalf("downgrade must fail closed; got %v", err)
+		}
+	})
 }
 
 const schemaDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

@@ -1,7 +1,13 @@
 // Package migrations applies the reviewed PostgreSQL schema sequence.
 package migrations
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrForwardOnly rejects a schema downgrade.
+var ErrForwardOnly = errors.New("schema migrations are forward only")
 
 // Up applies the supported schema sequence. Its behavior is introduced by the
 // schema task after the compiled fresh-install RED checkpoint.

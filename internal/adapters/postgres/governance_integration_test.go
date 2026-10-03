@@ -815,13 +815,14 @@ func TestPostgresExistingHistoryAndUnrepresentableFactsCannotCreateEffects(t *te
 			t.Fatalf("rejected historical encoding created authority or effects: %+v, %v", current, err)
 		}
 	})
-	t.Run("unrepresentable consent operation", func(t *testing.T) {
+	t.Run("unrepresentable rejected receipt actor", func(t *testing.T) {
 		pool, store, _ := newGovernanceDatabase(t)
 		fixture := pgGovernanceFixture(t)
 		if err := store.InitializeTrusted(t.Context(), fixture.authority); err != nil {
 			t.Fatal(err)
 		}
-		command := pgValue(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(string([]byte{'o', 0xff})), SourceCommandID: "new-source", Actor: fixture.owner, Reference: fixture.request.Reference, Carrier: "carrier", Action: contract.ApproveConsent, Order: 1}))
+		actor := pgValue(contract.NewPrincipal(contract.PrincipalID(string([]byte{'o', 0xff})), contract.Human))
+		command := pgValue(contract.NewCommand(contract.CommandInput{OperationID: "unrepresentable", SourceCommandID: "new-source", Actor: actor, Reference: fixture.request.Reference, Carrier: "carrier", Action: contract.ApproveConsent, Order: 1}))
 		if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: command}); !errors.Is(err, governance.ErrInvalidRequest) {
 			t.Fatalf("unrepresentable consent identity committed: %v", err)
 		}

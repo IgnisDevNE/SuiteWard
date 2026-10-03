@@ -102,7 +102,7 @@ func RestoreStateCheckpoint(encoded []byte) (StateCheckpoint, error) {
 func validateCheckpointJSON(encoded []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.UseNumber()
-	if err := checkpointJSONValue(decoder); err != nil {
+	if err := checkpointJSONValue(decoder, false); err != nil {
 		return err
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
@@ -111,7 +111,7 @@ func validateCheckpointJSON(encoded []byte) error {
 	return nil
 }
 
-func checkpointJSONValue(decoder *json.Decoder) error {
+func checkpointJSONValue(decoder *json.Decoder, exactKeys bool) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -127,18 +127,27 @@ func checkpointJSONValue(decoder *json.Decoder) error {
 			if err != nil {
 				return err
 			}
-			name := strings.ToLower(key.(string))
+			rawName := key.(string)
+			name := rawName
+			if !exactKeys {
+				for known := range keys {
+					if strings.EqualFold(known, rawName) {
+						return ErrInvalidCheckpoint
+					}
+				}
+			}
 			if keys[name] {
 				return ErrInvalidCheckpoint
 			}
 			keys[name] = true
-			if err := checkpointJSONValue(decoder); err != nil {
+			// These dictionary keys are domain identities, unlike DTO field names.
+			if err := checkpointJSONValue(decoder, strings.EqualFold(rawName, "Covered") || strings.EqualFold(rawName, "Operations")); err != nil {
 				return err
 			}
 		}
 	} else {
 		for decoder.More() {
-			if err := checkpointJSONValue(decoder); err != nil {
+			if err := checkpointJSONValue(decoder, false); err != nil {
 				return err
 			}
 		}

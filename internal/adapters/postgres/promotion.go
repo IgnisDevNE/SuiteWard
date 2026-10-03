@@ -90,7 +90,7 @@ func (s *Store) CommitPromotion(ctx context.Context, fence governance.AuthorityF
 		return governance.ErrInvalidRequest
 	}
 	receipt := governance.OperationReceipt{Kind: identity.Kind, Promotion: write.Receipt}
-	encoded, err := encodeReceipt(receipt)
+	encoded, err := encodeReceipt(receipt, request.OperationID)
 	if err != nil {
 		return governance.ErrInvalidRequest
 	}

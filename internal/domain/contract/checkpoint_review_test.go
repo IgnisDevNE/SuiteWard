@@ -3,11 +3,28 @@ package contract
 import (
 	"errors"
 	"testing"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
 
+func TestIndependentCoveredInputKeysRemainCaseSensitive(t *testing.T) {
+	manifest := checkpointValue(artifact.NewManifest(nil))
+	protected := checkpointValue(NewProtectedContract(manifest, artifact.Hash([]byte("scope")), map[string]string{"runner": "v1", "RUNNER": "v2"}))
+	encoded, err := EncodeStateCheckpoint(StateCheckpoint{Protected: protected})
+	if err != nil {
+		t.Fatalf("valid case-distinct dictionary keys rejected: %v", err)
+	}
+	restored, err := RestoreStateCheckpoint(encoded)
+	if err != nil || !restored.Protected.Equal(protected) {
+		t.Fatalf("case-distinct dictionary changed: %+v %v", restored, err)
+	}
+}
+
 func TestReviewAmbiguousCaseVariantVersion(t *testing.T) {
-	if _, err := RestoreStateCheckpoint([]byte(`{"version":99,"Version":1}`)); !errors.Is(err, ErrInvalidCheckpoint) {
-		t.Fatalf("unsupported version hidden by case-variant duplicate: %v", err)
+	for _, input := range []string{`{"version":99,"Version":1}`, `{"version":99,"verſion":1}`} {
+		if _, err := RestoreStateCheckpoint([]byte(input)); !errors.Is(err, ErrInvalidCheckpoint) {
+			t.Fatalf("unsupported version hidden by case-variant duplicate: %v", err)
+		}
 	}
 }
 

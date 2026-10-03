@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -61,6 +62,9 @@ type receiptPayload struct {
 }
 
 func decodePayload(encoded []byte, value any) error {
+	if !utf8.Valid(encoded) || !validPayloadUnicodeEscapes(encoded) {
+		return governance.ErrInvalidSnapshot
+	}
 	if err := validatePayloadFields(encoded, reflect.TypeOf(value)); err != nil {
 		return governance.ErrInvalidSnapshot
 	}
@@ -73,6 +77,78 @@ func decodePayload(encoded []byte, value any) error {
 		return governance.ErrInvalidSnapshot
 	}
 	return nil
+}
+
+// Reject unpaired UTF-16 escapes before encoding/json can replace an identity.
+func validPayloadUnicodeEscapes(encoded []byte) bool {
+	for i := 0; i < len(encoded); i++ {
+		if encoded[i] != '"' {
+			continue
+		}
+		for i++; i < len(encoded) && encoded[i] != '"'; i++ {
+			if encoded[i] != '\\' {
+				continue
+			}
+			if i+1 >= len(encoded) || encoded[i+1] != 'u' {
+				i++
+				continue
+			}
+			if i+6 > len(encoded) {
+				return false
+			}
+			code, err := strconv.ParseUint(string(encoded[i+2:i+6]), 16, 16)
+			if err != nil || code >= 0xdc00 && code <= 0xdfff {
+				return false
+			}
+			if code >= 0xd800 && code <= 0xdbff {
+				if i+12 > len(encoded) || encoded[i+6] != '\\' || encoded[i+7] != 'u' {
+					return false
+				}
+				low, err := strconv.ParseUint(string(encoded[i+8:i+12]), 16, 16)
+				if err != nil || low < 0xdc00 || low > 0xdfff {
+					return false
+				}
+				i += 6
+			}
+			i += 5
+		}
+	}
+	return true
+}
+
+func encodePayload(value any) ([]byte, error) {
+	if !validPayloadStrings(reflect.ValueOf(value)) {
+		return nil, governance.ErrInvalidSnapshot
+	}
+	return json.Marshal(value)
+}
+
+func validPayloadStrings(value reflect.Value) bool {
+	if value.Type() == reflect.TypeFor[json.RawMessage]() || value.Type() == reflect.TypeFor[time.Time]() {
+		return true
+	}
+	switch value.Kind() {
+	case reflect.Pointer:
+		if value.IsNil() {
+			return true
+		}
+		return validPayloadStrings(value.Elem())
+	case reflect.String:
+		return utf8.ValidString(value.String())
+	case reflect.Struct:
+		for i := 0; i < value.NumField(); i++ {
+			if !validPayloadStrings(value.Field(i)) {
+				return false
+			}
+		}
+	case reflect.Slice:
+		for i := 0; i < value.Len(); i++ {
+			if !validPayloadStrings(value.Index(i)) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Field spellings are exact at this private persistence boundary. Raw domain
@@ -162,7 +238,7 @@ func encodeAuthority(state authorityState) ([]byte, error) {
 		}
 		payload.Assessments = append(payload.Assessments, encoded)
 	}
-	return json.Marshal(payload)
+	return encodePayload(payload)
 }
 func decodeAuthority(encoded []byte, project, suite, current, revision string) (authorityState, error) {
 	var payload authorityPayload
@@ -241,7 +317,7 @@ func encodeReceipt(receipt governance.OperationReceipt, operation contract.Opera
 		}
 		payload.Promotion = &promotionPayload{request.OperationID, request.Reference, request.Carrier, request.AssessmentSource, request.NewVersionID, request.RecordedAt, i.BootstrapMode, i.CorrectsVersionID, domain}
 	}
-	return json.Marshal(payload)
+	return encodePayload(payload)
 }
 func decodeReceipt(encoded []byte, kind int16, project, suite, operation string) (governance.OperationReceipt, error) {
 	var payload receiptPayload

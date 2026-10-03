@@ -8,7 +8,7 @@ try {
     if ($Integration -and [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', 'Process'))) {
         throw 'PostgreSQL integration requires SUITEWARD_TEST_DATABASE_URL; refusing an unverified adapter run'
     }
-    $buildTags = if ($Integration) { @('-tags=integration') } else { @() }
+    $buildTags = @(if ($Integration) { '-tags=integration' })
     $packages = @(go list @buildTags ./...)
     if ($LASTEXITCODE -ne 0 -or $packages.Count -eq 0) { throw 'Expected real Go packages; refusing an empty verification' }
     $sources = @(git ls-files --cached --others --exclude-standard '*.go' | Where-Object { $_ -cnotmatch '^vendor/' } | Sort-Object -Unique)

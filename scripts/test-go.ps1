@@ -80,7 +80,7 @@ try {
         if ($null -eq $savedDatabase) { Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', $savedDatabase, 'Process') }
     }
-    Write-Output 'Passed 7 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
+    Write-Output 'Passed 10 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $scratch).Path
     if ($resolved -ne [IO.Path]::GetFullPath($scratch) -or -not $resolved.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {

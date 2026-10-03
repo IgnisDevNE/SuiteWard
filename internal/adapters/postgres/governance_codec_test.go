@@ -399,6 +399,53 @@ func TestStoredAuthorityRejectsLossyTargetEncoding(t *testing.T) {
 	}
 }
 
+func TestStoredReceiptRejectsLossyEnvelopeEncoding(t *testing.T) {
+	fixture := newCodecFixture(t)
+	lossy := string([]byte{'a', 0xff})
+	t.Run("reserved alias operation", func(t *testing.T) {
+		encoded, err := encodeReceipt(fixture.consent, contract.OperationID(lossy))
+		if err != nil {
+			return
+		}
+		var payload receiptPayload
+		if err := json.Unmarshal(encoded, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Operation != contract.OperationID(lossy) {
+			t.Fatalf("reserved receipt alias lost exact operation identity: original %q, encoded %q", lossy, payload.Operation)
+		}
+	})
+	t.Run("evaluated policy identity", func(t *testing.T) {
+		receipt := fixture.consent
+		receipt.Consent.PolicyRevisionID = contract.PolicyRevisionID(lossy)
+		encoded, err := encodeReceipt(receipt, "approve")
+		if err != nil {
+			return
+		}
+		restored, err := decodeReceipt(encoded, int16(governance.OperationConsent), "project", "suite", "approve")
+		if err != nil {
+			t.Fatalf("receipt encoder emitted unreadable policy identity: %v", err)
+		}
+		if restored.Consent.PolicyRevisionID != receipt.Consent.PolicyRevisionID {
+			t.Fatalf("receipt evaluated policy lost exact identity: original %q, restored %q", receipt.Consent.PolicyRevisionID, restored.Consent.PolicyRevisionID)
+		}
+	})
+}
+
+func TestStoredPayloadsRejectInvalidUTF8(t *testing.T) {
+	fixture := newCodecFixture(t)
+	authority := codecValue(encodeAuthority(fixture.state))
+	authority = bytes.Replace(authority, []byte(`"target":"main"`), []byte{'"', 't', 'a', 'r', 'g', 'e', 't', '"', ':', '"', 'm', 0xff, '"'}, 1)
+	if _, err := decodeAuthority(authority, "project", "suite", "", "0"); !errors.Is(err, governance.ErrInvalidSnapshot) {
+		t.Errorf("raw invalid UTF-8 authority target was silently decoded: %v", err)
+	}
+	receipt := codecValue(encodeReceipt(fixture.consent, "approve"))
+	receipt = bytes.Replace(receipt, []byte(`"PolicyRevision":"policy"`), append(append([]byte(`"PolicyRevision":"p`), byte(0xff)), byte('"')), 1)
+	if _, err := decodeReceipt(receipt, int16(governance.OperationConsent), "project", "suite", "approve"); !errors.Is(err, governance.ErrInvalidSnapshot) {
+		t.Errorf("raw invalid UTF-8 receipt policy identity was silently decoded: %v", err)
+	}
+}
+
 func codecValue[T any](value T, err error) T {
 	if err != nil {
 		panic(err)

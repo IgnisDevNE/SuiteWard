@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,55 @@ func pgValue[T any](value T, err error) T {
 		panic(err)
 	}
 	return value
+}
+
+func pgInitializeAndApprove(t *testing.T,store *postgres.Store,fixture governanceFixture) {
+	t.Helper();if err:=store.InitializeTrusted(t.Context(),fixture.authority);err!=nil{t.Fatal(err)};if result,err:=governance.ProcessConsent(t.Context(),store,governance.ConsentRequest{Command:fixture.command});err!=nil||!result.Committed{t.Fatalf("approve setup: %+v %v",result,err)}
+}
+type loadedBarrier struct { governance.Store; ready chan<- struct{}; release <-chan struct{} }
+func (s loadedBarrier) Load(ctx context.Context,r governance.ReadRequest) (governance.Snapshot,error) {snapshot,err:=s.Store.Load(ctx,r);if err!=nil{return snapshot,err};select{case s.ready<-struct{}{}:case <-ctx.Done():return governance.Snapshot{},ctx.Err()};select{case <-s.release:return snapshot,nil;case <-ctx.Done():return governance.Snapshot{},ctx.Err()}}
+func TestPostgresPromotionRacePreservesOneWinner(t *testing.T) {
+	pool,store,_:=newGovernanceDatabase(t);fixture:=pgGovernanceFixture(t);pgInitializeAndApprove(t,store,fixture)
+	ready,release:=make(chan struct{},2),make(chan struct{});barrier:=loadedBarrier{store,ready,release};var wait sync.WaitGroup;results:=make([]governance.PromoteResult,2);failures:=make([]error,2)
+	for i:=range results{wait.Add(1);go func(){defer wait.Done();request:=fixture.request;request.OperationID=contract.OperationID("race-"+string(rune('a'+i)));request.NewVersionID=contract.SuiteVersionID("race-version-"+string(rune('a'+i)));results[i],failures[i]=governance.Promote(t.Context(),barrier,request)}()}
+	for range 2{select{case <-ready:case <-t.Context().Done():t.Fatal(t.Context().Err())}};close(release);wait.Wait();winner:=-1
+	for i,result:=range results{if failures[i]==nil&&result.Committed{if winner!=-1{t.Fatal("two promotions committed")};winner=i}else if !errors.Is(failures[i],governance.ErrAuthorityConflict){t.Fatalf("loser did not reject stale whole-Suite fence: %+v %v",result,failures[i])}}
+	if winner==-1{t.Fatal("no valid promotion committed")};snapshot,err:=store.Load(t.Context(),governance.ReadRequest{Reference:fixture.request.Reference});if err!=nil{t.Fatal(err)};effect,_:=results[winner].Decision.Effect();if snapshot.Canonical.Version().ID()!=effect.Version().ID()||pgCount(t,pool,"promotions")!=1||pgCount(t,pool,"suite_versions")!=1{t.Fatal("winning version lost or competing effects persisted")}
+}
+
+func TestPostgresPromotionRollsBackSQLAndCommitFailures(t *testing.T) {
+	for _,stage:=range []string{"audit statement","deferred commit"}{t.Run(stage,func(t *testing.T){pool,store,_:=newGovernanceDatabase(t);fixture:=pgGovernanceFixture(t);pgInitializeAndApprove(t,store,fixture)
+		statement:=`CREATE FUNCTION fail_effect() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit SQL failure'; END $$; CREATE TRIGGER fail_effect BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_effect()`
+		if stage=="deferred commit"{statement=`CREATE FUNCTION fail_effect() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$; CREATE TRIGGER fail_effect BEFORE INSERT ON publication_intents FOR EACH ROW EXECUTE FUNCTION fail_effect()`}
+		schemaExec(t,pool,statement);result,err:=governance.Promote(t.Context(),store,fixture.request);if err==nil||result.Committed{t.Fatalf("failed transaction exposed success: %+v %v",result,err)}
+		snapshot,err:=store.Load(t.Context(),governance.ReadRequest{Reference:fixture.request.Reference});if err!=nil{t.Fatal(err)};if snapshot.Fence.Revision!=1{t.Fatal("failed transaction advanced authority")};if _,present:=snapshot.Canonical.Suite().CurrentVersionID();present{t.Fatal("failed transaction changed pointer")}
+		for table,want:=range map[string]int{"suite_versions":0,"promotions":0,"operation_receipts":1,"audit_events":1,"publication_intents":0,"consent_acknowledgments":1}{if got:=pgCount(t,pool,table);got!=want{t.Fatalf("rollback left partial %s=%d want%d",table,got,want)}}
+		table:="audit_events";if stage=="deferred commit"{table="publication_intents"};schemaExec(t,pool,"DROP TRIGGER fail_effect ON "+table);retry,err:=governance.Promote(t.Context(),store,fixture.request);if err!=nil||!retry.Committed||retry.Duplicate{t.Fatalf("rollback reserved operation/version identity: %+v %v",retry,err)}
+	})}
+}
+
+type changedConsentView struct { governance.Store; consent contract.Consent }
+func (s changedConsentView) Load(ctx context.Context,r governance.ReadRequest) (governance.Snapshot,error) {snapshot,err:=s.Store.Load(ctx,r);snapshot.Consent=s.consent;return snapshot,err}
+func TestPostgresRevalidatesRevocationAndPreservesAliasReceipt(t *testing.T) {
+	pool,store,_:=newGovernanceDatabase(t);fixture:=pgGovernanceFixture(t);pgInitializeAndApprove(t,store,fixture);approved,err:=store.Load(t.Context(),governance.ReadRequest{Reference:fixture.request.Reference});if err!=nil{t.Fatal(err)}
+	revoke:=pgValue(contract.NewCommand(contract.CommandInput{OperationID:"revoke",SourceCommandID:"source-revoke",Actor:fixture.owner,Reference:fixture.request.Reference,Carrier:"carrier",Action:contract.RevokeConsent,Order:2}));revoked,err:=governance.ProcessConsent(t.Context(),store,governance.ConsentRequest{Command:revoke});if err!=nil||revoked.Receipt.Result.Outcome()!=contract.ConsentRevoked{t.Fatalf("revoke: %+v %v",revoked,err)}
+	result,err:=governance.Promote(t.Context(),changedConsentView{store,approved.Consent},fixture.request);if !errors.Is(err,governance.ErrInvalidRequest)||result.Committed{t.Fatalf("caller old approval authorized promotion under current fence: %+v %v",result,err)}
+	alias:=pgValue(contract.NewCommand(contract.CommandInput{OperationID:"alias",SourceCommandID:"source-approve",Actor:fixture.owner,Reference:fixture.request.Reference,Carrier:"changed-carrier",Action:contract.RevokeConsent,Order:99}));aliased,err:=governance.ProcessConsent(t.Context(),store,governance.ConsentRequest{Command:alias});if err!=nil||!aliased.Duplicate||aliased.Receipt.Result.Outcome()!=contract.ConsentApproved||!aliased.Receipt.CurrentApprovalEligible{t.Fatalf("alias reevaluated historical outcome: %+v %v",aliased,err)}
+	current,err:=store.Load(t.Context(),governance.ReadRequest{Reference:fixture.request.Reference});if err!=nil||current.Fence.Revision!=3||current.Consent.HasApproval(current.Proposal,current.Policy){t.Fatalf("alias changed current revocation: %+v %v",current,err)}
+	for table,want:=range map[string]int{"operation_receipts":3,"consent_sources":2,"audit_events":2,"consent_acknowledgments":2}{if got:=pgCount(t,pool,table);got!=want{t.Fatalf("alias duplicated %s: %d want%d",table,got,want)}}
+}
+
+func TestPostgresRejectsReceiptRowIdentityMismatch(t *testing.T) {
+	pool,store,_:=newGovernanceDatabase(t);fixture:=pgGovernanceFixture(t);pgInitializeAndApprove(t,store,fixture)
+	schemaExec(t,pool,`INSERT INTO operation_receipts(operation_id,project_id,suite_id,kind,receipt_payload) SELECT 'forged','project','suite',kind,receipt_payload FROM operation_receipts WHERE operation_id='approve'`)
+	command:=pgValue(contract.NewCommand(contract.CommandInput{OperationID:"forged",SourceCommandID:"source-approve",Actor:fixture.owner,Reference:fixture.request.Reference,Carrier:"carrier",Action:contract.ApproveConsent,Order:1}));if _,err:=governance.ProcessConsent(t.Context(),store,governance.ConsentRequest{Command:command});!errors.Is(err,governance.ErrInvalidSnapshot){t.Fatalf("unbound copied receipt accepted as operation: %v",err)}
+}
+
+func TestPostgresContentAvailabilityPreventsPromotionLoadAndReplay(t *testing.T) {
+	pool,store,verifier:=newGovernanceDatabase(t);fixture:=pgGovernanceFixture(t);pgInitializeAndApprove(t,store,fixture);verifier.absent=fixture.request.Proposed.Manifest().Entries()[0].Content
+	if result,err:=governance.Promote(t.Context(),store,fixture.request);!errors.Is(err,os.ErrNotExist)||result.Committed{t.Fatalf("missing proposed bytes promoted: %+v %v",result,err)};if pgCount(t,pool,"promotions")!=0{t.Fatal("unavailable bytes created history")}
+	verifier.absent=artifact.Digest{};if result,err:=governance.Promote(t.Context(),store,fixture.request);err!=nil||!result.Committed{t.Fatalf("valid bytes setup: %+v %v",result,err)};verifier.absent=fixture.request.Proposed.Manifest().Entries()[0].Content
+	if _,err:=store.Load(t.Context(),governance.ReadRequest{Reference:fixture.request.Reference});!errors.Is(err,os.ErrNotExist){t.Fatalf("canonical read ignored missing bytes: %v",err)};if result,err:=governance.Promote(t.Context(),store,fixture.request);!errors.Is(err,os.ErrNotExist)||result.Committed{t.Fatalf("historical replay ignored original missing bytes: %+v %v",result,err)}
 }
 
 type pgVerifier struct{ absent artifact.Digest }

@@ -182,6 +182,14 @@ func TestStateCheckpointRejectsCorruptPersistedFacts(t *testing.T) {
 	}
 }
 
+func TestStateCheckpointRejectsPairedForeignConsent(t *testing.T) {
+	state := checkpointFixture(t)
+	state.Consent = checkpointValue(NewConsent("project", "foreign-suite", "proposal"))
+	if _, err := EncodeStateCheckpoint(state); !errors.Is(err, ErrInvalidCheckpoint) {
+		t.Fatalf("paired foreign consent accepted: %v", err)
+	}
+}
+
 func TestStateCheckpointEmptyAndUnbaselinedValues(t *testing.T) {
 	for _, value := range []StateCheckpoint{{}, {Canonical: checkpointValue(NewCanonicalSnapshot(checkpointValue(NewSuite("project", "suite", "", 0)), SuiteVersion{}, ProtectedContract{}, PromotionRecord{})), Consent: checkpointValue(NewConsent("project", "suite", "proposal")), Scheduling: checkpointValue(NewSchedule("project", "suite"))}} {
 		encoded, err := EncodeStateCheckpoint(value)

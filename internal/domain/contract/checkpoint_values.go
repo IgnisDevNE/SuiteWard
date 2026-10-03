@@ -535,6 +535,9 @@ func (d checkpointData) restore() (StateCheckpoint, error) {
 	if s.Command, e = d.Command.restore(); e != nil {
 		return s, e
 	}
+	if !s.Proposal.IsZero() && s.Consent.project != "" && !s.Consent.contains(s.Proposal.Current().Binding().Reference()) {
+		return StateCheckpoint{}, checkpointProblem("proposal consent scope")
+	}
 	return s, nil
 }
 

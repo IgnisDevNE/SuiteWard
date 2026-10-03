@@ -41,6 +41,54 @@ func TestNewStoreRejectsUnsafeRoots(t *testing.T) {
 	})
 }
 
+func TestNewStoreRejectsUnresolvableRelativeRoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux removal of the process working directory")
+	}
+	cwd := filepath.Join(t.TempDir(), "removed-working-directory")
+	if err := os.Mkdir(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+	if err := os.Remove(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if store, err := NewStore("relative-artifacts"); store != nil || !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("unresolvable root yielded a store or lost missing-directory cause: %v, %v", store, err)
+	}
+}
+
+func TestNewStoreRejectsUncreatableRoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux directory permission enforcement")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("requires a nonprivileged user without root permission bypass")
+	}
+	parent := filepath.Join(t.TempDir(), "read-only-parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(parent, 0o700); err != nil {
+			t.Errorf("restore owned directory permission: %v", err)
+		}
+	})
+	if err := os.Chmod(parent, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "artifacts")
+	if _, err := os.Lstat(root); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("permission fixture cannot inspect its missing child: %v", err)
+	}
+	if store, err := NewStore(root); store != nil || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("uncreatable root yielded a store or lost permission cause: %v, %v", store, err)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("failed initialization created an artifact root: %v", err)
+	}
+}
+
 func TestNonregularAndSymlinkObjectsAreRejected(t *testing.T) {
 	for _, kind := range []string{"directory", "symlink"} {
 		t.Run(kind, func(t *testing.T) {

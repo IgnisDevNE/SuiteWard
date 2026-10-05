@@ -42,7 +42,7 @@ func (q *Queries) BumpSuiteRevision(ctx context.Context, arg BumpSuiteRevisionPa
 }
 
 const getAssessment = `-- name: GetAssessment :one
-SELECT project_id, suite_id, proposal_id, revision_id, source, evidence_emitter, evidence_source, outcome FROM assessments
+SELECT project_id, suite_id, proposal_id, revision_id, source, evidence_emitter, evidence_source, evidence_revision_id, outcome FROM assessments
 WHERE project_id = $1 AND suite_id = $2 AND proposal_id = $3
   AND revision_id = $4 AND source = $5
 `
@@ -72,6 +72,7 @@ func (q *Queries) GetAssessment(ctx context.Context, arg GetAssessmentParams) (A
 		&i.Source,
 		&i.EvidenceEmitter,
 		&i.EvidenceSource,
+		&i.EvidenceRevisionID,
 		&i.Outcome,
 	)
 	return i, err
@@ -296,20 +297,21 @@ func (q *Queries) GetVersion(ctx context.Context, arg GetVersionParams) (GetVers
 }
 
 const insertAssessment = `-- name: InsertAssessment :exec
-INSERT INTO assessments (project_id, suite_id, proposal_id, revision_id, source, evidence_emitter, evidence_source, outcome)
+INSERT INTO assessments (project_id, suite_id, proposal_id, revision_id, source, evidence_emitter, evidence_source, evidence_revision_id, outcome)
 VALUES ($1, $2, $3, $4, $5,
-    $6, $7, $8)
+    $6, $7, $8, $9)
 `
 
 type InsertAssessmentParams struct {
-	ProjectID       string
-	SuiteID         string
-	ProposalID      string
-	RevisionID      string
-	Source          string
-	EvidenceEmitter pgtype.Text
-	EvidenceSource  pgtype.Text
-	Outcome         pgtype.Text
+	ProjectID          string
+	SuiteID            string
+	ProposalID         string
+	RevisionID         string
+	Source             string
+	EvidenceEmitter    pgtype.Text
+	EvidenceSource     pgtype.Text
+	EvidenceRevisionID pgtype.Text
+	Outcome            pgtype.Text
 }
 
 func (q *Queries) InsertAssessment(ctx context.Context, arg InsertAssessmentParams) error {
@@ -321,6 +323,7 @@ func (q *Queries) InsertAssessment(ctx context.Context, arg InsertAssessmentPara
 		arg.Source,
 		arg.EvidenceEmitter,
 		arg.EvidenceSource,
+		arg.EvidenceRevisionID,
 		arg.Outcome,
 	)
 	return err

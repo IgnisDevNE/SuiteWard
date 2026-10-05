@@ -9,14 +9,15 @@ import (
 )
 
 type Assessment struct {
-	ProjectID       string
-	SuiteID         string
-	ProposalID      string
-	RevisionID      string
-	Source          string
-	EvidenceEmitter pgtype.Text
-	EvidenceSource  pgtype.Text
-	Outcome         pgtype.Text
+	ProjectID          string
+	SuiteID            string
+	ProposalID         string
+	RevisionID         string
+	Source             string
+	EvidenceEmitter    pgtype.Text
+	EvidenceSource     pgtype.Text
+	EvidenceRevisionID pgtype.Text
+	Outcome            pgtype.Text
 }
 
 type ConsentResult struct {

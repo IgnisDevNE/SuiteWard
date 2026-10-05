@@ -221,7 +221,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `suite_versions` | (project_id, suite_id, version_id) | immutable | manifest_digest, manifest jsonb |
 | `proposals` | (project_id, suite_id, proposal_id) | immutable | carrier_id |
 | `proposal_revisions` | (project_id, suite_id, proposal_id, revision_id); unique seq | immutable | seq, origin, carrier, manifest/scope digests, covered_inputs jsonb, expected_version_id, policy_revision_id |
-| `assessments` | (project_id, suite_id, proposal_id, revision_id, source) | immutable | evidence emitter, evidence source, outcome (null = missing evidence) |
+| `assessments` | (project_id, suite_id, proposal_id, revision_id, source) | immutable | evidence emitter, evidence source, evidence revision id (FK to `proposal_revisions` of the same proposal; the evidence binding is rebuilt from it, so evidence bound to another proposal is not representable and is rejected by the writer), outcome; all four null = missing evidence, otherwise all non-null |
 | `schedule_entries` | (project_id, suite_id, proposal_id); unique carrier | only `state` and `position`-preserving updates | position, state text |
 | `consent_results` | source_command_id | append-only | operation_id, proposal, revision, actor, carrier, action, command_order, outcome, reason, seq |
 | `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent kinds, FK to `consent_results`), receipt jsonb (immutable receipt payload with explicit json tags) |

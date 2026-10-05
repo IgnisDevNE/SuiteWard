@@ -96,14 +96,18 @@ CREATE TABLE assessments (
     source text NOT NULL CHECK (btrim(source) <> ''),
     evidence_emitter text,
     evidence_source text,
+    evidence_revision_id text,
     outcome text,
     CONSTRAINT assessments_pkey PRIMARY KEY (project_id, suite_id, proposal_id, revision_id, source),
     CONSTRAINT assessments_revision_fkey FOREIGN KEY (project_id, suite_id, proposal_id, revision_id)
         REFERENCES proposal_revisions(project_id, suite_id, proposal_id, revision_id),
+    -- The evidence binding is rebuilt from this revision of the same proposal; the key is skipped while evidence is missing.
+    CONSTRAINT assessments_evidence_revision_fkey FOREIGN KEY (project_id, suite_id, proposal_id, evidence_revision_id)
+        REFERENCES proposal_revisions(project_id, suite_id, proposal_id, revision_id),
     -- Evidence is entirely present or entirely absent; absent means missing evidence.
     CONSTRAINT assessments_evidence_check CHECK (
-        (evidence_emitter IS NULL AND evidence_source IS NULL AND outcome IS NULL)
-        OR (evidence_emitter IS NOT NULL AND btrim(evidence_emitter) <> '' AND evidence_source IS NOT NULL AND btrim(evidence_source) <> '' AND outcome IS NOT NULL)),
+        (evidence_emitter IS NULL AND evidence_source IS NULL AND evidence_revision_id IS NULL AND outcome IS NULL)
+        OR (evidence_emitter IS NOT NULL AND btrim(evidence_emitter) <> '' AND evidence_source IS NOT NULL AND btrim(evidence_source) <> '' AND evidence_revision_id IS NOT NULL AND btrim(evidence_revision_id) <> '' AND outcome IS NOT NULL)),
     CONSTRAINT assessments_outcome_check CHECK (outcome IS NULL OR outcome IN ('passed', 'failed', 'unavailable'))
 );
 

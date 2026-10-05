@@ -42,7 +42,7 @@ func seedWithQueries(t *testing.T, queries *dbgen.Queries) {
 			return queries.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Seq: 1, Origin: "origin-1", CarrierID: "pr-1", ManifestDigest: schemaDigest, ScopeDigest: schemaDigest, CoveredInputs: []byte(`{}`), ExpectedVersionID: text("v0"), PolicyRevisionID: "policy-1"})
 		},
 		func() error {
-			return queries.InsertAssessment(ctx, dbgen.InsertAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "sha-1", EvidenceEmitter: text("ci"), EvidenceSource: text("sha-1"), Outcome: text("passed")})
+			return queries.InsertAssessment(ctx, dbgen.InsertAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "sha-1", EvidenceEmitter: text("ci"), EvidenceSource: text("sha-1"), EvidenceRevisionID: text("r1"), Outcome: text("passed")})
 		},
 		func() error {
 			return queries.InsertAssessment(ctx, dbgen.InsertAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", Source: "sha-2"})
@@ -160,11 +160,11 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 	})
 	t.Run("assessment by key", func(t *testing.T) {
 		assessment, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "sha-1"})
-		if err != nil || assessment.Outcome.String != "passed" || assessment.EvidenceEmitter.String != "ci" {
+		if err != nil || assessment.Outcome.String != "passed" || assessment.EvidenceEmitter.String != "ci" || assessment.EvidenceRevisionID.String != "r1" {
 			t.Fatalf("assessment %+v, error %v", assessment, err)
 		}
 		missing, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", Source: "sha-2"})
-		if err != nil || missing.Outcome.Valid || missing.EvidenceEmitter.Valid {
+		if err != nil || missing.Outcome.Valid || missing.EvidenceEmitter.Valid || missing.EvidenceRevisionID.Valid {
 			t.Fatalf("missing evidence %+v, error %v", missing, err)
 		}
 		if _, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "other"}); !errors.Is(err, pgx.ErrNoRows) {

@@ -101,9 +101,9 @@ VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.ar
     sqlc.narg(expected_version_id), sqlc.arg(policy_revision_id));
 
 -- name: InsertAssessment :exec
-INSERT INTO assessments (project_id, suite_id, proposal_id, revision_id, source, evidence_emitter, evidence_source, outcome)
+INSERT INTO assessments (project_id, suite_id, proposal_id, revision_id, source, evidence_emitter, evidence_source, evidence_revision_id, outcome)
 VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.arg(revision_id), sqlc.arg(source),
-    sqlc.narg(evidence_emitter), sqlc.narg(evidence_source), sqlc.narg(outcome));
+    sqlc.narg(evidence_emitter), sqlc.narg(evidence_source), sqlc.narg(evidence_revision_id), sqlc.narg(outcome));
 
 -- name: InsertScheduleEntry :exec
 INSERT INTO schedule_entries (project_id, suite_id, proposal_id, carrier_id, position, state)

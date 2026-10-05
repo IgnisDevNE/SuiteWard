@@ -200,6 +200,8 @@ func TestGovernanceSuiteRevisionGuard(t *testing.T) {
 		{"revision rewinds", "UPDATE suites SET revision=revision-1", "suites_revision_advance"},
 		{"suite key changes", "UPDATE suites SET suite_id='moved', revision=revision+1", "suites_identity_immutable"},
 		{"project key changes", "UPDATE suites SET project_id='moved', revision=revision+1", "suites_identity_immutable"},
+		{"target changes", "UPDATE suites SET target_id='other', revision=revision+1", "suites_governance_immutable"},
+		{"policy changes", "UPDATE suites SET policy_revision_id='policy-2', revision=revision+1", "suites_governance_immutable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := database.conn.Exec(t.Context(), test.statement)
@@ -210,6 +212,19 @@ func TestGovernanceSuiteRevisionGuard(t *testing.T) {
 	var revision, generation int64
 	if err := database.conn.QueryRow(t.Context(), "SELECT revision, schedule_generation FROM suites").Scan(&revision, &generation); err != nil || revision != 2 || generation != 2 {
 		t.Fatalf("exact next revision update: revision=%d generation=%d error=%v", revision, generation, err)
+	}
+}
+
+func TestGovernanceReadIndexes(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	for index, table := range map[string]string{"consent_results_proposal_seq_idx": "consent_results", "operations_source_command_idx": "operations"} {
+		var present bool
+		if err := database.conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexname = $3)", database.schema, table, index).Scan(&present); err != nil || !present {
+			t.Fatalf("index %s on %s is missing (error %v)", index, table, err)
+		}
 	}
 }
 

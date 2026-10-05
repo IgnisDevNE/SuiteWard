@@ -1,23 +1,17 @@
-## Result
+## Summary
 
-<!-- Concrete trigger and resulting behavior. One phase, one PR. -->
+<!-- What this phase delivers and why. One phase, one PR. -->
 
-Phase: <!-- F0, M0.01, ...; link docs/plan/phases/<ID>.md -->
+## Behavior changed
 
-Merge method: **Create a merge commit**. Preserve the RED/GREEN checkpoint commits; do not squash or rebase this phase.
-Tasks completed: <!-- Stable task IDs; describe partial/excluded work explicitly. -->
+<!-- Concrete triggers and resulting behavior; note any migration or compatibility impact. -->
 
-## Review and evidence
+## Checks run
 
-- Contracts/ADRs changed:
-- Start and integration dependencies satisfied:
-- Acceptance scenarios and negative cases:
-- TDD record: <!-- Link docs/plan/executions/<phase>.json; every task and changed file accounted for. -->
-- RED/GREEN revisions and independent review: <!-- Behavioral failures observed before implementation, matching passing runs, optional refactor checks. -->
-- Non-applicable tasks and reasons: <!-- Documentation/discovery/decision only; never an implementation waiver. -->
-- Commands, outcomes, and exact tested revision:
-- Windows/Linux and real adapter evidence, where applicable:
-- Migration, recovery, and compatibility impact:
-- Remaining limitations or decisions:
+<!-- Commands, outcomes, and the exact revision tested. Include Windows/Linux or real PostgreSQL results where they apply. -->
 
-<!-- Preserve recorded RED/GREEN commits; the final revision must pass all checks. CI validates evidence consistency, not the truth or quality of a claimed TDD sequence. Independent review is required. Publish using the authorized bot. Merge requires the user's authorization. -->
+## Limitations and decisions
+
+<!-- Remaining limitations, open decisions, anything not done. -->
+
+Merge method: **Create a merge commit** so the test-first commits stay in history. Publish with the authorized bot; merging requires the user's authorization.

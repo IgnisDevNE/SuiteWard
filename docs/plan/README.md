@@ -25,7 +25,7 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 | --- | --- | --- |
 | [S1](phases/S1.md) | Throwaway walking skeleton against real GitHub: App polling one repository, a required check, an approval, a merge, a recorded promotion. Findings settle the GitHub decisions. | R1 |
 | [M1.2](phases/M1.2.md) | `suiteward serve`: configuration, River jobs enqueued in the unit-of-work transaction, publication outbox, graceful shutdown. | R1 |
-| [M1.3](phases/M1.3.md) | `.suiteward.yml` scope with protected defaults, protected inventory, existing-baseline bootstrap, schedule admission. | R1 |
+| [M1.3](phases/M1.3.md) | `.suiteward.yml` scope with protected defaults, protected inventory, existing-baseline bootstrap. | R1 |
 | [M1.4](phases/M1.4.md) | GitHub App authentication, budgeted ETag polling, PR discovery, local MCP sync/status. | S1, M1.2 |
 | [M1.5](phases/M1.5.md) | Owner setup, TOTP enrollment, installation tier, protection verification (including a required project test check). | S1, M1.4 |
 | [M1.6](phases/M1.6.md) | `/suiteward approve` and `revoke` with TOTP, integrity assessment, `SuiteWard / Contract` check publication through the outbox. | M1.3, M1.4, M1.5 |

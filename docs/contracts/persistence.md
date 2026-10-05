@@ -30,7 +30,6 @@ type SuiteState struct {
 	Canonical contract.CanonicalSnapshot // Suite().Revision() is the stored counter; no current version before bootstrap
 	Policy    contract.Policy            // governing policy revision
 	Target    contract.IntegrationTargetID
-	Schedule  contract.Schedule
 }
 
 // Tx is valid only inside fn. Reads see the transaction's own writes.
@@ -51,7 +50,7 @@ type Tx interface {
 }
 
 // Seeder writes trusted initial state. It is the only writer of policies,
-// proposals, assessments, schedule entries and historical versions until the
+// proposals, assessments and historical versions until the
 // GitHub-facing phases add their own write paths.
 type Seeder interface {
 	Seed(context.Context, Seed) error
@@ -136,12 +135,10 @@ type ConsentWrite struct {
 }
 
 // PromotionWrite records a proposed promotion: the new version (its manifest
-// bytes are verified now), the promotion record, the new current pointer, and
-// the observed schedule.
+// bytes are verified now), the promotion record, and the new current pointer.
 type PromotionWrite struct {
-	Receipt  PromotionReceipt
-	Version  contract.SuiteVersion
-	Schedule contract.Schedule
+	Receipt PromotionReceipt
+	Version contract.SuiteVersion
 }
 
 type PromoteResult struct {
@@ -177,17 +174,17 @@ Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `
   - `ConsentReasonCommandConflict` → `ErrOperationConflict`, nothing written;
   - a duplicate result (same source command, new operation id) → `AppendConsent` with `Alias: true` and the original receipt from `ReceiptBySource`;
   - otherwise build the receipt (eligibility from `Consent.HasApproval`; `PromotedVersionID` from `PromotionFor(reference)`) and `AppendConsent`.
-- **Promotion, bootstrap, correction:** inside `Do`: replay by `Receipt(operationID)` compares the stored identity with the request (same kind, reference, carrier, proposed contract, assessment source, integration, new version id, corrected version); mismatch is `ErrOperationConflict`. Otherwise load suite state, proposal, consent, assessment and (for correction) the target version; decide in the domain. Only a `PromotionProposed` decision writes: `Schedule.Observe(..., ObservePromoted)` then `RecordPromotion`. Blocked and no-change outcomes are returned without writing.
+- **Promotion, bootstrap, correction:** inside `Do`: replay by `Receipt(operationID)` compares the stored identity with the request (same kind, reference, carrier, proposed contract, assessment source, integration, new version id, corrected version); mismatch is `ErrOperationConflict`. Otherwise load suite state, proposal, consent, assessment and (for correction) the target version; decide in the domain. Only a `PromotionProposed` decision writes, through `RecordPromotion`. Blocked and no-change outcomes are returned without writing. There is no admission gate: proposals based on the same canonical version are all promotable, the first promotion wins, and the canonical compare-and-set blocks the others with `PromotionReasonCanonicalChanged` until they have a new revision against the new canonical and a fresh exact approval.
 
 ### Store write semantics
 
 - `AppendConsent` (not alias): insert the command result and an operation row carrying the receipt; bump the revision.
 - `AppendConsent` (alias): insert only an operation row keyed by `ConsentWrite.OperationID` pointing at `Result.Command().SourceCommandID()` (never at `Result.Command().OperationID()`, which is the original operation), with a copy of the original receipt; bump the revision.
-- `RecordPromotion`: verify the version's manifest bytes in the content store; insert the version, the promotion, and the operation row; set the Suite's current version; persist schedule entry states and generation; bump the revision. A duplicate version id or promoted reference is `ErrVersionConflict`.
+- `RecordPromotion`: verify the version's manifest bytes in the content store; insert the version, the promotion, and the operation row; set the Suite's current version; bump the revision. A duplicate version id or promoted reference is `ErrVersionConflict`.
 - Time values are stored with microsecond precision (PostgreSQL `timestamptz`). Stores reject a `PromotionRecord.RecordedAt` with finer precision rather than truncating it, so callers building a `PromoteRequest` must truncate their clock to microseconds (`time.Now().UTC().Truncate(time.Microsecond)`).
 - `Seed` stores the given state as is, including the Suite revision carried by `Canonical.Suite().Revision()`; it does not reset counters.
 - `Do` must not commit when its context is canceled, even if `fn` returned nil; a `Tx` is unusable after `fn` returns.
-- Reads reconstitute: proposals via `NewProposal` + `Revise` in sequence order; consent via `ReconstituteConsent` from stored results and aliases; assessments via `AssessIntegrity` over stored evidence; schedule via `ReconstituteSchedule`; canonical and history via `NewSuite`, `NewSuiteVersion`, `NewPromotionRecord`, `NewCanonicalSnapshot`, `NewHistoricalCanonical`.
+- Reads reconstitute: proposals via `NewProposal` + `Revise` in sequence order; consent via `ReconstituteConsent` from stored results and aliases; assessments via `AssessIntegrity` over stored evidence; canonical and history via `NewSuite`, `NewSuiteVersion`, `NewPromotionRecord`, `NewCanonicalSnapshot`, `NewHistoricalCanonical`.
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
@@ -202,31 +199,20 @@ func ReconstituteCommandResult(command Command, outcome ConsentOutcome, reason C
 // non-increasing order for an actor and revision, unknown revisions, aliases
 // pointing at unknown source commands).
 func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map[OperationID]SourceCommandID) (Consent, error)
-
-type ScheduleEntryInput struct {
-	ProposalID ProposalID
-	Carrier    ApprovalCarrierID
-	State      ScheduleEntryState
-}
-
-// ReconstituteSchedule rebuilds a schedule; at most one entry is active and
-// proposal ids and carriers are unique.
-func ReconstituteSchedule(project ProjectID, suite SuiteID, generation ScheduleGeneration, entries []ScheduleEntryInput) (Schedule, error)
 ```
 
-Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, `Active`, `CanPromote`, and the outcome of the next `Apply`/`Observe`).
+Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
 ## Tables (R1-D1 creates one migration `00001_governance.sql`)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
-| `suites` | (project_id, suite_id) | update only via revision +1 trigger; no delete | revision bigint, current_version_id (deferred FK), target_id, policy_revision_id, schedule_generation bigint |
+| `suites` | (project_id, suite_id) | update only via revision +1 trigger; no delete | revision bigint, current_version_id (deferred FK), target_id, policy_revision_id |
 | `policies` | (project_id, revision_id) | immutable | owner principal id and kind |
 | `suite_versions` | (project_id, suite_id, version_id) | immutable | manifest_digest, manifest jsonb |
 | `proposals` | (project_id, suite_id, proposal_id) | immutable | carrier_id |
 | `proposal_revisions` | (project_id, suite_id, proposal_id, revision_id); unique seq | immutable | seq, origin, carrier, manifest/scope digests, covered_inputs jsonb, expected_version_id, policy_revision_id |
 | `assessments` | (project_id, suite_id, proposal_id, revision_id, source) | immutable | evidence emitter, evidence source, evidence revision id (FK to `proposal_revisions` of the same proposal; the evidence binding is rebuilt from it, so evidence bound to another proposal is not representable and is rejected by the writer), outcome; all four null = missing evidence, otherwise all non-null |
-| `schedule_entries` | (project_id, suite_id, proposal_id); unique carrier | only `state` and `position`-preserving updates | position, state text |
 | `consent_results` | source_command_id | append-only | operation_id, proposal, revision, actor, carrier, action, command_order, outcome, reason, seq |
 | `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent kinds, FK to `consent_results`), receipt jsonb (immutable receipt payload with explicit json tags) |
 | `promotions` | operation_id (unique; no FK, because seeded history has no receipt) | immutable | version_id (FK to `suite_versions`), proposal_id + revision_id (FK to `proposal_revisions`, which holds the binding), carrier, source, target, recorded_at, corrects_version_id; unique version and unique reference |

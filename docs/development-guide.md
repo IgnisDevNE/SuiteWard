@@ -1,7 +1,7 @@
 # SuiteWard development conventions
 
-- **Updated:** 2026-09-30
-- **Status:** Accepted conventions; M0 domain implementation has started.
+- **Updated:** 2026-10-05
+- **Status:** Accepted conventions; M0, M1.01 and R1 are delivered.
 - **Scope:** How contributors and agents write SuiteWard code and tests.
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.
@@ -20,7 +20,7 @@ Tests should establish observable behavior and invariants rather than duplicate 
 
 Use small, purpose-built fakes at actual external boundaries. Pass controlled time and other nondeterministic inputs where a rule depends on them. A fake is not evidence that PostgreSQL transactions, filesystem behavior, or GitHub requests work correctly; adapter and integrated tests must exercise those real components as they are implemented.
 
-Keep the M0 suite runnable without external services. Later infrastructure tests must be identifiable and runnable separately. Parallel tests must own independent mutable resources; do not use timing sleeps as a substitute for coordinating concurrent test behavior.
+Domain and application tests need no external services (no database, container, or GitHub credentials). Later infrastructure tests must be identifiable and runnable separately. Parallel tests must own independent mutable resources; do not use timing sleeps as a substitute for coordinating concurrent test behavior.
 
 Coverage targets and CI checks are defined in the [CI and coverage guide](ci-and-coverage.md). Detailed persistence and generated-code checks must be implemented with those capabilities.
 
@@ -62,4 +62,4 @@ Keep dependencies visible in a component's construction rather than looking them
 
 Each task includes its behavior tests and follows the same conventions, regardless of the implementing agent. Additional libraries should address a concrete limitation and be discussed with the coordinating agent when they change shared dependencies. Install selected tools locally with pinned versions as required by ADR 0023.
 
-Configuration loading, migrations, and release automation remain separate open decisions. Formatting/static-analysis gates, vulnerability checks, and coverage policy are now defined in the [CI and coverage guide](ci-and-coverage.md).
+Migrations use embedded Goose with a single normalized `00001` ([ADR 0026](decisions/0026-versioned-postgresql-migrations.md)). Configuration loading and release automation remain open decisions. Formatting/static-analysis gates, vulnerability checks, and coverage policy are now defined in the [CI and coverage guide](ci-and-coverage.md).

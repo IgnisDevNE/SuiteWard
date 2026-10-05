@@ -20,7 +20,7 @@ Run `./scripts/dev.ps1 check` before finishing, plus `./scripts/dev.ps1 persiste
 
 ## GitHub and merges
 
-All GitHub writes go through the `ignisdevne[bot]` GitHub App, within its granted permissions; obtain its token with `scripts/bot-token.ps1` once that script exists. Verify the identity before publishing. Never fall back to personal credentials after a missing token or an access denial, and never print tokens or keys.
+All GitHub writes go through the `ignisdevne[bot]` GitHub App, within its granted permissions; obtain its token for `gh` and API calls with `scripts/bot-token.ps1`. Verify the identity before publishing. Never fall back to personal credentials after a missing token or an access denial, and never print tokens or keys.
 
 The user authorizes every merge into `main` and every message to other people. Passing CI, a prepared PR, or bot capability is not that authorization.
 

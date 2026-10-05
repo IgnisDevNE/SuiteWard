@@ -2,7 +2,7 @@
 
 SuiteWard protects an independently governed, canonical test contract. A repository may contain and propose tests, but it cannot redefine its own canonical contract.
 
-**Status.** The M0 domain (artifact identities, immutable suite versions, governing-policy authorization, proposals, approval, and promotion rules) and the M1.01 PostgreSQL persistence adapter are merged. Phase R1, a simplification of the plan and the persistence contract, is in progress. The runtime service, GitHub integration, owner identity, and test execution are planned and not yet implemented.
+**Status.** The M0 domain (artifact identities, immutable suite versions, governing-policy authorization, proposals, approval, and promotion rules), the M1.01 PostgreSQL persistence adapter, and phase R1 (a simplified persistence contract and delivery process) are delivered. Next are the S1 walking skeleton and M1.2/M1.3. The runtime service, GitHub integration, owner identity, and test execution are planned and not yet implemented.
 
 M1 aims to deliver a tamper-evident, human-approved test contract. Approval requires a TOTP code from the verified owner so that, on an isolated installation, an AI agent cannot approve its own changes; co-located installations are labeled with reduced assurance ([ADR 0027](docs/decisions/0027-agent-human-trust-separation.md)). Canonical test execution arrives in M2.
 

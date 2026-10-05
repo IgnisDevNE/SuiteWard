@@ -75,16 +75,19 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				// A fixture that cannot be built, or a store that panics, fails the
-				// subtest instead of aborting the others.
-				if r := recover(); r != nil {
-					t.Fatalf("panic: %v\n%s", r, debug.Stack())
-				}
-			}()
+			defer cfGuard(t)
 			owner := cfMust(contract.NewPrincipal("owner", contract.Human))
 			tc.run(&cfEnv{t: t, store: newStore(t), owner: owner})
 		})
+	}
+}
+
+// cfGuard fails the running subtest on a panic, from a fixture that cannot be
+// built or from the store, instead of aborting the others. Every subtest,
+// including nested ones, must run through RunConformance or cfEnv.run.
+func cfGuard(t *testing.T) {
+	if r := recover(); r != nil {
+		t.Fatalf("panic: %v\n%s", r, debug.Stack())
 	}
 }
 
@@ -186,8 +189,13 @@ type cfEnv struct {
 	owner contract.Principal
 }
 
-// sub returns the env for a subtest of the running subtest.
-func (e *cfEnv) sub(t *testing.T) *cfEnv { return &cfEnv{t: t, store: e.store, owner: e.owner} }
+// run runs fn as a nested subtest with its own env and panic isolation.
+func (e *cfEnv) run(name string, fn func(*cfEnv)) {
+	e.t.Run(name, func(t *testing.T) {
+		defer cfGuard(t)
+		fn(&cfEnv{t: t, store: e.store, owner: e.owner})
+	})
+}
 
 func (e *cfEnv) candidate(id string, baseline contract.SuiteVersionID, content string, revisions ...contract.ProposalRevisionID) cfCandidate {
 	return cfNewCandidate(cfProject, cfSuite, id, baseline, content, revisions...)
@@ -832,46 +840,46 @@ func (s *cfSuiteStore) Do(ctx context.Context, _ contract.ProjectID, _ contract.
 
 func cfOperationAcrossKinds(e *cfEnv) {
 	c := e.candidate("p1", "", "v1")
-	e.seedSimple(cfProject, cfSuite, c)
+	fresh := e.candidate("p2", "", "v2") // never promoted: only its operation id can conflict
+	e.seedSimple(cfProject, cfSuite, c, fresh)
 	e.approve(c)
 	e.promote(c.mergedRequest("promote-1", "version-1"))
 	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"approve-p1", "promote-1"}, sources: []contract.SourceCommandID{"comment-other"},
-		versions: []contract.SuiteVersionID{"version-2"}, references: []contract.ProposalReference{c.current()}}
+		versions: []contract.SuiteVersionID{"version-2"}, references: []contract.ProposalReference{c.current(), fresh.current()}}
 	before := e.view(probe)
 
-	t := e.t
-	t.Run("a consent operation id used by a promotion", func(t *testing.T) {
+	e.run("a consent operation id used by a promotion", func(e *cfEnv) {
 		_, err := governance.Promote(context.Background(), e.store, c.mergedRequest("approve-p1", "version-2"))
 		if !errors.Is(err, governance.ErrOperationConflict) {
-			t.Fatalf("error = %v, want an operation conflict", err)
+			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
-	t.Run("a promotion operation id used by a consent command", func(t *testing.T) {
+	e.run("a promotion operation id used by a consent command", func(e *cfEnv) {
 		command := e.command(c, "revision-1", "promote-1", "comment-other", contract.ApproveConsent, 2)
 		_, err := governance.ProcessConsent(context.Background(), e.store, governance.ConsentRequest{Command: command})
 		if !errors.Is(err, governance.ErrOperationConflict) {
-			t.Fatalf("error = %v, want an operation conflict", err)
+			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
-	t.Run("a promotion operation id used by another promotion kind", func(t *testing.T) {
+	e.run("a promotion operation id used by another promotion kind", func(e *cfEnv) {
 		_, err := governance.Bootstrap(context.Background(), e.store, c.baselineRequest("promote-1", "version-1"))
 		if !errors.Is(err, governance.ErrOperationConflict) {
-			t.Fatalf("error = %v, want an operation conflict", err)
+			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
-	t.Run("a promotion operation id used by a changed request", func(t *testing.T) {
+	e.run("a promotion operation id used by a changed request", func(e *cfEnv) {
 		_, err := governance.Promote(context.Background(), e.store, c.mergedRequest("promote-1", "version-2"))
 		if !errors.Is(err, governance.ErrOperationConflict) {
-			t.Fatalf("error = %v, want an operation conflict", err)
+			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
-	t.Run("a store rejects an operation id of another kind on write", func(t *testing.T) {
+	e.run("a store rejects an operation id of another kind on write", func(e *cfEnv) {
 		err := e.do(func(ctx context.Context, tx governance.Tx) error {
-			write := e.promotionWriteWith(c, "approve-p1", "version-2", "", cfMust(cfSchedule(ctx, tx)))
+			write := e.promotionWriteWith(fresh, "approve-p1", "version-2", "", cfMust(cfSchedule(ctx, tx)))
 			return tx.RecordPromotion(ctx, write)
 		})
 		if !errors.Is(err, governance.ErrOperationConflict) {
-			t.Fatalf("error = %v, want an operation conflict", err)
+			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
 	e.requireSameView(before, e.view(probe))
@@ -892,15 +900,18 @@ func cfSourceReplayConflicts(e *cfEnv) {
 	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"replay-agent", "replay-other-proposal"}, sources: []contract.SourceCommandID{"comment-p1"}}
 	before := e.view(probe)
 
-	for name, command := range map[string]contract.Command{
-		"another actor":    e.commandBy(agent, c, "revision-1", "replay-agent", "comment-p1", contract.ApproveConsent, 2),
-		"another proposal": e.command(d, "revision-1", "replay-other-proposal", "comment-p1", contract.ApproveConsent, 2),
-		"another suite":    e.command(other, "revision-1", "replay-other-suite", "comment-p1", contract.ApproveConsent, 2),
+	for _, tc := range []struct {
+		name    string
+		command contract.Command
+	}{
+		{"another actor", e.commandBy(agent, c, "revision-1", "replay-agent", "comment-p1", contract.ApproveConsent, 2)},
+		{"another proposal", e.command(d, "revision-1", "replay-other-proposal", "comment-p1", contract.ApproveConsent, 2)},
+		{"another suite", e.command(other, "revision-1", "replay-other-suite", "comment-p1", contract.ApproveConsent, 2)},
 	} {
-		e.t.Run(name, func(t *testing.T) {
-			_, err := governance.ProcessConsent(context.Background(), e.store, governance.ConsentRequest{Command: command})
+		e.run(tc.name, func(e *cfEnv) {
+			_, err := governance.ProcessConsent(context.Background(), e.store, governance.ConsentRequest{Command: tc.command})
 			if !errors.Is(err, governance.ErrOperationConflict) {
-				t.Fatalf("error = %v, want an operation conflict", err)
+				e.t.Fatalf("error = %v, want an operation conflict", err)
 			}
 		})
 	}
@@ -1208,8 +1219,7 @@ func cfCancellationDuringWork(e *cfEnv) {
 	before := e.view(probe)
 	approve := e.command(c, "revision-1", "approve-p1", "comment-p1", contract.ApproveConsent, 1)
 
-	e.t.Run("canceled after a write and returning nil", func(t *testing.T) {
-		e := e.sub(t)
+	e.run("canceled after a write and returning nil", func(e *cfEnv) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		err := e.store.Do(ctx, cfProject, cfSuite, func(ctx context.Context, tx governance.Tx) error {
@@ -1224,12 +1234,11 @@ func cfCancellationDuringWork(e *cfEnv) {
 			return nil
 		})
 		if err == nil {
-			t.Fatal("Do committed a unit of work whose context was canceled before it ended")
+			e.t.Fatal("Do committed a unit of work whose context was canceled before it ended")
 		}
 		e.requireSameView(before, e.view(probe))
 	})
-	e.t.Run("a write with a canceled context fails", func(t *testing.T) {
-		e := e.sub(t)
+	e.run("a write with a canceled context fails", func(e *cfEnv) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var writeErr error
@@ -1243,7 +1252,7 @@ func cfCancellationDuringWork(e *cfEnv) {
 			return writeErr
 		})
 		if writeErr == nil {
-			t.Error("AppendConsent succeeded with a canceled context")
+			e.t.Error("AppendConsent succeeded with a canceled context")
 		}
 		e.requireSameView(before, e.view(probe))
 	})
@@ -1257,16 +1266,16 @@ func cfVersionConflict(e *cfEnv) {
 		references: []contract.ProposalReference{r.open.current(), r.second.current()}}
 	before := e.view(probe)
 
-	for name, attempt := range map[string]struct {
+	for _, attempt := range []struct {
+		name      string
 		candidate cfCandidate
 		operation string
 		version   contract.SuiteVersionID
 	}{
-		"an existing version id":                {r.open, "vc-op-1", "version-1"},
-		"an already promoted proposal revision": {r.second, "vc-op-2", "version-9"},
+		{"an existing version id", r.open, "vc-op-1", "version-1"},
+		{"an already promoted proposal revision", r.second, "vc-op-2", "version-9"},
 	} {
-		e.t.Run(name, func(t *testing.T) {
-			e := e.sub(t)
+		e.run(attempt.name, func(e *cfEnv) {
 			err := e.do(func(ctx context.Context, tx governance.Tx) error {
 				state, err := tx.Suite(ctx)
 				if err != nil {
@@ -1275,7 +1284,7 @@ func cfVersionConflict(e *cfEnv) {
 				return tx.RecordPromotion(ctx, e.promotionWriteWith(attempt.candidate, attempt.operation, attempt.version, "", state.Schedule))
 			})
 			if !errors.Is(err, governance.ErrVersionConflict) {
-				t.Fatalf("error = %v, want a version conflict", err)
+				e.t.Fatalf("error = %v, want a version conflict", err)
 			}
 			e.requireSameView(before, e.view(probe))
 		})
@@ -1287,21 +1296,23 @@ func cfUnknownPromotionReference(e *cfEnv) {
 	probe := cfProbe{proposal: "p2", operations: []contract.OperationID{"ghost-op"}, versions: []contract.SuiteVersionID{"version-9"}}
 	before := e.view(probe)
 
-	for name, ghost := range map[string]cfCandidate{
-		"an unknown proposal":                     e.candidate("ghost", "version-2", "v3"),
-		"an unknown revision of a known proposal": e.candidate("p2", "version-2", "v3", "revision-9"),
+	for _, tc := range []struct {
+		name  string
+		ghost cfCandidate
+	}{
+		{"an unknown proposal", e.candidate("ghost", "version-2", "v3")},
+		{"an unknown revision of a known proposal", e.candidate("p2", "version-2", "v3", "revision-9")},
 	} {
-		e.t.Run(name, func(t *testing.T) {
-			e := e.sub(t)
+		e.run(tc.name, func(e *cfEnv) {
 			err := e.do(func(ctx context.Context, tx governance.Tx) error {
 				state, err := tx.Suite(ctx)
 				if err != nil {
 					return err
 				}
-				return tx.RecordPromotion(ctx, e.promotionWriteWith(ghost, "ghost-op", "version-9", "", state.Schedule))
+				return tx.RecordPromotion(ctx, e.promotionWriteWith(tc.ghost, "ghost-op", "version-9", "", state.Schedule))
 			})
 			if err == nil {
-				t.Fatal("RecordPromotion accepted a promotion of a proposal revision the store does not hold")
+				e.t.Fatal("RecordPromotion accepted a promotion of a proposal revision the store does not hold")
 			}
 			e.requireSameView(before, e.view(probe))
 		})
@@ -1367,16 +1378,17 @@ func cfNotFound(e *cfEnv) {
 	c := e.candidate("p1", "", "v1")
 	e.seedSimple(cfProject, cfSuite, c)
 	called := false
-	for name, ids := range map[string]struct {
+	for _, ids := range []struct {
+		name    string
 		project contract.ProjectID
 		suite   contract.SuiteID
-	}{"suite": {cfProject, "unknown-suite"}, "project": {"unknown-project", cfSuite}} {
+	}{{"suite", cfProject, "unknown-suite"}, {"project", "unknown-project", cfSuite}} {
 		err := e.doIn(ids.project, ids.suite, func(context.Context, governance.Tx) error {
 			called = true
 			return nil
 		})
 		if !errors.Is(err, governance.ErrNotFound) || called {
-			e.t.Errorf("Do on an unknown %s = %v (function called: %v), want not found without running the function", name, err, called)
+			e.t.Errorf("Do on an unknown %s = %v (function called: %v), want not found without running the function", ids.name, err, called)
 		}
 	}
 	e.read(func(ctx context.Context, tx governance.Tx) error {

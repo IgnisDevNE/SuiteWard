@@ -106,3 +106,17 @@ The cost is a broader App permission and additional responsibility for preservin
 - Concrete protection-change detection and repair mechanics under ADR 0017; mandatory human repair confirmation is settled.
 
 The integrated, owner-confirmed automatic setup is accepted; no live GitHub rules have been changed by recording this decision.
+
+## Amendment (2026-10-05, phase R1): verified protection, support matrix, deferred automation
+
+**Required checks.** Setup verifies that at least one project test check is a required status check, in addition to `SuiteWard / Contract`. If none is, SuiteWard reports a distinct failing state; the contract check alone does not make the project's tests a merge requirement.
+
+**GitHub support matrix.** Branch protection and rulesets are unavailable for private repositories on GitHub Free. On such repositories SuiteWard reports "enforcement unavailable" and never claims the contract is protected.
+
+| Repository | Plan | Protection |
+| --- | --- | --- |
+| Public | Any | Verified through branch protection or rulesets. |
+| Private | Pro, Team, Enterprise | Verified through branch protection or rulesets. |
+| Private | Free | "Enforcement unavailable"; SuiteWard still reports contract state. |
+
+**Automation moved post-MVP.** Automatic application of protection rules (the owner-confirmed setup above) moves post-MVP, as does automatic repair under [ADR 0017](0017-protection-change-detection-and-confirmed-repair.md). The MVP verifies protection and gives manual instructions. This also removes the need for `Administration: write` on the App in the MVP, which matters under [ADR 0027](0027-agent-human-trust-separation.md). Protection-drift detection remains in the MVP.

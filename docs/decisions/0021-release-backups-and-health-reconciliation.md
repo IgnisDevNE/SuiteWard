@@ -1,7 +1,7 @@
 # ADR 0021: Dedicated backup releases and periodic health reconciliation
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision, including the 29-day escalation rule for state awaiting its first verified remote coverage. Not implemented.
+- **Status:** Accepted, deferred to post-MVP (phase R1, 2026-10-05). Original status: Accepted design decision, including the 29-day escalation rule for state awaiting its first verified remote coverage. Not implemented.
 - **Product:** SuiteWard
 - **Scope:** Release assets as the primary remote destination, independent backup publication, health checks, and proposed Git fallback/cleanup.
 - **Updates:** The default committed-file destination in [ADR 0019](0019-encrypted-backups-and-instance-recovery-key.md). Its archive contents, encryption, recovery kit, local copy, and history requirements remain in force.
@@ -105,3 +105,7 @@ Technical capability to write files is not a bypass of branch protection or auth
 - Retention and locator migration for physical archives referenced by old receipts, while preserving logical canonical history.
 
 Dedicated Release assets, publication independent of product releases, periodic health reconciliation, reviewable contingency proposals, and the 29-day escalation clock for state awaiting its first verified remote coverage are accepted.
+
+## Amendment (2026-10-05, phase R1): deferred to post-MVP
+
+Release-asset backups, health reconciliation, and the 29-day Git contingency are deferred; the decision stays accepted. See the interim MVP backup in the amendment to [ADR 0019](0019-encrypted-backups-and-instance-recovery-key.md).

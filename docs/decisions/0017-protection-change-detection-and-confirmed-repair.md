@@ -97,3 +97,7 @@ The selected flow combines automatic detection with an owner-confirmed repair th
 - Corrective-PR rollback and history tooling under [ADR 0018](0018-corrective-pr-rollback-and-audit-history.md), backup/restore implementation under [ADR 0019](0019-encrypted-backups-and-instance-recovery-key.md), and administrative-access recovery; these remain separate from repairing GitHub protection.
 
 The automatic detection, notice, and mandatory human repair confirmation are accepted; implementation remains pending.
+
+## Amendment (2026-10-05, phase R1): repair moves post-MVP
+
+Detection, the distinct unknown state, and notices remain in the MVP. Confirmed repair through the setup interface moves post-MVP; the MVP reports the gap and gives manual instructions. See the amendment in [ADR 0016](0016-integrated-protection-onboarding.md).

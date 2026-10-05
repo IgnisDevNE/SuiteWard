@@ -1,10 +1,10 @@
 # ADR 0025: Mandatory task-level test-driven development
 
 - **Date:** 2026-09-30
-- **Status:** Accepted by the user; enforcement delivered through F0.01.
+- **Status:** Accepted by the user; amended 2026-10-05 (phase R1), which replaces the evidence and enforcement machinery described below.
 - **Product:** SuiteWard
 - **Scope:** Development of this repository, including application behavior, infrastructure scripts, and behavioral configuration.
-- **Related:** [ADR 0023](0023-development-environment-and-project-local-tooling.md), [ADR 0024](0024-single-module-project-structure.md), [development conventions](../development-guide.md), and [parallel delivery](../plan/parallel-delivery.md).
+- **Related:** [ADR 0023](0023-development-environment-and-project-local-tooling.md), [ADR 0024](0024-single-module-project-structure.md), and [development conventions](../development-guide.md).
 
 ## Context
 
@@ -46,3 +46,13 @@ Machine validation cannot establish command execution chronology, diagnostic aut
 - Require TDD only for application Go code: leaves behavioral infrastructure and enforcement changes outside the rule.
 - Serialize all testing behind one agent: adds unnecessary blocking and separates behavior ownership from its tests.
 - Treat a RED/GREEN JSON claim as proof of TDD: overstates what a validator can know and allows meaningless or fabricated evidence to appear authoritative.
+
+## Amendment (2026-10-05, phase R1): test-first without evidence machinery
+
+This amendment supersedes the evidence and enforcement parts of this record (the RED/GREEN checkpoint declarations, the per-task execution records, and CI validation of evidence and Git ancestry). The test-first discipline itself stays.
+
+- **Required:** test-first is required for domain and application rules about authority, consent, promotion, idempotency and concurrency, and for adapter behavior. Write the failing behavior test, observe it fail for the right reason, commit it, then implement.
+- **Review:** the PR shows the test commit before the implementation commit, and the `sw-reviewer` subagent checks that order and that the test fails for the right reason.
+- **Exempt:** documentation, deletions, mechanical refactors, and time-boxed throwaway spikes.
+- **Removed:** per-task evidence JSON, generated execution records, and the ancestry validator. They checked structure, not whether a test was meaningful, and cost more than they protected.
+- **Unchanged:** phases still integrate with merge commits, so the RED and GREEN commits stay in history. The user still authorizes each merge into `main`.

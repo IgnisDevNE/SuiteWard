@@ -1,7 +1,7 @@
 # ADR 0019: Encrypted backups and an instance recovery key
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; the primary remote destination is updated by [ADR 0021](0021-release-backups-and-health-reconciliation.md). Physical format and implementation details remain open. Not yet implemented.
+- **Status:** Accepted, deferred to post-MVP (phase R1, 2026-10-05). Original status: Accepted design decision; the primary remote destination is updated by [ADR 0021](0021-release-backups-and-health-reconciliation.md). Physical format and implementation details remain open. Not yet implemented.
 - **Product:** SuiteWard
 - **Scope:** Local recovery copy, encrypted versioned repository backup, one external recovery kit per instance, recovery references, and restore boundaries.
 - **Related:** [Hosting](0001-self-hosted-github-synchronization.md), [background jobs](0005-river-background-jobs.md), [canonical authority](0007-canonical-contract-authority.md), [authorization](0012-mvp-authorization-policy.md), [promotion](0014-merge-triggered-canonical-promotion.md), and [history retention](0018-corrective-pr-rollback-and-audit-history.md).
@@ -151,3 +151,7 @@ Disaster recovery restores recorded state; it does not replace ADR 0018's correc
 - Notification thresholds and issue placement for instance-level failures; the `suiteward restore` interface direction is selected in ADR 0020, with detailed prompts and packaging still open.
 
 The two-copy workflow, single external recovery kit per instance, and self-contained ledger plus distinct file contents are accepted. ADR 0021 updates the primary remote destination to Release assets. The physical archive format and remaining operational details are still open.
+
+## Amendment (2026-10-05, phase R1): deferred to post-MVP
+
+Encrypted archives, the recovery kit, and recovery receipts are deferred; the decision stays accepted. The MVP backup is `pg_dump` plus a tarball of the artifact volume, with a runbook that re-bootstraps the instance from the protected main branch. The archive design above is the target for the post-MVP backup work.

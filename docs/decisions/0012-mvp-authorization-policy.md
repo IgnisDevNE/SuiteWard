@@ -76,3 +76,7 @@ Human approval expresses authorization of the exact contract revision; it does n
 
 The MVP profiles, one-approval threshold, and approval by an authorized PR author are accepted.
 
+
+## Amendment (2026-10-05, phase R1): credential separation made concrete
+
+[ADR 0027](0027-agent-human-trust-separation.md) defines how "approval credentials remain outside agent access" is achieved. Approval and revocation require a TOTP code whose secret lives only inside the instance. Installations are tiered as isolated (full assurance) or co-located (supported, with SuiteWard reporting that the App key and database are reachable by the agent). Agents use their own GitHub identity. The roles, single eligible approval, and PR-author approval remain as decided above.

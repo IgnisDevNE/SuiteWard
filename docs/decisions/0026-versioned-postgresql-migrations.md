@@ -1,8 +1,8 @@
 # ADR 0026: Versioned PostgreSQL migrations
 
-- Status: Accepted implementation decision; migration behavior awaits M1.01 verification.
+- Status: Accepted implementation decision; amended 2026-10-05 (phase R1) with a pre-release reset to a single migration.
 - Date: 2026-10-02.
-- Related: [ADR 0004](0004-postgresql-pgx-sqlc.md), [ADR 0023](0023-development-environment-and-project-local-tooling.md), [M1-C01](../contracts/m1-01.md).
+- Related: [ADR 0004](0004-postgresql-pgx-sqlc.md), [ADR 0023](0023-development-environment-and-project-local-tooling.md), [persistence contract](../contracts/persistence.md).
 
 ## Decision
 
@@ -27,3 +27,7 @@ The library adds a pinned dependency and an explicit schema lifecycle. Session l
 - [Goose v3.28.0 release](https://github.com/pressly/goose/releases/tag/v3.28.0), verified 2026-10-02.
 - [Goose Provider](https://pressly.github.io/goose/blog/2023/goose-provider/).
 - [pgx v5.11.0 release](https://github.com/jackc/pgx/releases/tag/v5.11.0), verified 2026-10-02.
+
+## Amendment (2026-10-05, phase R1): pre-release reset
+
+No installation exists yet, so the migrations are rewritten as a single normalized `00001` (see the [persistence contract](../contracts/persistence.md)). The forward-only rule applies from this reset on; the earlier two-step sequence and its populated 1-to-2 upgrade test no longer apply. The earlier M1-C01 contract is replaced by the persistence contract.

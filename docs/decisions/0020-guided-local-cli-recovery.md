@@ -1,7 +1,7 @@
 # ADR 0020: Guided reconstruction through a local CLI
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design direction; not yet implemented. Detailed prompts, flags, and runtime packaging remain open.
+- **Status:** Accepted, deferred to post-MVP (phase R1, 2026-10-05). Original status: Accepted design direction; not yet implemented. Detailed prompts, flags, and runtime packaging remain open.
 - **Product:** SuiteWard
 - **Scope:** Local guided restore, reconstruction of instance configuration, and controlled resumption of GitHub integration.
 - **Related:** [Hosting](0001-self-hosted-github-synchronization.md), [authorization](0012-mvp-authorization-policy.md), [protection onboarding](0016-integrated-protection-onboarding.md), [confirmed repair](0017-protection-change-detection-and-confirmed-repair.md), and [encrypted backups](0019-encrypted-backups-and-instance-recovery-key.md).
@@ -87,3 +87,7 @@ The final result reports what was restored, the recovery point, unresolved gaps,
 - Limits and operational targets already open in ADR 0019.
 
 Guided reconstruction through a local `suiteward restore` command is accepted. This documentation does not install or implement the CLI.
+
+## Amendment (2026-10-05, phase R1): deferred to post-MVP
+
+`suiteward restore` is deferred; the decision stays accepted. The MVP recovery path is the runbook described in the amendment to [ADR 0019](0019-encrypted-backups-and-instance-recovery-key.md): restore the `pg_dump` and artifact tarball, or re-bootstrap from the protected main branch.

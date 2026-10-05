@@ -106,3 +106,23 @@ func TestOpeningStoreNeverFollowsPartialSymlinks(t *testing.T) {
 		t.Fatalf("symlink target outside the store was altered: %q, %v", got, err)
 	}
 }
+
+func TestDuplicatePutSyncsDirectoryBeforeReportingSuccess(t *testing.T) {
+	store := newTestStore(t, t.TempDir())
+	content := []byte("retry must not report success without a durable entry")
+	digest := artifact.Hash(content)
+	failure := errors.New("directory fsync failed")
+	syncs := 0
+	var syncErr error = failure
+	store.io.syncDir = func(*os.Root) error { syncs++; return syncErr }
+	if err := store.Put(context.Background(), digest, bytes.NewReader(content)); !errors.Is(err, failure) {
+		t.Fatalf("first Put = %v, want directory sync failure", err)
+	}
+	if err := store.Put(context.Background(), digest, bytes.NewReader(content)); !errors.Is(err, failure) || syncs != 2 {
+		t.Fatalf("retry = %v after %d syncs, want the failure from a second sync", err, syncs)
+	}
+	syncErr = nil
+	if err := store.Put(context.Background(), digest, bytes.NewReader(content)); err != nil || syncs != 3 {
+		t.Fatalf("retry with working sync = %v after %d syncs, want success from a third sync", err, syncs)
+	}
+}

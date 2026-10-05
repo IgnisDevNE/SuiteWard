@@ -109,15 +109,15 @@ func TestSameSourceCommandWithNewOperationRecordsAliasAndReturnsOriginalReceipt(
 	w.requireWrites(before, 1)
 }
 
-func TestOperationIDReusedForDifferentCommandConflicts(t *testing.T) {
+func TestReusedOperationIDOrReplayedSourceCommandConflicts(t *testing.T) {
 	w, c := consentWorld(t)
 	w.approve(c)
 	before := w.revision()
 	agent := must(contract.NewPrincipal("agent-1", contract.Agent))
 
 	for name, command := range map[string]contract.Command{
-		"another source command": w.command(c, "revision-1", "approve-p1", "comment-other", contract.RevokeConsent, 2),
-		"another actor":          w.commandBy(agent, c, "revision-1", "approve-agent", "comment-p1", contract.ApproveConsent, 2),
+		"operation id reused for another source command": w.command(c, "revision-1", "approve-p1", "comment-other", contract.RevokeConsent, 2),
+		"source command replayed by another actor":       w.commandBy(agent, c, "revision-1", "approve-agent", "comment-p1", contract.ApproveConsent, 2),
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := governance.ProcessConsent(context.Background(), w.mem, governance.ConsentRequest{Command: command})

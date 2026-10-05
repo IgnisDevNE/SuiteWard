@@ -37,6 +37,8 @@ func protectedOf(t *testing.T, content string) contract.ProtectedContract {
 // candidate is a proposal against a baseline canonical, with passing
 // integrity assessments for its candidate source and its merged source.
 type candidate struct {
+	project     contract.ProjectID
+	suite       contract.SuiteID
 	id          string
 	protected   contract.ProtectedContract
 	proposal    contract.Proposal
@@ -46,13 +48,17 @@ type candidate struct {
 	assessments []contract.IntegrityAssessment
 }
 
-// newCandidate builds one proposal; the last revision is the current one.
+// newCandidate builds one proposal in the default Suite; the last revision is the current one.
 func newCandidate(t *testing.T, id string, baseline contract.SuiteVersionID, protected contract.ProtectedContract, revisions ...contract.ProposalRevisionID) candidate {
+	return newCandidateIn(t, projectID, suiteID, id, baseline, protected, revisions...)
+}
+
+func newCandidateIn(t *testing.T, project contract.ProjectID, suite contract.SuiteID, id string, baseline contract.SuiteVersionID, protected contract.ProtectedContract, revisions ...contract.ProposalRevisionID) candidate {
 	t.Helper()
 	if len(revisions) == 0 {
 		revisions = []contract.ProposalRevisionID{"revision-1"}
 	}
-	c := candidate{id: id, protected: protected, carrier: contract.ApprovalCarrierID("carrier-" + id),
+	c := candidate{project: project, suite: suite, id: id, protected: protected, carrier: contract.ApprovalCarrierID("carrier-" + id),
 		origin: contract.SourceRevision("candidate-" + id), merged: contract.SourceRevision("merged-" + id)}
 	for _, revisionID := range revisions {
 		binding := must(contract.NewApprovalBinding(contract.BindingInput{Reference: c.reference(revisionID), ExpectedCanonical: baseline,
@@ -72,7 +78,7 @@ func newCandidate(t *testing.T, id string, baseline contract.SuiteVersionID, pro
 }
 
 func (c candidate) reference(revision contract.ProposalRevisionID) contract.ProposalReference {
-	return contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: contract.ProposalID(c.id), RevisionID: revision}
+	return contract.ProposalReference{ProjectID: c.project, SuiteID: c.suite, ProposalID: contract.ProposalID(c.id), RevisionID: revision}
 }
 
 func (c candidate) current() contract.ProposalReference {
@@ -81,14 +87,14 @@ func (c candidate) current() contract.ProposalReference {
 
 func (c candidate) mergedRequest(t *testing.T, operation string, version contract.SuiteVersionID) governance.PromoteRequest {
 	t.Helper()
-	integration := must(contract.NewIntegration(projectID, target, c.merged, c.carrier, contract.IntegrationMergedChange))
+	integration := must(contract.NewIntegration(c.project, target, c.merged, c.carrier, contract.IntegrationMergedChange))
 	return governance.PromoteRequest{OperationID: contract.OperationID(operation), Reference: c.current(), Carrier: c.carrier, Proposed: c.protected,
 		AssessmentSource: c.merged, Integration: integration, NewVersionID: version, RecordedAt: recordedAt}
 }
 
 func (c candidate) baselineRequest(t *testing.T, operation string, version contract.SuiteVersionID) governance.PromoteRequest {
 	t.Helper()
-	integration := must(contract.NewIntegration(projectID, target, c.origin, "", contract.IntegrationExistingBaseline))
+	integration := must(contract.NewIntegration(c.project, target, c.origin, "", contract.IntegrationExistingBaseline))
 	return governance.PromoteRequest{OperationID: contract.OperationID(operation), Reference: c.current(), Carrier: c.carrier, Proposed: c.protected,
 		AssessmentSource: c.origin, Integration: integration, NewVersionID: version, RecordedAt: recordedAt}
 }
@@ -99,26 +105,31 @@ type world struct {
 	owner contract.Principal
 }
 
-// newWorld seeds a Suite without a canonical version, owned by one human,
-// with every candidate admitted to the schedule in order.
+// newWorld seeds the default Suite without a canonical version, owned by one
+// human, with every candidate admitted to the schedule in order.
 func newWorld(t *testing.T, candidates ...candidate) *world {
 	t.Helper()
-	owner := must(contract.NewPrincipal("owner", contract.Human))
-	policy := must(contract.NewPolicy(projectID, policyID, owner))
-	suite := must(contract.NewSuite(projectID, suiteID, "", 7))
+	w := &world{t: t, mem: governancetest.NewMemory(), owner: must(contract.NewPrincipal("owner", contract.Human))}
+	w.addSuite(projectID, suiteID, candidates...)
+	return w
+}
+
+// addSuite seeds another Suite, possibly of another project, into the same Memory.
+func (w *world) addSuite(project contract.ProjectID, id contract.SuiteID, candidates ...candidate) {
+	w.t.Helper()
+	policy := must(contract.NewPolicy(project, policyID, w.owner))
+	suite := must(contract.NewSuite(project, id, "", 7))
 	canonical := must(contract.NewCanonicalSnapshot(suite, contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{}))
-	schedule := must(contract.NewSchedule(projectID, suiteID))
+	schedule := must(contract.NewSchedule(project, id))
 	seed := governance.Seed{}
 	for _, c := range candidates {
 		schedule = must(schedule.Admit(c.proposal, true))
 		seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: c.proposal, Assessments: c.assessments})
 	}
 	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: policy, Target: target, Schedule: schedule}
-	mem := governancetest.NewMemory()
-	if err := mem.Seed(context.Background(), seed); err != nil {
-		t.Fatal(err)
+	if err := w.mem.Seed(context.Background(), seed); err != nil {
+		w.t.Fatal(err)
 	}
-	return &world{t: t, mem: mem, owner: owner}
 }
 
 func (w *world) command(c candidate, revision contract.ProposalRevisionID, operation, source string, action contract.ConsentAction, order contract.CommandOrder) contract.Command {
@@ -230,4 +241,42 @@ func (w *world) requireWrites(before contract.StateRevision, writes int) {
 	if got := w.revision(); got != before+contract.StateRevision(writes) {
 		w.t.Fatalf("revision = %d, want %d", got, before+contract.StateRevision(writes))
 	}
+}
+
+// correctionWorld has two promoted versions (version-1, version-2) and an
+// approved fix proposal that restores the first contract against version-2.
+func correctionWorld(t *testing.T) (w *world, first, second, fix candidate) {
+	t.Helper()
+	v1 := protectedOf(t, "v1")
+	first = newCandidate(t, "p1", "", v1)
+	second = newCandidate(t, "p2", "version-1", protectedOf(t, "v2"))
+	fix = newCandidate(t, "p3", "version-2", v1)
+	w = newWorld(t, first, second, fix)
+	for _, c := range []candidate{first, second, fix} {
+		w.approve(c)
+	}
+	w.promote(first.mergedRequest(t, "promote-1", "version-1"))
+	w.promote(second.mergedRequest(t, "promote-2", "version-2"))
+	return w, first, second, fix
+}
+
+// sameHistory compares the immutable facts of two historical versions.
+func sameHistory(a, b contract.HistoricalCanonical) bool {
+	return a.Version().ID() == b.Version().ID() && a.Version().Manifest().Digest() == b.Version().Manifest().Digest() &&
+		a.Record().OperationID() == b.Record().OperationID() && a.Record().CorrectsVersionID() == b.Record().CorrectsVersionID() &&
+		a.Record().Carrier() == b.Record().Carrier() && a.Record().Binding().Equal(b.Record().Binding())
+}
+
+func (w *world) revisionIn(project contract.ProjectID, id contract.SuiteID) contract.StateRevision {
+	w.t.Helper()
+	var revision contract.StateRevision
+	err := w.mem.Do(context.Background(), project, id, func(ctx context.Context, tx governance.Tx) error {
+		state, err := tx.Suite(ctx)
+		revision = state.Canonical.Suite().Revision()
+		return err
+	})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return revision
 }

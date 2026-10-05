@@ -62,18 +62,11 @@ func TestBootstrapNeedsAnExistingBaselineAndNoCanonical(t *testing.T) {
 }
 
 func TestCorrectionCreatesNewVersionAttributingTheCorrectedOneAndKeepsHistory(t *testing.T) {
-	v1 := protectedOf(t, "v1")
-	first := newCandidate(t, "p1", "", v1)
-	second := newCandidate(t, "p2", "version-1", protectedOf(t, "v2"))
-	fix := newCandidate(t, "p3", "version-2", v1)
-	w := newWorld(t, first, second, fix)
-	for _, c := range []candidate{first, second, fix} {
-		w.approve(c)
-	}
-	w.promote(first.mergedRequest(t, "promote-1", "version-1"))
-	w.promote(second.mergedRequest(t, "promote-2", "version-2"))
+	w, _, _, fix := correctionWorld(t)
 	request := governance.CorrectionRequest{Promotion: fix.mergedRequest(t, "correct-1", "version-3"), TargetVersionID: "version-1"}
 	before := w.revision()
+	v1, _ := w.version("version-1")
+	v2, _ := w.version("version-2")
 
 	missing := governance.CorrectionRequest{Promotion: request.Promotion, TargetVersionID: "version-9"}
 	if _, err := governance.Correct(context.Background(), w.mem, missing); !errors.Is(err, governance.ErrNotFound) {
@@ -90,10 +83,14 @@ func TestCorrectionCreatesNewVersionAttributingTheCorrectedOneAndKeepsHistory(t 
 	if w.currentVersion() != "version-3" {
 		t.Fatalf("current version = %q, want version-3", w.currentVersion())
 	}
-	for _, id := range []contract.SuiteVersionID{"version-1", "version-2", "version-3"} {
-		if _, found := w.version(id); !found {
-			t.Fatalf("%s is missing from history after the correction", id)
+	for _, earlier := range []contract.HistoricalCanonical{v1, v2} {
+		id := earlier.Version().ID()
+		if now, found := w.version(id); !found || !sameHistory(earlier, now) {
+			t.Fatalf("%s changed or went missing after the correction", id)
 		}
+	}
+	if _, found := w.version("version-3"); !found {
+		t.Fatal("version-3 is missing from history")
 	}
 	if receipt, found := w.receipt("correct-1"); !found || receipt.Kind != governance.OperationCorrect {
 		t.Fatalf("receipt = %+v, found %v", receipt, found)

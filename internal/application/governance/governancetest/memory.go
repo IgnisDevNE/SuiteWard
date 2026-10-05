@@ -28,6 +28,7 @@ var (
 	_ governance.Seeder     = (*Memory)(nil)
 )
 
+// NewMemory returns an empty store; Seed adds Suites before any unit of work.
 func NewMemory() *Memory {
 	return &Memory{data: data{suites: map[suiteKey]*suiteData{}, byOp: map[contract.OperationID]governance.OperationReceipt{}, bySource: map[contract.SourceCommandID]governance.OperationReceipt{}}}
 }
@@ -108,6 +109,8 @@ func (m *Memory) Do(ctx context.Context, project contract.ProjectID, suite contr
 	return nil
 }
 
+// Seed installs trusted initial state for one Suite. It does not advance the
+// revision and rejects a Suite that already exists.
 func (m *Memory) Seed(_ context.Context, seed governance.Seed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

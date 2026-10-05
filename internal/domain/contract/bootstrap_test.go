@@ -85,17 +85,9 @@ func lifecycleContext(t *testing.T, canonical contract.CanonicalSnapshot, manife
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedule, err := contract.NewSchedule("project", "suite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	schedule, err = schedule.Admit(proposal, true)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return contract.PromotionContext{
 		Canonical: canonical, Proposed: protected, Proposal: proposal, Reference: binding.Reference(), Carrier: carrier,
-		Policy: policy, Consent: consent, Assessment: assessment, Scheduling: schedule,
+		Policy: policy, Consent: consent, Assessment: assessment,
 	}
 }
 

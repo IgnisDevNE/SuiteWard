@@ -158,34 +158,6 @@ func integrityOutcomeFromCode(code string) (contract.IntegrityOutcome, error) {
 	return 0, unknownValue("integrity outcome code", code)
 }
 
-func scheduleStateCode(state contract.ScheduleEntryState) (string, error) {
-	switch state {
-	case contract.ScheduleWaiting:
-		return "waiting", nil
-	case contract.ScheduleActive:
-		return "active", nil
-	case contract.ScheduleClosed:
-		return "closed", nil
-	case contract.SchedulePromoted:
-		return "promoted", nil
-	}
-	return "", unknownValue("schedule state", state)
-}
-
-func scheduleStateFromCode(code string) (contract.ScheduleEntryState, error) {
-	switch code {
-	case "waiting":
-		return contract.ScheduleWaiting, nil
-	case "active":
-		return contract.ScheduleActive, nil
-	case "closed":
-		return contract.ScheduleClosed, nil
-	case "promoted":
-		return contract.SchedulePromoted, nil
-	}
-	return 0, unknownValue("schedule state code", code)
-}
-
 func operationKindCode(kind governance.OperationKind) (string, error) {
 	switch kind {
 	case governance.OperationPromote:

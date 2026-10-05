@@ -7,11 +7,6 @@ FOR UPDATE;
 SELECT * FROM policies
 WHERE project_id = sqlc.arg(project_id) AND revision_id = sqlc.arg(revision_id);
 
--- name: ListScheduleEntries :many
-SELECT * FROM schedule_entries
-WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id)
-ORDER BY position;
-
 -- name: GetProposal :one
 SELECT * FROM proposals
 WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id) AND proposal_id = sqlc.arg(proposal_id);
@@ -86,9 +81,9 @@ INSERT INTO policies (project_id, revision_id, owner_id, owner_kind)
 VALUES (sqlc.arg(project_id), sqlc.arg(revision_id), sqlc.arg(owner_id), sqlc.arg(owner_kind));
 
 -- name: InsertSuite :exec
-INSERT INTO suites (project_id, suite_id, revision, current_version_id, target_id, policy_revision_id, schedule_generation)
+INSERT INTO suites (project_id, suite_id, revision, current_version_id, target_id, policy_revision_id)
 VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(revision), sqlc.narg(current_version_id), sqlc.arg(target_id),
-    sqlc.arg(policy_revision_id), sqlc.arg(schedule_generation));
+    sqlc.arg(policy_revision_id));
 
 -- name: InsertSuiteVersion :exec
 INSERT INTO suite_versions (project_id, suite_id, version_id, manifest_digest, manifest)
@@ -110,10 +105,6 @@ INSERT INTO assessments (project_id, suite_id, proposal_id, revision_id, source,
 VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.arg(revision_id), sqlc.arg(source),
     sqlc.narg(evidence_emitter), sqlc.narg(evidence_source), sqlc.narg(evidence_revision_id), sqlc.narg(outcome));
 
--- name: InsertScheduleEntry :exec
-INSERT INTO schedule_entries (project_id, suite_id, proposal_id, carrier_id, position, state)
-VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.arg(carrier_id), sqlc.arg(position), sqlc.arg(state));
-
 -- name: InsertConsentResult :exec
 INSERT INTO consent_results (source_command_id, operation_id, project_id, suite_id, proposal_id, revision_id,
     actor_id, actor_kind, carrier_id, action, command_order, outcome, reason)
@@ -132,19 +123,14 @@ VALUES (sqlc.arg(operation_id), sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.a
     sqlc.arg(revision_id), sqlc.arg(carrier_id), sqlc.arg(source_revision), sqlc.arg(target_id), sqlc.arg(recorded_at),
     sqlc.narg(corrects_version_id));
 
--- Advances the revision by exactly one, optionally moving the current version
--- and the schedule generation, and returns the new revision.
+-- Advances the revision by exactly one, optionally moving the current version,
+-- and returns the new revision.
 -- name: BumpSuiteRevision :one
 UPDATE suites
 SET revision = revision + 1,
-    current_version_id = COALESCE(sqlc.narg(current_version_id)::text, current_version_id),
-    schedule_generation = COALESCE(sqlc.narg(schedule_generation)::bigint, schedule_generation)
+    current_version_id = COALESCE(sqlc.narg(current_version_id)::text, current_version_id)
 WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id)
 RETURNING revision;
-
--- name: UpdateScheduleEntryState :execrows
-UPDATE schedule_entries SET state = sqlc.arg(state)
-WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id) AND proposal_id = sqlc.arg(proposal_id);
 
 -- name: GetSchemaVersion :one
 SELECT schema_version()::bigint AS version;

@@ -152,7 +152,6 @@ type PromotionContext struct {
 	Policy     Policy
 	Consent    Consent
 	Assessment IntegrityAssessment
-	Scheduling Schedule
 }
 
 type PromotionOutcome uint8
@@ -175,7 +174,6 @@ const (
 	PromotionReasonApprovalMissing
 	PromotionReasonAssessmentMismatch
 	PromotionReasonIntegrityNotPassed
-	PromotionReasonSchedulingBlocked
 	PromotionReasonIntegrationMissing
 	PromotionReasonIntegrationMismatch
 	PromotionReasonCanonicalPresent
@@ -306,9 +304,6 @@ func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevi
 	}
 	if !context.Assessment.Passed() {
 		return blockedPromotion(PromotionReasonIntegrityNotPassed), nil
-	}
-	if !context.Scheduling.CanPromote(context.Proposal) {
-		return blockedPromotion(PromotionReasonSchedulingBlocked), nil
 	}
 	return PromotionDecision{outcome: PromotionReady}, nil
 }

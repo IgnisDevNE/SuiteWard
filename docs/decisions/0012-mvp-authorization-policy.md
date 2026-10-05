@@ -2,6 +2,7 @@
 
 - **Date:** 2026-09-26
 - **Status:** Accepted design decision; not yet implemented.
+- **R1 note (2026-10-05):** the contract-change priority transfer described below is deferred to post-MVP; the MVP has no admission gate or priority queue ([ADR 0022](0022-contract-change-pr-priority.md)).
 - **Product:** SuiteWard
 - **Scope:** Initial human and agent capabilities, approval threshold, and PR authorship.
 - **Related:** [Canonical authority](0007-canonical-contract-authority.md), [bootstrap](0010-repository-bootstrap.md), [exact approval](0002-exact-revision-approval.md), and [revocation](0011-approval-revocation-and-acknowledgments.md).
@@ -30,7 +31,7 @@ Keep the following boundaries:
 - Repository write or administrator permission on GitHub does not automatically confer SuiteWard approval or administration privileges.
 - An agent can propose a change through the connected PR workflow, but cannot approve it, withdraw someone else's consent, grant roles, or rewrite the canonical pointer.
 - The local MCP interface keeps its synchronization and status capabilities; this decision does not add privileged approval or administration tools.
-- The human owner may request contract-change priority transfer using the PR command in [ADR 0022](0022-contract-change-pr-priority.md). It is a scheduling action, not approval; agent MCP and credentials do not gain this authority.
+- Post-MVP, the human owner may request contract-change priority transfer using the PR command in [ADR 0022](0022-contract-change-pr-priority.md). It is a scheduling action, not approval; agent MCP and credentials do not gain this authority. The MVP has no priority queue.
 - SuiteWard performs promotion only when required approvals, verification, integration validation, and policy conditions are satisfied.
 - Project administration does not provide a normal workflow for bypassing contract governance.
 - A policy change is evaluated and authorized under the governing policy before replacement. A proposal cannot lower its own approval threshold or grant itself authority.

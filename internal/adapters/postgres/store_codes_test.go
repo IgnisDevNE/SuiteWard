@@ -26,9 +26,6 @@ func TestEveryStoredCodeRoundTrips(t *testing.T) {
 	one.assessments = append(one.assessments, must(contract.AssessIntegrity("failing", r2, &failed)), must(contract.AssessIntegrity("offline", r2, &unavailable)))
 
 	seed := w.emptySeed(fxProject, fxSuite, one, two, three, four, misgoverned)
-	// Schedule states: p1 closed, p2 promoted, p3 active, p4 and p5 waiting.
-	schedule := must(seed.Suite.Schedule.Observe(one.proposal, contract.ObserveClosedUnmerged))
-	seed.Suite.Schedule = must(schedule.Observe(two.proposal, contract.ObservePromoted))
 	if err := w.store.Seed(t.Context(), seed); err != nil {
 		t.Fatal(err)
 	}
@@ -121,16 +118,6 @@ func TestEveryStoredCodeRoundTrips(t *testing.T) {
 			values = append(values, value)
 		}
 		return strings.Join(values, ",")
-	}
-	if got := stored("SELECT state FROM schedule_entries ORDER BY position"); got != "closed,promoted,active,waiting,waiting" {
-		t.Fatalf("stored schedule states %s", got)
-	}
-	states := map[contract.ProposalID]contract.ScheduleEntryState{}
-	for _, entry := range w.state().Schedule.Entries() {
-		states[entry.ProposalID()] = entry.State()
-	}
-	if states["p1"] != contract.ScheduleClosed || states["p2"] != contract.SchedulePromoted || states["p3"] != contract.ScheduleActive || states["p4"] != contract.ScheduleWaiting {
-		t.Fatalf("schedule states read back %v", states)
 	}
 	if got := stored("SELECT outcome FROM assessments WHERE source IN ('failing', 'offline') ORDER BY source"); got != "failed,unavailable" {
 		t.Fatalf("stored integrity outcomes %s", got)

@@ -89,23 +89,13 @@ type ProposalRevision struct {
 	PolicyRevisionID  string
 }
 
-type ScheduleEntry struct {
-	ProjectID  string
-	SuiteID    string
-	ProposalID string
-	CarrierID  string
-	Position   int64
-	State      string
-}
-
 type Suite struct {
-	ProjectID          string
-	SuiteID            string
-	Revision           int64
-	CurrentVersionID   pgtype.Text
-	TargetID           string
-	PolicyRevisionID   string
-	ScheduleGeneration int64
+	ProjectID        string
+	SuiteID          string
+	Revision         int64
+	CurrentVersionID pgtype.Text
+	TargetID         string
+	PolicyRevisionID string
 }
 
 type SuiteVersion struct {

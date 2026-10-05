@@ -1,7 +1,7 @@
 # ADR 0022: One active contract-change PR per suite and explicit priority transfer
 
 - **Date:** 2026-09-26
-- **Status:** Accepted, deferred to post-MVP (phase R1, 2026-10-05). Original status: Accepted design decision; implementation and GitHub coordination validation remain pending.
+- **Status:** Accepted, deferred to post-MVP (phase R1, 2026-10-05); the MVP has no admission gate or priority queue. Original status: Accepted design decision; implementation and GitHub coordination validation remain pending.
 - **Product:** SuiteWard
 - **Scope:** Contract-change scheduling, waiting PRs, human priority transfer, and required-check reassessment.
 - **Related:** [Exact approval](0002-exact-revision-approval.md), [background jobs](0005-river-background-jobs.md), [canonical authority](0007-canonical-contract-authority.md), [bootstrap](0010-repository-bootstrap.md), [processed acknowledgments](0011-approval-revocation-and-acknowledgments.md), [authorization](0012-mvp-authorization-policy.md), [promotion](0014-merge-triggered-canonical-promotion.md), and [required check](0015-required-contract-check.md).
@@ -116,6 +116,6 @@ The product must report a merged-but-unpromoted contract honestly and provide a 
 
 The priority queue, human transfer command, acknowledgment behavior, and separation from test CI are accepted. Implementation, integration testing, and proof of the stated coordination behavior remain pending.
 
-## Amendment (2026-10-05, phase R1): deferred to post-MVP
+## Amendment (2026-10-05, phase R1): no admission gate in the MVP
 
-The contract-change priority queue is deferred; the decision stays accepted. Its single active position serializes the parallel-agent workflow the product is meant to support, while promotion-time compare-and-set plus reassessment of the base already handles conflicting contract changes: the later PR is reassessed against the new canonical version and requires fresh approval if its covered inputs changed. `/suiteward prioritize` is not part of the MVP command set.
+The MVP has no admission gate, single active position, or priority queue; the decision stays accepted for post-MVP. Any approved contract-changing proposal may be promoted. Concurrent contract-changing PRs based on the same canonical version are resolved at promotion by the canonical compare-and-set: the first promotion wins and the later PR is blocked with a changed-canonical reason. It needs a new revision against the new canonical version and fresh exact approval, so parallel agent work is not serialized. A queue may return after the MVP if real use shows contention. `/suiteward prioritize` is not part of the MVP command set.

@@ -14,28 +14,21 @@ import (
 const bumpSuiteRevision = `-- name: BumpSuiteRevision :one
 UPDATE suites
 SET revision = revision + 1,
-    current_version_id = COALESCE($1::text, current_version_id),
-    schedule_generation = COALESCE($2::bigint, schedule_generation)
-WHERE project_id = $3 AND suite_id = $4
+    current_version_id = COALESCE($1::text, current_version_id)
+WHERE project_id = $2 AND suite_id = $3
 RETURNING revision
 `
 
 type BumpSuiteRevisionParams struct {
-	CurrentVersionID   pgtype.Text
-	ScheduleGeneration pgtype.Int8
-	ProjectID          string
-	SuiteID            string
+	CurrentVersionID pgtype.Text
+	ProjectID        string
+	SuiteID          string
 }
 
-// Advances the revision by exactly one, optionally moving the current version
-// and the schedule generation, and returns the new revision.
+// Advances the revision by exactly one, optionally moving the current version,
+// and returns the new revision.
 func (q *Queries) BumpSuiteRevision(ctx context.Context, arg BumpSuiteRevisionParams) (int64, error) {
-	row := q.db.QueryRow(ctx, bumpSuiteRevision,
-		arg.CurrentVersionID,
-		arg.ScheduleGeneration,
-		arg.ProjectID,
-		arg.SuiteID,
-	)
+	row := q.db.QueryRow(ctx, bumpSuiteRevision, arg.CurrentVersionID, arg.ProjectID, arg.SuiteID)
 	var revision int64
 	err := row.Scan(&revision)
 	return revision, err
@@ -560,46 +553,19 @@ func (q *Queries) InsertProposalRevision(ctx context.Context, arg InsertProposal
 	return err
 }
 
-const insertScheduleEntry = `-- name: InsertScheduleEntry :exec
-INSERT INTO schedule_entries (project_id, suite_id, proposal_id, carrier_id, position, state)
-VALUES ($1, $2, $3, $4, $5, $6)
-`
-
-type InsertScheduleEntryParams struct {
-	ProjectID  string
-	SuiteID    string
-	ProposalID string
-	CarrierID  string
-	Position   int64
-	State      string
-}
-
-func (q *Queries) InsertScheduleEntry(ctx context.Context, arg InsertScheduleEntryParams) error {
-	_, err := q.db.Exec(ctx, insertScheduleEntry,
-		arg.ProjectID,
-		arg.SuiteID,
-		arg.ProposalID,
-		arg.CarrierID,
-		arg.Position,
-		arg.State,
-	)
-	return err
-}
-
 const insertSuite = `-- name: InsertSuite :exec
-INSERT INTO suites (project_id, suite_id, revision, current_version_id, target_id, policy_revision_id, schedule_generation)
+INSERT INTO suites (project_id, suite_id, revision, current_version_id, target_id, policy_revision_id)
 VALUES ($1, $2, $3, $4, $5,
-    $6, $7)
+    $6)
 `
 
 type InsertSuiteParams struct {
-	ProjectID          string
-	SuiteID            string
-	Revision           int64
-	CurrentVersionID   pgtype.Text
-	TargetID           string
-	PolicyRevisionID   string
-	ScheduleGeneration int64
+	ProjectID        string
+	SuiteID          string
+	Revision         int64
+	CurrentVersionID pgtype.Text
+	TargetID         string
+	PolicyRevisionID string
 }
 
 func (q *Queries) InsertSuite(ctx context.Context, arg InsertSuiteParams) error {
@@ -610,7 +576,6 @@ func (q *Queries) InsertSuite(ctx context.Context, arg InsertSuiteParams) error 
 		arg.CurrentVersionID,
 		arg.TargetID,
 		arg.PolicyRevisionID,
-		arg.ScheduleGeneration,
 	)
 	return err
 }
@@ -774,46 +739,8 @@ func (q *Queries) ListProposalRevisions(ctx context.Context, arg ListProposalRev
 	return items, nil
 }
 
-const listScheduleEntries = `-- name: ListScheduleEntries :many
-SELECT project_id, suite_id, proposal_id, carrier_id, position, state FROM schedule_entries
-WHERE project_id = $1 AND suite_id = $2
-ORDER BY position
-`
-
-type ListScheduleEntriesParams struct {
-	ProjectID string
-	SuiteID   string
-}
-
-func (q *Queries) ListScheduleEntries(ctx context.Context, arg ListScheduleEntriesParams) ([]ScheduleEntry, error) {
-	rows, err := q.db.Query(ctx, listScheduleEntries, arg.ProjectID, arg.SuiteID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ScheduleEntry{}
-	for rows.Next() {
-		var i ScheduleEntry
-		if err := rows.Scan(
-			&i.ProjectID,
-			&i.SuiteID,
-			&i.ProposalID,
-			&i.CarrierID,
-			&i.Position,
-			&i.State,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockSuite = `-- name: LockSuite :one
-SELECT project_id, suite_id, revision, current_version_id, target_id, policy_revision_id, schedule_generation FROM suites
+SELECT project_id, suite_id, revision, current_version_id, target_id, policy_revision_id FROM suites
 WHERE project_id = $1 AND suite_id = $2
 FOR UPDATE
 `
@@ -833,32 +760,6 @@ func (q *Queries) LockSuite(ctx context.Context, arg LockSuiteParams) (Suite, er
 		&i.CurrentVersionID,
 		&i.TargetID,
 		&i.PolicyRevisionID,
-		&i.ScheduleGeneration,
 	)
 	return i, err
-}
-
-const updateScheduleEntryState = `-- name: UpdateScheduleEntryState :execrows
-UPDATE schedule_entries SET state = $1
-WHERE project_id = $2 AND suite_id = $3 AND proposal_id = $4
-`
-
-type UpdateScheduleEntryStateParams struct {
-	State      string
-	ProjectID  string
-	SuiteID    string
-	ProposalID string
-}
-
-func (q *Queries) UpdateScheduleEntryState(ctx context.Context, arg UpdateScheduleEntryStateParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateScheduleEntryState,
-		arg.State,
-		arg.ProjectID,
-		arg.SuiteID,
-		arg.ProposalID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

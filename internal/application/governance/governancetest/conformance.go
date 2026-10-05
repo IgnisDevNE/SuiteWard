@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
-	"slices"
 	"testing"
 	"time"
 
@@ -206,17 +205,15 @@ func (e *cfEnv) policy(project contract.ProjectID) contract.Policy {
 }
 
 // seedSimple seeds a Suite without a canonical version in which every
-// candidate is admitted to the schedule in order.
+// candidate is seeded as a proposal.
 func (e *cfEnv) seedSimple(project contract.ProjectID, suite contract.SuiteID, candidates ...cfCandidate) governance.Seed {
 	e.t.Helper()
 	snapshot := cfMust(contract.NewCanonicalSnapshot(cfMust(contract.NewSuite(project, suite, "", cfSeededRevision)), contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{}))
-	schedule := cfMust(contract.NewSchedule(project, suite))
 	seed := governance.Seed{}
 	for _, c := range candidates {
-		schedule = cfMust(schedule.Admit(c.proposal, true))
 		seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: c.proposal, Assessments: c.assessments})
 	}
-	seed.Suite = governance.SuiteState{Canonical: snapshot, Policy: e.policy(project), Target: cfTarget, Schedule: schedule}
+	seed.Suite = governance.SuiteState{Canonical: snapshot, Policy: e.policy(project), Target: cfTarget}
 	e.seed(seed)
 	return seed
 }
@@ -265,17 +262,11 @@ func (e *cfEnv) seedRich() cfRich {
 			Carrier: step.c.carrier, Source: step.c.merged, Target: cfTarget, RecordedAt: cfRecordedAt}))
 		r.versions[i] = cfMust(contract.NewHistoricalCanonical(version, record))
 	}
-	schedule := cfMust(contract.NewSchedule(cfProject, cfSuite))
-	for _, c := range []cfCandidate{r.base, r.second, r.open} {
-		schedule = cfMust(schedule.Admit(c.proposal, true))
-	}
-	schedule = cfMust(schedule.Observe(r.base.proposal, contract.ObservePromoted))
-	schedule = cfMust(schedule.Observe(r.second.proposal, contract.ObservePromoted))
 	current := r.versions[1]
 	suite := cfMust(contract.NewSuite(cfProject, cfSuite, "version-2", cfSeededRevision))
 	canonical := cfMust(contract.NewCanonicalSnapshot(suite, current.Version(), r.second.protected, current.Record()))
 	r.seed = governance.Seed{
-		Suite:   governance.SuiteState{Canonical: canonical, Policy: e.policy(cfProject), Target: cfTarget, Schedule: schedule},
+		Suite:   governance.SuiteState{Canonical: canonical, Policy: e.policy(cfProject), Target: cfTarget},
 		History: r.versions[:],
 		Proposals: []governance.SeedProposal{
 			{Proposal: r.base.proposal, Assessments: r.base.assessments},
@@ -386,8 +377,6 @@ type cfProbe struct {
 type cfView struct {
 	Revision   contract.StateRevision
 	Current    contract.SuiteVersionID
-	Generation contract.ScheduleGeneration
-	Entries    []contract.ScheduleEntry
 	Results    int
 	Operations []bool
 	Sources    []bool
@@ -405,7 +394,6 @@ func (e *cfEnv) view(p cfProbe) cfView {
 		}
 		v.Revision = state.Canonical.Suite().Revision()
 		v.Current, _ = state.Canonical.Suite().CurrentVersionID()
-		v.Generation, v.Entries = state.Schedule.Generation(), state.Schedule.Entries()
 		if p.proposal != "" {
 			_, consent, err := tx.Proposal(ctx, p.proposal)
 			if err != nil {
@@ -480,21 +468,8 @@ func (e *cfEnv) consentWrite(ctx context.Context, tx governance.Tx, command cont
 	return governance.ConsentWrite{OperationID: command.OperationID(), Result: result, Receipt: receipt}, nil
 }
 
-// promotionWrite builds the write of a promotion of the candidate's current
-// revision, observing it in the schedule as the use cases do.
-func (e *cfEnv) promotionWrite(ctx context.Context, tx governance.Tx, c cfCandidate, operation string, version, corrects contract.SuiteVersionID) (governance.PromotionWrite, error) {
-	state, err := tx.Suite(ctx)
-	if err != nil {
-		return governance.PromotionWrite{}, fmt.Errorf("load suite: %w", err)
-	}
-	schedule, err := state.Schedule.Observe(c.proposal, contract.ObservePromoted)
-	if err != nil {
-		return governance.PromotionWrite{}, fmt.Errorf("observe promotion: %w", err)
-	}
-	return e.promotionWriteWith(c, operation, version, corrects, schedule), nil
-}
-
-func (e *cfEnv) promotionWriteWith(c cfCandidate, operation string, version, corrects contract.SuiteVersionID, schedule contract.Schedule) governance.PromotionWrite {
+// promotionWrite builds the write of a promotion of the candidate's current revision.
+func (e *cfEnv) promotionWrite(c cfCandidate, operation string, version, corrects contract.SuiteVersionID) governance.PromotionWrite {
 	request := c.mergedRequest(operation, version)
 	suiteVersion := cfMust(contract.NewSuiteVersion(c.project, c.suite, version, c.protected.Manifest()))
 	record := cfMust(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: request.OperationID, VersionID: version, Binding: c.proposal.Current().Binding(),
@@ -504,7 +479,7 @@ func (e *cfEnv) promotionWriteWith(c cfCandidate, operation string, version, cor
 		kind = governance.OperationCorrect
 	}
 	identity := governance.PromotionIdentity{Kind: kind, Request: request, CorrectsVersionID: corrects, Binding: c.proposal.Current().Binding()}
-	return governance.PromotionWrite{Receipt: governance.PromotionReceipt{Identity: identity, Record: record}, Version: suiteVersion, Schedule: schedule}
+	return governance.PromotionWrite{Receipt: governance.PromotionReceipt{Identity: identity, Record: record}, Version: suiteVersion}
 }
 
 // Equality of domain values that are not comparable with ==.
@@ -517,10 +492,6 @@ func cfSameRecord(a, b contract.PromotionRecord) bool {
 func cfSameHistory(a, b contract.HistoricalCanonical) bool {
 	return a.Version().ID() == b.Version().ID() && a.Version().ProjectID() == b.Version().ProjectID() && a.Version().SuiteID() == b.Version().SuiteID() &&
 		a.Version().Manifest().Digest() == b.Version().Manifest().Digest() && cfSameRecord(a.Record(), b.Record())
-}
-
-func cfSameSchedule(a, b contract.Schedule) bool {
-	return a.ProjectID() == b.ProjectID() && a.SuiteID() == b.SuiteID() && a.Generation() == b.Generation() && slices.Equal(a.Entries(), b.Entries())
 }
 
 func cfSameRevision(a, b contract.ProposalRevision) bool {
@@ -592,9 +563,6 @@ func cfSeedWithCurrentVersion(e *cfEnv) {
 		e.t.Error("canonical promotion record is not the stored record of version-2")
 	}
 	e.requireSuiteAuthority(state, r.seed.Suite)
-	if active, ok := state.Schedule.Active(); !ok || active.ProposalID() != r.open.proposalID() || active.Carrier() != r.open.carrier {
-		e.t.Errorf("active schedule entry = %+v, %v, want the open candidate", active, ok)
-	}
 }
 
 func (e *cfEnv) requireSuiteAuthority(got, want governance.SuiteState) {
@@ -604,9 +572,6 @@ func (e *cfEnv) requireSuiteAuthority(got, want governance.SuiteState) {
 	}
 	if got.Target != want.Target {
 		e.t.Errorf("target = %q, want %q", got.Target, want.Target)
-	}
-	if !cfSameSchedule(got.Schedule, want.Schedule) {
-		e.t.Errorf("schedule = %d %v, want %d %v", got.Schedule.Generation(), got.Schedule.Entries(), want.Schedule.Generation(), want.Schedule.Entries())
 	}
 }
 
@@ -875,19 +840,13 @@ func cfOperationAcrossKinds(e *cfEnv) {
 	})
 	e.run("a store rejects an operation id of another kind on write", func(e *cfEnv) {
 		err := e.do(func(ctx context.Context, tx governance.Tx) error {
-			write := e.promotionWriteWith(fresh, "approve-p1", "version-2", "", cfMust(cfSchedule(ctx, tx)))
-			return tx.RecordPromotion(ctx, write)
+			return tx.RecordPromotion(ctx, e.promotionWrite(fresh, "approve-p1", "version-2", ""))
 		})
 		if !errors.Is(err, governance.ErrOperationConflict) {
 			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
 	e.requireSameView(before, e.view(probe))
-}
-
-func cfSchedule(ctx context.Context, tx governance.Tx) (contract.Schedule, error) {
-	state, err := tx.Suite(ctx)
-	return state.Schedule, err
 }
 
 func cfSourceReplayConflicts(e *cfEnv) {
@@ -1028,11 +987,7 @@ func cfRevisionAdvances(e *cfEnv) {
 			e.t.Errorf("own alias not visible: found %v, %v", found, err)
 		}
 
-		promotion, err := e.promotionWrite(ctx, tx, c, "op-promote", "version-1", "")
-		if err != nil {
-			return err
-		}
-		if err := tx.RecordPromotion(ctx, promotion); err != nil {
+		if err := tx.RecordPromotion(ctx, e.promotionWrite(c, "op-promote", "version-1", "")); err != nil {
 			return fmt.Errorf("record promotion: %w", err)
 		}
 		at(4, "the promotion")
@@ -1135,11 +1090,7 @@ func cfRollbackOnError(e *cfEnv) {
 		if err := tx.AppendConsent(ctx, write); err != nil {
 			return err
 		}
-		promotion, err := e.promotionWrite(ctx, tx, c, "rb-promote", "version-1", "")
-		if err != nil {
-			return err
-		}
-		if err := tx.RecordPromotion(ctx, promotion); err != nil {
+		if err := tx.RecordPromotion(ctx, e.promotionWrite(c, "rb-promote", "version-1", "")); err != nil {
 			return err
 		}
 		return errCfAbort
@@ -1277,11 +1228,7 @@ func cfVersionConflict(e *cfEnv) {
 	} {
 		e.run(attempt.name, func(e *cfEnv) {
 			err := e.do(func(ctx context.Context, tx governance.Tx) error {
-				state, err := tx.Suite(ctx)
-				if err != nil {
-					return err
-				}
-				return tx.RecordPromotion(ctx, e.promotionWriteWith(attempt.candidate, attempt.operation, attempt.version, "", state.Schedule))
+				return tx.RecordPromotion(ctx, e.promotionWrite(attempt.candidate, attempt.operation, attempt.version, ""))
 			})
 			if !errors.Is(err, governance.ErrVersionConflict) {
 				e.t.Fatalf("error = %v, want a version conflict", err)
@@ -1305,11 +1252,7 @@ func cfUnknownPromotionReference(e *cfEnv) {
 	} {
 		e.run(tc.name, func(e *cfEnv) {
 			err := e.do(func(ctx context.Context, tx governance.Tx) error {
-				state, err := tx.Suite(ctx)
-				if err != nil {
-					return err
-				}
-				return tx.RecordPromotion(ctx, e.promotionWriteWith(tc.ghost, "ghost-op", "version-9", "", state.Schedule))
+				return tx.RecordPromotion(ctx, e.promotionWrite(tc.ghost, "ghost-op", "version-9", ""))
 			})
 			if err == nil {
 				e.t.Fatal("RecordPromotion accepted a promotion of a proposal revision the store does not hold")
@@ -1322,14 +1265,8 @@ func cfUnknownPromotionReference(e *cfEnv) {
 func cfPromotionRoundTrip(e *cfEnv) {
 	r := e.seedRich()
 	before := e.revision()
-	wantSchedule := cfMust(r.seed.Suite.Schedule.Observe(r.open.proposal, contract.ObservePromoted))
-	var write governance.PromotionWrite
-	err := e.do(func(ctx context.Context, tx governance.Tx) (err error) {
-		if write, err = e.promotionWrite(ctx, tx, r.open, "round-trip", "version-3", "version-1"); err != nil {
-			return err
-		}
-		return tx.RecordPromotion(ctx, write)
-	})
+	write := e.promotionWrite(r.open, "round-trip", "version-3", "version-1")
+	err := e.do(func(ctx context.Context, tx governance.Tx) error { return tx.RecordPromotion(ctx, write) })
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -1342,12 +1279,6 @@ func cfPromotionRoundTrip(e *cfEnv) {
 	}
 	if !state.Canonical.Contract().Equal(r.open.protected) || !cfSameRecord(state.Canonical.Record(), record) {
 		e.t.Error("canonical does not carry the promoted contract and its record")
-	}
-	if !cfSameSchedule(state.Schedule, wantSchedule) {
-		e.t.Errorf("schedule = %d %v, want %d %v", state.Schedule.Generation(), state.Schedule.Entries(), wantSchedule.Generation(), wantSchedule.Entries())
-	}
-	if _, active := state.Schedule.Active(); active {
-		e.t.Error("the promoted proposal still holds the active schedule entry")
 	}
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		history, found, err := tx.Version(ctx, "version-3")

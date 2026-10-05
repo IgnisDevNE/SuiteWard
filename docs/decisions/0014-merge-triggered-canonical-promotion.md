@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-26
 - **Status:** Accepted design decision; not yet implemented.
-- **R1 note (2026-10-05):** the first-test-PR flow and the priority-queue behavior below are deferred to post-MVP (see the amendments to [ADR 0010](0010-repository-bootstrap.md) and [ADR 0022](0022-contract-change-pr-priority.md)).
+- **R1 note (2026-10-05):** the first-test-PR flow and the priority-queue behavior below are deferred to post-MVP (see the amendments to [ADR 0010](0010-repository-bootstrap.md) and [ADR 0022](0022-contract-change-pr-priority.md)). The MVP has no admission gate: concurrent contract-changing PRs are resolved at promotion by the canonical compare-and-set, and the later PR needs a new revision and fresh approval.
 - **Product:** SuiteWard
 - **Scope:** Repository acceptance, post-integration integrity checks, and canonical promotion in M1.
 - **Related:** [Exact approval](0002-exact-revision-approval.md), [canonical authority](0007-canonical-contract-authority.md), [integrity before execution](0008-progressive-integrity-and-execution.md), [bootstrap](0010-repository-bootstrap.md), [revocation](0011-approval-revocation-and-acknowledgments.md), and [protected scope](0013-protected-scope-and-agent-assisted-review.md).

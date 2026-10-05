@@ -75,11 +75,7 @@ func (t *tx) Suite(ctx context.Context) (governance.SuiteState, error) {
 	if err != nil {
 		return governance.SuiteState{}, err
 	}
-	schedule, err := t.schedule(ctx, row)
-	if err != nil {
-		return governance.SuiteState{}, err
-	}
-	return governance.SuiteState{Canonical: canonical, Policy: policy, Target: contract.IntegrationTargetID(row.TargetID), Schedule: schedule}, nil
+	return governance.SuiteState{Canonical: canonical, Policy: policy, Target: contract.IntegrationTargetID(row.TargetID)}, nil
 }
 
 func (t *tx) canonical(ctx context.Context, row dbgen.Suite) (contract.CanonicalSnapshot, error) {
@@ -111,26 +107,6 @@ func (t *tx) canonical(ctx context.Context, row dbgen.Suite) (contract.Canonical
 		return contract.CanonicalSnapshot{}, invalidState("canonical snapshot", err)
 	}
 	return snapshot, nil
-}
-
-func (t *tx) schedule(ctx context.Context, row dbgen.Suite) (contract.Schedule, error) {
-	entries, err := t.q.ListScheduleEntries(ctx, dbgen.ListScheduleEntriesParams{ProjectID: row.ProjectID, SuiteID: row.SuiteID})
-	if err != nil {
-		return contract.Schedule{}, fmt.Errorf("load schedule: %w", err)
-	}
-	inputs := make([]contract.ScheduleEntryInput, 0, len(entries))
-	for _, entry := range entries {
-		state, err := scheduleStateFromCode(entry.State)
-		if err != nil {
-			return contract.Schedule{}, invalidState("schedule entry "+entry.ProposalID, err)
-		}
-		inputs = append(inputs, contract.ScheduleEntryInput{ProposalID: contract.ProposalID(entry.ProposalID), Carrier: contract.ApprovalCarrierID(entry.CarrierID), State: state})
-	}
-	schedule, err := contract.ReconstituteSchedule(t.project, t.suite, contract.ScheduleGeneration(row.ScheduleGeneration), inputs)
-	if err != nil {
-		return contract.Schedule{}, invalidState("schedule", err)
-	}
-	return schedule, nil
 }
 
 func (t *tx) Proposal(ctx context.Context, id contract.ProposalID) (contract.Proposal, contract.Consent, error) {
@@ -389,7 +365,7 @@ func (t *tx) AppendConsent(ctx context.Context, write governance.ConsentWrite) e
 	if err := t.q.InsertOperation(ctx, operation); err != nil {
 		return translateWrite("insert consent operation", err)
 	}
-	return t.bump(ctx, pgtype.Text{}, pgtype.Int8{})
+	return t.bump(ctx, pgtype.Text{})
 }
 
 func (t *tx) consentResultRow(result contract.CommandResult) (dbgen.InsertConsentResultParams, error) {
@@ -426,8 +402,7 @@ func (t *tx) RecordPromotion(ctx context.Context, write governance.PromotionWrit
 	switch {
 	case record.IsZero() || write.Version.ID() == "":
 		return fmt.Errorf("%w: a promotion write needs its record and version", governance.ErrInvalidRequest)
-	case !t.inScope(record.Binding().Reference()) || write.Version.ProjectID() != t.project || write.Version.SuiteID() != t.suite ||
-		write.Schedule.ProjectID() != t.project || write.Schedule.SuiteID() != t.suite:
+	case !t.inScope(record.Binding().Reference()) || write.Version.ProjectID() != t.project || write.Version.SuiteID() != t.suite:
 		return fmt.Errorf("%w: promotion %q belongs to another suite", governance.ErrInvalidRequest, record.OperationID())
 	case receipt.Identity.Request.OperationID != record.OperationID():
 		return fmt.Errorf("%w: the receipt request and the promotion record name different operations", governance.ErrInvalidRequest)
@@ -465,10 +440,7 @@ func (t *tx) RecordPromotion(ctx context.Context, write governance.PromotionWrit
 		CorrectsVersionID: optionalText(string(record.CorrectsVersionID()))}); err != nil {
 		return translateWrite("insert promotion", err)
 	}
-	if err := t.persistSchedule(ctx, write.Schedule); err != nil {
-		return err
-	}
-	return t.bump(ctx, pgtype.Text{String: string(write.Version.ID()), Valid: true}, pgtype.Int8{Int64: int64(write.Schedule.Generation()), Valid: true})
+	return t.bump(ctx, pgtype.Text{String: string(write.Version.ID()), Valid: true})
 }
 
 // exactMicroseconds reports whether PostgreSQL's timestamptz keeps the time exactly.
@@ -488,54 +460,10 @@ func (t *tx) verifyArtifacts(ctx context.Context, manifest artifact.Manifest) er
 	return nil
 }
 
-// persistSchedule stores the entry states of next. A promotion only changes
-// states, never the membership or order, so a different shape is refused.
-// schedule_entries_one_active is not deferrable: every entry that stops being
-// active is written before an entry becomes active.
-func (t *tx) persistSchedule(ctx context.Context, next contract.Schedule) error {
-	stored, err := t.q.ListScheduleEntries(ctx, dbgen.ListScheduleEntriesParams{ProjectID: string(t.project), SuiteID: string(t.suite)})
-	if err != nil {
-		return fmt.Errorf("load schedule entries: %w", err)
-	}
-	entries := next.Entries()
-	if len(entries) != len(stored) {
-		return fmt.Errorf("%w: a promotion cannot add or remove schedule entries", governance.ErrInvalidRequest)
-	}
-	var leaving, becomingActive []dbgen.UpdateScheduleEntryStateParams
-	for i, entry := range entries {
-		if string(entry.ProposalID()) != stored[i].ProposalID || string(entry.Carrier()) != stored[i].CarrierID {
-			return fmt.Errorf("%w: schedule entry %d is not the stored one", governance.ErrInvalidRequest, i+1)
-		}
-		code, err := scheduleStateCode(entry.State())
-		if err != nil {
-			return invalidRequest("schedule entry "+stored[i].ProposalID, err)
-		}
-		if code == stored[i].State {
-			continue
-		}
-		update := dbgen.UpdateScheduleEntryStateParams{ProjectID: string(t.project), SuiteID: string(t.suite), ProposalID: stored[i].ProposalID, State: code}
-		if entry.State() == contract.ScheduleActive {
-			becomingActive = append(becomingActive, update)
-		} else {
-			leaving = append(leaving, update)
-		}
-	}
-	for _, update := range append(leaving, becomingActive...) {
-		changed, err := t.q.UpdateScheduleEntryState(ctx, update)
-		if err != nil {
-			return translateWrite("update schedule entry "+update.ProposalID, err)
-		}
-		if changed != 1 {
-			return fmt.Errorf("%w: schedule entry %q disappeared", governance.ErrInvalidState, update.ProposalID)
-		}
-	}
-	return nil
-}
-
 // bump advances the Suite revision by exactly one, optionally moving the
-// current version and the schedule generation.
-func (t *tx) bump(ctx context.Context, current pgtype.Text, generation pgtype.Int8) error {
-	if _, err := t.q.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{CurrentVersionID: current, ScheduleGeneration: generation, ProjectID: string(t.project), SuiteID: string(t.suite)}); err != nil {
+// current version.
+func (t *tx) bump(ctx context.Context, current pgtype.Text) error {
+	if _, err := t.q.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{CurrentVersionID: current, ProjectID: string(t.project), SuiteID: string(t.suite)}); err != nil {
 		return fmt.Errorf("advance suite revision: %w", err)
 	}
 	return nil

@@ -198,7 +198,7 @@ func ReconstituteSchedule(project ProjectID, suite SuiteID, generation ScheduleG
 		return Schedule{}, ErrInvalidSchedule
 	}
 	s.generation = generation
-	proposals, carriers, active := map[ProposalID]struct{}{}, map[ApprovalCarrierID]struct{}{}, false
+	proposals, carriers, active, waiting := map[ProposalID]struct{}{}, map[ApprovalCarrierID]struct{}{}, false, false
 	for _, entry := range entries {
 		if strings.TrimSpace(string(entry.ProposalID)) == "" || strings.TrimSpace(string(entry.Carrier)) == "" ||
 			entry.State < ScheduleWaiting || entry.State > SchedulePromoted {
@@ -216,8 +216,12 @@ func ReconstituteSchedule(project ProjectID, suite SuiteID, generation ScheduleG
 			}
 			active = true
 		}
+		waiting = waiting || entry.State == ScheduleWaiting
 		proposals[entry.ProposalID], carriers[entry.Carrier] = struct{}{}, struct{}{}
 		s.entries = append(s.entries, ScheduleEntry{proposal: entry.ProposalID, carrier: entry.Carrier, state: entry.State})
+	}
+	if waiting && !active {
+		return Schedule{}, ErrInvalidSchedule
 	}
 	return s, nil
 }

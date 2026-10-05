@@ -246,7 +246,6 @@ func TestReconstituteConsentRejectsInconsistentInput(t *testing.T) {
 		"unknown revision":                    {[]contract.CommandResult{reconstituted("a", "sa", approve, 5, "r9", contract.ConsentApproved)}, nil},
 		"repeated source command":             {[]contract.CommandResult{reconstituted("a", "sa", approve, 5, "r2", contract.ConsentApproved), reconstituted("b", "sa", revoke, 6, "r2", contract.ConsentRevoked)}, nil},
 		"repeated operation":                  {[]contract.CommandResult{reconstituted("a", "sa", approve, 5, "r2", contract.ConsentApproved), reconstituted("a", "sb", revoke, 6, "r2", contract.ConsentRevoked)}, nil},
-		"outcome contradicts action":          {[]contract.CommandResult{reconstituted("a", "sa", revoke, 5, "r2", contract.ConsentApproved)}, nil},
 		"revoked without active approval":     {[]contract.CommandResult{reconstituted("a", "sa", revoke, 5, "r2", contract.ConsentRevoked)}, nil},
 		"no-active over an active approval":   {[]contract.CommandResult{reconstituted("a", "sa", approve, 5, "r2", contract.ConsentApproved), reconstituted("b", "sb", revoke, 6, "r2", contract.ConsentNoActiveApproval)}, nil},
 		"alias for an unknown source command": {stored, map[contract.OperationID]contract.SourceCommandID{"alias": "unknown-source"}},

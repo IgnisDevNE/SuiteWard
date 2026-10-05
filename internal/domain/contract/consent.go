@@ -198,10 +198,14 @@ func (c Consent) conflict(command Command) (Consent, CommandResult, error) {
 }
 
 // valid reports whether the outcome and reason are a combination Apply can
-// record: only a rejection carries a reason, and never a command conflict,
-// which is returned but not stored.
+// record: an approval is approved or rejected, a revocation is revoked,
+// no-active or rejected, only a rejection carries a reason, and never a
+// command conflict, which is returned but not stored.
 func (r CommandResult) valid() bool {
 	if r.command.OperationID() == "" || r.outcome < ConsentApproved || r.outcome > ConsentRejected {
+		return false
+	}
+	if (r.command.Action() == ApproveConsent) != (r.outcome == ConsentApproved) && r.outcome != ConsentRejected {
 		return false
 	}
 	if r.outcome == ConsentRejected {
@@ -260,9 +264,6 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 				return invalid("result targets an unknown revision or carrier")
 			}
 			approve := command.Action() == ApproveConsent
-			if approve != (result.outcome == ConsentApproved) {
-				return invalid("outcome contradicts the command action")
-			}
 			if !approve && previous.active != (result.outcome == ConsentRevoked) {
 				return invalid("revocation outcome contradicts the earlier approval")
 			}

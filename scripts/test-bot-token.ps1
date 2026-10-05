@@ -108,6 +108,53 @@ try {
     $script:requests.Clear()
     $checks++
 
+    # Identifiers must be well formed; the slug cannot be empty.
+    foreach ($case in @(@{ app_id = 'abc' }, @{ app_id = '12 3' }, @{ installation_id = '12x' }, @{ bot_login = '[bot]' })) {
+        Write-TestConfig $case
+        Expect-Failure { Invoke-WithBotToken -Root $testRoot -Command $childPrintsLength -Http $fakeHttp } "$($case.Keys[0])"
+    }
+    Write-TestConfig @{ app_id = 12345; installation_id = 67890 }
+    $script:slug = ''
+    Expect-Failure { Invoke-WithBotToken -Root $testRoot -Command $childPrintsLength -Http $fakeHttp } 'does not match'
+    $script:slug = 'ignisdevne'
+    Write-TestConfig
+    $script:requests.Clear()
+    $checks++
+
+    # The child command is validated before any token work: a typo or a cmd.exe script issues no JWT and no request.
+    Expect-Failure { Invoke-WithBotToken -Root $testRoot -Command @('definitely-not-a-real-command-xyz', 'arg') -Http $fakeHttp } 'Command not found'
+    if ($script:requests.Count) { throw 'A mistyped command still contacted GitHub.' }
+    if ($IsWindows) {
+        $batch = Join-Path $testRoot 'tool.cmd'
+        Set-Content -LiteralPath $batch -Value '@echo off' -Encoding utf8NoBOM
+        Expect-Failure { Invoke-WithBotToken -Root $testRoot -Command @($batch, 'arg') -Http $fakeHttp } 'real executable'
+        if ($script:requests.Count) { throw 'A .cmd command still contacted GitHub.' }
+    }
+    $checks++
+
+    # A rejected HTTP request must not leave the JWT in the session's error records (Invoke-RestMethod would).
+    $secretJwt = 'eyJSECRETHEADER.SECRETCLAIMS.SECRETSIGNATURE'
+    $tcp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tcp.Start(); $port = $tcp.LocalEndpoint.Port; $tcp.Stop()
+    $listener = [Net.HttpListener]::new(); $listener.Prefixes.Add("http://127.0.0.1:$port/"); $listener.Start()
+    $server = Start-ThreadJob -ArgumentList $listener -ScriptBlock {
+        param($listener)
+        foreach ($status in 401, 200) {
+            $context = $listener.GetContext()
+            $bytes = [Text.Encoding]::UTF8.GetBytes($(if ($status -eq 200) { '{"slug":"ok"}' } else { '{"message":"Bad credentials"}' }))
+            $context.Response.StatusCode = $status; $context.Response.ContentType = 'application/json'
+            $context.Response.OutputStream.Write($bytes, 0, $bytes.Length); $context.Response.Close()
+        }
+    }
+    try {
+        $Error.Clear()
+        Expect-Failure { Send-GitHubRequest 'GET' "http://127.0.0.1:$port/app" @{ Authorization = "Bearer $secretJwt" } '' } 'HTTP 401'
+        $errorText = ($Error | Out-String) + (($Error | ForEach-Object { Get-Error -InputObject $_ } | Out-String))
+        if ($errorText -match 'Bearer|SECRET') { throw 'A rejected request left the JWT in the session error records.' }
+        $ok = Send-GitHubRequest 'GET' "http://127.0.0.1:$port/app" @{ Authorization = "Bearer $secretJwt" } ''
+        if ($ok.slug -cne 'ok') { throw 'A successful response was not parsed.' }
+    } finally { $listener.Stop(); Remove-Job $server -Force }
+    $checks++
+
     # In-process run: the request shape is exact, the caller's environment is restored, and the function itself prints only the exit code.
     $env:GH_TOKEN = 'caller-gh-token'; Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
     $result = @(Invoke-WithBotToken -Root $testRoot -Command @('pwsh', '-NoProfile', '-Command', 'exit 0') -Http $fakeHttp *>&1)

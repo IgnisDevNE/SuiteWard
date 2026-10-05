@@ -43,14 +43,13 @@ func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) 
 			Canonical: snapshot.Canonical, Proposed: request.Proposed, Proposal: snapshot.Proposal,
 			Reference: request.Reference, Carrier: request.Carrier, Policy: snapshot.Policy, Consent: snapshot.Consent,
 			Assessment: snapshot.Assessment, Scheduling: snapshot.Scheduling,
-			ExpectedStateRevision: snapshot.Fence.Revision, ExpectedSchedulingGeneration: snapshot.Scheduling.Generation(),
 		},
 		Integration: request.Integration, Target: snapshot.Target, OperationID: request.OperationID,
 		NewVersionID: request.NewVersionID, RecordedAt: request.RecordedAt, CorrectsVersionID: identity.CorrectsVersionID,
 	}
 	var decision contract.PromotionDecision
 	if identity.Kind == OperationBootstrap {
-		decision, err = contract.DecideBootstrap(contract.BootstrapInput{Mode: identity.BootstrapMode, Promotion: input})
+		decision, err = contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
 	} else if identity.Kind == OperationCorrect {
 		decision, err = contract.DecideCorrection(contract.CorrectionInput{Promotion: input, Target: snapshot.History})
 	} else {
@@ -62,7 +61,7 @@ func runPromotion(ctx context.Context, store Store, identity PromotionIdentity) 
 	if decision.Outcome() != contract.PromotionProposed {
 		return PromoteResult{Decision: decision}, nil
 	}
-	scheduling, err := snapshot.Scheduling.Observe(snapshot.Proposal, snapshot.Scheduling.Generation(), contract.ObservePromoted)
+	scheduling, err := snapshot.Scheduling.Observe(snapshot.Proposal, contract.ObservePromoted)
 	if err != nil {
 		return PromoteResult{}, err
 	}
@@ -104,7 +103,7 @@ func replayPromotion(stored OperationReceipt, wanted PromotionIdentity) (Promote
 
 func samePromotionIdentity(left, right PromotionIdentity) bool {
 	a, b := left.Request, right.Request
-	return left.Kind == right.Kind && left.BootstrapMode == right.BootstrapMode && left.CorrectsVersionID == right.CorrectsVersionID &&
+	return left.Kind == right.Kind && left.CorrectsVersionID == right.CorrectsVersionID &&
 		a.OperationID == b.OperationID && a.Reference == b.Reference && a.Carrier == b.Carrier && a.Proposed.Equal(b.Proposed) &&
 		a.AssessmentSource == b.AssessmentSource && a.Integration == b.Integration && a.NewVersionID == b.NewVersionID
 }
@@ -130,12 +129,11 @@ func validPromotionReceipt(receipt PromotionReceipt) bool {
 	}
 	switch id.Kind {
 	case OperationPromote:
-		return id.BootstrapMode == 0 && id.CorrectsVersionID == ""
+		return id.CorrectsVersionID == ""
 	case OperationBootstrap:
-		return id.CorrectsVersionID == "" && ((id.BootstrapMode == contract.ExistingBaselineBootstrap && r.Integration.Kind() == contract.IntegrationExistingBaseline) ||
-			(id.BootstrapMode == contract.FirstTestBootstrap && r.Integration.Kind() == contract.IntegrationMergedChange))
+		return id.CorrectsVersionID == "" && r.Integration.Kind() == contract.IntegrationExistingBaseline
 	case OperationCorrect:
-		return id.BootstrapMode == 0 && id.CorrectsVersionID != ""
+		return id.CorrectsVersionID != ""
 	default:
 		return false
 	}

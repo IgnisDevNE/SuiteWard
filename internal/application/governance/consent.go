@@ -120,7 +120,7 @@ func sameConsentAggregate(a, b contract.ProposalReference) bool {
 func emptyConsentIndexPromotion(receipt PromotionReceipt) bool {
 	identity := receipt.Identity
 	request := identity.Request
-	return identity.Kind == 0 && identity.BootstrapMode == 0 && identity.CorrectsVersionID == "" && identity.Binding.IsZero() &&
+	return identity.Kind == 0 && identity.CorrectsVersionID == "" && identity.Binding.IsZero() &&
 		receipt.Decision.Outcome() == 0 && request.OperationID == "" && request.Reference == (contract.ProposalReference{}) && request.Carrier == "" &&
 		request.Proposed.IsZero() && request.AssessmentSource == "" && request.Integration.IsZero() && request.NewVersionID == "" && request.RecordedAt.IsZero()
 }

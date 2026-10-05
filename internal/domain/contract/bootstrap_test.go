@@ -96,7 +96,6 @@ func lifecycleContext(t *testing.T, canonical contract.CanonicalSnapshot, manife
 	return contract.PromotionContext{
 		Canonical: canonical, Proposed: protected, Proposal: proposal, Reference: binding.Reference(), Carrier: carrier,
 		Policy: policy, Consent: consent, Assessment: assessment, Scheduling: schedule,
-		ExpectedStateRevision: canonical.Suite().Revision(), ExpectedSchedulingGeneration: schedule.Generation(),
 	}
 }
 
@@ -105,6 +104,13 @@ func lifecycleInput(context contract.PromotionContext) contract.PromotionInput {
 		Context: context, Target: "main", OperationID: "promote-operation", NewVersionID: "new-version",
 		RecordedAt: time.Date(2026, 9, 30, 13, 0, 0, 0, time.UTC),
 	}
+}
+
+func lifecycleBaselineInput(t *testing.T, context contract.PromotionContext, source contract.SourceRevision) contract.PromotionInput {
+	t.Helper()
+	input := lifecycleInput(context)
+	input.Integration = lifecycleIntegration(t, source, "", contract.IntegrationExistingBaseline)
+	return input
 }
 
 func lifecycleIntegration(t *testing.T, source contract.SourceRevision, carrier contract.ApprovalCarrierID, kind contract.IntegrationKind) contract.Integration {
@@ -116,50 +122,6 @@ func lifecycleIntegration(t *testing.T, source contract.SourceRevision, carrier 
 	return integration
 }
 
-func TestBootstrapFirstTestsReadinessHasNoCanonicalEffect(t *testing.T) {
-	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
-	context := lifecycleContext(t, lifecycleAbsent(t), manifest, "first-tests", "first-pr", "candidate", "candidate")
-	decision, err := contract.DecideBootstrap(contract.BootstrapInput{
-		Mode: contract.FirstTestBootstrap, Promotion: contract.PromotionInput{Context: context},
-	})
-	if err != nil || decision.Outcome() != contract.PromotionReady || decision.Reason() != contract.PromotionReasonNone {
-		t.Fatalf("approved pre-integration first tests were not ready: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
-	}
-	if _, ok := decision.Effect(); ok {
-		t.Fatal("pre-integration readiness manufactured a canonical effect")
-	}
-	if _, present := context.Canonical.Suite().CurrentVersionID(); present {
-		t.Fatal("readiness changed the supplied absent canonical state")
-	}
-}
-
-func TestBootstrapFirstTestsReadinessRequiresRealAuthority(t *testing.T) {
-	cases := []struct {
-		name   string
-		change func(*contract.PromotionContext)
-		reason contract.PromotionReason
-	}{
-		{"no consent", func(c *contract.PromotionContext) { c.Consent = contract.Consent{} }, contract.PromotionReasonApprovalMissing},
-		{"no assessment", func(c *contract.PromotionContext) { c.Assessment = contract.IntegrityAssessment{} }, contract.PromotionReasonIntegrityNotPassed},
-		{"stale state", func(c *contract.PromotionContext) { c.ExpectedStateRevision++ }, contract.PromotionReasonStateChanged},
-		{"stale schedule", func(c *contract.PromotionContext) { c.ExpectedSchedulingGeneration++ }, contract.PromotionReasonSchedulingBlocked},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
-			context := lifecycleContext(t, lifecycleAbsent(t), manifest, "first-tests", "first-pr", "candidate", "candidate")
-			test.change(&context)
-			decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: contract.PromotionInput{Context: context}})
-			if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != test.reason {
-				t.Fatalf("missing prerequisite did not block readiness: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
-			}
-			if _, ok := decision.Effect(); ok {
-				t.Fatal("blocked bootstrap returned a canonical effect")
-			}
-		})
-	}
-}
-
 func TestBootstrapRejectsMalformedLifecycleInput(t *testing.T) {
 	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
 	context := lifecycleContext(t, lifecycleAbsent(t), manifest, "first-tests", "first-pr", "candidate", "candidate")
@@ -167,8 +129,6 @@ func TestBootstrapRejectsMalformedLifecycleInput(t *testing.T) {
 		name   string
 		change func(*contract.BootstrapInput)
 	}{
-		{"absent mode", func(i *contract.BootstrapInput) { i.Mode = 0 }},
-		{"unknown mode", func(i *contract.BootstrapInput) { i.Mode = 99 }},
 		{"absent canonical snapshot", func(i *contract.BootstrapInput) { i.Promotion.Context.Canonical = contract.CanonicalSnapshot{} }},
 		{"absent proposal", func(i *contract.BootstrapInput) { i.Promotion.Context.Proposal = contract.Proposal{} }},
 		{"absent proposed inventory", func(i *contract.BootstrapInput) { i.Promotion.Context.Proposed = contract.ProtectedContract{} }},
@@ -176,7 +136,7 @@ func TestBootstrapRejectsMalformedLifecycleInput(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			input := contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: contract.PromotionInput{Context: context}}
+			input := contract.BootstrapInput{Promotion: contract.PromotionInput{Context: context}}
 			test.change(&input)
 			decision, err := contract.DecideBootstrap(input)
 			if !errors.Is(err, contract.ErrInvalidBootstrap) {
@@ -196,7 +156,7 @@ func TestBootstrapRequiresAbsentCanonicalEvenWithFreshApproval(t *testing.T) {
 	canonical := lifecycleEstablished(t, version, record)
 	proposed := lifecycleManifest(t, artifact.Entry{Path: "tests/new.go", Content: artifact.Hash([]byte("new test"))})
 	context := lifecycleContext(t, canonical, proposed, "fresh-proposal", "fresh-pr", "candidate", "candidate")
-	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: lifecycleInput(context)})
+	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Promotion: lifecycleBaselineInput(t, context, "candidate")})
 	if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != contract.PromotionReasonCanonicalPresent {
 		t.Fatalf("bootstrap replaced established canonical: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
 	}
@@ -206,8 +166,7 @@ func TestBootstrapRequiresAbsentCanonicalEvenWithFreshApproval(t *testing.T) {
 	// The same approved contract still expects the existing baseline if its
 	// caller instead supplies an absent canonical snapshot.
 	context.Canonical = lifecycleAbsent(t)
-	context.ExpectedStateRevision = context.Canonical.Suite().Revision()
-	decision, err = contract.DecideBootstrap(contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: lifecycleInput(context)})
+	decision, err = contract.DecideBootstrap(contract.BootstrapInput{Promotion: lifecycleBaselineInput(t, context, "candidate")})
 	if err != nil || decision.Reason() != contract.PromotionReasonCanonicalChanged {
 		t.Fatalf("expected-present approval became initial authority: reason=%v error=%v", decision.Reason(), err)
 	}
@@ -215,7 +174,7 @@ func TestBootstrapRequiresAbsentCanonicalEvenWithFreshApproval(t *testing.T) {
 
 func TestBootstrapEmptyInventoryCannotEstablishContract(t *testing.T) {
 	context := lifecycleContext(t, lifecycleAbsent(t), lifecycleManifest(t), "empty-proposal", "empty-pr", "candidate", "candidate")
-	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: contract.FirstTestBootstrap, Promotion: lifecycleInput(context)})
+	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Promotion: lifecycleBaselineInput(t, context, "candidate")})
 	if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != contract.PromotionReasonEmptyInventory {
 		t.Fatalf("empty inventory became a ready initial contract: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
 	}
@@ -224,60 +183,46 @@ func TestBootstrapEmptyInventoryCannotEstablishContract(t *testing.T) {
 	}
 }
 
-func TestBootstrapIntegratedPathsUseDistinctOrigins(t *testing.T) {
-	for _, mode := range []contract.BootstrapMode{contract.ExistingBaselineBootstrap, contract.FirstTestBootstrap} {
-		t.Run(map[contract.BootstrapMode]string{contract.ExistingBaselineBootstrap: "existing baseline", contract.FirstTestBootstrap: "first tests"}[mode], func(t *testing.T) {
-			origin, integrated, carrier, observedCarrier := contract.SourceRevision("pinned-baseline"), contract.SourceRevision("pinned-baseline"), contract.ApprovalCarrierID("open-hosting-pr"), contract.ApprovalCarrierID("")
-			kind := contract.IntegrationExistingBaseline
-			if mode == contract.FirstTestBootstrap {
-				origin, integrated, carrier, observedCarrier = "premerge-source", "exact-merge-source", "first-pr", "first-pr"
-				kind = contract.IntegrationMergedChange
-			}
-			manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
-			context := lifecycleContext(t, lifecycleAbsent(t), manifest, "bootstrap-proposal", carrier, origin, integrated)
-			input := lifecycleInput(context)
-			input.Integration = lifecycleIntegration(t, integrated, observedCarrier, kind)
-			decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: mode, Promotion: input})
-			if err != nil || decision.Outcome() != contract.PromotionProposed {
-				t.Fatalf("valid integrated bootstrap did not propose first canonical: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
-			}
-			effect, ok := decision.Effect()
-			if !ok || effect.ExpectedCanonicalID() != "" || effect.Version().ID() != input.NewVersionID || effect.Promotion().Source() != integrated || effect.Promotion().Carrier() != carrier {
-				t.Fatal("bootstrap effect lost absence, exact integrated origin, or independent approval carrier")
-			}
-			if effect.Version().Manifest().Digest() != manifest.Digest() || effect.Promotion().CorrectsVersionID() != "" {
-				t.Fatal("bootstrap produced unrelated inventory or correction provenance")
-			}
-			if _, present := context.Canonical.Suite().CurrentVersionID(); present {
-				t.Fatal("promotion proposal mutated supplied canonical state")
-			}
-		})
+func TestBootstrapExistingBaselineProposesFirstCanonical(t *testing.T) {
+	const source, carrier = contract.SourceRevision("pinned-baseline"), contract.ApprovalCarrierID("open-hosting-pr")
+	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
+	context := lifecycleContext(t, lifecycleAbsent(t), manifest, "bootstrap-proposal", carrier, source, source)
+	input := lifecycleInput(context)
+	input.Integration = lifecycleIntegration(t, source, "", contract.IntegrationExistingBaseline)
+	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
+	if err != nil || decision.Outcome() != contract.PromotionProposed {
+		t.Fatalf("valid integrated bootstrap did not propose first canonical: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
+	}
+	effect, ok := decision.Effect()
+	if !ok || effect.ExpectedCanonicalID() != "" || effect.Version().ID() != input.NewVersionID || effect.Promotion().Source() != source || effect.Promotion().Carrier() != carrier {
+		t.Fatal("bootstrap effect lost absence, exact integrated origin, or independent approval carrier")
+	}
+	if effect.Version().Manifest().Digest() != manifest.Digest() || effect.Promotion().CorrectsVersionID() != "" {
+		t.Fatal("bootstrap produced unrelated inventory or correction provenance")
+	}
+	if _, present := context.Canonical.Suite().CurrentVersionID(); present {
+		t.Fatal("promotion proposal mutated supplied canonical state")
 	}
 }
 
-func TestBootstrapIntegratedPathsRejectSubstitutedFacts(t *testing.T) {
+func TestBootstrapRejectsSubstitutedFacts(t *testing.T) {
 	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
 	cases := []struct {
 		name        string
-		mode        contract.BootstrapMode
-		origin      contract.SourceRevision
 		assessed    contract.SourceRevision
 		integration contract.Integration
 		reason      contract.PromotionReason
 	}{
-		{"existing integration missing", contract.ExistingBaselineBootstrap, "pinned", "pinned", contract.Integration{}, contract.PromotionReasonIntegrationMissing},
-		{"hosting merge cannot substitute baseline observation", contract.ExistingBaselineBootstrap, "pinned", "pinned", lifecycleIntegration(t, "pinned", "approval-pr", contract.IntegrationMergedChange), contract.PromotionReasonIntegrationMismatch},
-		{"existing baseline cannot substitute first-test merge", contract.FirstTestBootstrap, "pinned", "pinned", lifecycleIntegration(t, "pinned", "", contract.IntegrationExistingBaseline), contract.PromotionReasonIntegrationMismatch},
-		{"moving tip cannot replace pin", contract.ExistingBaselineBootstrap, "pinned", "new-tip", lifecycleIntegration(t, "new-tip", "", contract.IntegrationExistingBaseline), contract.PromotionReasonIntegrationMismatch},
-		{"premerge assessment cannot validate integrated source", contract.FirstTestBootstrap, "candidate", "candidate", lifecycleIntegration(t, "merge-source", "approval-pr", contract.IntegrationMergedChange), contract.PromotionReasonAssessmentMismatch},
-		{"unrelated merged carrier", contract.FirstTestBootstrap, "candidate", "merge-source", lifecycleIntegration(t, "merge-source", "unrelated-pr", contract.IntegrationMergedChange), contract.PromotionReasonIntegrationMismatch},
+		{"integration missing", "pinned", contract.Integration{}, contract.PromotionReasonIntegrationMissing},
+		{"hosting merge cannot substitute baseline observation", "pinned", lifecycleIntegration(t, "pinned", "approval-pr", contract.IntegrationMergedChange), contract.PromotionReasonIntegrationMismatch},
+		{"moving tip cannot replace pin", "new-tip", lifecycleIntegration(t, "new-tip", "", contract.IntegrationExistingBaseline), contract.PromotionReasonIntegrationMismatch},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			context := lifecycleContext(t, lifecycleAbsent(t), manifest, "bootstrap-proposal", "approval-pr", test.origin, test.assessed)
+			context := lifecycleContext(t, lifecycleAbsent(t), manifest, "bootstrap-proposal", "approval-pr", "pinned", test.assessed)
 			input := lifecycleInput(context)
 			input.Integration = test.integration
-			decision, err := contract.DecideBootstrap(contract.BootstrapInput{Mode: test.mode, Promotion: input})
+			decision, err := contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
 			if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != test.reason {
 				t.Fatalf("substituted bootstrap facts accepted: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
 			}

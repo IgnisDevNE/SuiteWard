@@ -390,7 +390,7 @@ func promotionContextWith(t *testing.T, canonical contract.CanonicalSnapshot, pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	return contract.PromotionContext{Canonical: canonical, Proposed: proposed, Proposal: proposal, Reference: ref, Carrier: "carrier", Policy: policy, Consent: consent, Assessment: assessment, Scheduling: schedule, ExpectedStateRevision: 10, ExpectedSchedulingGeneration: schedule.Generation()}
+	return contract.PromotionContext{Canonical: canonical, Proposed: proposed, Proposal: proposal, Reference: ref, Carrier: "carrier", Policy: policy, Consent: consent, Assessment: assessment, Scheduling: schedule}
 }
 
 func promotionRevoke(t *testing.T, c *contract.PromotionContext) {
@@ -445,7 +445,7 @@ func promotionWaitingSchedule(t *testing.T, proposal contract.Proposal) contract
 func TestPromotionReadinessCombinedAuthorityMatrix(t *testing.T) {
 	for _, baseline := range []string{"current", "stale"} {
 		for _, approval := range []string{"active", "missing", "revoked"} {
-			for _, scheduling := range []string{"active", "stale", "waiting"} {
+			for _, scheduling := range []string{"active", "waiting"} {
 				t.Run(baseline+"/"+approval+"/"+scheduling, func(t *testing.T) {
 					c := promotionContext(t)
 					if baseline == "stale" {
@@ -456,11 +456,8 @@ func TestPromotionReadinessCombinedAuthorityMatrix(t *testing.T) {
 					} else if approval == "revoked" {
 						promotionRevoke(t, &c)
 					}
-					if scheduling == "stale" {
-						c.ExpectedSchedulingGeneration++
-					} else if scheduling == "waiting" {
+					if scheduling == "waiting" {
 						c.Scheduling = promotionWaitingSchedule(t, c.Proposal)
-						c.ExpectedSchedulingGeneration = c.Scheduling.Generation()
 					}
 					beforeSuite := c.Canonical.Suite()
 					beforeConsent := c.Consent.Results()
@@ -644,7 +641,6 @@ func TestPromotionReadinessRequiresExactCurrentContext(t *testing.T) {
 		{"proposed context removed", func(c *contract.PromotionContext) {
 			c.Proposed = promotionProtected(t, c.Proposed.Manifest(), "scope", nil)
 		}, contract.PromotionReasonContextMismatch},
-		{"state fence", func(c *contract.PromotionContext) { c.ExpectedStateRevision++ }, contract.PromotionReasonStateChanged},
 		{"absent baseline against established", func(c *contract.PromotionContext) {
 			input := promotionCopyBindingInput(c.Proposal.Current().Binding())
 			input.ExpectedCanonical = ""
@@ -696,7 +692,6 @@ func TestPromotionReadinessRequiresExactSourceBoundEvidence(t *testing.T) {
 			}
 		}, contract.PromotionReasonAssessmentMismatch},
 		{"absent schedule", func(c *contract.PromotionContext) { c.Scheduling = contract.Schedule{} }, contract.PromotionReasonSchedulingBlocked},
-		{"zero scheduling fence", func(c *contract.PromotionContext) { c.ExpectedSchedulingGeneration = 0 }, contract.PromotionReasonSchedulingBlocked},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := promotionContext(t)
@@ -729,8 +724,8 @@ func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	if !present || effect.IsZero() {
 		t.Fatal("proposed promotion omitted grouped effect")
 	}
-	if effect.ExpectedCanonicalID() != "v1" || effect.ExpectedStateRevision() != 10 || effect.ExpectedSchedulingGeneration() != input.Context.Scheduling.Generation() {
-		t.Fatal("effect lost its conditional authority fences")
+	if effect.ExpectedCanonicalID() != "v1" {
+		t.Fatal("effect lost its expected canonical baseline")
 	}
 	current, exists := effect.Suite().CurrentVersionID()
 	if !exists || current != "v2" || effect.Suite().ProjectID() != "project" || effect.Suite().ID() != "suite" || effect.Suite().Revision() != 11 || effect.Version().ID() != "v2" || effect.Version().ProjectID() != "project" || effect.Version().SuiteID() != "suite" || effect.Version().Manifest().Digest() != input.Context.Proposed.Manifest().Digest() {
@@ -740,9 +735,6 @@ func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	if record.IsZero() || record.OperationID() != input.OperationID || record.VersionID() != input.NewVersionID || !record.Binding().Equal(input.Context.Proposal.Current().Binding()) || record.Carrier() != input.Context.Carrier || record.Source() != input.Integration.Source() || record.Target() != input.Target || record.RecordedAt() != input.RecordedAt || record.CorrectsVersionID() != input.CorrectsVersionID {
 		t.Fatal("effect promotion record lost exact facts")
 	}
-	if effect.Audit().IsZero() || effect.Publication().IsZero() || !reflect.DeepEqual(record, effect.Audit().Promotion()) || !reflect.DeepEqual(record, effect.Publication().Promotion()) {
-		t.Fatal("audit and publication do not describe the identical promotion")
-	}
 	if _, err := contract.NewCanonicalSnapshot(effect.Suite(), effect.Version(), input.Context.Proposed, record); err != nil {
 		t.Fatalf("proposed canonical is internally contradictory: %v", err)
 	}
@@ -750,7 +742,7 @@ func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	context["runner"] = "changed"
 	entries := effect.Version().Manifest().Entries()
 	entries[0].Path = "changed"
-	if effect.Audit().Promotion().Binding().CoveredInputs()["runner"] != "v1" || effect.Version().Manifest().Entries()[0].Path != "a_test.go" {
+	if effect.Promotion().Binding().CoveredInputs()["runner"] != "v1" || effect.Version().Manifest().Entries()[0].Path != "a_test.go" {
 		t.Fatal("grouped effect aliases mutable returned data")
 	}
 	if input.Context.Canonical.Suite() != beforeSuite || !reflect.DeepEqual(input.Context.Scheduling.Entries(), beforeSchedule) || !reflect.DeepEqual(input.Context.Consent.Results(), beforeConsent) {
@@ -760,8 +752,8 @@ func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	if effect.Promotion().OperationID() != "promote-op" || effect.Suite().Revision() != 11 {
 		t.Fatal("subsequent consent changed already produced immutable facts")
 	}
-	if !(contract.PromotionEffect{}).IsZero() || !(contract.AuditEvent{}).IsZero() || !(contract.PublicationIntent{}).IsZero() {
-		t.Fatal("zero effects claimed publication or history")
+	if !(contract.PromotionEffect{}).IsZero() {
+		t.Fatal("zero effect claimed history")
 	}
 }
 
@@ -868,7 +860,7 @@ func TestPromotionRequiresExactConfirmedIntegration(t *testing.T) {
 	}
 }
 
-func TestPromotionRejectsInvalidEffectIdentityAndExhaustedFence(t *testing.T) {
+func TestPromotionRejectsInvalidEffectIdentity(t *testing.T) {
 	for name, change := range map[string]func(*contract.PromotionInput){
 		"canonical absent":       func(i *contract.PromotionInput) { i.Context.Canonical = contract.CanonicalSnapshot{} },
 		"protected absent":       func(i *contract.PromotionInput) { i.Context.Proposed = contract.ProtectedContract{} },
@@ -883,15 +875,6 @@ func TestPromotionRejectsInvalidEffectIdentityAndExhaustedFence(t *testing.T) {
 		"timestamp absent":       func(i *contract.PromotionInput) { i.RecordedAt = time.Time{} },
 		"correction blank":       func(i *contract.PromotionInput) { i.CorrectsVersionID = "\t" },
 		"self correction":        func(i *contract.PromotionInput) { i.CorrectsVersionID = i.NewVersionID },
-		"exhausted state fence": func(i *contract.PromotionInput) {
-			c := i.Context.Canonical
-			value, err := contract.NewCanonicalSnapshot(promotionSuite(t, "project", "suite", "v1", ^contract.StateRevision(0)), c.Version(), c.Contract(), c.Record())
-			if err != nil {
-				t.Fatal(err)
-			}
-			i.Context.Canonical = value
-			i.Context.ExpectedStateRevision = ^contract.StateRevision(0)
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := promotionInput(t)
@@ -904,54 +887,5 @@ func TestPromotionRejectsInvalidEffectIdentityAndExhaustedFence(t *testing.T) {
 				t.Fatal("invalid effect escaped")
 			}
 		})
-	}
-}
-
-func TestPromotionComposesActualPriorityTransferFences(t *testing.T) {
-	input := promotionInput(t)
-	oldSchedule := input.Context.Scheduling
-	oldGeneration := oldSchedule.Generation()
-	binding := promotionCopyBindingInput(input.Context.Proposal.Current().Binding())
-	binding.Reference.ProposalID = "waiting-proposal"
-	other := promotionProposal(t, binding, "other-source", "other-carrier")
-	schedule, err := oldSchedule.Admit(other, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, err := contract.NewPrincipal("owner", contract.Human)
-	if err != nil {
-		t.Fatal(err)
-	}
-	command, err := contract.NewPriorityCommand(contract.PriorityCommandInput{OperationID: "priority-op", SourceCommandID: "priority-source", Actor: owner, ProjectID: "project", SuiteID: "suite", ProposalID: "waiting-proposal", Carrier: "other-carrier", Order: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	schedule, result, err := schedule.RequestPriority(input.Context.Policy, command)
-	if err != nil || result.Outcome() != contract.PriorityRequested {
-		t.Fatalf("real priority request failed: %v %v", result, err)
-	}
-	input.Context.Scheduling = schedule
-	input.Context.ExpectedSchedulingGeneration = schedule.Generation()
-	decision, err := contract.DecidePromotion(input)
-	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonSchedulingBlocked)
-	input.Context.ExpectedSchedulingGeneration = oldGeneration
-	decision, err = contract.DecidePromotion(input)
-	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonSchedulingBlocked)
-	pendingGeneration := schedule.Generation()
-	schedule, err = schedule.ResolveTransfer("priority-op", pendingGeneration, contract.FormerMerged)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input.Context.Scheduling = schedule
-	input.Context.ExpectedSchedulingGeneration = pendingGeneration
-	decision, err = contract.DecidePromotion(input)
-	requirePromotionDecision(t, decision, err, contract.PromotionBlocked, contract.PromotionReasonSchedulingBlocked)
-	input.Context.ExpectedSchedulingGeneration = schedule.Generation()
-	decision, err = contract.DecidePromotion(input)
-	if err != nil || decision.Outcome() != contract.PromotionProposed {
-		t.Fatalf("reconciled former merged proposal not eligible under fresh fence: outcome=%v reason=%v err=%v", decision.Outcome(), decision.Reason(), err)
-	}
-	if !oldSchedule.CanPromote(input.Context.Proposal, oldGeneration) || oldSchedule.Generation() != oldGeneration {
-		t.Fatal("transfer mutated older schedule snapshot")
 	}
 }

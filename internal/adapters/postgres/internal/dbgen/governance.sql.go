@@ -221,6 +221,44 @@ func (q *Queries) GetProposal(ctx context.Context, arg GetProposalParams) (Propo
 	return i, err
 }
 
+const getProposalRevision = `-- name: GetProposalRevision :one
+SELECT project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id, manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id FROM proposal_revisions
+WHERE project_id = $1 AND suite_id = $2 AND proposal_id = $3
+  AND revision_id = $4
+`
+
+type GetProposalRevisionParams struct {
+	ProjectID  string
+	SuiteID    string
+	ProposalID string
+	RevisionID string
+}
+
+func (q *Queries) GetProposalRevision(ctx context.Context, arg GetProposalRevisionParams) (ProposalRevision, error) {
+	row := q.db.QueryRow(ctx, getProposalRevision,
+		arg.ProjectID,
+		arg.SuiteID,
+		arg.ProposalID,
+		arg.RevisionID,
+	)
+	var i ProposalRevision
+	err := row.Scan(
+		&i.ProjectID,
+		&i.SuiteID,
+		&i.ProposalID,
+		&i.RevisionID,
+		&i.Seq,
+		&i.Origin,
+		&i.CarrierID,
+		&i.ManifestDigest,
+		&i.ScopeDigest,
+		&i.CoveredInputs,
+		&i.ExpectedVersionID,
+		&i.PolicyRevisionID,
+	)
+	return i, err
+}
+
 const getSchemaVersion = `-- name: GetSchemaVersion :one
 SELECT schema_version()::bigint AS version
 `

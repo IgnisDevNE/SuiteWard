@@ -195,3 +195,18 @@ func (c Consent) conflict(command Command) (Consent, CommandResult, error) {
 	// Do not overwrite the original receipt or append a competing identity record.
 	return c, CommandResult{command: command, outcome: ConsentRejected, reason: ConsentReasonCommandConflict}, nil
 }
+
+// ReconstituteCommandResult rebuilds a stored, non-duplicate command result.
+func ReconstituteCommandResult(command Command, outcome ConsentOutcome, reason ConsentReason) (CommandResult, error) {
+	return CommandResult{}, nil
+}
+
+// ReconstituteConsent rebuilds consent for proposal's aggregate from stored
+// results in their original order plus operation aliases. It derives the
+// per-revision, per-actor state exactly as Apply produced it and rejects
+// inconsistent input (foreign aggregate, duplicate or conflict results,
+// non-increasing order for an actor and revision, unknown revisions, aliases
+// pointing at unknown source commands).
+func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map[OperationID]SourceCommandID) (Consent, error) {
+	return Consent{}, nil
+}

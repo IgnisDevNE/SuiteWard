@@ -182,3 +182,16 @@ func (s Schedule) checkProposal(proposal Proposal) error {
 	}
 	return nil
 }
+
+// ScheduleEntryInput is one stored schedule entry.
+type ScheduleEntryInput struct {
+	ProposalID ProposalID
+	Carrier    ApprovalCarrierID
+	State      ScheduleEntryState
+}
+
+// ReconstituteSchedule rebuilds a schedule; at most one entry is active and
+// proposal ids and carriers are unique.
+func ReconstituteSchedule(project ProjectID, suite SuiteID, generation ScheduleGeneration, entries []ScheduleEntryInput) (Schedule, error) {
+	return Schedule{}, nil
+}

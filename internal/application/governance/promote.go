@@ -1,6 +1,11 @@
 package governance
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var errNotImplemented = errors.New("not implemented")
 
 // Promote coordinates a domain decision with the stored authority boundary.
 func Promote(ctx context.Context, uow UnitOfWork, request PromoteRequest) (PromoteResult, error) {

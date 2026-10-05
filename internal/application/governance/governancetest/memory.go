@@ -225,7 +225,7 @@ func (t *tx) AppendConsent(_ context.Context, w governance.ConsentWrite) error {
 	if !ok {
 		return governance.ErrNotFound
 	}
-	if _, taken := t.d.byOp[w.OperationID]; taken || w.OperationID != command.OperationID() || w.Result.Duplicate() != w.Alias {
+	if _, taken := t.d.byOp[w.OperationID]; taken || w.Result.Duplicate() != w.Alias || (!w.Alias && w.OperationID != command.OperationID()) {
 		return governance.ErrOperationConflict
 	}
 	receipt := w.Receipt

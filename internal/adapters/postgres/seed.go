@@ -77,7 +77,7 @@ func validateSeed(seed governance.Seed) error {
 		return seedInvalid("incomplete or inconsistent suite state")
 	}
 	current, hasCurrent := suite.CurrentVersionID()
-	inHistory := map[contract.SuiteVersionID]struct{}{}
+	inHistory := map[contract.SuiteVersionID]contract.HistoricalCanonical{}
 	for _, historical := range seed.History {
 		version, record := historical.Version(), historical.Record()
 		reference := record.Binding().Reference()
@@ -87,10 +87,16 @@ func validateSeed(seed governance.Seed) error {
 		if !exactMicroseconds(record.RecordedAt()) {
 			return seedInvalid("version %q was recorded at a time PostgreSQL cannot store exactly", version.ID())
 		}
-		inHistory[version.ID()] = struct{}{}
+		inHistory[version.ID()] = historical
 	}
-	if _, ok := inHistory[current]; hasCurrent && !ok {
-		return seedInvalid("current version %q is missing from the history", current)
+	if hasCurrent {
+		stored, ok := inHistory[current]
+		if !ok {
+			return seedInvalid("current version %q is missing from the history", current)
+		}
+		if !sameCurrent(state.Canonical, stored) {
+			return seedInvalid("the canonical snapshot contradicts the history entry of version %q", current)
+		}
 	}
 	carriers := map[contract.ProposalID]contract.ApprovalCarrierID{}
 	for _, seeded := range seed.Proposals {
@@ -265,4 +271,25 @@ func seedAssessment(ctx context.Context, q *dbgen.Queries, assessment contract.I
 		return seedFailure("insert assessment "+string(assessment.Source()), err)
 	}
 	return nil
+}
+
+// sameCurrent reports whether the canonical snapshot and the history entry of
+// its current version describe the same version and promotion, so that Seed
+// stores what the snapshot says and no store can read back something else.
+func sameCurrent(canonical contract.CanonicalSnapshot, stored contract.HistoricalCanonical) bool {
+	a, b := canonical.Record(), stored.Record()
+	return canonical.Version().Manifest().Digest() == stored.Version().Manifest().Digest() &&
+		a.Binding().Equal(b.Binding()) && a.OperationID() == b.OperationID() && a.VersionID() == b.VersionID() && a.Carrier() == b.Carrier() &&
+		a.Source() == b.Source() && a.Target() == b.Target() && a.RecordedAt().Equal(b.RecordedAt()) && a.CorrectsVersionID() == b.CorrectsVersionID() &&
+		canonical.Contract().Equal(contractOf(stored))
+}
+
+// contractOf is the protected contract that a history entry implies.
+func contractOf(entry contract.HistoricalCanonical) contract.ProtectedContract {
+	binding := entry.Record().Binding()
+	protected, err := contract.NewProtectedContract(entry.Version().Manifest(), binding.ScopeDigest(), binding.CoveredInputs())
+	if err != nil {
+		return contract.ProtectedContract{}
+	}
+	return protected
 }

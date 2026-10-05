@@ -118,6 +118,7 @@ var (
 		"promotions_operation_key":      governance.ErrOperationConflict,
 		"consent_results_operation_key": governance.ErrOperationConflict,
 		"consent_results_pkey":          governance.ErrOperationConflict,
+		"consent_results_scope_key":     governance.ErrOperationConflict,
 	}
 	foreignKeyViolations = map[string]error{
 		"consent_results_proposal_fkey": governance.ErrNotFound,

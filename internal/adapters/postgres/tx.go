@@ -431,6 +431,8 @@ func (t *tx) RecordPromotion(ctx context.Context, write governance.PromotionWrit
 		return fmt.Errorf("%w: promotion %q belongs to another suite", governance.ErrInvalidRequest, record.OperationID())
 	case receipt.Identity.Request.OperationID != record.OperationID():
 		return fmt.Errorf("%w: the receipt request and the promotion record name different operations", governance.ErrInvalidRequest)
+	case receipt.Identity.CorrectsVersionID != record.CorrectsVersionID() || !receipt.Identity.Binding.Equal(record.Binding()):
+		return fmt.Errorf("%w: the receipt identity and the promotion record disagree about the corrected version or the approval binding", governance.ErrInvalidRequest)
 	case !exactMicroseconds(record.RecordedAt()):
 		return fmt.Errorf("%w: recorded time %s needs sub-microsecond precision that PostgreSQL does not keep", governance.ErrInvalidRequest, record.RecordedAt().Format(time.RFC3339Nano))
 	}

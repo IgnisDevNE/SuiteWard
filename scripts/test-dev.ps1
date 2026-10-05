@@ -6,7 +6,8 @@ $rootContext = Get-DevContext
 $testRoot = Join-Path $rootContext.Cache "dev-tests/$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 $checks = 0
-# Archive tools live in a shared per-user cache; tests redirect it to scratch space and never touch the real one.
+# Archive tools live in a shared per-user cache. The first call below ensures actionlint is installed in the real cache (as setup would);
+# every other test redirects the cache to scratch space via SUITEWARD_TOOLS_DIR.
 Install-ArchiveTool $rootContext 'actionlint'
 $realActionlint = Split-Path (Get-ToolPath $rootContext 'actionlint') -Parent
 $savedToolsDir = $env:SUITEWARD_TOOLS_DIR

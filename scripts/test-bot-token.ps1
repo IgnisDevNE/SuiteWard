@@ -153,6 +153,9 @@ try {
         $ok = Send-GitHubRequest 'GET' "http://127.0.0.1:$port/app" @{ Authorization = "Bearer $secretJwt" } ''
         if ($ok.slug -cne 'ok') { throw 'A successful response was not parsed.' }
     } finally { $listener.Stop(); Remove-Job $server -Force }
+    $Error.Clear()
+    Expect-Failure { Send-GitHubRequest 'GET' "http://127.0.0.1:$port/app" @{ Authorization = "Bearer $secretJwt" } '' } 'HTTP'
+    if ((($Error | Out-String) + ($Error | ForEach-Object { Get-Error -InputObject $_ } | Out-String)) -match 'Bearer|SECRET') { throw 'A transport failure left the JWT in the session error records.' }
     $checks++
 
     # In-process run: the request shape is exact, the caller's environment is restored, and the function itself prints only the exit code.

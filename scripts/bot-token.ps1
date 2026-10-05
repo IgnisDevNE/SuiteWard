@@ -48,6 +48,10 @@ function Get-BotConfig {
         $property = $json.PSObject.Properties[$field]
         if (-not $property -or -not "$($property.Value)".Trim()) { throw ".local/github-app.json is missing $field." }
     }
+    foreach ($field in @('app_id', 'installation_id')) {
+        if ("$($json.$field)" -cnotmatch '^[0-9]+$') { throw "$field in .local/github-app.json must be numeric." }
+    }
+    if (("$($json.bot_login)" -replace '\[bot\]$', '') -eq '') { throw 'bot_login in .local/github-app.json must name the App slug.' }
     if ("$($json.repository)" -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'repository in .local/github-app.json must look like owner/name.' }
     $keyPath = [IO.Path]::GetFullPath("$($json.private_key_path)", $Root)
     if (-not (Test-Path -LiteralPath $keyPath -PathType Leaf)) { throw 'The GitHub App private key file was not found.' }
@@ -60,10 +64,20 @@ function Get-BotConfig {
 
 function Send-GitHubRequest {
     param([string]$Method, [string]$Uri, [hashtable]$Headers, [string]$Body)
-    $parameters = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = 30 }
+    # HTTP errors are read from the status code instead of caught: a failed Invoke-RestMethod leaves an ErrorRecord
+    # in $Error whose request message carries the Authorization header.
+    $parameters = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = 30; SkipHttpErrorCheck = $true }
     if ($Body) { $parameters.Body = $Body; $parameters.ContentType = 'application/json' }
-    try { return Invoke-RestMethod @parameters }
-    catch { throw "HTTP $([int]$_.Exception.Response?.StatusCode)" }
+    $recorded = $global:Error.Count
+    try { $response = Invoke-WebRequest @parameters }
+    catch {
+        # Transport failures (no response) still produce records that reference the request; drop what this call added.
+        for ($extra = $global:Error.Count - $recorded; $extra -gt 0; $extra--) { $global:Error.RemoveAt(0) }
+        throw 'HTTP 000'
+    }
+    $status = [int]$response.StatusCode
+    if ($status -lt 200 -or $status -ge 300) { throw "HTTP $status" }
+    return $response.Content | ConvertFrom-Json
 }
 
 function Invoke-GitHubApi {
@@ -74,6 +88,15 @@ function Invoke-GitHubApi {
         $status = if ($_.Exception.Message -cmatch '^HTTP [0-9]{3}$') { " ($($_.Exception.Message))" } else { '' }
         throw "GitHub request failed: $Method $Path$status."
     }
+}
+
+function Resolve-BotExecutable {
+    param([string]$Name)
+    $executable = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $executable) { throw "Command not found: $Name" }
+    # cmd.exe re-parses arguments, so quoting is unsafe for batch scripts; only real executables run with the token.
+    if ($executable.Source -match '\.(cmd|bat)$') { throw "The command must be a real executable, not a batch script: $Name" }
+    return $executable.Source
 }
 
 function Get-PropertyValue {
@@ -90,11 +113,13 @@ function Invoke-WithBotToken {
         [scriptblock]$Http = { param($Method, $Uri, $Headers, $Body) Send-GitHubRequest $Method $Uri $Headers $Body }
     )
     $Command = Resolve-BotCommand $Command
+    $executable = Resolve-BotExecutable $Command[0]
     $config = Get-BotConfig $Root
     $jwt = New-GitHubAppJwt $config.AppId (Get-Content -LiteralPath $config.KeyPath -Raw)
     $headers = @{ Authorization = "Bearer $jwt"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'; 'User-Agent' = 'suiteward-bot-token' }
     $app = Invoke-GitHubApi $Http GET '/app' $headers
-    if ("$(Get-PropertyValue $app 'slug')" -cne $config.Slug) { throw 'The GitHub App slug does not match bot_login; refusing to continue.' }
+    $appSlug = "$(Get-PropertyValue $app 'slug')"
+    if (-not $appSlug -or $appSlug -cne $config.Slug) { throw 'The GitHub App slug does not match bot_login; refusing to continue.' }
     $body = ConvertTo-Json -Compress @{ repositories = @($config.RepositoryName) }
     $installation = Invoke-GitHubApi $Http POST "/app/installations/$($config.InstallationId)/access_tokens" $headers $body
     $token = "$(Get-PropertyValue $installation 'token')"
@@ -103,9 +128,7 @@ function Invoke-WithBotToken {
         throw 'GitHub did not return an installation token restricted to the configured repository.'
     }
 
-    $executable = Get-Command $Command[0] -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $executable) { throw "Command not found: $($Command[0])" }
-    $start = [Diagnostics.ProcessStartInfo]::new($executable.Source)
+    $start = [Diagnostics.ProcessStartInfo]::new($executable)
     foreach ($argument in ($Command | Select-Object -Skip 1)) { $start.ArgumentList.Add($argument) }
     $start.UseShellExecute = $false
     # Only the child process receives the token; the caller's environment is never modified.

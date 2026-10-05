@@ -2,7 +2,16 @@
 
 package filesystem
 
-import "os"
+import (
+	"errors"
+	"os"
+)
 
-// syncDirectory is a stub until directory durability is implemented.
-func syncDirectory(*os.Root) error { return nil }
+// syncDirectory makes a new directory entry durable across a crash.
+func syncDirectory(root *os.Root) error {
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(dir.Sync(), dir.Close())
+}

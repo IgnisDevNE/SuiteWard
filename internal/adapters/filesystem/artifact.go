@@ -49,7 +49,9 @@ type artifactFile interface {
 	Close() error
 }
 
-// NewStore creates the instance-owned local volume when it is absent.
+// NewStore creates the instance-owned local volume when it is absent. Opening
+// removes every .partial-* file in the root, so exactly one store instance may
+// own a root at a time.
 func NewStore(root string) (*Store, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("blank artifact root: %w", fs.ErrInvalid)
@@ -124,10 +126,13 @@ func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Read
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.io.link(root, stage, name); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return s.Verify(ctx, digest)
+	if err := s.io.link(root, stage, name); errors.Is(err, fs.ErrExist) {
+		// A prior or concurrent writer may have linked without syncing yet, so
+		// a duplicate is durable only after the directory sync below.
+		if err := s.Verify(ctx, digest); err != nil {
+			return err
 		}
+	} else if err != nil {
 		return fmt.Errorf("publish artifact: %w", err)
 	}
 	if err := s.io.syncDir(root); err != nil {

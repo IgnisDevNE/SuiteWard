@@ -21,6 +21,11 @@ SELECT * FROM proposal_revisions
 WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id) AND proposal_id = sqlc.arg(proposal_id)
 ORDER BY seq;
 
+-- name: GetProposalRevision :one
+SELECT * FROM proposal_revisions
+WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id) AND proposal_id = sqlc.arg(proposal_id)
+  AND revision_id = sqlc.arg(revision_id);
+
 -- name: ListConsentResults :many
 SELECT * FROM consent_results
 WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id) AND proposal_id = sqlc.arg(proposal_id)

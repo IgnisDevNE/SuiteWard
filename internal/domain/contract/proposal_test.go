@@ -272,3 +272,25 @@ func TestProposalRevisionBranchesDoNotShareMutableHistory(t *testing.T) {
 		t.Fatal("forked revisions modified another immutable history snapshot")
 	}
 }
+
+func TestProposalRevisionsListsEveryRevisionInOrderAsACopy(t *testing.T) {
+	first := mustProposalRevision(t, proposalBindingInput(), "source-1", "carrier-1")
+	input := proposalBindingInput()
+	input.Reference.RevisionID = "revision-2"
+	second := mustProposalRevision(t, input, "source-2", first.Carrier())
+	proposal, err := mustProposal(t, first).Revise(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisions := proposal.Revisions()
+	if len(revisions) != 2 || !revisions[0].Binding().Equal(first.Binding()) || !revisions[1].Binding().Equal(second.Binding()) {
+		t.Fatalf("revisions = %d entries, want the first and the second revision in order", len(revisions))
+	}
+	revisions[0] = contract.ProposalRevision{}
+	if got := proposal.Revisions(); !got[0].Binding().Equal(first.Binding()) {
+		t.Fatal("mutating the returned slice changed the proposal's history")
+	}
+	if (contract.Proposal{}).Revisions() != nil {
+		t.Fatal("an absent proposal has revisions")
+	}
+}

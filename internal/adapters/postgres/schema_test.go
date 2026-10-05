@@ -29,7 +29,7 @@ var governanceRows = map[string]map[string]any{
 	"suite_versions":     {"project_id": "project", "suite_id": "suite", "version_id": "v1", "manifest_digest": schemaDigest, "manifest": `{"entries":[]}`},
 	"proposals":          {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "carrier_id": "pr-1"},
 	"proposal_revisions": {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "seq": 1, "origin": "origin-1", "carrier_id": "pr-1", "manifest_digest": schemaDigest, "scope_digest": schemaDigest, "covered_inputs": `{}`, "expected_version_id": nil, "policy_revision_id": "policy-1"},
-	"assessments":        {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "source": "sha-1", "evidence_emitter": "ci", "evidence_source": "sha-1", "outcome": "passed"},
+	"assessments":        {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "source": "sha-1", "evidence_emitter": "ci", "evidence_source": "sha-1", "evidence_revision_id": "r1", "outcome": "passed"},
 	"schedule_entries":   {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "carrier_id": "pr-1", "position": 1, "state": "active"},
 	"consent_results":    {"source_command_id": "src-1", "operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "actor_id": "owner", "actor_kind": "human", "carrier_id": "pr-1", "action": "approve", "command_order": 1, "outcome": "approved", "reason": "none"},
 	"operations":         {"operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "kind": "consent", "source_command_id": "src-1", "receipt": `{"kind":"consent"}`},
@@ -321,7 +321,10 @@ func TestGovernanceConstraints(t *testing.T) {
 		{"revision of unknown proposal", "proposal_revisions", "23503", "proposal_revisions_proposal_fkey", map[string]any{"proposal_id": "missing", "revision_id": "r9", "seq": 9}},
 		{"unknown integrity outcome", "assessments", "23514", "assessments_outcome_check", map[string]any{"source": "sha-2", "outcome": "green"}},
 		{"evidence without outcome", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-2", "outcome": nil}},
-		{"outcome without evidence", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-3", "evidence_emitter": nil, "evidence_source": nil}},
+		{"outcome without evidence", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-3", "evidence_emitter": nil, "evidence_source": nil, "evidence_revision_id": nil}},
+		{"evidence without revision", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-4", "evidence_revision_id": nil}},
+		{"revision without evidence", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-5", "evidence_emitter": nil, "evidence_source": nil, "outcome": nil}},
+		{"evidence of an unknown revision", "assessments", "23503", "assessments_evidence_revision_fkey", map[string]any{"source": "sha-6", "evidence_revision_id": "missing"}},
 		{"unknown schedule state", "schedule_entries", "23514", "schedule_entries_state_check", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "position": 2, "state": "paused"}},
 		{"second active entry", "schedule_entries", "23505", "schedule_entries_one_active", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "position": 2}},
 		{"duplicate carrier", "schedule_entries", "23505", "schedule_entries_carrier_key", map[string]any{"proposal_id": "p2", "position": 2, "state": "waiting"}},
@@ -372,7 +375,21 @@ func TestGovernanceMissingEvidenceIsStoredAsNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedGovernance(t, database.conn)
-	mustInsert(t, database.conn, "assessments", map[string]any{"source": "sha-missing", "evidence_emitter": nil, "evidence_source": nil, "outcome": nil})
+	mustInsert(t, database.conn, "assessments", map[string]any{"source": "sha-missing", "evidence_emitter": nil, "evidence_source": nil, "evidence_revision_id": nil, "outcome": nil})
+}
+
+func TestGovernanceEvidenceMayCiteAnotherRevisionOfTheProposal(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	seedGovernance(t, database.conn)
+	mustInsert(t, database.conn, "proposal_revisions", map[string]any{"revision_id": "r2", "seq": 2})
+	mustInsert(t, database.conn, "assessments", map[string]any{"revision_id": "r2", "source": "sha-2", "evidence_source": "sha-1", "evidence_revision_id": "r1"})
+	var cited string
+	if err := database.conn.QueryRow(t.Context(), "SELECT evidence_revision_id FROM assessments WHERE revision_id = 'r2'").Scan(&cited); err != nil || cited != "r1" {
+		t.Fatalf("stored evidence revision = %q, error %v; want r1", cited, err)
+	}
 }
 
 const schemaDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

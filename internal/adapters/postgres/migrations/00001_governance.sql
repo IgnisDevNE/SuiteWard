@@ -137,7 +137,7 @@ CREATE TABLE consent_results (
     command_order bigint NOT NULL,
     outcome text NOT NULL,
     reason text NOT NULL,
-    seq bigint GENERATED ALWAYS AS IDENTITY,
+    seq bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
     CONSTRAINT consent_results_pkey PRIMARY KEY (source_command_id),
     CONSTRAINT consent_results_operation_key UNIQUE (operation_id),
     CONSTRAINT consent_results_seq_key UNIQUE (seq),

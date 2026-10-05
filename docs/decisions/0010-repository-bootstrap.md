@@ -98,7 +98,6 @@ The first monitored PR can therefore include both a baseline import and a separa
 
 The two bootstrap paths and first-real-PR approval experience are accepted.
 
-
 ## Amendment (2026-10-05, phase R1): first-test-PR path deferred
 
 The first-test-PR bootstrap path (a repository without an initial test contract) is deferred to post-MVP. The existing-baseline bootstrap above remains in the MVP.

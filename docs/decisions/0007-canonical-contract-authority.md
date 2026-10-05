@@ -66,7 +66,6 @@ These alternatives conflict with the product's core purpose.
 
 The earlier draft SQL schema is a design input, not a completed production migration.
 
-
 ## Amendment (2026-10-05, phase R1): verification point and storage shape
 
 - Artifact bytes are verified when a version is written, against that version's manifest only. Loads and replays do not re-hash stored artifacts. Periodic integrity verification becomes a runtime job.

@@ -2,6 +2,7 @@
 
 - **Date:** 2026-09-26
 - **Status:** Accepted design decision; not yet implemented.
+- **R1 note (2026-10-05):** the `/suiteward prioritize` command described below is deferred to post-MVP ([ADR 0022](0022-contract-change-pr-priority.md)); the approve command now also carries an owner TOTP code (see the amendment at the end).
 - **Product:** SuiteWard
 - **Scope:** GitHub approval experience for changes to the canonical test contract.
 - **Related:** [ADR 0001: Self-hosted deployment and GitHub synchronization](0001-self-hosted-github-synchronization.md).

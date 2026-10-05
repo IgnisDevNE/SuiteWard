@@ -1,7 +1,7 @@
 # ADR 0027: Agent/human trust separation (D-TRUST)
 
 - **Date:** 2026-10-05
-- **Status:** Accepted; implemented in roadmap phases M1.5 and M1.6.
+- **Status:** Accepted; to be implemented in roadmap phases M1.5 and M1.6 (not implemented yet).
 - **Product:** SuiteWard
 - **Scope:** How SuiteWard distinguishes the verified human owner from AI agents that share the owner's machine.
 - **Amends:** [ADR 0002](0002-exact-revision-approval.md) (command syntax) and [ADR 0012](0012-mvp-authorization-policy.md) (credential separation).
@@ -23,9 +23,11 @@ A container run under the same OS user is not isolation: a rootless `podman exec
 
 Every `/suiteward approve <ref> <code>` and `/suiteward revoke <ref> <code>` requires a current TOTP code from the verified owner.
 
-- A code is single-use per time window: a replayed code is rejected.
-- A code is bound to the command it authorizes (verb and reference); it cannot be reused for a different command in the same window.
-- The TOTP secret is enrolled at owner setup and stored only inside the instance, outside the repository and outside the agent's reach.
+- A code is consumed once per owner and time step across all commands (global single use, not per command). The code appears in a public PR comment, so it must not be reusable for a different command. A replayed code is rejected.
+- A code is also bound to the command it authorizes (verb and reference). The binding and the global single use are separate checks.
+- Validity is evaluated against the GitHub comment's `created_at` with a stated tolerance (for example one step either side), not against processing time, so polling delay does not invalidate a code.
+- Commands are processed in comment order, so the owner's own comment consumes the code before any later comment that copies it.
+- The TOTP secret is enrolled at owner setup and stored only inside the instance, outside the repository and, on isolated installations, outside the agent's reach. On co-located installations the agent can reach it, and SuiteWard labels the assurance accordingly.
 - A command without a valid code records no approval or revocation and receives an explicit rejection acknowledgment.
 
 ### Installation tiers
@@ -39,7 +41,7 @@ Agents should use their own GitHub identity, never the owner's credentials.
 
 ## Consequences
 
-- Amends ADR 0002: the command syntax gains the code. Amends ADR 0012: separate credentials become concrete, with the TOTP secret as the approval credential held outside the agent's reach.
-- Implemented in roadmap phases M1.5 (owner identity and setup) and M1.6 (approval processing).
+- Amends ADR 0002: the command syntax gains the code. Amends ADR 0012: separate credentials become concrete, with the TOTP secret as the approval credential held outside the agent's reach on isolated installations.
+- To be implemented in roadmap phases M1.5 (owner identity and setup) and M1.6 (approval processing); not implemented yet.
 - Does not protect against a compromised host administrator, or against an agent that can read the TOTP secret on a co-located install; the co-located label states this.
 - Owner enrollment adds a setup step and an authenticator app for the owner.

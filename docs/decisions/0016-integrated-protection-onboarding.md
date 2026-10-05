@@ -1,7 +1,8 @@
 # ADR 0016: Integrated installation and automatic protection setup
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted; automation/repair deferred post-MVP by the R1 amendment. Not yet implemented.
+- **R1 note (2026-10-05):** the first-test-PR bootstrap path is deferred to post-MVP; only the existing-baseline path is in the MVP (see the amendment to [ADR 0010](0010-repository-bootstrap.md)).
 - **Product:** SuiteWard
 - **Scope:** Owner-confirmed setup of mandatory GitHub merge protection during onboarding.
 - **Related:** [Hosting and GitHub synchronization](0001-self-hosted-github-synchronization.md), [bootstrap](0010-repository-bootstrap.md), [MVP authorization](0012-mvp-authorization-policy.md), and [required contract check](0015-required-contract-check.md).

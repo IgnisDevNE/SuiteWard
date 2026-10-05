@@ -32,7 +32,7 @@
 | [0022](0022-contract-change-pr-priority.md) | Contract-change PR priority | One active contract-changing PR per suite, waiting checks, human `/suiteward prioritize`, confirmed demotion before replacement readiness, and post-integration reconciliation. Deferred to post-MVP (R1). |
 | [0023](0023-development-environment-and-project-local-tooling.md) | Development environment and project-local tooling | Native Windows development, Windows/Linux CI, local PostgreSQL in Podman, pinned project-local tools, and isolated worktree resources. Amended (R1): shared per-user tool cache. |
 | [0024](0024-single-module-project-structure.md) | Single-module project structure | `cmd/` entry points, internal domain/application/adapter boundaries, capability grouping, and dependency rules for parallel implementation. |
-| [0025](0025-test-driven-development.md) | Test-driven development | Test-first for authority, consent, promotion, idempotency, concurrency and adapter behavior; reviewed by `sw-reviewer`; amended (R1): no evidence JSON or ancestry validator. |
+| [0025](0025-test-driven-development.md) | Mandatory task-level test-driven development | Test-first for authority, consent, promotion, idempotency, concurrency and adapter behavior; reviewed by `sw-reviewer`; amended (R1): no evidence JSON or ancestry validator. |
 | [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`. |
 | [0027](0027-agent-human-trust-separation.md) | Agent/human trust separation | TOTP code on every approve and revoke command, isolated and co-located installation tiers, and separate agent identity. |
 
@@ -76,4 +76,4 @@ A review found overengineering and gaps in the threat model and plan. Phase R1 s
 
 ## Next product decision
 
-Owner enrollment and TOTP verification (ADR 0027) are implemented in M1.5 and M1.6. The open gates D-GITHUB-ACCESS, D-IDENTITY, D-PROTECTION, D-CHECKS and D-INTEGRATION still need concrete decisions before their phases; strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone. Execution-profile selection is deferred to M2.
+Owner enrollment and TOTP verification (ADR 0027) are to be implemented in M1.5 and M1.6 (not implemented yet). The open gates D-GITHUB-ACCESS, D-IDENTITY, D-PROTECTION, D-CHECKS and D-INTEGRATION still need concrete decisions before their phases; strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone. Execution-profile selection is deferred to M2.

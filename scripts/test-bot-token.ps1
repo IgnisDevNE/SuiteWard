@@ -135,20 +135,30 @@ try {
     Set-Content -LiteralPath $childScript -Value 'Write-Output ("len=" + $env:GH_TOKEN.Length + "/" + $env:GITHUB_TOKEN.Length)' -Encoding utf8NoBOM
     $nestedScript = Join-Path $testRoot 'nested.ps1'
     Set-Content -LiteralPath $nestedScript -Encoding utf8NoBOM -Value @'
-param($Library, $Root, $ChildScript)
+param($Library, $RepoRoot, $ChildScript)
 . $Library -Mode Library
 $http = {
     param($Method, $Uri, $Headers, $Body)
     if ($Method -eq 'GET') { return [pscustomobject]@{ slug = 'ignisdevne' } }
     return [pscustomobject]@{ token = 'ghs_FAKE_INSTALLATION_TOKEN_VALUE'; repository_selection = 'selected'; repositories = @([pscustomobject]@{ name = 'SuiteWard' }) }
 }
-exit (Invoke-WithBotToken -Root $Root -Command @('pwsh', '-NoProfile', '-File', $ChildScript) -Http $http)
+exit (Invoke-WithBotToken -Root $RepoRoot -Command @('pwsh', '-NoProfile', '-File', $ChildScript) -Http $http)
 '@
     $nestedOutput = @(& pwsh -NoProfile -File $nestedScript (Join-Path $PSScriptRoot 'bot-token.ps1') $testRoot $childScript 2>&1 | ForEach-Object { "$_" })
     if ($LASTEXITCODE -ne 0) { throw "Nested run failed: $($nestedOutput -join '|')" }
     $tokenLength = 'ghs_FAKE_INSTALLATION_TOKEN_VALUE'.Length
     if ($nestedOutput -notcontains "len=$tokenLength/$tokenLength") { throw "Child did not receive the token in GH_TOKEN and GITHUB_TOKEN: $($nestedOutput -join '|')" }
     if (($nestedOutput -join "`n") -match 'ghs_FAKE|eyJ') { throw 'Process output contains a token.' }
+    $checks++
+
+    # The documented invocation form refuses cleanly and exits non-zero when the App is not configured.
+    $emptyRoot = Join-Path $testRoot 'unconfigured'
+    New-Item -ItemType Directory -Path $emptyRoot | Out-Null
+    $scriptPath = Join-Path $PSScriptRoot 'bot-token.ps1'
+    $refusal = @(& pwsh -NoProfile -Command "& '$scriptPath' -Root '$emptyRoot' -- gh --version" 2>&1 | ForEach-Object { "$_" }) -join "`n"
+    if ($LASTEXITCODE -eq 0 -or $refusal -notmatch 'configuration not found') { throw "bot-token.ps1 -- <command> did not refuse without configuration: $refusal" }
+    $refusal = @(& pwsh -NoProfile -Command "& '$scriptPath' -Root '$emptyRoot'" 2>&1 | ForEach-Object { "$_" }) -join "`n"
+    if ($LASTEXITCODE -eq 0 -or $refusal -notmatch 'No command given') { throw "bot-token.ps1 without a command did not refuse: $refusal" }
     $checks++
 
     # A failing HTTP layer reports no secret.

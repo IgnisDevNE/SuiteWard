@@ -24,6 +24,7 @@ try {
     & (Join-Path $PSScriptRoot 'test-go.ps1')
     & (Join-Path $PSScriptRoot 'test-persistence.ps1')
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
+    & (Join-Path $PSScriptRoot 'test-bot-token.ps1')
     & (Join-Path $PSScriptRoot 'check-plan.ps1')
     & (Join-Path $PSScriptRoot 'test-plan.ps1')
     & (Join-Path $PSScriptRoot 'test-tdd.ps1')

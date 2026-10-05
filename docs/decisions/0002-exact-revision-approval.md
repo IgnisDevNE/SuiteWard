@@ -2,6 +2,7 @@
 
 - **Date:** 2026-09-26
 - **Status:** Accepted design decision; not yet implemented.
+- **R1 note (2026-10-05):** the `/suiteward prioritize` command described below is deferred to post-MVP ([ADR 0022](0022-contract-change-pr-priority.md)); the approve command now also carries an owner TOTP code (see the amendment at the end).
 - **Product:** SuiteWard
 - **Scope:** GitHub approval experience for changes to the canonical test contract.
 - **Related:** [ADR 0001: Self-hosted deployment and GitHub synchronization](0001-self-hosted-github-synchronization.md).
@@ -73,3 +74,7 @@ Resolve and validate the revision at processing time, and enforce the revision's
 - Implement revocation, processed comment handling, and durable PR acknowledgments according to [ADR 0011](0011-approval-revocation-and-acknowledgments.md).
 
 These details do not reopen the accepted explicit-revision approval flow.
+
+## Amendment (2026-10-05, phase R1): owner confirmation code
+
+[ADR 0027](0027-agent-human-trust-separation.md) changes the command shape to `/suiteward approve <proposal-revision-reference> <code>`, where `<code>` is a current single-use TOTP code from the verified owner, bound to the command. A command without a valid code approves nothing. The exact-revision binding, stale-reference handling, and idempotency rules above are unchanged. The copyable command published in the PR contains the reference; the owner appends the code.

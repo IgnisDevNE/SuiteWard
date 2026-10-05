@@ -73,3 +73,7 @@ Existing global tools are not automatically removed or replaced. In particular, 
 - Supported production operating systems and any additional Windows database integration job.
 
 These details do not reopen Windows development, Windows/Linux CI, local Podman PostgreSQL, or the preference for project-local installation.
+
+## Amendment (2026-10-05, phase R1): shared tool cache
+
+Pinned tools are installed once into a shared, checksum-verified per-user cache outside the checkout. Go caches, state, and the PostgreSQL database stay per checkout, so worktrees remain isolated without each downloading and verifying every tool.

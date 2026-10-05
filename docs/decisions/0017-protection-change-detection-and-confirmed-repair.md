@@ -1,7 +1,7 @@
 # ADR 0017: Detect protection changes and require confirmation to repair
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted; automation/repair deferred post-MVP by the R1 amendment. Not yet implemented.
 - **Product:** SuiteWard
 - **Scope:** Detection, notification, and repair of required merge protection after setup.
 - **Related:** [Periodic synchronization](0001-self-hosted-github-synchronization.md), [MVP authorization](0012-mvp-authorization-policy.md), [canonical promotion](0014-merge-triggered-canonical-promotion.md), [required contract check](0015-required-contract-check.md), and [integrated setup](0016-integrated-protection-onboarding.md).
@@ -97,3 +97,7 @@ The selected flow combines automatic detection with an owner-confirmed repair th
 - Corrective-PR rollback and history tooling under [ADR 0018](0018-corrective-pr-rollback-and-audit-history.md), backup/restore implementation under [ADR 0019](0019-encrypted-backups-and-instance-recovery-key.md), and administrative-access recovery; these remain separate from repairing GitHub protection.
 
 The automatic detection, notice, and mandatory human repair confirmation are accepted; implementation remains pending.
+
+## Amendment (2026-10-05, phase R1): repair moves post-MVP
+
+Detection, the distinct unknown state, and notices remain in the MVP. Confirmed repair through the setup interface moves post-MVP; the MVP reports the gap and gives manual instructions. See the amendment in [ADR 0016](0016-integrated-protection-onboarding.md).

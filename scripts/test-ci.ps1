@@ -127,4 +127,9 @@ $gateJob=[regex]::Match($workflow,'(?ms)^  gate:\n(?<body>.*?)(?=^  [a-z]+:|\z)'
 if(-not $gateJob.Contains('name: CI / Gate')){throw 'The gate job must keep the required context name CI / Gate.'}
 if(-not $gateJob.Contains('needs: [inspect, foundation, go, coverage]') -or -not $gateJob.Contains('if: always()')){throw 'The gate must always run and require inspect, foundation, go, and coverage.'}
 $checks++
+# GitHub's pwsh step wrapper exits with $LASTEXITCODE; script tests deliberately run failing native children,
+# so a successful foundation run must leave a zero exit code behind.
+$foundationSource=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Replace("`r",'')
+if($foundationSource -notmatch "(?m)^\s*Write-Host 'Foundation scripts, workflows, and documentation are valid\.'\s*\n\s*\`$global:LASTEXITCODE = 0\s*$"){throw 'Foundation must reset the native exit code after all checks succeed.'}
+$checks++
 Write-Output "Passed $checks CI behavior checks. These verify CI infrastructure, not application coverage."

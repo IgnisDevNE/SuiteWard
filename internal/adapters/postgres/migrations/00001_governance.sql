@@ -127,6 +127,7 @@ CREATE TABLE schedule_entries (
 );
 CREATE UNIQUE INDEX schedule_entries_one_active ON schedule_entries (project_id, suite_id) WHERE state = 'active';
 
+
 CREATE TABLE consent_results (
     source_command_id text NOT NULL CHECK (btrim(source_command_id) <> ''),
     operation_id text NOT NULL CHECK (btrim(operation_id) <> ''),
@@ -155,6 +156,8 @@ CREATE TABLE consent_results (
     CONSTRAINT consent_results_reason_outcome_check CHECK ((outcome = 'rejected') = (reason <> 'none'))
 );
 
+CREATE INDEX consent_results_proposal_seq_idx ON consent_results (project_id, suite_id, proposal_id, seq);
+
 CREATE TABLE operations (
     operation_id text NOT NULL CHECK (btrim(operation_id) <> ''),
     project_id text NOT NULL,
@@ -169,6 +172,8 @@ CREATE TABLE operations (
     CONSTRAINT operations_source_check CHECK ((kind = 'consent') = (source_command_id IS NOT NULL)),
     CONSTRAINT operations_receipt_check CHECK (jsonb_typeof(receipt) = 'object')
 );
+
+CREATE INDEX operations_source_command_idx ON operations (project_id, suite_id, source_command_id) WHERE source_command_id IS NOT NULL;
 
 -- operation_id has no foreign key because seeded history has no receipt.
 CREATE TABLE promotions (
@@ -216,6 +221,10 @@ BEGIN
     IF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.suite_id IS DISTINCT FROM OLD.suite_id THEN
         RAISE EXCEPTION 'Suite identity cannot be changed'
             USING ERRCODE = '23514', CONSTRAINT = 'suites_identity_immutable';
+    END IF;
+    IF NEW.target_id IS DISTINCT FROM OLD.target_id OR NEW.policy_revision_id IS DISTINCT FROM OLD.policy_revision_id THEN
+        RAISE EXCEPTION 'Suite target and governing policy cannot be changed'
+            USING ERRCODE = '23514', CONSTRAINT = 'suites_governance_immutable';
     END IF;
     IF NEW.revision <> OLD.revision + 1 THEN
         RAISE EXCEPTION 'Suite writes require the exact next revision'

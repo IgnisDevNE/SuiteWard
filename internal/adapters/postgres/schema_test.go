@@ -195,7 +195,7 @@ func TestGovernanceSuiteRevisionGuard(t *testing.T) {
 	for _, test := range []struct{ name, statement, constraint string }{
 		{"delete", "DELETE FROM suites", "immutable_history"},
 		{"truncate", "TRUNCATE suites CASCADE", "immutable_history"},
-		{"same revision", "UPDATE suites SET target_id='other'", "suites_revision_advance"},
+		{"same revision", "UPDATE suites SET schedule_generation=schedule_generation+1", "suites_revision_advance"},
 		{"revision skips", "UPDATE suites SET revision=revision+2", "suites_revision_advance"},
 		{"revision rewinds", "UPDATE suites SET revision=revision-1", "suites_revision_advance"},
 		{"suite key changes", "UPDATE suites SET suite_id='moved', revision=revision+1", "suites_identity_immutable"},

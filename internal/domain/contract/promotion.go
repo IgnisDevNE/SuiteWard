@@ -144,17 +144,15 @@ var ErrInvalidPromotion = errors.New("invalid promotion")
 
 // PromotionContext is a caller-supplied snapshot of all governing authority.
 type PromotionContext struct {
-	Canonical                    CanonicalSnapshot
-	Proposed                     ProtectedContract
-	Proposal                     Proposal
-	Reference                    ProposalReference
-	Carrier                      ApprovalCarrierID
-	Policy                       Policy
-	Consent                      Consent
-	Assessment                   IntegrityAssessment
-	Scheduling                   Schedule
-	ExpectedStateRevision        StateRevision
-	ExpectedSchedulingGeneration ScheduleGeneration
+	Canonical  CanonicalSnapshot
+	Proposed   ProtectedContract
+	Proposal   Proposal
+	Reference  ProposalReference
+	Carrier    ApprovalCarrierID
+	Policy     Policy
+	Consent    Consent
+	Assessment IntegrityAssessment
+	Scheduling Schedule
 }
 
 type PromotionOutcome uint8
@@ -173,7 +171,6 @@ const (
 	PromotionReasonContextMismatch
 	PromotionReasonProposalNotCurrent
 	PromotionReasonCanonicalChanged
-	PromotionReasonStateChanged
 	PromotionReasonPolicyChanged
 	PromotionReasonApprovalMissing
 	PromotionReasonAssessmentMismatch
@@ -196,29 +193,21 @@ type PromotionInput struct {
 	CorrectsVersionID SuiteVersionID
 }
 
-// PromotionEffect proposes one atomic local write and its publication intent.
+// PromotionEffect proposes one atomic local write.
 type PromotionEffect struct {
 	expectedCanonical SuiteVersionID
-	expectedState     StateRevision
-	expectedSchedule  ScheduleGeneration
 	suite             Suite
 	version           SuiteVersion
 	promotion         PromotionRecord
 }
 
-func (e PromotionEffect) IsZero() bool                                     { return e.promotion.IsZero() }
-func (e PromotionEffect) ExpectedCanonicalID() SuiteVersionID              { return e.expectedCanonical }
-func (e PromotionEffect) ExpectedStateRevision() StateRevision             { return e.expectedState }
-func (e PromotionEffect) ExpectedSchedulingGeneration() ScheduleGeneration { return e.expectedSchedule }
-func (e PromotionEffect) Suite() Suite                                     { return e.suite }
-func (e PromotionEffect) Version() SuiteVersion                            { return e.version }
-func (e PromotionEffect) Promotion() PromotionRecord                       { return e.promotion }
-func (e PromotionEffect) Audit() AuditEvent                                { return AuditEvent{promotion: e.promotion} }
-func (e PromotionEffect) Publication() PublicationIntent {
-	return PublicationIntent{promotion: e.promotion}
-}
+func (e PromotionEffect) IsZero() bool                        { return e.promotion.IsZero() }
+func (e PromotionEffect) ExpectedCanonicalID() SuiteVersionID { return e.expectedCanonical }
+func (e PromotionEffect) Suite() Suite                        { return e.suite }
+func (e PromotionEffect) Version() SuiteVersion               { return e.version }
+func (e PromotionEffect) Promotion() PromotionRecord          { return e.promotion }
 
-// DecidePromotion proposes effects only; committing every authority fence is an
+// DecidePromotion proposes effects only; committing them under the per-Suite lock is an
 // application obligation. No-change means only that no new canonical is needed.
 func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	change, err := ClassifyContractChange(input.Context.Canonical, input.Context.Proposed)
@@ -249,9 +238,6 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	} else if _, present := current.CurrentVersionID(); present || input.Integration.Source() != input.Context.Proposal.Current().Origin() {
 		return blockedPromotion(PromotionReasonIntegrationMismatch), nil
 	}
-	if current.Revision() == ^StateRevision(0) {
-		return PromotionDecision{}, ErrInvalidPromotion
-	}
 	record, err := NewPromotionRecord(PromotionRecordInput{OperationID: input.OperationID, VersionID: input.NewVersionID, Binding: input.Context.Proposal.Current().Binding(), Carrier: input.Context.Carrier, Source: input.Integration.Source(), Target: input.Target, RecordedAt: input.RecordedAt, CorrectsVersionID: input.CorrectsVersionID})
 	if err != nil {
 		return PromotionDecision{}, ErrInvalidPromotion
@@ -264,7 +250,7 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	if err != nil {
 		return PromotionDecision{}, ErrInvalidPromotion
 	}
-	effect := PromotionEffect{expectedCanonical: record.Binding().ExpectedCanonical(), expectedState: input.Context.ExpectedStateRevision, expectedSchedule: input.Context.ExpectedSchedulingGeneration, suite: suite, version: version, promotion: record}
+	effect := PromotionEffect{expectedCanonical: record.Binding().ExpectedCanonical(), suite: suite, version: version, promotion: record}
 	return PromotionDecision{outcome: PromotionProposed, effect: effect}, nil
 }
 
@@ -303,9 +289,6 @@ func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevi
 	if binding.ExpectedCanonical() != current {
 		return blockedPromotion(PromotionReasonCanonicalChanged), nil
 	}
-	if context.ExpectedStateRevision != context.Canonical.Suite().Revision() {
-		return blockedPromotion(PromotionReasonStateChanged), nil
-	}
 	if context.Policy.ProjectID() != context.Canonical.Suite().ProjectID() {
 		return blockedPromotion(PromotionReasonContextMismatch), nil
 	}
@@ -324,7 +307,7 @@ func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevi
 	if !context.Assessment.Passed() {
 		return blockedPromotion(PromotionReasonIntegrityNotPassed), nil
 	}
-	if !context.Scheduling.CanPromote(context.Proposal, context.ExpectedSchedulingGeneration) {
+	if !context.Scheduling.CanPromote(context.Proposal) {
 		return blockedPromotion(PromotionReasonSchedulingBlocked), nil
 	}
 	return PromotionDecision{outcome: PromotionReady}, nil

@@ -30,87 +30,59 @@ func addAssessment(t *testing.T, store *referenceStore, reference contract.Propo
 	}
 }
 
-func TestBootstrapBothModesCommitAndReplay(t *testing.T) {
-	for _, mode := range []contract.BootstrapMode{contract.ExistingBaselineBootstrap, contract.FirstTestBootstrap} {
-		t.Run(map[contract.BootstrapMode]string{contract.ExistingBaselineBootstrap: "existing", contract.FirstTestBootstrap: "first tests"}[mode], func(t *testing.T) {
-			f, store := approvedStoreFixture(t)
-			if mode == contract.ExistingBaselineBootstrap {
-				f.request.AssessmentSource = f.snapshot.Proposal.Current().Origin()
-				var err error
-				f.request.Integration, err = contract.NewIntegration("project", "default", f.request.AssessmentSource, "", contract.IntegrationExistingBaseline)
-				if err != nil {
-					t.Fatal(err)
-				}
-				addAssessment(t, store, f.request.Reference, f.request.AssessmentSource, f.snapshot.Proposal.Current().Binding())
-			}
-			before := store.inspect()
-			request := BootstrapRequest{Mode: mode, Promotion: f.request}
-			result, err := Bootstrap(context.Background(), store, request)
-			if err != nil || !result.Committed || result.Duplicate || result.Decision.Outcome() != contract.PromotionProposed {
-				t.Fatalf("bootstrap not committed: %+v %v", result, err)
-			}
-			after := store.inspect()
-			if after.canonical.Version().ID() != f.request.NewVersionID || len(after.publications) != len(before.publications)+1 || after.scheduling.Entries()[0].State() != contract.SchedulePromoted {
-				t.Fatal("bootstrap effect incomplete")
-			}
-			receipt := after.operations[f.request.OperationID].Promotion
-			if receipt.Identity.Kind != OperationBootstrap || receipt.Identity.BootstrapMode != mode {
-				t.Fatal("bootstrap identity lost")
-			}
-			request.Promotion.RecordedAt = request.Promotion.RecordedAt.Add(time.Hour)
-			replay, err := Bootstrap(context.Background(), store, request)
-			if err != nil || !replay.Committed || !replay.Duplicate || !reflect.DeepEqual(replay.Decision, result.Decision) || !reflect.DeepEqual(after, store.inspect()) {
-				t.Fatalf("bootstrap replay changed original: %+v %v", replay, err)
-			}
-			other, err := Promote(context.Background(), store, request.Promotion)
-			if !errors.Is(err, ErrOperationConflict) {
-				t.Fatalf("bootstrap receipt adopted by ordinary promotion: %+v %v", other, err)
-			}
-			requireZeroPromotionResult(t, other)
-			if mode == contract.FirstTestBootstrap {
-				request.Mode = contract.ExistingBaselineBootstrap
-			} else {
-				request.Mode = contract.FirstTestBootstrap
-			}
-			other, err = Bootstrap(context.Background(), store, request)
-			if !errors.Is(err, ErrOperationConflict) {
-				t.Fatalf("changed bootstrap mode replayed: %+v %v", other, err)
-			}
-			requireZeroPromotionResult(t, other)
-		})
+// baselineBootstrapRequest turns the fixture request into an existing-baseline
+// bootstrap: the pinned origin is the integrated source and evidence binds it.
+func baselineBootstrapRequest(t *testing.T, f storeFixture, store *referenceStore) PromoteRequest {
+	t.Helper()
+	request := f.request
+	request.AssessmentSource = f.snapshot.Proposal.Current().Origin()
+	var err error
+	request.Integration, err = contract.NewIntegration("project", "default", request.AssessmentSource, "", contract.IntegrationExistingBaseline)
+	if err != nil {
+		t.Fatal(err)
 	}
+	addAssessment(t, store, request.Reference, request.AssessmentSource, f.snapshot.Proposal.Current().Binding())
+	return request
 }
 
-func TestBootstrapPremergeReadinessAndFailuresRemainProvisional(t *testing.T) {
+func TestBootstrapCommitsAndReplays(t *testing.T) {
 	f, store := approvedStoreFixture(t)
-	request := BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: f.request}
-	request.Promotion.Integration = contract.Integration{}
-	request.Promotion.AssessmentSource = f.snapshot.Proposal.Current().Origin()
-	request.Promotion.NewVersionID = ""
-	request.Promotion.RecordedAt = time.Time{}
-	addAssessment(t, store, f.request.Reference, request.Promotion.AssessmentSource, f.snapshot.Proposal.Current().Binding())
+	request := BootstrapRequest{Promotion: baselineBootstrapRequest(t, f, store)}
 	before := store.inspect()
 	result, err := Bootstrap(context.Background(), store, request)
-	if err != nil || result.Committed || result.Duplicate || result.Decision.Outcome() != contract.PromotionReady {
-		t.Fatalf("premerge readiness wrong: %+v %v", result, err)
+	if err != nil || !result.Committed || result.Duplicate || result.Decision.Outcome() != contract.PromotionProposed {
+		t.Fatalf("bootstrap not committed: %+v %v", result, err)
 	}
-	if !reflect.DeepEqual(before, store.inspect()) {
-		t.Fatal("premerge readiness wrote authority")
+	after := store.inspect()
+	if after.canonical.Version().ID() != f.request.NewVersionID || len(after.publications) != len(before.publications)+1 || after.scheduling.Entries()[0].State() != contract.SchedulePromoted {
+		t.Fatal("bootstrap effect incomplete")
 	}
-	request.Promotion.Integration = f.request.Integration
-	result, err = Bootstrap(context.Background(), store, request)
-	if err != nil || result.Committed || result.Decision.Reason() != contract.PromotionReasonAssessmentMismatch {
-		t.Fatalf("candidate evidence authorized merged source: %+v %v", result, err)
+	if after.operations[f.request.OperationID].Promotion.Identity.Kind != OperationBootstrap {
+		t.Fatal("bootstrap identity lost")
 	}
-	if !reflect.DeepEqual(before, store.inspect()) {
-		t.Fatal("mismatched evidence wrote authority")
+	request.Promotion.RecordedAt = request.Promotion.RecordedAt.Add(time.Hour)
+	replay, err := Bootstrap(context.Background(), store, request)
+	if err != nil || !replay.Committed || !replay.Duplicate || !reflect.DeepEqual(replay.Decision, result.Decision) || !reflect.DeepEqual(after, store.inspect()) {
+		t.Fatalf("bootstrap replay changed original: %+v %v", replay, err)
 	}
-	request.Mode = contract.ExistingBaselineBootstrap
-	result, err = Bootstrap(context.Background(), store, request)
+	other, err := Promote(context.Background(), store, request.Promotion)
+	if !errors.Is(err, ErrOperationConflict) {
+		t.Fatalf("bootstrap receipt adopted by ordinary promotion: %+v %v", other, err)
+	}
+	requireZeroPromotionResult(t, other)
+}
+
+func TestBootstrapRequiresExistingBaselineAndAbsentCanonical(t *testing.T) {
+	f, store := approvedStoreFixture(t)
+	before := store.inspect()
+	result, err := Bootstrap(context.Background(), store, BootstrapRequest{Promotion: f.request})
 	if err != nil || result.Committed || result.Decision.Reason() != contract.PromotionReasonIntegrationMismatch {
-		t.Fatalf("wrong integration kind accepted: %+v %v", result, err)
+		t.Fatalf("merged-change integration bootstrapped: %+v %v", result, err)
 	}
-	request = BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: f.request}
+	if !reflect.DeepEqual(before, store.inspect()) {
+		t.Fatal("rejected bootstrap wrote authority")
+	}
+	request := BootstrapRequest{Promotion: baselineBootstrapRequest(t, f, store)}
 	if _, err = Bootstrap(context.Background(), store, request); err != nil {
 		t.Fatal(err)
 	}
@@ -125,17 +97,10 @@ func TestBootstrapPremergeReadinessAndFailuresRemainProvisional(t *testing.T) {
 	}
 }
 
-func TestBootstrapInvalidModeAndStoreFailure(t *testing.T) {
+func TestBootstrapStoreFailure(t *testing.T) {
 	f, store := approvedStoreFixture(t)
 	store.failAt = "load"
-	for _, mode := range []contract.BootstrapMode{0, 99} {
-		result, err := Bootstrap(context.Background(), store, BootstrapRequest{Mode: mode, Promotion: f.request})
-		if !errors.Is(err, ErrInvalidRequest) {
-			t.Fatalf("invalid bootstrap mode reached store: %+v %v", result, err)
-		}
-		requireZeroPromotionResult(t, result)
-	}
-	result, err := Bootstrap(context.Background(), store, BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: f.request})
+	result, err := Bootstrap(context.Background(), store, BootstrapRequest{Promotion: f.request})
 	if !errors.Is(err, errReferenceFailure) {
 		t.Fatalf("load failure hidden: %v", err)
 	}
@@ -290,8 +255,9 @@ func TestBootstrapAndCorrectionFailuresRollBackEveryEffect(t *testing.T) {
 				if kind == "bootstrap" {
 					f, s := approvedStoreFixture(t)
 					store = s
+					request := baselineBootstrapRequest(t, f, store)
 					call = func() (PromoteResult, error) {
-						return Bootstrap(context.Background(), store, BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: f.request})
+						return Bootstrap(context.Background(), store, BootstrapRequest{Promotion: request})
 					}
 				} else {
 					s, request := correctionFixture(t)

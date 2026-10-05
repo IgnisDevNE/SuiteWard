@@ -123,10 +123,11 @@ type ConsentReceipt struct {
 	PromotedVersionID       contract.SuiteVersionID
 }
 
-// ConsentWrite appends one processed command. With Alias, Result is the
-// duplicate observed for a new operation id and Receipt is the original
-// receipt: the store records only the new operation id for the original
-// source command.
+// ConsentWrite appends one processed command. OperationID is the operation
+// being processed. With Alias, Result is the domain's duplicate result, whose
+// Command() is the original command (including its original operation id), and
+// Receipt is the original receipt: the store records only OperationID for
+// Result.Command().SourceCommandID().
 type ConsentWrite struct {
 	OperationID contract.OperationID
 	Result      contract.CommandResult
@@ -172,7 +173,7 @@ Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `
 
 ### Use-case semantics
 
-- **Consent:** inside `Do`: look up `Receipt(operationID)`. A consent receipt for the same source command, actor and proposal is returned as a duplicate; anything else is `ErrOperationConflict`. Then load the proposal and consent, apply the command with the governing policy, and:
+- **Consent:** inside `Do`: look up `Receipt(operationID)`. A consent receipt for the same Suite, proposal, source command and actor is returned as a duplicate; anything else is `ErrOperationConflict`. Then look up `ReceiptBySource(sourceCommandID)`: source command ids are global and the domain sees only one proposal's history, so a receipt there that is not a consent receipt for the same Suite, proposal and actor is `ErrOperationConflict`. Then load the proposal and consent, apply the command with the governing policy, and:
   - `ConsentReasonCommandConflict` → `ErrOperationConflict`, nothing written;
   - a duplicate result (same source command, new operation id) → `AppendConsent` with `Alias: true` and the original receipt from `ReceiptBySource`;
   - otherwise build the receipt (eligibility from `Consent.HasApproval`; `PromotedVersionID` from `PromotionFor(reference)`) and `AppendConsent`.
@@ -181,7 +182,7 @@ Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `
 ### Store write semantics
 
 - `AppendConsent` (not alias): insert the command result and an operation row carrying the receipt; bump the revision.
-- `AppendConsent` (alias): insert only an operation row for the new operation id pointing at the original source command, with a copy of the original receipt; bump the revision.
+- `AppendConsent` (alias): insert only an operation row keyed by `ConsentWrite.OperationID` pointing at `Result.Command().SourceCommandID()` (never at `Result.Command().OperationID()`, which is the original operation), with a copy of the original receipt; bump the revision.
 - `RecordPromotion`: verify the version's manifest bytes in the content store; insert the version, the promotion, and the operation row; set the Suite's current version; persist schedule entry states and generation; bump the revision. A duplicate version id or promoted reference is `ErrVersionConflict`.
 - Reads reconstitute: proposals via `NewProposal` + `Revise` in sequence order; consent via `ReconstituteConsent` from stored results and aliases; assessments via `AssessIntegrity` over stored evidence; schedule via `ReconstituteSchedule`; canonical and history via `NewSuite`, `NewSuiteVersion`, `NewPromotionRecord`, `NewCanonicalSnapshot`, `NewHistoricalCanonical`.
 

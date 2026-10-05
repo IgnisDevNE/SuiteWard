@@ -2,6 +2,7 @@
 
 - **Date:** 2026-09-26
 - **Status:** Accepted design decision; not yet implemented.
+- **R1 note (2026-10-05):** the first-test-PR bootstrap flows below are deferred to post-MVP; only the existing-baseline bootstrap is in the MVP (see the amendment to [ADR 0010](0010-repository-bootstrap.md)).
 - **Product:** SuiteWard
 - **Scope:** Declaring, reviewing, and changing the protected inventory.
 - **Related:** [Bootstrap](0010-repository-bootstrap.md), [exact approval](0002-exact-revision-approval.md), [canonical authority](0007-canonical-contract-authority.md), [PR acknowledgments](0011-approval-revocation-and-acknowledgments.md), and [MVP authorization](0012-mvp-authorization-policy.md).
@@ -101,3 +102,7 @@ The selected flow combines a suggested starting point with normal repository edi
 - Exact revision binding for declaration bytes versus normalized rules; no normalization may hide a meaningful change to covered inputs.
 
 These details must preserve the accepted PR interaction and external canonical authority.
+
+## Amendment (2026-10-05, phase R1): default protected scope
+
+The default protected scope includes `.github/workflows/**`, the test runner configuration, and the scripts that run tests, because changing them can alter or bypass what the tests verify. Owners may extend the scope. Removing any of these from the scope is a scope reduction and requires approval like any other (see the declaration rules under D-SCOPE in the [decision register](../plan/decisions.md)).

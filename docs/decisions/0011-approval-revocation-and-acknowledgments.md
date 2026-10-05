@@ -101,3 +101,7 @@ Both MCP-triggered and periodic reconciliation use these rules. No MCP call is r
 
 Explicit withdrawal, its effective point, and the PR acknowledgment requirement are accepted.
 
+
+## Amendment (2026-10-05, phase R1): owner confirmation code
+
+Per [ADR 0027](0027-agent-human-trust-separation.md), `/suiteward revoke <ref> <code>` also requires a current single-use TOTP code from the verified owner. A revoke command without a valid code has no effect and receives a rejection acknowledgment.

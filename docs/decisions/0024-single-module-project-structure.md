@@ -56,6 +56,8 @@ M0 begins with the domain and the application behavior needed to demonstrate its
 
 Domain entities such as RunnerProfile and ExecutionPlan are added when the relevant use cases require them. Their presence in the product model is not a reason to scaffold execution infrastructure early.
 
+Amendment (2026-10-05, phase R1): `internal/application/<capability>/<capability>test` packages may hold exported test support (fakes, conformance suites); only tests import them.
+
 Unit tests live beside the packages they verify. Multi-component tests can live with the coordinating application package; tests requiring real infrastructure must be identifiable and runnable separately from the fast domain suite. SQL, migrations, generated code, and their configuration stay versioned and assigned to the persistence workstream; their final source-directory names are implementation details.
 
 ## Dependency rules

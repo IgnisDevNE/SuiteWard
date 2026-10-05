@@ -3,136 +3,94 @@ package governance
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// ProcessConsent coordinates a domain command with its atomic stored outcome.
-func ProcessConsent(ctx context.Context, store Store, request ConsentRequest) (ConsentResponse, error) {
+// ProcessConsent applies one command inside a unit of work and records its
+// outcome together with the receipt that makes later replays exact.
+func ProcessConsent(ctx context.Context, uow UnitOfWork, request ConsentRequest) (ConsentResponse, error) {
 	command := request.Command
-	if store == nil || command.OperationID() == "" {
+	reference := command.Reference()
+	if uow == nil || command.OperationID() == "" {
 		return ConsentResponse{}, ErrInvalidRequest
 	}
-	snapshot, err := store.Load(ctx, ReadRequest{Reference: command.Reference(), OperationID: command.OperationID(), SourceCommandID: command.SourceCommandID()})
+	var response ConsentResponse
+	err := uow.Do(ctx, reference.ProjectID, reference.SuiteID, func(ctx context.Context, tx Tx) error {
+		stored, found, err := tx.Receipt(ctx, command.OperationID())
+		if err != nil {
+			return fmt.Errorf("load operation receipt: %w", err)
+		}
+		if found {
+			if !isCommandReceipt(stored, command) {
+				return ErrOperationConflict
+			}
+			response = ConsentResponse{Receipt: *stored.Consent, Committed: true, Duplicate: true}
+			return nil
+		}
+		original, sourceKnown, err := tx.ReceiptBySource(ctx, command.SourceCommandID())
+		if err != nil {
+			return fmt.Errorf("load source command receipt: %w", err)
+		}
+		if sourceKnown && !isCommandReceipt(original, command) {
+			return ErrOperationConflict
+		}
+		state, err := tx.Suite(ctx)
+		if err != nil {
+			return fmt.Errorf("load suite: %w", err)
+		}
+		proposal, consent, err := tx.Proposal(ctx, reference.ProposalID)
+		if err != nil {
+			return fmt.Errorf("load proposal: %w", err)
+		}
+		next, result, err := consent.Apply(proposal, state.Policy, command)
+		if err != nil {
+			return fmt.Errorf("apply consent command: %w", err)
+		}
+		switch {
+		case result.Reason() == contract.ConsentReasonCommandConflict:
+			return ErrOperationConflict
+		case result.Duplicate() != sourceKnown:
+			return fmt.Errorf("%w: consent history and receipts disagree about source command %q", ErrInvalidState, command.SourceCommandID())
+		case result.Duplicate():
+			if err := tx.AppendConsent(ctx, ConsentWrite{OperationID: command.OperationID(), Result: result, Receipt: *original.Consent, Alias: true}); err != nil {
+				return fmt.Errorf("record consent alias: %w", err)
+			}
+			response = ConsentResponse{Receipt: *original.Consent, Committed: true, Duplicate: true}
+			return nil
+		}
+		var promoted contract.SuiteVersionID
+		record, promotedFound, err := tx.PromotionFor(ctx, reference)
+		if err != nil {
+			return fmt.Errorf("load promotion: %w", err)
+		}
+		if promotedFound {
+			promoted = record.VersionID()
+		}
+		receipt := ConsentReceipt{
+			Result: result, EvaluatedReference: proposal.Current().Binding().Reference(), PolicyRevisionID: state.Policy.RevisionID(),
+			CurrentApprovalEligible: next.HasApproval(proposal, state.Policy), PromotedVersionID: promoted,
+		}
+		if err := tx.AppendConsent(ctx, ConsentWrite{OperationID: command.OperationID(), Result: result, Receipt: receipt}); err != nil {
+			return fmt.Errorf("record consent: %w", err)
+		}
+		response = ConsentResponse{Receipt: receipt, Committed: true}
+		return nil
+	})
 	if err != nil {
 		return ConsentResponse{}, err
 	}
-	if err := checkConsentIndexes(snapshot, command); err != nil {
-		return ConsentResponse{}, err
-	}
-	if snapshot.Operation.Kind != 0 {
-		return ConsentResponse{Receipt: snapshot.Operation.Consent, Committed: true, Duplicate: true}, nil
-	}
-	if !validConsentSnapshot(snapshot, command.Reference()) {
-		return ConsentResponse{}, ErrInvalidSnapshot
-	}
-	next, result, err := snapshot.Consent.Apply(snapshot.Proposal, snapshot.Policy, command)
-	if err != nil {
-		return ConsentResponse{}, fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
-	}
-	if result.Duplicate() {
-		original := snapshot.Source.Consent
-		if snapshot.Source.Kind != OperationConsent || original.Result.Duplicate() ||
-			original.Result.Command() != result.Command() || original.Result.Outcome() != result.Outcome() || original.Result.Reason() != result.Reason() {
-			return ConsentResponse{}, ErrInvalidSnapshot
-		}
-		if err := store.CommitConsent(ctx, snapshot.Fence, ConsentWrite{Command: command, Consent: next, Receipt: original, Alias: true}); err != nil {
-			return ConsentResponse{}, err
-		}
-		return ConsentResponse{Receipt: original, Committed: true, Duplicate: true}, nil
-	}
-	if snapshot.Source.Kind != 0 || result.Reason() == contract.ConsentReasonCommandConflict {
-		return ConsentResponse{}, ErrInvalidSnapshot
-	}
-	var promoted contract.SuiteVersionID
-	if record := snapshot.HistoricalPromotion; !record.IsZero() {
-		revision, err := snapshot.Proposal.Lookup(record.Binding().Reference(), record.Carrier())
-		if err != nil || record.Binding().Reference() != command.Reference() || !revision.Binding().Equal(record.Binding()) {
-			return ConsentResponse{}, ErrInvalidSnapshot
-		}
-		promoted = record.VersionID()
-	}
-	receipt := ConsentReceipt{
-		Result: result, EvaluatedReference: snapshot.Proposal.Current().Binding().Reference(),
-		PolicyRevisionID: snapshot.Policy.RevisionID(), CurrentApprovalEligible: next.HasApproval(snapshot.Proposal, snapshot.Policy),
-		PromotedVersionID: promoted,
-	}
-	if err := store.CommitConsent(ctx, snapshot.Fence, ConsentWrite{Command: command, Consent: next, Receipt: receipt}); err != nil {
-		return ConsentResponse{}, err
-	}
-	return ConsentResponse{Receipt: receipt, Committed: true}, nil
+	return response, nil
 }
 
-// Indexed identities are checked before evaluating any current authority.
-func checkConsentIndexes(snapshot Snapshot, command contract.Command) error {
-	for _, receipt := range []OperationReceipt{snapshot.Operation, snapshot.Source} {
-		switch receipt.Kind {
-		case 0:
-			if receipt.Consent != (ConsentReceipt{}) || !emptyConsentIndexPromotion(receipt.Promotion) {
-				return ErrInvalidSnapshot
-			}
-		case OperationConsent:
-			if !emptyConsentIndexPromotion(receipt.Promotion) || !validConsentReceipt(receipt.Consent) {
-				return ErrInvalidSnapshot
-			}
-		case OperationPromote, OperationBootstrap, OperationCorrect:
-			if receipt.Consent != (ConsentReceipt{}) || receipt.Promotion.Identity.Kind != receipt.Kind || receipt.Promotion.Decision.Outcome() != contract.PromotionProposed {
-				return ErrInvalidSnapshot
-			}
-		default:
-			return ErrInvalidSnapshot
-		}
-	}
-	if snapshot.Source.Kind != 0 && snapshot.Source.Kind != OperationConsent {
-		return ErrInvalidSnapshot
-	}
-	for _, receipt := range []OperationReceipt{snapshot.Operation, snapshot.Source} {
-		if receipt.Kind == 0 {
-			continue
-		}
-		if receipt.Kind != OperationConsent {
-			return ErrOperationConflict
-		}
-		original := receipt.Consent.Result.Command()
-		if original.SourceCommandID() != command.SourceCommandID() || original.Actor() != command.Actor() || !sameConsentAggregate(original.Reference(), command.Reference()) {
-			return ErrOperationConflict
-		}
-	}
-	if snapshot.Operation.Kind != 0 && (snapshot.Source.Kind == 0 || snapshot.Operation.Consent != snapshot.Source.Consent) {
-		return ErrInvalidSnapshot
-	}
-	return nil
-}
-
-func validConsentReceipt(receipt ConsentReceipt) bool {
-	result := receipt.Result
-	return result.Command().OperationID() != "" && result.Outcome() >= contract.ConsentApproved && result.Outcome() <= contract.ConsentRejected &&
-		!result.Duplicate() && result.Reason() != contract.ConsentReasonCommandConflict && sameConsentAggregate(result.Command().Reference(), receipt.EvaluatedReference) &&
-		strings.TrimSpace(string(receipt.EvaluatedReference.RevisionID)) != "" && strings.TrimSpace(string(receipt.PolicyRevisionID)) != "" &&
-		(receipt.PromotedVersionID == "" || strings.TrimSpace(string(receipt.PromotedVersionID)) != "")
-}
-
-func sameConsentAggregate(a, b contract.ProposalReference) bool {
-	return a.ProjectID == b.ProjectID && a.SuiteID == b.SuiteID && a.ProposalID == b.ProposalID
-}
-
-func emptyConsentIndexPromotion(receipt PromotionReceipt) bool {
-	identity := receipt.Identity
-	request := identity.Request
-	return identity.Kind == 0 && identity.BootstrapMode == 0 && identity.CorrectsVersionID == "" && identity.Binding.IsZero() &&
-		receipt.Decision.Outcome() == 0 && request.OperationID == "" && request.Reference == (contract.ProposalReference{}) && request.Carrier == "" &&
-		request.Proposed.IsZero() && request.AssessmentSource == "" && request.Integration.IsZero() && request.NewVersionID == "" && request.RecordedAt.IsZero()
-}
-
-func validConsentSnapshot(snapshot Snapshot, reference contract.ProposalReference) bool {
-	if snapshot.Canonical.IsZero() || snapshot.Proposal.IsZero() {
+// isCommandReceipt reports whether stored is a consent receipt for the same
+// source command, actor and proposal as command.
+func isCommandReceipt(stored OperationReceipt, command contract.Command) bool {
+	if stored.Kind != OperationConsent || stored.Consent == nil {
 		return false
 	}
-	suite := snapshot.Canonical.Suite()
-	current := snapshot.Proposal.Current().Binding().Reference()
-	return suite.ProjectID() == reference.ProjectID && suite.ID() == reference.SuiteID &&
-		snapshot.Fence == (AuthorityFence{ProjectID: suite.ProjectID(), SuiteID: suite.ID(), Revision: suite.Revision()}) &&
-		current.ProjectID == reference.ProjectID && current.SuiteID == reference.SuiteID && current.ProposalID == reference.ProposalID &&
-		snapshot.Policy.ProjectID() == reference.ProjectID
+	original := stored.Consent.Result.Command()
+	wanted := command.Reference()
+	return stored.ProjectID == wanted.ProjectID && stored.SuiteID == wanted.SuiteID && original.Reference().ProposalID == wanted.ProposalID &&
+		original.SourceCommandID() == command.SourceCommandID() && original.Actor() == command.Actor()
 }

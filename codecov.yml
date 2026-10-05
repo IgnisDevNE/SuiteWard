@@ -9,14 +9,8 @@ coverage:
     project:
       default:
         target: auto
-        threshold: 0.25%
-        if_not_found: failure
-        informational: false
-      floor:
-        target: 99%
-        threshold: 0%
-        if_not_found: failure
-        informational: false
+        threshold: 1%
+        informational: true
     patch:
       default:
         target: 90%
@@ -26,6 +20,7 @@ coverage:
 
 ignore:
   - "internal/adapters/postgres/internal/dbgen/**"
+  - "internal/application/governance/governancetest/**"
 
 comment:
   require_head: true

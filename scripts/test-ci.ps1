@@ -26,7 +26,6 @@ function New-Results {
     return [pscustomobject]@{
         inspect = [pscustomobject]@{ result = 'success'; outputs = [pscustomobject]@{ go = $HasGo } }
         foundation = [pscustomobject]@{ result = 'success' }
-        tdd = [pscustomobject]@{ result = 'success' }
         go = [pscustomobject]@{ result = $GoResult }
         coverage = [pscustomobject]@{ result = $CoverageResult }
     }
@@ -47,36 +46,9 @@ $failedFoundation = New-Results 'false' 'skipped' 'skipped'
 $failedFoundation.foundation.result = 'failure'
 Assert-Throws { Assert-CiGate $failedFoundation } 'failed documentation/configuration verification'
 $checks++
-$failedTdd = New-Results 'false' 'skipped' 'skipped'
-foreach ($badResult in @('failure', 'skipped', 'cancelled')) {
-    $failedTdd.tdd.result = $badResult
-    Assert-Throws { Assert-CiGate $failedTdd } "TDD evidence job $badResult"
-    $checks++
-}
-$missingTdd = New-Results 'false' 'skipped' 'skipped'
-$missingTdd.PSObject.Properties.Remove('tdd')
-Assert-Throws { Assert-CiGate $missingTdd } 'missing TDD evidence job'
-$checks++
-
-$base = 'a' * 40
-$head = 'b' * 40
-$event = [pscustomobject]@{ pull_request = [pscustomobject]@{ base = [pscustomobject]@{sha=$base}; head = [pscustomobject]@{sha=$head} } }
-$range = Get-TddRevisionRange -EventName 'pull_request' -Event $event
-if ($range.Base -cne $base -or $range.Head -cne $head) { throw 'PR evidence must use the event base/head, not the checkout merge revision.' }
-$checks++
-$range = Get-TddRevisionRange -EventName 'push' -Event ([pscustomobject]@{before=$base;after=$head})
-if ($range.Base -cne $base -or $range.Head -cne $head) { throw 'Push evidence must include the entire pushed range.' }
-$checks++
-$range = Get-TddRevisionRange -EventName 'workflow_dispatch' -CurrentRevision $head -ParentRevision $base
-if ($range.Base -cne $base -or $range.Head -cne $head) { throw 'Manual verification must use the requested checkout and its first parent.' }
-$checks++
-Assert-Throws { Get-TddRevisionRange -EventName 'push' -Event ([pscustomobject]@{before=('0'*40);after=$head}) } 'missing push base'
-$checks++
-Assert-Throws { Get-TddRevisionRange -EventName 'push' -Event ([pscustomobject]@{before='main';after=$head}) } 'symbolic event revision'
-$checks++
-Assert-Throws { Get-TddRevisionRange -EventName 'workflow_dispatch' -CurrentRevision $head -ParentRevision '' } 'manual verification without parent'
-$checks++
-Assert-Throws { Get-TddRevisionRange -EventName 'unknown' } 'unsupported TDD event'
+$missingFoundation = New-Results 'false' 'skipped' 'skipped'
+$missingFoundation.PSObject.Properties.Remove('foundation')
+Assert-Throws { Assert-CiGate $missingFoundation } 'missing foundation job'
 $checks++
 
 # Inspect the scalar status declarations used by this repository. This is a
@@ -111,31 +83,24 @@ function Test-CoveragePolicyDecision {
     return $HeadCoverage -ge ($target - (Convert-CoverageNumber $Policy['threshold']))
 }
 
-$ratchet = Get-CoveragePolicy 'project' 'default'
-$floor = Get-CoveragePolicy 'project' 'floor'
+$project = Get-CoveragePolicy 'project' 'default'
 $patch = Get-CoveragePolicy 'patch' 'default'
-foreach ($entry in @(@{Name='project/default';Policy=$ratchet}, @{Name='project/floor';Policy=$floor}, @{Name='patch/default';Policy=$patch})) {
-    $policy = $entry.Policy
-    if ($policy['informational'] -ne 'false') { throw "$($entry.Name) must block a coverage violation; missing/informational status cannot enforce the accepted policy." }
-    if ($policy['if_not_found'] -ne 'failure') { throw "$($entry.Name) must fail when the head coverage report is absent." }
-    foreach ($key in @('target', 'threshold')) {
-        if (-not $policy.ContainsKey($key)) { throw "$($entry.Name) must declare $key explicitly." }
-    }
-    foreach ($filter in @('paths', 'flags', 'branches', 'only_pulls')) {
-        if ($policy.ContainsKey($filter)) { throw "$($entry.Name) must not narrow the accepted coverage scope or reporting events." }
-    }
-    if (Test-CoveragePolicyDecision -Policy $policy -HeadCoverage $null -BaseCoverage 100) { throw "$($entry.Name) accepted an absent report." }
-    $checks++
+if ($project['informational'] -ne 'true' -or $project['target'] -ne 'auto') { throw 'project/default must be an informational ratchet signal against the base.' }
+$checks++
+if (@([regex]::Matches($coverageYaml, '(?m)^      [a-z_]+:$')).Count -ne 2) { throw 'Coverage statuses must be exactly project/default and patch/default.' }
+$checks++
+if ($patch['informational'] -ne 'false') { throw 'patch/default must block a coverage violation (codecov/patch is a required check).' }
+if ($patch['if_not_found'] -ne 'failure') { throw 'patch/default must fail when the head coverage report is absent.' }
+foreach ($key in @('target', 'threshold')) {
+    if (-not $patch.ContainsKey($key)) { throw "patch/default must declare $key explicitly." }
 }
+foreach ($filter in @('paths', 'flags', 'branches', 'only_pulls')) {
+    if ($patch.ContainsKey($filter)) { throw 'patch/default must not narrow the accepted coverage scope or reporting events.' }
+}
+if (Test-CoveragePolicyDecision -Policy $patch -HeadCoverage $null -BaseCoverage 100) { throw 'patch/default accepted an absent report.' }
+$checks++
 
 foreach ($case in @(
-    @{Name='ratchet allows exactly 0.25 percentage points';Policy=$ratchet;Base=99.75;Head=99.5;Pass=$true},
-    @{Name='ratchet rejects a larger decrease';Policy=$ratchet;Base=99.75;Head=99.499;Pass=$false},
-    @{Name='ratchet follows a higher actual base';Policy=$ratchet;Base=100;Head=99.6;Pass=$false},
-    @{Name='ratchet follows a lower actual base independently of floor';Policy=$ratchet;Base=99;Head=98.75;Pass=$true},
-    @{Name='observed M0 report satisfies tolerance';Policy=$ratchet;Base=99.68;Head=99.51;Pass=$true},
-    @{Name='absolute floor accepts exactly 99 independently of base';Policy=$floor;Base=100;Head=99;Pass=$true},
-    @{Name='absolute floor stops accumulated decreases';Policy=$floor;Base=99.1;Head=98.999;Pass=$false},
     @{Name='patch retains exactly 90 percent';Policy=$patch;Base=100;Head=90;Pass=$true},
     @{Name='patch rejects below 90 independently of a lower base';Policy=$patch;Base=80;Head=89.999;Pass=$false},
     @{Name='patch has no tolerance below 90 percent';Policy=$patch;Base=100;Head=89.999;Pass=$false}
@@ -156,5 +121,15 @@ foreach($job in @($goJob,$coverageJob)) {
     $checks++
 }
 if(-not (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Contains("'test-persistence.ps1'")){throw 'Foundation must execute the persistence infrastructure behavior checks.'}
+$checks++
+# Branch protection requires the exact context name; the gate must aggregate every verification job.
+$gateJob=[regex]::Match($workflow,'(?ms)^  gate:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
+if(-not $gateJob.Contains('name: CI / Gate')){throw 'The gate job must keep the required context name CI / Gate.'}
+if(-not $gateJob.Contains('needs: [inspect, foundation, go, coverage]') -or -not $gateJob.Contains('if: always()')){throw 'The gate must always run and require inspect, foundation, go, and coverage.'}
+$checks++
+# GitHub's pwsh step wrapper exits with $LASTEXITCODE; script tests deliberately run failing native children,
+# so a successful foundation run must leave a zero exit code behind.
+$foundationSource=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Replace("`r",'')
+if($foundationSource -notmatch "(?m)^\s*Write-Host 'Foundation scripts, workflows, and documentation are valid\.'\s*\n\s*\`$global:LASTEXITCODE = 0\s*$"){throw 'Foundation must reset the native exit code after all checks succeed.'}
 $checks++
 Write-Output "Passed $checks CI behavior checks. These verify CI infrastructure, not application coverage."

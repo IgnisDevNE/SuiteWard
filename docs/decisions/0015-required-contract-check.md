@@ -2,6 +2,7 @@
 
 - **Date:** 2026-09-26
 - **Status:** Accepted design decision; not yet implemented.
+- **R1 note (2026-10-05):** the first-test-PR "Bootstrap ready for integration" flow and the priority eligibility described below are deferred to post-MVP (see the amendments to [ADR 0010](0010-repository-bootstrap.md) and [ADR 0022](0022-contract-change-pr-priority.md)); the MVP check has no waiting state, and a PR whose canonical baseline has changed is not ready until it has a new revision and fresh approval; the MVP also verifies that a project test check is required (see the [ADR 0016](0016-integrated-protection-onboarding.md) amendment).
 - **Product:** SuiteWard
 - **Scope:** Mandatory PR governance check, readiness semantics, and enforcement boundaries.
 - **Related:** [Exact approval](0002-exact-revision-approval.md), [bootstrap](0010-repository-bootstrap.md), [revocation](0011-approval-revocation-and-acknowledgments.md), [protected scope](0013-protected-scope-and-agent-assisted-review.md), and [post-merge promotion](0014-merge-triggered-canonical-promotion.md).

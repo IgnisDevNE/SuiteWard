@@ -1,18 +1,18 @@
 # SuiteWard development conventions
 
-- **Updated:** 2026-09-30
-- **Status:** Accepted conventions; M0 domain implementation has started.
+- **Updated:** 2026-10-05
+- **Status:** Accepted conventions; M0, M1.01 and R1 are delivered.
 - **Scope:** How contributors and agents write SuiteWard code and tests.
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.
 
-Use the [local development guide](local-development.md) to prepare tools and the database, run verification, and keep worktree resources isolated. Versioned ADRs and project documents remain canonical when Memtrace is unavailable or inconsistent.
+Use the [local development guide](local-development.md) to prepare tools and the database, run verification, and keep worktree resources isolated. Versioned ADRs and project documents are canonical; Memtrace is optional and supplementary.
 
 ## Tests
 
-Follow [mandatory task-level TDD](tdd.md), accepted in [ADR 0025](decisions/0025-test-driven-development.md). Before implementing each behavior, write its test and observe a meaningful failure; record the RED revision, then implement and record the same command passing at GREEN. Refactor when useful and rerun the relevant suite. Bug fixes start with a reproducer. Include failure, security, boundary, and invariant scenarios relevant to the task; a green happy path alone is insufficient.
+Follow the [test-first rule](tdd.md), accepted in [ADR 0025](decisions/0025-test-driven-development.md). For governance rules and adapter behavior, write the test, observe a meaningful failure, and commit the test before the implementation; the reviewer checks that order. Bug fixes start with a reproducer. Include failure, security, boundary, and invariant scenarios relevant to the task; a green happy path alone is insufficient.
 
-This rule also applies to infrastructure scripts and configuration that changes behavior. Documentation, discovery, and decision tasks can record a justified `not_applicable` only while they change no executable behavior. Each task carries its own evidence and independent review into the phase PR. Passing CI or achieving coverage does not establish that tests preceded implementation.
+This also applies to infrastructure scripts and configuration that change behavior. Documentation, deletions, mechanical refactors, and throwaway spikes are exempt. Passing CI or achieving coverage does not establish that tests preceded implementation.
 
 Use Go's standard `testing` package as the initial test framework. Use table-driven cases when several inputs exercise the same behavior; use focused standalone tests when that makes the scenario clearer. Test files live beside the package they exercise.
 
@@ -20,7 +20,7 @@ Tests should establish observable behavior and invariants rather than duplicate 
 
 Use small, purpose-built fakes at actual external boundaries. Pass controlled time and other nondeterministic inputs where a rule depends on them. A fake is not evidence that PostgreSQL transactions, filesystem behavior, or GitHub requests work correctly; adapter and integrated tests must exercise those real components as they are implemented.
 
-Keep the M0 suite runnable without external services. Later infrastructure tests must be identifiable and runnable separately. Parallel tests must own independent mutable resources; do not use timing sleeps as a substitute for coordinating concurrent test behavior.
+Domain and application tests need no external services (no database, container, or GitHub credentials). Later infrastructure tests must be identifiable and runnable separately. Parallel tests must own independent mutable resources; do not use timing sleeps as a substitute for coordinating concurrent test behavior.
 
 Coverage targets and CI checks are defined in the [CI and coverage guide](ci-and-coverage.md). Detailed persistence and generated-code checks must be implemented with those capabilities.
 
@@ -62,4 +62,4 @@ Keep dependencies visible in a component's construction rather than looking them
 
 Each task includes its behavior tests and follows the same conventions, regardless of the implementing agent. Additional libraries should address a concrete limitation and be discussed with the coordinating agent when they change shared dependencies. Install selected tools locally with pinned versions as required by ADR 0023.
 
-Configuration loading, migrations, and release automation remain separate open decisions. Formatting/static-analysis gates, vulnerability checks, and coverage policy are now defined in the [CI and coverage guide](ci-and-coverage.md).
+Migrations use embedded Goose with a single normalized `00001` ([ADR 0026](decisions/0026-versioned-postgresql-migrations.md)). Configuration loading and release automation remain open decisions. Formatting/static-analysis gates, vulnerability checks, and coverage policy are now defined in the [CI and coverage guide](ci-and-coverage.md).

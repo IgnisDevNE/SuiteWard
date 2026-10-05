@@ -5,6 +5,7 @@ package governancetest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -33,8 +34,10 @@ func NewMemory() *Memory {
 	return &Memory{data: data{suites: map[suiteKey]*suiteData{}, byOp: map[contract.OperationID]governance.OperationReceipt{}, bySource: map[contract.SourceCommandID]governance.OperationReceipt{}}}
 }
 
-// FailNext makes the next write fail with err after it has been applied to
-// the working copy, so a rollback discards a real effect.
+// FailNext makes the next write of the next unit of work fail with err after
+// it has been applied to the working copy, so a rollback discards a real
+// effect. The failure is consumed by that unit of work even if it writes
+// nothing.
 func (m *Memory) FailNext(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -102,7 +105,14 @@ func (m *Memory) Do(ctx context.Context, project contract.ProjectID, suite contr
 		return governance.ErrNotFound
 	}
 	work := m.data.clone()
-	if err := fn(ctx, &tx{m: m, d: &work, key: key, s: work.suites[key]}); err != nil {
+	t := &tx{d: &work, key: key, s: work.suites[key], fail: m.fail}
+	m.fail = nil
+	err := fn(ctx, t)
+	t.closed = true
+	if err == nil {
+		err = ctx.Err() // a canceled unit of work cannot commit
+	}
+	if err != nil {
 		return err
 	}
 	m.data = work
@@ -145,13 +155,25 @@ func (m *Memory) Seed(_ context.Context, seed governance.Seed) error {
 }
 
 type tx struct {
-	m   *Memory
-	d   *data
-	key suiteKey
-	s   *suiteData
+	d      *data
+	key    suiteKey
+	s      *suiteData
+	fail   error // injected failure for the next write
+	closed bool  // the unit of work has ended
 }
 
-func (t *tx) Suite(context.Context) (governance.SuiteState, error) {
+// live fails once the unit of work has ended or its context is canceled.
+func (t *tx) live(ctx context.Context) error {
+	if t.closed {
+		return errors.New("governancetest: transaction used after its unit of work ended")
+	}
+	return ctx.Err()
+}
+
+func (t *tx) Suite(ctx context.Context) (governance.SuiteState, error) {
+	if err := t.live(ctx); err != nil {
+		return governance.SuiteState{}, err
+	}
 	suite, err := contract.NewSuite(t.key.project, t.key.suite, t.s.current, t.s.revision)
 	if err != nil {
 		return governance.SuiteState{}, fmt.Errorf("%w: %w", governance.ErrInvalidState, err)
@@ -173,7 +195,10 @@ func (t *tx) Suite(context.Context) (governance.SuiteState, error) {
 	return governance.SuiteState{Canonical: canonical, Policy: t.s.policy, Target: t.s.target, Schedule: t.s.schedule}, nil
 }
 
-func (t *tx) Proposal(_ context.Context, id contract.ProposalID) (contract.Proposal, contract.Consent, error) {
+func (t *tx) Proposal(ctx context.Context, id contract.ProposalID) (contract.Proposal, contract.Consent, error) {
+	if err := t.live(ctx); err != nil {
+		return contract.Proposal{}, contract.Consent{}, err
+	}
 	p, ok := t.s.proposals[id]
 	if !ok {
 		return contract.Proposal{}, contract.Consent{}, governance.ErrNotFound
@@ -185,7 +210,10 @@ func (t *tx) Proposal(_ context.Context, id contract.ProposalID) (contract.Propo
 	return p.proposal, consent, nil
 }
 
-func (t *tx) Assessment(_ context.Context, reference contract.ProposalReference, source contract.SourceRevision) (contract.IntegrityAssessment, bool, error) {
+func (t *tx) Assessment(ctx context.Context, reference contract.ProposalReference, source contract.SourceRevision) (contract.IntegrityAssessment, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return contract.IntegrityAssessment{}, false, err
+	}
 	if p, ok := t.s.proposals[reference.ProposalID]; ok {
 		a, found := p.assessments[assessmentKey{reference, source}]
 		return a, found, nil
@@ -193,12 +221,18 @@ func (t *tx) Assessment(_ context.Context, reference contract.ProposalReference,
 	return contract.IntegrityAssessment{}, false, nil
 }
 
-func (t *tx) Version(_ context.Context, id contract.SuiteVersionID) (contract.HistoricalCanonical, bool, error) {
+func (t *tx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.HistoricalCanonical, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return contract.HistoricalCanonical{}, false, err
+	}
 	h, ok := t.s.history[id]
 	return h, ok, nil
 }
 
-func (t *tx) PromotionFor(_ context.Context, reference contract.ProposalReference) (contract.PromotionRecord, bool, error) {
+func (t *tx) PromotionFor(ctx context.Context, reference contract.ProposalReference) (contract.PromotionRecord, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return contract.PromotionRecord{}, false, err
+	}
 	record, found := t.promotionFor(reference)
 	return record, found, nil
 }
@@ -212,17 +246,26 @@ func (t *tx) promotionFor(reference contract.ProposalReference) (contract.Promot
 	return contract.PromotionRecord{}, false
 }
 
-func (t *tx) Receipt(_ context.Context, id contract.OperationID) (governance.OperationReceipt, bool, error) {
+func (t *tx) Receipt(ctx context.Context, id contract.OperationID) (governance.OperationReceipt, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return governance.OperationReceipt{}, false, err
+	}
 	r, ok := t.d.byOp[id]
 	return r, ok, nil
 }
 
-func (t *tx) ReceiptBySource(_ context.Context, id contract.SourceCommandID) (governance.OperationReceipt, bool, error) {
+func (t *tx) ReceiptBySource(ctx context.Context, id contract.SourceCommandID) (governance.OperationReceipt, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return governance.OperationReceipt{}, false, err
+	}
 	r, ok := t.d.bySource[id]
 	return r, ok, nil
 }
 
-func (t *tx) AppendConsent(_ context.Context, w governance.ConsentWrite) error {
+func (t *tx) AppendConsent(ctx context.Context, w governance.ConsentWrite) error {
+	if err := t.live(ctx); err != nil {
+		return err
+	}
 	command := w.Result.Command()
 	p, ok := t.s.proposals[command.Reference().ProposalID]
 	if !ok {
@@ -233,10 +276,12 @@ func (t *tx) AppendConsent(_ context.Context, w governance.ConsentWrite) error {
 	}
 	receipt := w.Receipt
 	operation := governance.OperationReceipt{Kind: governance.OperationConsent, ProjectID: t.key.project, SuiteID: t.key.suite, Consent: &receipt}
-	_, sourceKnown := t.d.bySource[command.SourceCommandID()]
+	original, sourceKnown := t.d.bySource[command.SourceCommandID()]
 	switch {
 	case w.Alias && !sourceKnown:
 		return fmt.Errorf("%w: alias for an unknown source command", governance.ErrInvalidState)
+	case w.Alias && *original.Consent != receipt:
+		return fmt.Errorf("%w: alias receipt differs from the original receipt", governance.ErrInvalidRequest)
 	case w.Alias:
 		p.aliases[w.OperationID] = command.SourceCommandID()
 	case sourceKnown:
@@ -249,7 +294,10 @@ func (t *tx) AppendConsent(_ context.Context, w governance.ConsentWrite) error {
 	return t.written()
 }
 
-func (t *tx) RecordPromotion(_ context.Context, w governance.PromotionWrite) error {
+func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) error {
+	if err := t.live(ctx); err != nil {
+		return err
+	}
 	record := w.Receipt.Record
 	if _, taken := t.d.byOp[record.OperationID()]; taken {
 		return governance.ErrOperationConflict
@@ -257,6 +305,11 @@ func (t *tx) RecordPromotion(_ context.Context, w governance.PromotionWrite) err
 	_, versionTaken := t.s.history[w.Version.ID()]
 	if _, promoted := t.promotionFor(record.Binding().Reference()); versionTaken || promoted {
 		return governance.ErrVersionConflict
+	}
+	if p, known := t.s.proposals[record.Binding().Reference().ProposalID]; !known {
+		return governance.ErrNotFound
+	} else if _, err := p.proposal.Lookup(record.Binding().Reference(), record.Carrier()); err != nil {
+		return fmt.Errorf("%w: promoted revision: %w", governance.ErrNotFound, err)
 	}
 	h, err := contract.NewHistoricalCanonical(w.Version, record)
 	if err != nil {
@@ -271,8 +324,8 @@ func (t *tx) RecordPromotion(_ context.Context, w governance.PromotionWrite) err
 // written bumps the Suite revision and applies an injected failure.
 func (t *tx) written() error {
 	t.s.revision++
-	if err := t.m.fail; err != nil {
-		t.m.fail = nil
+	if err := t.fail; err != nil {
+		t.fail = nil
 		return err
 	}
 	return nil

@@ -224,8 +224,8 @@ Property every reconstitution test must check: state produced by domain operatio
 | `assessments` | (project_id, suite_id, proposal_id, revision_id, source) | immutable | evidence emitter, evidence source, outcome (null = missing evidence) |
 | `schedule_entries` | (project_id, suite_id, proposal_id); unique carrier | only `state` and `position`-preserving updates | position, state text |
 | `consent_results` | source_command_id | append-only | operation_id, proposal, revision, actor, carrier, action, command_order, outcome, reason, seq |
-| `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent), consent receipt columns, promotion identity columns |
-| `promotions` | operation_id → operations | immutable | version_id, proposal/revision, carrier, source, target, recorded_at, corrects_version_id; unique version and reference |
+| `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent kinds, FK to `consent_results`), receipt jsonb (immutable receipt payload with explicit json tags) |
+| `promotions` | operation_id (unique; no FK, because seeded history has no receipt) | immutable | version_id (FK to `suite_versions`), proposal_id + revision_id (FK to `proposal_revisions`, which holds the binding), carrier, source, target, recorded_at, corrects_version_id; unique version and unique reference |
 
 All enumerations are `text` with `CHECK` constraints. Immutable and append-only tables reject `UPDATE`, `DELETE` and `TRUNCATE` by trigger. `migrations.SupportedVersion` is the single exported schema version used by both the migrator and the schema-readiness check.
 

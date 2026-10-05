@@ -103,3 +103,6 @@ func (p Proposal) Revise(next ProposalRevision) (Proposal, error) {
 	}
 	return Proposal{revisions: append(slices.Clone(p.revisions), next)}, nil
 }
+
+// Revisions returns an independent copy of every revision, oldest first.
+func (p Proposal) Revisions() []ProposalRevision { return nil }

@@ -2,6 +2,17 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Pinned archive tools are shared by all checkouts of this user; caches, state, and the database stay per checkout.
+function Get-ToolsRoot {
+    if ($env:SUITEWARD_TOOLS_DIR) { return [IO.Path]::GetFullPath($env:SUITEWARD_TOOLS_DIR) }
+    if ($IsWindows) {
+        if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is not set; set SUITEWARD_TOOLS_DIR to choose the shared tool cache.' }
+        return [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'SuiteWard\tools'))
+    }
+    $cacheHome = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } elseif ($env:HOME) { Join-Path $env:HOME '.cache' } else { throw 'HOME is not set; set SUITEWARD_TOOLS_DIR to choose the shared tool cache.' }
+    return [IO.Path]::GetFullPath((Join-Path $cacheHome 'suiteward/tools'))
+}
+
 function Get-DevContext {
     param([string]$Root = (Split-Path $PSScriptRoot -Parent))
     $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
@@ -14,7 +25,7 @@ function Get-DevContext {
     if ($manifest.go.version -ne (Get-Content -LiteralPath (Join-Path $rootPath '.go-version') -Raw).Trim()) { throw 'Go version declarations disagree.' }
     return [pscustomobject]@{
         Root = $rootPath; ID = $hash; Platform = $platform; Manifest = $manifest
-        Tools = Join-Path $rootPath '.tools'; Cache = Join-Path $rootPath '.cache'
+        Tools = Get-ToolsRoot; Cache = Join-Path $rootPath '.cache'
         State = Join-Path $rootPath '.local/dev'; Container = "suiteward-$hash-postgres"; Volume = "suiteward-$hash-pgdata"
         Suffix = $(if ($IsWindows) { '.exe' } else { '' })
     }
@@ -77,7 +88,7 @@ function Assert-ArchiveChecksum {
 
 function Get-VerifiedArchive {
     param($Context, $Asset)
-    $downloadDir = Join-Path $Context.Cache 'downloads'
+    $downloadDir = Join-Path $Context.Tools 'downloads'
     New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
     $uri = [Uri]$Asset.url
     if ($uri.Scheme -ne 'https') { throw 'Tool downloads require HTTPS.' }
@@ -100,7 +111,7 @@ function Get-VerifiedArchive {
 function Assert-ToolVersion {
     param($Context, [string]$Name)
     $exe = Get-ToolPath $Context $Name
-    if (-not (Test-Path -LiteralPath $exe)) { throw "$Name is not installed for this checkout. Run: ./scripts/dev.ps1 setup" }
+    if (-not (Test-Path -LiteralPath $exe)) { throw "$Name is not installed in the shared tool cache ($($Context.Tools)). Run: ./scripts/dev.ps1 setup" }
     [string[]]$versionArgs = @(switch ($Name) { 'go' { 'version' }; 'sqlc' { 'version' }; 'actionlint' { '-version' }; 'govulncheck' { '-version' } })
     $output = Invoke-ToolConfigScope $Context {
         & $exe @versionArgs 2>&1
@@ -109,37 +120,55 @@ function Assert-ToolVersion {
     if (($output -join "`n") -notmatch ('(?<![0-9])' + [regex]::Escape($Context.Manifest[$Name].version) + '(?![0-9.])')) { throw "$Name does not report its pinned version." }
 }
 
+function Invoke-WithToolsLock {
+    param($Context, [scriptblock]$Action, [int]$TimeoutSeconds = 900)
+    # One lock per shared cache: setups from different checkouts wait for each other instead of failing.
+    New-Item -ItemType Directory -Path $Context.Tools -Force | Out-Null
+    $path = Join-Path $Context.Tools '.setup.lock'
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lock = $null
+    while (-not $lock) {
+        try { $lock = [IO.File]::Open($path, 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the shared tool cache lock. Another setup may still be running.' }
+            Start-Sleep -Milliseconds 200
+        }
+    }
+    try { & $Action } finally { $lock.Dispose() }
+}
+
 function Install-ArchiveTool {
     param($Context, [string]$Name)
     $exe = Get-ToolPath $Context $Name
     $toolDir = Join-Path $Context.Tools "$Name/$($Context.Manifest[$Name].version)/$($Context.Platform)"
     $receipt = Join-Path $toolDir '.ready'
     $asset = $Context.Manifest[$Name].assets[$Context.Platform]
-    if (Test-Path -LiteralPath $toolDir) {
-        if (-not (Test-Path -LiteralPath $receipt) -or (Get-Content -LiteralPath $receipt -Raw).Trim() -cne $asset.sha256) { throw "Incomplete or mismatched $Name installation at $toolDir. Move it aside and rerun setup." }
-        Assert-ToolVersion $Context $Name
-        return
-    }
-    $archive = Get-VerifiedArchive $Context $asset
-    $parent = Split-Path $toolDir -Parent
-    New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    $staging = Join-Path $parent ".install-$([Guid]::NewGuid().ToString('N'))"
-    New-Item -ItemType Directory -Path $staging | Out-Null
-    # Interrupted staging directories are never treated as usable installations.
-    if ($archive.EndsWith('.zip')) { Expand-Archive -LiteralPath $archive -DestinationPath $staging }
-    else {
-        & tar -xzf $archive -C $staging
-        if ($LASTEXITCODE -ne 0) { throw "Cannot extract $Name." }
-    }
-    $relativeExe = [IO.Path]::GetRelativePath($toolDir, $exe)
-    if (-not (Test-Path -LiteralPath (Join-Path $staging $relativeExe))) { throw "Archive did not contain $Name." }
-    Set-Content -LiteralPath (Join-Path $staging '.ready') -Value $asset.sha256 -Encoding utf8
     $toolsPrefix = [IO.Path]::GetFullPath($Context.Tools) + [IO.Path]::DirectorySeparatorChar
-    foreach ($path in @($staging, $toolDir)) {
-        if (-not [IO.Path]::GetFullPath($path).StartsWith($toolsPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Tool installation escaped its checkout.' }
+    if (-not [IO.Path]::GetFullPath($toolDir).StartsWith($toolsPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Tool installation escaped the shared tool cache.' }
+    Invoke-WithToolsLock $Context {
+        # Re-check under the lock: a setup from another checkout may have installed the tool while this one waited.
+        if (Test-Path -LiteralPath $toolDir) {
+            if (-not (Test-Path -LiteralPath $receipt) -or (Get-Content -LiteralPath $receipt -Raw).Trim() -cne $asset.sha256) { throw "Incomplete or mismatched $Name installation at $toolDir. Move it aside and rerun setup." }
+            Assert-ToolVersion $Context $Name
+            return
+        }
+        $archive = Get-VerifiedArchive $Context $asset
+        $parent = Split-Path $toolDir -Parent
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        $staging = Join-Path $parent ".install-$([Guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $staging | Out-Null
+        # Interrupted staging directories are never treated as usable installations.
+        if ($archive.EndsWith('.zip')) { Expand-Archive -LiteralPath $archive -DestinationPath $staging }
+        else {
+            & tar -xzf $archive -C $staging
+            if ($LASTEXITCODE -ne 0) { throw "Cannot extract $Name." }
+        }
+        $relativeExe = [IO.Path]::GetRelativePath($toolDir, $exe)
+        if (-not (Test-Path -LiteralPath (Join-Path $staging $relativeExe))) { throw "Archive did not contain $Name." }
+        Set-Content -LiteralPath (Join-Path $staging '.ready') -Value $asset.sha256 -Encoding utf8
+        Move-Item -LiteralPath $staging -Destination $toolDir
+        Assert-ToolVersion $Context $Name
     }
-    Move-Item -LiteralPath $staging -Destination $toolDir
-    Assert-ToolVersion $Context $Name
 }
 
 function Install-DevTools {
@@ -151,21 +180,24 @@ function Install-DevTools {
         catch { throw 'Another setup is running in this checkout. Wait for it to finish.' }
         foreach ($name in @('go', 'sqlc', 'actionlint')) { Install-ArchiveTool $Context $name }
         $exe = Get-ToolPath $Context 'govulncheck'
-        if (-not (Test-Path -LiteralPath $exe)) {
-            $toolDir = Split-Path $exe -Parent
-            New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
-            $savedBin = $env:GOBIN
-            $savedProxy = $env:GOPROXY; $savedSum = $env:GOSUMDB; $savedNoSum = $env:GONOSUMDB; $savedPrivate = $env:GOPRIVATE
-            try {
-                $env:GOBIN = $toolDir
-                $env:GOPROXY = 'https://proxy.golang.org'; $env:GOSUMDB = 'sum.golang.org'; $env:GONOSUMDB = ''; $env:GOPRIVATE = ''
-                Invoke-ToolConfigScope $Context {
-                    & (Get-ToolPath $Context 'go') install "golang.org/x/vuln/cmd/govulncheck@v$($Context.Manifest.govulncheck.version)"
-                    if ($LASTEXITCODE -ne 0) { throw 'Could not install pinned govulncheck.' }
-                }
-            } finally { Restore-DevEnvironment @{ GOBIN = $savedBin; GOPROXY = $savedProxy; GOSUMDB = $savedSum; GONOSUMDB = $savedNoSum; GOPRIVATE = $savedPrivate } }
+        Invoke-WithToolsLock $Context {
+            if (-not (Test-Path -LiteralPath $exe)) {
+                $toolDir = Split-Path $exe -Parent
+                New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
+                $savedBin = $env:GOBIN
+                $savedProxy = $env:GOPROXY; $savedSum = $env:GOSUMDB; $savedNoSum = $env:GONOSUMDB; $savedPrivate = $env:GOPRIVATE
+                try {
+                    $env:GOBIN = $toolDir
+                    $env:GOPROXY = 'https://proxy.golang.org'; $env:GOSUMDB = 'sum.golang.org'; $env:GONOSUMDB = ''; $env:GOPRIVATE = ''
+                    Invoke-ToolConfigScope $Context {
+                        & (Get-ToolPath $Context 'go') install "golang.org/x/vuln/cmd/govulncheck@v$($Context.Manifest.govulncheck.version)"
+                        if ($LASTEXITCODE -ne 0) { throw 'Could not install pinned govulncheck.' }
+                    }
+                } finally { Restore-DevEnvironment @{ GOBIN = $savedBin; GOPROXY = $savedProxy; GOSUMDB = $savedSum; GONOSUMDB = $savedNoSum; GOPRIVATE = $savedPrivate } }
+            }
         }
         Assert-ToolVersion $Context 'govulncheck'
+        if (Test-Path -LiteralPath (Join-Path $Context.Root '.tools')) { Write-Host 'Note: this checkout''s .tools/ directory is no longer used; tools now live in the shared cache. You can delete it.' }
     } finally { if ($lock) { $lock.Dispose() } }
 }
 
@@ -269,6 +301,35 @@ function Start-DevDatabase {
         Set-Content -LiteralPath $urlFile -Value "postgresql://suiteward:${password}@127.0.0.1:$($binding.HostPort)/suiteward?sslmode=disable" -Encoding utf8NoBOM
         if (-not $IsWindows) { & chmod 600 $urlFile }
         Write-Host "PostgreSQL ready: 127.0.0.1:$($binding.HostPort) ($($Context.Container))"
+    } finally { if ($lock) { $lock.Dispose() } }
+}
+
+function Remove-DevDatabase {
+    param($Context)
+    New-Item -ItemType Directory -Path $Context.State -Force | Out-Null
+    $lock = $null
+    try {
+        try { $lock = [IO.File]::Open((Join-Path $Context.State 'database.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch { throw 'Another database operation is running in this checkout.' }
+        # Verify ownership of everything first; nothing is removed unless both resources belong to this checkout.
+        & podman container exists $Context.Container
+        $containerExists = switch ($LASTEXITCODE) { 0 { $true } 1 { $false } default { throw 'Podman is unavailable. Start the existing Podman machine, then retry.' } }
+        if ($containerExists) { Assert-DatabaseOwnership $Context (@(Invoke-PodmanJson @('container', 'inspect', $Context.Container))[0]).Config.Labels }
+        & podman volume exists $Context.Volume
+        $volumeExists = switch ($LASTEXITCODE) { 0 { $true } 1 { $false } default { throw 'Cannot inspect the database volume.' } }
+        if ($volumeExists) { Assert-DatabaseOwnership $Context (@(Invoke-PodmanJson @('volume', 'inspect', $Context.Volume))[0]).Labels }
+        if ($containerExists) {
+            & podman rm --force $Context.Container | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not remove the checkout database container.' }
+        }
+        if ($volumeExists) {
+            & podman volume rm $Context.Volume | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not remove the checkout database volume.' }
+        }
+        foreach ($file in @('postgres.env', 'postgres.json', 'database-url.txt')) {
+            $path = Join-Path $Context.State $file
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        }
     } finally { if ($lock) { $lock.Dispose() } }
 }
 

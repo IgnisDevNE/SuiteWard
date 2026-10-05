@@ -39,23 +39,35 @@ The declarations and original checksum sources live in `dev/tools.json`. Review 
 ./scripts/dev.ps1 govulncheck ./... # Once real Go packages exist
 ```
 
-The wrapper prioritizes the checkout SDK and scopes Go installation/cache paths to the process. `GOENV=off`, `GOTOOLCHAIN=local`, and `GOWORK=off` prevent a user's persisted Go settings, toolchain download, or ancestor workspace from silently changing the selected toolchain. During tool execution only, the OS configuration directory (`APPDATA` on Windows, `XDG_CONFIG_HOME` on Linux) points to `.cache/tool-config`, keeping Go telemetry/configuration local too. Podman uses its existing host configuration. The wrapper restores the caller's environment on completion or failure. Application dependencies belong in `go.mod` and `go.sum`.
+The wrapper prioritizes the pinned SDK from the shared cache and scopes Go installation/cache paths to the process. `GOENV=off`, `GOTOOLCHAIN=local`, and `GOWORK=off` prevent a user's persisted Go settings, toolchain download, or ancestor workspace from silently changing the selected toolchain. During tool execution only, the OS configuration directory (`APPDATA` on Windows, `XDG_CONFIG_HOME` on Linux) points to `.cache/tool-config`, keeping Go telemetry/configuration local too. Podman uses its existing host configuration. The wrapper restores the caller's environment on completion or failure. Application dependencies belong in `go.mod` and `go.sum`.
 
 ## Local state and installation recovery
 
 | Directory | Contents |
 | --- | --- |
-| `.tools/<tool>/<version>/<platform>/` | Per-checkout executables and Go SDK. |
-| `.cache/downloads/` | Verified release archives. |
-| `.cache/go-*`, `.cache/gopath/` | Build, module, temporary, and package caches. |
+| Shared tool cache (see below) | Pinned executables, the Go SDK, `govulncheck`, and verified release archives, shared by every checkout of this user. |
+| `.cache/go-*`, `.cache/gopath/` | Per-checkout build, module, temporary, and package caches. |
 | `.local/dev/` | Checkout database metadata, random local credentials, selected Podman connection, operation locks. |
 | `.memdb/`, `.memtrace/fts/` | Local Memtrace data/search cache. |
 
 These paths are ignored by Git. Images and named volumes live in Podman's own storage. Database passwords are random per checkout and written only under `.local/dev/`; preserve this directory if preserving its database volume. These are disposable development credentials, never GitHub credentials or SuiteWard approval identities.
 
+### Shared tool cache
+
+Pinned archive tools (Go SDK, sqlc, actionlint), their downloaded archives, and `govulncheck` (the wrapper's `GOBIN`) install once per user, so a new worktree does not download them again:
+
+| Platform | Default location |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\SuiteWard\tools` |
+| Linux | `${XDG_CACHE_HOME:-$HOME/.cache}/suiteward/tools` |
+
+Set `SUITEWARD_TOOLS_DIR` to use another directory (the offline infrastructure tests do this with a scratch directory). Layout is `<tool>/<version>/<platform>/`; versions are pinned in `dev/tools.json`, so checkouts on different pins coexist. The checksum and ready-receipt verification is unchanged, and an install path that resolves outside the cache root is rejected.
+
+Setups from different checkouts serialize on a lock file in the cache root: a second setup waits (up to 15 minutes) instead of failing, then re-checks whether the tool is already installed before downloading. Build and module caches, `.local/dev` state, and the database stay per checkout. An older checkout's `.tools/` directory is no longer read; run `./scripts/dev.ps1 setup` (or `tools`) once to populate the shared cache, then delete `.tools/`.
+
 Setup uses an exclusive per-checkout lock. Archives download to unique partial files; their SHA-256 is checked before extraction. Archive tools extract into a fresh staging directory and become usable only after a ready receipt and a successful version check. Repeated setup reuses valid installations and the existing database.
 
-A mismatched checksum fails closed. Remove only the named corrupt archive, then retry. An incomplete final installation is reported explicitly: move that exact tool/version/platform directory aside before retrying. Abandoned `.install-*` directories can be inspected and removed when no setup owns the checkout lock; they never count as installed tools. Setup does not automatically erase or replace a database after a version/ownership mismatch.
+A mismatched checksum fails closed. Remove only the named corrupt archive, then retry. An incomplete final installation is reported explicitly: move that exact tool/version/platform directory aside before retrying. Abandoned `.install-*` directories can be inspected and removed when no setup holds the cache lock; they never count as installed tools. Setup does not automatically erase or replace a database after a version/ownership mismatch.
 
 ## PostgreSQL and parallel work
 
@@ -64,9 +76,12 @@ A mismatched checksum fails closed. Remove only the named corrupt archive, then 
 ./scripts/dev.ps1 db-status
 ./scripts/dev.ps1 db-test
 ./scripts/dev.ps1 db-stop
+./scripts/dev.ps1 db-reset
 ```
 
-Each canonical checkout path determines a stable resource ID. Windows path casing and trailing separators do not change it. Every worktree gets its own container, volume, credential, caches, and loopback port. Let Podman allocate the port; discover it with `db-status` rather than assuming 5432. Container ownership labels, image digest, and mounted volume are checked before use or stop. `db-stop` preserves data. There is no automatic reset or volume deletion command.
+Each canonical checkout path determines a stable resource ID. Windows path casing and trailing separators do not change it. Every worktree gets its own container, volume, credential, caches, and loopback port. Let Podman allocate the port; discover it with `db-status` rather than assuming 5432. Container ownership labels, image digest, and mounted volume are checked before use or stop. `db-stop` preserves data; no other command deletes data automatically.
+
+`db-reset` is the one explicit, destructive command. It verifies the ownership labels (`io.suiteward.dev.owner` equal to this checkout's ID and `io.suiteward.dev.managed=true`) of both this checkout's container and volume, and refuses without removing anything if either belongs to another checkout. Otherwise it force-removes only that container and volume, deletes the local credential and connection files under `.local/dev/`, then creates and starts a fresh database with new random credentials. It prints no credential. Use it after a schema reset, such as the R1 migration reset that leaves older databases at an obsolete Goose version, then rerun `./scripts/dev.ps1 persistence`. All data in this checkout's database is lost.
 
 Connection details are in `.local/dev/postgres.json`. The complete development URL is in the ignored `.local/dev/database-url.txt`; load it only into the process running a database client/test, and do not print or commit it. It includes `sslmode=disable` for the loopback-only development database. The authenticated smoke test uses the local credential over TCP inside the container and separately verifies the published host TCP port; it is not an application adapter integration test.
 
@@ -88,9 +103,17 @@ Use a separate working copy and branch for each implementation task. Run its own
 
 GitHub writes and PR publication use the authorized bot within its granted permissions. An access denial is not permission to switch to the user's personal credentials. The user continues to authorize each integration into `main`.
 
+`scripts/bot-token.ps1` runs one command as the GitHub App bot, for example `./scripts/bot-token.ps1 -- gh pr create ...`. It reads the ignored `.local/github-app.json` (`app_id`, `installation_id`, `private_key_path`, `repository` as `owner/name`, `bot_login`), signs a short-lived RS256 App JWT with the local private key, confirms through `GET /app` that the App slug matches `bot_login` without `[bot]`, and requests an installation token restricted to the configured repository. It refuses a token that is not restricted to that single repository. The child command receives the token as `GH_TOKEN` and `GITHUB_TOKEN` in its own process environment only; the caller's environment is untouched and the child's exit code is returned.
+
+Invoke it from a PowerShell session: `./scripts/bot-token.ps1 -- gh pr create ...`, or from another shell `pwsh -NoProfile -Command "& ./scripts/bot-token.ps1 -- gh pr create ..."`. Do not use `pwsh -File`; it mishandles the `--` separator. The command is validated first (a mistyped command requests no token) and must be a real executable, not a `.cmd` or `.bat` script. `app_id` and `installation_id` must be numeric.
+
+Use it for `gh` and direct API calls only. `git push` ignores `GH_TOKEN` and `GITHUB_TOKEN` and could fall back to personal credentials, so do not use this script for it. Never run a child that prints its credential, such as `gh auth token`; the child receives the token by design and the script cannot stop it from displaying it.
+
+The JWT and token are never written to stdout, stderr, files, or logs, and error messages from GitHub requests are replaced by a generic message with at most the HTTP status. The script never reads or changes global git or `gh` configuration. It refuses when the configuration, key, or command is missing or the slug does not match, and it never falls back to personal credentials: if it refuses or GitHub denies access, stop and report rather than retrying with a personal token or `gh auth` login. Keep the private key outside the repository or under `.local/`; never commit or print it. `./scripts/test-bot-token.ps1` verifies the JWT, refusals, and no-print behavior offline with an injected HTTP function and a generated key.
+
 ## Verification boundaries
 
-The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, and process environment isolation. A real database smoke check runs locally through `doctor`/`db-test`.
+The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.
 
 M0 introduces domain/application packages for artifact identity, authority and immutable canonical snapshots. `./scripts/dev.ps1 tools` and `./scripts/dev.ps1 check` still support service-free development. M1.01 adds the real PostgreSQL and filesystem adapters; run `./scripts/dev.ps1 persistence` before claiming their integration succeeds. The wrapper loads the ignored `database-url.txt` only into the verification process and restores any caller value even after failure. Each database fixture owns a unique schema and cleans only that schema, preserving other tests/checkouts.
 

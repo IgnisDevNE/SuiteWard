@@ -23,5 +23,6 @@ try {
     & (Join-Path $PSScriptRoot 'test-go.ps1')
     & (Join-Path $PSScriptRoot 'test-persistence.ps1')
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
+    & (Join-Path $PSScriptRoot 'test-bot-token.ps1')
     Write-Host 'Foundation scripts, workflows, and documentation are valid.'
 } finally { Pop-Location }

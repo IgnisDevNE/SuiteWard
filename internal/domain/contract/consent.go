@@ -2,6 +2,7 @@ package contract
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -196,9 +197,26 @@ func (c Consent) conflict(command Command) (Consent, CommandResult, error) {
 	return c, CommandResult{command: command, outcome: ConsentRejected, reason: ConsentReasonCommandConflict}, nil
 }
 
+// valid reports whether the outcome and reason are a combination Apply can
+// record: only a rejection carries a reason, and never a command conflict,
+// which is returned but not stored.
+func (r CommandResult) valid() bool {
+	if r.command.OperationID() == "" || r.outcome < ConsentApproved || r.outcome > ConsentRejected {
+		return false
+	}
+	if r.outcome == ConsentRejected {
+		return r.reason >= ConsentReasonUnauthorized && r.reason <= ConsentReasonObsoleteCommand
+	}
+	return r.reason == ConsentReasonNone
+}
+
 // ReconstituteCommandResult rebuilds a stored, non-duplicate command result.
 func ReconstituteCommandResult(command Command, outcome ConsentOutcome, reason ConsentReason) (CommandResult, error) {
-	return CommandResult{}, nil
+	result := CommandResult{command: command, outcome: outcome, reason: reason}
+	if !result.valid() {
+		return CommandResult{}, ErrInvalidCommand
+	}
+	return result, nil
 }
 
 // ReconstituteConsent rebuilds consent for proposal's aggregate from stored
@@ -208,5 +226,71 @@ func ReconstituteCommandResult(command Command, outcome ConsentOutcome, reason C
 // non-increasing order for an actor and revision, unknown revisions, aliases
 // pointing at unknown source commands).
 func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map[OperationID]SourceCommandID) (Consent, error) {
-	return Consent{}, nil
+	if proposal.IsZero() {
+		return Consent{}, ErrInvalidConsent
+	}
+	reference := proposal.Current().Binding().Reference()
+	c, err := NewConsent(reference.ProjectID, reference.SuiteID, reference.ProposalID)
+	if err != nil {
+		return Consent{}, err
+	}
+	invalid := func(detail string) (Consent, error) {
+		return Consent{}, fmt.Errorf("%w: %s", ErrInvalidConsent, detail)
+	}
+	sources := map[SourceCommandID]struct{}{}
+	for _, result := range results {
+		command := result.command
+		switch {
+		case result.duplicate || !result.valid():
+			return invalid("result is zero, duplicate, or a command conflict")
+		case !c.contains(command.Reference()):
+			return invalid("result belongs to another aggregate")
+		}
+		if _, repeated := sources[command.SourceCommandID()]; repeated {
+			return invalid("source command recorded twice")
+		}
+		if _, repeated := c.operations[command.OperationID()]; repeated {
+			return invalid("operation recorded twice")
+		}
+		if result.outcome != ConsentRejected {
+			key := consentKey{command.Reference().RevisionID, command.Actor()}
+			previous := c.states[key]
+			revision, err := proposal.Lookup(command.Reference(), command.Carrier())
+			if err != nil {
+				return invalid("result targets an unknown revision or carrier")
+			}
+			approve := command.Action() == ApproveConsent
+			if approve != (result.outcome == ConsentApproved) {
+				return invalid("outcome contradicts the command action")
+			}
+			if !approve && previous.active != (result.outcome == ConsentRevoked) {
+				return invalid("revocation outcome contradicts the earlier approval")
+			}
+			if command.Order() <= previous.order {
+				return invalid("command order does not increase for the actor and revision")
+			}
+			for _, earlier := range c.results {
+				if earlier.command.Reference().RevisionID == key.revision && earlier.command.Actor() == key.actor && earlier.command.Order() == command.Order() {
+					return invalid("command order repeats for the actor and revision")
+				}
+			}
+			c.states[key] = consentState{binding: revision.Binding(), active: approve, order: command.Order()}
+		}
+		sources[command.SourceCommandID()] = struct{}{}
+		c.operations[command.OperationID()] = command.SourceCommandID()
+		c.results = append(c.results, result)
+	}
+	for operation, source := range aliases {
+		if strings.TrimSpace(string(operation)) == "" {
+			return invalid("alias without an operation id")
+		}
+		if _, known := sources[source]; !known {
+			return invalid("alias points at an unknown source command")
+		}
+		if existing, mapped := c.operations[operation]; mapped && existing != source {
+			return invalid("operation maps to two source commands")
+		}
+		c.operations[operation] = source
+	}
+	return c, nil
 }

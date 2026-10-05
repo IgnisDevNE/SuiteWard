@@ -193,5 +193,31 @@ type ScheduleEntryInput struct {
 // ReconstituteSchedule rebuilds a schedule; at most one entry is active and
 // proposal ids and carriers are unique.
 func ReconstituteSchedule(project ProjectID, suite SuiteID, generation ScheduleGeneration, entries []ScheduleEntryInput) (Schedule, error) {
-	return Schedule{}, nil
+	s, err := NewSchedule(project, suite)
+	if err != nil || generation < 1 {
+		return Schedule{}, ErrInvalidSchedule
+	}
+	s.generation = generation
+	proposals, carriers, active := map[ProposalID]struct{}{}, map[ApprovalCarrierID]struct{}{}, false
+	for _, entry := range entries {
+		if strings.TrimSpace(string(entry.ProposalID)) == "" || strings.TrimSpace(string(entry.Carrier)) == "" ||
+			entry.State < ScheduleWaiting || entry.State > SchedulePromoted {
+			return Schedule{}, ErrInvalidSchedule
+		}
+		if _, repeated := proposals[entry.ProposalID]; repeated {
+			return Schedule{}, ErrInvalidSchedule
+		}
+		if _, repeated := carriers[entry.Carrier]; repeated {
+			return Schedule{}, ErrInvalidSchedule
+		}
+		if entry.State == ScheduleActive {
+			if active {
+				return Schedule{}, ErrInvalidSchedule
+			}
+			active = true
+		}
+		proposals[entry.ProposalID], carriers[entry.Carrier] = struct{}{}, struct{}{}
+		s.entries = append(s.entries, ScheduleEntry{proposal: entry.ProposalID, carrier: entry.Carrier, state: entry.State})
+	}
+	return s, nil
 }

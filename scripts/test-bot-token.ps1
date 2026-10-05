@@ -108,16 +108,13 @@ try {
     $script:requests.Clear()
     $checks++
 
-    # Successful run: the child sees both variables, the caller's environment is restored, and nothing prints the token.
+    # In-process run: the request shape is exact, the caller's environment is restored, and the function itself prints only the exit code.
     $env:GH_TOKEN = 'caller-gh-token'; Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
-    $output = @(Invoke-WithBotToken -Root $testRoot -Command $childPrintsLength -Http $fakeHttp *>&1 | ForEach-Object { "$_" })
-    $tokenLength = 'ghs_FAKE_INSTALLATION_TOKEN_VALUE'.Length
-    if ($output -notcontains "len=$tokenLength/$tokenLength") { throw "Child did not receive the token in GH_TOKEN and GITHUB_TOKEN: $($output -join '|')" }
+    $result = @(Invoke-WithBotToken -Root $testRoot -Command @('pwsh', '-NoProfile', '-Command', 'exit 0') -Http $fakeHttp *>&1)
+    if ($result.Count -ne 1 -or $result[0] -ne 0) { throw "The function must emit only the child's exit code: $($result -join '|')" }
     if ($env:GH_TOKEN -cne 'caller-gh-token') { throw 'Caller GH_TOKEN was not restored.' }
     if (Test-Path Env:GITHUB_TOKEN) { throw 'GITHUB_TOKEN leaked into the caller environment.' }
     Remove-Item Env:GH_TOKEN
-    $everything = $output -join "`n"
-    if ($everything -match 'ghs_FAKE' -or $everything -match [regex]::Escape($jwt.Substring(0, 10))) { throw 'Output contains a token.' }
     $get = $script:requests | Where-Object Method -eq 'GET'
     $post = $script:requests | Where-Object Method -eq 'POST'
     if (@($get).Count -ne 1 -or @($post).Count -ne 1) { throw 'Expected one /app and one token request.' }
@@ -127,10 +124,31 @@ try {
     if (@($body.repositories).Count -ne 1 -or $body.repositories[0] -cne 'SuiteWard') { throw 'Installation token must be restricted to the configured repository.' }
     $checks++
 
-    # The caller's environment is restored when the child fails, and the child's exit code is reported.
+    # The child's exit code is returned, and its environment variables do not outlive it.
     $exit = Invoke-WithBotToken -Root $testRoot -Command @('pwsh', '-NoProfile', '-Command', 'exit 7') -Http $fakeHttp
     if ($exit -ne 7) { throw "Child exit code was not returned: $exit" }
     if (Test-Path Env:GH_TOKEN) { throw 'GH_TOKEN leaked after a failing child.' }
+    $checks++
+
+    # End to end in a separate process: the child sees both variables, and no output of the whole process tree contains a token.
+    $childScript = Join-Path $testRoot 'child.ps1'
+    Set-Content -LiteralPath $childScript -Value 'Write-Output ("len=" + $env:GH_TOKEN.Length + "/" + $env:GITHUB_TOKEN.Length)' -Encoding utf8NoBOM
+    $nestedScript = Join-Path $testRoot 'nested.ps1'
+    Set-Content -LiteralPath $nestedScript -Encoding utf8NoBOM -Value @'
+param($Library, $Root, $ChildScript)
+. $Library -Mode Library
+$http = {
+    param($Method, $Uri, $Headers, $Body)
+    if ($Method -eq 'GET') { return [pscustomobject]@{ slug = 'ignisdevne' } }
+    return [pscustomobject]@{ token = 'ghs_FAKE_INSTALLATION_TOKEN_VALUE'; repository_selection = 'selected'; repositories = @([pscustomobject]@{ name = 'SuiteWard' }) }
+}
+exit (Invoke-WithBotToken -Root $Root -Command @('pwsh', '-NoProfile', '-File', $ChildScript) -Http $http)
+'@
+    $nestedOutput = @(& pwsh -NoProfile -File $nestedScript (Join-Path $PSScriptRoot 'bot-token.ps1') $testRoot $childScript 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -ne 0) { throw "Nested run failed: $($nestedOutput -join '|')" }
+    $tokenLength = 'ghs_FAKE_INSTALLATION_TOKEN_VALUE'.Length
+    if ($nestedOutput -notcontains "len=$tokenLength/$tokenLength") { throw "Child did not receive the token in GH_TOKEN and GITHUB_TOKEN: $($nestedOutput -join '|')" }
+    if (($nestedOutput -join "`n") -match 'ghs_FAKE|eyJ') { throw 'Process output contains a token.' }
     $checks++
 
     # A failing HTTP layer reports no secret.

@@ -20,17 +20,16 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 )
 
-var governanceTables = []string{"suites", "policies", "suite_versions", "proposals", "proposal_revisions", "assessments", "schedule_entries", "consent_results", "operations", "promotions"}
+var governanceTables = []string{"suites", "policies", "suite_versions", "proposals", "proposal_revisions", "assessments", "consent_results", "operations", "promotions"}
 
 // governanceRows are mutually consistent default rows; tests copy them with overrides.
 var governanceRows = map[string]map[string]any{
 	"policies":           {"project_id": "project", "revision_id": "policy-1", "owner_id": "owner", "owner_kind": "human"},
-	"suites":             {"project_id": "project", "suite_id": "suite", "revision": 1, "current_version_id": "v1", "target_id": "main", "policy_revision_id": "policy-1", "schedule_generation": 1},
+	"suites":             {"project_id": "project", "suite_id": "suite", "revision": 1, "current_version_id": "v1", "target_id": "main", "policy_revision_id": "policy-1"},
 	"suite_versions":     {"project_id": "project", "suite_id": "suite", "version_id": "v1", "manifest_digest": schemaDigest, "manifest": `{"entries":[]}`},
 	"proposals":          {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "carrier_id": "pr-1"},
 	"proposal_revisions": {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "seq": 1, "origin": "origin-1", "carrier_id": "pr-1", "manifest_digest": schemaDigest, "scope_digest": schemaDigest, "covered_inputs": `{}`, "expected_version_id": nil, "policy_revision_id": "policy-1"},
 	"assessments":        {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "source": "sha-1", "evidence_emitter": "ci", "evidence_source": "sha-1", "evidence_revision_id": "r1", "outcome": "passed"},
-	"schedule_entries":   {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "carrier_id": "pr-1", "position": 1, "state": "active"},
 	"consent_results":    {"source_command_id": "src-1", "operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "actor_id": "owner", "actor_kind": "human", "carrier_id": "pr-1", "action": "approve", "command_order": 1, "outcome": "approved", "reason": "none"},
 	"operations":         {"operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "kind": "consent", "source_command_id": "src-1", "receipt": `{"kind":"consent"}`},
 	"promotions":         {"operation_id": "promo-op", "project_id": "project", "suite_id": "suite", "version_id": "v1", "proposal_id": "p1", "revision_id": "r1", "carrier_id": "pr-1", "source_revision": "sha-1", "target_id": "main", "recorded_at": "2026-10-02T12:00:00Z", "corrects_version_id": nil},
@@ -79,7 +78,7 @@ func seedGovernance(t *testing.T, connection *pgx.Conn) {
 		t.Fatal(err)
 	}
 	defer transaction.Rollback(context.Background())
-	for _, table := range []string{"policies", "suites", "suite_versions", "proposals", "proposal_revisions", "assessments", "schedule_entries", "consent_results", "operations", "promotions"} {
+	for _, table := range []string{"policies", "suites", "suite_versions", "proposals", "proposal_revisions", "assessments", "consent_results", "operations", "promotions"} {
 		mustInsert(t, transaction, table, nil)
 	}
 	mustInsert(t, transaction, "operations", map[string]any{"operation_id": "promo-op", "kind": "promote", "source_command_id": nil, "receipt": `{"kind":"promote"}`})
@@ -195,7 +194,7 @@ func TestGovernanceSuiteRevisionGuard(t *testing.T) {
 	for _, test := range []struct{ name, statement, constraint string }{
 		{"delete", "DELETE FROM suites", "immutable_history"},
 		{"truncate", "TRUNCATE suites CASCADE", "immutable_history"},
-		{"same revision", "UPDATE suites SET schedule_generation=schedule_generation+1", "suites_revision_advance"},
+		{"same revision", "UPDATE suites SET current_version_id=current_version_id", "suites_revision_advance"},
 		{"revision skips", "UPDATE suites SET revision=revision+2", "suites_revision_advance"},
 		{"revision rewinds", "UPDATE suites SET revision=revision-1", "suites_revision_advance"},
 		{"suite key changes", "UPDATE suites SET suite_id='moved', revision=revision+1", "suites_identity_immutable"},
@@ -208,10 +207,10 @@ func TestGovernanceSuiteRevisionGuard(t *testing.T) {
 			schemaRequireError(t, err, "23514", test.constraint)
 		})
 	}
-	schemaExec(t, database.conn, "UPDATE suites SET revision=revision+1, schedule_generation=schedule_generation+1")
-	var revision, generation int64
-	if err := database.conn.QueryRow(t.Context(), "SELECT revision, schedule_generation FROM suites").Scan(&revision, &generation); err != nil || revision != 2 || generation != 2 {
-		t.Fatalf("exact next revision update: revision=%d generation=%d error=%v", revision, generation, err)
+	schemaExec(t, database.conn, "UPDATE suites SET revision=revision+1")
+	var revision int64
+	if err := database.conn.QueryRow(t.Context(), "SELECT revision FROM suites").Scan(&revision); err != nil || revision != 2 {
+		t.Fatalf("exact next revision update: revision=%d error=%v", revision, err)
 	}
 }
 
@@ -225,32 +224,6 @@ func TestGovernanceReadIndexes(t *testing.T) {
 		if err := database.conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexname = $3)", database.schema, table, index).Scan(&present); err != nil || !present {
 			t.Fatalf("index %s on %s is missing (error %v)", index, table, err)
 		}
-	}
-}
-
-func TestGovernanceScheduleEntryGuard(t *testing.T) {
-	database := newSchemaDatabase(t)
-	if err := migrations.Up(t.Context(), database.url); err != nil {
-		t.Fatal(err)
-	}
-	seedGovernance(t, database.conn)
-	for _, test := range []struct{ name, statement, constraint string }{
-		{"delete", "DELETE FROM schedule_entries", "immutable_history"},
-		{"truncate", "TRUNCATE schedule_entries CASCADE", "immutable_history"},
-		{"position changes", "UPDATE schedule_entries SET position=2", "schedule_entries_state_only"},
-		{"carrier changes", "UPDATE schedule_entries SET carrier_id='other'", "schedule_entries_state_only"},
-		{"proposal changes", "UPDATE schedule_entries SET proposal_id='other'", "schedule_entries_state_only"},
-		{"state and position change", "UPDATE schedule_entries SET state='closed', position=2", "schedule_entries_state_only"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := database.conn.Exec(t.Context(), test.statement)
-			schemaRequireError(t, err, "23514", test.constraint)
-		})
-	}
-	schemaExec(t, database.conn, "UPDATE schedule_entries SET state='promoted'")
-	var state string
-	if err := database.conn.QueryRow(t.Context(), "SELECT state FROM schedule_entries").Scan(&state); err != nil || state != "promoted" {
-		t.Fatalf("state update: state=%q error=%v", state, err)
 	}
 }
 
@@ -326,7 +299,6 @@ func TestGovernanceConstraints(t *testing.T) {
 		{"unknown principal kind", "policies", "23514", "policies_owner_kind_check", map[string]any{"revision_id": "bad", "owner_kind": "robot"}},
 		{"empty identifier", "policies", "23514", "", map[string]any{"revision_id": " "}},
 		{"negative revision", "suites", "23514", "suites_revision_check", map[string]any{"suite_id": "negative", "revision": -1, "current_version_id": nil}},
-		{"zero schedule generation", "suites", "23514", "suites_schedule_generation_check", map[string]any{"suite_id": "generation", "schedule_generation": 0, "current_version_id": nil}},
 		{"unknown policy", "suites", "23503", "suites_policy_fkey", map[string]any{"suite_id": "nopolicy", "policy_revision_id": "missing", "current_version_id": nil}},
 		{"invalid manifest digest", "suite_versions", "23514", "suite_versions_manifest_digest_check", map[string]any{"version_id": "bad", "manifest_digest": "sha256:ABC"}},
 		{"manifest is not an object", "suite_versions", "23514", "suite_versions_manifest_check", map[string]any{"version_id": "array", "manifest": `[]`}},
@@ -340,10 +312,6 @@ func TestGovernanceConstraints(t *testing.T) {
 		{"evidence without revision", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-4", "evidence_revision_id": nil}},
 		{"revision without evidence", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-5", "evidence_emitter": nil, "evidence_source": nil, "outcome": nil}},
 		{"evidence of an unknown revision", "assessments", "23503", "assessments_evidence_revision_fkey", map[string]any{"source": "sha-6", "evidence_revision_id": "missing"}},
-		{"unknown schedule state", "schedule_entries", "23514", "schedule_entries_state_check", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "position": 2, "state": "paused"}},
-		{"second active entry", "schedule_entries", "23505", "schedule_entries_one_active", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "position": 2}},
-		{"duplicate carrier", "schedule_entries", "23505", "schedule_entries_carrier_key", map[string]any{"proposal_id": "p2", "position": 2, "state": "waiting"}},
-		{"duplicate position", "schedule_entries", "23505", "schedule_entries_position_key", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "state": "waiting"}},
 		{"unknown consent action", "consent_results", "23514", "consent_results_action_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "action": "veto"}},
 		{"unknown consent outcome", "consent_results", "23514", "consent_results_outcome_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "outcome": "maybe"}},
 		{"unknown consent reason", "consent_results", "23514", "consent_results_reason_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "outcome": "rejected", "reason": "command_conflict"}},

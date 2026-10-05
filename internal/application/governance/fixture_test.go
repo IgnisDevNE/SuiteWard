@@ -106,7 +106,7 @@ type world struct {
 }
 
 // newWorld seeds the default Suite without a canonical version, owned by one
-// human, with every candidate admitted to the schedule in order.
+// human, with every candidate seeded as a proposal.
 func newWorld(t *testing.T, candidates ...candidate) *world {
 	t.Helper()
 	w := &world{t: t, mem: governancetest.NewMemory(), owner: must(contract.NewPrincipal("owner", contract.Human))}
@@ -120,13 +120,11 @@ func (w *world) addSuite(project contract.ProjectID, id contract.SuiteID, candid
 	policy := must(contract.NewPolicy(project, policyID, w.owner))
 	suite := must(contract.NewSuite(project, id, "", 7))
 	canonical := must(contract.NewCanonicalSnapshot(suite, contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{}))
-	schedule := must(contract.NewSchedule(project, id))
 	seed := governance.Seed{}
 	for _, c := range candidates {
-		schedule = must(schedule.Admit(c.proposal, true))
 		seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: c.proposal, Assessments: c.assessments})
 	}
-	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: policy, Target: target, Schedule: schedule}
+	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: policy, Target: target}
 	if err := w.mem.Seed(context.Background(), seed); err != nil {
 		w.t.Fatal(err)
 	}

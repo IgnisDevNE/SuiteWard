@@ -72,8 +72,7 @@ func validateSeed(seed governance.Seed) error {
 	state := seed.Suite
 	suite := state.Canonical.Suite()
 	project, id := suite.ProjectID(), suite.ID()
-	if state.Canonical.IsZero() || state.Target == "" || state.Policy.RevisionID() == "" || state.Policy.ProjectID() != project ||
-		state.Schedule.IsZero() || state.Schedule.ProjectID() != project || state.Schedule.SuiteID() != id {
+	if state.Canonical.IsZero() || state.Target == "" || state.Policy.RevisionID() == "" || state.Policy.ProjectID() != project {
 		return seedInvalid("incomplete or inconsistent suite state")
 	}
 	current, hasCurrent := suite.CurrentVersionID()
@@ -98,7 +97,6 @@ func validateSeed(seed governance.Seed) error {
 			return seedInvalid("the canonical snapshot contradicts the history entry of version %q", current)
 		}
 	}
-	carriers := map[contract.ProposalID]contract.ApprovalCarrierID{}
 	for _, seeded := range seed.Proposals {
 		if seeded.Proposal.IsZero() {
 			return seedInvalid("proposal without revisions")
@@ -112,16 +110,10 @@ func validateSeed(seed governance.Seed) error {
 			}
 			bindings[reference.RevisionID] = revision.Binding()
 		}
-		carriers[first.ProposalID] = seeded.Proposal.Current().Carrier()
 		for _, assessment := range seeded.Assessments {
 			if err := validateAssessment(first.ProposalID, bindings, assessment); err != nil {
 				return err
 			}
-		}
-	}
-	for _, entry := range state.Schedule.Entries() {
-		if carrier, seeded := carriers[entry.ProposalID()]; !seeded || carrier != entry.Carrier() {
-			return seedInvalid("schedule entry %q has no seeded proposal on carrier %q", entry.ProposalID(), entry.Carrier())
 		}
 	}
 	return nil
@@ -154,7 +146,7 @@ func writeSeed(ctx context.Context, q *dbgen.Queries, seed governance.Seed) erro
 	current, _ := suite.CurrentVersionID()
 	// The current-version pointer is checked when the transaction commits.
 	if err := q.InsertSuite(ctx, dbgen.InsertSuiteParams{ProjectID: project, SuiteID: id, Revision: int64(suite.Revision()), CurrentVersionID: optionalText(string(current)),
-		TargetID: string(state.Target), PolicyRevisionID: string(state.Policy.RevisionID()), ScheduleGeneration: int64(state.Schedule.Generation())}); err != nil {
+		TargetID: string(state.Target), PolicyRevisionID: string(state.Policy.RevisionID())}); err != nil {
 		return seedFailure("insert suite", err)
 	}
 	for _, seeded := range seed.Proposals {
@@ -172,16 +164,6 @@ func writeSeed(ctx context.Context, q *dbgen.Queries, seed governance.Seed) erro
 			if err := seedAssessment(ctx, q, assessment); err != nil {
 				return err
 			}
-		}
-	}
-	for i, entry := range state.Schedule.Entries() {
-		code, err := scheduleStateCode(entry.State())
-		if err != nil {
-			return seedInvalid("schedule entry %q: %v", entry.ProposalID(), err)
-		}
-		if err := q.InsertScheduleEntry(ctx, dbgen.InsertScheduleEntryParams{ProjectID: project, SuiteID: id, ProposalID: string(entry.ProposalID()),
-			CarrierID: string(entry.Carrier()), Position: int64(i + 1), State: code}); err != nil {
-			return seedFailure("insert schedule entry "+string(entry.ProposalID()), err)
 		}
 	}
 	return nil

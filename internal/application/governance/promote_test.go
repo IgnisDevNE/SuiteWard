@@ -9,7 +9,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// promotionWorld has one approved candidate that is active in the schedule.
+// promotionWorld has one approved candidate.
 func promotionWorld(t *testing.T) (*world, candidate) {
 	t.Helper()
 	c := newCandidate(t, "p1", "", protectedOf(t, "v1"))
@@ -37,9 +37,6 @@ func TestPromotionAfterMergeRecordsNewVersionAndAdvancesRevision(t *testing.T) {
 	}
 	if !state.Canonical.Contract().Equal(c.protected) {
 		t.Fatal("canonical contract is not the promoted contract")
-	}
-	if _, active := state.Schedule.Active(); active {
-		t.Fatal("the promoted proposal is still active in the schedule")
 	}
 	if receipt, found := w.receipt("promote-1"); !found || receipt.Kind != governance.OperationPromote || receipt.Promotion == nil {
 		t.Fatalf("receipt = %+v, found %v", receipt, found)
@@ -144,9 +141,6 @@ func TestFailingWriteRollsBackEverythingInTheUnitOfWork(t *testing.T) {
 		}
 		if _, found := w.receipt("promote-1"); found {
 			t.Fatal("a failed promotion left a receipt")
-		}
-		if _, active := w.state().Schedule.Active(); !active {
-			t.Fatal("a failed promotion changed the schedule")
 		}
 		if retry := w.promote(request); !retry.Committed || retry.Duplicate {
 			t.Fatalf("retry = %+v, want a fresh commit", retry)

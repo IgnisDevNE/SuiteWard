@@ -202,12 +202,6 @@ func TestSeedRoundTripsEveryStoredFact(t *testing.T) {
 			!state.Canonical.Record().RecordedAt().Equal(fxRecordedAt) || !state.Canonical.Record().Binding().Equal(base.proposal.Current().Binding()) {
 			t.Fatalf("canonical %+v", state.Canonical)
 		}
-		entries := state.Schedule.Entries()
-		active, hasActive := state.Schedule.Active()
-		if len(entries) != 2 || entries[0].ProposalID() != "p0" || entries[0].State() != contract.SchedulePromoted || entries[1].ProposalID() != "p1" ||
-			entries[1].Carrier() != revised.carrier || !hasActive || active.ProposalID() != "p1" || state.Schedule.Generation() < 1 {
-			t.Fatalf("schedule %+v", entries)
-		}
 		proposal, consent, err := tx.Proposal(ctx, "p1")
 		if err != nil {
 			t.Fatal(err)
@@ -255,21 +249,8 @@ func TestSeedRoundTripsEveryStoredFact(t *testing.T) {
 		}
 		return nil
 	})
-	var codes []string
-	rows, err := w.db.conn.Query(t.Context(), "SELECT state FROM schedule_entries ORDER BY position")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rows.Next() {
-		var state string
-		if err := rows.Scan(&state); err != nil {
-			t.Fatal(err)
-		}
-		codes = append(codes, state)
-	}
-	rows.Close()
 	var outcomes []string
-	rows, err = w.db.conn.Query(t.Context(), "SELECT coalesce(outcome, 'none') FROM assessments WHERE source IN ('pending', 'pending-2', 'failing', 'offline') ORDER BY source")
+	rows, err := w.db.conn.Query(t.Context(), "SELECT coalesce(outcome, 'none') FROM assessments WHERE source IN ('pending', 'pending-2', 'failing', 'offline') ORDER BY source")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,8 +262,8 @@ func TestSeedRoundTripsEveryStoredFact(t *testing.T) {
 		outcomes = append(outcomes, outcome)
 	}
 	rows.Close()
-	if strings.Join(codes, ",") != "promoted,active" || strings.Join(outcomes, ",") != "failed,unavailable,none,passed" {
-		t.Fatalf("stored codes schedule=%v assessments=%v", codes, outcomes)
+	if strings.Join(outcomes, ",") != "failed,unavailable,none,passed" {
+		t.Fatalf("stored assessment outcomes %v", outcomes)
 	}
 }
 
@@ -324,7 +305,7 @@ func TestSeedRejectsInconsistentState(t *testing.T) {
 			if err := w.store.Seed(t.Context(), tt.seed); !errors.Is(err, governance.ErrInvalidRequest) {
 				t.Fatalf("Seed = %v; want ErrInvalidRequest", err)
 			}
-			for _, table := range []string{"policies", "suites", "proposals", "proposal_revisions", "assessments", "schedule_entries", "suite_versions", "promotions"} {
+			for _, table := range []string{"policies", "suites", "proposals", "proposal_revisions", "assessments", "suite_versions", "promotions"} {
 				if n := w.count(table); n != 0 {
 					t.Fatalf("%d rows remain in %s after a rejected seed", n, table)
 				}
@@ -569,13 +550,9 @@ func (w *pgWorld) promotionWrite(c candidate, request governance.PromoteRequest,
 	record := must(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: request.OperationID, VersionID: request.NewVersionID, Binding: c.proposal.Current().Binding(),
 		Carrier: c.carrier, Source: request.Integration.Source(), Target: fxTarget, RecordedAt: request.RecordedAt, CorrectsVersionID: corrects}))
 	version := must(contract.NewSuiteVersion(fxProject, fxSuite, request.NewVersionID, c.protected.Manifest()))
-	schedule := w.state().Schedule
-	if _, active := schedule.Active(); active {
-		schedule = must(schedule.Observe(c.proposal, contract.ObservePromoted))
-	}
 	return governance.PromotionWrite{
 		Receipt: governance.PromotionReceipt{Identity: governance.PromotionIdentity{Kind: kind, Request: request, CorrectsVersionID: corrects, Binding: c.proposal.Current().Binding()}, Record: record},
-		Version: version, Schedule: schedule,
+		Version: version,
 	}
 }
 
@@ -585,7 +562,6 @@ func TestPromotionEndToEnd(t *testing.T) {
 	one := newCandidate("p1", "v0", w.protected("first change"))
 	two := newCandidate("p2", "v1", w.protected("second change"))
 	w.seedWithBaseline(base, one, two)
-	generation := w.state().Schedule.Generation()
 	w.approve(one)
 	if w.revision() != 4 {
 		t.Fatalf("revision after the consent = %d; want 4", w.revision())
@@ -595,12 +571,6 @@ func TestPromotionEndToEnd(t *testing.T) {
 	result, err := governance.Promote(t.Context(), w.store, request)
 	if err != nil || result.Outcome != contract.PromotionProposed || !result.Committed || result.Duplicate || w.revision() != 5 || w.currentVersion() != "v1" {
 		t.Fatalf("promotion %+v err=%v revision=%d current=%q", result, err, w.revision(), w.currentVersion())
-	}
-	state := w.state()
-	active, hasActive := state.Schedule.Active()
-	entries := state.Schedule.Entries()
-	if !hasActive || active.ProposalID() != "p2" || entries[1].State() != contract.SchedulePromoted || state.Schedule.Generation() != generation+1 {
-		t.Fatalf("schedule after the promotion: active=%v %+v generation %d (was %d)", active.ProposalID(), entries, state.Schedule.Generation(), generation)
 	}
 	w.read(func(ctx context.Context, tx governance.Tx) error {
 		historical, found, err := tx.Version(ctx, "v1")
@@ -911,10 +881,9 @@ func TestPromotionWritesRejectForeignFacts(t *testing.T) {
 func TestArtifactBytesAreVerifiedWhenAVersionIsWritten(t *testing.T) {
 	assertNothingWritten := func(t *testing.T, w *pgWorld, revision contract.StateRevision) {
 		t.Helper()
-		active, _ := w.state().Schedule.Active()
-		if w.revision() != revision || w.count("suite_versions") != 1 || w.count("promotions") != 1 || w.count("operations") != 1 || w.currentVersion() != "v0" || active.ProposalID() != "p1" {
-			t.Fatalf("revision %d (was %d), %d versions, %d promotions, %d operations, current %q, active %q; want no partial effect",
-				w.revision(), revision, w.count("suite_versions"), w.count("promotions"), w.count("operations"), w.currentVersion(), active.ProposalID())
+		if w.revision() != revision || w.count("suite_versions") != 1 || w.count("promotions") != 1 || w.count("operations") != 1 || w.currentVersion() != "v0" {
+			t.Fatalf("revision %d (was %d), %d versions, %d promotions, %d operations, current %q; want no partial effect",
+				w.revision(), revision, w.count("suite_versions"), w.count("promotions"), w.count("operations"), w.currentVersion())
 		}
 	}
 	t.Run("missing content", func(t *testing.T) {

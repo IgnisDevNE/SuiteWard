@@ -47,7 +47,7 @@ func runPromotion(ctx context.Context, uow UnitOfWork, identity PromotionIdentit
 			Context: contract.PromotionContext{
 				Canonical: state.Canonical, Proposed: request.Proposed, Proposal: proposal,
 				Reference: request.Reference, Carrier: request.Carrier, Policy: state.Policy, Consent: consent,
-				Assessment: assessment, Scheduling: state.Schedule,
+				Assessment: assessment,
 			},
 			Integration: request.Integration, Target: state.Target, OperationID: request.OperationID,
 			NewVersionID: request.NewVersionID, RecordedAt: request.RecordedAt, CorrectsVersionID: identity.CorrectsVersionID,
@@ -76,12 +76,8 @@ func runPromotion(ctx context.Context, uow UnitOfWork, identity PromotionIdentit
 		if decision.Outcome() != contract.PromotionProposed || !proposed {
 			return nil
 		}
-		schedule, err := state.Schedule.Observe(proposal, contract.ObservePromoted)
-		if err != nil {
-			return fmt.Errorf("observe promotion in schedule: %w", err)
-		}
 		identity.Binding = proposal.Current().Binding()
-		write := PromotionWrite{Receipt: PromotionReceipt{Identity: identity, Record: effect.Promotion()}, Version: effect.Version(), Schedule: schedule}
+		write := PromotionWrite{Receipt: PromotionReceipt{Identity: identity, Record: effect.Promotion()}, Version: effect.Version()}
 		if err := tx.RecordPromotion(ctx, write); err != nil {
 			return fmt.Errorf("record promotion: %w", err)
 		}

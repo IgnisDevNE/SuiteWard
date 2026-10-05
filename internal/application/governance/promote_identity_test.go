@@ -79,7 +79,4 @@ func TestReusedVersionIDIsAVersionConflictAndWritesNothing(t *testing.T) {
 	if _, found := w.receipt("promote-3"); found {
 		t.Fatal("a conflicting version left a receipt")
 	}
-	if _, active := w.state().Schedule.Active(); !active {
-		t.Fatal("a conflicting version changed the schedule")
-	}
 }

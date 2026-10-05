@@ -27,7 +27,7 @@ func seedWithQueries(t *testing.T, queries *dbgen.Queries) {
 			return queries.InsertPolicy(ctx, dbgen.InsertPolicyParams{ProjectID: "project", RevisionID: "policy-1", OwnerID: "owner", OwnerKind: "human"})
 		},
 		func() error {
-			return queries.InsertSuite(ctx, dbgen.InsertSuiteParams{ProjectID: "project", SuiteID: "suite", Revision: 4, CurrentVersionID: text("v1"), TargetID: "main", PolicyRevisionID: "policy-1", ScheduleGeneration: 1})
+			return queries.InsertSuite(ctx, dbgen.InsertSuiteParams{ProjectID: "project", SuiteID: "suite", Revision: 4, CurrentVersionID: text("v1"), TargetID: "main", PolicyRevisionID: "policy-1"})
 		},
 		func() error {
 			return queries.InsertSuiteVersion(ctx, dbgen.InsertSuiteVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v1", ManifestDigest: schemaDigest, Manifest: []byte(`{"entries":[{"path":"a"}]}`)})
@@ -46,9 +46,6 @@ func seedWithQueries(t *testing.T, queries *dbgen.Queries) {
 		},
 		func() error {
 			return queries.InsertAssessment(ctx, dbgen.InsertAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", Source: "sha-2"})
-		},
-		func() error {
-			return queries.InsertScheduleEntry(ctx, dbgen.InsertScheduleEntryParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", CarrierID: "pr-1", Position: 1, State: "active"})
 		},
 		func() error {
 			return queries.InsertConsentResult(ctx, dbgen.InsertConsentResultParams{SourceCommandID: "src-b", OperationID: "op-b", ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", ActorID: "owner", ActorKind: "human", CarrierID: "pr-1", Action: "revoke", CommandOrder: 2, Outcome: "no_active_approval", Reason: "none"})
@@ -106,7 +103,7 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 		}
 		defer locking.Rollback(context.Background())
 		suite, err := dbgen.New(locking).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"})
-		if err != nil || suite.Revision != 4 || suite.CurrentVersionID.String != "v1" || suite.TargetID != "main" || suite.PolicyRevisionID != "policy-1" || suite.ScheduleGeneration != 1 {
+		if err != nil || suite.Revision != 4 || suite.CurrentVersionID.String != "v1" || suite.TargetID != "main" || suite.PolicyRevisionID != "policy-1" {
 			t.Fatalf("locked suite %+v, error %v", suite, err)
 		}
 		other, err := pgx.Connect(ctx, database.url)
@@ -140,12 +137,6 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 		}
 		if revisions[0].ExpectedVersionID.String != "v0" || revisions[1].ExpectedVersionID.Valid || string(revisions[1].CoveredInputs) != `{"k": "v"}` {
 			t.Fatalf("revision payloads %+v", revisions)
-		}
-	})
-	t.Run("schedule entries", func(t *testing.T) {
-		entries, err := queries.ListScheduleEntries(ctx, dbgen.ListScheduleEntriesParams{ProjectID: "project", SuiteID: "suite"})
-		if err != nil || len(entries) != 1 || entries[0].State != "active" || entries[0].Position != 1 {
-			t.Fatalf("entries %+v, error %v", entries, err)
 		}
 	})
 	t.Run("consent results in insertion order with aliases", func(t *testing.T) {
@@ -213,23 +204,13 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 		if err := queries.InsertSuiteVersion(ctx, dbgen.InsertSuiteVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v2", ManifestDigest: schemaDigest, Manifest: []byte(`{}`)}); err != nil {
 			t.Fatal(err)
 		}
-		revision, err = queries.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{ProjectID: "project", SuiteID: "suite", CurrentVersionID: text("v2"), ScheduleGeneration: pgtype.Int8{Int64: 3, Valid: true}})
+		revision, err = queries.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{ProjectID: "project", SuiteID: "suite", CurrentVersionID: text("v2")})
 		if err != nil || revision != 6 {
 			t.Fatalf("promoting bump revision=%d error=%v", revision, err)
 		}
 		suite, err := dbgen.New(database.conn).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"})
-		if err != nil || suite.CurrentVersionID.String != "v2" || suite.ScheduleGeneration != 3 || suite.Revision != 6 || suite.TargetID != "main" {
+		if err != nil || suite.CurrentVersionID.String != "v2" || suite.Revision != 6 || suite.TargetID != "main" {
 			t.Fatalf("bumped suite %+v, error %v", suite, err)
-		}
-	})
-	t.Run("schedule entry state", func(t *testing.T) {
-		rows, err := queries.UpdateScheduleEntryState(ctx, dbgen.UpdateScheduleEntryStateParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", State: "promoted"})
-		if err != nil || rows != 1 {
-			t.Fatalf("state update rows=%d error=%v", rows, err)
-		}
-		rows, err = queries.UpdateScheduleEntryState(ctx, dbgen.UpdateScheduleEntryStateParams{ProjectID: "project", SuiteID: "suite", ProposalID: "unknown", State: "closed"})
-		if err != nil || rows != 0 {
-			t.Fatalf("unknown entry rows=%d error=%v", rows, err)
 		}
 	})
 	t.Run("schema version", func(t *testing.T) {

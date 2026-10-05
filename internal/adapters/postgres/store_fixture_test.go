@@ -151,7 +151,7 @@ func (c candidate) baselineRequest(operation string, version contract.SuiteVersi
 }
 
 // seedSuite seeds a Suite at revision 7 without a canonical version, owned by
-// one human, with every candidate admitted to the schedule in order.
+// one human, with every candidate seeded as a proposal.
 func (w *pgWorld) seedSuite(project contract.ProjectID, suite contract.SuiteID, candidates ...candidate) {
 	w.t.Helper()
 	if err := w.store.Seed(w.t.Context(), w.emptySeed(project, suite, candidates...)); err != nil {
@@ -162,13 +162,11 @@ func (w *pgWorld) seedSuite(project contract.ProjectID, suite contract.SuiteID, 
 func (w *pgWorld) emptySeed(project contract.ProjectID, suite contract.SuiteID, candidates ...candidate) governance.Seed {
 	policy := must(contract.NewPolicy(project, fxPolicy, w.owner))
 	canonical := must(contract.NewCanonicalSnapshot(must(contract.NewSuite(project, suite, "", 7)), contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{}))
-	schedule := must(contract.NewSchedule(project, suite))
 	seed := governance.Seed{}
 	for _, c := range candidates {
-		schedule = must(schedule.Admit(c.proposal, true))
 		seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: c.proposal, Assessments: c.assessments})
 	}
-	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: policy, Target: fxTarget, Schedule: schedule}
+	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: policy, Target: fxTarget}
 	return seed
 }
 
@@ -188,16 +186,12 @@ func (w *pgWorld) baselineSeed(base candidate, candidates ...candidate) governan
 	record := must(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: "seed-promote", VersionID: "v0", Binding: base.proposal.Current().Binding(),
 		Carrier: base.carrier, Source: base.merged, Target: fxTarget, RecordedAt: fxRecordedAt}))
 	canonical := must(contract.NewCanonicalSnapshot(must(contract.NewSuite(fxProject, fxSuite, "v0", 3)), version, base.protected, record))
-	schedule := must(contract.NewSchedule(fxProject, fxSuite))
-	schedule = must(schedule.Admit(base.proposal, true))
-	schedule = must(schedule.Observe(base.proposal, contract.ObservePromoted))
 	seed := governance.Seed{History: []contract.HistoricalCanonical{must(contract.NewHistoricalCanonical(version, record))}}
 	seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: base.proposal, Assessments: base.assessments})
 	for _, c := range candidates {
-		schedule = must(schedule.Admit(c.proposal, true))
 		seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: c.proposal, Assessments: c.assessments})
 	}
-	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: must(contract.NewPolicy(fxProject, fxPolicy, w.owner)), Target: fxTarget, Schedule: schedule}
+	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: must(contract.NewPolicy(fxProject, fxPolicy, w.owner)), Target: fxTarget}
 	return seed
 }
 

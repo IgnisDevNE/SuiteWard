@@ -382,15 +382,7 @@ func promotionContextWith(t *testing.T, canonical contract.CanonicalSnapshot, pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedule, err := contract.NewSchedule("project", "suite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	schedule, err = schedule.Admit(proposal, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return contract.PromotionContext{Canonical: canonical, Proposed: proposed, Proposal: proposal, Reference: ref, Carrier: "carrier", Policy: policy, Consent: consent, Assessment: assessment, Scheduling: schedule}
+	return contract.PromotionContext{Canonical: canonical, Proposed: proposed, Proposal: proposal, Reference: ref, Carrier: "carrier", Policy: policy, Consent: consent, Assessment: assessment}
 }
 
 func promotionRevoke(t *testing.T, c *contract.PromotionContext) {
@@ -421,62 +413,33 @@ func promotionNewerCanonical(t *testing.T) contract.CanonicalSnapshot {
 	return value
 }
 
-func promotionWaitingSchedule(t *testing.T, proposal contract.Proposal) contract.Schedule {
-	t.Helper()
-	b := proposal.Current().Binding()
-	ref := b.Reference()
-	ref.ProposalID = "first-proposal"
-	first := promotionProposal(t, contract.BindingInput{Reference: ref, ExpectedCanonical: b.ExpectedCanonical(), Manifest: b.ManifestDigest(), Scope: b.ScopeDigest(), PolicyRevision: b.PolicyRevisionID(), CoveredInputs: b.CoveredInputs()}, "first-source", "first-carrier")
-	schedule, err := contract.NewSchedule("project", "suite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	schedule, err = schedule.Admit(first, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	schedule, err = schedule.Admit(proposal, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return schedule
-}
-
 func TestPromotionReadinessCombinedAuthorityMatrix(t *testing.T) {
 	for _, baseline := range []string{"current", "stale"} {
 		for _, approval := range []string{"active", "missing", "revoked"} {
-			for _, scheduling := range []string{"active", "waiting"} {
-				t.Run(baseline+"/"+approval+"/"+scheduling, func(t *testing.T) {
-					c := promotionContext(t)
-					if baseline == "stale" {
-						c.Canonical = promotionNewerCanonical(t)
-					}
-					if approval == "missing" {
-						c.Consent = contract.Consent{}
-					} else if approval == "revoked" {
-						promotionRevoke(t, &c)
-					}
-					if scheduling == "waiting" {
-						c.Scheduling = promotionWaitingSchedule(t, c.Proposal)
-					}
-					beforeSuite := c.Canonical.Suite()
-					beforeConsent := c.Consent.Results()
-					beforeSchedule := c.Scheduling.Entries()
-					outcome, reason := contract.PromotionReady, contract.PromotionReasonNone
-					if baseline == "stale" {
-						outcome, reason = contract.PromotionBlocked, contract.PromotionReasonCanonicalChanged
-					} else if approval != "active" {
-						outcome, reason = contract.PromotionBlocked, contract.PromotionReasonApprovalMissing
-					} else if scheduling != "active" {
-						outcome, reason = contract.PromotionBlocked, contract.PromotionReasonSchedulingBlocked
-					}
-					decision, err := contract.CheckPromotionReadiness(c, "integrated-source")
-					requirePromotionDecision(t, decision, err, outcome, reason)
-					if c.Canonical.Suite() != beforeSuite || !reflect.DeepEqual(c.Consent.Results(), beforeConsent) || !reflect.DeepEqual(c.Scheduling.Entries(), beforeSchedule) {
-						t.Fatal("readiness changed original authority snapshots")
-					}
-				})
-			}
+			t.Run(baseline+"/"+approval, func(t *testing.T) {
+				c := promotionContext(t)
+				if baseline == "stale" {
+					c.Canonical = promotionNewerCanonical(t)
+				}
+				if approval == "missing" {
+					c.Consent = contract.Consent{}
+				} else if approval == "revoked" {
+					promotionRevoke(t, &c)
+				}
+				beforeSuite := c.Canonical.Suite()
+				beforeConsent := c.Consent.Results()
+				outcome, reason := contract.PromotionReady, contract.PromotionReasonNone
+				if baseline == "stale" {
+					outcome, reason = contract.PromotionBlocked, contract.PromotionReasonCanonicalChanged
+				} else if approval != "active" {
+					outcome, reason = contract.PromotionBlocked, contract.PromotionReasonApprovalMissing
+				}
+				decision, err := contract.CheckPromotionReadiness(c, "integrated-source")
+				requirePromotionDecision(t, decision, err, outcome, reason)
+				if c.Canonical.Suite() != beforeSuite || !reflect.DeepEqual(c.Consent.Results(), beforeConsent) {
+					t.Fatal("readiness changed original authority snapshots")
+				}
+			})
 		}
 	}
 }
@@ -691,7 +654,6 @@ func TestPromotionReadinessRequiresExactSourceBoundEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, contract.PromotionReasonAssessmentMismatch},
-		{"absent schedule", func(c *contract.PromotionContext) { c.Scheduling = contract.Schedule{} }, contract.PromotionReasonSchedulingBlocked},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := promotionContext(t)
@@ -714,7 +676,6 @@ func promotionInput(t *testing.T) contract.PromotionInput {
 func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	input := promotionInput(t)
 	beforeSuite := input.Context.Canonical.Suite()
-	beforeSchedule := input.Context.Scheduling.Entries()
 	beforeConsent := input.Context.Consent.Results()
 	decision, err := contract.DecidePromotion(input)
 	if err != nil || decision.Outcome() != contract.PromotionProposed || decision.Reason() != contract.PromotionReasonNone {
@@ -745,7 +706,7 @@ func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	if effect.Promotion().Binding().CoveredInputs()["runner"] != "v1" || effect.Version().Manifest().Entries()[0].Path != "a_test.go" {
 		t.Fatal("grouped effect aliases mutable returned data")
 	}
-	if input.Context.Canonical.Suite() != beforeSuite || !reflect.DeepEqual(input.Context.Scheduling.Entries(), beforeSchedule) || !reflect.DeepEqual(input.Context.Consent.Results(), beforeConsent) {
+	if input.Context.Canonical.Suite() != beforeSuite || !reflect.DeepEqual(input.Context.Consent.Results(), beforeConsent) {
 		t.Fatal("proposed effect changed input authority snapshots")
 	}
 	promotionRevoke(t, &input.Context)

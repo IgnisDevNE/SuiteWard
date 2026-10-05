@@ -66,7 +66,6 @@ type suiteData struct {
 	current   contract.SuiteVersionID
 	policy    contract.Policy
 	target    contract.IntegrationTargetID
-	schedule  contract.Schedule
 	history   map[contract.SuiteVersionID]contract.HistoricalCanonical
 	proposals map[contract.ProposalID]*proposalData
 }
@@ -128,13 +127,13 @@ func (m *Memory) Seed(_ context.Context, seed governance.Seed) error {
 	suite := state.Canonical.Suite()
 	key := suiteKey{suite.ProjectID(), suite.ID()}
 	current, _ := suite.CurrentVersionID()
-	if key.suite == "" || state.Policy.ProjectID() != key.project || state.Schedule.IsZero() || state.Target == "" {
+	if key.suite == "" || state.Policy.ProjectID() != key.project || state.Target == "" {
 		return fmt.Errorf("%w: incomplete suite state", governance.ErrInvalidRequest)
 	}
 	if _, exists := m.data.suites[key]; exists {
 		return fmt.Errorf("%w: suite already seeded", governance.ErrInvalidRequest)
 	}
-	s := &suiteData{revision: suite.Revision(), current: current, policy: state.Policy, target: state.Target, schedule: state.Schedule,
+	s := &suiteData{revision: suite.Revision(), current: current, policy: state.Policy, target: state.Target,
 		history: map[contract.SuiteVersionID]contract.HistoricalCanonical{}, proposals: map[contract.ProposalID]*proposalData{}}
 	for _, h := range seed.History {
 		s.history[h.Version().ID()] = h
@@ -192,7 +191,7 @@ func (t *tx) Suite(ctx context.Context) (governance.SuiteState, error) {
 	if err != nil {
 		return governance.SuiteState{}, fmt.Errorf("%w: %w", governance.ErrInvalidState, err)
 	}
-	return governance.SuiteState{Canonical: canonical, Policy: t.s.policy, Target: t.s.target, Schedule: t.s.schedule}, nil
+	return governance.SuiteState{Canonical: canonical, Policy: t.s.policy, Target: t.s.target}, nil
 }
 
 func (t *tx) Proposal(ctx context.Context, id contract.ProposalID) (contract.Proposal, contract.Consent, error) {
@@ -316,7 +315,7 @@ func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) e
 		return fmt.Errorf("%w: %w", governance.ErrInvalidRequest, err)
 	}
 	receipt := w.Receipt
-	t.s.history[w.Version.ID()], t.s.current, t.s.schedule = h, w.Version.ID(), w.Schedule
+	t.s.history[w.Version.ID()], t.s.current = h, w.Version.ID()
 	t.d.byOp[record.OperationID()] = governance.OperationReceipt{Kind: receipt.Identity.Kind, ProjectID: t.key.project, SuiteID: t.key.suite, Promotion: &receipt}
 	return t.written()
 }

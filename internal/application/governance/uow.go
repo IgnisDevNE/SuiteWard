@@ -21,7 +21,6 @@ type SuiteState struct {
 	Canonical contract.CanonicalSnapshot // Suite().Revision() is the stored counter; no current version before bootstrap
 	Policy    contract.Policy            // governing policy revision
 	Target    contract.IntegrationTargetID
-	Schedule  contract.Schedule
 }
 
 // Tx is valid only inside fn. Reads see the transaction's own writes.
@@ -42,7 +41,7 @@ type Tx interface {
 }
 
 // Seeder writes trusted initial state. It is the only writer of policies,
-// proposals, assessments, schedule entries and historical versions until the
+// proposals, assessments and historical versions until the
 // GitHub-facing phases add their own write paths.
 type Seeder interface {
 	Seed(context.Context, Seed) error
@@ -126,12 +125,10 @@ type ConsentWrite struct {
 }
 
 // PromotionWrite records a proposed promotion: the new version (its manifest
-// bytes are verified now), the promotion record, the new current pointer, and
-// the observed schedule.
+// bytes are verified now), the promotion record, and the new current pointer.
 type PromotionWrite struct {
-	Receipt  PromotionReceipt
-	Version  contract.SuiteVersion
-	Schedule contract.Schedule
+	Receipt PromotionReceipt
+	Version contract.SuiteVersion
 }
 
 type PromoteResult struct {

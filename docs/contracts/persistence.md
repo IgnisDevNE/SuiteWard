@@ -184,6 +184,8 @@ Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `
 - `AppendConsent` (not alias): insert the command result and an operation row carrying the receipt; bump the revision.
 - `AppendConsent` (alias): insert only an operation row keyed by `ConsentWrite.OperationID` pointing at `Result.Command().SourceCommandID()` (never at `Result.Command().OperationID()`, which is the original operation), with a copy of the original receipt; bump the revision.
 - `RecordPromotion`: verify the version's manifest bytes in the content store; insert the version, the promotion, and the operation row; set the Suite's current version; persist schedule entry states and generation; bump the revision. A duplicate version id or promoted reference is `ErrVersionConflict`.
+- `Seed` stores the given state as is, including the Suite revision carried by `Canonical.Suite().Revision()`; it does not reset counters.
+- `Do` must not commit when its context is canceled, even if `fn` returned nil; a `Tx` is unusable after `fn` returns.
 - Reads reconstitute: proposals via `NewProposal` + `Revise` in sequence order; consent via `ReconstituteConsent` from stored results and aliases; assessments via `AssessIntegrity` over stored evidence; schedule via `ReconstituteSchedule`; canonical and history via `NewSuite`, `NewSuiteVersion`, `NewPromotionRecord`, `NewCanonicalSnapshot`, `NewHistoricalCanonical`.
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)

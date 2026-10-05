@@ -52,6 +52,7 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 
 ## Open
 
+- **D-DEPLOY:** remote verification host (VPS provider or home server, OS, size), private access method (Tailscale or SSH tunnel), image registry (recommended: GHCR published by the bot), approval-gated deployment environment, and who provisions the host and places the App key. Needed before S1-D. Recommendation: small Ubuntu 24.04 VPS with Podman, Tailscale, no inbound ports, owner-provisioned.
 - **D-GITHUB-ACCESS:** map each operation to minimal GitHub App permissions and the supported host and token lifecycle, without public webhooks. Administration write is not needed in the MVP (ADR 0016 amendment).
 - **D-IDENTITY:** initial owner proof, local/headless setup sessions, trusted App installation association, and policy serialization; builds on ADR 0027.
 - **D-PROTECTION:** how to read and compare effective branch protection and rulesets, including the GitHub support matrix; the MVP verifies and gives manual instructions.

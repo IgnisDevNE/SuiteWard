@@ -74,17 +74,19 @@ func TestReconstituteScheduleRejectsInconsistentInput(t *testing.T) {
 		generation ScheduleGeneration
 		entries    []ScheduleEntryInput
 	}{
-		"blank project":         {" ", "suite", 1, nil},
-		"blank suite":           {"project", "", 1, nil},
-		"zero generation":       {"project", "suite", 0, nil},
-		"negative generation":   {"project", "suite", -1, nil},
-		"two active entries":    {"project", "suite", 2, []ScheduleEntryInput{active("a", "ca"), active("b", "cb")}},
-		"duplicate proposal id": {"project", "suite", 2, []ScheduleEntryInput{active("a", "ca"), waiting("a", "cb")}},
-		"duplicate carrier":     {"project", "suite", 2, []ScheduleEntryInput{active("a", "ca"), waiting("b", "ca")}},
-		"blank proposal id":     {"project", "suite", 2, []ScheduleEntryInput{waiting(" ", "ca")}},
-		"blank carrier":         {"project", "suite", 2, []ScheduleEntryInput{waiting("a", "")}},
-		"absent state":          {"project", "suite", 2, []ScheduleEntryInput{{ProposalID: "a", Carrier: "ca"}}},
-		"unknown state":         {"project", "suite", 2, []ScheduleEntryInput{{ProposalID: "a", Carrier: "ca", State: 99}}},
+		"blank project":                      {" ", "suite", 1, nil},
+		"blank suite":                        {"project", "", 1, nil},
+		"zero generation":                    {"project", "suite", 0, nil},
+		"negative generation":                {"project", "suite", -1, nil},
+		"two active entries":                 {"project", "suite", 2, []ScheduleEntryInput{active("a", "ca"), active("b", "cb")}},
+		"duplicate proposal id":              {"project", "suite", 2, []ScheduleEntryInput{active("a", "ca"), waiting("a", "cb")}},
+		"duplicate carrier":                  {"project", "suite", 2, []ScheduleEntryInput{active("a", "ca"), waiting("b", "ca")}},
+		"blank proposal id":                  {"project", "suite", 2, []ScheduleEntryInput{waiting(" ", "ca")}},
+		"blank carrier":                      {"project", "suite", 2, []ScheduleEntryInput{waiting("a", "")}},
+		"waiting without an active entry":    {"project", "suite", 2, []ScheduleEntryInput{waiting("a", "ca")}},
+		"waiting behind closed and promoted": {"project", "suite", 2, []ScheduleEntryInput{{ProposalID: "a", Carrier: "ca", State: ScheduleClosed}, {ProposalID: "p", Carrier: "cp", State: SchedulePromoted}, waiting("b", "cb")}},
+		"absent state":                       {"project", "suite", 2, []ScheduleEntryInput{{ProposalID: "a", Carrier: "ca"}}},
+		"unknown state":                      {"project", "suite", 2, []ScheduleEntryInput{{ProposalID: "a", Carrier: "ca", State: 99}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := ReconstituteSchedule(tc.project, tc.suite, tc.generation, tc.entries)

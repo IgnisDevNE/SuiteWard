@@ -164,20 +164,26 @@ func TestReconstituteCommandResultMatchesApply(t *testing.T) {
 func TestReconstituteCommandResultRejectsInconsistentFacts(t *testing.T) {
 	_, _, _, input := consentFixture(t)
 	command := consentCommandForTest(t, input)
+	revokeInput := input
+	revokeInput.Action = contract.RevokeConsent
+	revoke := consentCommandForTest(t, revokeInput)
 	for name, tc := range map[string]struct {
 		command contract.Command
 		outcome contract.ConsentOutcome
 		reason  contract.ConsentReason
 	}{
-		"zero command":              {contract.Command{}, contract.ConsentApproved, contract.ConsentReasonNone},
-		"absent outcome":            {command, 0, contract.ConsentReasonNone},
-		"unknown outcome":           {command, 99, contract.ConsentReasonNone},
-		"unknown reason":            {command, contract.ConsentRejected, 99},
-		"accepted with a reason":    {command, contract.ConsentApproved, contract.ConsentReasonUnauthorized},
-		"rejected without reason":   {command, contract.ConsentRejected, contract.ConsentReasonNone},
-		"rejected as a conflict":    {command, contract.ConsentRejected, contract.ConsentReasonCommandConflict},
-		"revoked with a reason":     {command, contract.ConsentRevoked, contract.ConsentReasonObsoleteCommand},
-		"no approval with a reason": {command, contract.ConsentNoActiveApproval, contract.ConsentReasonUnauthorized},
+		"approve recorded as revoked":     {command, contract.ConsentRevoked, contract.ConsentReasonNone},
+		"approve recorded as no approval": {command, contract.ConsentNoActiveApproval, contract.ConsentReasonNone},
+		"revoke recorded as approved":     {revoke, contract.ConsentApproved, contract.ConsentReasonNone},
+		"zero command":                    {contract.Command{}, contract.ConsentApproved, contract.ConsentReasonNone},
+		"absent outcome":                  {command, 0, contract.ConsentReasonNone},
+		"unknown outcome":                 {command, 99, contract.ConsentReasonNone},
+		"unknown reason":                  {command, contract.ConsentRejected, 99},
+		"accepted with a reason":          {command, contract.ConsentApproved, contract.ConsentReasonUnauthorized},
+		"rejected without reason":         {command, contract.ConsentRejected, contract.ConsentReasonNone},
+		"rejected as a conflict":          {command, contract.ConsentRejected, contract.ConsentReasonCommandConflict},
+		"revoked with a reason":           {command, contract.ConsentRevoked, contract.ConsentReasonObsoleteCommand},
+		"no approval with a reason":       {command, contract.ConsentNoActiveApproval, contract.ConsentReasonUnauthorized},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := contract.ReconstituteCommandResult(tc.command, tc.outcome, tc.reason)

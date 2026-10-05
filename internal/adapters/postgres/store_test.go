@@ -76,7 +76,7 @@ func TestDoRejectsAnUnknownSuite(t *testing.T) {
 func (w *pgWorld) consentWrite(c candidate, operation, source string, order contract.CommandOrder) governance.ConsentWrite {
 	w.t.Helper()
 	command := w.command(c, c.current().RevisionID, operation, source, contract.ApproveConsent, order)
-	consent := must(contract.NewConsent(fxProject, fxSuite, contract.ProposalID(c.id)))
+	consent := must(contract.NewConsent(c.current().ProjectID, c.current().SuiteID, contract.ProposalID(c.id)))
 	policy := must(contract.NewPolicy(fxProject, fxPolicy, w.owner))
 	_, result, err := consent.Apply(c.proposal, policy, command)
 	if err != nil {
@@ -835,8 +835,9 @@ func TestEveryStatementOfAUnitOfWorkRollsBackTogether(t *testing.T) {
 		}
 	})
 	t.Run("the promotion fails after its first rows were inserted", func(t *testing.T) {
+		write := w.promotionWrite(one, one.mergedRequest("promote-bad", "v9"), governance.OperationCorrect, "no-such-version")
 		err := w.store.Do(t.Context(), fxProject, fxSuite, func(ctx context.Context, tx governance.Tx) error {
-			return tx.RecordPromotion(ctx, w.promotionWrite(one, one.mergedRequest("promote-bad", "v9"), governance.OperationCorrect, "no-such-version"))
+			return tx.RecordPromotion(ctx, write)
 		})
 		if err == nil || w.revision() != revision || w.count("suite_versions") != versions || w.count("operations") != operations || w.currentVersion() != "v0" {
 			t.Fatalf("Do = %v at revision %d, %d versions, %d operations; want a failure with no partial effect", err, w.revision(), w.count("suite_versions"), w.count("operations"))
@@ -853,7 +854,7 @@ func TestVersionAndOperationConflictsAreTranslated(t *testing.T) {
 		write   governance.PromotionWrite
 		wantErr error
 	}{
-		{"a version id that already exists", w.promotionWrite(one, one.mergedRequest("promote-a", "v0"), governance.OperationPromote, ""), governance.ErrVersionConflict},
+		{"a version id that already exists", w.promotionWrite(newCandidateFromBase(w), newCandidateFromBase(w).mergedRequest("promote-a", "v0"), governance.OperationPromote, ""), governance.ErrVersionConflict},
 		{"a promoted reference promoted again", w.promotionWrite(newCandidateFromBase(w), newCandidateFromBase(w).mergedRequest("promote-b", "v7"), governance.OperationPromote, ""), governance.ErrVersionConflict},
 		{"an operation id used by seeded history", w.promotionWrite(one, one.mergedRequest("seed-promote", "v8"), governance.OperationPromote, ""), governance.ErrOperationConflict},
 		{"an operation id used by a consent", w.promotionWrite(one, one.mergedRequest("approve-p1", "v8"), governance.OperationPromote, ""), governance.ErrOperationConflict},

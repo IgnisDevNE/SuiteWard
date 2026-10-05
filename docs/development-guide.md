@@ -6,13 +6,13 @@
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.
 
-Use the [local development guide](local-development.md) to prepare tools and the database, run verification, and keep worktree resources isolated. Versioned ADRs and project documents remain canonical when Memtrace is unavailable or inconsistent.
+Use the [local development guide](local-development.md) to prepare tools and the database, run verification, and keep worktree resources isolated. Versioned ADRs and project documents are canonical; Memtrace is optional and supplementary.
 
 ## Tests
 
-Follow [mandatory task-level TDD](tdd.md), accepted in [ADR 0025](decisions/0025-test-driven-development.md). Before implementing each behavior, write its test and observe a meaningful failure; record the RED revision, then implement and record the same command passing at GREEN. Refactor when useful and rerun the relevant suite. Bug fixes start with a reproducer. Include failure, security, boundary, and invariant scenarios relevant to the task; a green happy path alone is insufficient.
+Follow the [test-first rule](tdd.md), accepted in [ADR 0025](decisions/0025-test-driven-development.md). For governance rules and adapter behavior, write the test, observe a meaningful failure, and commit the test before the implementation; the reviewer checks that order. Bug fixes start with a reproducer. Include failure, security, boundary, and invariant scenarios relevant to the task; a green happy path alone is insufficient.
 
-This rule also applies to infrastructure scripts and configuration that changes behavior. Documentation, discovery, and decision tasks can record a justified `not_applicable` only while they change no executable behavior. Each task carries its own evidence and independent review into the phase PR. Passing CI or achieving coverage does not establish that tests preceded implementation.
+This also applies to infrastructure scripts and configuration that change behavior. Documentation, deletions, mechanical refactors, and throwaway spikes are exempt. Passing CI or achieving coverage does not establish that tests preceded implementation.
 
 Use Go's standard `testing` package as the initial test framework. Use table-driven cases when several inputs exercise the same behavior; use focused standalone tests when that makes the scenario clearer. Test files live beside the package they exercise.
 

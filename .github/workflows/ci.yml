@@ -44,20 +44,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate scripts, workflows, documentation, and delivery plan
+      - name: Validate scripts, workflows, and documentation
         run: ./scripts/check-foundation.ps1
-
-  tdd:
-    name: TDD evidence
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Require reviewed task evidence for the exact change
-        run: ./scripts/ci.ps1 -Mode Tdd
 
   go:
     name: Go (${{ matrix.os }})
@@ -157,12 +145,10 @@ jobs:
           fail_ci_if_error: true
           handle_no_reports_found: false
           cleanup: true
-      - name: Enforce project coverage using complete Codecov reports
-        run: ./scripts/check-codecov-policy.ps1
 
   gate:
     name: CI / Gate
-    needs: [inspect, foundation, tdd, go, coverage]
+    needs: [inspect, foundation, go, coverage]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

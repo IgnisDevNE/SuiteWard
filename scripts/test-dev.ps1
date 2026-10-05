@@ -140,7 +140,7 @@ try {
     } finally { $holder.Dispose() }
     if ((Receive-Job (Wait-Job $job -Timeout 60) -Wait) -cne 'installed') { throw 'Install did not reuse the tool installed by a concurrent setup.' }
     Remove-Job $job
-    if (Test-Path -LiteralPath (Join-Path $toolsDir 'downloads')) { throw 'Install downloaded a tool that was already present after the lock.' }
+    if (@(Get-ChildItem -LiteralPath (Join-Path $toolsDir 'downloads') -Filter 'actionlint*').Count) { throw 'Install downloaded a tool that was already present after the lock.' }
     $checks++
     New-Item -ItemType Directory -Path $a.State -Force | Out-Null
     $lock = [IO.File]::Open((Join-Path $a.State 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
@@ -223,13 +223,13 @@ try {
     try {
         Initialize-ResetScenario @{ $a.Container = $foreign } @{ $a.Volume = $own }
         Expect-Failure { Remove-DevDatabase $a } 'another checkout'
-        if ((Get-DestructiveCalls).Count) { throw 'Reset removed resources despite a foreign container.' }
+        if (@(Get-DestructiveCalls).Count) { throw 'Reset removed resources despite a foreign container.' }
         Initialize-ResetScenario @{ $a.Container = $own } @{ $a.Volume = $foreign }
         Expect-Failure { Remove-DevDatabase $a } 'another checkout'
-        if ((Get-DestructiveCalls).Count -or -not $script:fakeContainers.ContainsKey($a.Container)) { throw 'Reset removed the container despite a foreign volume.' }
+        if (@(Get-DestructiveCalls).Count -or -not $script:fakeContainers.ContainsKey($a.Container)) { throw 'Reset removed the container despite a foreign volume.' }
         Initialize-ResetScenario @{ $a.Container = @{} } @{}
         Expect-Failure { Remove-DevDatabase $a } 'another checkout'
-        if ((Get-DestructiveCalls).Count) { throw 'Reset removed an unlabeled container.' }
+        if (@(Get-DestructiveCalls).Count) { throw 'Reset removed an unlabeled container.' }
         foreach ($file in $stateFiles) { if (-not (Test-Path -LiteralPath (Join-Path $a.State $file))) { throw 'Refused reset deleted local state.' } }
         $checks += 3
 
@@ -242,7 +242,7 @@ try {
         $checks++
         Initialize-ResetScenario @{} @{}
         Remove-DevDatabase $a
-        if ((Get-DestructiveCalls).Count) { throw 'Reset removed something when nothing existed.' }
+        if (@(Get-DestructiveCalls).Count) { throw 'Reset removed something when nothing existed.' }
         $checks++
         $dbLock = [IO.File]::Open((Join-Path $a.State 'database.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
         try { Expect-Failure { Remove-DevDatabase $a } 'Another database operation is running' } finally { $dbLock.Dispose() }

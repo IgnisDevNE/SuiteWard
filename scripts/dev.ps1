@@ -1,7 +1,7 @@
 #Requires -Version 7.2
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('setup', 'tools', 'doctor', 'check', 'persistence', 'go', 'sqlc', 'actionlint', 'govulncheck', 'db-start', 'db-stop', 'db-status', 'db-test')]
+    [ValidateSet('setup', 'tools', 'doctor', 'check', 'persistence', 'go', 'sqlc', 'actionlint', 'govulncheck', 'db-start', 'db-stop', 'db-status', 'db-test', 'db-reset')]
     [string]$Command = 'doctor',
     [string]$PodmanConnection = '',
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -16,12 +16,12 @@ $previous['CONTAINER_CONNECTION'] = [Environment]::GetEnvironmentVariable('CONTA
 $previous['CONTAINER_HOST'] = [Environment]::GetEnvironmentVariable('CONTAINER_HOST', 'Process')
 Push-Location -LiteralPath $context.Root
 try {
-    if ($Command -in @('setup', 'doctor', 'db-start', 'db-stop', 'db-status', 'db-test')) { Select-DevPodmanConnection $context $PodmanConnection }
+    if ($Command -in @('setup', 'doctor', 'db-start', 'db-stop', 'db-status', 'db-test', 'db-reset')) { Select-DevPodmanConnection $context $PodmanConnection }
     switch ($Command) {
         { $_ -in @('setup', 'tools') } {
             Install-DevTools $context
             if ($Command -eq 'setup') { Start-DevDatabase $context; Test-DevDatabase $context }
-            Write-Host 'Pinned development tools are ready in this checkout.'
+            Write-Host "Pinned development tools are ready in the shared cache ($($context.Tools))."
         }
         'doctor' {
             foreach ($name in @('go', 'sqlc', 'actionlint', 'govulncheck')) { Assert-ToolVersion $context $name; Write-Host "$name $($context.Manifest[$name].version): OK" }
@@ -50,6 +50,12 @@ try {
         }
         'db-start' { Start-DevDatabase $context }
         'db-test' { Test-DevDatabase $context }
+        'db-reset' {
+            # Destroys this checkout's database data only; ownership labels are verified before anything is removed.
+            Remove-DevDatabase $context
+            Start-DevDatabase $context
+            Write-Host 'Checkout database recreated with new credentials; apply migrations as usual.'
+        }
         'db-stop' {
             $dbLock = [IO.File]::Open((Join-Path $context.State 'database.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
             try {

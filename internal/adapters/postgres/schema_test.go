@@ -9,70 +9,113 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/internal/dbgen"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 )
 
-func TestPostgresSchemaFreshConstraints(t *testing.T) {
+var governanceTables = []string{"suites", "policies", "suite_versions", "proposals", "proposal_revisions", "assessments", "schedule_entries", "consent_results", "operations", "promotions"}
+
+// governanceRows are mutually consistent default rows; tests copy them with overrides.
+var governanceRows = map[string]map[string]any{
+	"policies":           {"project_id": "project", "revision_id": "policy-1", "owner_id": "owner", "owner_kind": "human"},
+	"suites":             {"project_id": "project", "suite_id": "suite", "revision": 1, "current_version_id": "v1", "target_id": "main", "policy_revision_id": "policy-1", "schedule_generation": 1},
+	"suite_versions":     {"project_id": "project", "suite_id": "suite", "version_id": "v1", "manifest_digest": schemaDigest, "manifest": `{"entries":[]}`},
+	"proposals":          {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "carrier_id": "pr-1"},
+	"proposal_revisions": {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "seq": 1, "origin": "origin-1", "carrier_id": "pr-1", "manifest_digest": schemaDigest, "scope_digest": schemaDigest, "covered_inputs": `{}`, "expected_version_id": nil, "policy_revision_id": "policy-1"},
+	"assessments":        {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "source": "sha-1", "evidence_emitter": "ci", "evidence_source": "sha-1", "evidence_revision_id": "r1", "outcome": "passed"},
+	"schedule_entries":   {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "carrier_id": "pr-1", "position": 1, "state": "active"},
+	"consent_results":    {"source_command_id": "src-1", "operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "actor_id": "owner", "actor_kind": "human", "carrier_id": "pr-1", "action": "approve", "command_order": 1, "outcome": "approved", "reason": "none"},
+	"operations":         {"operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "kind": "consent", "source_command_id": "src-1", "receipt": `{"kind":"consent"}`},
+	"promotions":         {"operation_id": "promo-op", "project_id": "project", "suite_id": "suite", "version_id": "v1", "proposal_id": "p1", "revision_id": "r1", "carrier_id": "pr-1", "source_revision": "sha-1", "target_id": "main", "recorded_at": "2026-10-02T12:00:00Z", "corrects_version_id": nil},
+}
+
+type sqlExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// insertRow inserts the default row of table with overrides applied.
+func insertRow(ctx context.Context, executor sqlExecutor, table string, overrides map[string]any) error {
+	values := map[string]any{}
+	for column, value := range governanceRows[table] {
+		values[column] = value
+	}
+	for column, value := range overrides {
+		values[column] = value
+	}
+	columns := make([]string, 0, len(values))
+	for column := range values {
+		columns = append(columns, column)
+	}
+	slices.Sort(columns)
+	placeholders := make([]string, len(columns))
+	arguments := make([]any, len(columns))
+	for i, column := range columns {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		arguments[i] = values[column]
+	}
+	_, err := executor.Exec(ctx, "INSERT INTO "+table+" ("+strings.Join(columns, ", ")+") VALUES ("+strings.Join(placeholders, ", ")+")", arguments...)
+	return err
+}
+
+func mustInsert(t *testing.T, executor sqlExecutor, table string, overrides map[string]any) {
+	t.Helper()
+	if err := insertRow(t.Context(), executor, table, overrides); err != nil {
+		t.Fatalf("insert into %s: %v", table, err)
+	}
+}
+
+// seedGovernance writes one complete, consistent Suite history in one transaction.
+func seedGovernance(t *testing.T, connection *pgx.Conn) {
+	t.Helper()
+	transaction, err := connection.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transaction.Rollback(context.Background())
+	for _, table := range []string{"policies", "suites", "suite_versions", "proposals", "proposal_revisions", "assessments", "schedule_entries", "consent_results", "operations", "promotions"} {
+		mustInsert(t, transaction, table, nil)
+	}
+	mustInsert(t, transaction, "operations", map[string]any{"operation_id": "promo-op", "kind": "promote", "source_command_id": nil, "receipt": `{"kind":"promote"}`})
+	if err := transaction.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGovernanceSchemaFreshMigration(t *testing.T) {
 	database := newSchemaDatabase(t)
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	tables := []string{"suites", "suite_versions", "operation_receipts", "consent_sources", "promotions", "audit_events", "publication_intents", "consent_acknowledgments"}
-	var present int
-	if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FROM pg_tables WHERE schemaname = $1 AND tablename = ANY($2)", database.schema, tables).Scan(&present); err != nil {
+	rows, err := database.conn.Query(t.Context(), "SELECT tablename FROM pg_tables WHERE schemaname = $1 ORDER BY tablename", database.schema)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if present != len(tables) {
-		t.Fatalf("fresh migration created %d required tables; want %d", present, len(tables))
+	present, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
 	}
-	schemaExec(t, database.conn, "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','suite',0,'{}'),('project','other',0,'{}'),('project','maximum',18446744073709551615,'{}')")
-	schemaExec(t, database.conn, "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('project','suite','version',$1,'{}')", schemaDigest)
-	schemaExec(t, database.conn, "INSERT INTO operation_receipts(operation_id,project_id,suite_id,kind,receipt_payload) VALUES ('consent','project','suite',4,'{}')")
-	schemaExec(t, database.conn, "INSERT INTO consent_sources(source_command_id,project_id,suite_id,operation_id) VALUES ('source','project','suite','consent')")
-	cases := []struct {
-		name, statement, code, constraint string
-		args                              []any
-	}{
-		{"duplicate Suite", "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','suite',0,'{}')", "23505", "suites_pkey", nil},
-		{"duplicate version", "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('project','suite','version',$1,'{}')", "23505", "suite_versions_pkey", []any{schemaDigest}},
-		{"global operation", "INSERT INTO operation_receipts(operation_id,project_id,suite_id,kind,receipt_payload) VALUES ('consent','project','other',4,'{}')", "23505", "operation_receipts_pkey", nil},
-		{"global source", "INSERT INTO consent_sources(source_command_id,project_id,suite_id,operation_id) VALUES ('source','project','suite','consent')", "23505", "consent_sources_pkey", nil},
-		{"foreign Suite version", "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('foreign','suite','version',$1,'{}')", "23503", "suite_versions_suite_fkey", []any{schemaDigest}},
-		{"wrong receipt scope", "INSERT INTO consent_sources(source_command_id,project_id,suite_id,operation_id) VALUES ('wrong-scope','project','other','consent')", "23503", "consent_sources_operation_fkey", nil},
-		{"invalid digest", "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('project','suite','invalid','sha256:ABC','{}')", "23514", "suite_versions_digest_check", nil},
-		{"payload is not object", "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','array',0,'[]')", "23514", "suites_payload_check", nil},
-		{"revision exceeds uint64", "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','overflow',18446744073709551616,'{}')", "23514", "suites_revision_check", nil},
-		{"negative revision", "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','negative',-1,'{}')", "23514", "suites_revision_check", nil},
+	want := append([]string{"goose_db_version"}, governanceTables...)
+	slices.Sort(want)
+	if !slices.Equal(present, want) {
+		t.Fatalf("fresh migration tables = %v; want exactly %v", present, want)
 	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := database.conn.Exec(t.Context(), test.statement, test.args...)
-			schemaRequireError(t, err, test.code, test.constraint)
-		})
-	}
-	var revision string
-	if err := database.conn.QueryRow(t.Context(), "SELECT authority_revision::text FROM suites WHERE suite_id='maximum'").Scan(&revision); err != nil || revision != "18446744073709551615" {
-		t.Fatalf("full uint64 revision round trip = %q, error %v", revision, err)
-	}
+	seedGovernance(t, database.conn)
 }
 
-func TestPostgresMigrationsLifecycle(t *testing.T) {
+func TestGovernanceMigrationsLifecycle(t *testing.T) {
 	t.Run("repeat and concurrent", func(t *testing.T) {
 		database := newSchemaDatabase(t)
 		var workers sync.WaitGroup
 		failures := make(chan error, 4)
 		for range 4 {
-			workers.Go(func() { failures <- migrations.UpTo(t.Context(), database.url, 1) })
+			workers.Go(func() { failures <- migrations.Up(t.Context(), database.url) })
 		}
 		workers.Wait()
 		close(failures)
@@ -81,77 +124,51 @@ func TestPostgresMigrationsLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+		if err := migrations.Up(t.Context(), database.url); err != nil {
 			t.Fatal(err)
 		}
-		var applications int
-		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FROM goose_db_version WHERE version_id=1 AND is_applied").Scan(&applications); err != nil {
-			t.Fatalf("concurrent migration did not establish version history: %v", err)
-		}
-		if applications != 1 {
-			t.Fatalf("migration 1 applied %d times; want exactly one", applications)
+		var applications, later int
+		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FILTER (WHERE version_id=1), count(*) FILTER (WHERE version_id>1) FROM goose_db_version WHERE is_applied").Scan(&applications, &later); err != nil || applications != 1 || later != 0 {
+			t.Fatalf("migration 1 applied %d times, later migrations %d (error %v); want exactly one and none", applications, later, err)
 		}
 	})
 	t.Run("failed body rolls back", func(t *testing.T) {
 		database := newSchemaDatabase(t)
 		schemaExec(t, database.conn, "CREATE TABLE suite_versions(conflicting_fixture boolean)")
-		if err := migrations.UpTo(t.Context(), database.url, 1); err == nil {
-			t.Fatal("conflicting preexisting relation did not reject migration")
+		if err := migrations.Up(t.Context(), database.url); err == nil {
+			t.Fatal("conflicting preexisting relation did not reject the migration")
 		}
 		var absent bool
 		if err := database.conn.QueryRow(t.Context(), "SELECT to_regclass('suites') IS NULL").Scan(&absent); err != nil || !absent {
-			t.Fatalf("failed migration left staged authority table: absent=%v error=%v", absent, err)
-		}
-		var applications int
-		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FROM goose_db_version WHERE version_id=1 AND is_applied").Scan(&applications); err != nil || applications != 0 {
-			t.Fatalf("failed migration advanced version history: applications=%d error=%v", applications, err)
+			t.Fatalf("failed migration left a partial schema: absent=%v error=%v", absent, err)
 		}
 		schemaExec(t, database.conn, "DROP TABLE suite_versions")
-		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+		if err := migrations.Up(t.Context(), database.url); err != nil {
 			t.Fatalf("failed migration cannot recover after its fixture is removed: %v", err)
 		}
 	})
-	t.Run("downgrade rejected", func(t *testing.T) {
+	t.Run("downgrade and newer database rejected", func(t *testing.T) {
 		database := newSchemaDatabase(t)
-		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
+		if err := migrations.Up(t.Context(), database.url); err != nil {
 			t.Fatal(err)
 		}
 		if err := migrations.UpTo(t.Context(), database.url, 0); !errors.Is(err, migrations.ErrForwardOnly) {
 			t.Fatalf("downgrade must fail closed; got %v", err)
 		}
-	})
-	t.Run("failed populated upgrade rolls back", func(t *testing.T) {
-		database := newSchemaDatabase(t)
-		if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
-			t.Fatal(err)
-		}
-		seedSchemaHistory(t, database.conn)
-		schemaExec(t, database.conn, "CREATE FUNCTION require_next_authority_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$")
-		if err := migrations.Up(t.Context(), database.url); err == nil {
-			t.Fatal("conflicting upgrade function did not reject migration 2")
-		}
-		var applied, versions int
-		var firstFunctionAbsent bool
-		if err := database.conn.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM goose_db_version WHERE version_id=2 AND is_applied),(SELECT count(*) FROM suite_versions),to_regprocedure('reject_immutable_history()') IS NULL").Scan(&applied, &versions, &firstFunctionAbsent); err != nil || applied != 0 || versions != 1 || !firstFunctionAbsent {
-			t.Fatalf("failed populated upgrade left effects: applied=%d versions=%d first function absent=%v error=%v", applied, versions, firstFunctionAbsent, err)
-		}
-		schemaExec(t, database.conn, "DROP FUNCTION require_next_authority_revision()")
-		if err := migrations.Up(t.Context(), database.url); err != nil {
-			t.Fatal(err)
+		schemaExec(t, database.conn, "INSERT INTO goose_db_version(version_id, is_applied) VALUES (2, true)")
+		if err := migrations.Up(t.Context(), database.url); !errors.Is(err, migrations.ErrForwardOnly) {
+			t.Fatalf("a database newer than the supported schema must be rejected; got %v", err)
 		}
 	})
 }
 
-func TestPostgresSchemaImmutableHistory(t *testing.T) {
+func TestGovernanceImmutableHistory(t *testing.T) {
 	database := newSchemaDatabase(t)
-	if err := migrations.UpTo(t.Context(), database.url, 1); err != nil {
-		t.Fatal(err)
-	}
-	seedSchemaHistory(t, database.conn)
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"suite_versions", "operation_receipts", "consent_sources", "promotions", "audit_events", "publication_intents", "consent_acknowledgments"} {
+	seedGovernance(t, database.conn)
+	for _, table := range []string{"policies", "suite_versions", "proposals", "proposal_revisions", "assessments", "consent_results", "operations", "promotions"} {
 		t.Run(table, func(t *testing.T) {
 			for _, statement := range []string{
 				"UPDATE " + table + " SET project_id=project_id",
@@ -159,103 +176,198 @@ func TestPostgresSchemaImmutableHistory(t *testing.T) {
 				"TRUNCATE " + table + " CASCADE",
 			} {
 				_, err := database.conn.Exec(t.Context(), statement)
-				if err == nil {
-					t.Fatalf("immutable history mutation was accepted: %s", statement)
-				}
 				schemaRequireError(t, err, "23514", "immutable_history")
 			}
 		})
 	}
-	t.Run("authority requires exact next revision", func(t *testing.T) {
-		for _, assignment := range []string{"governance_payload='{}'", "authority_revision=authority_revision+2"} {
-			_, err := database.conn.Exec(t.Context(), "UPDATE suites SET "+assignment+" WHERE suite_id='suite'")
-			schemaRequireError(t, err, "23514", "suites_revision_advance")
+	var versions, promotions, operations int
+	if err := database.conn.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM suite_versions),(SELECT count(*) FROM promotions),(SELECT count(*) FROM operations)").Scan(&versions, &promotions, &operations); err != nil || versions != 1 || promotions != 1 || operations != 2 {
+		t.Fatalf("rejected mutations lost history: versions=%d promotions=%d operations=%d error=%v", versions, promotions, operations, err)
+	}
+}
+
+func TestGovernanceSuiteRevisionGuard(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	seedGovernance(t, database.conn)
+	for _, test := range []struct{ name, statement, constraint string }{
+		{"delete", "DELETE FROM suites", "immutable_history"},
+		{"truncate", "TRUNCATE suites CASCADE", "immutable_history"},
+		{"same revision", "UPDATE suites SET schedule_generation=schedule_generation+1", "suites_revision_advance"},
+		{"revision skips", "UPDATE suites SET revision=revision+2", "suites_revision_advance"},
+		{"revision rewinds", "UPDATE suites SET revision=revision-1", "suites_revision_advance"},
+		{"suite key changes", "UPDATE suites SET suite_id='moved', revision=revision+1", "suites_identity_immutable"},
+		{"project key changes", "UPDATE suites SET project_id='moved', revision=revision+1", "suites_identity_immutable"},
+		{"target changes", "UPDATE suites SET target_id='other', revision=revision+1", "suites_governance_immutable"},
+		{"policy changes", "UPDATE suites SET policy_revision_id='policy-2', revision=revision+1", "suites_governance_immutable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := database.conn.Exec(t.Context(), test.statement)
+			schemaRequireError(t, err, "23514", test.constraint)
+		})
+	}
+	schemaExec(t, database.conn, "UPDATE suites SET revision=revision+1, schedule_generation=schedule_generation+1")
+	var revision, generation int64
+	if err := database.conn.QueryRow(t.Context(), "SELECT revision, schedule_generation FROM suites").Scan(&revision, &generation); err != nil || revision != 2 || generation != 2 {
+		t.Fatalf("exact next revision update: revision=%d generation=%d error=%v", revision, generation, err)
+	}
+}
+
+func TestGovernanceReadIndexes(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	for index, table := range map[string]string{"consent_results_proposal_seq_idx": "consent_results", "operations_source_command_idx": "operations"} {
+		var present bool
+		if err := database.conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexname = $3)", database.schema, table, index).Scan(&present); err != nil || !present {
+			t.Fatalf("index %s on %s is missing (error %v)", index, table, err)
 		}
-		_, err := database.conn.Exec(t.Context(), "UPDATE suites SET suite_id='changed',authority_revision=authority_revision+1 WHERE suite_id='suite'")
-		schemaRequireError(t, err, "23514", "suites_identity_immutable")
-		schemaExec(t, database.conn, "UPDATE suites SET authority_revision=authority_revision+1,governance_payload='{\"updated\":true}' WHERE suite_id='suite'")
-		_, err = database.conn.Exec(t.Context(), "UPDATE suites SET authority_revision=authority_revision+1 WHERE suite_id='maximum'")
-		schemaRequireError(t, err, "23514", "suites_revision_check")
+	}
+}
+
+func TestGovernanceScheduleEntryGuard(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	seedGovernance(t, database.conn)
+	for _, test := range []struct{ name, statement, constraint string }{
+		{"delete", "DELETE FROM schedule_entries", "immutable_history"},
+		{"truncate", "TRUNCATE schedule_entries CASCADE", "immutable_history"},
+		{"position changes", "UPDATE schedule_entries SET position=2", "schedule_entries_state_only"},
+		{"carrier changes", "UPDATE schedule_entries SET carrier_id='other'", "schedule_entries_state_only"},
+		{"proposal changes", "UPDATE schedule_entries SET proposal_id='other'", "schedule_entries_state_only"},
+		{"state and position change", "UPDATE schedule_entries SET state='closed', position=2", "schedule_entries_state_only"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := database.conn.Exec(t.Context(), test.statement)
+			schemaRequireError(t, err, "23514", test.constraint)
+		})
+	}
+	schemaExec(t, database.conn, "UPDATE schedule_entries SET state='promoted'")
+	var state string
+	if err := database.conn.QueryRow(t.Context(), "SELECT state FROM schedule_entries").Scan(&state); err != nil || state != "promoted" {
+		t.Fatalf("state update: state=%q error=%v", state, err)
+	}
+}
+
+func TestGovernanceTruncateRejectedEverywhere(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range governanceTables {
+		t.Run(table, func(t *testing.T) {
+			_, err := database.conn.Exec(t.Context(), "TRUNCATE "+table+" CASCADE")
+			schemaRequireError(t, err, "23514", "immutable_history")
+		})
+	}
+}
+
+func TestGovernanceCurrentVersionPointerIsDeferred(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	seedGovernance(t, database.conn)
+	t.Run("version and pointer in one transaction", func(t *testing.T) {
+		transaction, err := database.conn.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer transaction.Rollback(context.Background())
+		schemaExec(t, transaction, "UPDATE suites SET revision=revision+1, current_version_id='v2'")
+		mustInsert(t, transaction, "suite_versions", map[string]any{"version_id": "v2"})
+		if err := transaction.Commit(t.Context()); err != nil {
+			t.Fatalf("deferred pointer must accept a version inserted later in the same transaction: %v", err)
+		}
 	})
-	var versions, promotions int
-	if err := database.conn.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM suite_versions),(SELECT count(*) FROM promotions)").Scan(&versions, &promotions); err != nil || versions != 1 || promotions != 1 {
-		t.Fatalf("populated upgrade or rejected mutations lost history: versions=%d promotions=%d error=%v", versions, promotions, err)
-	}
-	if err := migrations.UpTo(t.Context(), database.url, 1); !errors.Is(err, migrations.ErrForwardOnly) {
-		t.Fatalf("populated migration 2 cannot downgrade: %v", err)
-	}
+	t.Run("dangling pointer rejected at commit", func(t *testing.T) {
+		transaction, err := database.conn.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer transaction.Rollback(context.Background())
+		schemaExec(t, transaction, "UPDATE suites SET revision=revision+1, current_version_id='ghost'")
+		schemaRequireError(t, transaction.Commit(t.Context()), "23503", "suites_current_version_fkey")
+		var current string
+		if err := database.conn.QueryRow(t.Context(), "SELECT current_version_id FROM suites").Scan(&current); err != nil || current != "v2" {
+			t.Fatalf("rejected pointer must not persist: current=%q error=%v", current, err)
+		}
+	})
+	t.Run("pointer to a version of another Suite rejected", func(t *testing.T) {
+		mustInsert(t, database.conn, "suites", map[string]any{"suite_id": "other", "revision": 0, "current_version_id": nil})
+		mustInsert(t, database.conn, "suite_versions", map[string]any{"suite_id": "other", "version_id": "foreign"})
+		transaction, err := database.conn.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer transaction.Rollback(context.Background())
+		schemaExec(t, transaction, "UPDATE suites SET revision=revision+1, current_version_id='foreign' WHERE suite_id='suite'")
+		schemaRequireError(t, transaction.Commit(t.Context()), "23503", "suites_current_version_fkey")
+	})
 }
 
-func seedSchemaHistory(t *testing.T, connection *pgx.Conn) {
-	t.Helper()
-	transaction, err := connection.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer transaction.Rollback(context.Background())
-	schemaExec(t, transaction, "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','suite',0,'{}'),('project','maximum',18446744073709551615,'{}')")
-	schemaExec(t, transaction, "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('project','suite','version',$1,'{}')", schemaDigest)
-	schemaExec(t, transaction, "INSERT INTO operation_receipts(operation_id,project_id,suite_id,kind,receipt_payload) VALUES ('promotion','project','suite',2,'{}'),('consent','project','suite',4,'{}')")
-	schemaExec(t, transaction, "INSERT INTO consent_sources(source_command_id,project_id,suite_id,operation_id) VALUES ('source','project','suite','consent')")
-	schemaExec(t, transaction, "INSERT INTO promotions(operation_id,project_id,suite_id,operation_kind,version_id,proposal_id,proposal_revision_id,carrier_id,source_revision,target_id,recorded_at,promotion_payload) VALUES ('promotion','project','suite',2,'version','proposal','revision','carrier','source','target',now(),'{}')")
-	schemaExec(t, transaction, "INSERT INTO audit_events(operation_id,project_id,suite_id,event_kind,event_payload) VALUES ('promotion','project','suite',2,'{}'),('consent','project','suite',4,'{}')")
-	schemaExec(t, transaction, "INSERT INTO publication_intents(operation_id,project_id,suite_id,publication_payload) VALUES ('promotion','project','suite','{}')")
-	schemaExec(t, transaction, "INSERT INTO consent_acknowledgments(operation_id,project_id,suite_id,acknowledgment_payload) VALUES ('consent','project','suite','{}')")
-	schemaExec(t, transaction, "UPDATE suites SET current_version_id='version',authority_revision=authority_revision+1 WHERE suite_id='suite'")
-	if err := transaction.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestPostgresGeneratedCAS(t *testing.T) {
+// TestGovernanceConstraints runs each case in a rolled-back transaction over
+// the seeded history plus a second Suite, version, revision and proposal.
+func TestGovernanceConstraints(t *testing.T) {
 	database := newSchemaDatabase(t)
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	schemaExec(t, database.conn, "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','suite',0,'{}')")
-	queries := dbgen.New(database.conn)
-	arguments := dbgen.CASAuthorityParams{ProjectID: "project", SuiteID: "suite", ExpectedRevision: "0", NewRevision: "1", GovernancePayload: []byte(`{"next":true}`)}
-	rows, err := queries.CASAuthority(t.Context(), arguments)
-	if err != nil || rows != 1 {
-		t.Fatalf("exact nullable-baseline CAS changed %d rows, error %v; want one", rows, err)
-	}
-	rows, err = queries.CASAuthority(t.Context(), arguments)
-	if err != nil || rows != 0 {
-		t.Fatalf("stale revision CAS changed %d rows, error %v; want zero", rows, err)
-	}
-	arguments.ExpectedRevision = "1"
-	arguments.NewRevision = "2"
-	arguments.ExpectedCurrent = pgtype.Text{String: "wrong", Valid: true}
-	rows, err = queries.CASAuthority(t.Context(), arguments)
-	if err != nil || rows != 0 {
-		t.Fatalf("wrong canonical CAS changed %d rows, error %v; want zero", rows, err)
-	}
-	var revision, payload string
-	if err := database.conn.QueryRow(t.Context(), "SELECT authority_revision::text,governance_payload::text FROM suites WHERE project_id='project' AND suite_id='suite'").Scan(&revision, &payload); err != nil || revision != "1" || payload != `{"next": true}` {
-		t.Fatalf("CAS authority result revision=%q payload=%q error=%v", revision, payload, err)
-	}
-	arguments.ExpectedCurrent = pgtype.Text{}
-	arguments.NewRevision = "3"
-	rows, err = queries.CASAuthority(t.Context(), arguments)
-	if rows != 0 {
-		t.Fatalf("failed CAS exposed %d committed rows", rows)
-	}
-	schemaRequireError(t, err, "23514", "suites_revision_advance")
-}
-
-func TestPostgresSchemaDeferredEffects(t *testing.T) {
-	database := newSchemaDatabase(t)
-	if err := migrations.Up(t.Context(), database.url); err != nil {
-		t.Fatal(err)
-	}
-	schemaExec(t, database.conn, "INSERT INTO suites(project_id,suite_id,authority_revision,governance_payload) VALUES ('project','suite',0,'{}'),('project','other',0,'{}')")
+	seedGovernance(t, database.conn)
 	for _, test := range []struct {
-		name, constraint              string
-		promotion, audit, publication bool
+		name, table, code, constraint string
+		row                           map[string]any
 	}{
-		{"unpromoted version cannot become canonical", "suites_current_promotion_fkey", false, false, false},
-		{"promotion requires audit", "promotions_audit_fkey", true, false, true},
-		{"promotion requires publication", "promotions_publication_fkey", true, true, false},
+		{"unknown principal kind", "policies", "23514", "policies_owner_kind_check", map[string]any{"revision_id": "bad", "owner_kind": "robot"}},
+		{"empty identifier", "policies", "23514", "", map[string]any{"revision_id": " "}},
+		{"negative revision", "suites", "23514", "suites_revision_check", map[string]any{"suite_id": "negative", "revision": -1, "current_version_id": nil}},
+		{"zero schedule generation", "suites", "23514", "suites_schedule_generation_check", map[string]any{"suite_id": "generation", "schedule_generation": 0, "current_version_id": nil}},
+		{"unknown policy", "suites", "23503", "suites_policy_fkey", map[string]any{"suite_id": "nopolicy", "policy_revision_id": "missing", "current_version_id": nil}},
+		{"invalid manifest digest", "suite_versions", "23514", "suite_versions_manifest_digest_check", map[string]any{"version_id": "bad", "manifest_digest": "sha256:ABC"}},
+		{"manifest is not an object", "suite_versions", "23514", "suite_versions_manifest_check", map[string]any{"version_id": "array", "manifest": `[]`}},
+		{"covered inputs is not an object", "proposal_revisions", "23514", "proposal_revisions_covered_inputs_check", map[string]any{"revision_id": "r9", "seq": 9, "covered_inputs": `"text"`}},
+		{"revision seq must be positive", "proposal_revisions", "23514", "proposal_revisions_seq_check", map[string]any{"revision_id": "r9", "seq": 0}},
+		{"duplicate revision seq", "proposal_revisions", "23505", "proposal_revisions_seq_key", map[string]any{"revision_id": "r9"}},
+		{"revision of unknown proposal", "proposal_revisions", "23503", "proposal_revisions_proposal_fkey", map[string]any{"proposal_id": "missing", "revision_id": "r9", "seq": 9}},
+		{"unknown integrity outcome", "assessments", "23514", "assessments_outcome_check", map[string]any{"source": "sha-2", "outcome": "green"}},
+		{"evidence without outcome", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-2", "outcome": nil}},
+		{"outcome without evidence", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-3", "evidence_emitter": nil, "evidence_source": nil, "evidence_revision_id": nil}},
+		{"evidence without revision", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-4", "evidence_revision_id": nil}},
+		{"revision without evidence", "assessments", "23514", "assessments_evidence_check", map[string]any{"source": "sha-5", "evidence_emitter": nil, "evidence_source": nil, "outcome": nil}},
+		{"evidence of an unknown revision", "assessments", "23503", "assessments_evidence_revision_fkey", map[string]any{"source": "sha-6", "evidence_revision_id": "missing"}},
+		{"unknown schedule state", "schedule_entries", "23514", "schedule_entries_state_check", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "position": 2, "state": "paused"}},
+		{"second active entry", "schedule_entries", "23505", "schedule_entries_one_active", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "position": 2}},
+		{"duplicate carrier", "schedule_entries", "23505", "schedule_entries_carrier_key", map[string]any{"proposal_id": "p2", "position": 2, "state": "waiting"}},
+		{"duplicate position", "schedule_entries", "23505", "schedule_entries_position_key", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "state": "waiting"}},
+		{"unknown consent action", "consent_results", "23514", "consent_results_action_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "action": "veto"}},
+		{"unknown consent outcome", "consent_results", "23514", "consent_results_outcome_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "outcome": "maybe"}},
+		{"unknown consent reason", "consent_results", "23514", "consent_results_reason_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "outcome": "rejected", "reason": "command_conflict"}},
+		{"rejection needs a reason", "consent_results", "23514", "consent_results_reason_outcome_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "outcome": "rejected"}},
+		{"reason requires rejection", "consent_results", "23514", "consent_results_reason_outcome_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "reason": "unauthorized"}},
+		{"unknown actor kind", "consent_results", "23514", "consent_results_actor_kind_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "actor_kind": "robot"}},
+		{"command order must be positive", "consent_results", "23514", "consent_results_command_order_check", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "command_order": 0}},
+		{"global source command id", "consent_results", "23505", "consent_results_pkey", map[string]any{"operation_id": "op-2"}},
+		{"unique result operation id", "consent_results", "23505", "consent_results_operation_key", map[string]any{"source_command_id": "src-2"}},
+		{"result for unknown proposal", "consent_results", "23503", "consent_results_proposal_fkey", map[string]any{"source_command_id": "src-2", "operation_id": "op-2", "proposal_id": "missing"}},
+		{"unknown operation kind", "operations", "23514", "operations_kind_check", map[string]any{"operation_id": "op-2", "kind": "merge", "source_command_id": nil}},
+		{"consent operation needs a source command", "operations", "23514", "operations_source_check", map[string]any{"operation_id": "op-2", "source_command_id": nil}},
+		{"promotion operation has no source command", "operations", "23514", "operations_source_check", map[string]any{"operation_id": "op-2", "kind": "promote"}},
+		{"receipt is not an object", "operations", "23514", "operations_receipt_check", map[string]any{"operation_id": "op-2", "receipt": `[]`}},
+		{"global operation id in another Suite", "operations", "23505", "operations_pkey", map[string]any{"suite_id": "other", "source_command_id": nil, "kind": "promote"}},
+		{"unknown source command", "operations", "23503", "operations_source_fkey", map[string]any{"operation_id": "op-2", "source_command_id": "missing"}},
+		{"source command in another Suite", "operations", "23503", "operations_source_fkey", map[string]any{"operation_id": "op-2", "suite_id": "other"}},
+		{"duplicate promoted version", "promotions", "23505", "promotions_pkey", map[string]any{"operation_id": "promo-2", "revision_id": "r2"}},
+		{"duplicate promoted reference", "promotions", "23505", "promotions_reference_key", map[string]any{"operation_id": "promo-2", "version_id": "v2"}},
+		{"duplicate promotion operation", "promotions", "23505", "promotions_operation_key", map[string]any{"version_id": "v2", "revision_id": "r2"}},
+		{"promotion of unknown version", "promotions", "23503", "promotions_version_fkey", map[string]any{"operation_id": "promo-2", "version_id": "missing", "revision_id": "r2"}},
+		{"promotion of unknown revision", "promotions", "23503", "promotions_revision_fkey", map[string]any{"operation_id": "promo-2", "version_id": "v2", "revision_id": "missing"}},
+		{"promotion corrects unknown version", "promotions", "23503", "promotions_corrects_fkey", map[string]any{"operation_id": "promo-2", "version_id": "v2", "revision_id": "r2", "corrects_version_id": "missing"}},
+		{"promotion corrects itself", "promotions", "23514", "promotions_corrects_check", map[string]any{"operation_id": "promo-2", "version_id": "v2", "revision_id": "r2", "corrects_version_id": "v2"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			transaction, err := database.conn.Begin(t.Context())
@@ -263,118 +375,35 @@ func TestPostgresSchemaDeferredEffects(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer transaction.Rollback(context.Background())
-			schemaExec(t, transaction, "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('project','suite','staged',$1,'{}')", schemaDigest)
-			if test.promotion {
-				schemaExec(t, transaction, "INSERT INTO operation_receipts(operation_id,project_id,suite_id,kind,receipt_payload) VALUES ('staged','project','suite',2,'{}')")
-				schemaExec(t, transaction, "INSERT INTO promotions(operation_id,project_id,suite_id,operation_kind,version_id,proposal_id,proposal_revision_id,carrier_id,source_revision,target_id,recorded_at,promotion_payload) VALUES ('staged','project','suite',2,'staged','proposal','revision','carrier','source','target',now(),'{}')")
-			}
-			if test.audit {
-				schemaExec(t, transaction, "INSERT INTO audit_events(operation_id,project_id,suite_id,event_kind,event_payload) VALUES ('staged','project','suite',2,'{}')")
-			}
-			if test.publication {
-				schemaExec(t, transaction, "INSERT INTO publication_intents(operation_id,project_id,suite_id,publication_payload) VALUES ('staged','project','suite','{}')")
-			}
-			schemaExec(t, transaction, "UPDATE suites SET current_version_id='staged',authority_revision=1 WHERE suite_id='suite'")
-			schemaRequireError(t, transaction.Commit(t.Context()), "23503", test.constraint)
-			var versions, operations, promotions int
-			var revision string
-			if err := database.conn.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM suite_versions),(SELECT count(*) FROM operation_receipts),(SELECT count(*) FROM promotions),authority_revision::text FROM suites WHERE suite_id='suite'").Scan(&versions, &operations, &promotions, &revision); err != nil || versions != 0 || operations != 0 || promotions != 0 || revision != "0" {
-				t.Fatalf("deferred failure left partial effects: versions=%d operations=%d promotions=%d revision=%q error=%v", versions, operations, promotions, revision, err)
-			}
+			mustInsert(t, transaction, "suites", map[string]any{"suite_id": "other", "revision": 0, "current_version_id": nil})
+			mustInsert(t, transaction, "suite_versions", map[string]any{"version_id": "v2"})
+			mustInsert(t, transaction, "proposals", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2"})
+			mustInsert(t, transaction, "proposal_revisions", map[string]any{"revision_id": "r2", "seq": 2})
+			schemaRequireError(t, insertRow(t.Context(), transaction, test.table, test.row), test.code, test.constraint)
 		})
 	}
-	schemaExec(t, database.conn, "INSERT INTO operation_receipts(operation_id,project_id,suite_id,kind,receipt_payload) VALUES ('promotion-kind','project','suite',1,'{}')")
-	_, err := database.conn.Exec(t.Context(), "INSERT INTO consent_sources(source_command_id,project_id,suite_id,operation_id) VALUES ('wrong-kind','project','suite','promotion-kind')")
-	schemaRequireError(t, err, "23503", "consent_sources_operation_fkey")
-	_, err = database.conn.Exec(t.Context(), "INSERT INTO audit_events(operation_id,project_id,suite_id,event_kind,event_payload) VALUES ('promotion-kind','project','suite',4,'{}')")
-	schemaRequireError(t, err, "23503", "audit_events_operation_fkey")
-	_, err = database.conn.Exec(t.Context(), "INSERT INTO consent_acknowledgments(operation_id,project_id,suite_id,acknowledgment_payload) VALUES ('promotion-kind','project','suite','{}')")
-	schemaRequireError(t, err, "23503", "consent_acknowledgments_operation_fkey")
-	transaction, err := database.conn.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer transaction.Rollback(context.Background())
-	schemaExec(t, transaction, "INSERT INTO suite_versions(project_id,suite_id,version_id,manifest_digest,version_payload) VALUES ('project','other','foreign',$1,'{}'),('project','suite','local',$1,'{}')", schemaDigest)
-	_, err = transaction.Exec(t.Context(), "INSERT INTO promotions(operation_id,project_id,suite_id,operation_kind,version_id,proposal_id,proposal_revision_id,expected_version_id,carrier_id,source_revision,target_id,recorded_at,promotion_payload) VALUES ('promotion-kind','project','suite',1,'local','proposal','revision','foreign','carrier','source','target',now(),'{}')")
-	schemaRequireError(t, err, "23503", "promotions_expected_version_fkey")
 }
 
-func TestPostgresGeneratedRoundTrip(t *testing.T) {
+func TestGovernanceMissingEvidenceIsStoredAsNull(t *testing.T) {
 	database := newSchemaDatabase(t)
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	queries := dbgen.New(database.conn)
-	if err := queries.InsertInitialAuthority(t.Context(), dbgen.InsertInitialAuthorityParams{ProjectID: "project", SuiteID: "suite", AuthorityRevision: "7", GovernancePayload: []byte(`{"state":1}`)}); err != nil {
+	seedGovernance(t, database.conn)
+	mustInsert(t, database.conn, "assessments", map[string]any{"source": "sha-missing", "evidence_emitter": nil, "evidence_source": nil, "evidence_revision_id": nil, "outcome": nil})
+}
+
+func TestGovernanceEvidenceMayCiteAnotherRevisionOfTheProposal(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	authority, err := queries.GetAuthority(t.Context(), dbgen.GetAuthorityParams{ProjectID: "project", SuiteID: "suite"})
-	if err != nil || authority.AuthorityRevision != "7" || authority.CurrentVersionID.Valid {
-		t.Fatalf("generated authority round trip: %+v error=%v", authority, err)
-	}
-	transaction, err := database.conn.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer transaction.Rollback(context.Background())
-	queries = queries.WithTx(transaction)
-	locked, err := queries.LockAuthority(t.Context(), dbgen.LockAuthorityParams{ProjectID: "project", SuiteID: "suite"})
-	if err != nil || locked.AuthorityRevision != "7" {
-		t.Fatalf("generated locked authority: %+v error=%v", locked, err)
-	}
-	if err := queries.InsertVersion(t.Context(), dbgen.InsertVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "version", ManifestDigest: schemaDigest, VersionPayload: []byte(`{"version":1}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := queries.InsertOperation(t.Context(), dbgen.InsertOperationParams{OperationID: "promotion", ProjectID: "project", SuiteID: "suite", Kind: 2, ReceiptPayload: []byte(`{"promotion":1}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := queries.InsertOperation(t.Context(), dbgen.InsertOperationParams{OperationID: "consent", ProjectID: "project", SuiteID: "suite", Kind: 4, ReceiptPayload: []byte(`{"consent":1}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := queries.InsertConsentSource(t.Context(), dbgen.InsertConsentSourceParams{SourceCommandID: "source", ProjectID: "project", SuiteID: "suite", OperationID: "consent"}); err != nil {
-		t.Fatal(err)
-	}
-	recorded := time.Date(2026, 10, 2, 12, 0, 0, 123000000, time.UTC)
-	if err := queries.InsertPromotion(t.Context(), dbgen.InsertPromotionParams{OperationID: "promotion", ProjectID: "project", SuiteID: "suite", OperationKind: 2, VersionID: "version", ProposalID: "proposal", ProposalRevisionID: "revision", CarrierID: "carrier", SourceRevision: "source", TargetID: "target", RecordedAt: pgtype.Timestamptz{Time: recorded, Valid: true}, PromotionPayload: []byte(`{"record":1}`)}); err != nil {
-		t.Fatal(err)
-	}
-	for _, value := range []struct {
-		id   string
-		kind int16
-	}{{"promotion", 2}, {"consent", 4}} {
-		if err := queries.InsertAudit(t.Context(), dbgen.InsertAuditParams{OperationID: value.id, ProjectID: "project", SuiteID: "suite", EventKind: value.kind, EventPayload: []byte(`{"audit":1}`)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := queries.InsertPublication(t.Context(), dbgen.InsertPublicationParams{OperationID: "promotion", ProjectID: "project", SuiteID: "suite", PublicationPayload: []byte(`{"publication":1}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := queries.InsertAcknowledgment(t.Context(), dbgen.InsertAcknowledgmentParams{OperationID: "consent", ProjectID: "project", SuiteID: "suite", AcknowledgmentPayload: []byte(`{"ack":1}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if rows, err := queries.CASAuthority(t.Context(), dbgen.CASAuthorityParams{ProjectID: "project", SuiteID: "suite", ExpectedRevision: "7", NewRevision: "8", NewCurrent: pgtype.Text{String: "version", Valid: true}, GovernancePayload: []byte(`{"state":2}`)}); err != nil || rows != 1 {
-		t.Fatalf("generated promotion CAS rows=%d error=%v", rows, err)
-	}
-	if err := transaction.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	queries = dbgen.New(database.conn)
-	version, err := queries.GetVersion(t.Context(), dbgen.GetVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "version"})
-	if err != nil || version.ManifestDigest != schemaDigest || string(version.VersionPayload) != `{"version": 1}` {
-		t.Fatalf("version round trip: %+v error=%v", version, err)
-	}
-	operation, err := queries.FindOperation(t.Context(), "consent")
-	if err != nil || operation.Kind != 4 || operation.ProjectID != "project" {
-		t.Fatalf("operation round trip: %+v error=%v", operation, err)
-	}
-	source, err := queries.FindConsentSource(t.Context(), "source")
-	if err != nil || source.OperationID != operation.OperationID || string(source.ReceiptPayload) != string(operation.ReceiptPayload) {
-		t.Fatalf("source round trip: %+v error=%v", source, err)
-	}
-	promotion, err := queries.FindPromotionByReference(t.Context(), dbgen.FindPromotionByReferenceParams{ProjectID: "project", SuiteID: "suite", ProposalID: "proposal", ProposalRevisionID: "revision"})
-	if err != nil || promotion.VersionID != "version" || !promotion.RecordedAt.Time.Equal(recorded) {
-		t.Fatalf("promotion round trip: %+v error=%v", promotion, err)
+	seedGovernance(t, database.conn)
+	mustInsert(t, database.conn, "proposal_revisions", map[string]any{"revision_id": "r2", "seq": 2})
+	mustInsert(t, database.conn, "assessments", map[string]any{"revision_id": "r2", "source": "sha-2", "evidence_source": "sha-1", "evidence_revision_id": "r1"})
+	var cited string
+	if err := database.conn.QueryRow(t.Context(), "SELECT evidence_revision_id FROM assessments WHERE revision_id = 'r2'").Scan(&cited); err != nil || cited != "r1" {
+		t.Fatalf("stored evidence revision = %q, error %v; want r1", cited, err)
 	}
 }
 

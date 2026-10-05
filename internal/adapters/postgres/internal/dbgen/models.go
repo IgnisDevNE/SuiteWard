@@ -8,68 +8,104 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type AuditEvent struct {
-	OperationID  string
-	ProjectID    string
-	SuiteID      string
-	EventKind    int16
-	EventPayload []byte
+type Assessment struct {
+	ProjectID          string
+	SuiteID            string
+	ProposalID         string
+	RevisionID         string
+	Source             string
+	EvidenceEmitter    pgtype.Text
+	EvidenceSource     pgtype.Text
+	EvidenceRevisionID pgtype.Text
+	Outcome            pgtype.Text
 }
 
-type ConsentAcknowledgment struct {
-	OperationID           string
-	ProjectID             string
-	SuiteID               string
-	Kind                  int16
-	AcknowledgmentPayload []byte
-}
-
-type ConsentSource struct {
+type ConsentResult struct {
 	SourceCommandID string
+	OperationID     string
 	ProjectID       string
 	SuiteID         string
-	OperationID     string
-	Kind            int16
+	ProposalID      string
+	RevisionID      string
+	ActorID         string
+	ActorKind       string
+	CarrierID       string
+	Action          string
+	CommandOrder    int64
+	Outcome         string
+	Reason          string
+	Seq             int64
 }
 
-type OperationReceipt struct {
-	OperationID    string
-	ProjectID      string
-	SuiteID        string
-	Kind           int16
-	ReceiptPayload []byte
+type Operation struct {
+	OperationID     string
+	ProjectID       string
+	SuiteID         string
+	Kind            string
+	SourceCommandID pgtype.Text
+	Receipt         []byte
+}
+
+type Policy struct {
+	ProjectID  string
+	RevisionID string
+	OwnerID    string
+	OwnerKind  string
 }
 
 type Promotion struct {
-	OperationID        string
-	ProjectID          string
-	SuiteID            string
-	OperationKind      int16
-	VersionID          string
-	ProposalID         string
-	ProposalRevisionID string
-	ExpectedVersionID  pgtype.Text
-	CorrectsVersionID  pgtype.Text
-	CarrierID          string
-	SourceRevision     string
-	TargetID           string
-	RecordedAt         pgtype.Timestamptz
-	PromotionPayload   []byte
+	OperationID       string
+	ProjectID         string
+	SuiteID           string
+	VersionID         string
+	ProposalID        string
+	RevisionID        string
+	CarrierID         string
+	SourceRevision    string
+	TargetID          string
+	RecordedAt        pgtype.Timestamptz
+	CorrectsVersionID pgtype.Text
 }
 
-type PublicationIntent struct {
-	OperationID        string
-	ProjectID          string
-	SuiteID            string
-	PublicationPayload []byte
+type Proposal struct {
+	ProjectID  string
+	SuiteID    string
+	ProposalID string
+	CarrierID  string
+}
+
+type ProposalRevision struct {
+	ProjectID         string
+	SuiteID           string
+	ProposalID        string
+	RevisionID        string
+	Seq               int64
+	Origin            string
+	CarrierID         string
+	ManifestDigest    string
+	ScopeDigest       string
+	CoveredInputs     []byte
+	ExpectedVersionID pgtype.Text
+	PolicyRevisionID  string
+}
+
+type ScheduleEntry struct {
+	ProjectID  string
+	SuiteID    string
+	ProposalID string
+	CarrierID  string
+	Position   int64
+	State      string
 }
 
 type Suite struct {
-	ProjectID         string
-	SuiteID           string
-	CurrentVersionID  pgtype.Text
-	AuthorityRevision pgtype.Numeric
-	GovernancePayload []byte
+	ProjectID          string
+	SuiteID            string
+	Revision           int64
+	CurrentVersionID   pgtype.Text
+	TargetID           string
+	PolicyRevisionID   string
+	ScheduleGeneration int64
 }
 
 type SuiteVersion struct {
@@ -77,5 +113,5 @@ type SuiteVersion struct {
 	SuiteID        string
 	VersionID      string
 	ManifestDigest string
-	VersionPayload []byte
+	Manifest       []byte
 }

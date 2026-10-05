@@ -1,6 +1,6 @@
 # Local development
 
-SuiteWard develops on Windows and verifies portable behavior on Windows and Linux. This bootstrap supports x64 Windows/Linux with PowerShell 7.2 or newer. It prepares development infrastructure; application implementation starts separately with M0.
+SuiteWard develops on Windows and verifies portable behavior on Windows and Linux. This bootstrap supports x64 Windows/Linux with PowerShell 7.2 or newer. Implementation is underway: M0, M1.01 and R1 delivered the domain and application packages and the PostgreSQL and filesystem adapters. This document covers the development infrastructure they run on.
 
 ## Start here
 
@@ -115,13 +115,13 @@ The JWT and token are never written to stdout, stderr, files, or logs, and error
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.
 
-M0 introduces domain/application packages for artifact identity, authority and immutable canonical snapshots. `./scripts/dev.ps1 tools` and `./scripts/dev.ps1 check` still support service-free development. M1.01 adds the real PostgreSQL and filesystem adapters; run `./scripts/dev.ps1 persistence` before claiming their integration succeeds. The wrapper loads the ignored `database-url.txt` only into the verification process and restores any caller value even after failure. Each database fixture owns a unique schema and cleans only that schema, preserving other tests/checkouts.
+Domain and application tests need no services, so `./scripts/dev.ps1 tools` and `./scripts/dev.ps1 check` support service-free development. The PostgreSQL and filesystem adapters need a database; run `./scripts/dev.ps1 persistence` before claiming their integration succeeds. The wrapper loads the ignored `database-url.txt` only into the verification process and restores any caller value even after failure. Each database fixture owns a unique schema and cleans only that schema, preserving other tests/checkouts.
 
 `scripts/check-persistence.ps1 -Mode Generated` installs/checks the pinned local sqlc executable, regenerates into a fresh owned staging directory and compares complete, case-sensitive filenames and SHA-256 contents with the versioned output. It leaves tracked files untouched and rejects stale, missing, added or orphan output and generator failures. After intentional SQL changes, regenerate with `./scripts/dev.ps1 sqlc generate`, review and commit the output, then verify freshness. Fresh staging is necessary because in-place regeneration could leave obsolete files undetected.
 
 Integration tests use the `integration` build tag. `scripts/check-go.ps1 -Integration` requires an explicitly supplied `SUITEWARD_TEST_DATABASE_URL`; `-Coverage -Integration` retains race detection and produces the real combined coverage report. Linux CI provides an isolated PostgreSQL service. Native Windows integration uses each worktree's Podman database. This phase does not introduce a production CLI, GitHub installation flow, execution backend or restore command.
 
-This preparation was verified on the Windows host and in an isolated Ubuntu 24.04 container: fresh pinned-tool installation, repeat installation, development checks, 15 CI checks, documentation links, and actionlint passed. Two Windows checkouts ran independent PostgreSQL clusters on different ports; stopping/restarting one preserved the other's state. Wrong database credentials were rejected, a failed tool command restored the caller's environment, and conflicting ambient Go settings did not select a global SDK. These local runs do not substitute for the next PR's hosted CI run.
+The bootstrap was verified on the Windows host and in an isolated Ubuntu 24.04 container: fresh and repeated pinned-tool installation, development checks, documentation links, and actionlint. Two Windows checkouts ran independent PostgreSQL clusters on different ports, and stopping or restarting one preserved the other's state. These local runs do not substitute for hosted CI; the current checks are listed in [CI and coverage](ci-and-coverage.md).
 
 ## References
 

@@ -18,14 +18,14 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 | Job | Behavior |
 | --- | --- |
 | Inspect repository | Compare tracked files with the base revision to select foundation or Go verification. Removing an existing Go module or source cannot silently disable the Go checks. |
-| Foundation, Windows and Linux | Parse all PowerShell scripts; validate the workflow with actionlint and documentation links; run the tests for CI classification and gate behavior, coverage argument handling, Go, persistence, and development tooling safety and isolation. |
+| Foundation, Windows and Linux | Parse all PowerShell scripts; validate the workflow with actionlint and documentation links; run the tests for CI classification and gate behavior, coverage argument handling, Go, persistence, and development tooling safety and isolation, and the bot-token script. |
 | Go, Windows and Linux | Verify formatting, analyze, build and run portable tests; verify fresh sqlc output. A module without real packages fails. |
 | Race, security, and coverage | Test the exact event head against an isolated PostgreSQL service with integration tests, verify fresh sqlc output, scan vulnerabilities, preserve the coverage report, and upload it to Codecov. |
 | CI / Gate | Always evaluate all prerequisite results. Accept skipped Go jobs only when the successful classifier established foundation-only applicability. Failures, cancellations, missing classification, and unexpected skips fail the gate. |
 
 There is no placeholder application package and no artificial coverage upload. Once Go code exists, even a documentation-only PR runs the Go jobs so the required coverage contexts remain available. The PowerShell tests verify CI infrastructure and are not counted as application coverage.
 
-Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. The [local bootstrap](local-development.md) installs the same Go and scanner versions inside each checkout and reuses `scripts/check-go.ps1`.
+Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. The [local bootstrap](local-development.md) installs the same Go and scanner versions in the shared per-user tool cache (not inside each checkout) and reuses `scripts/check-go.ps1`.
 
 ## Required contexts
 
@@ -45,7 +45,7 @@ Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Serv
 | `patch/default` | Require 90% coverage of lines added or changed by the PR, zero tolerance, failing when the report is missing. Not informational. |
 | `project/default` | Compare whole-project coverage with the PR base (`target: auto`) with a 1% threshold. Informational only: it reports a trend and gates nothing. |
 
-The dedicated sqlc output directory, `internal/adapters/postgres/internal/dbgen/`, is excluded from the coverage scope. Go statement coverage and Codecov line coverage are different metrics.
+The dedicated sqlc output directory, `internal/adapters/postgres/internal/dbgen/`, is excluded from the coverage scope, as is `internal/application/governance/governancetest/**`, which is test support code. Go statement coverage and Codecov line coverage are different metrics.
 
 Uploads from repository branches use GitHub OIDC, with `id-token: write` limited to the coverage job; the pinned Codecov Action handles public fork PRs tokenlessly. The uploader reads only the named `coverage.out`; a missing or empty report or an upload error fails the job. Workflows do not use `pull_request_target` to run candidate code and do not retain checkout credentials. Codecov waits for CI before sending final statuses.
 

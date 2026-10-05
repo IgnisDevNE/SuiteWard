@@ -205,7 +205,7 @@ exit (Invoke-WithBotToken -Root $RepoRoot -Command @('pwsh', '-NoProfile', '-Fil
     $emptyRoot = Join-Path $testRoot 'unconfigured'
     New-Item -ItemType Directory -Path $emptyRoot | Out-Null
     $scriptPath = Join-Path $PSScriptRoot 'bot-token.ps1'
-    $refusal = @(& pwsh -NoProfile -Command "& '$scriptPath' -Root '$emptyRoot' -- gh --version" 2>&1 | ForEach-Object { "$_" }) -join "`n"
+    $refusal = @(& pwsh -NoProfile -Command "& '$scriptPath' -Root '$emptyRoot' -- pwsh --version" 2>&1 | ForEach-Object { "$_" }) -join "`n"
     if ($LASTEXITCODE -eq 0 -or $refusal -notmatch 'configuration not found') { throw "bot-token.ps1 -- <command> did not refuse without configuration: $refusal" }
     $refusal = @(& pwsh -NoProfile -Command "& '$scriptPath' -Root '$emptyRoot'" 2>&1 | ForEach-Object { "$_" }) -join "`n"
     if ($LASTEXITCODE -eq 0 -or $refusal -notmatch 'No command given') { throw "bot-token.ps1 without a command did not refuse: $refusal" }

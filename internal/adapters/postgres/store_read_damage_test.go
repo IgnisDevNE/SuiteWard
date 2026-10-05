@@ -53,7 +53,9 @@ func dropConstraint(table, name string) string {
 	return "ALTER TABLE " + table + " DROP CONSTRAINT " + name
 }
 
-func renameTable(table string) string { return "ALTER TABLE " + table + " RENAME TO " + table + "_gone" }
+func renameTable(table string) string {
+	return "ALTER TABLE " + table + " RENAME TO " + table + "_gone"
+}
 
 func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 	suite := func(ctx context.Context, tx governance.Tx) error { _, err := tx.Suite(ctx); return err }
@@ -61,7 +63,10 @@ func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 		return func(ctx context.Context, tx governance.Tx) error { _, _, err := tx.Proposal(ctx, id); return err }
 	}
 	assessment := func(reference contract.ProposalReference, source contract.SourceRevision) func(context.Context, governance.Tx) error {
-		return func(ctx context.Context, tx governance.Tx) error { _, _, err := tx.Assessment(ctx, reference, source); return err }
+		return func(ctx context.Context, tx governance.Tx) error {
+			_, _, err := tx.Assessment(ctx, reference, source)
+			return err
+		}
 	}
 	version := func(id contract.SuiteVersionID) func(context.Context, governance.Tx) error {
 		return func(ctx context.Context, tx governance.Tx) error { _, _, err := tx.Version(ctx, id); return err }
@@ -70,7 +75,10 @@ func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 		_, _, err := tx.PromotionFor(ctx, contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "p0", RevisionID: "revision-1"})
 		return err
 	}
-	receipt := func(ctx context.Context, tx governance.Tx) error { _, _, err := tx.Receipt(ctx, "approve-p1"); return err }
+	receipt := func(ctx context.Context, tx governance.Tx) error {
+		_, _, err := tx.Receipt(ctx, "approve-p1")
+		return err
+	}
 	receiptBySource := func(ctx context.Context, tx governance.Tx) error {
 		_, _, err := tx.ReceiptBySource(ctx, "comment-p1")
 		return err

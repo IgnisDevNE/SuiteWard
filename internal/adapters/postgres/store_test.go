@@ -839,8 +839,8 @@ func TestEveryStatementOfAUnitOfWorkRollsBackTogether(t *testing.T) {
 		err := w.store.Do(t.Context(), fxProject, fxSuite, func(ctx context.Context, tx governance.Tx) error {
 			return tx.RecordPromotion(ctx, write)
 		})
-		if err == nil || w.revision() != revision || w.count("suite_versions") != versions || w.count("operations") != operations || w.currentVersion() != "v0" {
-			t.Fatalf("Do = %v at revision %d, %d versions, %d operations; want a failure with no partial effect", err, w.revision(), w.count("suite_versions"), w.count("operations"))
+		if !errors.Is(err, governance.ErrNotFound) || w.revision() != revision || w.count("suite_versions") != versions || w.count("operations") != operations || w.currentVersion() != "v0" {
+			t.Fatalf("Do = %v at revision %d, %d versions, %d operations; want ErrNotFound (unknown corrected version) with no partial effect", err, w.revision(), w.count("suite_versions"), w.count("operations"))
 		}
 	})
 }
@@ -884,6 +884,10 @@ func TestPromotionWritesRejectForeignFacts(t *testing.T) {
 	}
 	nanoseconds := one.mergedRequest("promote-ns", "v5")
 	nanoseconds.RecordedAt = fxRecordedAt.Add(7 * time.Nanosecond)
+	wrongCorrects := w.promotionWrite(one, one.mergedRequest("promote-z", "v5"), governance.OperationPromote, "")
+	wrongCorrects.Receipt.Identity.CorrectsVersionID = "v0" // the record corrects nothing
+	wrongBinding := w.promotionWrite(one, one.mergedRequest("promote-w", "v5"), governance.OperationPromote, "")
+	wrongBinding.Receipt.Identity.Binding = newCandidateFromBase(w).proposal.Current().Binding() // another proposal's binding
 	cases := []struct {
 		name  string
 		write governance.PromotionWrite
@@ -891,6 +895,8 @@ func TestPromotionWritesRejectForeignFacts(t *testing.T) {
 		{"a version of another Suite", otherSuite(w.promotionWrite(one, one.mergedRequest("promote-x", "v5"), governance.OperationPromote, ""))},
 		{"an unknown operation kind", w.promotionWrite(one, one.mergedRequest("promote-y", "v5"), governance.OperationConsent, "")},
 		{"a time PostgreSQL cannot store exactly", w.promotionWrite(one, nanoseconds, governance.OperationPromote, "")},
+		{"an identity that corrects another version than the record", wrongCorrects},
+		{"an identity bound to another proposal than the record", wrongBinding},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

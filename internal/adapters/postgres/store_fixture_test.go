@@ -106,6 +106,11 @@ func newCandidate(id string, baseline contract.SuiteVersionID, protected contrac
 }
 
 func newCandidateIn(project contract.ProjectID, suite contract.SuiteID, id string, baseline contract.SuiteVersionID, protected contract.ProtectedContract, revisions ...contract.ProposalRevisionID) candidate {
+	return newCandidateUnderPolicy(project, suite, id, baseline, protected, fxPolicy, revisions...)
+}
+
+// newCandidateUnderPolicy binds every revision to the given policy revision.
+func newCandidateUnderPolicy(project contract.ProjectID, suite contract.SuiteID, id string, baseline contract.SuiteVersionID, protected contract.ProtectedContract, policy contract.PolicyRevisionID, revisions ...contract.ProposalRevisionID) candidate {
 	if len(revisions) == 0 {
 		revisions = []contract.ProposalRevisionID{"revision-1"}
 	}
@@ -114,7 +119,7 @@ func newCandidateIn(project contract.ProjectID, suite contract.SuiteID, id strin
 	for _, revisionID := range revisions {
 		reference := contract.ProposalReference{ProjectID: project, SuiteID: suite, ProposalID: contract.ProposalID(id), RevisionID: revisionID}
 		binding := must(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: baseline,
-			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: fxPolicy, CoveredInputs: protected.CoveredInputs()}))
+			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: policy, CoveredInputs: protected.CoveredInputs()}))
 		revision := must(contract.NewProposalRevision(binding, c.origin, c.carrier))
 		if c.proposal.IsZero() {
 			c.proposal = must(contract.NewProposal(revision))
@@ -171,6 +176,14 @@ func (w *pgWorld) emptySeed(project contract.ProjectID, suite contract.SuiteID, 
 // the already integrated candidate base; the other candidates follow it.
 func (w *pgWorld) seedWithBaseline(base candidate, candidates ...candidate) {
 	w.t.Helper()
+	if err := w.store.Seed(w.t.Context(), w.baselineSeed(base, candidates...)); err != nil {
+		w.t.Fatalf("seed with baseline: %v", err)
+	}
+}
+
+// baselineSeed is the seed seedWithBaseline writes, for tests that alter it.
+func (w *pgWorld) baselineSeed(base candidate, candidates ...candidate) governance.Seed {
+	w.t.Helper()
 	version := must(contract.NewSuiteVersion(fxProject, fxSuite, "v0", base.protected.Manifest()))
 	record := must(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: "seed-promote", VersionID: "v0", Binding: base.proposal.Current().Binding(),
 		Carrier: base.carrier, Source: base.merged, Target: fxTarget, RecordedAt: fxRecordedAt}))
@@ -185,9 +198,7 @@ func (w *pgWorld) seedWithBaseline(base candidate, candidates ...candidate) {
 		seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: c.proposal, Assessments: c.assessments})
 	}
 	seed.Suite = governance.SuiteState{Canonical: canonical, Policy: must(contract.NewPolicy(fxProject, fxPolicy, w.owner)), Target: fxTarget, Schedule: schedule}
-	if err := w.store.Seed(w.t.Context(), seed); err != nil {
-		w.t.Fatalf("seed with baseline: %v", err)
-	}
+	return seed
 }
 
 func (w *pgWorld) command(c candidate, revision contract.ProposalRevisionID, operation, source string, action contract.ConsentAction, order contract.CommandOrder) contract.Command {

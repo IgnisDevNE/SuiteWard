@@ -36,6 +36,7 @@ type artifactIO struct {
 	lstat    func(*os.Root, string) (fs.FileInfo, error)
 	link     func(*os.Root, string, string) error
 	remove   func(*os.Root, string) error
+	syncDir  func(*os.Root) error
 }
 
 type artifactFile interface {
@@ -70,6 +71,7 @@ func NewStore(root string) (*Store, error) {
 			return root.OpenFile(name, flag, mode)
 		},
 		lstat: (*os.Root).Lstat, link: (*os.Root).Link, remove: (*os.Root).Remove,
+		syncDir: syncDirectory,
 	}}, nil
 }
 

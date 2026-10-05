@@ -26,6 +26,8 @@ The completed F0 baseline predates this decision. Preserve its existing verifica
 
 ## Evidence and enforcement
 
+> Superseded by the R1 amendment below: evidence records, plan declarations, and the evidence gate were removed; [docs/tdd.md](../tdd.md) now describes the simplified rule.
+
 The [TDD rule](../tdd.md) defines the plan declarations, execution-record format, and local check. Each phase records its tasks and exact changed-file ownership. Referenced RED and GREEN checkpoints remain reachable in the integration history; the final PR revision passes all applicable checks. This preserves one integration PR per phase and independent parallel worker cycles.
 
 CI validates evidence structure, task applicability, changed-file coverage, Git ancestry, and whether the final recorded GREEN covers the task's final behavioral files. It never executes arbitrary commands from evidence. The evidence gate feeds the existing required `CI / Gate`.

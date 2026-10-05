@@ -34,7 +34,7 @@ Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Serv
 | `CI / Gate` | GitHub Actions | Every applicable job above passed. |
 | `codecov/patch` | Codecov | Coverage of the executable lines added or changed by the PR meets the patch target. |
 
-Both are configured to fail when the expected report is absent. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that review; human merge authorization is an operational rule, and a green CI run is not that authorization.
+`codecov/patch` fails when its report is absent; `CI / Gate` fails when any applicable job did not succeed. The PR requirement has zero independent approving reviews, because a same-account PR author cannot provide that review; human merge authorization is an operational rule, and a green CI run is not that authorization.
 
 ## Codecov policy
 

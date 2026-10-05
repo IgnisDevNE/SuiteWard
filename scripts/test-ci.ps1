@@ -122,4 +122,9 @@ foreach($job in @($goJob,$coverageJob)) {
 }
 if(-not (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Contains("'test-persistence.ps1'")){throw 'Foundation must execute the persistence infrastructure behavior checks.'}
 $checks++
+# Branch protection requires the exact context name; the gate must aggregate every verification job.
+$gateJob=[regex]::Match($workflow,'(?ms)^  gate:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
+if(-not $gateJob.Contains('name: CI / Gate')){throw 'The gate job must keep the required context name CI / Gate.'}
+if(-not $gateJob.Contains('needs: [inspect, foundation, go, coverage]') -or -not $gateJob.Contains('if: always()')){throw 'The gate must always run and require inspect, foundation, go, and coverage.'}
+$checks++
 Write-Output "Passed $checks CI behavior checks. These verify CI infrastructure, not application coverage."

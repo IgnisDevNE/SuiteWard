@@ -16,14 +16,15 @@ import (
 // ErrForwardOnly rejects a schema downgrade.
 var ErrForwardOnly = errors.New("schema migrations are forward only")
 
-const supportedVersion int64 = 2
+// SupportedVersion is the schema version this build migrates to and expects at runtime.
+const SupportedVersion int64 = 1
 
 //go:embed *.sql
 var migrationFiles embed.FS
 
 // Up applies the complete supported schema sequence.
 func Up(ctx context.Context, databaseURL string) error {
-	return UpTo(ctx, databaseURL, supportedVersion)
+	return UpTo(ctx, databaseURL, SupportedVersion)
 }
 
 // UpTo applies migrations through a supported forward version.
@@ -31,7 +32,7 @@ func UpTo(ctx context.Context, databaseURL string, version int64) (err error) {
 	if version < 1 {
 		return ErrForwardOnly
 	}
-	if version > supportedVersion {
+	if version > SupportedVersion {
 		return fmt.Errorf("unsupported schema migration version: %d", version)
 	}
 	configuration, err := pgx.ParseConfig(databaseURL)

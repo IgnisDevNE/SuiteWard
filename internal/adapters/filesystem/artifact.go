@@ -17,6 +17,9 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
 
+// stagePrefix names unpublished temporary files inside the store root.
+const stagePrefix = ".partial-"
+
 var (
 	ErrDigestMismatch  = errors.New("artifact content does not match digest")
 	ErrCorruptArtifact = errors.New("corrupt artifact object")
@@ -36,6 +39,7 @@ type artifactIO struct {
 	lstat    func(*os.Root, string) (fs.FileInfo, error)
 	link     func(*os.Root, string, string) error
 	remove   func(*os.Root, string) error
+	syncDir  func(*os.Root) error
 }
 
 type artifactFile interface {
@@ -45,7 +49,9 @@ type artifactFile interface {
 	Close() error
 }
 
-// NewStore creates the instance-owned local volume when it is absent.
+// NewStore creates the instance-owned local volume when it is absent. Opening
+// removes every .partial-* file in the root, so exactly one store instance may
+// own a root at a time.
 func NewStore(root string) (*Store, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("blank artifact root: %w", fs.ErrInvalid)
@@ -64,12 +70,16 @@ func NewStore(root string) (*Store, error) {
 	} else if !info.IsDir() || info.Mode()&fs.ModeSymlink != 0 {
 		return nil, fmt.Errorf("artifact root must be a directory without a symlink: %w", fs.ErrInvalid)
 	}
+	if err := removeOrphanStages(abs); err != nil {
+		return nil, err
+	}
 	return &Store{root: abs, io: artifactIO{
 		openRoot: os.OpenRoot,
 		openFile: func(root *os.Root, name string, flag int, mode fs.FileMode) (artifactFile, error) {
 			return root.OpenFile(name, flag, mode)
 		},
 		lstat: (*os.Root).Lstat, link: (*os.Root).Link, remove: (*os.Root).Remove,
+		syncDir: syncDirectory,
 	}}, nil
 }
 
@@ -91,7 +101,7 @@ func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Read
 		return fmt.Errorf("open artifact root: %w", err)
 	}
 	defer root.Close()
-	stage := ".partial-" + rand.Text()
+	stage := stagePrefix + rand.Text()
 	file, err := s.io.openFile(root, stage, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("create artifact stage: %w", err)
@@ -116,11 +126,17 @@ func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Read
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.io.link(root, stage, name); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return s.Verify(ctx, digest)
+	if err := s.io.link(root, stage, name); errors.Is(err, fs.ErrExist) {
+		// A prior or concurrent writer may have linked without syncing yet, so
+		// a duplicate is durable only after the directory sync below.
+		if err := s.Verify(ctx, digest); err != nil {
+			return err
 		}
+	} else if err != nil {
 		return fmt.Errorf("publish artifact: %w", err)
+	}
+	if err := s.io.syncDir(root); err != nil {
+		return fmt.Errorf("sync artifact directory: %w", err)
 	}
 	return nil
 }
@@ -188,4 +204,32 @@ func (r contextReader) Read(p []byte) (int, error) {
 		return n, cancelled
 	}
 	return n, err
+}
+
+// removeOrphanStages deletes regular stage files that interrupted writes left
+// in the instance-owned root. Published objects, other names, and symlinks are
+// never touched.
+func removeOrphanStages(abs string) error {
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return fmt.Errorf("open artifact root: %w", err)
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return fmt.Errorf("list artifact root: %w", err)
+	}
+	entries, err := dir.ReadDir(-1)
+	if err := errors.Join(err, dir.Close()); err != nil {
+		return fmt.Errorf("list artifact root: %w", err)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), stagePrefix) || !entry.Type().IsRegular() {
+			continue
+		}
+		if err := root.Remove(entry.Name()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove orphan artifact stage: %w", err)
+		}
+	}
+	return nil
 }

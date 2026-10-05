@@ -629,7 +629,7 @@ func TestProcessConsentRecordsScopedRejections(t *testing.T) {
 	}
 }
 
-func TestProcessConsentCannotCommitStaleOrExhaustedAuthority(t *testing.T) {
+func TestProcessConsentCannotCommitStaleAuthority(t *testing.T) {
 	t.Run("policy changes after load", func(t *testing.T) {
 		f := newStoreFixture(t)
 		actual := newReferenceStore(t, f.snapshot)
@@ -651,24 +651,6 @@ func TestProcessConsentCannotCommitStaleOrExhaustedAuthority(t *testing.T) {
 		retry := processConsentForTest(t, actual, f.command)
 		if retry.Receipt.Result.Reason() != contract.ConsentReasonPolicyMismatch || retry.Receipt.PolicyRevisionID != policy.RevisionID() {
 			t.Fatal("retry silently reused stale policy")
-		}
-	})
-	t.Run("exhausted authority", func(t *testing.T) {
-		f := newStoreFixture(t)
-		suite, err := contract.NewSuite("project", "suite", "", ^contract.StateRevision(0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		canonical, err := contract.NewCanonicalSnapshot(suite, contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.snapshot.Canonical = canonical
-		store := newReferenceStore(t, f.snapshot)
-		before := store.inspect()
-		response, err := ProcessConsent(context.Background(), store, ConsentRequest{Command: f.command})
-		if !errors.Is(err, ErrAuthorityExhausted) || response != (ConsentResponse{}) || !reflect.DeepEqual(before, store.inspect()) {
-			t.Fatalf("overflow = %+v, %v", response, err)
 		}
 	})
 }

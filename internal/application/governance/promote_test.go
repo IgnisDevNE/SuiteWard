@@ -174,7 +174,7 @@ func TestPromotionRejectsNilStore(t *testing.T) {
 	for name, call := range map[string]func() (PromoteResult, error){
 		"promote": func() (PromoteResult, error) { return Promote(context.Background(), nil, f.request) },
 		"bootstrap": func() (PromoteResult, error) {
-			return Bootstrap(context.Background(), nil, BootstrapRequest{Mode: contract.FirstTestBootstrap, Promotion: f.request})
+			return Bootstrap(context.Background(), nil, BootstrapRequest{Promotion: f.request})
 		},
 		"correct": func() (PromoteResult, error) {
 			return Correct(context.Background(), nil, CorrectionRequest{Promotion: f.request, TargetVersionID: "version"})

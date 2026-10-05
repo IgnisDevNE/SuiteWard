@@ -41,7 +41,7 @@ type referenceState struct {
 	operations      map[contract.OperationID]OperationReceipt
 	sources         map[contract.SourceCommandID]OperationReceipt
 	audits          []OperationReceipt
-	publications    []contract.PublicationIntent
+	publications    []contract.PromotionRecord
 	acknowledgments []ConsentReceipt
 }
 
@@ -178,9 +178,6 @@ func (s *referenceStore) checkFence(ctx context.Context, fence AuthorityFence) e
 	if fence != (AuthorityFence{suite.ProjectID(), suite.ID(), suite.Revision()}) {
 		return ErrAuthorityConflict
 	}
-	if suite.Revision() == ^contract.StateRevision(0) {
-		return ErrAuthorityExhausted
-	}
 	return nil
 }
 
@@ -198,15 +195,15 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 	request := identity.Request
 	switch identity.Kind {
 	case OperationPromote:
-		if identity.BootstrapMode != 0 || identity.CorrectsVersionID != "" {
+		if identity.CorrectsVersionID != "" {
 			return ErrInvalidRequest
 		}
 	case OperationBootstrap:
-		if (identity.BootstrapMode != contract.ExistingBaselineBootstrap && identity.BootstrapMode != contract.FirstTestBootstrap) || identity.CorrectsVersionID != "" {
+		if identity.CorrectsVersionID != "" {
 			return ErrInvalidRequest
 		}
 	case OperationCorrect:
-		if identity.BootstrapMode != 0 || identity.CorrectsVersionID == "" {
+		if identity.CorrectsVersionID == "" {
 			return ErrInvalidRequest
 		}
 	default:
@@ -219,7 +216,7 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 		return ErrVersionConflict
 	}
 	currentID, _ := s.state.canonical.Suite().CurrentVersionID()
-	if effect.ExpectedStateRevision() != fence.Revision || effect.ExpectedCanonicalID() != currentID || effect.ExpectedSchedulingGeneration() != s.state.scheduling.Generation() {
+	if effect.ExpectedCanonicalID() != currentID {
 		return ErrAuthorityConflict
 	}
 	record := effect.Promotion()
@@ -235,7 +232,7 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 	if proposal.IsZero() || !proposal.Current().Binding().Equal(identity.Binding) {
 		return ErrInvalidRequest
 	}
-	expectedSchedule, err := s.state.scheduling.Observe(proposal, s.state.scheduling.Generation(), contract.ObservePromoted)
+	expectedSchedule, err := s.state.scheduling.Observe(proposal, contract.ObservePromoted)
 	if err != nil || !reflect.DeepEqual(expectedSchedule, write.Scheduling) {
 		return ErrInvalidRequest
 	}
@@ -269,7 +266,7 @@ func (s *referenceStore) CommitPromotion(ctx context.Context, fence AuthorityFen
 	if s.failAt == "schedule" {
 		return errReferenceFailure
 	}
-	next.publications = append(next.publications, effect.Publication())
+	next.publications = append(next.publications, effect.Promotion())
 	if s.failAt == "publication" {
 		return errReferenceFailure
 	}
@@ -461,14 +458,14 @@ func (f storeFixture) consentWrite(t *testing.T) ConsentWrite {
 func (f storeFixture) promotionWrite(t *testing.T) PromotionWrite {
 	t.Helper()
 	c := f.snapshot
-	decision, err := contract.DecidePromotion(contract.PromotionInput{Context: contract.PromotionContext{Canonical: c.Canonical, Proposed: f.proposed, Proposal: c.Proposal, Reference: f.request.Reference, Carrier: f.request.Carrier, Policy: c.Policy, Consent: c.Consent, Assessment: c.Assessment, Scheduling: c.Scheduling, ExpectedStateRevision: c.Fence.Revision, ExpectedSchedulingGeneration: c.Scheduling.Generation()}, Integration: f.request.Integration, Target: c.Target, OperationID: f.request.OperationID, NewVersionID: f.request.NewVersionID, RecordedAt: f.request.RecordedAt})
+	decision, err := contract.DecidePromotion(contract.PromotionInput{Context: contract.PromotionContext{Canonical: c.Canonical, Proposed: f.proposed, Proposal: c.Proposal, Reference: f.request.Reference, Carrier: f.request.Carrier, Policy: c.Policy, Consent: c.Consent, Assessment: c.Assessment, Scheduling: c.Scheduling}, Integration: f.request.Integration, Target: c.Target, OperationID: f.request.OperationID, NewVersionID: f.request.NewVersionID, RecordedAt: f.request.RecordedAt})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if decision.Outcome() != contract.PromotionProposed {
 		t.Fatalf("fixture not promotable: %v", decision.Reason())
 	}
-	next, err := c.Scheduling.Observe(c.Proposal, c.Scheduling.Generation(), contract.ObservePromoted)
+	next, err := c.Scheduling.Observe(c.Proposal, contract.ObservePromoted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,26 +610,6 @@ func approvedStoreFixture(t *testing.T) (storeFixture, *referenceStore) {
 }
 
 func TestReferenceStoreCommitValidation(t *testing.T) {
-	t.Run("consent overflow", func(t *testing.T) {
-		f := newStoreFixture(t)
-		suite, err := contract.NewSuite("project", "suite", "", ^contract.StateRevision(0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.snapshot.Canonical, err = contract.NewCanonicalSnapshot(suite, contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.snapshot.Fence.Revision = suite.Revision()
-		s := newReferenceStore(t, f.snapshot)
-		before := s.inspect()
-		if err := s.CommitConsent(context.Background(), f.snapshot.Fence, f.consentWrite(t)); !errors.Is(err, ErrAuthorityExhausted) {
-			t.Fatalf("overflow accepted: %v", err)
-		}
-		if !reflect.DeepEqual(before, s.inspect()) {
-			t.Fatal("overflow mutated authority")
-		}
-	})
 	for _, tc := range []struct {
 		name   string
 		mutate func(*storeFixture, *referenceStore, *PromotionWrite)
@@ -644,10 +621,6 @@ func TestReferenceStoreCommitValidation(t *testing.T) {
 		{"version collision", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
 			s.state.versions[f.request.NewVersionID] = f.snapshot.Canonical.Version()
 		}, ErrVersionConflict},
-		{"wrong effect revision", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
-			f.snapshot.Fence.Revision--
-			*w = f.promotionWrite(t)
-		}, ErrAuthorityConflict},
 		{"stale schedule", func(f *storeFixture, s *referenceStore, w *PromotionWrite) { w.Scheduling = f.snapshot.Scheduling }, ErrInvalidRequest},
 		{"wrong operation identity", func(f *storeFixture, s *referenceStore, w *PromotionWrite) {
 			w.Receipt.Identity.Request.OperationID = "other-operation"
@@ -810,7 +783,7 @@ func TestReferenceStoreOtherAuthorityWrites(t *testing.T) {
 					next.proposals[ref.ProposalID] = proposal
 					return err
 				case "waiting closure":
-					schedule, err := next.scheduling.Observe(waiting, next.scheduling.Generation(), contract.ObserveClosedUnmerged)
+					schedule, err := next.scheduling.Observe(waiting, contract.ObserveClosedUnmerged)
 					next.scheduling = schedule
 					return err
 				}
@@ -965,19 +938,14 @@ func TestReferenceStoreReceiptDiscriminators(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		kind OperationKind
-		mode contract.BootstrapMode
 	}{
-		{"promote with bootstrap metadata", OperationPromote, contract.FirstTestBootstrap},
-		{"bootstrap without mode", OperationBootstrap, 0},
-		{"bootstrap unknown mode", OperationBootstrap, 99},
-		{"correction without target", OperationCorrect, 0},
+		{"correction without target", OperationCorrect},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, s := approvedStoreFixture(t)
 			before := s.inspect()
 			write := f.promotionWrite(t)
 			write.Receipt.Identity.Kind = tc.kind
-			write.Receipt.Identity.BootstrapMode = tc.mode
 			if err := s.CommitPromotion(context.Background(), f.snapshot.Fence, write); !errors.Is(err, ErrInvalidRequest) {
 				t.Fatalf("inconsistent receipt discriminator accepted: %v", err)
 			}
@@ -986,16 +954,15 @@ func TestReferenceStoreReceiptDiscriminators(t *testing.T) {
 			}
 		})
 	}
-	t.Run("valid first-test discriminator", func(t *testing.T) {
+	t.Run("valid bootstrap discriminator", func(t *testing.T) {
 		f, s := approvedStoreFixture(t)
 		write := f.promotionWrite(t)
 		write.Receipt.Identity.Kind = OperationBootstrap
-		write.Receipt.Identity.BootstrapMode = contract.FirstTestBootstrap
 		if err := s.CommitPromotion(context.Background(), f.snapshot.Fence, write); err != nil {
 			t.Fatal(err)
 		}
-		if receipt := s.inspect().operations[f.request.OperationID]; receipt.Kind != OperationBootstrap || receipt.Promotion.Identity.BootstrapMode != contract.FirstTestBootstrap {
-			t.Fatal("committed receipt lost operation mode")
+		if receipt := s.inspect().operations[f.request.OperationID]; receipt.Kind != OperationBootstrap {
+			t.Fatal("committed receipt lost operation kind")
 		}
 	})
 }

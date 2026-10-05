@@ -2,6 +2,7 @@ package contract_test
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -17,7 +18,7 @@ func TestSuitePreservesSnapshot(t *testing.T) {
 	}{
 		{name: "awaiting initial canonical", project: "project-1", id: "suite-1"},
 		{name: "existing canonical", project: "project-1", id: "suite-1", current: "version-7", revision: 42},
-		{name: "accepted identifier bytes", project: " project-1 ", id: " suite-1 ", current: " version-7 ", revision: ^contract.StateRevision(0)},
+		{name: "accepted identifier bytes", project: " project-1 ", id: " suite-1 ", current: " version-7 ", revision: math.MaxInt64},
 	}
 
 	for _, tt := range tests {

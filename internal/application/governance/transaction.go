@@ -62,7 +62,6 @@ type PromoteRequest struct {
 }
 
 type BootstrapRequest struct {
-	Mode      contract.BootstrapMode
 	Promotion PromoteRequest
 }
 
@@ -74,7 +73,6 @@ type CorrectionRequest struct {
 type PromotionIdentity struct {
 	Kind              OperationKind
 	Request           PromoteRequest
-	BootstrapMode     contract.BootstrapMode
 	CorrectsVersionID contract.SuiteVersionID
 	Binding           contract.ApprovalBinding
 }
@@ -135,11 +133,10 @@ type Store interface {
 }
 
 var (
-	ErrInvalidRequest     = errors.New("invalid governance request")
-	ErrInvalidSnapshot    = errors.New("invalid governance snapshot")
-	ErrAuthorityConflict  = errors.New("authority fence conflict")
-	ErrOperationConflict  = errors.New("operation identity conflict")
-	ErrVersionConflict    = errors.New("version identity conflict")
-	ErrAuthorityExhausted = errors.New("authority revision exhausted")
-	ErrNotFound           = errors.New("governance aggregate not found")
+	ErrInvalidRequest    = errors.New("invalid governance request")
+	ErrInvalidSnapshot   = errors.New("invalid governance snapshot")
+	ErrAuthorityConflict = errors.New("authority fence conflict")
+	ErrOperationConflict = errors.New("operation identity conflict")
+	ErrVersionConflict   = errors.New("version identity conflict")
+	ErrNotFound          = errors.New("governance aggregate not found")
 )

@@ -126,7 +126,7 @@ func (c Consent) Apply(proposal Proposal, governing Policy, command Command) (Co
 		if revision.Binding().PolicyRevisionID() != governing.RevisionID() {
 			return c.reject(command, ConsentReasonPolicyMismatch)
 		}
-	} else if !governing.CanRevoke(command.Actor(), command.Actor().ID()) {
+	} else if !governing.CanRevoke(command.Actor()) {
 		return c.reject(command, ConsentReasonUnauthorized)
 	}
 	key := consentKey{command.Reference().RevisionID, command.Actor()}

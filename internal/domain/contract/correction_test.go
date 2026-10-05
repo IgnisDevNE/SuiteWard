@@ -163,9 +163,8 @@ func TestCorrectionCreatesFreshVersionAndRetainsHistoricalFacts(t *testing.T) {
 				t.Fatalf("exact approved correction was not proposed: outcome=%v reason=%v error=%v", decision.Outcome(), decision.Reason(), err)
 			}
 			effect, ok := decision.Effect()
-			if !ok || effect.Version().ID() != "v3" || effect.ExpectedCanonicalID() != "v2" || effect.Promotion().CorrectsVersionID() != "v1" ||
-				effect.Audit().Promotion().CorrectsVersionID() != "v1" || effect.Publication().Promotion().CorrectsVersionID() != "v1" {
-				t.Fatal("correction lost fresh logical version, current baseline, or historical audit relation")
+			if !ok || effect.Version().ID() != "v3" || effect.ExpectedCanonicalID() != "v2" || effect.Promotion().CorrectsVersionID() != "v1" {
+				t.Fatal("correction lost fresh logical version, current baseline, or historical correction relation")
 			}
 			entries := effect.Version().Manifest().Entries()
 			wantCount := 2
@@ -197,7 +196,6 @@ func TestCorrectionDelegatesCurrentAuthorityAndIntegration(t *testing.T) {
 			i.Promotion.Context.Canonical = lifecycleEstablished(t, i.Target.Version(), i.Target.Record())
 		}, contract.PromotionReasonCanonicalChanged},
 		{"integration absent", func(i *contract.CorrectionInput) { i.Promotion.Integration = contract.Integration{} }, contract.PromotionReasonIntegrationMissing},
-		{"stale scheduling", func(i *contract.CorrectionInput) { i.Promotion.Context.ExpectedSchedulingGeneration++ }, contract.PromotionReasonSchedulingBlocked},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

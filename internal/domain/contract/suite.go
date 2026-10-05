@@ -14,8 +14,8 @@ type SuiteID string
 // SuiteVersionID identifies a logical version, rather than its content digest.
 type SuiteVersionID string
 
-// StateRevision is caller-supplied concurrency context, including an initial zero.
-type StateRevision uint64
+// StateRevision counts canonical changes of a Suite, starting at an initial zero.
+type StateRevision int64
 
 // Suite is an immutable snapshot of a suite's canonical reference.
 type Suite struct {

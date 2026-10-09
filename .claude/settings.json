@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
+    "PONYTAIL_DEFAULT_MODE": "full",
+    "PONYTAIL_SUBAGENT_MATCHER": "^sw-(implementer|reviewer)$",
+    "PONYTAIL_QUIET_STARTUP": "1"
+  },
+  "model": "sonnet",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"$CLAUDE_PROJECT_DIR/scripts/hooks/go-format.ps1\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"$CLAUDE_PROJECT_DIR/scripts/hooks/repeat-failure.ps1\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail",
+        "ref": "v5.1.0"
+      },
+      "autoUpdate": false
+    }
+  },
+  "effortLevel": "high",
+  "advisorModel": "opus",
+  "enabledPlugins": {
+    "ponytail@ponytail": true
+  }
+}

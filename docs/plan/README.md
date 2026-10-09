@@ -23,7 +23,7 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
-| [H1](phases/H1.md) | Go hygiene: audit and fix defensive nil checks that hide impossible states; write the rule into `AGENTS.md`, the development guide and the reviewer checklist. | R1 |
+| [H1](phases/H1.md) | Orchestration v2 (Sonnet orchestrator, Opus advisor, Haiku scouts, deterministic hooks, Memtrace-first with gopls fallback, ponytail) and Go hygiene (defensive nil checks, needless code, golangci-lint in CI). | R1 |
 | [S1](phases/S1.md) | Throwaway walking skeleton against real GitHub, deployed on both verification targets: App polling one repository, a required check, an approval, a merge, a recorded promotion. Findings settle the GitHub and deployment decisions. | R1 |
 | [M1.2](phases/M1.2.md) | `suiteward serve`: configuration, River jobs enqueued in the unit-of-work transaction, publication outbox, graceful shutdown. | R1 |
 | [M1.3](phases/M1.3.md) | `.suiteward.yml` scope with protected defaults, protected inventory, existing-baseline bootstrap. | R1 |

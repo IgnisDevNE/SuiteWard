@@ -241,7 +241,7 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	if err != nil {
 		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
-	// Cannot fail here: the version id was validated by NewPromotionRecord and the rest comes from a validated Suite.
+	// Cannot fail here: the version id was validated by NewPromotionRecord and the project, suite and manifest come from the validated canonical Suite and Proposed contract.
 	version, err := NewSuiteVersion(current.ProjectID(), current.ID(), input.NewVersionID, input.Context.Proposed.Manifest())
 	if err != nil {
 		return PromotionDecision{}, ErrInvalidPromotion

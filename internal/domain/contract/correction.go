@@ -28,7 +28,7 @@ func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
 		return PromotionDecision{}, ErrInvalidCorrection
 	}
 	if target.ID() == currentID && (target.Manifest().Digest() != canonical.Version().Manifest().Digest() ||
-		!samePromotionRecord(input.Target.Record(), canonical.Record())) {
+		!input.Target.Record().Equal(canonical.Record())) {
 		return PromotionDecision{}, ErrInvalidCorrection
 	}
 	revision := promotion.Context.Proposal.Current()
@@ -39,12 +39,6 @@ func DecideCorrection(input CorrectionInput) (PromotionDecision, error) {
 	}
 	promotion.CorrectsVersionID = target.ID()
 	return DecidePromotion(promotion)
-}
-
-func samePromotionRecord(left, right PromotionRecord) bool {
-	return left.VersionID() == right.VersionID() && left.Binding().Equal(right.Binding()) && left.OperationID() == right.OperationID() &&
-		left.Carrier() == right.Carrier() && left.Source() == right.Source() && left.Target() == right.Target() &&
-		left.RecordedAt().Equal(right.RecordedAt()) && left.CorrectsVersionID() == right.CorrectsVersionID()
 }
 
 // HistoricalCanonical pairs a version with its immutable promotion provenance.

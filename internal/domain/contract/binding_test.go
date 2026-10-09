@@ -94,8 +94,8 @@ func TestApprovalBindingEmptyContextAndAbsentValues(t *testing.T) {
 	if !base.Equal(mustBinding(t, input)) || base.ExpectedCanonical() != "" {
 		t.Fatal("nil/empty context must describe the same set with explicit absent baseline")
 	}
-	var absent contract.ApprovalBinding
-	if !absent.IsZero() || absent.Equal(absent) || absent.Equal(base) || base.Equal(absent) {
+	var absent, otherAbsent contract.ApprovalBinding
+	if !absent.IsZero() || absent.Equal(otherAbsent) || absent.Equal(base) || base.Equal(absent) {
 		t.Fatal("absent bindings must not match usable consent or evidence")
 	}
 	input = proposalBindingInput()

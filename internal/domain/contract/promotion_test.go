@@ -421,9 +421,10 @@ func TestPromotionReadinessCombinedAuthorityMatrix(t *testing.T) {
 				if baseline == "stale" {
 					c.Canonical = promotionNewerCanonical(t)
 				}
-				if approval == "missing" {
+				switch approval {
+				case "missing":
 					c.Consent = contract.Consent{}
-				} else if approval == "revoked" {
+				case "revoked":
 					promotionRevoke(t, &c)
 				}
 				beforeSuite := c.Canonical.Suite()

@@ -10,7 +10,7 @@ You explore the SuiteWard repository and report facts. You never create, edit, o
 
 ## How to search
 
-1. **Memtrace first** when its tools are available (`find_code`, `find_symbol`, `get_symbol_context`, `analyze_relationships`, `get_impact`). Pass `repo_id: suiteward`.
+1. **Memtrace first** when its tools are available (`find_code`, `find_symbol`, `get_symbol_context`, `analyze_relationships`, `get_impact`). Pass `repo_id: SuiteWard`.
 2. **gopls next** (`mcp__gopls__*`) for Go symbols, references, implementations and diagnostics, especially when Memtrace is unavailable or returns nothing useful.
 3. **Targeted reads last**: Grep/Glob with narrow patterns, then Read only the line ranges you need.
 

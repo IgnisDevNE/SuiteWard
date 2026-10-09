@@ -12,7 +12,8 @@ try {
     $packages = @(go list @buildTags ./...)
     if ($LASTEXITCODE -ne 0 -or $packages.Count -eq 0) { throw 'Expected real Go packages; refusing an empty verification' }
     # git still lists a tracked file that was deleted from disk but not yet from the index; gofmt would fail on it.
-    $sources = @(git ls-files --cached --others --exclude-standard '*.go' | Where-Object { $_ -cnotmatch '^vendor/' -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Sort-Object -Unique)
+    # core.quotepath=false keeps non-ASCII names unquoted so the existence filter does not drop them.
+    $sources = @(git -c core.quotepath=false ls-files --cached --others --exclude-standard '*.go' | Where-Object { $_ -cnotmatch '^vendor/' -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Sort-Object -Unique)
     if ($LASTEXITCODE -ne 0 -or $sources.Count -eq 0) { throw 'No Go source files in the checkout' }
     $unformatted = @(gofmt -l @sources)
     if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }

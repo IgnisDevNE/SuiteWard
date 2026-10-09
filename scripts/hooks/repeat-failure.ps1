@@ -47,7 +47,10 @@ try {
     $target = ''
     foreach ($key in @('command', 'file_path', 'path', 'pattern', 'url')) { if ($toolInput[$key] -is [string]) { $target = $toolInput[$key]; break } }
     $target = Get-NormalizedText $target
-    $lines = @(($failure -split '\r?\n') | ForEach-Object { Get-NormalizedText $_ } | Where-Object { $_ } | Select-Object -Last 3 | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 200)) })
+    # Only the tail matters: cap the text and the line count before the regex-heavy normalization so a huge output stays fast.
+    if ($failure.Length -gt 65536) { $failure = $failure.Substring($failure.Length - 65536) }
+    $tail = @(($failure -split '\r?\n') | Where-Object { $_.Trim() } | Select-Object -Last 10)
+    $lines = @($tail | ForEach-Object { Get-NormalizedText $_ } | Where-Object { $_ } | Select-Object -Last 3 | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 200)) })
     $tool = [string]$payload.tool_name
     $key = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$tool`n$target`n$($lines -join "`n")"))).ToLowerInvariant().Substring(0, 16)
     $session = if ($payload.session_id -is [string] -and $payload.session_id) { $payload.session_id } else { 'unknown' }
@@ -87,6 +90,7 @@ try {
         [ordered]@{ hookSpecificOutput = [ordered]@{ hookEventName = $event; additionalContext = $message } } | ConvertTo-Json -Compress
     }
 } catch {
-    [Console]::Error.WriteLine("repeat-failure: $($_.Exception.Message)")
+    $message = $_.Exception.Message -replace '\s+', ' '
+    [Console]::Error.WriteLine("repeat-failure: $($message.Substring(0, [Math]::Min($message.Length, 300)))")
 }
 exit 0

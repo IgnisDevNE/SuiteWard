@@ -10,7 +10,10 @@ try {
     $context = Get-DevContext (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent)
     $path = [IO.Path]::GetFullPath($file)
     $prefix = $context.Root + [IO.Path]::DirectorySeparatorChar
-    if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { exit 0 }
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if (-not $path.StartsWith($prefix, $comparison) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { exit 0 }
+    # gofmt -w would write through a link to a file that may live outside the repository.
+    if ((Get-Item -LiteralPath $path -Force).LinkType) { exit 0 }
     $gofmt = Join-Path (Split-Path (Get-ToolPath $context 'go') -Parent) "gofmt$($context.Suffix)"
     if (-not (Test-Path -LiteralPath $gofmt)) { [Console]::Error.WriteLine('go-format: pinned gofmt is not installed; run ./scripts/dev.ps1 tools'); exit 0 }
     $output = & $gofmt -w $path 2>&1

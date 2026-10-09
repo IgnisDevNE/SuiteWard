@@ -43,3 +43,10 @@ func (r PromotionRecord) Target() IntegrationTargetID       { return r.input.Tar
 func (r PromotionRecord) RecordedAt() time.Time             { return r.input.RecordedAt }
 func (r PromotionRecord) CorrectsVersionID() SuiteVersionID { return r.input.CorrectsVersionID }
 func (r PromotionRecord) IsZero() bool                      { return r.input.Binding.IsZero() }
+
+// Equal reports whether both records state the same promotion; an absent record equals nothing.
+func (r PromotionRecord) Equal(other PromotionRecord) bool {
+	return !r.IsZero() && !other.IsZero() && r.VersionID() == other.VersionID() && r.Binding().Equal(other.Binding()) && r.OperationID() == other.OperationID() &&
+		r.Carrier() == other.Carrier() && r.Source() == other.Source() && r.Target() == other.Target() &&
+		r.RecordedAt().Equal(other.RecordedAt()) && r.CorrectsVersionID() == other.CorrectsVersionID()
+}

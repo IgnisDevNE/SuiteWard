@@ -9,7 +9,11 @@ New-Item -ItemType Directory -Path $fixtureScripts -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'check-go.ps1') -Destination (Join-Path $fixtureScripts 'check-go.ps1')
 
 $fixturePackages = @('example.test/project/artifact', 'example.test/project/contract')
-$invocation = [pscustomobject]@{ TestArguments = @(); ProfilePath = ''; Commands=@{} }
+$invocation = [pscustomobject]@{ TestArguments = @(); ProfilePath = ''; Commands=@{}; GofmtArguments = @() }
+
+# check-go.ps1 formats only files that exist on disk: a tracked file deleted from the working tree is still listed by git.
+New-Item -ItemType Directory -Path (Join-Path $scratch 'internal/domain') -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $scratch 'internal/domain/value.go') -Value 'package domain'
 
 # Script-local command fakes exercise PowerShell's real argument parsing without
 # requiring Go or producing an application coverage report in foundation CI.
@@ -39,10 +43,12 @@ function go {
 function git {
     Set-Variable -Name LASTEXITCODE -Value 0 -Scope 1
     'internal/domain/value.go'
+    'internal/domain/deleted.go'
 }
 
 function gofmt {
     Set-Variable -Name LASTEXITCODE -Value 0 -Scope 1
+    $invocation.GofmtArguments = @($args)
 }
 
 try {
@@ -53,6 +59,9 @@ try {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $scratch 'coverage.out'))) {
         throw 'The Go invocation must produce the exact coverage.out path consumed by CI.'
+    }
+    if (($invocation.GofmtArguments -join ' ') -cne '-l internal/domain/value.go') {
+        throw "gofmt must receive only Go files that exist on disk, not a tracked file deleted from the working tree. Received: $($invocation.GofmtArguments -join ' ')"
     }
     $coverageArguments = @($invocation.TestArguments | Where-Object { $_ -like '-coverpkg=*' })
     if ($coverageArguments.Count -ne 1 -or $coverageArguments[0] -cne '-coverpkg=example.test/project/artifact,example.test/project/contract') {
@@ -80,7 +89,7 @@ try {
         if ($null -eq $savedDatabase) { Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', $savedDatabase, 'Process') }
     }
-    Write-Output 'Passed 10 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
+    Write-Output 'Passed 11 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $scratch).Path
     if ($resolved -ne [IO.Path]::GetFullPath($scratch) -or -not $resolved.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {

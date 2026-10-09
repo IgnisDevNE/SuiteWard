@@ -850,3 +850,18 @@ func TestPromotionRejectsInvalidEffectIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestPromotionDecisionKeepsCauseOfInvalidPromotion(t *testing.T) {
+	input := promotionInput(t)
+	input.Context.Proposed = contract.ProtectedContract{}
+	_, err := contract.DecidePromotion(input)
+	if !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, contract.ErrInvalidProtectedContract) {
+		t.Errorf("classification failure lost its cause: %v", err)
+	}
+	input = promotionInput(t)
+	input.RecordedAt = time.Time{}
+	_, err = contract.DecidePromotion(input)
+	if !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, contract.ErrInvalidPromotionRecord) {
+		t.Errorf("record failure lost its cause: %v", err)
+	}
+}

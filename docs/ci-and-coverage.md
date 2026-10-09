@@ -25,7 +25,7 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 
 There is no placeholder application package and no artificial coverage upload. Once Go code exists, even a documentation-only PR runs the Go jobs so the required coverage contexts remain available. The PowerShell tests verify CI infrastructure and are not counted as application coverage.
 
-Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. The [local bootstrap](local-development.md) installs the same Go, scanner, and linter versions in the shared per-user tool cache (not inside each checkout) and reuses `scripts/check-go.ps1`.
+Go is pinned to 1.27.2 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. The [local bootstrap](local-development.md) installs the same Go, scanner, and linter versions in the shared per-user tool cache (not inside each checkout) and reuses `scripts/check-go.ps1`.
 
 ## Required contexts
 

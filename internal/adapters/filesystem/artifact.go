@@ -100,7 +100,8 @@ func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Read
 	if err != nil {
 		return fmt.Errorf("open artifact root: %w", err)
 	}
-	defer root.Close()
+	// A root is a directory handle: written data is synced and its close error joined, and durability goes through syncDir.
+	defer func() { _ = root.Close() }()
 	stage := stagePrefix + rand.Text()
 	file, err := s.io.openFile(root, stage, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -154,7 +155,8 @@ func (s *Store) Read(ctx context.Context, digest artifact.Digest) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("open artifact root: %w", err)
 	}
-	defer root.Close()
+	// A root is a directory handle: written data is synced and its close error joined, and durability goes through syncDir.
+	defer func() { _ = root.Close() }()
 	info, err := s.io.lstat(root, name)
 	if err != nil {
 		return nil, fmt.Errorf("inspect artifact object: %w", err)
@@ -214,7 +216,8 @@ func removeOrphanStages(abs string) error {
 	if err != nil {
 		return fmt.Errorf("open artifact root: %w", err)
 	}
-	defer root.Close()
+	// A root is a directory handle: written data is synced and its close error joined, and durability goes through syncDir.
+	defer func() { _ = root.Close() }()
 	dir, err := root.Open(".")
 	if err != nil {
 		return fmt.Errorf("list artifact root: %w", err)

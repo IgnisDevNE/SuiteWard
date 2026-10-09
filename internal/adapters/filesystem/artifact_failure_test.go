@@ -26,7 +26,7 @@ func TestNewStoreRejectsUnsafeRoots(t *testing.T) {
 	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, root := range []string{file, filepath.Join(file, "child"), filepath.Join(parent, "invalid\x00root")} {
+	for _, root := range []string{file, filepath.Join(file, "child"), filepath.Join(parent, "invalid") + "\x00root"} {
 		if store, err := NewStore(root); err == nil || store != nil {
 			t.Errorf("non-directory root accepted: %v, %v", store, err)
 		}

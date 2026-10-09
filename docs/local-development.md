@@ -23,7 +23,7 @@ Existing host prerequisites are Git, PowerShell 7, and a running Podman engine/m
 
 | Tool | Version | Installation |
 | --- | --- | --- |
-| Go | 1.27.1 | Official archive, SHA-256 checked; must match `.go-version`. |
+| Go | 1.27.2 | Official archive, SHA-256 checked; must match `.go-version`. |
 | sqlc | 1.31.1 | Official release archive, SHA-256 checked. |
 | actionlint | 1.7.12 | Official release archive, SHA-256 checked. |
 | golangci-lint | 2.14.0 | Official release archive, SHA-256 checked against the release's checksums file. |

@@ -36,7 +36,7 @@ A task states its outcome, applicable ADRs and contracts, dependencies, owned fi
 - GitHub organization `IgnisDevNE` is on the Free plan. The public `SuiteWard` repository uses branch protection requiring an up-to-date PR and `CI / Gate`, with administrator enforcement and force pushes and deletion disabled.
 - Codecov is configured through the organization's existing GitHub App installation.
 - Bot identity: `ignisdevne[bot]` (App 5028495, installation 163660443), with Workflows write access for SuiteWard.
-- Go 1.27.1, sqlc 1.31.1, actionlint 1.7.12, golangci-lint 2.14.0, govulncheck 1.8.0, and gopls 0.23.0 install once per user in a shared tool cache. PostgreSQL 18.6 runs from a digest-pinned image with isolated volumes, credentials, and loopback ports per checkout. Windows uses the rootless Podman connection per checkout; the host default connection is never changed.
+- Go 1.27.2, sqlc 1.31.1, actionlint 1.7.12, golangci-lint 2.14.0, govulncheck 1.8.0, and gopls 0.23.0 install once per user in a shared tool cache. PostgreSQL 18.6 runs from a digest-pinned image with isolated volumes, credentials, and loopback ports per checkout. Windows uses the rootless Podman connection per checkout; the host default connection is never changed.
 - Memtrace is scoped to SuiteWard; versioned documents remain canonical.
 
 ## Decisions still required

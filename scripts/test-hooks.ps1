@@ -108,6 +108,33 @@ try {
     if ($output.hookSpecificOutput.hookEventName -cne 'PostToolUse') { throw 'PostToolUse repeat output has the wrong hookEventName.' }
     $checks++
 
+    # A huge failure output stays fast: only the tail is normalized, and the fingerprint still comes from the last lines.
+    $noise = (1..300000 | ForEach-Object { "verbose output line $_ with some filler text to make the log large" }) -join "`n"
+    $bigFirst = New-FailureInput -Session 'session-big' -Command 'go test -v ./...' -ErrorText "Exit code 1`n$noise`nFAIL github.com/x/y 0.5s`npanic: boom at 2026-10-09T10:00:00Z"
+    $bigSecond = New-FailureInput -Session 'session-big' -Command 'go test -v ./...' -ErrorText "Exit code 1`n$noise`nFAIL github.com/x/y 9.5s`npanic: boom at 2026-10-09T11:30:45Z"
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    Assert-Silent (Invoke-Hook $failureHook $bigFirst) 'a very large first failure'
+    $result = Invoke-Hook $failureHook $bigSecond
+    $timer.Stop()
+    if (-not $result.Stdout) { throw 'A very large repeated failure was not fingerprinted from its last lines.' }
+    if ($timer.Elapsed.TotalSeconds -gt 5) { throw "Two very large failures took $([int]$timer.Elapsed.TotalSeconds) seconds; the hook must normalize only the output tail." }
+    $checks++
+
+    # Long internal errors are truncated before they reach stderr.
+    [IO.File]::WriteAllText((Join-Path $stateDir 'failures.json'), '{"sessions":{}}')
+    $result = Invoke-Hook $failureHook ('{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","error":"x","tool_input":' + ('[' * 5000))
+    if ($result.ExitCode -ne 0 -or $result.Stdout -or $result.Stderr.Length -gt 400) { throw "An internal error was not contained and truncated (stderr length $($result.Stderr.Length))." }
+    $checks++
+
+    # go-format never writes through a link; a hard link stands in where symlinks need a privilege the host does not grant.
+    $linkTarget = Join-Path $testRoot 'link-target.go'
+    [IO.File]::WriteAllText($linkTarget, $unformatted)
+    $link = Join-Path $checkout 'internal/sample/linked.go'
+    try { New-Item -ItemType SymbolicLink -Path $link -Target $linkTarget | Out-Null }
+    catch { New-Item -ItemType HardLink -Path $link -Target $linkTarget | Out-Null }
+    Assert-Silent (Invoke-Hook $formatHook (@{ tool_name = 'Write'; tool_input = @{ file_path = $link } } | ConvertTo-Json -Compress)) 'go-format on a link'
+    if ([IO.File]::ReadAllText($linkTarget) -cne $unformatted) { throw 'go-format wrote through a link.' }
+    $checks++
     # A corrupt state file is reset, not fatal; state stays inside the override directory.
     $stateFile = Join-Path $stateDir 'failures.json'
     if (-not (Test-Path -LiteralPath $stateFile)) { throw 'Hook state was not written to SUITEWARD_HOOK_STATE_DIR.' }

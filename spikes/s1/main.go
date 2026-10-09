@@ -236,7 +236,9 @@ func run() error {
 	if cfg.once {
 		return a.cycle(ctx)
 	}
-	srv := &http.Server{Addr: cfg.statusAddr, Handler: http.HandlerFunc(a.status), ReadHeaderTimeout: 5 * time.Second}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /status", a.status)
+	srv := &http.Server{Addr: cfg.statusAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			lg.emit("status_error", map[string]any{"error": err.Error()})

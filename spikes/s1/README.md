@@ -39,7 +39,7 @@ JSON lines on stdout (and `S1_LOG_FILE`). Every line has `ts` (UTC, nanoseconds;
 | `check` | `number`, `head_sha`, `state`, `check_run_id`, `action` (`create` or `update`) |
 | `token` | `action:"minted"`, `expires_at`, `requested_permissions` (never the token or the response body) |
 
-Only the whitelisted response headers are logged: `ETag`, `Date`, `Last-Modified`, `X-GitHub-Request-Id`, `X-RateLimit-*`, `Vary`. Request headers, the JWT and the installation token never reach the log (`TestHTTPLogKeepsOnlyWhitelistedHeaders`).
+Only the whitelisted response headers are logged: `ETag`, `Date`, `Last-Modified`, `X-GitHub-Request-Id`, `X-RateLimit-*`, `Vary`. Request headers, the JWT and the installation token never reach the log (`TestHTTPLogKeepsOnlyWhitelistedHeaders`). GitHub's `Vary` value contains the word `Authorization` (a header name, not a credential), so a grep for it in a real log matches.
 
 304 rate per endpoint: count `poll.calls` entries by `path` and `status`. Rate-limit cost of a 304: compare `X-RateLimit-Used` across consecutive `http` lines.
 

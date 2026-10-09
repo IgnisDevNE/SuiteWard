@@ -249,6 +249,39 @@ try {
         try { Expect-Failure { Remove-DevDatabase $a } 'Another database operation is running' } finally { $dbLock.Dispose() }
         $checks++
     } finally { Remove-Item Function:podman, Function:Get-DestructiveCalls, Function:Initialize-ResetScenario }
+    # Lint and code-navigation tools: pins, dispatch through the wrapper, and the MCP launcher's missing-tool path (no network, empty cache).
+    $manifest = $rootContext.Manifest
+    if ($manifest.gopls.version -cne '0.23.0') { throw 'gopls is not pinned to 0.23.0.' }
+    $lintPin = $manifest['golangci-lint']
+    if ($lintPin.version -cne '2.14.0') { throw 'golangci-lint is not pinned to 2.14.0.' }
+    foreach ($platform in @('windows-amd64', 'linux-amd64')) {
+        $asset = $lintPin.assets[$platform]
+        if ($asset.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw "golangci-lint $platform has no pinned SHA-256." }
+        $extension = if ($platform -eq 'windows-amd64') { 'zip' } else { 'tar.gz' }
+        if ($asset.url -cne "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-$platform.$extension") { throw "golangci-lint $platform URL is not the pinned release asset." }
+    }
+    $lintExe = Get-ToolPath $a 'golangci-lint'
+    if ($lintExe -cne (Join-Path $a.Tools "golangci-lint/2.14.0/$($a.Platform)/golangci-lint-2.14.0-$($a.Platform)/golangci-lint$($a.Suffix)")) { throw 'golangci-lint binary path does not follow the archive layout.' }
+    if ((Get-ToolPath $a 'gopls') -cne (Join-Path $a.Tools "gopls/0.23.0/$($a.Platform)/gopls$($a.Suffix)")) { throw 'gopls binary path is not versioned in the shared cache.' }
+    Expect-Failure { Assert-ToolVersion $a 'gopls' } 'gopls is not installed'
+    Expect-Failure { Assert-ToolVersion $a 'golangci-lint' } 'golangci-lint is not installed'
+    $checks++
+    $pwsh = (Get-Process -Id $PID).Path
+    foreach ($command in @(@('lint', 'golangci-lint'), @('gopls', 'gopls'))) {
+        $output = (& $pwsh -NoProfile -File (Join-Path $PSScriptRoot 'dev.ps1') $command[0] 2>&1) -join "`n"
+        if ($LASTEXITCODE -eq 0 -or $output -notlike "*$($command[1]) is not installed*") { throw "dev.ps1 $($command[0]) did not dispatch to the pinned $($command[1]) (exit $LASTEXITCODE): $output" }
+    }
+    $checks++
+    $launcher = Join-Path $PSScriptRoot 'gopls-mcp.ps1'
+    $errFile = Join-Path $testRoot 'launcher-stderr.txt'
+    $stdout = (& $pwsh -NoProfile -File $launcher 2> $errFile) -join "`n"
+    $launcherExit = $LASTEXITCODE
+    $stderr = Get-Content -LiteralPath $errFile -Raw
+    if ($launcherExit -eq 0) { throw 'gopls-mcp.ps1 succeeded without an installed gopls.' }
+    if ($stdout) { throw 'gopls-mcp.ps1 wrote to stdout, which belongs to the MCP protocol.' }
+    if ($stderr -notlike '*./scripts/dev.ps1 tools*') { throw 'gopls-mcp.ps1 does not tell the user to run ./scripts/dev.ps1 tools.' }
+    if (Test-Path -LiteralPath (Join-Path $toolsDir 'gopls')) { throw 'gopls-mcp.ps1 installed something.' }
+    $checks++
     Write-Host "Passed $checks development infrastructure checks. No application coverage is produced."
 } finally {
     if ($null -eq $savedToolsDir) { Remove-Item Env:SUITEWARD_TOOLS_DIR -ErrorAction SilentlyContinue } else { $env:SUITEWARD_TOOLS_DIR = $savedToolsDir }

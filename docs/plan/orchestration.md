@@ -13,6 +13,11 @@ The main Claude session orchestrates SuiteWard work. It delegates exploration, i
 
 Subagents inherit the advisor. The ponytail plugin injects its keep-it-small rules into the orchestrator, `sw-implementer` and `sw-reviewer` (`PONYTAIL_SUBAGENT_MATCHER`). It is declared in `.claude/settings.json` from `DietrichGebert/ponytail` at tag `v5.1.0` with automatic updates off; the audited commit is `9cc65d03aa2da1db7121b912d03596409ee340b8` (a tag pin, not a cryptographic one: re-audit before changing the tag). Each machine installs it once with `claude plugin install ponytail@ponytail --scope project` after trusting the project. The gopls MCP server in `.mcp.json` needs a one-time approval in each new environment.
 
+Two consequences of the configuration:
+
+- Memtrace and gopls index the orchestrator's checkout (the phase branch), not task worktrees. Treat their answers as phase-branch state and read the file in your own worktree before editing it.
+- `CLAUDE_CODE_SUBAGENT_MODEL=haiku` also applies to built-in agents that inherit the model (such as `general-purpose` and `Plan`). Pass `model: "sonnet"` (or `"opus"`) explicitly when using them for design or substantive work.
+
 ## Roles
 
 - **Orchestrator** (main session): plans phases, writes one [brief](task-brief.md) per task, creates worktrees, dispatches subagents, integrates reviewed work, runs phase checks, publishes through the bot, and reports to the user. It owns shared files and decides conflicts. It sends discovery to `sw-scout` instead of reading broadly itself.

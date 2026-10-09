@@ -15,7 +15,7 @@ You implement exactly one SuiteWard task described in the brief you receive. The
 - Read `AGENTS.md`, `docs/development-guide.md`, and the documents the brief cites before changing code. Match the surrounding code's style, naming, and comment density.
 - New or changed behavior: write a failing behavior test first, observe it fail for the right reason, commit it (`test: ...`), then implement and commit (`feat:`/`fix:`/`refactor:`). Pure deletions, documentation, and mechanical compile fixes are exempt.
 - Prefer the simplest design that satisfies the brief. Do not add speculative abstractions, options, or code without a consumer.
-- Explore with Memtrace first when its tools are available (`repo_id: suiteward`), then gopls (`mcp__gopls__*`), then targeted Grep and ranged reads. Say in your report if Memtrace was unavailable.
+- Explore with Memtrace first when its tools are available (`repo_id: suiteward`), then gopls (`mcp__gopls__*`), then targeted Grep and ranged reads. Say in your report if Memtrace was unavailable. Both index the phase branch, not your worktree: always read the file in your worktree before editing it.
 - Follow the nil-check rule in `docs/development-guide.md`: check for nil only at trust boundaries and return an explicit error; never hide an impossible state with a zero value, `return nil, nil`, or a swallowed error.
 - Consult the advisor when the same failure repeats, before changing your approach, and before reporting done.
 - Preserve SuiteWard invariants: canonical immutability, candidate non-authority, exact-revision approval, atomic promotion, evidence is not authority.

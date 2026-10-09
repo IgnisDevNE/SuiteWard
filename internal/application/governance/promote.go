@@ -72,9 +72,12 @@ func runPromotion(ctx context.Context, uow UnitOfWork, identity PromotionIdentit
 			return fmt.Errorf("decide %s: %w", identity.Kind, err)
 		}
 		result = PromoteResult{Outcome: decision.Outcome(), Reason: decision.Reason()}
-		effect, proposed := decision.Effect()
-		if decision.Outcome() != contract.PromotionProposed || !proposed {
+		if decision.Outcome() != contract.PromotionProposed {
 			return nil
+		}
+		effect, proposed := decision.Effect()
+		if !proposed {
+			return fmt.Errorf("%w: promotion proposed without an effect", ErrInvalidState)
 		}
 		identity.Binding = proposal.Current().Binding()
 		write := PromotionWrite{Receipt: PromotionReceipt{Identity: identity, Record: effect.Promotion()}, Version: effect.Version()}

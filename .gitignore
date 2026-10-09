@@ -5,7 +5,7 @@
 /outputs/
 /coverage.out
 /.memdb/
-/.memtrace/fts/
+/.memtrace/
 /.env
 /.env.*
 !/.env.example

@@ -38,6 +38,9 @@ func (s *Store) Seed(ctx context.Context, seed governance.Seed) error {
 		}
 		rollback, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 		defer cancel()
+		// The rollback must outlive a canceled ctx. Its own failure means the
+		// connection is gone: the server aborts the transaction and the pool
+		// discards the connection, so the original outcome is what matters.
 		_ = transaction.Rollback(rollback)
 	}()
 	if err := writeSeed(ctx, dbgen.New(transaction), seed); err != nil {
@@ -259,19 +262,5 @@ func seedAssessment(ctx context.Context, q *dbgen.Queries, assessment contract.I
 // its current version describe the same version and promotion, so that Seed
 // stores what the snapshot says and no store can read back something else.
 func sameCurrent(canonical contract.CanonicalSnapshot, stored contract.HistoricalCanonical) bool {
-	a, b := canonical.Record(), stored.Record()
-	return canonical.Version().Manifest().Digest() == stored.Version().Manifest().Digest() &&
-		a.Binding().Equal(b.Binding()) && a.OperationID() == b.OperationID() && a.VersionID() == b.VersionID() && a.Carrier() == b.Carrier() &&
-		a.Source() == b.Source() && a.Target() == b.Target() && a.RecordedAt().Equal(b.RecordedAt()) && a.CorrectsVersionID() == b.CorrectsVersionID() &&
-		canonical.Contract().Equal(contractOf(stored))
-}
-
-// contractOf is the protected contract that a history entry implies.
-func contractOf(entry contract.HistoricalCanonical) contract.ProtectedContract {
-	binding := entry.Record().Binding()
-	protected, err := contract.NewProtectedContract(entry.Version().Manifest(), binding.ScopeDigest(), binding.CoveredInputs())
-	if err != nil {
-		return contract.ProtectedContract{}
-	}
-	return protected
+	return canonical.Version().Manifest().Digest() == stored.Version().Manifest().Digest() && canonical.Record().Equal(stored.Record())
 }

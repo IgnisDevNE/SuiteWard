@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gopls": {
+      "type": "stdio",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "scripts/gopls-mcp.ps1"]
+    }
+  }
+}

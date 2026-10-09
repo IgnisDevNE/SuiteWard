@@ -12,7 +12,7 @@ func TestSyncDirectorySyncsOpenRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }() // second close on purpose: the test closes root itself below
 	if err := syncDirectory(root); err != nil {
 		t.Fatalf("sync of an existing directory: %v", err)
 	}

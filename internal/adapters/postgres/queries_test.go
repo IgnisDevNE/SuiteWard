@@ -86,7 +86,7 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer transaction.Rollback(context.Background())
+	defer func() { _ = transaction.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
 	queries := dbgen.New(transaction)
 	// The seeded Suite points at v1 and the revision v0 has no row: the deferred
 	// pointer is satisfied at commit and expected_version_id has no foreign key.
@@ -101,7 +101,7 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer locking.Rollback(context.Background())
+		defer func() { _ = locking.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
 		suite, err := dbgen.New(locking).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"})
 		if err != nil || suite.Revision != 4 || suite.CurrentVersionID.String != "v1" || suite.TargetID != "main" || suite.PolicyRevisionID != "policy-1" {
 			t.Fatalf("locked suite %+v, error %v", suite, err)
@@ -110,7 +110,7 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer other.Close(context.Background())
+		defer func() { _ = other.Close(context.Background()) }() // cleanup path: a failed close only means the connection is gone
 		deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		defer cancel()
 		if _, err := dbgen.New(other).LockSuite(deadline, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"}); err == nil {

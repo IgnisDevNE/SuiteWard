@@ -1,0 +1,48 @@
+version: "2"
+
+run:
+  build-tags:
+    - integration
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - unused
+    - ineffassign
+    - revive
+    - gocritic
+  settings:
+    revive:
+      rules:
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: errorf
+        - name: indent-error-flow
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: empty-block
+        - name: redefines-builtin-id
+    gocritic:
+      disable-all: true
+      enabled-tags:
+        - diagnostic
+  exclusions:
+    # Only generated code (sqlc output) is excluded: no path, linter, or //nolint exclusions.
+    generated: lax
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/IgnisDevNE/SuiteWard
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

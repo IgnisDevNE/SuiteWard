@@ -23,7 +23,8 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
-| [S1](phases/S1.md) | Throwaway walking skeleton against real GitHub: App polling one repository, a required check, an approval, a merge, a recorded promotion. Findings settle the GitHub decisions. | R1 |
+| [H1](phases/H1.md) | Orchestration v2 (Sonnet orchestrator, Opus advisor, Haiku scouts, deterministic hooks, Memtrace-first with gopls fallback, ponytail) and Go hygiene (defensive nil checks, needless code, golangci-lint in CI). | R1 |
+| [S1](phases/S1.md) | Throwaway walking skeleton against real GitHub, deployed on both verification targets: App polling one repository, a required check, an approval, a merge, a recorded promotion. Findings settle the GitHub and deployment decisions. | R1 |
 | [M1.2](phases/M1.2.md) | `suiteward serve`: configuration, River jobs enqueued in the unit-of-work transaction, publication outbox, graceful shutdown. | R1 |
 | [M1.3](phases/M1.3.md) | `.suiteward.yml` scope with protected defaults, protected inventory, existing-baseline bootstrap. | R1 |
 | [M1.4](phases/M1.4.md) | GitHub App authentication, budgeted ETag polling, PR discovery, local MCP sync/status. | S1, M1.2 |
@@ -32,7 +33,18 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 | [M1.7](phases/M1.7.md) | Merge detection and promotion for supported merge methods; explicit failure state for the others. | M1.6 |
 | [M1.8](phases/M1.8.md) | MVP acceptance: install guide, backup and re-bootstrap runbook, end-to-end run, dogfooding on SuiteWard. | M1.7 |
 
-M1.2 and M1.3 can run in parallel with S1. S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
+H1 runs first, before new code builds on the current packages. M1.2 and M1.3 can run in parallel with S1. S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
+
+## Verification targets
+
+Every phase that changes what runs (S1, M1.2, M1.4–M1.8) is verified on both targets before its PR, and the MVP is accepted on both:
+
+| Target | ADR 0027 tier | Shape |
+| --- | --- | --- |
+| Local container | co-located | The same OCI image under Podman on the developer machine, next to the agent; reduced assurance is reported. |
+| Remote host | isolated | The same image on a remote Linux host as a systemd service (Podman quadlet). Outbound-only: no inbound ports; status, MCP and TOTP enrollment reached through Tailscale or an SSH tunnel. The App key and database never leave the host. |
+
+Remote deployment runs through a GitHub Actions workflow bound to a protected environment that requires the owner's approval; the host's SSH deploy key exists only as that environment's secret, and the owner places the App key on the host once. The agent can prepare and trigger a deployment but never holds host credentials, so the remote target stays a genuine isolated installation. Host choice and access are decided in D-DEPLOY.
 
 ## After the MVP
 

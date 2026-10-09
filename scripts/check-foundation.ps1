@@ -24,6 +24,7 @@ try {
     & (Join-Path $PSScriptRoot 'test-persistence.ps1')
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
     & (Join-Path $PSScriptRoot 'test-bot-token.ps1')
+    & (Join-Path $PSScriptRoot 'test-hooks.ps1')
     Write-Host 'Foundation scripts, workflows, and documentation are valid.'
     $global:LASTEXITCODE = 0
 } finally { Pop-Location }

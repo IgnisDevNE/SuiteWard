@@ -1,11 +1,11 @@
 # CI and coverage
 
-- **Updated:** 2026-10-05
+- **Updated:** 2026-10-09
 - **Status:** Active. `main` requires an up-to-date PR with the contexts `CI / Gate` (GitHub Actions) and `codecov/patch` (Codecov).
 
 ## Quality policy
 
-Build and tests must pass on Windows and Linux. Formatting (`gofmt`) and static analysis (`go vet`) are required. Linux CI also runs the race detector and `govulncheck`, with reachable known vulnerability findings treated as failures. A failed scanner is not a clean security result.
+Build and tests must pass on Windows and Linux. Formatting (`gofmt`), static analysis (`go vet`), and `golangci-lint` against `.golangci.yml` are required; any lint finding fails the build. The linter is the version pinned in `dev/tools.json` (2.14.0), installed from its checksum-verified release archive, and runs once per Go runner (Windows and Linux) in the default mode of `scripts/check-go.ps1`; the race and coverage runner does not repeat it. Run it locally with `./scripts/dev.ps1 lint`. Linux CI also runs the race detector and `govulncheck`, with reachable known vulnerability findings treated as failures. A failed scanner is not a clean security result.
 
 Linux race and coverage runs execute all tests with the `integration` tag against a healthy PostgreSQL 18.6 service pinned to the same immutable image as local development. The coverage step rejects an absent database URL. The Go runners and the coverage runner regenerate sqlc queries into private staging and require an exact match with the versioned output; they never mutate tracked generated files.
 
@@ -19,13 +19,13 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 | --- | --- |
 | Inspect repository | Compare tracked files with the base revision to select foundation or Go verification. Removing an existing Go module or source cannot silently disable the Go checks. |
 | Foundation, Windows and Linux | Parse all PowerShell scripts; validate the workflow with actionlint and documentation links; run the tests for CI classification and gate behavior, coverage argument handling, Go, persistence, and development tooling safety and isolation, and the bot-token script. |
-| Go, Windows and Linux | Verify formatting, analyze, build and run portable tests; verify fresh sqlc output. A module without real packages fails. |
+| Go, Windows and Linux | Verify formatting, analyze, lint, build and run portable tests; verify fresh sqlc output. A module without real packages fails. |
 | Race, security, and coverage | Test the exact event head against an isolated PostgreSQL service with integration tests, verify fresh sqlc output, scan vulnerabilities, preserve the coverage report, and upload it to Codecov. |
 | CI / Gate | Always evaluate all prerequisite results. Accept skipped Go jobs only when the successful classifier established foundation-only applicability. Failures, cancellations, missing classification, and unexpected skips fail the gate. |
 
 There is no placeholder application package and no artificial coverage upload. Once Go code exists, even a documentation-only PR runs the Go jobs so the required coverage contexts remain available. The PowerShell tests verify CI infrastructure and are not counted as application coverage.
 
-Go is pinned to 1.27.1 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. The [local bootstrap](local-development.md) installs the same Go and scanner versions in the shared per-user tool cache (not inside each checkout) and reuses `scripts/check-go.ps1`.
+Go is pinned to 1.27.2 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. The [local bootstrap](local-development.md) installs the same Go, scanner, and linter versions in the shared per-user tool cache (not inside each checkout) and reuses `scripts/check-go.ps1`.
 
 ## Required contexts
 

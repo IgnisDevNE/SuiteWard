@@ -77,7 +77,7 @@ func seedGovernance(t *testing.T, connection *pgx.Conn) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer transaction.Rollback(context.Background())
+	defer func() { _ = transaction.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
 	for _, table := range []string{"policies", "suites", "suite_versions", "proposals", "proposal_revisions", "assessments", "consent_results", "operations", "promotions"} {
 		mustInsert(t, transaction, table, nil)
 	}
@@ -251,7 +251,7 @@ func TestGovernanceCurrentVersionPointerIsDeferred(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer transaction.Rollback(context.Background())
+		defer func() { _ = transaction.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
 		schemaExec(t, transaction, "UPDATE suites SET revision=revision+1, current_version_id='v2'")
 		mustInsert(t, transaction, "suite_versions", map[string]any{"version_id": "v2"})
 		if err := transaction.Commit(t.Context()); err != nil {
@@ -263,7 +263,7 @@ func TestGovernanceCurrentVersionPointerIsDeferred(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer transaction.Rollback(context.Background())
+		defer func() { _ = transaction.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
 		schemaExec(t, transaction, "UPDATE suites SET revision=revision+1, current_version_id='ghost'")
 		schemaRequireError(t, transaction.Commit(t.Context()), "23503", "suites_current_version_fkey")
 		var current string
@@ -278,7 +278,7 @@ func TestGovernanceCurrentVersionPointerIsDeferred(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer transaction.Rollback(context.Background())
+		defer func() { _ = transaction.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
 		schemaExec(t, transaction, "UPDATE suites SET revision=revision+1, current_version_id='foreign' WHERE suite_id='suite'")
 		schemaRequireError(t, transaction.Commit(t.Context()), "23503", "suites_current_version_fkey")
 	})
@@ -342,7 +342,7 @@ func TestGovernanceConstraints(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer transaction.Rollback(context.Background())
+			defer func() { _ = transaction.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
 			mustInsert(t, transaction, "suites", map[string]any{"suite_id": "other", "revision": 0, "current_version_id": nil})
 			mustInsert(t, transaction, "suite_versions", map[string]any{"version_id": "v2"})
 			mustInsert(t, transaction, "proposals", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2"})
@@ -396,14 +396,14 @@ func newSchemaDatabase(t *testing.T) schemaDatabase {
 	schema := "sw_schema_" + strings.ToLower(rand.Text())
 	identifier := pgx.Identifier{schema}.Sanitize()
 	if _, err := admin.Exec(t.Context(), "CREATE SCHEMA "+identifier); err != nil {
-		admin.Close(context.Background())
+		_ = admin.Close(context.Background()) // cleanup path: a failed close only means the connection is gone
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if _, err := admin.Exec(context.Background(), "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
 			t.Errorf("remove owned schema: %v", err)
 		}
-		admin.Close(context.Background())
+		_ = admin.Close(context.Background()) // cleanup path: a failed close only means the connection is gone
 	})
 	parsed, err := url.Parse(connectionURL)
 	if err != nil {
@@ -417,7 +417,7 @@ func newSchemaDatabase(t *testing.T) schemaDatabase {
 	if err != nil {
 		t.Fatalf("connect owned schema: %v", err)
 	}
-	t.Cleanup(func() { conn.Close(context.Background()) })
+	t.Cleanup(func() { _ = conn.Close(context.Background()) }) // cleanup path: a failed close only means the connection is gone
 	return schemaDatabase{url: connectionURL, schema: schema, conn: conn}
 }
 

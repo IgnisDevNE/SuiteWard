@@ -50,6 +50,15 @@ Operational failure, rejected governance action, and an already-completed idempo
 
 Reference: [Go errors documentation](https://pkg.go.dev/errors).
 
+## Nil checks
+
+Defensive nil checks inside validated code hide bugs: an impossible state silently becomes a zero value and the failure surfaces somewhere else.
+
+- Check for nil only at trust boundaries: external input, values the contract declares optional (a pointer or map that may legitimately be absent), and dependencies passed to constructors. A failed check returns an explicit, wrapped error.
+- Inside a boundary, rely on invariants established by validated constructors (`New*`, `Reconstitute*`); do not re-check what the type already guarantees.
+- An unreachable nil fails loudly: an error naming the broken invariant, or a panic with a message only where the state is genuinely unreachable.
+- Never `if err != nil { return nil }`, never `return nil, nil` for "not found" (return a sentinel such as `ErrNotFound`), and never an empty `default` that swallows an unexpected case.
+
 ## Dependency composition
 
 Connect dependencies explicitly through constructors or explicit parameters. Use manual composition in the entry point/bootstrap boundary; do not introduce a dependency-injection container or service locator as part of the initial implementation.

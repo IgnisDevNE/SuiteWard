@@ -82,3 +82,41 @@ func TestPromotionRecordRejectsInconsistentHistory(t *testing.T) {
 		})
 	}
 }
+
+func TestPromotionRecordEqualComparesEveryField(t *testing.T) {
+	base := promotionRecord(t, promotionRecordInput(t))
+	if !base.Equal(promotionRecord(t, promotionRecordInput(t))) {
+		t.Fatal("identical records must be equal")
+	}
+	bindingInput := promotionCopyBindingInput(promotionRecordInput(t).Binding)
+	bindingInput.PolicyRevision = "other-policy"
+	otherBinding := promotionBinding(t, bindingInput)
+	for name, change := range map[string]func(*contract.PromotionRecordInput){
+		"version":   func(i *contract.PromotionRecordInput) { i.VersionID = "v9" },
+		"binding":   func(i *contract.PromotionRecordInput) { i.Binding = otherBinding },
+		"operation": func(i *contract.PromotionRecordInput) { i.OperationID = "other-operation" },
+		"carrier":   func(i *contract.PromotionRecordInput) { i.Carrier = "other-carrier" },
+		"source":    func(i *contract.PromotionRecordInput) { i.Source = "other-source" },
+		"target":    func(i *contract.PromotionRecordInput) { i.Target = "other-target" },
+		"recorded":  func(i *contract.PromotionRecordInput) { i.RecordedAt = i.RecordedAt.Add(time.Second) },
+		"corrects":  func(i *contract.PromotionRecordInput) { i.CorrectsVersionID = "v8" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := promotionRecordInput(t)
+			change(&input)
+			other := promotionRecord(t, input)
+			if base.Equal(other) || other.Equal(base) {
+				t.Fatalf("records differing in %s compared equal", name)
+			}
+		})
+	}
+	var zero contract.PromotionRecord
+	if zero.Equal(contract.PromotionRecord{}) || zero.Equal(base) || base.Equal(zero) {
+		t.Fatal("an absent record must never equal another record")
+	}
+	input := promotionRecordInput(t)
+	input.RecordedAt = input.RecordedAt.In(time.FixedZone("UTC+3", 3*60*60))
+	if !base.Equal(promotionRecord(t, input)) {
+		t.Fatal("the same instant in another location must be equal")
+	}
+}

@@ -421,9 +421,10 @@ func TestPromotionReadinessCombinedAuthorityMatrix(t *testing.T) {
 				if baseline == "stale" {
 					c.Canonical = promotionNewerCanonical(t)
 				}
-				if approval == "missing" {
+				switch approval {
+				case "missing":
 					c.Consent = contract.Consent{}
-				} else if approval == "revoked" {
+				case "revoked":
 					promotionRevoke(t, &c)
 				}
 				beforeSuite := c.Canonical.Suite()
@@ -846,6 +847,46 @@ func TestPromotionRejectsInvalidEffectIdentity(t *testing.T) {
 			}
 			if effect, present := decision.Effect(); present || !effect.IsZero() {
 				t.Fatal("invalid effect escaped")
+			}
+		})
+	}
+}
+
+func TestPromotionDecisionKeepsCauseOfInvalidPromotion(t *testing.T) {
+	input := promotionInput(t)
+	input.Context.Proposed = contract.ProtectedContract{}
+	_, err := contract.DecidePromotion(input)
+	if !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, contract.ErrInvalidProtectedContract) {
+		t.Errorf("classification failure lost its cause: %v", err)
+	}
+	input = promotionInput(t)
+	input.RecordedAt = time.Time{}
+	_, err = contract.DecidePromotion(input)
+	if !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, contract.ErrInvalidPromotionRecord) {
+		t.Errorf("record failure lost its cause: %v", err)
+	}
+}
+
+func TestPromotionReadinessKeepsCauseOfInvalidProposalInputs(t *testing.T) {
+	for name, test := range map[string]struct {
+		change func(*contract.PromotionContext)
+		cause  error
+	}{
+		"zero proposal":     {func(c *contract.PromotionContext) { c.Proposal = contract.Proposal{} }, contract.ErrInvalidProposal},
+		"invalid reference": {func(c *contract.PromotionContext) { c.Reference.RevisionID = " " }, contract.ErrInvalidReference},
+		"blank carrier":     {func(c *contract.PromotionContext) { c.Carrier = " \n" }, contract.ErrInvalidReference},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := promotionContext(t)
+			test.change(&c)
+			decision, err := contract.CheckPromotionReadiness(c, "integrated-source")
+			if !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, test.cause) || decision.Outcome() != 0 {
+				t.Fatalf("outcome=%v err=%v, want ErrInvalidPromotion caused by %v", decision.Outcome(), err, test.cause)
+			}
+			input := promotionInput(t)
+			test.change(&input.Context)
+			if _, err := contract.DecidePromotion(input); !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, test.cause) {
+				t.Fatalf("promotion err=%v, want ErrInvalidPromotion caused by %v", err, test.cause)
 			}
 		})
 	}

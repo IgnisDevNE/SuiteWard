@@ -484,14 +484,9 @@ func (e *cfEnv) promotionWrite(c cfCandidate, operation string, version, correct
 
 // Equality of domain values that are not comparable with ==.
 
-func cfSameRecord(a, b contract.PromotionRecord) bool {
-	return a.VersionID() == b.VersionID() && a.Binding().Equal(b.Binding()) && a.OperationID() == b.OperationID() && a.Carrier() == b.Carrier() &&
-		a.Source() == b.Source() && a.Target() == b.Target() && a.RecordedAt().Equal(b.RecordedAt()) && a.CorrectsVersionID() == b.CorrectsVersionID()
-}
-
 func cfSameHistory(a, b contract.HistoricalCanonical) bool {
 	return a.Version().ID() == b.Version().ID() && a.Version().ProjectID() == b.Version().ProjectID() && a.Version().SuiteID() == b.Version().SuiteID() &&
-		a.Version().Manifest().Digest() == b.Version().Manifest().Digest() && cfSameRecord(a.Record(), b.Record())
+		a.Version().Manifest().Digest() == b.Version().Manifest().Digest() && a.Record().Equal(b.Record())
 }
 
 func cfSameRevision(a, b contract.ProposalRevision) bool {
@@ -515,7 +510,7 @@ func cfSamePromotionReceipt(a, b governance.PromotionReceipt) bool {
 	p, q := x.Request, y.Request
 	return x.Kind == y.Kind && x.CorrectsVersionID == y.CorrectsVersionID && x.Binding.Equal(y.Binding) &&
 		p.OperationID == q.OperationID && p.Reference == q.Reference && p.Carrier == q.Carrier && p.Proposed.Equal(q.Proposed) && p.AssessmentSource == q.AssessmentSource &&
-		p.Integration == q.Integration && p.NewVersionID == q.NewVersionID && p.RecordedAt.Equal(q.RecordedAt) && cfSameRecord(a.Record, b.Record)
+		p.Integration == q.Integration && p.NewVersionID == q.NewVersionID && p.RecordedAt.Equal(q.RecordedAt) && a.Record.Equal(b.Record)
 }
 
 func cfSameReceipt(a, b governance.OperationReceipt) bool {
@@ -559,7 +554,7 @@ func cfSeedWithCurrentVersion(e *cfEnv) {
 	if !state.Canonical.Contract().Equal(r.second.protected) {
 		e.t.Error("canonical contract is not the second protected contract")
 	}
-	if !cfSameRecord(state.Canonical.Record(), r.versions[1].Record()) {
+	if !state.Canonical.Record().Equal(r.versions[1].Record()) {
 		e.t.Error("canonical promotion record is not the stored record of version-2")
 	}
 	e.requireSuiteAuthority(state, r.seed.Suite)
@@ -661,7 +656,7 @@ func cfSeedHistory(e *cfEnv) {
 				e.t.Errorf("version %s = found %v, %v, want the seeded history entry %d", id, found, err, i)
 			}
 			record, found, err := tx.PromotionFor(ctx, stored.Record().Binding().Reference())
-			if err != nil || !found || !cfSameRecord(record, stored.Record()) {
+			if err != nil || !found || !record.Equal(stored.Record()) {
 				e.t.Errorf("promotion for %v = found %v, %v, want the seeded record", stored.Record().Binding().Reference(), found, err)
 			}
 		}
@@ -719,7 +714,7 @@ func cfReceiptReplay(e *cfEnv) {
 	})
 
 	replay, err := governance.Promote(context.Background(), e.store, request)
-	if err != nil || !replay.Duplicate || !replay.Committed || !cfSameRecord(replay.Record, result.Record) {
+	if err != nil || !replay.Duplicate || !replay.Committed || !replay.Record.Equal(result.Record) {
 		e.t.Errorf("promotion replay = %+v, %v, want the original record as a duplicate", replay, err)
 	}
 }
@@ -1277,19 +1272,19 @@ func cfPromotionRoundTrip(e *cfEnv) {
 	if current, _ := state.Canonical.Suite().CurrentVersionID(); current != "version-3" || state.Canonical.Version().ID() != "version-3" {
 		e.t.Errorf("current version = %q, want version-3", current)
 	}
-	if !state.Canonical.Contract().Equal(r.open.protected) || !cfSameRecord(state.Canonical.Record(), record) {
+	if !state.Canonical.Contract().Equal(r.open.protected) || !state.Canonical.Record().Equal(record) {
 		e.t.Error("canonical does not carry the promoted contract and its record")
 	}
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		history, found, err := tx.Version(ctx, "version-3")
-		if err != nil || !found || history.Version().Manifest().Digest() != r.open.protected.Manifest().Digest() || !cfSameRecord(history.Record(), record) {
+		if err != nil || !found || history.Version().Manifest().Digest() != r.open.protected.Manifest().Digest() || !history.Record().Equal(record) {
 			e.t.Errorf("version-3 = found %v, %v, want the promoted version with its record", found, err)
 		}
 		if history.Record().CorrectsVersionID() != "version-1" {
 			e.t.Errorf("corrected version = %q, want version-1", history.Record().CorrectsVersionID())
 		}
 		promoted, found, err := tx.PromotionFor(ctx, r.open.current())
-		if err != nil || !found || !cfSameRecord(promoted, record) {
+		if err != nil || !found || !promoted.Equal(record) {
 			e.t.Errorf("promotion for the reference = found %v, %v, want the record", found, err)
 		}
 		for i, previous := range r.versions {

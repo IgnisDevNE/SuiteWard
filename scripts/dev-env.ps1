@@ -35,7 +35,12 @@ function Get-ToolPath {
     param($Context, [string]$Name)
     $version = $Context.Manifest[$Name].version
     $dir = Join-Path $Context.Tools "$Name/$version/$($Context.Platform)"
-    $binary = if ($Name -eq 'go') { "go/bin/go$($Context.Suffix)" } else { "$Name$($Context.Suffix)" }
+    # The Go and golangci-lint archives wrap their binary in a top-level directory.
+    $binary = switch ($Name) {
+        'go' { "go/bin/go$($Context.Suffix)" }
+        'golangci-lint' { "golangci-lint-$version-$($Context.Platform)/golangci-lint$($Context.Suffix)" }
+        default { "$Name$($Context.Suffix)" }
+    }
     return Join-Path $dir $binary
 }
 
@@ -112,7 +117,7 @@ function Assert-ToolVersion {
     param($Context, [string]$Name)
     $exe = Get-ToolPath $Context $Name
     if (-not (Test-Path -LiteralPath $exe)) { throw "$Name is not installed in the shared tool cache ($($Context.Tools)). Run: ./scripts/dev.ps1 setup" }
-    [string[]]$versionArgs = @(switch ($Name) { 'go' { 'version' }; 'sqlc' { 'version' }; 'actionlint' { '-version' }; 'govulncheck' { '-version' } })
+    [string[]]$versionArgs = @(switch ($Name) { 'go' { 'version' }; 'sqlc' { 'version' }; 'actionlint' { '-version' }; 'govulncheck' { '-version' }; 'gopls' { 'version' }; 'golangci-lint' { '--version' } })
     $output = Invoke-ToolConfigScope $Context {
         & $exe @versionArgs 2>&1
         if ($LASTEXITCODE -ne 0) { throw "$Name version check failed." }
@@ -178,25 +183,29 @@ function Install-DevTools {
     try {
         try { $lock = [IO.File]::Open((Join-Path $Context.State 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
         catch { throw 'Another setup is running in this checkout. Wait for it to finish.' }
-        foreach ($name in @('go', 'sqlc', 'actionlint')) { Install-ArchiveTool $Context $name }
-        $exe = Get-ToolPath $Context 'govulncheck'
-        Invoke-WithToolsLock $Context {
-            if (-not (Test-Path -LiteralPath $exe)) {
-                $toolDir = Split-Path $exe -Parent
-                New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
-                $savedBin = $env:GOBIN
-                $savedProxy = $env:GOPROXY; $savedSum = $env:GOSUMDB; $savedNoSum = $env:GONOSUMDB; $savedPrivate = $env:GOPRIVATE
-                try {
-                    $env:GOBIN = $toolDir
-                    $env:GOPROXY = 'https://proxy.golang.org'; $env:GOSUMDB = 'sum.golang.org'; $env:GONOSUMDB = ''; $env:GOPRIVATE = ''
-                    Invoke-ToolConfigScope $Context {
-                        & (Get-ToolPath $Context 'go') install "golang.org/x/vuln/cmd/govulncheck@v$($Context.Manifest.govulncheck.version)"
-                        if ($LASTEXITCODE -ne 0) { throw 'Could not install pinned govulncheck.' }
-                    }
-                } finally { Restore-DevEnvironment @{ GOBIN = $savedBin; GOPROXY = $savedProxy; GOSUMDB = $savedSum; GONOSUMDB = $savedNoSum; GOPRIVATE = $savedPrivate } }
+        foreach ($name in @('go', 'sqlc', 'actionlint', 'golangci-lint')) { Install-ArchiveTool $Context $name }
+        # Go-module tools install with the pinned Go into their own versioned directory, verified through the public checksum database.
+        $modules = [ordered]@{ govulncheck = 'golang.org/x/vuln/cmd/govulncheck'; gopls = 'golang.org/x/tools/gopls' }
+        foreach ($module in $modules.Keys) {
+            $exe = Get-ToolPath $Context $module
+            Invoke-WithToolsLock $Context {
+                if (-not (Test-Path -LiteralPath $exe)) {
+                    $toolDir = Split-Path $exe -Parent
+                    New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
+                    $savedBin = $env:GOBIN
+                    $savedProxy = $env:GOPROXY; $savedSum = $env:GOSUMDB; $savedNoSum = $env:GONOSUMDB; $savedPrivate = $env:GOPRIVATE
+                    try {
+                        $env:GOBIN = $toolDir
+                        $env:GOPROXY = 'https://proxy.golang.org'; $env:GOSUMDB = 'sum.golang.org'; $env:GONOSUMDB = ''; $env:GOPRIVATE = ''
+                        Invoke-ToolConfigScope $Context {
+                            & (Get-ToolPath $Context 'go') install "$($modules[$module])@v$($Context.Manifest[$module].version)"
+                            if ($LASTEXITCODE -ne 0) { throw "Could not install pinned $module." }
+                        }
+                    } finally { Restore-DevEnvironment @{ GOBIN = $savedBin; GOPROXY = $savedProxy; GOSUMDB = $savedSum; GONOSUMDB = $savedNoSum; GOPRIVATE = $savedPrivate } }
+                }
             }
+            Assert-ToolVersion $Context $module
         }
-        Assert-ToolVersion $Context 'govulncheck'
         if (Test-Path -LiteralPath (Join-Path $Context.Root '.tools')) { Write-Host 'Note: this checkout''s .tools/ directory is no longer used; tools now live in the shared cache. You can delete it.' }
     } finally { if ($lock) { $lock.Dispose() } }
 }

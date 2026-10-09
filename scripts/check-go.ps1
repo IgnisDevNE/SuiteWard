@@ -11,13 +11,23 @@ try {
     $buildTags = @(if ($Integration) { '-tags=integration' })
     $packages = @(go list @buildTags ./...)
     if ($LASTEXITCODE -ne 0 -or $packages.Count -eq 0) { throw 'Expected real Go packages; refusing an empty verification' }
-    $sources = @(git ls-files --cached --others --exclude-standard '*.go' | Where-Object { $_ -cnotmatch '^vendor/' } | Sort-Object -Unique)
+    # git still lists a tracked file that was deleted from disk but not yet from the index; gofmt would fail on it.
+    # core.quotepath=false keeps non-ASCII names unquoted so the existence filter does not drop them.
+    $sources = @(git -c core.quotepath=false ls-files --cached --others --exclude-standard '*.go' | Where-Object { $_ -cnotmatch '^vendor/' -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Sort-Object -Unique)
     if ($LASTEXITCODE -ne 0 -or $sources.Count -eq 0) { throw 'No Go source files in the checkout' }
     $unformatted = @(gofmt -l @sources)
     if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
     if ($unformatted.Count -gt 0) { throw "Run gofmt on: $($unformatted -join ', ')" }
     go vet @buildTags ./...
     if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
+    if (-not $Coverage -and -not $Integration) {
+        # The pinned, checksum-verified golangci-lint from dev/tools.json; .golangci.yml also lints the integration-tagged files, so the other modes skip this.
+        . (Join-Path $PSScriptRoot 'dev-env.ps1')
+        $context = Get-DevContext
+        Install-ArchiveTool $context 'golangci-lint'
+        & (Get-ToolPath $context 'golangci-lint') run ./...
+        if ($LASTEXITCODE -ne 0) { throw 'golangci-lint reported findings' }
+    }
     go build @buildTags ./...
     if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
     if ($Coverage) {

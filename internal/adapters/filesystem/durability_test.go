@@ -113,7 +113,7 @@ func TestDuplicatePutSyncsDirectoryBeforeReportingSuccess(t *testing.T) {
 	digest := artifact.Hash(content)
 	failure := errors.New("directory fsync failed")
 	syncs := 0
-	var syncErr error = failure
+	syncErr := failure
 	store.io.syncDir = func(*os.Root) error { syncs++; return syncErr }
 	if err := store.Put(context.Background(), digest, bytes.NewReader(content)); !errors.Is(err, failure) {
 		t.Fatalf("first Put = %v, want directory sync failure", err)

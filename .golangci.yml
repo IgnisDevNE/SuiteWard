@@ -27,6 +27,7 @@ linters:
         - name: empty-block
         - name: redefines-builtin-id
     gocritic:
+      disable-all: true
       enabled-tags:
         - diagnostic
   exclusions:

@@ -1,0 +1,71 @@
+# Spike S1 only: publishes the throwaway verification image to GHCR. Not part of the CI gate and not a required check.
+name: S1 publish
+
+on:
+  push:
+    branches: [phase/S1]
+    paths:
+      - 'spikes/s1/**'
+      - '.github/workflows/s1-publish.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: s1-publish
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/ignisdevne/suiteward-s1
+
+jobs:
+  build:
+    name: Build and push sha tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@PIN_FULL_SHA_BEFORE_USE # vTODO
+      - uses: docker/setup-buildx-action@PIN_FULL_SHA_BEFORE_USE # vTODO
+      - uses: docker/login-action@PIN_FULL_SHA_BEFORE_USE # vTODO
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        uses: docker/build-push-action@PIN_FULL_SHA_BEFORE_USE # vTODO
+        with:
+          context: spikes/s1
+          file: spikes/s1/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+
+  promote:
+    name: Promote to deploy (owner approval)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: remote-poc
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@PIN_FULL_SHA_BEFORE_USE # vTODO
+      - uses: docker/login-action@PIN_FULL_SHA_BEFORE_USE # vTODO
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Move the deploy tag to the built digest
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: docker buildx imagetools create --tag "$IMAGE:deploy" "$IMAGE@$DIGEST"

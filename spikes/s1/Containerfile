@@ -1,0 +1,13 @@
+# Build context is spikes/s1/. Build: podman build -t suiteward-s1 -f Containerfile .
+FROM docker.io/library/golang:1.27.2-alpine AS build
+WORKDIR /src
+COPY go.mod ./
+COPY *.go ./
+RUN CGO_ENABLED=0 go build -trimpath -o /out/suiteward-s1 .
+
+# Distroless static ships CA certificates and a nonroot user (65532).
+FROM gcr.io/distroless/static:nonroot
+COPY --from=build /out/suiteward-s1 /suiteward-s1
+USER 65532:65532
+# State lives in /data (mount a volume); the App key is a mounted file at /run/secrets/app-key.
+ENTRYPOINT ["/suiteward-s1"]

@@ -127,7 +127,8 @@ foreach($required in @("Install-ArchiveTool `$context 'golangci-lint'", "(Get-To
     if(-not $checkGoSource.Contains($required)){throw "check-go.ps1 must install and run the pinned golangci-lint: $required"}
 }
 if($coverageJob.Contains('golangci') -or $workflow -match 'golangci-lint-action|golangci-lint@latest'){throw 'Lint must not run in the coverage job or through an unpinned install or action.'}
-$checks+=3
+if($checkGoSource -match 'go install|@latest'){throw 'check-go.ps1 must not install tools with go install or an unpinned version; tools come from dev/tools.json.'}
+$checks+=4
 if(-not (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Contains("'test-persistence.ps1'")){throw 'Foundation must execute the persistence infrastructure behavior checks.'}
 $checks++
 # Branch protection requires the exact context name; the gate must aggregate every verification job.

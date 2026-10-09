@@ -866,3 +866,28 @@ func TestPromotionDecisionKeepsCauseOfInvalidPromotion(t *testing.T) {
 		t.Errorf("record failure lost its cause: %v", err)
 	}
 }
+
+func TestPromotionReadinessKeepsCauseOfInvalidProposalInputs(t *testing.T) {
+	for name, test := range map[string]struct {
+		change func(*contract.PromotionContext)
+		cause  error
+	}{
+		"zero proposal":     {func(c *contract.PromotionContext) { c.Proposal = contract.Proposal{} }, contract.ErrInvalidProposal},
+		"invalid reference": {func(c *contract.PromotionContext) { c.Reference.RevisionID = " " }, contract.ErrInvalidReference},
+		"blank carrier":     {func(c *contract.PromotionContext) { c.Carrier = " \n" }, contract.ErrInvalidReference},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := promotionContext(t)
+			test.change(&c)
+			decision, err := contract.CheckPromotionReadiness(c, "integrated-source")
+			if !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, test.cause) || decision.Outcome() != 0 {
+				t.Fatalf("outcome=%v err=%v, want ErrInvalidPromotion caused by %v", decision.Outcome(), err, test.cause)
+			}
+			input := promotionInput(t)
+			test.change(&input.Context)
+			if _, err := contract.DecidePromotion(input); !errors.Is(err, contract.ErrInvalidPromotion) || !errors.Is(err, test.cause) {
+				t.Fatalf("promotion err=%v, want ErrInvalidPromotion caused by %v", err, test.cause)
+			}
+		})
+	}
+}

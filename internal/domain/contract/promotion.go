@@ -241,13 +241,14 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	if err != nil {
 		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
+	// Cannot fail here: the version id was validated by NewPromotionRecord and the rest comes from a validated Suite.
 	version, err := NewSuiteVersion(current.ProjectID(), current.ID(), input.NewVersionID, input.Context.Proposed.Manifest())
 	if err != nil {
-		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
+		return PromotionDecision{}, ErrInvalidPromotion
 	}
 	suite, err := NewSuite(current.ProjectID(), current.ID(), input.NewVersionID, current.Revision()+1)
 	if err != nil {
-		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
+		return PromotionDecision{}, ErrInvalidPromotion
 	}
 	effect := PromotionEffect{expectedCanonical: record.Binding().ExpectedCanonical(), suite: suite, version: version, promotion: record}
 	return PromotionDecision{outcome: PromotionProposed, effect: effect}, nil
@@ -266,18 +267,18 @@ func blockedPromotion(reason PromotionReason) PromotionDecision {
 	return PromotionDecision{outcome: PromotionBlocked, reason: reason}
 }
 func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision, error) {
-	if context.Canonical.IsZero() || context.Proposed.IsZero() || context.Proposal.IsZero() || !validProposalReference(context.Reference) ||
-		strings.TrimSpace(string(context.Carrier)) == "" || context.Policy.RevisionID() == "" || strings.TrimSpace(string(requiredSource)) == "" {
+	if context.Canonical.IsZero() || context.Proposed.IsZero() || context.Policy.RevisionID() == "" || strings.TrimSpace(string(requiredSource)) == "" {
 		return PromotionDecision{}, ErrInvalidPromotion
 	}
+	// Resolve itself rejects a zero proposal, an invalid reference and a blank carrier.
 	revision, err := context.Proposal.Resolve(context.Reference, context.Carrier)
-	if errors.Is(err, ErrProposalContextMismatch) {
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrProposalContextMismatch):
 		return blockedPromotion(PromotionReasonContextMismatch), nil
-	}
-	if errors.Is(err, ErrUnknownRevision) || errors.Is(err, ErrSupersededRevision) {
+	case errors.Is(err, ErrUnknownRevision), errors.Is(err, ErrSupersededRevision):
 		return blockedPromotion(PromotionReasonProposalNotCurrent), nil
-	}
-	if err != nil {
+	default:
 		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
 	binding := revision.Binding()

@@ -120,6 +120,15 @@ foreach($job in @($goJob,$coverageJob)) {
     if(-not $job.Contains('./scripts/check-persistence.ps1 -Mode Generated')){throw 'CI must verify fresh sqlc output on both native Go runners and the real PostgreSQL coverage runner.'}
     $checks++
 }
+# Lint runs once, inside the default-mode Go job (both OSes), from the pinned checksum-verified tool; no unpinned install or third-party action.
+if($goJob -notmatch '(?m)^\s+run: \./scripts/check-go\.ps1\s*$'){throw 'The Go job must run check-go.ps1 in default mode, which includes golangci-lint.'}
+$checkGoSource=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-go.ps1')).Replace("`r",'')
+foreach($required in @("Install-ArchiveTool `$context 'golangci-lint'", "(Get-ToolPath `$context 'golangci-lint') run ./...")){
+    if(-not $checkGoSource.Contains($required)){throw "check-go.ps1 must install and run the pinned golangci-lint: $required"}
+}
+if($coverageJob.Contains('golangci') -or $workflow -match 'golangci-lint-action|golangci-lint@latest'){throw 'Lint must not run in the coverage job or through an unpinned install or action.'}
+if($checkGoSource -match 'go install|@latest'){throw 'check-go.ps1 must not install tools with go install or an unpinned version; tools come from dev/tools.json.'}
+$checks+=4
 if(-not (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Contains("'test-persistence.ps1'")){throw 'Foundation must execute the persistence infrastructure behavior checks.'}
 $checks++
 # Branch protection requires the exact context name; the gate must aggregate every verification job.

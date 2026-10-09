@@ -1,0 +1,30 @@
+# Rootless user quadlet for the `suiteward` user. Install as ~/.config/containers/systemd/suiteward-s1.container (see HOST.md).
+# Outbound only: the single published port is bound to loopback and is reached through SSM port forwarding.
+[Unit]
+Description=SuiteWard S1 spike
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=ghcr.io/ignisdevne/suiteward-s1:deploy
+ContainerName=suiteward-s1
+# Polled by podman-auto-update.timer; the host pulls, nothing pushes to it.
+AutoUpdate=registry
+# Non-secret configuration (S1_APP_ID, S1_INSTALLATION_ID, S1_REPO, S1_OWNER_LOGIN, ...).
+EnvironmentFile=%h/.config/suiteward-s1/env
+# The container listens on all its interfaces; the host side below is loopback only.
+Environment=S1_STATUS_ADDR=0.0.0.0:8080
+PublishPort=127.0.0.1:8080:8080
+# The App key is a podman secret mounted as a file; it is never an environment variable.
+Secret=suiteward-s1-app-key,type=mount,target=/run/secrets/app-key,uid=65532,mode=0400
+Volume=suiteward-s1-data:/data
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

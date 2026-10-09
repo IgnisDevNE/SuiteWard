@@ -2,6 +2,7 @@ package contract
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 	"time"
@@ -210,7 +211,7 @@ func (e PromotionEffect) Promotion() PromotionRecord          { return e.promoti
 func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	change, err := ClassifyContractChange(input.Context.Canonical, input.Context.Proposed)
 	if err != nil {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
 	if change == ContractUnchanged {
 		return PromotionDecision{outcome: PromotionNoChange}, nil
@@ -238,15 +239,15 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	}
 	record, err := NewPromotionRecord(PromotionRecordInput{OperationID: input.OperationID, VersionID: input.NewVersionID, Binding: input.Context.Proposal.Current().Binding(), Carrier: input.Context.Carrier, Source: input.Integration.Source(), Target: input.Target, RecordedAt: input.RecordedAt, CorrectsVersionID: input.CorrectsVersionID})
 	if err != nil {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
 	version, err := NewSuiteVersion(current.ProjectID(), current.ID(), input.NewVersionID, input.Context.Proposed.Manifest())
 	if err != nil {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
 	suite, err := NewSuite(current.ProjectID(), current.ID(), input.NewVersionID, current.Revision()+1)
 	if err != nil {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
 	effect := PromotionEffect{expectedCanonical: record.Binding().ExpectedCanonical(), suite: suite, version: version, promotion: record}
 	return PromotionDecision{outcome: PromotionProposed, effect: effect}, nil
@@ -273,8 +274,11 @@ func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevi
 	if errors.Is(err, ErrProposalContextMismatch) {
 		return blockedPromotion(PromotionReasonContextMismatch), nil
 	}
-	if err != nil {
+	if errors.Is(err, ErrUnknownRevision) || errors.Is(err, ErrSupersededRevision) {
 		return blockedPromotion(PromotionReasonProposalNotCurrent), nil
+	}
+	if err != nil {
+		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
 	binding := revision.Binding()
 	if context.Reference.ProjectID != context.Canonical.Suite().ProjectID() || context.Reference.SuiteID != context.Canonical.Suite().ID() || !context.Proposed.matches(binding) {

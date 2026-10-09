@@ -19,6 +19,14 @@ try {
     if ($unformatted.Count -gt 0) { throw "Run gofmt on: $($unformatted -join ', ')" }
     go vet @buildTags ./...
     if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
+    if (-not $Coverage -and -not $Integration) {
+        # The pinned, checksum-verified golangci-lint from dev/tools.json; .golangci.yml also lints the integration-tagged files, so the other modes skip this.
+        . (Join-Path $PSScriptRoot 'dev-env.ps1')
+        $context = Get-DevContext
+        Install-ArchiveTool $context 'golangci-lint'
+        & (Get-ToolPath $context 'golangci-lint') run ./...
+        if ($LASTEXITCODE -ne 0) { throw 'golangci-lint reported findings' }
+    }
     go build @buildTags ./...
     if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
     if ($Coverage) {

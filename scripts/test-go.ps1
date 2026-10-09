@@ -9,7 +9,7 @@ New-Item -ItemType Directory -Path $fixtureScripts -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'check-go.ps1') -Destination (Join-Path $fixtureScripts 'check-go.ps1')
 
 $fixturePackages = @('example.test/project/artifact', 'example.test/project/contract')
-$invocation = [pscustomobject]@{ TestArguments = @(); ProfilePath = ''; Commands=@{}; GofmtArguments = @() }
+$invocation = [pscustomobject]@{ TestArguments = @(); ProfilePath = ''; Commands=@{}; GofmtArguments = @(); GitArguments = @() }
 
 # check-go.ps1 formats only files that exist on disk: a tracked file deleted from the working tree is still listed by git.
 New-Item -ItemType Directory -Path (Join-Path $scratch 'internal/domain') -Force | Out-Null
@@ -43,6 +43,7 @@ function go {
 
 function git {
     Set-Variable -Name LASTEXITCODE -Value 0 -Scope 1
+    $invocation.GitArguments = @($args)
     'internal/domain/value.go'
     'internal/domain/deleted.go'
 }
@@ -75,6 +76,10 @@ try {
     }
     if (($invocation.GofmtArguments -join ' ') -cne '-l internal/domain/value.go') {
         throw "gofmt must receive only Go files that exist on disk, not a tracked file deleted from the working tree. Received: $($invocation.GofmtArguments -join ' ')"
+    }
+    # Quoted non-ASCII paths (for example "\303\251.go") would not exist on disk and be dropped from gofmt silently.
+    if (($invocation.GitArguments -join ' ') -cnotmatch '^-c core\.quotepath=false ls-files ') {
+        throw "git ls-files must run with core.quotepath=false so non-ASCII Go files are not dropped. Received: $($invocation.GitArguments -join ' ')"
     }
     $coverageArguments = @($invocation.TestArguments | Where-Object { $_ -like '-coverpkg=*' })
     if ($coverageArguments.Count -ne 1 -or $coverageArguments[0] -cne '-coverpkg=example.test/project/artifact,example.test/project/contract') {
@@ -117,7 +122,7 @@ try {
         if ($null -eq $savedDatabase) { Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', $savedDatabase, 'Process') }
     }
-    Write-Output 'Passed 16 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
+    Write-Output 'Passed 17 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $scratch).Path
     if ($resolved -ne [IO.Path]::GetFullPath($scratch) -or -not $resolved.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {

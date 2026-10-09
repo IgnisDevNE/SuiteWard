@@ -121,10 +121,10 @@ ss -tnp state established
 Only connections to GitHub (`api.github.com`, port 443) should come from the container. One more check, whether containers can reach the instance metadata service (the host uses IMDSv2 with hop limit 1):
 
 ```
-podman run --rm docker.io/curlimages/curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/meta-data/
+podman run --rm docker.io/curlimages/curl -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/api/token
 ```
 
-`000` means blocked; `401` means reachable but token-protected (rootless networking can hide the extra hop). Report which one you see, and never run commands that print metadata credentials.
+`000` (or anything other than `200`) means blocked. `200` means a container can obtain a metadata token, which contradicts D-DEPLOY (rootless networking can hide the extra hop from the hop limit); report it, do not fix it, and never run commands that print metadata credentials.
 
 ## What to paste back to the orchestrator
 

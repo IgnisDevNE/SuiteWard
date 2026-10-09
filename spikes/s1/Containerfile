@@ -1,9 +1,11 @@
 # Build context is spikes/s1/. Build: podman build -t suiteward-s1 -f Containerfile .
-FROM docker.io/library/golang:1.27.2-alpine AS build
+# The compiler runs natively and cross-compiles, so the arm64 build needs no emulated Go toolchain.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.2-alpine AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -o /out/suiteward-s1 . && mkdir /out/data
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /out/suiteward-s1 . && mkdir /out/data
 
 # Distroless static ships CA certificates and a nonroot user (65532).
 FROM gcr.io/distroless/static:nonroot

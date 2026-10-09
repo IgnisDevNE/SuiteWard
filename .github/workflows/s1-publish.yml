@@ -1,4 +1,5 @@
 # Spike S1 only: publishes the throwaway verification image to GHCR. Not part of the CI gate and not a required check.
+# No third-party actions: the runner's own docker and buildx do the work, and the helper images below are pinned by digest.
 name: S1 publish
 
 on:
@@ -17,6 +18,9 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/ignisdevne/suiteward-s1
+  # tonistiigi/binfmt:latest and moby/buildkit:buildx-stable-1 as of 2026-10-09.
+  BINFMT_IMAGE: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+  BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
 
 jobs:
   build:
@@ -32,22 +36,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@PIN_FULL_SHA_BEFORE_USE # vTODO
-      - uses: docker/setup-buildx-action@PIN_FULL_SHA_BEFORE_USE # vTODO
-      - uses: docker/login-action@PIN_FULL_SHA_BEFORE_USE # vTODO
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Register QEMU and create the builder
+        run: |
+          docker run --privileged --rm "$BINFMT_IMAGE" --install arm64
+          docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
       - id: push
-        uses: docker/build-push-action@PIN_FULL_SHA_BEFORE_USE # vTODO
-        with:
-          context: spikes/s1
-          file: spikes/s1/Containerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+        name: Build and push linux/amd64 and linux/arm64
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+            --file spikes/s1/Containerfile --tag "$IMAGE:sha-$COMMIT" \
+            --metadata-file "$RUNNER_TEMP/meta.json" spikes/s1
+          echo "digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/meta.json")" >> "$GITHUB_OUTPUT"
 
   promote:
     name: Promote to deploy (owner approval)
@@ -56,15 +62,13 @@ jobs:
     timeout-minutes: 10
     environment: remote-poc
     permissions:
-      contents: read
       packages: write
     steps:
-      - uses: docker/setup-buildx-action@PIN_FULL_SHA_BEFORE_USE # vTODO
-      - uses: docker/login-action@PIN_FULL_SHA_BEFORE_USE # vTODO
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
       - name: Move the deploy tag to the built digest
         env:
           DIGEST: ${{ needs.build.outputs.digest }}

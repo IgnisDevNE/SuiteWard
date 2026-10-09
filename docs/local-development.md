@@ -26,7 +26,9 @@ Existing host prerequisites are Git, PowerShell 7, and a running Podman engine/m
 | Go | 1.27.1 | Official archive, SHA-256 checked; must match `.go-version`. |
 | sqlc | 1.31.1 | Official release archive, SHA-256 checked. |
 | actionlint | 1.7.12 | Official release archive, SHA-256 checked. |
+| golangci-lint | 2.14.0 | Official release archive, SHA-256 checked against the release's checksums file. |
 | govulncheck | 1.8.0 | Exact Go module version, verified using the public Go checksum database. |
+| gopls | 0.23.0 | Exact Go module version, installed like govulncheck. |
 | PostgreSQL | 18.6, Debian trixie | Official image pinned to an immutable multiarchitecture digest. |
 
 The declarations and original checksum sources live in `dev/tools.json`. Review version, checksum, CI, and compatibility changes together. No download uses a floating `latest` version. `gofmt`, `go vet`, and the standard test runner are included with Go. [ADR 0026](decisions/0026-versioned-postgresql-migrations.md) selects embedded Goose migrations with pgx; exact dependencies are versioned in `go.mod`/`go.sum`. `sqlc.yaml` consumes the real persistence SQL.
@@ -37,6 +39,8 @@ The declarations and original checksum sources live in `dev/tools.json`. Review 
 ./scripts/dev.ps1 go test ./...     # Once real Go packages exist
 ./scripts/dev.ps1 sqlc version
 ./scripts/dev.ps1 govulncheck ./... # Once real Go packages exist
+./scripts/dev.ps1 lint               # golangci-lint run ./... (arguments replace the default)
+./scripts/dev.ps1 gopls version
 ```
 
 The wrapper prioritizes the pinned SDK from the shared cache and scopes Go installation/cache paths to the process. `GOENV=off`, `GOTOOLCHAIN=local`, and `GOWORK=off` prevent a user's persisted Go settings, toolchain download, or ancestor workspace from silently changing the selected toolchain. During tool execution only, the OS configuration directory (`APPDATA` on Windows, `XDG_CONFIG_HOME` on Linux) points to `.cache/tool-config`, keeping Go telemetry/configuration local too. Podman uses its existing host configuration. The wrapper restores the caller's environment on completion or failure. Application dependencies belong in `go.mod` and `go.sum`.
@@ -45,7 +49,7 @@ The wrapper prioritizes the pinned SDK from the shared cache and scopes Go insta
 
 | Directory | Contents |
 | --- | --- |
-| Shared tool cache (see below) | Pinned executables, the Go SDK, `govulncheck`, and verified release archives, shared by every checkout of this user. |
+| Shared tool cache (see below) | Pinned executables, the Go SDK, `govulncheck`, `gopls`, and verified release archives, shared by every checkout of this user. |
 | `.cache/go-*`, `.cache/gopath/` | Per-checkout build, module, temporary, and package caches. |
 | `.local/dev/` | Checkout database metadata, random local credentials, selected Podman connection, operation locks. |
 | `.memdb/`, `.memtrace/fts/` | Local Memtrace data/search cache. |
@@ -54,7 +58,7 @@ These paths are ignored by Git. Images and named volumes live in Podman's own st
 
 ### Shared tool cache
 
-Pinned archive tools (Go SDK, sqlc, actionlint), their downloaded archives, and `govulncheck` (the wrapper's `GOBIN`) install once per user, so a new worktree does not download them again:
+Pinned archive tools (Go SDK, sqlc, actionlint, golangci-lint), their downloaded archives, and the Go-module tools `govulncheck` and `gopls` (each installed with the wrapper's `GOBIN` set to its own versioned directory) install once per user, so a new worktree does not download them again:
 
 | Platform | Default location |
 | --- | --- |
@@ -111,6 +115,20 @@ Use it for `gh` and direct API calls only. `git push` ignores `GH_TOKEN` and `GI
 
 The JWT and token are never written to stdout, stderr, files, or logs, and error messages from GitHub requests are replaced by a generic message with at most the HTTP status. The script never reads or changes global git or `gh` configuration. It refuses when the configuration, key, or command is missing or the slug does not match, and it never falls back to personal credentials: if it refuses or GitHub denies access, stop and report rather than retrying with a personal token or `gh auth` login. Keep the private key outside the repository or under `.local/`; never commit or print it. `./scripts/test-bot-token.ps1` verifies the JWT, refusals, and no-print behavior offline with an injected HTTP function and a generated key.
 
+## Lint, code navigation, and hooks
+
+`./scripts/dev.ps1 lint` runs the pinned golangci-lint from the repository root (`run ./...` unless arguments are given) and propagates its exit code. The repository has no `.golangci.yml` yet, so the default linter set applies, and lint is not part of `check` or CI until its findings are resolved. Called from inside a PowerShell session, a bare `--flag` argument is split by PowerShell's own parameter binding (`./scripts/dev.ps1 lint --version` fails); use the subcommand form (`lint version`) or `pwsh -NoProfile -File ./scripts/dev.ps1 lint --version`.
+
+`./scripts/gopls-mcp.ps1` starts the pinned `gopls mcp` for Claude Code's stdio MCP configuration. It installs nothing: if `go` or `gopls` is missing from the shared cache it writes one error line to stderr (run `./scripts/dev.ps1 tools`) and exits non-zero. Stdout carries only the server's protocol traffic, and the pinned Go and per-checkout caches are on its environment. `./scripts/dev.ps1 gopls ...` runs the same binary interactively.
+
+Two scripts under `scripts/hooks/` are deterministic Claude Code hooks (no model reasoning). Both read the hook JSON from stdin, never fail the tool call, and write nothing but their documented output to stdout:
+
+| Hook script | Event | Behavior |
+| --- | --- | --- |
+| `go-format.ps1` | `PostToolUse` for `Edit\|Write\|MultiEdit` | Runs the pinned `gofmt -w` on the edited `.go` file when it exists inside the repository; ignores everything else. It never installs tools; a missing `gofmt` or any internal problem is one line on stderr. |
+| `repeat-failure.ps1` | `PostToolUseFailure` (and `PostToolUse` on `Bash` when the response reports a non-zero exit code) | Fingerprints a failure from the tool, the normalized command or file path, and the last three non-empty output lines with timestamps, durations, temp paths, and hex ids removed. Counts per `session_id` in `.local/hooks/failures.json` (reset if corrupt, capped at 20 sessions and 100 entries each). From the second identical failure it prints `additionalContext` telling Claude to stop retrying, find the root cause, and consult the advisor. `SUITEWARD_HOOK_STATE_DIR` overrides the state directory. |
+
+Per the Claude Code hooks reference, a Bash command that exits non-zero fires `PostToolUseFailure` (its `error` starts with `Exit code N`); `PostToolUse` fires only for calls that succeeded, and its Bash `tool_response` has `stdout`, `stderr`, `interrupted`, and `isImage` but no documented exit code. The `PostToolUse` path therefore only counts a response that carries an explicit non-zero `exitCode`, and is a safety net. `scripts/test-hooks.ps1` runs both hooks against sample input in a temporary checkout copy and is part of `check`.
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.

@@ -1,7 +1,7 @@
 #Requires -Version 7.2
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('setup', 'tools', 'doctor', 'check', 'persistence', 'go', 'sqlc', 'actionlint', 'govulncheck', 'db-start', 'db-stop', 'db-status', 'db-test', 'db-reset')]
+    [ValidateSet('setup', 'tools', 'doctor', 'check', 'persistence', 'go', 'sqlc', 'actionlint', 'govulncheck', 'gopls', 'lint', 'db-start', 'db-stop', 'db-status', 'db-test', 'db-reset')]
     [string]$Command = 'doctor',
     [string]$PodmanConnection = '',
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -24,7 +24,7 @@ try {
             Write-Host "Pinned development tools are ready in the shared cache ($($context.Tools))."
         }
         'doctor' {
-            foreach ($name in @('go', 'sqlc', 'actionlint', 'govulncheck')) { Assert-ToolVersion $context $name; Write-Host "$name $($context.Manifest[$name].version): OK" }
+            foreach ($name in @('go', 'sqlc', 'actionlint', 'govulncheck', 'gopls', 'golangci-lint')) { Assert-ToolVersion $context $name; Write-Host "$name $($context.Manifest[$name].version): OK" }
             $actualRoot = Invoke-ToolConfigScope $context { & (Get-ToolPath $context 'go') env GOROOT; if ($LASTEXITCODE -ne 0) { throw 'Cannot read Go configuration.' } }
             if ([IO.Path]::GetFullPath($actualRoot) -ne [IO.Path]::GetFullPath($env:GOROOT)) { throw 'Go did not select this checkout toolchain.' }
             Test-DevDatabase $context
@@ -71,10 +71,13 @@ try {
             } else { Write-Host 'No database container for this checkout.' }
         }
         default {
-            Assert-ToolVersion $context $Command
+            # `lint` runs the pinned golangci-lint over the whole module unless arguments say otherwise.
+            $tool = if ($Command -eq 'lint') { 'golangci-lint' } else { $Command }
+            [string[]]$arguments = @(if ($Command -eq 'lint' -and -not $ToolArgs) { 'run'; './...' } else { $ToolArgs })
+            Assert-ToolVersion $context $tool
             Invoke-ToolConfigScope $context {
-                & (Get-ToolPath $context $Command) @ToolArgs
-                if ($LASTEXITCODE -ne 0) { throw "$Command exited with code $LASTEXITCODE." }
+                & (Get-ToolPath $context $tool) @arguments
+                if ($LASTEXITCODE -ne 0) { throw "$tool exited with code $LASTEXITCODE." }
             }
         }
     }

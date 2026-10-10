@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -70,7 +71,7 @@ func TestOutboxConstraints(t *testing.T) {
 		{"scope needs both or neither", "23514", "outbox_scope_check", map[string]any{"project_id": "project"}},
 		{"unknown suite", "23503", "outbox_suite_fkey", map[string]any{"project_id": "project", "suite_id": "missing"}},
 		{"empty key", "23514", "outbox_key_check", map[string]any{"key": ""}},
-		{"overlong key", "23514", "outbox_key_check", map[string]any{"key": string(make([]byte, 201))}},
+		{"overlong key", "23514", "outbox_key_check", map[string]any{"key": strings.Repeat("k", 201)}},
 		{"bad kind", "23514", "outbox_kind_check", map[string]any{"kind": "Probe"}},
 		{"payload is not an object", "23514", "outbox_payload_check", map[string]any{"payload": `[]`}},
 		{"unknown state", "23514", "outbox_state_check", map[string]any{"state": "sent", "finished_at": "2026-10-02T12:00:00Z"}},

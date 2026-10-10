@@ -42,11 +42,11 @@ func TestNewStoreChecksSchemaReadiness(t *testing.T) {
 	})
 	t.Run("another schema version", func(t *testing.T) {
 		w := newPGWorld(t)
-		if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES (2, true)"); err != nil {
+		if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES (11, true)"); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := postgres.NewStore(w.pool, w.content); !errors.Is(err, postgres.ErrSchemaNotReady) {
-			t.Fatalf("NewStore on schema version 2 = %v; want ErrSchemaNotReady", err)
+			t.Fatalf("NewStore on schema version 11 = %v; want ErrSchemaNotReady", err)
 		}
 	})
 	t.Run("missing dependencies", func(t *testing.T) {

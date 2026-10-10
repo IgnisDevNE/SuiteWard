@@ -1,0 +1,3 @@
+# PostgreSQL data. The PG 18 image keeps PGDATA under /var/lib/postgresql/18/docker, so the volume mounts at /var/lib/postgresql.
+[Volume]
+VolumeName=suiteward-db-data

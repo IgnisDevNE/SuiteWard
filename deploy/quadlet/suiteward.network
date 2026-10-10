@@ -1,0 +1,4 @@
+# Rootless user quadlet for the `suiteward` user: ~/.config/containers/systemd/suiteward.network (see ../HOST.md).
+# A user-defined network, so the service reaches the database as suiteward-db:5432 by container name.
+[Network]
+NetworkName=suiteward

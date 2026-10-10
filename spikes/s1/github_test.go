@@ -146,3 +146,34 @@ func TestAppJWTVerifies(t *testing.T) {
 		t.Fatalf("claims %+v", claims)
 	}
 }
+
+func TestTokenEventCarriesGrantedPermissionsButNoToken(t *testing.T) {
+	const secret = "ghs_installation_token_value"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/access_tokens") {
+			_, _ = w.Write([]byte(`{"token":"` + secret + `","expires_at":"2999-01-01T00:00:00Z","permissions":{"contents":"read","metadata":"read"},"repository_selection":"selected"}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	c := testClient(t, srv.URL, &out)
+	if _, err := c.installationToken(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	log := out.String()
+	if strings.Contains(log, secret) {
+		t.Fatalf("log contains the token:\n%s", log)
+	}
+	for _, want := range []string{`"granted_permissions":{"contents":"read","metadata":"read"}`, `"repository_selection":"selected"`} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %s:\n%s", want, log)
+		}
+	}
+	// A 401 with the installation token drops it so the next call re-mints.
+	if _, err := c.get(context.Background(), "/x"); err == nil || c.token != "" {
+		t.Fatalf("err %v, token cleared = %v", err, c.token == "")
+	}
+}

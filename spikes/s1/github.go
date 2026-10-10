@@ -100,14 +100,16 @@ func (c *client) installationToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	var out struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
+		Token               string            `json:"token"`
+		Permissions         map[string]string `json:"permissions"`
+		RepositorySelection string            `json:"repository_selection"`
+		ExpiresAt           time.Time         `json:"expires_at"`
 	}
 	if err := json.Unmarshal(r.body, &out); err != nil || out.Token == "" {
 		return "", errors.New("access_tokens response has no token")
 	}
 	c.token, c.tokenExpires = out.Token, out.ExpiresAt
-	c.log.emit("token", map[string]any{"action": "minted", "expires_at": out.ExpiresAt, "requested_permissions": c.permissions})
+	c.log.emit("token", map[string]any{"action": "minted", "expires_at": out.ExpiresAt, "requested_permissions": c.permissions, "granted_permissions": out.Permissions, "repository_selection": out.RepositorySelection})
 	return c.token, nil
 }
 
@@ -146,6 +148,9 @@ func (c *client) call(ctx context.Context, method, path, bearer string, body []b
 	}
 	r := &response{status: resp.StatusCode, header: resp.Header, body: b}
 	c.calls = append(c.calls, call{method, path, r.status})
+	if r.status == http.StatusUnauthorized && bearer == c.token {
+		c.token = "" // revoked or expired early: the next call re-mints it
+	}
 	if r.status >= 300 && r.status != http.StatusNotModified {
 		var e struct {
 			Message string `json:"message"`

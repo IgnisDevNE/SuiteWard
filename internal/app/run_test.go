@@ -65,6 +65,27 @@ func TestBadSettingsListEveryProblemAndNoSecret(t *testing.T) {
 	}
 }
 
+// An unencoded @ in the password defeats the redaction of pgx's own errors,
+// which would echo the password tail: the URL must be refused with a fixed message.
+func TestAMalformedDatabaseURLIsRefusedWithoutEchoingIt(t *testing.T) {
+	env := testEnv(map[string]string{
+		"SUITEWARD_DATABASE_URL": "postgres://u:p@S3cr3tPW@127.0.0.1:1/db?sslmode=bogus",
+		"SUITEWARD_ARTIFACT_DIR": t.TempDir(),
+	})
+	for _, args := range [][]string{{"serve"}, {"probe"}, {"probe", "--wait", "1:probe-a"}} {
+		code, stdout, stderr := run(args, env)
+		if code != 1 {
+			t.Errorf("%q exited %d; want 1", args, code)
+		}
+		if !strings.Contains(stderr, "SUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string") {
+			t.Errorf("%q did not report the fixed message on stderr: %q", args, stderr)
+		}
+		if strings.Contains(stdout+stderr, "S3cr3tPW") {
+			t.Errorf("%q printed the password: %q %q", args, stdout, stderr)
+		}
+	}
+}
+
 func TestUnreachableDatabaseIsFatalAndLogged(t *testing.T) {
 	env := testEnv(map[string]string{
 		"SUITEWARD_DATABASE_URL": "postgres://suiteward:s3cret-pw@127.0.0.1:1/suiteward?sslmode=disable",

@@ -6,16 +6,48 @@ The first version of this page rests on a read-only exploration of the server (O
 
 ## Setup (owner, once)
 
-1. **A dedicated clone.** Register a separate clone of this repository (for example `D:\Repos\SuiteWard-orbit`) as the Orbit project's `path`. Not the orchestrator's checkout (Orbit would write into the working tree and branch the orchestrator is using) and not a subfolder of it (agents work only inside the registered path, so a subfolder hides the product code). `path` is a protected setting: change it in the Orbit dashboard or register the project again.
+1. **A dedicated clone.** The Orbit project's `path` is a separate clone of this repository, `D:\Repos\SuiteWard-orbit`, created from `main` with the [safeguards](#clone-safeguards) below. Not the orchestrator's checkout (Orbit would write into the working tree and branch the orchestrator is using) and not a subfolder of it (agents work only inside the registered path, so a subfolder hides the product code). `path` is a protected setting: register the project with the clone's path.
 2. **Project settings.** `gitPublish.mode` is `commit-only` (Orbit never pushes), `dispatchWithoutHumanApproval` is `false` (the owner approves every prompt in the dashboard before it runs), worktree isolation is required, and the runtime provides PowerShell 7 and the pinned tools (`./scripts/dev.ps1 tools`; every checkout has its own caches, database and ports).
-3. **MCP connection, user scope.** The URL and the token never enter a file of this repository. Orbit's own workspace folder in the repository root is ignored (`/suiteward/` in `.gitignore`) for that reason, and no committed `.mcp.json` carries the entry. In the owner's terminal, with the Orbit-managed `.mcp.json` of the project as the source (nothing is printed):
+3. **MCP connection, user scope.** The URL and the token never enter a committed file of this repository. Orbit writes its entry into the clone's `.mcp.json` (kept out of commits by the safeguards). In the owner's terminal, with that file as the source (nothing is printed):
 
    ```powershell
-   $o = (Get-Content -Raw <the Orbit-managed .mcp.json> | ConvertFrom-Json).mcpServers.orbit
+   $o = (Get-Content -Raw D:\Repos\SuiteWard-orbit\.mcp.json | ConvertFrom-Json).mcpServers.orbit
    claude mcp add --transport http --scope user orbit $o.url --header "Authorization: $($o.headers.Authorization)" --header "X-Orbit-Project: <slug>"
    ```
 
    The tools appear as `orbit_*` in the next session. `X-Orbit-Project` must be the slug of the project registered in step 1.
+
+## Clone safeguards
+
+Orbit scaffolds its own files into the project folder, writes its MCP entry (with the token) into `.mcp.json` and may rewrite `.claude/settings.json`. Both are tracked files of this repository, and the repository is public. These settings of the clone (none is versioned) keep that out of commits and keep the clone from reaching GitHub:
+
+```powershell
+$d = 'D:\Repos\SuiteWard-orbit'
+git clone https://github.com/IgnisDevNE/SuiteWard.git $d
+git -C $d remote set-url --push origin DISABLED-the-orbit-clone-never-pushes
+git -C $d update-index --skip-worktree .mcp.json .claude/settings.json
+```
+
+- A push from the clone fails and a fetch works. The orchestrator reads the clone by fetching from it, never by working in it.
+- The two flagged files may be rewritten by Orbit without dirtying the clone or entering `git add -A`. If a merge into the clone complains about them, clear the flag (`--no-skip-worktree`), update, and set it again.
+- `.git/info/exclude` lists the scaffold Orbit creates, which is untracked in this repository: `/ORBIT.md`, `/CLAUDE.md`, `/GEMINI.md`, `/COMPLETION_LOG.md`, `/COMPLETION_LOG.archive.md`, `/context/`, `/.orbit/`, `/.sweep/`, `/.codex/`.
+- `.git/hooks/pre-commit` refuses a commit that stages a managed file or adds a bearer token or an Orbit endpoint:
+
+```sh
+#!/bin/sh
+managed='^(\.mcp\.json|\.claude/settings\.json|\.codex/|\.orbit/|\.sweep/|context/|ORBIT\.md|CLAUDE\.md|GEMINI\.md|COMPLETION_LOG)'
+staged=$(git diff --cached --name-only | grep -E "$managed")
+if [ -n "$staged" ]; then
+	echo "pre-commit: Orbit-managed files are staged, commit refused:" >&2
+	echo "$staged" >&2
+	exit 1
+fi
+if git diff --cached -U0 | grep '^+' | grep -Eq 'Bearer [A-Za-z0-9._~+/=-]{20,}|[a-z0-9]{12,}\.orbit\.sivants\.com'; then
+	echo "pre-commit: a credential or an Orbit endpoint is in the staged changes, commit refused" >&2
+	exit 1
+fi
+exit 0
+```
 
 ## Tools
 

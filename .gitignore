@@ -6,6 +6,7 @@
 /coverage.out
 /.memdb/
 /.memtrace/
+/suiteward/
 /.env
 /.env.*
 !/.env.example

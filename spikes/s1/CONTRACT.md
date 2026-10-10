@@ -6,7 +6,7 @@ Frozen by the orchestrator before wave 1. Throwaway spike: nothing here is a pro
 
 - Separate Go module `github.com/IgnisDevNE/SuiteWard/spikes/s1` (`spikes/s1/go.mod`, `go 1.27.2`, standard library only, no `go.work` anywhere).
 - One `package main` in `spikes/s1/*.go`. The build context of the image is the `spikes/s1/` directory.
-- `spikes/s1/deploy/` holds the quadlet unit and host instructions. `.github/workflows/s1-publish.yml` is the only workflow the spike adds.
+- `spikes/s1/deploy/` holds the quadlet unit and host instructions. `.github/workflows/s1-publish.yml` is the only workflow the spike adds (removed in M1.2; `.github/workflows/deploy.yml` replaced it).
 
 ## Configuration (environment variables; secrets are mounted files, never variables)
 

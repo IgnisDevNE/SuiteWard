@@ -7,7 +7,7 @@ Never paste into chat, a file, a PR, or a log: the App private key, any installa
 ## 0. Before the host steps (GitHub, once)
 
 1. The first run of the `S1 publish` workflow creates the GHCR package `suiteward-s1` as private. Make it public (GitHub, owner profile, Packages, `suiteward-s1`, Package settings, Change visibility), so the host needs no registry credential. The image contains no secret. The image carries an `org.opencontainers.image.source` label that links the package to the repository. If the first run fails with `permission_denied: write_package`, open the package's settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job of that run waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for your approval holds the `s1-publish` concurrency group, so a later push queues behind it until you approve or reject. The host cannot start until `ghcr.io/ignisdevne/suiteward-s1:deploy` exists.
+2. When the `promote` job of that run waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for your approval holds the `s1-publish` concurrency group (that workflow was removed in M1.2; the product's `deploy.yml` uses the `deploy-publish` group), so a later push queues behind it until you approve or reject. The host cannot start until `ghcr.io/ignisdevne/suiteward-s1:deploy` exists.
 
 ## 1. Open a session
 

@@ -22,7 +22,8 @@ type publisher struct {
 	calls   map[string]int
 	payload map[string]json.RawMessage
 	fail    error
-	onCall  func(call int) // runs inside the delivery, before it reports its outcome
+	onCall  func(call int)       // runs inside the delivery, before it reports its outcome
+	panics  func(key string) any // a non-nil result is raised as a panic
 }
 
 func (p *publisher) publish(_ context.Context, key string, payload json.RawMessage) error {
@@ -32,10 +33,15 @@ func (p *publisher) publish(_ context.Context, key string, payload json.RawMessa
 	}
 	p.calls[key]++
 	p.payload[key] = payload
-	call, fail, onCall := p.calls[key], p.fail, p.onCall
+	call, fail, onCall, panics := p.calls[key], p.fail, p.onCall, p.panics
 	p.mu.Unlock()
 	if onCall != nil {
 		onCall(call)
+	}
+	if panics != nil {
+		if value := panics(key); value != nil {
+			panic(value)
+		}
 	}
 	return fail
 }
@@ -226,4 +232,167 @@ func TestRelayReportsAClaimThatFails(t *testing.T) {
 // claimsOf unwraps the claims of a claim pass.
 func claimsOf(result postgres.ClaimOutboxResult, err error) ([]postgres.OutboxClaim, error) {
 	return result.Claims, err
+}
+
+// enqueueMany writes n system messages named k0..k(n-1), oldest first.
+func enqueueMany(w *world, n int) []string {
+	keys := make([]string, n)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%d", i)
+		w.enqueue(keys[i], "probe", "demo", time.Time{})
+	}
+	return keys
+}
+
+func TestRelayTreatsAPublisherPanicAsAPublishError(t *testing.T) {
+	w := newWorld(t, 5)
+	keys := enqueueMany(w, 5)
+	c, logs := &clock{now: w.dbNow()}, &logCapture{}
+	p := &publisher{panics: func(key string) any {
+		if key == "k2" {
+			return "kaboom " + strings.Repeat("x", 5000)
+		}
+		return nil
+	}}
+	relay := newRelay(t, w, c, p, logs, 8)
+
+	if err := relay.RunOnce(t.Context()); err != nil {
+		t.Fatalf("a publisher panic must not abort the run: %v", err)
+	}
+	for _, key := range keys {
+		if key == "k2" {
+			continue
+		}
+		if got := w.row(key); got != "delivered 1 -" {
+			t.Errorf("%s = %q, want the rest of the batch delivered in the same run", key, got)
+		}
+	}
+	got := w.row("k2")
+	if !strings.HasPrefix(got, "pending 1 publisher panicked: kaboom") || len(got) > 1100 {
+		t.Errorf("k2 = %.80q (%d bytes), want a retry after a truncated panic text", got, len(got))
+	}
+	if strings.Contains(logs.String(), strings.Repeat("x", 2000)) {
+		t.Error("the log carries the whole panic value")
+	}
+}
+
+func TestRelayFailsAMessageWhoseLastAttemptPanics(t *testing.T) {
+	w := newWorld(t, 5)
+	w.enqueue("k1", "probe", "demo", time.Time{})
+	c, p := &clock{now: w.dbNow()}, &publisher{panics: func(string) any { return errors.New("boom") }}
+	relay := newRelay(t, w, c, p, &logCapture{}, 1)
+
+	if err := relay.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.row("k1"); got != "failed 1 publisher panicked: boom" {
+		t.Fatalf("row = %q, want the last attempt to end in the failed state", got)
+	}
+}
+
+func TestRelayTruncatesLongErrorTexts(t *testing.T) {
+	w := newWorld(t, 5)
+	w.enqueue("k1", "probe", "demo", time.Time{})
+	c, logs := &clock{now: w.dbNow()}, &logCapture{}
+	p := &publisher{fail: errors.New(strings.Repeat("é", 1500))} // multi-byte: a cut must not split a character
+	relay := newRelay(t, w, c, p, logs, 8)
+
+	if err := relay.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := w.pool.QueryRow(t.Context(), "SELECT last_error FROM outbox WHERE key='k1'").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) > 1024+len("…") || !strings.HasSuffix(stored, "…") || !strings.HasPrefix(stored, "é") {
+		t.Errorf("stored error is %d bytes ending %q, want at most 1 KiB and an ellipsis", len(stored), stored[max(0, len(stored)-8):])
+	}
+	if strings.Contains(logs.String(), strings.Repeat("é", 600)) {
+		t.Error("the log carries more than the truncated error")
+	}
+}
+
+func TestRelayGivesBackUntriedClaimsWhenTheRunIsCanceled(t *testing.T) {
+	w := newWorld(t, 5)
+	enqueueMany(w, 5)
+	c, p := &clock{now: w.dbNow()}, &publisher{}
+	relay := newRelay(t, w, c, p, &logCapture{}, 8)
+	ctx, cancel := context.WithCancel(t.Context())
+	p.onCall = func(int) { cancel() } // the process is told to stop during the first delivery
+
+	if err := relay.RunOnce(ctx); err == nil {
+		t.Fatal("RunOnce reported success although its context was canceled")
+	}
+	if got := w.scalar("SELECT count(*) FILTER (WHERE attempts = 0) || ' ' || count(*) FILTER (WHERE attempts = 1) FROM outbox"); got != "4 1" {
+		t.Fatalf("untried and tried messages = %q, want the four untried ones given back with their attempt", got)
+	}
+
+	if err := relay.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.scalar("SELECT count(*) FILTER (WHERE state = 'delivered' AND attempts = 1) || ' ' || count(*) FILTER (WHERE state = 'pending' AND attempts = 1) FROM outbox"); got != "4 1" {
+		t.Fatalf("after the next run (delivered, still leased) = %q, want the four released messages delivered at once as their first attempt", got)
+	}
+}
+
+// failingFinish fails the outcome write of one delivery.
+type failingFinish struct {
+	*postgres.Store
+	mu     sync.Mutex
+	calls  int
+	failAt int
+}
+
+func (s *failingFinish) FinishOutbox(ctx context.Context, claim postgres.OutboxClaim, update postgres.OutboxUpdate) (bool, error) {
+	s.mu.Lock()
+	s.calls++
+	fail := s.calls == s.failAt
+	s.mu.Unlock()
+	if fail {
+		return false, errors.New("outcome write failed")
+	}
+	return s.Store.FinishOutbox(ctx, claim, update)
+}
+
+func TestRelayGivesBackUntriedClaimsWhenAnOutcomeCannotBeWritten(t *testing.T) {
+	w := newWorld(t, 5)
+	enqueueMany(w, 5)
+	c, p := &clock{now: w.dbNow()}, &publisher{}
+	relay, err := river.NewRelay(river.RelayConfig{Store: &failingFinish{Store: w.store, failAt: 2}, Publishers: map[string]river.Publisher{"demo": p.publish},
+		MaxAttempts: 8, Lease: time.Minute, Now: c.Now, Logger: (&logCapture{}).logger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := relay.RunOnce(t.Context()); err == nil {
+		t.Fatal("RunOnce reported success although an outcome could not be written")
+	}
+	if got := w.scalar("SELECT count(*) FILTER (WHERE state = 'delivered') || ' ' || count(*) FILTER (WHERE attempts = 0) || ' ' || count(*) FILTER (WHERE state = 'pending' AND attempts = 1) FROM outbox"); got != "1 3 1" {
+		t.Fatalf("delivered, untried and tried-without-outcome = %q, want 1 3 1", got)
+	}
+}
+
+func TestRelayLogsAMessageItAbandoned(t *testing.T) {
+	w := newWorld(t, 5)
+	w.enqueue("k1", "probe", "demo", time.Time{})
+	if _, err := w.pool.Exec(t.Context(), `UPDATE outbox SET attempts = 3`); err != nil {
+		t.Fatal(err)
+	}
+	c, logs, p := &clock{now: w.dbNow()}, &logCapture{}, &publisher{}
+	relay := newRelay(t, w, c, p, logs, 3)
+
+	if err := relay.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.row("k1"); !strings.HasPrefix(got, "failed 3 delivery abandoned") || p.count("k1") != 0 {
+		t.Fatalf("row %q after %d deliveries, want the poison message failed without a delivery", got, p.count("k1"))
+	}
+	for _, want := range []string{"abandoned", `"key":"k1"`, `"kind":"demo"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %s: %s", want, logs.String())
+		}
+	}
+	if strings.Contains(logs.String(), `"n":1`) {
+		t.Error("the log carries a payload")
+	}
 }

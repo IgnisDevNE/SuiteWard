@@ -278,3 +278,23 @@ func TestNewInserterRejectsANegativeAttemptLimit(t *testing.T) {
 		t.Fatal("NewInserter accepted a negative attempt limit")
 	}
 }
+
+func TestNewRuntimeRejectsUnusableSettingsAndReservedKinds(t *testing.T) {
+	w := newWorld(t, 5)
+	noop := func(context.Context, json.RawMessage) error { return nil }
+	noPublish := func(context.Context, string, json.RawMessage) error { return nil }
+	for name, mutate := range map[string]func(*river.Config){
+		"no poll interval":                 func(c *river.Config) { c.OutboxPollInterval = 0 },
+		"no job timeout":                   func(c *river.Config) { c.JobTimeout = 0 },
+		"a replacement probe handler":      func(c *river.Config) { c.Handlers = map[string]river.Handler{"probe": noop} },
+		"a replacement probe publisher":    func(c *river.Config) { c.Publishers = map[string]river.Publisher{"probe": noPublish} },
+		"a handler named like the relay":   func(c *river.Config) { c.Handlers = map[string]river.Handler{"outbox_relay": noop} },
+		"a publisher named like the relay": func(c *river.Config) { c.Publishers = map[string]river.Publisher{"outbox_relay": noPublish} },
+	} {
+		config := testConfig(&logCapture{})
+		mutate(&config)
+		if _, err := river.NewRuntime(w.pool, w.store, config); err == nil {
+			t.Errorf("%s: NewRuntime accepted the configuration", name)
+		}
+	}
+}

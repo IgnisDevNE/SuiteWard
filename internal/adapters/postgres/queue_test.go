@@ -216,12 +216,15 @@ func TestClaimOutboxFailsMessagesThatUsedEveryAttempt(t *testing.T) {
 	w.outboxFixture("poison", 3, now.Add(-time.Minute)) // claimed three times, never finished
 	w.outboxFixture("fresh", 2, now.Add(-time.Minute))
 
-	claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 3, Limit: 10}))
+	result, err := w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 3, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := claimedKeys(claims); !slices.Equal(got, []string{"fresh"}) {
+	if got := claimedKeys(result.Claims); !slices.Equal(got, []string{"fresh"}) {
 		t.Fatalf("claimed %v, want only the message with an attempt left", got)
+	}
+	if want := []postgres.OutboxRef{{Key: "poison", Kind: "probe"}}; !slices.Equal(result.Abandoned, want) {
+		t.Errorf("abandoned = %v, want %v, so that the relay can log the key and kind", result.Abandoned, want)
 	}
 	if got := w.outboxRow("poison"); got != "failed 3 delivery abandoned: every attempt was claimed without an outcome" {
 		t.Errorf("poison row = %q, want failed with the reason", got)
@@ -341,6 +344,9 @@ func TestQueueEntryPointsFailOnACanceledContext(t *testing.T) {
 	if _, err := w.store.ClaimOutbox(ctx, postgres.ClaimOutboxParams{Now: time.Now(), Lease: time.Minute, MaxAttempts: 1, Limit: 1}); !errors.Is(err, context.Canceled) {
 		t.Errorf("ClaimOutbox = %v, want context.Canceled", err)
 	}
+	if _, err := w.store.ReleaseOutbox(ctx, postgres.OutboxClaim{Key: "k1", Attempts: 1}, time.Now()); !errors.Is(err, context.Canceled) {
+		t.Errorf("ReleaseOutbox = %v, want context.Canceled", err)
+	}
 	if _, err := w.store.FinishOutbox(ctx, postgres.OutboxClaim{Key: "k1", Attempts: 1}, postgres.OutboxUpdate{State: postgres.OutboxDelivered, FinishedAt: time.Now()}); !errors.Is(err, context.Canceled) {
 		t.Errorf("FinishOutbox = %v, want context.Canceled", err)
 	}
@@ -369,4 +375,58 @@ func TestEnqueueSystemFailsWhenTheCommitFails(t *testing.T) {
 // claimsOf unwraps the claims of a claim pass.
 func claimsOf(result postgres.ClaimOutboxResult, err error) ([]postgres.OutboxClaim, error) {
 	return result.Claims, err
+}
+
+func TestReleaseOutboxRestoresAnUntriedClaim(t *testing.T) {
+	w := newPGWorld(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	w.outboxFixture("m1", 0, now.Add(-time.Second))
+	params := postgres.ClaimOutboxParams{Now: now, Lease: time.Hour, MaxAttempts: 8, Limit: 1}
+	claim := func() postgres.OutboxClaim {
+		claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), params))
+		if err != nil || len(claims) != 1 {
+			t.Fatalf("claim = %v, %v", claims, err)
+		}
+		return claims[0]
+	}
+
+	first := claim()
+	applied, err := w.store.ReleaseOutbox(t.Context(), first, now)
+	if err != nil || !applied {
+		t.Fatalf("ReleaseOutbox = %v, %v, want applied", applied, err)
+	}
+	if got := w.outboxRow("m1"); got != "pending 0 -" {
+		t.Fatalf("released row = %q, want the attempt given back", got)
+	}
+	if again := claim(); again.Key != "m1" || again.Attempts != 1 {
+		t.Fatalf("claim after the release = %+v, want it due at once as attempt 1", again)
+	}
+
+	t.Run("a stale claim releases nothing", func(t *testing.T) {
+		params.Now = now.Add(2 * time.Hour) // the lease expired and another relay reclaims
+		fresh := claim()
+		if fresh.Attempts != 2 {
+			t.Fatalf("reclaim = %+v, want attempt 2", fresh)
+		}
+		applied, err := w.store.ReleaseOutbox(t.Context(), first, params.Now)
+		if err != nil || applied {
+			t.Fatalf("stale release = %v, %v, want not applied and no error", applied, err)
+		}
+		if got := w.outboxRow("m1"); got != "pending 2 -" {
+			t.Errorf("row = %q, want the newer claim untouched", got)
+		}
+	})
+	t.Run("a delivered message is left alone", func(t *testing.T) {
+		claim := postgres.OutboxClaim{Key: "m1", Attempts: 2}
+		if _, err := w.store.FinishOutbox(t.Context(), claim, postgres.OutboxUpdate{State: postgres.OutboxDelivered, FinishedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		applied, err := w.store.ReleaseOutbox(t.Context(), claim, now)
+		if err != nil || applied {
+			t.Fatalf("release of a delivered message = %v, %v, want not applied", applied, err)
+		}
+		if got := w.outboxRow("m1"); got != "delivered 2 -" {
+			t.Errorf("row = %q", got)
+		}
+	})
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,9 @@ type scriptedStore struct {
 	claimErr    error
 	finishErr   error
 	finishCalls int
+	released    []string
+	releaseErr  error
+	releaseLive bool // the context of the release was still usable
 }
 
 func (s *scriptedStore) ClaimOutbox(context.Context, postgres.ClaimOutboxParams) (postgres.ClaimOutboxResult, error) {
@@ -35,8 +39,10 @@ func (s *scriptedStore) ClaimOutbox(context.Context, postgres.ClaimOutboxParams)
 	return postgres.ClaimOutboxResult{Claims: claims}, s.claimErr
 }
 
-func (s *scriptedStore) ReleaseOutbox(context.Context, postgres.OutboxClaim, time.Time) (bool, error) {
-	return true, nil
+func (s *scriptedStore) ReleaseOutbox(ctx context.Context, claim postgres.OutboxClaim, _ time.Time) (bool, error) {
+	s.released = append(s.released, claim.Key)
+	s.releaseLive = ctx.Err() == nil
+	return true, s.releaseErr
 }
 
 func (s *scriptedStore) FinishOutbox(context.Context, postgres.OutboxClaim, postgres.OutboxUpdate) (bool, error) {
@@ -96,5 +102,45 @@ func TestProbeOnlyLogs(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "probe job") || !strings.Contains(out.String(), `"key":"probe-1"`) {
 		t.Fatalf("probe log = %s, want the job and the published key", out.String())
+	}
+}
+
+func TestRelayReleasesTheClaimsItNeverTriedOnAnAbortedRun(t *testing.T) {
+	boom := errors.New("outcome write failed")
+	store := &scriptedStore{claims: []postgres.OutboxClaim{{Key: "a", Kind: "demo", Attempts: 1}, {Key: "b", Kind: "demo", Attempts: 1}, {Key: "c", Kind: "demo", Attempts: 1}}, finishErr: boom}
+
+	if err := relayFor(t, store).RunOnce(t.Context()); !errors.Is(err, boom) {
+		t.Fatalf("RunOnce = %v, want the outcome error", err)
+	}
+	if !slices.Equal(store.released, []string{"b", "c"}) {
+		t.Fatalf("released %v, want exactly the untried claims b and c", store.released)
+	}
+}
+
+func TestRelayReleasesOnAContextTheAbortDidNotCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	store := &scriptedStore{claims: []postgres.OutboxClaim{{Key: "a", Kind: "demo", Attempts: 1}, {Key: "b", Kind: "demo", Attempts: 1}}, finishErr: context.Canceled}
+	relay, err := NewRelay(RelayConfig{Store: store, Publishers: map[string]Publisher{"demo": func(context.Context, string, json.RawMessage) error {
+		cancel()
+		return ctx.Err()
+	}}, MaxAttempts: 3, Lease: time.Minute, Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := relay.RunOnce(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunOnce = %v, want the cancellation", err)
+	}
+	if !slices.Equal(store.released, []string{"b"}) || !store.releaseLive {
+		t.Fatalf("released %v on a live context = %v, want b released although the run was canceled", store.released, store.releaseLive)
+	}
+}
+
+func TestAFailedReleaseDoesNotHideTheAbortError(t *testing.T) {
+	boom := errors.New("outcome write failed")
+	store := &scriptedStore{claims: []postgres.OutboxClaim{{Key: "a", Kind: "demo", Attempts: 1}, {Key: "b", Kind: "demo", Attempts: 1}}, finishErr: boom, releaseErr: errors.New("release failed")}
+
+	if err := relayFor(t, store).RunOnce(t.Context()); !errors.Is(err, boom) {
+		t.Fatalf("RunOnce = %v, want the original outcome error", err)
 	}
 }

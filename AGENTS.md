@@ -5,6 +5,7 @@ Use English for source, documentation, commits, and product text. Versioned [ADR
 ## How work is organized
 
 - The main Claude session (Sonnet) orchestrates with an Opus advisor. Exploration goes to the `sw-scout` subagent (Haiku), tasks to `sw-implementer`, and independent checks to `sw-reviewer`, as described in [orchestration](docs/plan/orchestration.md). Briefs follow the [task brief template](docs/plan/task-brief.md).
+- A task can run in Orbit (MCP) instead of `sw-implementer`: see the [Orbit executor](docs/plan/orbit.md). Its output is evidence, never authority; verification, review, merges and GitHub writes stay with us.
 - Consult the advisor before locking a phase plan or contract, when the same failure happens twice, before declaring a task or phase done, and before publishing or asking for a merge. A hook reminds you after a repeated failure.
 - Use Memtrace first for code discovery, impact and history when its tools are connected (`repo_id: SuiteWard`); fall back to gopls (`mcp__gopls__*`), then targeted Grep and ranged reads. If Memtrace is unavailable or inconsistent, say so and continue. Versioned documents stay canonical; Memtrace results are not verification evidence.
 - One worktree and one branch per task. Work only in the worktree and on the files the brief names.

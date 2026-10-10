@@ -16,8 +16,8 @@ try {
 } finally { if ($lock) { $lock.Dispose() } }
 Push-Location -LiteralPath $root
 try {
-    & (Get-ToolPath $context 'actionlint') -shellcheck= -pyflakes= .github/workflows/ci.yml
-    if ($LASTEXITCODE -ne 0) { throw 'Workflow validation failed.' }
+    & (Join-Path $PSScriptRoot 'check-workflows.ps1')
+    & (Join-Path $PSScriptRoot 'test-workflows.ps1')
     & (Join-Path $PSScriptRoot 'ci.ps1') -Mode Documents
     & (Join-Path $PSScriptRoot 'test-ci.ps1')
     & (Join-Path $PSScriptRoot 'test-go.ps1')

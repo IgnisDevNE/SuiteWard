@@ -1,0 +1,17 @@
+# Build context is spikes/s1/. Build: podman build -t suiteward-s1 -f Containerfile .
+# The compiler runs natively and cross-compiles, so the arm64 build needs no emulated Go toolchain.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.2-alpine AS build
+ARG TARGETOS TARGETARCH
+WORKDIR /src
+COPY go.mod ./
+COPY *.go ./
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /out/suiteward-s1 . && mkdir /out/data
+
+# Distroless static ships CA certificates and a nonroot user (65532).
+FROM gcr.io/distroless/static:nonroot
+COPY --from=build /out/suiteward-s1 /suiteward-s1
+# An empty /data owned by the nonroot user, so a fresh named volume mounted there is writable.
+COPY --from=build --chown=65532:65532 /out/data /data
+USER 65532:65532
+# The App key is a mounted file at /run/secrets/app-key.
+ENTRYPOINT ["/suiteward-s1"]

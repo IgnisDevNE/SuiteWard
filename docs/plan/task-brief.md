@@ -25,6 +25,7 @@ What not to touch or decide.
 
 ## Verification
 Exact commands to run (for example `./scripts/dev.ps1 check`, `./scripts/dev.ps1 persistence`).
+Nil-check rule: the implementer lists every non-error nil comparison it adds or keeps with a boundary-or-not verdict, and the reviewer re-reads the touched Go code against the [nil-check rule](../development-guide.md#nil-checks) and says in its report that it did. `golangci-lint` in `check` covers only the root module, so code in another module (such as a spike) is linted by hand with the root `.golangci.yml`.
 
 ## Notes
 Known pitfalls, related files, and the order of commits when it matters.

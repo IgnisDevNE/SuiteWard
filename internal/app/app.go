@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -12,6 +13,10 @@ import (
 // Version is the build version that /status reports. The release build sets it:
 // -ldflags "-X github.com/IgnisDevNE/SuiteWard/internal/app.Version=1.2.3".
 var Version = "dev"
+
+const usage = `usage: suiteward serve
+       suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
+`
 
 // Env is the process environment that the settings are read from.
 type Env struct {
@@ -27,7 +32,53 @@ func OSEnv() Env {
 }
 
 // Run executes one command (args without the program name) and returns the
-// process exit code of the runtime contract.
+// process exit code of the runtime contract. serve logs JSON to stdout; probe
+// prints JSON lines to stdout; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
-	return -1
+	command := ""
+	if len(args) > 0 {
+		command = args[0]
+	}
+	var probe probeOptions
+	switch command {
+	case "serve":
+		if len(args) != 1 {
+			return usageError(stderr)
+		}
+	case "probe":
+		var err error
+		if probe, err = parseProbe(args[1:], stderr); err != nil {
+			return 2
+		}
+	default:
+		return usageError(stderr)
+	}
+
+	cfg, warnings, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
+	logger := newLogger(stdout, cfg.LogLevel)
+	if command == "serve" {
+		for _, name := range warnings {
+			logger.Warn("unrecognized setting", "name", name)
+		}
+	}
+	if err != nil {
+		reportf(stderr, "invalid settings:\n%v\n", err)
+		return 1
+	}
+	if command == "serve" {
+		return serve(ctx, cfg, logger, nil)
+	}
+	return runProbe(ctx, cfg, probe, stdout, stderr)
+}
+
+func usageError(stderr io.Writer) int {
+	// A failed write to stderr cannot be reported anywhere else.
+	_, _ = io.WriteString(stderr, usage)
+	return 2
+}
+
+// reportf prints a problem to stderr.
+func reportf(stderr io.Writer, format string, args ...any) {
+	// A failed write to stderr cannot be reported anywhere else.
+	_, _ = fmt.Fprintf(stderr, "suiteward: "+format, args...)
 }

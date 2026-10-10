@@ -45,7 +45,7 @@ Frozen by the orchestrator before wave 1. Throwaway spike: nothing here is a pro
 
 ## Log
 
-JSON lines on stdout, one object per line, always with `ts` (UTC RFC 3339 with nanoseconds) and `event`. Every GitHub call logs `event:"http"` with `method`, `path`, `status`, `dur_ms`, `etag_sent` (bool), and a `headers` object restricted to this whitelist: `ETag`, `Date`, `Last-Modified`, `X-GitHub-Request-Id`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Used`, `X-RateLimit-Reset`, `X-RateLimit-Resource`, `Vary`. Request headers, the `Authorization` value, the JWT, installation tokens, the `/access_tokens` response body, and the key are never logged. Other events: `poll`, `digest`, `check`, `approval`, `merge`, `promotion`, `token`.
+JSON lines on stdout, one object per line, always with `ts` (UTC RFC 3339 with nanoseconds) and `event`. Every GitHub call logs `event:"http"` with `method`, `path`, `status`, `dur_ms`, `etag_sent` (bool), and a `headers` object restricted to this whitelist: `ETag`, `Date`, `Last-Modified`, `X-GitHub-Request-Id`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Used`, `X-RateLimit-Reset`, `X-RateLimit-Resource`, `Vary`. Request headers, the `Authorization` value, the JWT, installation tokens, the `/access_tokens` response body, and the key are never logged. Other events: `poll`, `digest`, `check`, `approval`, `merge`, `promotion`, `token`, and `status_error` (the `/status` listener failed or a snapshot could not be encoded; present in the code since S1-A but missing from the first freeze, listed here on 2026-10-10).
 
 ## Image and deployment (S1-D)
 

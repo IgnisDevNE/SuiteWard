@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 )
@@ -18,6 +19,10 @@ const (
 	// A failed delivery is retried after retryBase, doubling up to retryCap.
 	retryBase = 5 * time.Second
 	retryCap  = 5 * time.Minute
+	// maxErrorBytes bounds the publisher error text that is stored and logged.
+	maxErrorBytes = 1024
+	// releaseTimeout bounds giving back the untried claims of an aborted run.
+	releaseTimeout = 5 * time.Second
 )
 
 // OutboxStore is the part of *postgres.Store the relay needs.
@@ -42,6 +47,19 @@ type RelayConfig struct {
 }
 
 // Relay delivers due outbox messages.
+//
+// Two clocks are involved: rows get their first next_attempt_at from the
+// database's now(), while every later time (claims, leases, backoff, release)
+// comes from the injected Now. They must agree to the accuracy of the lease;
+// tests start the injected clock at the database time.
+//
+// Delivery is at least once. The publisher runs outside any transaction, so a
+// crash after the publish and before the outcome is written redelivers the
+// message once the lease expires, and a publish that outlasts the lease may
+// be delivered twice (its late outcome is then ignored). A publisher must
+// therefore be idempotent by key. A claim counts as an attempt even when the
+// process dies before trying it, so a poison message that keeps killing its
+// relay ends up failed after OUTBOX_MAX_ATTEMPTS claims.
 type Relay struct {
 	store       OutboxStore
 	publishers  map[string]Publisher
@@ -79,9 +97,13 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		for _, abandoned := range result.Abandoned {
+			r.logger.WarnContext(ctx, "outbox message abandoned: every attempt was claimed without an outcome", "key", abandoned.Key, "kind", abandoned.Kind)
+		}
 		claims := result.Claims
-		for _, claim := range claims {
+		for i, claim := range claims {
 			if err := r.deliver(ctx, claim); err != nil {
+				r.release(ctx, claims[i+1:])
 				return err
 			}
 		}
@@ -91,18 +113,57 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	}
 }
 
+// release gives back the claims an aborted run never tried, so that they are
+// retried at once without burning an attempt. It is best effort and runs on a
+// context the abort did not cancel; a failure only delays them to their lease.
+func (r *Relay) release(ctx context.Context, untried []postgres.OutboxClaim) {
+	if len(untried) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
+	defer cancel()
+	for _, claim := range untried {
+		if _, err := r.store.ReleaseOutbox(ctx, claim, r.now()); err != nil {
+			r.logger.WarnContext(ctx, "outbox claim could not be released; it is retried after its lease", "key", claim.Key, "error", truncate(err.Error()))
+		}
+	}
+}
+
+// publish calls the publisher and turns a panic into an error, so that one
+// message cannot abort the batch.
+func publish(ctx context.Context, publisher Publisher, claim postgres.OutboxClaim) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("publisher panicked: %s", truncate(fmt.Sprint(recovered)))
+		}
+	}()
+	return publisher(ctx, claim.Key, claim.Payload)
+}
+
+// truncate bounds text to maxErrorBytes, cutting at a character boundary.
+func truncate(text string) string {
+	if len(text) <= maxErrorBytes {
+		return text
+	}
+	cut := maxErrorBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "…"
+}
+
 // deliver publishes one claimed message outside any transaction and records
 // the outcome, which applies only while the claim is still the latest.
 func (r *Relay) deliver(ctx context.Context, claim postgres.OutboxClaim) error {
 	var update postgres.OutboxUpdate
 	if publisher, known := r.publishers[claim.Kind]; !known {
 		update = postgres.OutboxUpdate{State: postgres.OutboxFailed, LastError: fmt.Sprintf("no publisher for kind %q", claim.Kind), FinishedAt: r.now()}
-	} else if err := publisher(ctx, claim.Key, claim.Payload); err == nil {
+	} else if err := publish(ctx, publisher, claim); err == nil {
 		update = postgres.OutboxUpdate{State: postgres.OutboxDelivered, FinishedAt: r.now()}
 	} else if claim.Attempts >= r.maxAttempts {
-		update = postgres.OutboxUpdate{State: postgres.OutboxFailed, LastError: err.Error(), FinishedAt: r.now()}
+		update = postgres.OutboxUpdate{State: postgres.OutboxFailed, LastError: truncate(err.Error()), FinishedAt: r.now()}
 	} else {
-		update = postgres.OutboxUpdate{State: postgres.OutboxPending, LastError: err.Error(), NextAttemptAt: r.now().Add(backoff(claim.Attempts))}
+		update = postgres.OutboxUpdate{State: postgres.OutboxPending, LastError: truncate(err.Error()), NextAttemptAt: r.now().Add(backoff(claim.Attempts))}
 	}
 	if update.State != postgres.OutboxDelivered {
 		r.logger.WarnContext(ctx, "outbox delivery did not succeed", "key", claim.Key, "kind", claim.Kind, "attempt", claim.Attempts, "state", update.State, "error", update.LastError)

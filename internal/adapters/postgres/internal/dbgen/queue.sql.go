@@ -74,7 +74,7 @@ func (q *Queries) ClaimOutbox(ctx context.Context, arg ClaimOutboxParams) ([]Cla
 	return items, nil
 }
 
-const failExhaustedOutbox = `-- name: FailExhaustedOutbox :exec
+const failExhaustedOutbox = `-- name: FailExhaustedOutbox :many
 UPDATE outbox
 SET state = 'failed',
     last_error = 'delivery abandoned: every attempt was claimed without an outcome',
@@ -82,6 +82,7 @@ SET state = 'failed',
 WHERE state = 'pending'
   AND next_attempt_at <= $1::timestamptz
   AND attempts >= $2::int
+RETURNING key, kind
 `
 
 type FailExhaustedOutboxParams struct {
@@ -89,10 +90,30 @@ type FailExhaustedOutboxParams struct {
 	MaxAttempts int32
 }
 
+type FailExhaustedOutboxRow struct {
+	Key  string
+	Kind string
+}
+
 // Pending messages that were claimed on every attempt without an outcome stop here.
-func (q *Queries) FailExhaustedOutbox(ctx context.Context, arg FailExhaustedOutboxParams) error {
-	_, err := q.db.Exec(ctx, failExhaustedOutbox, arg.Now, arg.MaxAttempts)
-	return err
+func (q *Queries) FailExhaustedOutbox(ctx context.Context, arg FailExhaustedOutboxParams) ([]FailExhaustedOutboxRow, error) {
+	rows, err := q.db.Query(ctx, failExhaustedOutbox, arg.Now, arg.MaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FailExhaustedOutboxRow{}
+	for rows.Next() {
+		var i FailExhaustedOutboxRow
+		if err := rows.Scan(&i.Key, &i.Kind); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const finishOutbox = `-- name: FinishOutbox :execrows
@@ -174,4 +195,26 @@ func (q *Queries) InsertOutbox(ctx context.Context, arg InsertOutboxParams) erro
 		arg.Payload,
 	)
 	return err
+}
+
+const releaseOutbox = `-- name: ReleaseOutbox :execrows
+UPDATE outbox
+SET attempts = attempts - 1,
+    next_attempt_at = $1::timestamptz
+WHERE key = $2 AND state = 'pending' AND attempts = $3
+`
+
+type ReleaseOutboxParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	Key           string
+	Attempts      int32
+}
+
+// Gives back a claim that was never tried: restores the attempt and makes the message due.
+func (q *Queries) ReleaseOutbox(ctx context.Context, arg ReleaseOutboxParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseOutbox, arg.NextAttemptAt, arg.Key, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

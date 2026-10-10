@@ -149,7 +149,8 @@ func (s *Store) SystemStatus(ctx context.Context, jobID int64, outboxKey string)
 // messages that used every attempt are failed instead of claimed.
 func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (ClaimOutboxResult, error) {
 	q := dbgen.New(s.pool)
-	if err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: int32(params.MaxAttempts)}); err != nil {
+	abandoned, err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: int32(params.MaxAttempts)})
+	if err != nil {
 		return ClaimOutboxResult{}, fmt.Errorf("fail exhausted outbox messages: %w", err)
 	}
 	rows, err := q.ClaimOutbox(ctx, dbgen.ClaimOutboxParams{Now: timestamp(params.Now), LeaseUntil: timestamp(params.Now.Add(params.Lease)), MaxAttempts: int32(params.MaxAttempts), Batch: int32(params.Limit)})
@@ -160,7 +161,11 @@ func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (Clai
 	for i, row := range rows {
 		claims[i] = OutboxClaim{Key: row.Key, Kind: row.Kind, Payload: row.Payload, Attempts: int(row.Attempts)}
 	}
-	return ClaimOutboxResult{Claims: claims}, nil
+	result := ClaimOutboxResult{Claims: claims, Abandoned: make([]OutboxRef, len(abandoned))}
+	for i, row := range abandoned {
+		result.Abandoned[i] = OutboxRef{Key: row.Key, Kind: row.Kind}
+	}
+	return result, nil
 }
 
 // FinishOutbox records the outcome of a claim. It updates nothing, and
@@ -180,5 +185,9 @@ func (s *Store) FinishOutbox(ctx context.Context, claim OutboxClaim, update Outb
 // attempt and makes the message due at nextAttemptAt. It updates nothing, and
 // reports false, when another relay has reclaimed the message since.
 func (s *Store) ReleaseOutbox(ctx context.Context, claim OutboxClaim, nextAttemptAt time.Time) (bool, error) {
-	return false, errors.New("not implemented")
+	updated, err := dbgen.New(s.pool).ReleaseOutbox(ctx, dbgen.ReleaseOutboxParams{NextAttemptAt: timestamp(nextAttemptAt), Key: claim.Key, Attempts: int32(claim.Attempts)})
+	if err != nil {
+		return false, fmt.Errorf("release outbox claim: %w", err)
+	}
+	return updated == 1, nil
 }

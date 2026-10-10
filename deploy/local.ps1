@@ -88,6 +88,6 @@ Invoke-Podman run --detach --replace --name suiteward --network suiteward --rest
     $Image | Out-Null
 
 Write-Host "Started suiteward-db and suiteward ($Image)."
-Write-Host 'The port is published inside the Podman machine; a rootful machine does not forward it to this PC. Run the smoke test inside it:'
+Write-Host 'The port is published inside the Podman machine and may not be reachable from this PC (it was not on the WSL machine this was tested on). Run the smoke test inside the machine:'
 Write-Host '  Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"'
 Write-Host 'Add SMOKE_VERSION=sha-<commit> before sh to also assert the version /status reports.'

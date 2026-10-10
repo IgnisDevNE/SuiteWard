@@ -32,6 +32,7 @@ var governanceRows = map[string]map[string]any{
 	"assessments":        {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "source": "sha-1", "evidence_emitter": "ci", "evidence_source": "sha-1", "evidence_revision_id": "r1", "outcome": "passed"},
 	"consent_results":    {"source_command_id": "src-1", "operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "actor_id": "owner", "actor_kind": "human", "carrier_id": "pr-1", "action": "approve", "command_order": 1, "outcome": "approved", "reason": "none"},
 	"operations":         {"operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "kind": "consent", "source_command_id": "src-1", "receipt": `{"kind":"consent"}`},
+	"outbox":             {"key": "k1", "kind": "probe", "payload": `{}`},
 	"promotions":         {"operation_id": "promo-op", "project_id": "project", "suite_id": "suite", "version_id": "v1", "proposal_id": "p1", "revision_id": "r1", "carrier_id": "pr-1", "source_revision": "sha-1", "target_id": "main", "recorded_at": "2026-10-02T12:00:00Z", "corrects_version_id": nil},
 }
 
@@ -100,7 +101,7 @@ func TestGovernanceSchemaFreshMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := append([]string{"goose_db_version"}, governanceTables...)
+	want := append([]string{"goose_db_version", "outbox", "river_job", "river_leader", "river_migration", "river_notification", "river_queue"}, governanceTables...)
 	slices.Sort(want)
 	if !slices.Equal(present, want) {
 		t.Fatalf("fresh migration tables = %v; want exactly %v", present, want)
@@ -127,8 +128,8 @@ func TestGovernanceMigrationsLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		var applications, later int
-		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FILTER (WHERE version_id=1), count(*) FILTER (WHERE version_id>1) FROM goose_db_version WHERE is_applied").Scan(&applications, &later); err != nil || applications != 1 || later != 0 {
-			t.Fatalf("migration 1 applied %d times, later migrations %d (error %v); want exactly one and none", applications, later, err)
+		if err := database.conn.QueryRow(t.Context(), "SELECT count(*) FILTER (WHERE version_id=1), count(*) FILTER (WHERE version_id>$1) FROM goose_db_version WHERE is_applied", migrations.SupportedVersion).Scan(&applications, &later); err != nil || applications != 1 || later != 0 {
+			t.Fatalf("migration 1 applied %d times, migrations beyond SupportedVersion %d (error %v); want exactly one and none", applications, later, err)
 		}
 	})
 	t.Run("failed body rolls back", func(t *testing.T) {
@@ -154,7 +155,7 @@ func TestGovernanceMigrationsLifecycle(t *testing.T) {
 		if err := migrations.UpTo(t.Context(), database.url, 0); !errors.Is(err, migrations.ErrForwardOnly) {
 			t.Fatalf("downgrade must fail closed; got %v", err)
 		}
-		schemaExec(t, database.conn, "INSERT INTO goose_db_version(version_id, is_applied) VALUES (2, true)")
+		schemaExec(t, database.conn, "INSERT INTO goose_db_version(version_id, is_applied) VALUES ($1, true)", migrations.SupportedVersion+1)
 		if err := migrations.Up(t.Context(), database.url); !errors.Is(err, migrations.ErrForwardOnly) {
 			t.Fatalf("a database newer than the supported schema must be rejected; got %v", err)
 		}
@@ -232,7 +233,7 @@ func TestGovernanceTruncateRejectedEverywhere(t *testing.T) {
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range governanceTables {
+	for _, table := range append([]string{"outbox"}, governanceTables...) {
 		t.Run(table, func(t *testing.T) {
 			_, err := database.conn.Exec(t.Context(), "TRUNCATE "+table+" CASCADE")
 			schemaRequireError(t, err, "23514", "immutable_history")

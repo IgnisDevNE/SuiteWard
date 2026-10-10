@@ -8,14 +8,15 @@ The first version of this page rests on a read-only exploration of the server (O
 
 1. **A dedicated clone.** The Orbit project's `path` is a separate clone of this repository, `D:\Repos\SuiteWard-orbit`, created from `main` with the [safeguards](#clone-safeguards) below. Not the orchestrator's checkout (Orbit would write into the working tree and branch the orchestrator is using) and not a subfolder of it (agents work only inside the registered path, so a subfolder hides the product code). `path` is a protected setting: register the project with the clone's path.
 2. **Project settings.** `gitPublish.mode` is `commit-only` (Orbit never pushes), `dispatchWithoutHumanApproval` is `false` (the owner approves every prompt in the dashboard before it runs), worktree isolation is required, and the runtime provides PowerShell 7 and the pinned tools (`./scripts/dev.ps1 tools`; every checkout has its own caches, database and ports).
-3. **MCP connection, user scope.** The URL and the token never enter a committed file of this repository. Orbit writes its entry into the clone's `.mcp.json` (kept out of commits by the safeguards). In the owner's terminal, with that file as the source (nothing is printed):
+3. **MCP connection, local scope.** The URL and the token never enter a committed file of this repository. Once `.mcp.json` is untracked in the clone (see the safeguards), Orbit writes its entry there. In the owner's terminal, **from the orchestrator's checkout** `D:\Repos\SuiteWard` (the folder decides the scope), with the clone's file as the source (nothing is printed):
 
    ```powershell
+   cd D:\Repos\SuiteWard
    $o = (Get-Content -Raw D:\Repos\SuiteWard-orbit\.mcp.json | ConvertFrom-Json).mcpServers.orbit
-   claude mcp add --transport http --scope user orbit $o.url --header "Authorization: $($o.headers.Authorization)" --header "X-Orbit-Project: <slug>"
+   claude mcp add --transport http --scope local orbit $o.url --header "Authorization: $($o.headers.Authorization)" --header "X-Orbit-Project: suiteward"
    ```
 
-   The tools appear as `orbit_*` in the next session. `X-Orbit-Project` must be the slug of the project registered in step 1.
+   The tools appear as `orbit_*` in the next session opened in that folder. Local scope binds the entry, and its `X-Orbit-Project` header, to that folder only: with user scope every Claude Code session on the machine would inherit the binding to this project, including sessions for other Orbit projects. `X-Orbit-Project` must be the slug of the project registered in step 1. `--header` takes several values, so the name and the URL come first.
 
 ## Clone safeguards
 
@@ -25,11 +26,14 @@ Orbit scaffolds its own files into the project folder, writes its MCP entry (wit
 $d = 'D:\Repos\SuiteWard-orbit'
 git clone https://github.com/IgnisDevNE/SuiteWard.git $d
 git -C $d remote set-url --push origin DISABLED-the-orbit-clone-never-pushes
-git -C $d update-index --skip-worktree .mcp.json .claude/settings.json
+git -C $d update-index --skip-worktree .claude/settings.json
+git -C $d rm --cached .mcp.json
 ```
 
 - A push from the clone fails and a fetch works. The orchestrator reads the clone by fetching from it, never by working in it.
-- The two flagged files may be rewritten by Orbit without dirtying the clone or entering `git add -A`. If a merge into the clone complains about them, clear the flag (`--no-skip-worktree`), update, and set it again.
+- Orbit refuses to write its credential into a tracked file ("`.mcp.json` is already tracked"), and here `.mcp.json` is tracked (it carries the `gopls` server). `git rm --cached` untracks it **in the clone's index only**: the file stays on disk, nothing is committed, the repository and `main` are unchanged, and the pre-commit guard below refuses any commit that stages it, so this deletion can never be committed from the clone. A `git reset --hard origin/main` in the clone tracks it again and drops Orbit's entry: repeat the command.
+- `.claude/settings.json` may be rewritten by Orbit without dirtying the clone or entering `git add -A`. If a merge into the clone complains about it, clear the flag (`--no-skip-worktree`), update, and set it again.
+- Orbit also appends a managed block to the tracked `.gitignore`, which shows as a modified file in the clone.
 - `.git/info/exclude` lists the scaffold Orbit creates, which is untracked in this repository: `/ORBIT.md`, `/CLAUDE.md`, `/GEMINI.md`, `/COMPLETION_LOG.md`, `/COMPLETION_LOG.archive.md`, `/context/`, `/.orbit/`, `/.sweep/`, `/.codex/`.
 - `.git/hooks/pre-commit` refuses a commit that stages a managed file or adds a bearer token or an Orbit endpoint:
 

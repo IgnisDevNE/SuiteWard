@@ -13,6 +13,8 @@ on:
       - 'internal/**'
       - 'go.mod'
       - 'go.sum'
+      - '.go-version'
+      - '.dockerignore'
       - 'deploy/**'
       - '.github/workflows/deploy.yml'
 

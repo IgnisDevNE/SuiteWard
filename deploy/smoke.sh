@@ -97,9 +97,9 @@ else
 	podman restart "$CTR" </dev/null >/dev/null 2>&1 || die restart "podman restart $CTR failed"
 fi
 ok restart
-begin
+# No new begin: the clock keeps running from before the restart, so the next step is the time from restart to ready.
 wait_ready || die ready-after-restart "not ready within ${READY_TIMEOUT}s after the restart"
-ok ready-after-restart "time to ready after restart"
+ok ready-after-restart "time to ready after restart, including the restart"
 
 begin
 out=$(podman exec "$CTR" /suiteward probe --wait "$id" --timeout 90s </dev/null 2>&1) || die probe-after-restart "$(last "$out")"

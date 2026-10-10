@@ -35,7 +35,7 @@ git -C $d rm --cached .mcp.json
 - `.claude/settings.json` may be rewritten by Orbit without dirtying the clone or entering `git add -A`. If a merge into the clone complains about it, clear the flag (`--no-skip-worktree`), update, and set it again.
 - Orbit also appends a managed block to the tracked `.gitignore`, which shows as a modified file in the clone.
 - `.git/info/exclude` lists the scaffold Orbit creates, which is untracked in this repository: `/ORBIT.md`, `/CLAUDE.md`, `/GEMINI.md`, `/COMPLETION_LOG.md`, `/COMPLETION_LOG.archive.md`, `/context/`, `/.orbit/`, `/.sweep/`, `/.codex/`.
-- `.git/hooks/pre-commit` refuses a commit that stages a managed file or adds a bearer token or an Orbit endpoint:
+- `.git/hooks/pre-commit` refuses a commit that stages a managed file or adds a bearer token or the host name of the Orbit instance (fill in `orbit_host` with the instance's domain; the real domain stays out of this repository):
 
 ```sh
 #!/bin/sh
@@ -46,7 +46,8 @@ if [ -n "$staged" ]; then
 	echo "$staged" >&2
 	exit 1
 fi
-if git diff --cached -U0 | grep '^+' | grep -Eq 'Bearer [A-Za-z0-9._~+/=-]{20,}|[a-z0-9]{12,}\.orbit\.sivants\.com'; then
+orbit_host='[a-z0-9]{12,}\.orbit\.<domain of the Orbit instance, dots escaped>'
+if git diff --cached -U0 | grep '^+' | grep -Eq "Bearer [A-Za-z0-9._~+/=-]{20,}|$orbit_host"; then
 	echo "pre-commit: a credential or an Orbit endpoint is in the staged changes, commit refused" >&2
 	exit 1
 fi

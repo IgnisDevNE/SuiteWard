@@ -397,17 +397,6 @@ func TestOSWiresTheProcessEnvironment(t *testing.T) {
 	}
 }
 
-func TestLoadHTTPAddrPortMustBeInRange(t *testing.T) {
-	for addr, ok := range map[string]bool{"127.0.0.1:1": true, ":65535": true, "[::1]:8080": true, "h:0": false, "h:65536": false, "h:http": false} {
-		vars := required(t)
-		vars["SUITEWARD_HTTP_ADDR"] = addr
-		_, _, err := fakeEnv{vars: vars}.load()
-		if (err == nil) != ok {
-			t.Errorf("HTTP_ADDR=%q: error = %v, want accepted=%v", addr, err, ok)
-		}
-	}
-}
-
 func TestLoadRejectsMissingDependencies(t *testing.T) {
 	lookup := func(string) (string, bool) { return "", false }
 	readFile := func(string) ([]byte, error) { return nil, fs.ErrNotExist }

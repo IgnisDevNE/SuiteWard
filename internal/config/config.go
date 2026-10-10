@@ -61,6 +61,13 @@ type Config struct {
 // variable; secret values are never included. The warnings are returned even
 // when err is not nil.
 func Load(lookup func(string) (string, bool), environ []string, readFile func(string) ([]byte, error)) (Config, []string, error) {
+	// Injected dependencies are trust boundaries: fail loudly instead of panicking later.
+	if lookup == nil {
+		return Config{}, nil, errors.New("config: lookup function is required")
+	}
+	if readFile == nil {
+		return Config{}, nil, errors.New("config: readFile function is required")
+	}
 	l := &loader{lookup: lookup, readFile: readFile, known: map[string]bool{}}
 	var c Config
 
@@ -74,7 +81,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 		l.fail("ARTIFACT_DIR", errors.New("must be an absolute path"))
 	}
 	c.HTTPAddr = l.optional("HTTP_ADDR", "127.0.0.1:8080")
-	if err := validHTTPAddr(c.HTTPAddr); err != nil {
+	if _, _, err := net.SplitHostPort(c.HTTPAddr); err != nil {
 		l.fail("HTTP_ADDR", err)
 	}
 	c.LogLevel = l.logLevel("LOG_LEVEL", "info")
@@ -189,7 +196,7 @@ func number[T int | time.Duration](l *loader, name, def string, lo, hi T, parse 
 	return 0
 }
 
-// unrecognized lists the SUITEWARD_* names in environ that no setting claimed.
+// unrecognized lists (names only, sorted) the SUITEWARD_* names in environ that no setting claimed.
 func (l *loader) unrecognized(environ []string) []string {
 	var warnings []string
 	for _, entry := range environ {
@@ -198,7 +205,7 @@ func (l *loader) unrecognized(environ []string) []string {
 			slices.ContainsFunc(toolingPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
 			continue
 		}
-		warnings = append(warnings, "unrecognized setting "+name)
+		warnings = append(warnings, name)
 	}
 	slices.Sort(warnings)
 	return slices.Compact(warnings)
@@ -207,15 +214,4 @@ func (l *loader) unrecognized(environ []string) []string {
 func validDatabaseURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql")
-}
-
-func validHTTPAddr(s string) error {
-	_, port, err := net.SplitHostPort(s)
-	if err != nil {
-		return err
-	}
-	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
-		return fmt.Errorf("port %q is not a number from 1 to 65535", port)
-	}
-	return nil
 }

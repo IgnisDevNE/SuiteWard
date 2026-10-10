@@ -172,7 +172,7 @@ func TestPromotionVerifiesEachDistinctContentOnce(t *testing.T) {
 	w := newPGWorld(t)
 	verifier := &countingVerifier{inner: w.content}
 	var err error
-	if w.store, err = postgres.NewStore(w.pool, verifier); err != nil {
+	if w.store, err = postgres.NewStore(w.pool, verifier, testInserter()); err != nil {
 		t.Fatal(err)
 	}
 	shared := artifact.Hash([]byte("shared bytes"))

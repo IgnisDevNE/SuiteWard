@@ -3,6 +3,7 @@ package governance
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -37,7 +38,28 @@ type Tx interface {
 
 	AppendConsent(context.Context, ConsentWrite) error
 	RecordPromotion(context.Context, PromotionWrite) error
-	// M1.2 adds Enqueue (River) and Outbox writes here.
+
+	// Enqueue and Outbox are written in the same transaction as the facts
+	// above. Neither advances the Suite revision.
+	Enqueue(context.Context, Job) error
+	Outbox(context.Context, OutboxMessage) error
+}
+
+// Job is follow-up work for a background worker. Args reference scoped
+// records and immutable revisions; they never carry credentials.
+type Job struct {
+	Kind        string          // ^[a-z][a-z0-9_.]*$, at most 64 bytes, for example "probe"
+	Args        json.RawMessage // a JSON object, at most 64 KiB
+	ScheduledAt time.Time       // zero means as soon as possible
+}
+
+// OutboxMessage records an external effect (for example publishing a check)
+// together with the fact that requires it. Delivery is at least once, so a
+// publisher must be idempotent by Key.
+type OutboxMessage struct {
+	Key     string          // globally unique idempotency key, at most 200 bytes
+	Kind    string          // same syntax as Job.Kind; selects the publisher
+	Payload json.RawMessage // a JSON object, at most 64 KiB
 }
 
 // Seeder writes trusted initial state. It is the only writer of policies,

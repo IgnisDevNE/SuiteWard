@@ -325,3 +325,43 @@ func TestFinishOutboxIsConditionalOnTheClaim(t *testing.T) {
 		}
 	})
 }
+
+func TestQueueEntryPointsFailOnACanceledContext(t *testing.T) {
+	w := newPGWorld(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	job := governance.Job{Kind: "probe", Args: queueObject}
+	message := governance.OutboxMessage{Key: "k1", Kind: "probe", Payload: queueObject}
+	if _, err := w.store.EnqueueSystem(ctx, job, message); !errors.Is(err, context.Canceled) {
+		t.Errorf("EnqueueSystem = %v, want context.Canceled", err)
+	}
+	if _, err := w.store.SystemStatus(ctx, 1, "k1"); !errors.Is(err, context.Canceled) {
+		t.Errorf("SystemStatus = %v, want context.Canceled", err)
+	}
+	if _, err := w.store.ClaimOutbox(ctx, postgres.ClaimOutboxParams{Now: time.Now(), Lease: time.Minute, MaxAttempts: 1, Limit: 1}); !errors.Is(err, context.Canceled) {
+		t.Errorf("ClaimOutbox = %v, want context.Canceled", err)
+	}
+	if _, err := w.store.FinishOutbox(ctx, postgres.OutboxClaim{Key: "k1", Attempts: 1}, postgres.OutboxUpdate{State: postgres.OutboxDelivered, FinishedAt: time.Now()}); !errors.Is(err, context.Canceled) {
+		t.Errorf("FinishOutbox = %v, want context.Canceled", err)
+	}
+	if got := w.scalar("SELECT (SELECT count(*) FROM river_job) || ' ' || (SELECT count(*) FROM outbox)"); got != "0 0" {
+		t.Errorf("jobs and messages = %q, want none", got)
+	}
+}
+
+func TestEnqueueSystemFailsWhenTheCommitFails(t *testing.T) {
+	w := newPGWorld(t)
+	for _, statement := range []string{
+		`CREATE FUNCTION fail_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'commit refused' USING ERRCODE = '23514'; END; $$`,
+		`CREATE CONSTRAINT TRIGGER outbox_fail_commit AFTER INSERT ON outbox DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_commit()`,
+	} {
+		schemaExec(t, w.db.conn, statement)
+	}
+	_, err := w.store.EnqueueSystem(t.Context(), governance.Job{Kind: "probe", Args: queueObject}, governance.OutboxMessage{Key: "k1", Kind: "probe", Payload: queueObject})
+	if err == nil {
+		t.Fatal("EnqueueSystem reported success although the commit failed")
+	}
+	if got := w.scalar("SELECT (SELECT count(*) FROM river_job) || ' ' || (SELECT count(*) FROM outbox)"); got != "0 0" {
+		t.Fatalf("jobs and messages = %q, want none", got)
+	}
+}

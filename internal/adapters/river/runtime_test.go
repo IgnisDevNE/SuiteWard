@@ -14,6 +14,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 )
 
 // fastRetry retries almost at once, so tests do not wait for River's default backoff.
@@ -221,6 +222,20 @@ func TestNewRuntimeChecksItsDependencies(t *testing.T) {
 	config.Logger = nil
 	if _, err := river.NewRuntime(w.pool, w.store, config); err == nil {
 		t.Error("NewRuntime accepted a nil logger")
+	}
+	config = testConfig(&logCapture{})
+	config.Handlers = map[string]river.Handler{"Bad Kind": func(context.Context, json.RawMessage) error { return nil }}
+	if _, err := river.NewRuntime(w.pool, w.store, config); !errors.Is(err, governance.ErrInvalidRequest) {
+		t.Errorf("NewRuntime with an invalid handler kind = %v, want ErrInvalidRequest", err)
+	}
+	config.Handlers = map[string]river.Handler{"demo": nil}
+	if _, err := river.NewRuntime(w.pool, w.store, config); err == nil {
+		t.Error("NewRuntime accepted a nil handler")
+	}
+	config = testConfig(&logCapture{})
+	config.OutboxMaxAttempts = 0
+	if _, err := river.NewRuntime(w.pool, w.store, config); err == nil {
+		t.Error("NewRuntime accepted an outbox without attempts")
 	}
 }
 

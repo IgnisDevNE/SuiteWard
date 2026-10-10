@@ -40,7 +40,7 @@ stty -echo
 podman secret create suiteward-s1-app-key -
 ```
 
-Paste the full PEM (including the BEGIN and END lines), press Enter, then Ctrl-D. Then:
+Paste the full PEM (including the BEGIN and END lines), press Enter, then Ctrl-D. The terminal shows nothing because echo is off; that is expected. If the prompt does not come back, press Ctrl-D once more (needed when the pasted text had no trailing newline). Then:
 
 ```
 stty echo

@@ -87,17 +87,11 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 	}
 	committed := false
 	defer func() {
-		if committed {
-			return
+		if !committed {
+			rollback(ctx, transaction)
 		}
-		// The rollback must outlive a canceled ctx. Its own failure means the
-		// connection is gone: the server aborts the transaction and the pool
-		// discards the connection, so the original outcome is what matters.
-		rollback, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
-		defer cancel()
-		_ = transaction.Rollback(rollback)
 	}()
-	work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
+	work := &tx{q: dbgen.New(transaction), raw: transaction, project: project, suite: suite, artifacts: s.artifacts, jobs: s.jobs}
 	if _, err := work.lock(ctx); err != nil {
 		return err
 	}
@@ -114,6 +108,16 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 	return nil
 }
 
+// rollback abandons a transaction that did not commit. It must outlive a
+// canceled ctx. Its own failure means the connection is gone: the server
+// aborts the transaction and the pool discards the connection, so the
+// original outcome is what matters.
+func rollback(ctx context.Context, transaction pgx.Tx) {
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+	defer cancel()
+	_ = transaction.Rollback(rollbackCtx)
+}
+
 // Constraint names of the schema that a write can violate, with the
 // governance error each one means.
 var (
@@ -126,6 +130,7 @@ var (
 		"consent_results_operation_key": governance.ErrOperationConflict,
 		"consent_results_pkey":          governance.ErrOperationConflict,
 		"consent_results_scope_key":     governance.ErrOperationConflict,
+		"outbox_pkey":                   governance.ErrOperationConflict,
 	}
 	foreignKeyViolations = map[string]error{
 		"consent_results_proposal_fkey": governance.ErrNotFound,

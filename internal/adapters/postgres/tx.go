@@ -20,9 +20,11 @@ import (
 // callback of Store.Do runs.
 type tx struct {
 	q         *dbgen.Queries
+	raw       pgx.Tx
 	project   contract.ProjectID
 	suite     contract.SuiteID
 	artifacts ArtifactVerifier
+	jobs      JobInserter
 }
 
 var _ governance.Tx = (*tx)(nil)
@@ -469,8 +471,15 @@ func (t *tx) bump(ctx context.Context, current pgtype.Text) error {
 	return nil
 }
 
-func (t *tx) Enqueue(context.Context, governance.Job) error { return errors.New("not implemented") }
+// Enqueue and Outbox write through the unit of work's own transaction, so
+// they commit or roll back with the governance facts and never advance the
+// Suite revision.
 
-func (t *tx) Outbox(context.Context, governance.OutboxMessage) error {
-	return errors.New("not implemented")
+func (t *tx) Enqueue(ctx context.Context, job governance.Job) error {
+	_, err := enqueue(ctx, t.jobs, t.raw, job)
+	return err
+}
+
+func (t *tx) Outbox(ctx context.Context, message governance.OutboxMessage) error {
+	return insertOutbox(ctx, t.q, pgtype.Text{String: string(t.project), Valid: true}, pgtype.Text{String: string(t.suite), Valid: true}, message)
 }

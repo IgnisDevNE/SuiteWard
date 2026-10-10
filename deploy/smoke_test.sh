@@ -25,6 +25,8 @@ EOF
 cat > "$tmp/bin/podman" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$FAKE_LOG"
+# A command that reads stdin would swallow the rest of a script piped in with `sh -s`.
+[ "${FAKE_DRAIN_STDIN:-}" = 1 ] && cat > /dev/null
 case $* in
 "exec suiteward /suiteward probe --delay 20s --no-wait") echo '{"probeId":"42-probe-abc"}' ;;
 "exec suiteward /suiteward probe --wait "*)
@@ -87,6 +89,12 @@ expect_fail "pending probe lost after restart" "FAIL probe-after-restart"
 run sh "$smoke" --promote
 expect_ok "promote" "promote"
 logged "^auto-update" || bad "promote" "podman auto-update was not run"
+
+# Piped in, as `podman machine ssh "sh -s" < deploy/smoke.sh` does: no step may consume the script's own stdin.
+run FAKE_DRAIN_STDIN=1 sh -s < "$smoke"
+expect_ok "script piped to sh -s" "PASS"
+run FAKE_DRAIN_STDIN=1 sh -s -- --promote < "$smoke"
+expect_ok "script piped to sh -s with --promote" "promote"
 
 run sh "$smoke" --bogus
 expect_fail "unknown flag" "usage"

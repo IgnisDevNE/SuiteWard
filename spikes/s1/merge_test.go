@@ -100,3 +100,20 @@ func btoi(b bool) int {
 	}
 	return 0
 }
+
+// GitHub can report base.sha equal to head.sha on a merged PR; the fact is recorded, not interpreted.
+func TestMergeRecordsHeadEqualToBase(t *testing.T) {
+	h := newHarness(t)
+	h.gh.trees["aaaa"] = treeJSON(entryX)
+	h.gh.comments = []fakeComment{{id: 7, login: "magalz", body: "/suiteward approve " + refOf(entryX), updatedAt: "2026-01-01T00:00:00Z"}}
+	h.cycle()
+
+	h.gh.open = false
+	h.gh.prJSON = strings.Replace(prJSON(true, "aaaa"), `"base":{"ref":"main","sha":"base0"}`, `"base":{"ref":"main","sha":"aaaa"}`, 1)
+	h.gh.commits = map[string]string{"aaaa": commitJSON("aaaa", "tree-h", "Add tests", "base0")}
+	h.gh.trees["tree-h"] = treeJSON(entryX)
+	h.cycle()
+	if !strings.Contains(h.out.String(), `"head_is_base":true`) || !h.a.st.Pulls[5].Merged.HeadIsBase {
+		t.Fatalf("head_is_base not recorded:\n%s", h.out.String())
+	}
+}

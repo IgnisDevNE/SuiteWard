@@ -175,12 +175,14 @@ type commitResp struct {
 	} `json:"commit"`
 }
 
-// putFile creates a file on branch and returns the new commit sha.
+// putFile creates a file and returns the new commit sha. An empty branch means the default branch.
 func (d *driver) putFile(ctx context.Context, path, branch, content string) (string, error) {
+	body := map[string]string{"message": "driver: add " + path, "content": base64.StdEncoding.EncodeToString([]byte(content))}
+	if branch != "" {
+		body["branch"] = branch
+	}
 	var out commitResp
-	err := d.api(ctx, http.MethodPut, "/contents/"+path, map[string]string{
-		"message": "driver: add " + path, "content": base64.StdEncoding.EncodeToString([]byte(content)), "branch": branch,
-	}, &out)
+	err := d.api(ctx, http.MethodPut, "/contents/"+path, body, &out)
 	return out.Commit.SHA, err
 }
 
@@ -198,7 +200,7 @@ func (d *driver) seed(ctx context.Context) (map[string]any, error) {
 		case !errors.As(err, &ae) || (ae.Status != http.StatusNotFound && ae.Status != http.StatusConflict):
 			return nil, err // 404 is absent (also on an empty repository); anything else is a real failure
 		}
-		if _, err := d.putFile(ctx, f[0], "main", f[1]); err != nil {
+		if _, err := d.putFile(ctx, f[0], "", f[1]); err != nil {
 			return nil, err
 		}
 		created = append(created, f[0])

@@ -11,7 +11,7 @@ Environment variables and defaults are in the contract. The key is a mounted fil
 $env:S1_APP_ID = '...'; $env:S1_INSTALLATION_ID = '...'; $env:S1_REPO = 'IgnisDevNE/SuiteWardQ'; $env:S1_OWNER_LOGIN = 'magalz'
 $env:S1_KEY_FILE = '<path to the .pem>'; $env:S1_STATE_FILE = '<scratch>/state.json'
 $env:S1_ONCE = '1'                                  # one cycle, then exit (non-zero when a step failed)
-$env:S1_TOKEN_PERMISSIONS = 'pull_requests:read,contents:read'   # no checks:write: a read-only run; GitHub is expected (not yet observed) to refuse publication
+$env:S1_TOKEN_PERMISSIONS = 'pull_requests:read,contents:read,issues:read,checks:write'   # narrow it per measurement; a PR whose comments cannot be read gets no check published that cycle
 ./s1.exe
 ```
 
@@ -109,7 +109,7 @@ When `matches_approved` is true a `promotions` entry is appended: the same recor
 
 | command | what it does |
 | --- | --- |
-| `seed` | creates `README.md` and `tests/a.txt` on `main` through the Contents API when missing (the Contents API is the likely route for an empty repository; not verified against GitHub) |
+| `seed` | creates `README.md` and `tests/a.txt` on `main` through the Contents API when missing (commits to the default branch without naming it; the Contents API is the likely route for an empty repository, not verified against GitHub) |
 | `open <name>` | branch `<name>` from `main`, commit `tests/<name>.txt`, open the PR, print its number |
 | `push <pr> [-outside]` | add `tests/push-<ns>.txt` (or `other/push-<ns>.txt` with `-outside`) to the PR branch |
 | `comment <pr> <text>`, `edit <pr> <comment-id> <text>`, `delete <pr> <comment-id>` | issue comment calls |

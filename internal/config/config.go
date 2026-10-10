@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/url"
@@ -88,7 +89,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 
 	c.ShutdownTimeout = number(l, "SHUTDOWN_TIMEOUT", "30s", time.Second, 10*time.Minute, time.ParseDuration)
 	c.JobWorkers = number(l, "JOB_WORKERS", "4", 1, 64, strconv.Atoi)
-	c.JobTimeout = number(l, "JOB_TIMEOUT", "1m", 1, 0, time.ParseDuration)
+	c.JobTimeout = number(l, "JOB_TIMEOUT", "1m", time.Second, time.Hour, time.ParseDuration)
 	c.JobMaxAttempts = number(l, "JOB_MAX_ATTEMPTS", "5", 1, 25, strconv.Atoi)
 	c.OutboxMaxAttempts = number(l, "OUTBOX_MAX_ATTEMPTS", "8", 1, 25, strconv.Atoi)
 	c.OutboxPollInterval = number(l, "OUTBOX_POLL_INTERVAL", "5s", time.Second, time.Hour, time.ParseDuration)
@@ -118,12 +119,14 @@ func (l *loader) fail(name string, err error) {
 }
 
 // raw returns the value of a setting from NAME or, for a secret, from the file
-// named by NAME_FILE. ok is false when the value is absent, empty or unusable;
-// an unusable one has already been reported.
+// named by NAME_FILE. A variable that is set but empty counts as unset. ok is
+// false when the value is absent or unusable; an unusable one has already
+// been reported.
 func (l *loader) raw(name string, secret bool) (value string, ok bool) {
 	l.known[prefix+name], l.known[prefix+name+"_FILE"] = true, true
-	direct, hasDirect := l.lookup(prefix + name)
-	path, hasFile := l.lookup(prefix + name + "_FILE")
+	direct, _ := l.lookup(prefix + name)
+	path, _ := l.lookup(prefix + name + "_FILE")
+	hasDirect, hasFile := direct != "", path != ""
 	switch {
 	case hasFile && !secret:
 		l.fail(name+"_FILE", errors.New("only secret settings can be read from a file"))
@@ -132,6 +135,11 @@ func (l *loader) raw(name string, secret bool) (value string, ok bool) {
 	case hasFile:
 		content, err := l.readFile(path)
 		if err != nil {
+			// The path is dropped: an operator may have put the secret itself in NAME_FILE.
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				err = pathErr.Err
+			}
 			l.fail(name+"_FILE", fmt.Errorf("cannot read the file: %w", err))
 			return "", false
 		}
@@ -141,7 +149,7 @@ func (l *loader) raw(name string, secret bool) (value string, ok bool) {
 		}
 		return value, value != ""
 	default:
-		return direct, direct != ""
+		return direct, hasDirect
 	}
 	return "", false
 }

@@ -1,6 +1,6 @@
 # SuiteWard project baseline
 
-- **Updated:** 2026-10-05 (phase R1)
+- **Updated:** 2026-10-10 (phase M1.2)
 - **Stage:** M0 (domain), M1.01 (persistence), R1 (simplified plan, normalized persistence contract, trust-separation decision), S1 (GitHub walking skeleton), and M1.2 (runtime, jobs and outbox, deployment) are delivered. Next are M1.3 and M1.4. GitHub integration in the service and owner identity are not implemented.
 
 ## Product identity and audience

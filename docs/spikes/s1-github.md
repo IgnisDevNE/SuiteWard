@@ -1,6 +1,6 @@
 # S1 findings: GitHub walking skeleton
 
-- **Status:** draft for the owner's review; one measurement is pending (the promotion-to-host time under [Remote host](#remote-host-isolated-target)).
+- **Status:** draft for the owner's review. The container-local run with the owner's own approval is recorded under [Local container](#local-container-co-located-target) once measured.
 - **Phase:** [S1](../plan/phases/S1.md). Code: `spikes/s1/` (throwaway, separate module, never imported by `internal/`).
 - **Measured:** 2026-10-10 against `IgnisDevNE/SuiteWardQ` (public) and `IgnisDevNE/SuiteWardQ-private` with the test App `SuiteWardQ Spike` (not the production App).
 
@@ -12,7 +12,7 @@ The spike program polls one repository with conditional requests, computes a dig
 
 Limits that apply to everything below:
 
-- The harness commented as the App itself (`suitewardq-spike[bot]`) and the program was told to accept that login as the owner. The real owner login was never exercised end to end.
+- The harness commented as the App itself (`suitewardq-spike[bot]`) and the program was told to accept that login as the owner, except in the two runs where the owner (`magalz`) commented from their own account (host and local container, see their sections).
 - Latencies were measured from one Windows PC to `api.github.com` with a 20 s poll for the scenarios and 60 s for the long run. Single repository; 1 open PR in every cycle of the long run and at most 2 in the scenario runs.
 - Scenario steps were paced by hand about 22 to 25 s apart, close to the real poll period (20 s sleep plus about 2 s of cycle), so the phase between an event and the next poll was not random and the latencies below are samples, not distributions.
 - Some merge-attempt messages were seen interactively and not kept in a log; each such row says so.
@@ -129,6 +129,7 @@ Podman on the developer PC, image built from the same Containerfile and commit.
 - The full loop ran in the container: PR, check, approval, merge, promotion recorded with a digest equal to the approved one.
 - After `podman restart` the state survived in the volume (the check run was reused by a PATCH instead of a new run) and the first event came 1.1 s after the command (0.51 s after the container started); the first cycle was unconditional because response bodies are cached in memory only.
 - `/status` answered from inside the Podman machine but not through the published loopback port on Windows (WSL port forwarding); it was reached with `podman machine ssh`.
+- **Owner's own approval:** with the container accepting only `magalz` as the owner, the owner commented `/suiteward approve <ref>` on PR 12 from their own account at 10:46:05Z and the check was `success` at 10:46:07.0Z (the comment happened to land just before a poll, so this is the best case of a 20 s interval); the App merged at 10:47:14.9Z and the promotion was recorded at 10:47:35.9Z (21 s) with a digest equal to the approved one. The agent did not post that comment.
 - The container needs only outbound HTTPS. There are no inbound requirements.
 
 ### Remote host (isolated target)
@@ -143,8 +144,9 @@ AWS EC2 `t4g.small` (arm64), Ubuntu 24.04, Podman 4.9.3, rootless user `suitewar
 - **Request latency** from the host in its first cycle: 163 to 420 ms (5 requests), lower than from the developer PC.
 - **Status:** `/status` returned 200 through an SSM port forward (`AWS-StartPortForwardingSession`).
 - **Outbound-only:** every listener is on loopback (the resolver, `cloudflared` metrics, and the published status port held by `rootlessport`); the only container connection was to a GitHub address on port 443; the security group has no inbound rules.
-- **IMDS: a container could obtain a metadata token (HTTP 200).** D-DEPLOY states that IMDSv2 with hop limit 1 keeps containers from reading the role credentials; for a rootless container this did not hold. Only the token request was made, as the check specifies, and no credentials were read. The instance role is limited to the SSM managed-instance policy, so the exposure is that role. This is reported, not fixed.
-- **Auto-update on promotion:** pending (see the end of this section).
+- **IMDS: a container could obtain a metadata token (HTTP 200).** D-DEPLOY states that IMDSv2 with hop limit 1 keeps containers from reading the role credentials; for a rootless container this did not hold. Only the token request was made, as the check specifies, and no credentials were read. According to D-DEPLOY the instance role is limited to the SSM managed-instance policy (not re-verified here), so the exposure would be that role. This is reported, not fixed.
+- **Auto-update on promotion:** with the timer shortened to five minutes, the `promote` job finished at 10:42:57Z, `podman-auto-update.service` pulled and restarted the service at 10:45:17Z (2 min 20 s later; the timer's own jitter and period dominate this number), and the container then ran the new digest with the new `org.opencontainers.image.revision` label. The host stores no registry credential.
+- **Owner's own approval:** the host was reconfigured to accept only `magalz` as the owner. The owner commented `/suiteward approve <ref>` on PR 11 from their own account at 10:42:31Z, the program judged it `approved` at 10:42:44.8Z (13.3 s) and published `success` at 10:42:45.1Z; the App then merged and the promotion was recorded 16 s after the merge with a digest equal to the approved one. The agent did not post that comment.
 - **Steps that did not work as documented, now fixed in `HOST.md`:** `sudo -iu suiteward` fails because the account has a `nologin` shell, and `podman secret create … -` needs its stdin to be a pipe (`cat |`).
 - The env file on the host sets `S1_OWNER_LOGIN` to the App's own login (the scenarios are approved by the App), not the owner's login, and polls every 20 s.
 
@@ -194,9 +196,9 @@ Each item restates what the register has today and what the measurements support
 - Cancelling a stale waiting run is a human action (the bot lacks `actions: write`); document that in the install guide.
 - Record the SSM-versus-SSH/Tailscale discrepancy: the spike reached `/status` through SSM port forwarding and needed no SSH daemon and no Tailscale.
 - Correct the IMDS statement: hop limit 1 did not stop a rootless container from obtaining a token. Decide a mitigation (for example block `169.254.169.254` for the service user, or accept the exposure of the SSM-only role) before relying on it.
-- Promotion by `AutoUpdate=registry` works as designed once the image is public; the arm64 pull took 1.4 s. The measured time from promotion to the host is in the auto-update paragraph above.
+- Promotion by `AutoUpdate=registry` was observed end to end once the image was public: the host adopted the promoted digest 2 min 20 s after the `promote` job with a five-minute timer (the default timer is daily with a random delay, which sets the real latency); the arm64 pull took 1.4 s.
 - Document that the key cannot be placed on the host by an agent without leaving it in the SSM command history; the owner enters it in their own session.
 
 ## Not measured
 
-Fork PRs; `checks: read`; the permission for posting a comment; the real owner login; head-equals-base live; a PR opened and merged between polls; 20 repositories; secondary rate limits; the real owner login on the host; the host with the agent unable to reach it (the isolated property).
+Fork PRs; `checks: read`; the permission for posting a comment; the real owner login; head-equals-base live; a PR opened and merged between polls; 20 repositories; secondary rate limits; the host with the agent unable to reach it (the isolated property).

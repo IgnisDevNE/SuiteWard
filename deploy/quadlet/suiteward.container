@@ -1,0 +1,35 @@
+# The SuiteWard service. Outbound only: the single published port is bound to loopback and reached through SSM port forwarding.
+# Quadlet 4.9 has no Notify=healthy, so the database is ordered with Requires/After only. If it is not accepting connections yet,
+# the service exits 1 at startup (no retry loop inside the process) and Restart=always tries again.
+[Unit]
+Description=SuiteWard
+Wants=network-online.target
+After=network-online.target
+Requires=suiteward-db.service
+After=suiteward-db.service
+StartLimitIntervalSec=0
+
+[Container]
+Image=ghcr.io/ignisdevne/suiteward:deploy
+ContainerName=suiteward
+# Polled by podman-auto-update.timer (daily by default); the host pulls, nothing pushes to it.
+AutoUpdate=registry
+Network=suiteward.network
+# The container listens on all its interfaces; the host side is loopback only.
+PublishPort=127.0.0.1:8081:8080
+# The full database URL is a podman secret mounted as a file; it is never an environment variable.
+Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400
+Environment=SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url
+Volume=suiteward-data.volume:/data
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+# The stop timeout (45 s) must exceed SUITEWARD_SHUTDOWN_TIMEOUT (30 s by default). No quadlet key for it or the memory limit in 4.9.
+PodmanArgs=--memory=256m --stop-timeout=45
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,25 +1,32 @@
-# Spike S1 only: publishes the throwaway verification image to GHCR. Not part of the CI gate and not a required check.
+# Publishes the product image to GHCR and promotes it to the `deploy` tag after the owner approves.
+# Not part of the CI gate and not a required check.
 # No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
 # The image is cross-compiled on the build platform and the runtime stage has no RUN, so no QEMU is needed.
-# A run waiting for the owner's approval of `promote` holds the s1-publish concurrency group; approving moves `deploy` only to that run's digest.
-name: S1 publish
+# A run waiting for the owner's approval of `promote` holds the deploy-publish concurrency group; approving moves `deploy` only to that run's digest.
+name: Deploy
 
 on:
   push:
-    branches: [phase/S1]
+    branches: [phase/M1.2, main]
     paths:
-      - 'spikes/s1/**'
-      - '.github/workflows/s1-publish.yml'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.go-version'
+      - '.dockerignore'
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: s1-publish
+  group: deploy-publish
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/ignisdevne/suiteward-s1
+  IMAGE: ghcr.io/ignisdevne/suiteward
   # moby/buildkit:buildx-stable-1 as of 2026-10-09.
   BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
 
@@ -50,11 +57,12 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+            --build-arg "GO_VERSION=$(cat .go-version)" \
             --label org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
             --label "org.opencontainers.image.revision=$COMMIT" \
             --annotation index:org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
-            --file spikes/s1/Containerfile --tag "$IMAGE:sha-$COMMIT" \
-            --metadata-file "$RUNNER_TEMP/meta.json" spikes/s1
+            --file deploy/Containerfile --tag "$IMAGE:sha-$COMMIT" \
+            --metadata-file "$RUNNER_TEMP/meta.json" .
           echo "digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/meta.json")" >> "$GITHUB_OUTPUT"
 
   promote:

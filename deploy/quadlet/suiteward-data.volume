@@ -1,0 +1,3 @@
+# The service's only writable path: /data (artifacts under /data/artifacts).
+[Volume]
+VolumeName=suiteward-data

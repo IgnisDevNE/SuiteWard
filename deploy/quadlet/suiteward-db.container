@@ -1,0 +1,39 @@
+# PostgreSQL for SuiteWard. Pinned by digest and never auto-updated: a major or minor upgrade is a deliberate change here.
+# Only keys Podman 4.9 documents are used; HOST.md dry-runs the generator before the first start.
+[Unit]
+Description=SuiteWard PostgreSQL
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+ContainerName=suiteward-db
+Network=suiteward.network
+# Not published: only containers on the suiteward network reach it.
+# Runs as the image's postgres user from the start, which is what lets the root filesystem be read-only and every capability dropped.
+User=999
+Group=999
+Environment=POSTGRES_USER=suiteward
+Environment=POSTGRES_DB=suiteward
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password
+Secret=suiteward-db-password,type=mount,target=/run/secrets/postgres-password,uid=999,mode=0400
+Volume=suiteward-db-data.volume:/var/lib/postgresql
+Tmpfs=/run/postgresql
+Tmpfs=/tmp
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+HealthCmd=pg_isready -U suiteward -d suiteward
+HealthInterval=5s
+HealthTimeout=3s
+HealthRetries=12
+# The memory limit and stop timeout have no quadlet key in 4.9, hence PodmanArgs. The 2 GiB host is shared with other services.
+PodmanArgs=--memory=384m --stop-timeout=30
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

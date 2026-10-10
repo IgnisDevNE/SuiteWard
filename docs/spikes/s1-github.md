@@ -13,8 +13,10 @@ The spike program polls one repository with conditional requests, computes a dig
 Limits that apply to everything below:
 
 - The harness commented as the App itself (`suitewardq-spike[bot]`) and the program was told to accept that login as the owner. The real owner login was never exercised end to end.
-- Latencies were measured from one Windows PC to `api.github.com` with a 20 s poll for the scenarios and 60 s for the long run. Single repository, 1 to 3 open PRs.
-- The remote host was not reached; see below.
+- Latencies were measured from one Windows PC to `api.github.com` with a 20 s poll for the scenarios and 60 s for the long run. Single repository; 1 open PR in every cycle of the long run and at most 2 in the scenario runs.
+- Scenario steps were paced by hand about 22 to 25 s apart, close to the real poll period (20 s sleep plus about 2 s of cycle), so the phase between an event and the next poll was not random and the latencies below are samples, not distributions.
+- Some merge-attempt messages were seen interactively and not kept in a log; each such row says so.
+- The remote host section is incomplete; see below.
 
 ## Permission matrix
 
@@ -30,34 +32,34 @@ Measured on the **private** repository by minting an installation token narrowed
 | `pull_requests: read` + `contents: read` + `checks: write` | 200 | 200 | 200 | 201 |
 | `issues: read` + `contents: read` + `checks: write` | 403 | 200 | 403 | 201 |
 
-- **Minimum for the loop:** Pull requests read, Contents read, Checks write (plus Metadata read, implicit). The loop ran for hours with exactly that token.
+- **Minimum for the loop's own calls on a private repository:** Pull requests read, Contents read, Checks write (plus Metadata read, implicit). The hours-long loop ran with that token but on the public repository, where reads need nothing, so only the private-repository table above shows the minimum. The calls used after a merge (`GET /pulls/{n}`, commits, `PATCH /check-runs`) were not run with a narrowed token on the private repository.
 - **Comments on a PR need Pull requests read.** Issues read alone gets 403 for PR comments.
 - **On a public repository every read succeeds with no permission at all** (observed with `checks: write` only); only creating the check needs a permission. A permission test on a public repository proves nothing about reads.
 - Reading checks written by others (`checks: read`) and the permission needed to post an acknowledgement comment were **not** measured individually.
 - The test App also holds `contents`, `pull_requests` and `issues` write. They were used only by the driver (push, PR, comment, merge) and are harness-only; they must not be read as product requirements.
-- The installation token lives one hour (`expires_at` is 60 minutes after minting). Tokens requested with a `repositories` list and a `permissions` map are honoured exactly (`granted_permissions` in the log matches).
+- The installation token lives one hour (`expires_at` is 60 minutes after minting). Tokens requested with a `repositories` list and an explicit, non-empty `permissions` map are honoured exactly (`granted_permissions` in the log matches). An empty map is **not** a narrow token: it grants everything the App has, so the request must always carry an explicit map.
 
 ## Check identity and state mapping
 
 Measured on `main` of the public repository with a ruleset requiring the check.
 
 - The check is a check run on the PR head SHA. A new head SHA needs a new check run; the run on the old SHA stays as it was.
-- **The latest check run with the required name on the head wins.** Two runs on one head (an old `success`, a newer `failure`) gave "failing"; publishing a fresh `success` unblocked the merge about 3 s later.
-- The ruleset stores the required check with the App's `integration_id`, so only that App can satisfy it. The branch-protection UI offers the same pinning ("source").
-- Effect of the published state on a merge attempt:
+- **The latest check run with the required name on the head wins.** On one head there was an old `success` and three newer `failure` runs (from accidental extra program runs); the merge was refused as "failing". Publishing a fresh `success` unblocked it: the success was published at 04:24:18.6Z and the merge request started 0.5 s later and succeeded.
+- The ruleset stores the required check with the App's `integration_id`, which is meant to let only that App satisfy it. That is the configuration; no other actor was ever tried. The branch-protection UI offers the same pinning ("source").
+- Effect of the published state on a merge attempt (each state was published as the latest run on the PR head, then a merge was requested):
 
-| Published state | Merge result | GitHub message |
-| --- | --- | --- |
-| `in_progress` | blocked | `Required status check "…" is in progress.` |
-| `action_required` | blocked | `… is action required.` |
-| `failure` | blocked | `… is failing.` |
-| `neutral` | **allowed** | (merged) |
-| `success` | allowed | (merged) |
+| Published state | Merge result | GitHub message | Where it was seen |
+| --- | --- | --- | --- |
+| `in_progress` | blocked | `Required status check "…" is in progress.` | PR 6, interactive, not logged |
+| `action_required` | blocked | `… is action required.` | PR 6, interactive, not logged |
+| `failure` | blocked | `… is failing.` | PR 4 (kept in the driver log) and PR 6 (interactive) |
+| `neutral` | **allowed** | (merged) | PR 5, merged with `neutral` as the latest run |
+| `success` | allowed | (merged) | PRs 4, 6, 7 |
 
 - `neutral` satisfies a required check, so it must never be used for "not approved".
-- With "require branches to be up to date" on, a PR behind its base is blocked even when its head has `success` (`… is expected.`): the check has to run again on the updated head.
-- A comment `/suiteward approve …` from the wrong login set the check to `failure` in the spike (the contract says an invalid approval is a failure). It happened by accident in one run and shows that any commenter can set `failure`; `success` takes precedence, so an existing approval is not revoked, and a valid approval or a head change clears it.
-- Latency from a repository event to the published state is about half the poll interval plus the cycle time (see [Polling](#polling-numbers)).
+- With "require branches to be up to date" on, PR 8 (behind its base, with a `success` run on its head) was blocked (`… is expected.`; interactive, not logged): the check has to run again on the updated head.
+- A comment `/suiteward approve …` from the wrong login set the check to `failure` in the spike (the contract says an invalid approval is a failure). It happened by accident in three runs, so any commenter can set `failure`. From the code, `success` takes precedence over `failure` and a valid approval or a head change clears it; that precedence was **not** observed live.
+- Latency from a repository event to the published state is bounded by the poll interval plus the cycle time (samples in [Polling](#polling-numbers)).
 
 ## Merge methods and integrated source
 
@@ -67,36 +69,37 @@ For each merged PR the program fetched the PR, the merge commit and the head com
 | --- | --- | --- | --- | --- |
 | merge | merge commit | 2 (base tip, head) | yes (base unchanged under `tests/`) | matched, promotion recorded |
 | squash | new commit | 1 (base tip) | yes | matched, promotion recorded |
-| rebase, base unchanged | tip of rebased commits | 1 | yes | (not run) |
+| rebase, base unchanged | not measured | not measured | not measured | not measured |
 | rebase, **base moved** | tip of rebased commits | 1 (new base tip) | **no** | **mismatch, no promotion** |
 
-- Squash and rebase leave the same structure (one parent) and cannot be told apart from the commits alone; a title heuristic was only a hint. Recomputing the digest from the integrated tree works for all three methods and does not need to know the method.
+- The only rebase merge (PR 3) had a base that had moved, so the "base unchanged" row is empty on purpose.
+- Squash and rebase both leave one parent. The spike did not try to tell them apart beyond a title heuristic labelled as a hint, so whether it is possible was not tested. Recomputing the digest from the integrated tree works for all three methods and does not need to know the method.
 - The rebase-with-moved-base case matters: the approved digest was that of the PR head, but the integrated tree contained another PR's file, so the digests differed. The check had been green for the head. This is the case "require branches to be up to date" prevents (above).
 - Not measured live: a fork PR, a PR opened and merged within one poll interval (the program misses it by design), and the PR whose head equals its base (covered only by a fake).
 
 ## Same-SHA and same-ref cases
 
-- A push outside the protected set kept the ref and the approval; the new head SHA got a check run that was `success` from the start, 14.7 s after the push.
+- A push outside the protected set kept the ref and the approval; the new head SHA got a check run that was `success` from the start, 14.7 s after the push (an approving comment existed for that ref).
 - A push inside `tests/` changed the ref and returned the check to `in_progress`.
 - Reverting that push restored the **same digest** under a different commit SHA, confirming the ref is a function of content, not of the commit.
-- Approval is recomputed from the comments each cycle, so a revert regains an approval whose comment still exists; with the comment deleted the check stayed `in_progress`.
+- Approval is recomputed from the comments each cycle. The only live revert happened after the approving comment had been deleted, so the check stayed `in_progress`; that a revert regains an approval whose comment still exists is covered by a test with a fake GitHub, not observed live.
 
 ## Comment edit and delete
 
-- An edit changes `updated_at` and not `created_at`; the program saw it on the next cycle (about 10 s later) and the check stayed `success` by design (observed, not interpreted).
-- A delete is seen as the comment id disappearing, also about 10 s later; the approval state is likewise unchanged for the same head. A later head or ref change, then a return to the same ref, loses the approval because the comment is gone.
+- An edit changes `updated_at` and not `created_at`; the program saw it on the next cycle (about 10 s later) and logged it as `edited` with `still_valid: false`: the edited text was **no longer a valid approval command**. The check nevertheless stayed `success` because the spike keeps an approval already recorded for the same head (observed, not interpreted). That an approval survives its own comment becoming invalid is the authority-relevant fact and a product decision.
+- A delete is seen as the comment id disappearing, also about 10 s later; the approval state is likewise unchanged for the same head. After the later head change and revert the approval was gone, because the comment was gone.
 - Whether an approval should survive its comment being edited or deleted is a product decision, not decided here.
 
 ## Polling numbers
 
-Long run: one repository, 1 to 3 open PRs, poll every 60 s for 5.4 hours (2026-10-10 04:27 to 09:52 UTC).
+Long run: one repository, exactly 1 open PR in all 318 cycles, poll every 60 s for 5.4 hours (2026-10-10 04:27 to 09:52 UTC).
 
-- 318 cycles, all successful, no 4xx. 954 `GET`s: **935 were 304** and 19 were 200 (98%).
-- **A 304 does not count against the rate limit; a 200 costs 1.** Per hourly window the `X-RateLimit-Used` equalled the number of 200s: a window with 174 calls, all 304, used 0; windows with 3 or 4 responses of 200 used 3 or 4. The limit is 5000 per hour and is shared by every process using the installation.
-- **The ETag does not survive a token change.** After each of five token rotations the first cycle returned 200 for all three endpoints even though `If-None-Match` was sent (the responses carry `Vary: Authorization`); the cycle after that was 304 again. Cost: three full requests per hour per open PR.
-- Calls per cycle: one PR list plus, for each open PR, one tree and one comments request, so `1 + 2N`. A merge adds four requests (PR, merge commit, head commit, merge tree).
-- Latency per request from this PC was 340 to 620 ms; a cycle took 1.3 s on average with one to three open PRs. Requests are serial, so a cycle should grow with the number of PRs (not isolated in this run).
-- Detection latency (20 s poll): approval to green check 14 to 18 s; push to check on the new head 13 to 15 s; merge to promotion record 7 to 23 s.
+- 318 cycles, all successful, no 4xx. 954 `GET`s: **935 were 304** and 19 were 200 (98%): 3 at the start, 15 right after token rotations and 1 more PR-list 200 at 05:13 UTC (a change in the repository).
+- **A 304 did not count against the rate limit.** The `X-RateLimit-Used` counter rose only with 200 responses and writes (the check-run `POST` carried the incremented value) and never with a 304: a bucket with 174 calls, all 304, stayed at 0, and buckets with 3 or 4 responses of 200 reached 3 or 4. Grouping the responses by their `X-RateLimit-Reset` gives 8 buckets, not 6 hourly windows, because the first request after some token rotations reported a different reset time. The limit is 5000; the starting value in the first bucket (102) came from earlier traffic of the same installation, so the counter is shared across processes, which was not otherwise isolated. Writes were not isolated either.
+- **The ETag does not survive a token change.** After each of five token rotations (about every 55 minutes: the token lives one hour and is reused until five minutes before expiry) the first cycle returned 200 for all three endpoints even though `If-None-Match` was sent (the responses carry `Vary: Authorization`); the cycle after that was 304 again. Cost per rotation: `1 + 2N` full requests for a repository with N open PRs.
+- Calls per cycle: one PR list plus, for each open PR, one tree and one comments request, so `1 + 2N`. This was observed at N=1 (long run, mean cycle 1.13 s) and N=2 (scenario run, 1.85 s) only. A merge adds four requests (PR, merge commit, head commit, merge tree).
+- Latency per conditional request from this PC: median 365 ms, 5th to 95th percentile 308 to 575 ms, range 284 to 1302 ms (935 requests). The mean cycle over the whole run was 1.27 s. Requests are serial.
+- Detection latency with a 20 s poll, in seconds, as individual samples (see the pacing limit above): approval to green check 3.1, 5.7, 13.5, 14.8, 18.8 (n=5, local program) and 22.0 (container); push to the new check 9.8, 13.3, 14.7; merge to promotion record 6.8, 7.5, 23.1 (local program) and 19.8 (container). The smallest approval samples are the two approvals posted together just before a poll.
 
 ## Surprises
 
@@ -122,9 +125,9 @@ Long run: one repository, 1 to 3 open PRs, poll every 60 s for 5.4 hours (2026-1
 
 Podman on the developer PC, image built from the same Containerfile and commit.
 
-- First event 0.97 s after start; the first full cycle took 2.4 s.
+- First log event 0.97 s after the `podman run` command was issued (0.73 s after the container was created); the first full cycle took 2.4 s.
 - The full loop ran in the container: PR, check, approval, merge, promotion recorded with a digest equal to the approved one.
-- After `podman restart` the state survived in the volume (the check run was reused by a PATCH instead of a new run) and the first event came 1.1 s later; the first cycle was unconditional because response bodies are cached in memory only.
+- After `podman restart` the state survived in the volume (the check run was reused by a PATCH instead of a new run) and the first event came 1.1 s after the command (0.51 s after the container started); the first cycle was unconditional because response bodies are cached in memory only.
 - `/status` answered from inside the Podman machine but not through the published loopback port on Windows (WSL port forwarding); it was reached with `podman machine ssh`.
 - The container needs only outbound HTTPS. There are no inbound requirements.
 
@@ -163,9 +166,14 @@ Each item restates what the register has today and what the measurements support
 ### D-SYNC
 
 - Keep 60 s with conditional requests: a 304 is free, and the long run stayed far below 1% of the budget per hour.
-- Budget the cost as `1 + 2N` conditional requests per repository per poll, three extra full requests per PR per hour for the ETag reset, and four requests per merge.
-- The binding constraint is latency, not rate: requests were serial at about 0.4 s each, so a repository with many open PRs or 20 repositories would exceed a 60 s cycle unless repositories are polled concurrently. This is an estimate from the measured per-request latency, not a measurement.
+- Budget the cost as `1 + 2N` conditional requests per repository per poll (free when 304), `1 + 2N` full requests per repository at each token rotation (about hourly), four requests per merge, and the writes (not isolated here).
+- The binding constraint is latency, not rate: requests were serial at about 0.37 s each. Twenty repositories with one open PR each are about 60 requests, about 22 s, which fits a 60 s cycle; the cycle would exceed 60 s from about 160 serial requests (for example 20 repositories averaging 4 open PRs). Poll repositories concurrently if that is expected. This is arithmetic from the measured latency, not a measurement of 20 repositories.
 - The 50% budget cap can stay as a guard; it was never approached.
+
+### D-PROTECTION (input only)
+
+- Rulesets and branch protection are not enforced on a private repository of a free organization; verification of required checks and a "branches up to date" rule must say so and fall back to the manual instructions, or require a plan that enforces them.
+- A required check can be pinned to the App that publishes it, and `neutral` satisfies a required check; the verification should reject a configuration that does not pin the source.
 
 ### D-DEPLOY
 

@@ -132,6 +132,10 @@ Per the Claude Code hooks reference, a Bash command that exits non-zero fires `P
 
 Limits: `go-format.ps1` formats only files inside the checkout that launched the session and skips symbolic and hard links, so a subagent editing in another worktree relies on the gofmt step of `check`. `repeat-failure.ps1` normalizes only the last 10 non-empty lines (of at most 64 KB) of a failure, and its counts are best-effort: parallel tool calls can race on the state file and lose an increment. `scripts/test-hooks.ps1` runs both hooks against sample input in a temporary checkout copy and is part of `check`.
 
+## Running the service
+
+`suiteward serve` and `suiteward probe` are described in the [runtime contract](contracts/runtime.md). To run the real image on this PC build it with `podman build -f deploy/Containerfile --build-arg VERSION=dev -t localhost/suiteward:local .`, start the co-located stack with `./deploy/local.ps1 -Image localhost/suiteward:local` (one stack per machine; it generates the database password into Podman secrets) and run the smoke test inside the Podman machine with `Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"`. The remote verification host follows [deploy/HOST.md](../deploy/HOST.md). The smoke script's failure-path self-test, `deploy/smoke_test.sh`, runs as part of `check`.
+
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.
@@ -140,7 +144,7 @@ Domain and application tests need no services, so `./scripts/dev.ps1 tools` and 
 
 `scripts/check-persistence.ps1 -Mode Generated` installs/checks the pinned local sqlc executable, regenerates into a fresh owned staging directory and compares complete, case-sensitive filenames and SHA-256 contents with the versioned output. It leaves tracked files untouched and rejects stale, missing, added or orphan output and generator failures. After intentional SQL changes, regenerate with `./scripts/dev.ps1 sqlc generate`, review and commit the output, then verify freshness. Fresh staging is necessary because in-place regeneration could leave obsolete files undetected.
 
-Integration tests use the `integration` build tag. `scripts/check-go.ps1 -Integration` requires an explicitly supplied `SUITEWARD_TEST_DATABASE_URL`; `-Coverage -Integration` retains race detection and produces the real combined coverage report. Linux CI provides an isolated PostgreSQL service. Native Windows integration uses each worktree's Podman database. This phase does not introduce a production CLI, GitHub installation flow, execution backend or restore command.
+Integration tests use the `integration` build tag. `scripts/check-go.ps1 -Integration` requires an explicitly supplied `SUITEWARD_TEST_DATABASE_URL`; `-Coverage -Integration` retains race detection and produces the real combined coverage report. Linux CI provides an isolated PostgreSQL service. Native Windows integration uses each worktree's Podman database. There is still no GitHub installation flow, execution backend or restore command.
 
 The bootstrap was verified on the Windows host and in an isolated Ubuntu 24.04 container: fresh and repeated pinned-tool installation, development checks, documentation links, and actionlint. Two Windows checkouts ran independent PostgreSQL clusters on different ports, and stopping or restarting one preserved the other's state. These local runs do not substitute for hosted CI; the current checks are listed in [CI and coverage](ci-and-coverage.md).
 

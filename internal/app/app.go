@@ -31,4 +31,3 @@ func OSEnv() Env {
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
 	return -1
 }
-

@@ -24,7 +24,7 @@ type fakeStore struct {
 	countsErr  error
 }
 
-func (f fakeStore) SchemaVersion(context.Context) (int64, error)   { return f.version, f.versionErr }
+func (f fakeStore) SchemaVersion(context.Context) (int64, error)    { return f.version, f.versionErr }
 func (f fakeStore) Counts(context.Context) (postgres.Counts, error) { return f.counts, f.countsErr }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

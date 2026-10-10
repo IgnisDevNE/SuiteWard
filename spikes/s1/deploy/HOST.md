@@ -1,6 +1,6 @@
 # Remote host (isolated target): owner instructions
 
-Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, rootless Podman for the unprivileged `suiteward` user. No inbound ports, no SSH daemon: you administer it through SSM Session Manager from your own workstation. The agent has no AWS access and never sees the App key.
+Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, rootless Podman for the unprivileged `suiteward` user. No inbound ports, no SSH daemon: you administer it through SSM Session Manager from your own workstation. The App key is entered only by the owner in their own session. In the recorded S1 run the owner also let the agent run every other step through the AWS CLI (SSM Run Command), so that run does not demonstrate an agent that cannot reach the host; for a genuinely isolated installation the agent holds no AWS access at all.
 
 Never paste into chat, a file, a PR, or a log: the App private key, any installation token or JWT, a GitHub or AWS credential, an SSM session token. The key must only ever travel from your terminal into your own SSM session.
 
@@ -59,6 +59,7 @@ S1_APP_ID=5257122
 S1_INSTALLATION_ID=169774099
 S1_REPO=IgnisDevNE/SuiteWardQ
 S1_OWNER_LOGIN=magalz
+S1_TOKEN_PERMISSIONS=checks:write,pull_requests:read,contents:read
 EOF
 ```
 
@@ -151,7 +152,7 @@ The image is pinned by digest (`curlimages/curl`, resolved 2026-10-09). The comm
 ## Differences from D-DEPLOY and the phase plan
 
 - The phase page (S1-D) and the README target table say status is reached through Tailscale or an SSH tunnel. D-DEPLOY says administration is SSM only with no SSH daemon, so this spike reaches `/status` through SSM port forwarding and adds no Tailscale and no tunnel ingress rule.
-- D-DEPLOY plans service access through Cloudflare Tunnel and Cloudflare Access. S1 adds no Cloudflare route (the Access application does not exist yet); `cloudflared` keeps answering 404 for everything.
+- D-DEPLOY plans service access through Cloudflare Tunnel and Cloudflare Access. S1 adds no Cloudflare route. The Cloudflare Access application for `suiteward-poc.magalz.space` was created during S1 with one allow policy for the owner, so an anonymous request is now redirected to its login instead of answering 404; no tunnel ingress rule reaches the service.
 - The phase page says the image is published to GHCR through the bot. The workflow publishes with the Actions `GITHUB_TOKEN` and `packages: write` (App installation tokens are not documented for ghcr.io); the `ignisdevne[bot]` App is not involved.
 - GHCR packages start private. This spike makes the package public so the host stores no registry credential; D-DEPLOY says nothing about visibility. A private package would require a `read:packages` credential on the host.
 - Promotion is the `promote` job bound to the `remote-poc` environment, not a separate workflow; no host credential is stored in GitHub, as D-DEPLOY requires.

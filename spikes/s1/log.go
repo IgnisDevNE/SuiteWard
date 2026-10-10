@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -29,11 +31,15 @@ func (l *logger) emit(event string, fields map[string]any) {
 	maps.Copy(rec, fields)
 	b, err := json.Marshal(rec)
 	if err != nil {
+		// The replacement holds only strings, which always marshal; a failure here cannot happen.
 		b, _ = json.Marshal(map[string]any{"ts": rec["ts"], "event": "log_error", "error": err.Error()})
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, _ = l.w.Write(append(b, '\n'))
+	// The log is the spike's evidence: a failed write cannot be reported through the log, so say it on stderr.
+	if _, err := l.w.Write(append(b, '\n')); err != nil {
+		fmt.Fprintf(os.Stderr, "s1: write log: %v\n", err)
+	}
 }
 
 // http logs one GitHub call. Request headers and bodies never get here;

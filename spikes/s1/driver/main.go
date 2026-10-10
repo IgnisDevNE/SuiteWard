@@ -187,8 +187,13 @@ func (d *driver) putFile(ctx context.Context, path, branch, content string) (str
 		body["branch"] = branch
 	}
 	var out commitResp
-	err := d.api(ctx, http.MethodPut, "/contents/"+path, body, &out)
-	return out.Commit.SHA, err
+	if err := d.api(ctx, http.MethodPut, "/contents/"+path, body, &out); err != nil {
+		return "", err
+	}
+	if out.Commit.SHA == "" {
+		return "", fmt.Errorf("put %s: the response carries no commit sha", path)
+	}
+	return out.Commit.SHA, nil
 }
 
 // seed makes sure main has README.md and tests/a.txt. The Contents API is the route that can make the first
@@ -450,7 +455,7 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 	outside := false
 	var rest []string
 	for _, a := range args {
-		if a == "-outside" && len(args) > 0 && args[0] == "push" {
+		if a == "-outside" && args[0] == "push" {
 			outside = true
 		} else {
 			rest = append(rest, a)

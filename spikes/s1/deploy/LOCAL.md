@@ -14,6 +14,7 @@ S1_APP_ID=5257122
 S1_INSTALLATION_ID=169774099
 S1_REPO=IgnisDevNE/SuiteWardQ
 S1_OWNER_LOGIN=magalz
+S1_TOKEN_PERMISSIONS=checks:write,pull_requests:read,contents:read
 ```
 
 ## Run

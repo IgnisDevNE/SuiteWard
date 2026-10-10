@@ -145,9 +145,9 @@ func (a *app) pull(ctx context.Context, pr pull) error {
 	digest, files := protectedDigest(entries, a.cfg.protectedPrefix)
 	ref := digest[:12]
 
-	ps := a.st.Pulls[pr.Number]
-	if ps == nil {
-		ps = &pullState{}
+	ps, tracked := a.st.Pulls[pr.Number]
+	if !tracked {
+		ps = &pullState{Judged: map[int64]string{}}
 		a.st.Pulls[pr.Number] = ps
 	}
 	if ps.HeadSHA != pr.Head.SHA || ps.Digest != digest {
@@ -188,7 +188,7 @@ func (a *app) pull(ctx context.Context, pr pull) error {
 	if ps.CheckRunID == 0 {
 		action = "create"
 	}
-	summary := fmt.Sprintf("Protected set `%s`: %d files, ref `%s`, digest `%s`.", a.cfg.protectedPrefix, files, ref, digest)
+	summary := fmt.Sprintf("Protected set %#q: %d files, ref %#q, digest %#q.", a.cfg.protectedPrefix, files, ref, digest)
 	if want == "failure" {
 		summary += " Invalid approval: " + ps.Rejected + "."
 	}
@@ -205,10 +205,13 @@ func (a *app) pull(ctx context.Context, pr pull) error {
 func (a *app) publishSnapshot(l lastPoll) {
 	b, err := json.Marshal(a.st.Pulls)
 	if err != nil {
-		b = []byte(`null`)
+		a.log.emit("status_error", map[string]any{"error": "marshal pulls for /status: " + err.Error()})
 	}
 	a.mu.Lock()
-	a.pulls, a.last = b, l
+	if err == nil { // after a failure /status keeps serving the previous snapshot
+		a.pulls = b
+	}
+	a.last = l
 	a.mu.Unlock()
 }
 
@@ -217,7 +220,7 @@ func (a *app) status(w http.ResponseWriter, _ *http.Request) {
 	out := map[string]any{"uptime_s": int(time.Since(a.started).Seconds()), "last_poll": a.last, "pulls": a.pulls}
 	a.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(out) // a failed write means the client went away
 }
 
 func run() error {
@@ -231,7 +234,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("open log file: %w", err)
 		}
-		defer f.Close()
+		defer func() {
+			if err := f.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "s1: close log file:", err)
+			}
+		}()
 		out = io.MultiWriter(os.Stdout, f)
 	}
 	lg := &logger{w: out, start: time.Now()}
@@ -272,7 +279,7 @@ func run() error {
 			lg.emit("status_error", map[string]any{"error": err.Error()})
 		}
 	}()
-	defer srv.Close()
+	defer func() { _ = srv.Close() }() // the process is leaving; nothing can act on a close error
 	for {
 		_ = a.cycle(ctx) // logged in the poll event; the next cycle retries
 		select {

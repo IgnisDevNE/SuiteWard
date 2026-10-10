@@ -69,11 +69,18 @@ run sh "$smoke"
 expect_ok "success path" "PASS"
 logged "^restart suiteward" || bad "success path" "service was not restarted"
 logged "probe --wait 42-probe-abc" || bad "success path" "pending probe was not awaited after the restart"
+contains "status: ok, elapsed [0-9]* ms, version test, schema version 7" || bad "success path" "status does not report the version"
 contains "time to ready after restart, including the restart" || bad "success path" "ready-after-restart does not say its clock includes the restart"
 if contains "elapsed"; then pass "timings reported"; else bad "timings reported" "no elapsed time in the output"; fi
 
 run FAKE_READYZ=down sh "$smoke"
 expect_fail "readyz never answers" "FAIL readyz"
+
+run SMOKE_VERSION=test sh "$smoke"
+expect_ok "expected version matches" "version test"
+
+run SMOKE_VERSION=sha-abc sh "$smoke"
+expect_fail "expected version differs" "FAIL status: version test, want sha-abc"
 
 run FAKE_DISCARDED=2 sh "$smoke"
 expect_fail "discarded jobs" "FAIL status"

@@ -42,3 +42,6 @@ func (r *Runtime) Stop(ctx context.Context) error { return errors.New("not imple
 
 // StopAndCancel stops and cancels the contexts of running jobs.
 func (r *Runtime) StopAndCancel(ctx context.Context) error { return errors.New("not implemented") }
+
+// rescueStuckJobsAfter is when River rescues a job that stayed running.
+func (c Config) rescueStuckJobsAfter() time.Duration { return 0 }

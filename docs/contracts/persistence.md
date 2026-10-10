@@ -215,6 +215,7 @@ type OutboxMessage struct {
 
 Semantics:
 
+- `Job.Validate()` and `OutboxMessage.Validate()` (in `internal/application/governance/queue.go`) apply the limits above and are shared by every implementation of `Tx`, so the fake and the adapter reject the same inputs.
 - `Enqueue` inserts the job and `Outbox` inserts the message through the unit of work's own `pgx.Tx`. They commit or roll back with the facts; there is no enqueue after commit. Neither advances the Suite revision (the revision counts governance facts only) and neither takes a lock beyond the Suite's.
 - A malformed kind, a non-object or oversized `Args`/`Payload`, or an empty key is `ErrInvalidRequest`. A repeated `Key` is `ErrOperationConflict`; use cases replay by receipt before they write, so a repeated key means a genuine conflict.
 - Retry limits, timeouts and backoff are runtime settings per kind (see [runtime](runtime.md)), not part of the port.

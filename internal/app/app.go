@@ -4,7 +4,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"io"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -33,4 +32,3 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 	return -1
 }
 
-var errUnimplemented = errors.New("not implemented")

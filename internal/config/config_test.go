@@ -407,3 +407,84 @@ func TestLoadRejectsMissingDependencies(t *testing.T) {
 		t.Errorf("nil readFile: error = %v, want one naming readFile", err)
 	}
 }
+
+func TestLoadFileReadErrorNeverCarriesThePath(t *testing.T) {
+	// A misconfigured operator may put the secret itself in the _FILE variable.
+	vars := withoutURL(t)
+	vars["SUITEWARD_DATABASE_URL_FILE"] = validURL
+	_, _, err := fakeEnv{vars: vars}.load()
+	if err == nil || strings.Contains(err.Error(), secretPassword) {
+		t.Fatalf("error = %v, want one without the password", err)
+	}
+	if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "SUITEWARD_DATABASE_URL_FILE") {
+		t.Fatalf("error = %v, want one naming the variable and wrapping fs.ErrNotExist", err)
+	}
+}
+
+func TestLoadEmptyVariablesCountAsUnset(t *testing.T) {
+	files := map[string]string{"/s": validURL}
+
+	vars := required(t)
+	vars["SUITEWARD_DATABASE_URL"] = ""
+	vars["SUITEWARD_DATABASE_URL_FILE"] = "/s"
+	if cfg, _, err := (fakeEnv{vars: vars, files: files}).load(); err != nil || cfg.DatabaseURL.Reveal() != validURL {
+		t.Errorf("empty plain form next to a file: url %q err %v", cfg.DatabaseURL.Reveal(), err)
+	}
+
+	vars = required(t)
+	vars["SUITEWARD_DATABASE_URL_FILE"] = ""
+	if cfg, _, err := (fakeEnv{vars: vars, files: files}).load(); err != nil || cfg.DatabaseURL.Reveal() != validURL {
+		t.Errorf("empty file form next to a value: url %q err %v", cfg.DatabaseURL.Reveal(), err)
+	}
+
+	vars = withoutURL(t)
+	vars["SUITEWARD_DATABASE_URL_FILE"] = ""
+	_, _, err := fakeEnv{vars: vars, files: files}.load()
+	if err == nil || !strings.Contains(err.Error(), "SUITEWARD_DATABASE_URL: is required") {
+		t.Errorf("empty file form alone: error = %v, want the setting reported as required", err)
+	}
+
+	vars = required(t)
+	vars["SUITEWARD_LOG_LEVEL_FILE"] = ""
+	if _, _, err := (fakeEnv{vars: vars}).load(); err != nil {
+		t.Errorf("empty _FILE of a non-secret setting: %v", err)
+	}
+
+	vars = required(t)
+	vars["SUITEWARD_LOG_LEVEL"] = ""
+	vars["SUITEWARD_JOB_WORKERS"] = ""
+	vars["SUITEWARD_JOB_TIMEOUT"] = ""
+	cfg, _, err := fakeEnv{vars: vars}.load()
+	if err != nil || cfg.LogLevel != slog.LevelInfo || cfg.JobWorkers != 4 || cfg.JobTimeout != time.Minute {
+		t.Errorf("empty optional settings: %+v err %v, want the defaults", cfg, err)
+	}
+}
+
+func TestLoadJobTimeoutRange(t *testing.T) {
+	for value, ok := range map[string]bool{"1s": true, "1h": true, "999ms": false, "0s": false, "-1m": false, "61m": false} {
+		vars := required(t)
+		vars["SUITEWARD_JOB_TIMEOUT"] = value
+		_, _, err := fakeEnv{vars: vars}.load()
+		if (err == nil) != ok {
+			t.Errorf("JOB_TIMEOUT=%s: error = %v, want accepted=%v", value, err, ok)
+			continue
+		}
+		if err != nil && !strings.Contains(err.Error(), "SUITEWARD_JOB_TIMEOUT") {
+			t.Errorf("JOB_TIMEOUT=%s: error does not name the variable: %v", value, err)
+		}
+	}
+}
+
+func TestLoadReturnsWarningsTogetherWithAnError(t *testing.T) {
+	vars := map[string]string{"SUITEWARD_TYPO": "x"}
+	cfg, warnings, err := fakeEnv{vars: vars}.load()
+	if err == nil {
+		t.Fatal("Load succeeded without required settings")
+	}
+	if !slices.Equal(warnings, []string{"SUITEWARD_TYPO"}) {
+		t.Errorf("warnings = %q, want the unrecognized name alongside the error", warnings)
+	}
+	if cfg != (Config{}) {
+		t.Errorf("Config = %+v, want the zero value on error", cfg)
+	}
+}

@@ -1,6 +1,6 @@
 # S1 findings: GitHub walking skeleton
 
-- **Status:** draft for the owner's review; the remote-host section is incomplete (see [Remote host](#remote-host-pending)).
+- **Status:** draft for the owner's review; one measurement is pending (the promotion-to-host time under [Remote host](#remote-host-isolated-target)).
 - **Phase:** [S1](../plan/phases/S1.md). Code: `spikes/s1/` (throwaway, separate module, never imported by `internal/`).
 - **Measured:** 2026-10-10 against `IgnisDevNE/SuiteWardQ` (public) and `IgnisDevNE/SuiteWardQ-private` with the test App `SuiteWardQ Spike` (not the production App).
 
@@ -16,7 +16,7 @@ Limits that apply to everything below:
 - Latencies were measured from one Windows PC to `api.github.com` with a 20 s poll for the scenarios and 60 s for the long run. Single repository; 1 open PR in every cycle of the long run and at most 2 in the scenario runs.
 - Scenario steps were paced by hand about 22 to 25 s apart, close to the real poll period (20 s sleep plus about 2 s of cycle), so the phase between an event and the next poll was not random and the latencies below are samples, not distributions.
 - Some merge-attempt messages were seen interactively and not kept in a log; each such row says so.
-- The remote host section is incomplete; see below.
+- The remote host was operated by the agent except for the key; see the caveat in its section.
 
 ## Permission matrix
 
@@ -131,9 +131,22 @@ Podman on the developer PC, image built from the same Containerfile and commit.
 - `/status` answered from inside the Podman machine but not through the published loopback port on Windows (WSL port forwarding); it was reached with `podman machine ssh`.
 - The container needs only outbound HTTPS. There are no inbound requirements.
 
-### Remote host (pending)
+### Remote host (isolated target)
 
-Not yet run. The quadlet, the host steps and the outbound-only checks are written in `spikes/s1/deploy/HOST.md` and need the owner's SSM session. This section is to be completed with: startup, the full loop on the isolated tier, outbound-only behavior (including the IMDS check), restart, logs through `journalctl --user`, status access, and auto-update after the promotion.
+AWS EC2 `t4g.small` (arm64), Ubuntu 24.04, Podman 4.9.3, rootless user `suiteward`, administered only through SSM. **Caveat on the tier:** the owner authorized the agent to run the host steps with AWS CLI credentials that turned out to be the account root's, so the agent operated this host. Only the App key was entered by the owner in a Session Manager session (the agent could not pass it without writing it into an SSM command, which the SSM history and CloudTrail would keep). The measurements below are therefore real, but they do not demonstrate the "agent cannot reach the host" property of the isolated tier.
+
+- **Quadlet:** Podman 4.9.3 accepted every key of the unit (`NoNewPrivileges`, `ReadOnly`, `DropCapability`, `EnvironmentFile`, `Secret=…,type=mount,uid=,mode=`, `AutoUpdate=registry`) and generated a service; the dry run printed only a harmless warning about an optional directory.
+- **First pull:** 1.4 s for the arm64 image, anonymously, from the public package; the stored digest equals the promoted `deploy` index digest.
+- **Start:** the service was active at once and the first log event came within 0.2 s of the start; the first cycle created the check run.
+- **Full loop on the host:** PR, check, approval, merge, promotion recorded with a digest equal to the approved one. Approval to green check 13.1 s; merge to promotion record 12.3 s (20 s poll, single samples).
+- **Restart:** `systemctl --user restart` returned `active`; the state survived (the existing check run was updated by a PATCH, no duplicate) and the first event came 0.13 s after the command.
+- **Request latency** from the host in its first cycle: 163 to 420 ms (5 requests), lower than from the developer PC.
+- **Status:** `/status` returned 200 through an SSM port forward (`AWS-StartPortForwardingSession`).
+- **Outbound-only:** every listener is on loopback (the resolver, `cloudflared` metrics, and the published status port held by `rootlessport`); the only container connection was to a GitHub address on port 443; the security group has no inbound rules.
+- **IMDS: a container could obtain a metadata token (HTTP 200).** D-DEPLOY states that IMDSv2 with hop limit 1 keeps containers from reading the role credentials; for a rootless container this did not hold. Only the token request was made, as the check specifies, and no credentials were read. The instance role is limited to the SSM managed-instance policy, so the exposure is that role. This is reported, not fixed.
+- **Auto-update on promotion:** pending (see the end of this section).
+- **Steps that did not work as documented, now fixed in `HOST.md`:** `sudo -iu suiteward` fails because the account has a `nologin` shell, and `podman secret create … -` needs its stdin to be a pipe (`cat |`).
+- The env file on the host sets `S1_OWNER_LOGIN` to the App's own login (the scenarios are approved by the App), not the owner's login, and polls every 20 s.
 
 Differences already visible between the phase page and D-DEPLOY: the phase page says status is reached through Tailscale or an SSH tunnel; D-DEPLOY says there is no SSH daemon and access is SSM only, plus Cloudflare Access for any HTTP route. The Cloudflare Access application for `suiteward-poc.magalz.space` now exists with one allow policy for the owner; an anonymous request is redirected to its login.
 
@@ -179,9 +192,11 @@ Each item restates what the register has today and what the measurements support
 
 - Publish through a workflow with `GITHUB_TOKEN`; promote the `deploy` tag through an environment that requires the owner; make the package public so the host pulls without any credential (requires the organization to allow public packages); a private package would need a read credential on the host.
 - Cancelling a stale waiting run is a human action (the bot lacks `actions: write`); document that in the install guide.
-- Record the SSM-versus-SSH/Tailscale discrepancy in the register once the remote section is complete.
-- The remote isolated-tier results are still missing.
+- Record the SSM-versus-SSH/Tailscale discrepancy: the spike reached `/status` through SSM port forwarding and needed no SSH daemon and no Tailscale.
+- Correct the IMDS statement: hop limit 1 did not stop a rootless container from obtaining a token. Decide a mitigation (for example block `169.254.169.254` for the service user, or accept the exposure of the SSM-only role) before relying on it.
+- Promotion by `AutoUpdate=registry` works as designed once the image is public; the arm64 pull took 1.4 s. The measured time from promotion to the host is in the auto-update paragraph above.
+- Document that the key cannot be placed on the host by an agent without leaving it in the SSM command history; the owner enters it in their own session.
 
 ## Not measured
 
-Fork PRs; `checks: read`; the permission for posting a comment; the real owner login; head-equals-base live; a PR opened and merged between polls; 20 repositories; secondary rate limits; the remote host.
+Fork PRs; `checks: read`; the permission for posting a comment; the real owner login; head-equals-base live; a PR opened and merged between polls; 20 repositories; secondary rate limits; the real owner login on the host; the host with the agent unable to reach it (the isolated property).

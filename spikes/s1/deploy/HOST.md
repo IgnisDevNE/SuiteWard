@@ -36,14 +36,12 @@ Still as `suiteward`. Type the key into the terminal yourself; do not give it to
 The key goes straight from the terminal into a Podman secret, so no plaintext file is written. Echo is switched off so the PEM is not displayed (and so not logged):
 
 ```
-stty -echo
-podman secret create suiteward-s1-app-key -
+stty -echo; cat | podman secret create suiteward-s1-app-key -; stty echo
 ```
 
-Paste the full PEM (including the BEGIN and END lines), press Enter, then Ctrl-D. The terminal shows nothing because echo is off; that is expected. If the prompt does not come back, press Ctrl-D once more (needed when the pasted text had no trailing newline). Then:
+Podman refuses `-` when its stdin is a terminal ("data must be passed into stdin"), so `cat` feeds it through a pipe. Check the line on screen, press Enter, then paste the full PEM (including the BEGIN and END lines), press Enter, then Ctrl-D (twice if the prompt does not come back, which happens when the pasted text had no trailing newline). The terminal shows nothing while echo is off; that is expected, and the trailing `stty echo` turns it back on. Then:
 
 ```
-stty echo
 podman secret ls
 ```
 

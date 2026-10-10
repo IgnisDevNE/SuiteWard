@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -97,8 +99,10 @@ func (a *app) cycle(ctx context.Context) error {
 		errs = append(errs, err)
 	} else {
 		seen := map[string]bool{listPath(a.cfg.repo): true}
+		open := map[int]bool{}
 		for _, pr := range pulls {
-			seen[treePath(a.cfg.repo, pr.Head.SHA)] = true
+			open[pr.Number] = true
+			seen[treePath(a.cfg.repo, pr.Head.SHA)], seen[commentsPath(a.cfg.repo, pr.Number)] = true, true
 			if err := a.pull(ctx, pr); err != nil {
 				errs = append(errs, fmt.Errorf("PR #%d: %w", pr.Number, err))
 			}
@@ -108,6 +112,14 @@ func (a *app) cycle(ctx context.Context) error {
 			if !seen[u] {
 				delete(a.st.Etags, u)
 				delete(a.c.cache, u)
+			}
+		}
+		// A PR the state knew as open that the list no longer shows was closed or merged.
+		for _, n := range slices.Sorted(maps.Keys(a.st.Pulls)) {
+			if ps := a.st.Pulls[n]; !open[n] && ps.Closed == "" {
+				if err := a.closed(ctx, n, ps); err != nil {
+					errs = append(errs, fmt.Errorf("PR #%d: %w", n, err))
+				}
 			}
 		}
 	}
@@ -144,14 +156,27 @@ func (a *app) pull(ctx context.Context, pr pull) error {
 	if ps.HeadSHA != pr.Head.SHA {
 		ps.HeadSHA, ps.CheckRunID = pr.Head.SHA, 0 // a check run belongs to one head sha
 	}
+	ps.Closed = "" // a closed PR that shows up open again is tracked again
 	if ps.Ref != ref {
-		ps.ApprovedCommentID, ps.ApprovedAt = 0, "" // an approval covers one ref
+		// An approval covers one ref. The comments are scanned again below, so a ref that comes back regains it.
+		ps.ApprovedCommentID, ps.ApprovedAt, ps.ApprovedUpdatedAt, ps.ApprovedDigest = 0, "", "", ""
+		ps.ApprovalObserved, ps.ApprovalObservedUpdatedAt, ps.Rejected = "", "", ""
 	}
 	ps.Digest, ps.Ref = digest, ref
 
+	cs, err := a.c.comments(ctx, a.cfg.repo, pr.Number)
+	if err != nil {
+		return err
+	}
+	a.scanApproval(pr.Number, ps, cs)
+
+	// success once an approval covers the ref; failure after an invalid approval attempt under this ref.
 	want := "in_progress"
-	if ps.ApprovedCommentID != 0 {
+	switch {
+	case ps.ApprovedCommentID != 0:
 		want = "success"
+	case ps.Rejected != "":
+		want = "failure"
 	}
 	if a.cfg.forceConclusion != "" {
 		want = a.cfg.forceConclusion
@@ -164,6 +189,9 @@ func (a *app) pull(ctx context.Context, pr pull) error {
 		action = "create"
 	}
 	summary := fmt.Sprintf("Protected set `%s`: %d files, ref `%s`, digest `%s`.", a.cfg.protectedPrefix, files, ref, digest)
+	if want == "failure" {
+		summary += " Invalid approval: " + ps.Rejected + "."
+	}
 	id, err := a.c.putCheck(ctx, a.cfg.repo, a.cfg.checkName, pr.Head.SHA, ps.CheckRunID, want, summary)
 	if err != nil {
 		return err

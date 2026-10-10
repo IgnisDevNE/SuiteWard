@@ -237,6 +237,69 @@ func (c *client) tree(ctx context.Context, repo, sha string) ([]treeEntry, error
 	return t.Tree, nil
 }
 
+type comment struct {
+	ID        int64  `json:"id"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+func commentsPath(repo string, number int) string {
+	return fmt.Sprintf("/repos/%s/issues/%d/comments?per_page=100", repo, number)
+}
+
+// getJSON is a conditional GET decoded into v.
+func (c *client) getJSON(ctx context.Context, path string, v any) error {
+	b, err := c.get(ctx, path)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	return nil
+}
+
+// comments returns the first page of a PR's comments. shortcut: no paging, a spike PR has a handful.
+func (c *client) comments(ctx context.Context, repo string, number int) ([]comment, error) {
+	var cs []comment
+	if err := c.getJSON(ctx, commentsPath(repo, number), &cs); err != nil {
+		return nil, err
+	}
+	return cs, nil
+}
+
+// pullDetail is the part of GET /pulls/{n} the merge pass uses.
+type pullDetail struct {
+	State          string `json:"state"`
+	Merged         bool   `json:"merged"`
+	MergeCommitSHA string `json:"merge_commit_sha"`
+	MergedAt       string `json:"merged_at"`
+	MergedBy       struct {
+		Login string `json:"login"`
+	} `json:"merged_by"` // null while unmerged: decodes to the zero value
+	Head struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		SHA string `json:"sha"`
+	} `json:"base"`
+}
+
+// gitCommit is the part of GET /git/commits/{sha} the merge pass uses.
+type gitCommit struct {
+	Message string `json:"message"`
+	Tree    struct {
+		SHA string `json:"sha"`
+	} `json:"tree"`
+	Parents []struct {
+		SHA string `json:"sha"`
+	} `json:"parents"`
+}
+
 // putCheck creates (id == 0) or updates a check run and returns its id.
 // state is in_progress or a conclusion (success, failure, neutral, action_required).
 func (c *client) putCheck(ctx context.Context, repo, name, headSHA string, id int64, state, summary string) (int64, error) {

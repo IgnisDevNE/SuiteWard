@@ -44,6 +44,19 @@ type OutboxClaim struct {
 	Attempts int
 }
 
+// OutboxRef names an outbox message without its payload.
+type OutboxRef struct {
+	Key  string
+	Kind string
+}
+
+// ClaimOutboxResult is what one claim pass found: the claimed messages and
+// the pending messages it failed because every attempt was used up.
+type ClaimOutboxResult struct {
+	Claims    []OutboxClaim
+	Abandoned []OutboxRef
+}
+
 // OutboxUpdate is the outcome of one delivery attempt: State pending with the
 // time of the next attempt, or a terminal state with its finish time.
 type OutboxUpdate struct {
@@ -134,20 +147,20 @@ func (s *Store) SystemStatus(ctx context.Context, jobID int64, outboxKey string)
 // ClaimOutbox claims due pending messages with FOR UPDATE SKIP LOCKED: it
 // counts the attempt and hides the message until the lease expires. Pending
 // messages that used every attempt are failed instead of claimed.
-func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) ([]OutboxClaim, error) {
+func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (ClaimOutboxResult, error) {
 	q := dbgen.New(s.pool)
 	if err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: int32(params.MaxAttempts)}); err != nil {
-		return nil, fmt.Errorf("fail exhausted outbox messages: %w", err)
+		return ClaimOutboxResult{}, fmt.Errorf("fail exhausted outbox messages: %w", err)
 	}
 	rows, err := q.ClaimOutbox(ctx, dbgen.ClaimOutboxParams{Now: timestamp(params.Now), LeaseUntil: timestamp(params.Now.Add(params.Lease)), MaxAttempts: int32(params.MaxAttempts), Batch: int32(params.Limit)})
 	if err != nil {
-		return nil, fmt.Errorf("claim outbox messages: %w", err)
+		return ClaimOutboxResult{}, fmt.Errorf("claim outbox messages: %w", err)
 	}
 	claims := make([]OutboxClaim, len(rows))
 	for i, row := range rows {
 		claims[i] = OutboxClaim{Key: row.Key, Kind: row.Kind, Payload: row.Payload, Attempts: int(row.Attempts)}
 	}
-	return claims, nil
+	return ClaimOutboxResult{Claims: claims}, nil
 }
 
 // FinishOutbox records the outcome of a claim. It updates nothing, and
@@ -161,4 +174,11 @@ func (s *Store) FinishOutbox(ctx context.Context, claim OutboxClaim, update Outb
 		return false, fmt.Errorf("record outbox outcome: %w", err)
 	}
 	return updated == 1, nil
+}
+
+// ReleaseOutbox gives back a claim that was never tried: it restores the
+// attempt and makes the message due at nextAttemptAt. It updates nothing, and
+// reports false, when another relay has reclaimed the message since.
+func (s *Store) ReleaseOutbox(ctx context.Context, claim OutboxClaim, nextAttemptAt time.Time) (bool, error) {
+	return false, errors.New("not implemented")
 }

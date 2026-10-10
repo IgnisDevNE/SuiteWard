@@ -146,7 +146,7 @@ func TestRelayRedeliversAfterTheLeaseOfACrashedClaim(t *testing.T) {
 	relay := newRelay(t, w, c, p, &logCapture{}, 8)
 
 	// A relay that claimed the message and died before recording an outcome.
-	claims, err := w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: c.Now(), Lease: time.Minute, MaxAttempts: 8, Limit: 10})
+	claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: c.Now(), Lease: time.Minute, MaxAttempts: 8, Limit: 10}))
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("claim = %v, %v", claims, err)
 	}
@@ -221,4 +221,9 @@ func TestRelayReportsAClaimThatFails(t *testing.T) {
 	if err := relay.RunOnce(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunOnce on a canceled context = %v, want context.Canceled", err)
 	}
+}
+
+// claimsOf unwraps the claims of a claim pass.
+func claimsOf(result postgres.ClaimOutboxResult, err error) ([]postgres.OutboxClaim, error) {
+	return result.Claims, err
 }

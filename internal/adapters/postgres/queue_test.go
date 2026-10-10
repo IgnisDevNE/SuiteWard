@@ -164,7 +164,7 @@ func TestClaimOutboxLeasesDueMessages(t *testing.T) {
 	w.outboxFixture("later", 0, now.Add(time.Second))
 	params := postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 8, Limit: 10}
 
-	claims, err := w.store.ClaimOutbox(t.Context(), params)
+	claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), params))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,12 +177,12 @@ func TestClaimOutboxLeasesDueMessages(t *testing.T) {
 			t.Errorf("claim %+v, want attempt %d of a probe with the stored payload", claim, wantAttempts)
 		}
 	}
-	if again, err := w.store.ClaimOutbox(t.Context(), params); err != nil || len(again) != 0 {
+	if again, err := claimsOf(w.store.ClaimOutbox(t.Context(), params)); err != nil || len(again) != 0 {
 		t.Fatalf("claim inside the lease = %v, %v, want nothing", again, err)
 	}
 
 	params.Now = now.Add(time.Minute) // the lease of the crashed first claim has expired
-	claims, err = w.store.ClaimOutbox(t.Context(), params)
+	claims, err = claimsOf(w.store.ClaimOutbox(t.Context(), params))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestClaimOutboxHonorsTheLimitAndDueOrder(t *testing.T) {
 	w.outboxFixture("a", 0, now.Add(-3*time.Second))
 	w.outboxFixture("b", 0, now.Add(-2*time.Second))
 
-	claims, err := w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 8, Limit: 2})
+	claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 8, Limit: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestClaimOutboxFailsMessagesThatUsedEveryAttempt(t *testing.T) {
 	w.outboxFixture("poison", 3, now.Add(-time.Minute)) // claimed three times, never finished
 	w.outboxFixture("fresh", 2, now.Add(-time.Minute))
 
-	claims, err := w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 3, Limit: 10})
+	claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 3, Limit: 10}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestConcurrentClaimsNeverShareAMessage(t *testing.T) {
 	for range 6 {
 		wg.Go(func() {
 			for {
-				claims, err := w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Hour, MaxAttempts: 8, Limit: 4})
+				claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), postgres.ClaimOutboxParams{Now: now, Lease: time.Hour, MaxAttempts: 8, Limit: 4}))
 				if err != nil {
 					t.Error(err)
 					return
@@ -268,7 +268,7 @@ func TestFinishOutboxIsConditionalOnTheClaim(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	params := postgres.ClaimOutboxParams{Now: now, Lease: time.Minute, MaxAttempts: 8, Limit: 1}
 	claim := func() postgres.OutboxClaim {
-		claims, err := w.store.ClaimOutbox(t.Context(), params)
+		claims, err := claimsOf(w.store.ClaimOutbox(t.Context(), params))
 		if err != nil || len(claims) != 1 {
 			t.Fatalf("claim = %v, %v", claims, err)
 		}
@@ -364,4 +364,9 @@ func TestEnqueueSystemFailsWhenTheCommitFails(t *testing.T) {
 	if got := w.scalar("SELECT (SELECT count(*) FROM river_job) || ' ' || (SELECT count(*) FROM outbox)"); got != "0 0" {
 		t.Fatalf("jobs and messages = %q, want none", got)
 	}
+}
+
+// claimsOf unwraps the claims of a claim pass.
+func claimsOf(result postgres.ClaimOutboxResult, err error) ([]postgres.OutboxClaim, error) {
+	return result.Claims, err
 }

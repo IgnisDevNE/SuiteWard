@@ -29,10 +29,14 @@ type scriptedStore struct {
 	finishCalls int
 }
 
-func (s *scriptedStore) ClaimOutbox(context.Context, postgres.ClaimOutboxParams) ([]postgres.OutboxClaim, error) {
+func (s *scriptedStore) ClaimOutbox(context.Context, postgres.ClaimOutboxParams) (postgres.ClaimOutboxResult, error) {
 	claims := s.claims
 	s.claims = nil
-	return claims, s.claimErr
+	return postgres.ClaimOutboxResult{Claims: claims}, s.claimErr
+}
+
+func (s *scriptedStore) ReleaseOutbox(context.Context, postgres.OutboxClaim, time.Time) (bool, error) {
+	return true, nil
 }
 
 func (s *scriptedStore) FinishOutbox(context.Context, postgres.OutboxClaim, postgres.OutboxUpdate) (bool, error) {

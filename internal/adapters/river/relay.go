@@ -22,7 +22,8 @@ const (
 
 // OutboxStore is the part of *postgres.Store the relay needs.
 type OutboxStore interface {
-	ClaimOutbox(ctx context.Context, params postgres.ClaimOutboxParams) ([]postgres.OutboxClaim, error)
+	ClaimOutbox(ctx context.Context, params postgres.ClaimOutboxParams) (postgres.ClaimOutboxResult, error)
+	ReleaseOutbox(ctx context.Context, claim postgres.OutboxClaim, nextAttemptAt time.Time) (bool, error)
 	FinishOutbox(ctx context.Context, claim postgres.OutboxClaim, update postgres.OutboxUpdate) (bool, error)
 }
 
@@ -74,10 +75,11 @@ func NewRelay(config RelayConfig) (*Relay, error) {
 // failed is not due again before its backoff has passed, so it ends.
 func (r *Relay) RunOnce(ctx context.Context) error {
 	for {
-		claims, err := r.store.ClaimOutbox(ctx, postgres.ClaimOutboxParams{Now: r.now(), Lease: r.lease, MaxAttempts: r.maxAttempts, Limit: relayBatch})
+		result, err := r.store.ClaimOutbox(ctx, postgres.ClaimOutboxParams{Now: r.now(), Lease: r.lease, MaxAttempts: r.maxAttempts, Limit: relayBatch})
 		if err != nil {
 			return err
 		}
+		claims := result.Claims
 		for _, claim := range claims {
 			if err := r.deliver(ctx, claim); err != nil {
 				return err

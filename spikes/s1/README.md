@@ -84,6 +84,13 @@ Check state, with precedence `success`, then `failure`, then `in_progress`:
 
 `failure` therefore ends on a ref change or on a valid approval of the current ref. A stale approval that was first seen only after the ref changed (for example when the program was off) is `failure` until the next ref change.
 
+Who can set `failure`: any commenter. A `/suiteward ...` comment from anyone that is malformed, or has a `wrong_author` or `stale_ref` verdict, sets the marker and turns the check to `failure`, because the contract says `failure` for a malformed command or an invalid approval and does not restrict the author. It cannot revoke an approval (`success` takes precedence), and it is cleared by a valid owner approval of the current ref or by a ref change. A cheaper rule, listed as a candidate for D-CHECKS and not implemented: only owner-authored invalid commands set `rejected`, and `wrong_author` is only logged.
+
+Known gaps in the rescan:
+
+- A PR approved and merged between two polls is reported as `no approval recorded`: `closed()` examines the merge but does not rescan the comments, so an approval that was never seen while the PR was open does not count.
+- A revert to an already-judged ref does not restore a `failure` marker. The ref change cleared it and the commands are not judged again (`judged` remembers them), so such a PR shows `in_progress` until a new command is judged or the owner approves.
+
 ## Merge detection and the promotion record
 
 A PR that was open in the state and is no longer in the open list is fetched once (`GET /pulls/{n}`). Not merged: `closed` is recorded and `merge` logs `merged:false`. Merged: the merge commit, the head commit and the tree of the merge commit (`recursive=1`) are fetched, the protected digest is recomputed from that tree and compared with `approved_digest`. Nothing is recorded until all requests succeed, so a failed cycle retries. A PR that is opened and merged within one poll interval is never seen open, so it is never detected.
@@ -92,11 +99,11 @@ The record (`pulls.<n>.merged`, and the `merge` event's `result`):
 
 | field | meaning |
 | --- | --- |
-| `method` | structure only: `merge` for two parents, `squash_or_rebase` for one parent. Squash and rebase leave the same structure (one parent, and a tree equal to the head tree whenever the base did not move), so they cannot be told apart from parents and trees. |
+| `method` | structure only: `merge` for two parents, `squash_or_rebase` for one parent. Expectation pending live runs, not an observed fact: squash and rebase leave the same structure (one parent, and a tree equal to the head tree whenever the base did not move), so they cannot be told apart from parents and trees. |
 | `title_hint` | a guess from commit titles, not a fact: `squash` when the merge commit's first line ends with `(#<n>)`, `rebase` when it equals the head commit's first line, else empty. It depends on the repository's squash-title setting; compare it with the driver's `requested_method`. |
 | `merge_commit_sha`, `parents`, `tree_sha` | as GitHub reports them |
 | `head_sha`, `head_tree_sha`, `tree_equals_head`, `merge_commit_is_head` | `tree_equals_head` compares tree shas; `merge_commit_is_head` is the same-SHA case (the merge commit is the head commit) |
-| `base_sha`, `head_is_base` | `base.sha` of the closed PR as GitHub reports it; it is not the post-merge tip and is not interpreted |
+| `base_sha`, `head_is_base` | `base.sha` of the closed PR as GitHub reports it; it is not the post-merge tip and is not interpreted. That GitHub reports `base.sha` equal to `head.sha` on a merged PR is an expectation pending live runs; the program only records what it is told. |
 | `merged_by`, `merged_at` | from the PR; `merged_by` is empty when GitHub sends null |
 | `approved_digest`, `integrated_digest`, `matches_approved`, `reason` | `reason` is `no approval recorded` or `integrated digest differs from the approved digest` when not matching |
 | `at` | when the program recorded it (UTC) |
@@ -111,9 +118,10 @@ When `matches_approved` is true a `promotions` entry is appended: the same recor
 | --- | --- |
 | `seed` | creates `README.md` and `tests/a.txt` on `main` through the Contents API when missing (commits to the default branch without naming it; the Contents API is the likely route for an empty repository, not verified against GitHub) |
 | `open <name>` | branch `<name>` from `main`, commit `tests/<name>.txt`, open the PR, print its number |
-| `push <pr> [-outside]` | add `tests/push-<ns>.txt` (or `other/push-<ns>.txt` with `-outside`) to the PR branch |
+| `push <pr> [-outside]` | (`-outside` is a flag of `push` only; in other commands it is ordinary text) add `tests/push-<ns>.txt` (or `other/push-<ns>.txt` with `-outside`) to the PR branch |
 | `comment <pr> <text>`, `edit <pr> <comment-id> <text>`, `delete <pr> <comment-id>` | issue comment calls |
 | `merge <pr> <merge\|squash\|rebase>` | merges with that method; the output has `requested_method` |
+| `revert <pr>` | pushes a commit that undoes the PR's most recent change to a file under `tests/` (deletes the file when that commit added it, writes its previous content back when it modified it), to drive push-then-revert and same-tree cases; first 100 PR commits only |
 | `close <pr>` | closes without merging |
 
 Each prints one JSON line: `cmd`, `status` (of the last request), ids and shas, and `t_before`/`t_after`, the local UTC time (nine fractional digits) taken just before the last request and just after its response. Preparatory requests (token, lookups) are not bracketed. Nothing prints a token or key.

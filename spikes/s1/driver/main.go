@@ -9,6 +9,7 @@
 //	driver edit <pr> <comment-id> <text>
 //	driver delete <pr> <comment-id>
 //	driver merge <pr> <merge|squash|rebase>
+//	driver revert <pr>
 //	driver close <pr>
 //
 // The JWT and key handling duplicates the few lines of ../github.go: a package main cannot be imported.
@@ -130,7 +131,11 @@ func (d *driver) do(ctx context.Context, bearer, method, path string, in, out an
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(b, &e) // a non-JSON error body leaves the message empty
-		return &apiError{Status: resp.StatusCode, Message: e.Message}
+		msg := e.Message
+		if len(msg) > 200 {
+			msg = msg[:200]
+		}
+		return &apiError{Status: resp.StatusCode, Message: msg}
 	}
 	if out != nil {
 		if err := json.Unmarshal(b, out); err != nil {
@@ -298,6 +303,81 @@ func (d *driver) merge(ctx context.Context, pr int, method string) (map[string]a
 	return map[string]any{"pr": pr, "requested_method": method, "merge_commit_sha": out.SHA, "merged": out.Merged}, nil
 }
 
+// revert pushes a commit that undoes the PR's most recent change to a file under tests/: the file is deleted
+// when that commit added it and gets its previous content back when that commit modified it. It drives the
+// push-then-revert and same-tree cases. shortcut: the first 100 PR commits, and only added or modified files.
+func (d *driver) revert(ctx context.Context, pr int) (map[string]any, error) {
+	var p struct {
+		Head struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
+	}
+	if err := d.api(ctx, http.MethodGet, fmt.Sprintf("/pulls/%d", pr), nil, &p); err != nil {
+		return nil, err
+	}
+	var commits []struct {
+		SHA string `json:"sha"`
+	}
+	if err := d.api(ctx, http.MethodGet, fmt.Sprintf("/pulls/%d/commits?per_page=100", pr), nil, &commits); err != nil {
+		return nil, err
+	}
+	var path, status, parent string
+	for i := len(commits) - 1; i >= 0 && path == ""; i-- {
+		var c struct {
+			Parents []struct {
+				SHA string `json:"sha"`
+			} `json:"parents"`
+			Files []struct {
+				Filename string `json:"filename"`
+				Status   string `json:"status"`
+			} `json:"files"`
+		}
+		if err := d.api(ctx, http.MethodGet, "/commits/"+commits[i].SHA, nil, &c); err != nil {
+			return nil, err
+		}
+		for _, f := range c.Files {
+			if strings.HasPrefix(f.Filename, "tests/") {
+				path, status = f.Filename, f.Status
+				if len(c.Parents) > 0 {
+					parent = c.Parents[0].SHA
+				}
+				break
+			}
+		}
+	}
+	switch {
+	case path == "":
+		return nil, errors.New("no commit of the PR changed a file under tests/")
+	case status != "added" && (status != "modified" || parent == ""):
+		return nil, fmt.Errorf("revert supports added and modified files, not %q", status)
+	}
+	var cur struct {
+		SHA string `json:"sha"`
+	}
+	if err := d.api(ctx, http.MethodGet, "/contents/"+path+"?ref="+p.Head.Ref, nil, &cur); err != nil {
+		return nil, err
+	}
+	msg := "driver: revert " + path
+	var out commitResp
+	if status == "added" {
+		if err := d.api(ctx, http.MethodDelete, "/contents/"+path, map[string]string{"message": msg, "sha": cur.SHA, "branch": p.Head.Ref}, &out); err != nil {
+			return nil, err
+		}
+		return map[string]any{"pr": pr, "path": path, "action": "delete", "branch": p.Head.Ref, "head_sha": out.Commit.SHA}, nil
+	}
+	var old struct {
+		Content string `json:"content"`
+	}
+	if err := d.api(ctx, http.MethodGet, "/contents/"+path+"?ref="+parent, nil, &old); err != nil {
+		return nil, err
+	}
+	body := map[string]string{"message": msg, "content": strings.ReplaceAll(old.Content, "\n", ""), "sha": cur.SHA, "branch": p.Head.Ref}
+	if err := d.api(ctx, http.MethodPut, "/contents/"+path, body, &out); err != nil {
+		return nil, err
+	}
+	return map[string]any{"pr": pr, "path": path, "action": "restore", "branch": p.Head.Ref, "restored_from": parent, "head_sha": out.Commit.SHA}, nil
+}
+
 func (d *driver) close(ctx context.Context, pr int) (map[string]any, error) {
 	if err := d.api(ctx, http.MethodPatch, fmt.Sprintf("/pulls/%d", pr), map[string]string{"state": "closed"}, nil); err != nil {
 		return nil, err
@@ -313,17 +393,14 @@ func atoi(s string) (int, error) {
 	return n, nil
 }
 
-const usage = "usage: driver seed | open <name> | push <pr> [-outside] | comment <pr> <text> | edit <pr> <comment-id> <text> | delete <pr> <comment-id> | merge <pr> <merge|squash|rebase> | close <pr>"
+const usage = "usage: driver seed | open <name> | push <pr> [-outside] | comment <pr> <text> | edit <pr> <comment-id> <text> | delete <pr> <comment-id> | merge <pr> <merge|squash|rebase> | revert <pr> | close <pr>"
 
 // dispatch validates the arguments of one subcommand and runs it. Nothing is requested before they are valid.
 func (d *driver) dispatch(ctx context.Context, cmd string, a []string, outside bool) (map[string]any, error) {
 	// minimum arguments; comment and edit take the rest as text, the others take exactly this many
-	least, ok := map[string]int{"seed": 0, "open": 1, "push": 1, "close": 1, "comment": 2, "edit": 3, "delete": 2, "merge": 2}[cmd]
+	least, ok := map[string]int{"seed": 0, "open": 1, "push": 1, "close": 1, "revert": 1, "comment": 2, "edit": 3, "delete": 2, "merge": 2}[cmd]
 	if !ok || len(a) < least || (len(a) > least && cmd != "comment" && cmd != "edit") {
 		return nil, errors.New(usage)
-	}
-	if outside && cmd != "push" {
-		return nil, errors.New("-outside belongs to push")
 	}
 	switch cmd {
 	case "seed":
@@ -338,6 +415,8 @@ func (d *driver) dispatch(ctx context.Context, cmd string, a []string, outside b
 	switch cmd {
 	case "push":
 		return d.push(ctx, pr, outside)
+	case "revert":
+		return d.revert(ctx, pr)
 	case "close":
 		return d.close(ctx, pr)
 	case "comment":
@@ -364,11 +443,11 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 	if repo := getenv("S1_REPO"); repo != onlyRepo {
 		return fmt.Errorf("S1_REPO is %q: the driver only writes to %s", repo, onlyRepo)
 	}
-	// -outside may sit anywhere after the subcommand.
+	// -outside is push's only flag; it is never taken out of the text of other commands.
 	outside := false
 	var rest []string
 	for _, a := range args {
-		if a == "-outside" {
+		if a == "-outside" && len(args) > 0 && args[0] == "push" {
 			outside = true
 		} else {
 			rest = append(rest, a)

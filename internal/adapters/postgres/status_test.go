@@ -68,6 +68,14 @@ func TestCountsReportsAFailingDatabase(t *testing.T) {
 	}
 }
 
+func TestCountsReportsAnUnreadableOutbox(t *testing.T) {
+	w := newPGWorld(t)
+	w.exec("ALTER TABLE outbox RENAME TO outbox_unreadable")
+	if _, err := w.store.Counts(t.Context()); err == nil {
+		t.Fatal("Counts succeeded without the outbox table")
+	}
+}
+
 func TestSchemaVersionRequiresTheSupportedVersion(t *testing.T) {
 	w := newPGWorld(t)
 	if version, err := w.store.SchemaVersion(t.Context()); err != nil || version != migrations.SupportedVersion {

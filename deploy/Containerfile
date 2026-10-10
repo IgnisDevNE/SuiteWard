@@ -1,0 +1,28 @@
+# Build context is the repository root. Build: podman build -f deploy/Containerfile --build-arg VERSION=sha-<commit> -t localhost/suiteward:local .
+# GO_VERSION must equal .go-version; CI passes it with --build-arg, the default is for local builds.
+ARG GO_VERSION=1.27.2
+
+# The compiler runs natively and cross-compiles, so the arm64 build needs no emulated Go toolchain.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:${GO_VERSION}-alpine AS build
+ARG TARGETOS TARGETARCH
+# What /status reports; CI passes sha-<commit>, the same string as the image tag.
+ARG VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-X github.com/IgnisDevNE/SuiteWard/internal/app.Version=${VERSION}" -o /out/suiteward ./cmd/suiteward \
+	&& mkdir -p /out/data/artifacts
+
+# Distroless static ships CA certificates and a nonroot user (65532).
+FROM gcr.io/distroless/static:nonroot
+COPY --from=build /out/suiteward /suiteward
+# Empty directories owned by the nonroot user, so a fresh named volume mounted at /data is writable.
+COPY --from=build --chown=65532:65532 /out/data /data
+ENV SUITEWARD_HTTP_ADDR=0.0.0.0:8080 \
+	SUITEWARD_ARTIFACT_DIR=/data/artifacts
+USER 65532:65532
+# The database URL is a mounted secret file: SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url.
+ENTRYPOINT ["/suiteward"]
+CMD ["serve"]

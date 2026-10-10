@@ -33,10 +33,17 @@ type ArtifactVerifier interface {
 	Verify(ctx context.Context, digest artifact.Digest) error
 }
 
+// JobInserter inserts a job through a unit of work's transaction and returns
+// its id. The River adapter implements it.
+type JobInserter interface {
+	Insert(ctx context.Context, tx pgx.Tx, job governance.Job) (int64, error)
+}
+
 // Store implements governance.UnitOfWork and governance.Seeder on PostgreSQL.
 type Store struct {
 	pool      *pgxpool.Pool
 	artifacts ArtifactVerifier
+	jobs      JobInserter
 }
 
 var (
@@ -46,10 +53,10 @@ var (
 
 // NewStore returns a Store after checking that the database is at the schema
 // version this build supports. The artifact verifier is consulted only when a
-// version is written.
-func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier) (*Store, error) {
-	if pool == nil || artifacts == nil {
-		return nil, errors.New("postgres store requires a connection pool and an artifact verifier")
+// version is written; the job inserter is used for every enqueued job.
+func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier, jobs JobInserter) (*Store, error) {
+	if pool == nil || artifacts == nil || jobs == nil {
+		return nil, errors.New("postgres store requires a connection pool, an artifact verifier and a job inserter")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), schemaCheckTimeout)
 	defer cancel()
@@ -60,7 +67,7 @@ func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier) (*Store, error) {
 	if version != migrations.SupportedVersion {
 		return nil, fmt.Errorf("%w: schema version %d, this build requires %d", ErrSchemaNotReady, version, migrations.SupportedVersion)
 	}
-	return &Store{pool: pool, artifacts: artifacts}, nil
+	return &Store{pool: pool, artifacts: artifacts, jobs: jobs}, nil
 }
 
 // Do runs fn in one transaction that holds the lock of the Suite. It commits
@@ -80,17 +87,11 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 	}
 	committed := false
 	defer func() {
-		if committed {
-			return
+		if !committed {
+			rollback(ctx, transaction)
 		}
-		// The rollback must outlive a canceled ctx. Its own failure means the
-		// connection is gone: the server aborts the transaction and the pool
-		// discards the connection, so the original outcome is what matters.
-		rollback, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
-		defer cancel()
-		_ = transaction.Rollback(rollback)
 	}()
-	work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
+	work := &tx{q: dbgen.New(transaction), raw: transaction, project: project, suite: suite, artifacts: s.artifacts, jobs: s.jobs}
 	if _, err := work.lock(ctx); err != nil {
 		return err
 	}
@@ -107,6 +108,16 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 	return nil
 }
 
+// rollback abandons a transaction that did not commit. It must outlive a
+// canceled ctx. Its own failure means the connection is gone: the server
+// aborts the transaction and the pool discards the connection, so the
+// original outcome is what matters.
+func rollback(ctx context.Context, transaction pgx.Tx) {
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+	defer cancel()
+	_ = transaction.Rollback(rollbackCtx)
+}
+
 // Constraint names of the schema that a write can violate, with the
 // governance error each one means.
 var (
@@ -119,6 +130,7 @@ var (
 		"consent_results_operation_key": governance.ErrOperationConflict,
 		"consent_results_pkey":          governance.ErrOperationConflict,
 		"consent_results_scope_key":     governance.ErrOperationConflict,
+		"outbox_pkey":                   governance.ErrOperationConflict,
 	}
 	foreignKeyViolations = map[string]error{
 		"consent_results_proposal_fkey": governance.ErrNotFound,

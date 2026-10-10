@@ -31,3 +31,7 @@ The library adds a pinned dependency and an explicit schema lifecycle. Session l
 ## Amendment (2026-10-05, phase R1): pre-release reset
 
 No installation exists yet, so the migrations are rewritten as a single normalized `00001` (see the [persistence contract](../contracts/persistence.md)). The forward-only rule applies from this reset on; the earlier two-step sequence and its populated 1-to-2 upgrade test no longer apply. The earlier M1-C01 contract is replaced by the persistence contract.
+
+## Amendment (2026-10-10, phase M1.2): River's schema inside goose
+
+River's own migrations are vendored into goose migrations (one file per River version, each inserting its `river_migration` row, followed by the outbox table), so goose stays the only migrator and `migrations.SupportedVersion` the only readiness version, and covers River's tables. A test checks that River's own migrator validates a goose-migrated schema. Upgrading River means adding goose migrations; the forward-only rule still holds.

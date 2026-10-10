@@ -18,6 +18,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -36,26 +37,47 @@ func TestNewStoreChecksSchemaReadiness(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := postgres.NewStore(pool, content); !errors.Is(err, postgres.ErrSchemaNotReady) {
+		if _, err := postgres.NewStore(pool, content, testInserter()); !errors.Is(err, postgres.ErrSchemaNotReady) {
 			t.Fatalf("NewStore on an unmigrated schema = %v; want ErrSchemaNotReady", err)
 		}
 	})
 	t.Run("another schema version", func(t *testing.T) {
 		w := newPGWorld(t)
-		if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES (2, true)"); err != nil {
+		if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES (11, true)"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := postgres.NewStore(w.pool, w.content); !errors.Is(err, postgres.ErrSchemaNotReady) {
-			t.Fatalf("NewStore on schema version 2 = %v; want ErrSchemaNotReady", err)
+		if _, err := postgres.NewStore(w.pool, w.content, testInserter()); !errors.Is(err, postgres.ErrSchemaNotReady) {
+			t.Fatalf("NewStore on schema version 11 = %v; want ErrSchemaNotReady", err)
+		}
+	})
+	t.Run("an older schema version", func(t *testing.T) {
+		database := newSchemaDatabase(t)
+		if err := migrations.UpTo(t.Context(), database.url, migrations.SupportedVersion-1); err != nil {
+			t.Fatal(err)
+		}
+		pool, err := pgxpool.New(t.Context(), database.url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pool.Close()
+		content, err := filesystem.NewStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := postgres.NewStore(pool, content, testInserter()); !errors.Is(err, postgres.ErrSchemaNotReady) {
+			t.Fatalf("NewStore on the version before SupportedVersion = %v; want ErrSchemaNotReady", err)
 		}
 	})
 	t.Run("missing dependencies", func(t *testing.T) {
 		w := newPGWorld(t)
-		if _, err := postgres.NewStore(nil, w.content); err == nil {
+		if _, err := postgres.NewStore(nil, w.content, testInserter()); err == nil {
 			t.Fatal("NewStore accepted a nil pool")
 		}
-		if _, err := postgres.NewStore(w.pool, nil); err == nil {
+		if _, err := postgres.NewStore(w.pool, nil, testInserter()); err == nil {
 			t.Fatal("NewStore accepted a nil artifact verifier")
+		}
+		if _, err := postgres.NewStore(w.pool, w.content, nil); err == nil {
+			t.Fatal("NewStore accepted a nil job inserter")
 		}
 	})
 }
@@ -903,7 +925,7 @@ func TestArtifactBytesAreVerifiedWhenAVersionIsWritten(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if w.store, err = postgres.NewStore(w.pool, content); err != nil {
+		if w.store, err = postgres.NewStore(w.pool, content, testInserter()); err != nil {
 			t.Fatal(err)
 		}
 		w.content = content

@@ -71,6 +71,14 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"PromotionRoundTrip", cfPromotionRoundTrip},
 		{"UnknownAggregatesAreNotFound", cfNotFound},
 		{"TransactionIsUnusableAfterTheUnitOfWork", cfTransactionClosed},
+		{"QueuedWorkCommitsWithTheFact", cfQueueCommitsWithTheFact},
+		{"QueuedWorkRollsBackWithTheFact", cfQueueRollsBackWithTheFact},
+		{"QueuedWorkAloneCommitsWithoutAdvancingTheRevision", cfQueueAloneCommits},
+		{"InvalidQueuedWorkIsRejected", cfInvalidQueueWritesAreRejected},
+		{"DuplicateOutboxKeyConflicts", cfDuplicateOutboxKeyConflicts},
+		{"QueueWriteFailureRollsBack", cfQueueWriteFailureRollsBack},
+		{"QueuedWorkIsNotCommittedOnCancellation", cfQueueIsNotCommittedOnCancellation},
+		{"QueueIsUnusableAfterTheUnitOfWork", cfQueueIsUnusableAfterTheUnitOfWork},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

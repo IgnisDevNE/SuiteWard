@@ -33,7 +33,7 @@
 | [0023](0023-development-environment-and-project-local-tooling.md) | Development environment and project-local tooling | Native Windows development, Windows/Linux CI, local PostgreSQL in Podman, pinned project-local tools, and isolated worktree resources. Amended (R1): shared per-user tool cache. |
 | [0024](0024-single-module-project-structure.md) | Single-module project structure | `cmd/` entry points, internal domain/application/adapter boundaries, capability grouping, and dependency rules for parallel implementation. |
 | [0025](0025-test-driven-development.md) | Mandatory task-level test-driven development | Test-first for authority, consent, promotion, idempotency, concurrency and adapter behavior; reviewed by `sw-reviewer`; amended (R1): no evidence JSON or ancestry validator. |
-| [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`. |
+| [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`; amended (M1.2): River's schema vendored into goose. |
 | [0027](0027-agent-human-trust-separation.md) | Agent/human trust separation | TOTP code on every approve and revoke command, isolated and co-located installation tiers, and separate agent identity. |
 
 Naming, English as the project language, initial audience, and product positioning are recorded in the [project baseline](../project-baseline.md). They do not each need an architecture decision record.

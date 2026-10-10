@@ -13,6 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -27,6 +28,9 @@ const (
 
 // fxRecordedAt has microsecond precision, which is all PostgreSQL stores.
 var fxRecordedAt = time.Date(2026, 10, 2, 12, 0, 0, 123456000, time.UTC)
+
+// testInserter is the River job inserter the stores under test use.
+func testInserter() *river.Inserter { return must(river.NewInserter(5)) }
 
 // must unwraps a fixture value; a failed fixture panics and fails the test.
 func must[T any](value T, err error) T {
@@ -75,7 +79,7 @@ func newPGWorld(t *testing.T) *pgWorld {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := postgres.NewStore(pool, content)
+	store, err := postgres.NewStore(pool, content, testInserter())
 	if err != nil {
 		t.Fatalf("NewStore on the migrated schema: %v", err)
 	}

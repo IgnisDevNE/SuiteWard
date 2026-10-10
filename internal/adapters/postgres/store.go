@@ -33,10 +33,17 @@ type ArtifactVerifier interface {
 	Verify(ctx context.Context, digest artifact.Digest) error
 }
 
+// JobInserter inserts a job through a unit of work's transaction and returns
+// its id. The River adapter implements it.
+type JobInserter interface {
+	Insert(ctx context.Context, tx pgx.Tx, job governance.Job) (int64, error)
+}
+
 // Store implements governance.UnitOfWork and governance.Seeder on PostgreSQL.
 type Store struct {
 	pool      *pgxpool.Pool
 	artifacts ArtifactVerifier
+	jobs      JobInserter
 }
 
 var (
@@ -46,10 +53,10 @@ var (
 
 // NewStore returns a Store after checking that the database is at the schema
 // version this build supports. The artifact verifier is consulted only when a
-// version is written.
-func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier) (*Store, error) {
-	if pool == nil || artifacts == nil {
-		return nil, errors.New("postgres store requires a connection pool and an artifact verifier")
+// version is written; the job inserter is used for every enqueued job.
+func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier, jobs JobInserter) (*Store, error) {
+	if pool == nil || artifacts == nil || jobs == nil {
+		return nil, errors.New("postgres store requires a connection pool, an artifact verifier and a job inserter")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), schemaCheckTimeout)
 	defer cancel()
@@ -60,7 +67,7 @@ func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier) (*Store, error) {
 	if version != migrations.SupportedVersion {
 		return nil, fmt.Errorf("%w: schema version %d, this build requires %d", ErrSchemaNotReady, version, migrations.SupportedVersion)
 	}
-	return &Store{pool: pool, artifacts: artifacts}, nil
+	return &Store{pool: pool, artifacts: artifacts, jobs: jobs}, nil
 }
 
 // Do runs fn in one transaction that holds the lock of the Suite. It commits

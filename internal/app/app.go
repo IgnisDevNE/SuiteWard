@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
@@ -63,6 +65,11 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 	}
 	if err != nil {
 		reportf(stderr, "invalid settings:\n%v\n", err)
+		return 1
+	}
+	// The cause is dropped: pgx redacts only up to the first @, so for an unencoded @ in the password it echoes the rest.
+	if _, err := pgxpool.ParseConfig(cfg.DatabaseURL.Reveal()); err != nil {
+		reportf(stderr, "invalid settings:\nSUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string\n")
 		return 1
 	}
 	if command == "serve" {

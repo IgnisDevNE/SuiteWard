@@ -16,11 +16,11 @@ type Counts struct {
 }
 
 // SchemaVersion returns the applied schema version, or ErrSchemaNotReady when
-// it cannot be read or is not the supported one.
+// it is not the supported one. A database that cannot be read is a plain error.
 func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 	version, err := dbgen.New(s.pool).GetSchemaVersion(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("%w: read schema version: %w", ErrSchemaNotReady, err)
+		return 0, fmt.Errorf("read schema version: %w", err)
 	}
 	if version != migrations.SupportedVersion {
 		return 0, fmt.Errorf("%w: schema version %d, this build requires %d", ErrSchemaNotReady, version, migrations.SupportedVersion)

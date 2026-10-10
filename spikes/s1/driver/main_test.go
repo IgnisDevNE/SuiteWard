@@ -220,6 +220,56 @@ func TestRevertRestoresAModifiedFile(t *testing.T) {
 	}
 }
 
+// A write whose response carries no commit sha is an error, never an empty head_sha in the output.
+func TestAWriteWithoutACommitShaIsAnError(t *testing.T) {
+	const repo = "/repos/IgnisDevNE/SuiteWardQ"
+	revertFake := func(status string) map[string]string {
+		return map[string]string{
+			"GET " + repo + "/pulls/10?":                       `{"head":{"ref":"feat10"}}`,
+			"GET " + repo + "/pulls/10/commits?per_page=100":   `[{"sha":"d1"}]`,
+			"GET " + repo + "/commits/d1?":                     `{"parents":[{"sha":"base0"}],"files":[{"filename":"tests/a.txt","status":"` + status + `"}]}`,
+			"GET " + repo + "/contents/tests/a.txt?ref=feat10": `{"sha":"blobH","content":"bmV3Cg=="}`,
+			"GET " + repo + "/contents/tests/a.txt?ref=base0":  `{"sha":"blobB","content":"YQo="}`,
+			"PUT " + repo + "/contents/tests/a.txt?":           `{"commit":{}}`,
+			"DELETE " + repo + "/contents/tests/a.txt?":        `{"commit":{}}`,
+			"GET " + repo + "/contents/README.md?ref=main":     "404",
+			"PUT " + repo + "/contents/README.md?":             `{"commit":{}}`,
+		}
+	}
+	for _, c := range []struct {
+		name string
+		args []string
+		fake map[string]string
+	}{
+		{"seed", []string{"seed"}, revertFake("")},
+		{"revert of an added file", []string{"revert", "10"}, revertFake("added")},
+		{"revert of a modified file", []string{"revert", "10"}, revertFake("modified")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				key := r.Method + " " + r.URL.Path + "?" + r.URL.RawQuery
+				switch body, ok := c.fake[key]; {
+				case key == "POST /app/installations/7/access_tokens?":
+					_, _ = w.Write([]byte(`{"token":"` + fakeToken + `"}`))
+				case ok && body == "404":
+					http.NotFound(w, r)
+				case ok:
+					_, _ = w.Write([]byte(body))
+				default:
+					t.Errorf("unexpected request %s", key)
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			var out bytes.Buffer
+			err := run(c.args, env(srv.URL, writeKey(t), onlyRepo), &out)
+			if err == nil || !strings.Contains(err.Error(), "no commit sha") || out.Len() != 0 {
+				t.Fatalf("err %v, output %q", err, out.String())
+			}
+		})
+	}
+}
+
 func TestErrorMessagesAreTruncated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/access_tokens") {

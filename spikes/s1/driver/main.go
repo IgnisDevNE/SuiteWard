@@ -190,10 +190,16 @@ func (d *driver) putFile(ctx context.Context, path, branch, content string) (str
 	if err := d.api(ctx, http.MethodPut, "/contents/"+path, body, &out); err != nil {
 		return "", err
 	}
-	if out.Commit.SHA == "" {
-		return "", fmt.Errorf("put %s: the response carries no commit sha", path)
+	return out.sha("put " + path)
+}
+
+// sha returns the commit sha of a Contents API write. A response without one is an error: the sha is what the
+// caller reports, and an empty value would pass for a commit.
+func (c commitResp) sha(what string) (string, error) {
+	if c.Commit.SHA == "" {
+		return "", fmt.Errorf("%s: the response carries no commit sha", what)
 	}
-	return out.Commit.SHA, nil
+	return c.Commit.SHA, nil
 }
 
 // seed makes sure main has README.md and tests/a.txt. The Contents API is the route that can make the first
@@ -368,7 +374,11 @@ func (d *driver) revert(ctx context.Context, pr int) (map[string]any, error) {
 		if err := d.api(ctx, http.MethodDelete, "/contents/"+path, map[string]string{"message": msg, "sha": cur.SHA, "branch": p.Head.Ref}, &out); err != nil {
 			return nil, err
 		}
-		return map[string]any{"pr": pr, "path": path, "action": "delete", "branch": p.Head.Ref, "head_sha": out.Commit.SHA}, nil
+		sha, err := out.sha("delete " + path)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"pr": pr, "path": path, "action": "delete", "branch": p.Head.Ref, "head_sha": sha}, nil
 	}
 	var old struct {
 		Content string `json:"content"`
@@ -380,7 +390,11 @@ func (d *driver) revert(ctx context.Context, pr int) (map[string]any, error) {
 	if err := d.api(ctx, http.MethodPut, "/contents/"+path, body, &out); err != nil {
 		return nil, err
 	}
-	return map[string]any{"pr": pr, "path": path, "action": "restore", "branch": p.Head.Ref, "restored_from": parent, "head_sha": out.Commit.SHA}, nil
+	sha, err := out.sha("restore " + path)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"pr": pr, "path": path, "action": "restore", "branch": p.Head.Ref, "restored_from": parent, "head_sha": sha}, nil
 }
 
 func (d *driver) close(ctx context.Context, pr int) (map[string]any, error) {

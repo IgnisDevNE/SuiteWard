@@ -125,7 +125,7 @@ Long run: one repository, exactly 1 open PR in all 318 cycles, poll every 60 s f
 
 ### Local container (co-located target)
 
-Podman on the developer PC, image built from the same Containerfile and commit.
+Podman on the developer PC. The full-loop and restart measurements below used `localhost/suiteward-s1:local`, built from the same Containerfile and source (commit `f3315e9`). The published image was run afterwards for one cycle: `ghcr.io/ignisdevne/suiteward-s1:deploy`, pulled anonymously in 2.2 s (amd64 variant of the multi-arch index `sha256:4269fa50…`, amd64 manifest `sha256:85741073…`, label `org.opencontainers.image.revision=4d53bc4…`, user 65532). It started with the `LOCAL.md` command (read-only root, all capabilities dropped, owner login `magalz`), its first log event came 0.83 s after the command, the first cycle took 2.3 s and `/status` answered 200 inside the Podman machine. The full loop was not repeated on the published image.
 
 - First log event 0.97 s after the `podman run` command was issued (0.73 s after the container was created); the first full cycle took 2.4 s.
 - The full loop ran in the container: PR, check, approval, merge, promotion recorded with a digest equal to the approved one.

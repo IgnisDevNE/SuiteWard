@@ -1,0 +1,76 @@
+# Spike S1 only: publishes the throwaway verification image to GHCR. Not part of the CI gate and not a required check.
+# No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
+# The image is cross-compiled on the build platform and the runtime stage has no RUN, so no QEMU is needed.
+# A run waiting for the owner's approval of `promote` holds the s1-publish concurrency group; approving moves `deploy` only to that run's digest.
+name: S1 publish
+
+on:
+  push:
+    branches: [phase/S1]
+    paths:
+      - 'spikes/s1/**'
+      - '.github/workflows/s1-publish.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: s1-publish
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/ignisdevne/suiteward-s1
+  # moby/buildkit:buildx-stable-1 as of 2026-10-09.
+  BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
+jobs:
+  build:
+    name: Build and push sha tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create the builder
+        run: docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - id: push
+        name: Build and push linux/amd64 and linux/arm64
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+            --label org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
+            --annotation index:org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
+            --file spikes/s1/Containerfile --tag "$IMAGE:sha-$COMMIT" \
+            --metadata-file "$RUNNER_TEMP/meta.json" spikes/s1
+          echo "digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/meta.json")" >> "$GITHUB_OUTPUT"
+
+  promote:
+    name: Promote to deploy (owner approval)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: remote-poc
+    permissions:
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Move the deploy tag to the built digest
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: docker buildx imagetools create --tag "$IMAGE:deploy" "$IMAGE@$DIGEST"

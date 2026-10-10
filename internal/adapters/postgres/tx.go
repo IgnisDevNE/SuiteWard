@@ -468,3 +468,9 @@ func (t *tx) bump(ctx context.Context, current pgtype.Text) error {
 	}
 	return nil
 }
+
+func (t *tx) Enqueue(context.Context, governance.Job) error { return errors.New("not implemented") }
+
+func (t *tx) Outbox(context.Context, governance.OutboxMessage) error {
+	return errors.New("not implemented")
+}

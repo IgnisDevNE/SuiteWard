@@ -320,6 +320,12 @@ func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) e
 	return t.written()
 }
 
+func (t *tx) Enqueue(context.Context, governance.Job) error { return errors.New("not implemented") }
+
+func (t *tx) Outbox(context.Context, governance.OutboxMessage) error {
+	return errors.New("not implemented")
+}
+
 // written bumps the Suite revision and applies an injected failure.
 func (t *tx) written() error {
 	t.s.revision++

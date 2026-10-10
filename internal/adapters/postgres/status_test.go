@@ -80,7 +80,8 @@ func TestSchemaVersionRequiresTheSupportedVersion(t *testing.T) {
 		t.Fatalf("SchemaVersion on schema version 11 = %v; want ErrSchemaNotReady", err)
 	}
 	w.pool.Close()
-	if _, err := w.store.SchemaVersion(t.Context()); !errors.Is(err, postgres.ErrSchemaNotReady) {
-		t.Fatalf("SchemaVersion on a closed pool = %v; want ErrSchemaNotReady", err)
+	// An unreadable database is not a schema mismatch: readiness tells them apart.
+	if _, err := w.store.SchemaVersion(t.Context()); err == nil || errors.Is(err, postgres.ErrSchemaNotReady) {
+		t.Fatalf("SchemaVersion on a closed pool = %v; want an error that is not ErrSchemaNotReady", err)
 	}
 }

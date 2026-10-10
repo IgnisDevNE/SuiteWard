@@ -21,13 +21,13 @@ You land as `ssm-user`. Become the service user and point it at its systemd user
 
 ```
 sudo loginctl enable-linger suiteward
-sudo -iu suiteward
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
-export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+sudo -u suiteward -H env XDG_RUNTIME_DIR=/run/user/$(id -u suiteward) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u suiteward)/bus bash
 systemctl --user is-system-running
 ```
 
-`enable-linger` keeps the user manager and the container running with no login session and starts it at boot. `is-system-running` must print `running` (or `degraded`); if the bus socket is missing, wait a few seconds and retry. Re-run the two `export` lines in every new session.
+The `suiteward` account has a `nologin` shell, so `sudo -iu suiteward` fails with "This account is currently not available"; the command above starts `bash` directly with the user manager's environment (the two variables are already set). Start every new session this way.
+
+`enable-linger` keeps the user manager and the container running with no login session and starts it at boot. `is-system-running` must print `running` (or `degraded`); if the bus socket is missing, wait a few seconds and retry.
 
 ## 2. Place the App key and the environment file
 

@@ -1,5 +1,7 @@
 # Spike S1 only: publishes the throwaway verification image to GHCR. Not part of the CI gate and not a required check.
-# No third-party actions: the runner's own docker and buildx do the work, and the helper images below are pinned by digest.
+# No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
+# The image is cross-compiled on the build platform and the runtime stage has no RUN, so no QEMU is needed.
+# A run waiting for the owner's approval of `promote` holds the s1-publish concurrency group; approving moves `deploy` only to that run's digest.
 name: S1 publish
 
 on:
@@ -18,8 +20,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/ignisdevne/suiteward-s1
-  # tonistiigi/binfmt:latest and moby/buildkit:buildx-stable-1 as of 2026-10-09.
-  BINFMT_IMAGE: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+  # moby/buildkit:buildx-stable-1 as of 2026-10-09.
   BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
 
 jobs:
@@ -36,10 +37,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register QEMU and create the builder
-        run: |
-          docker run --privileged --rm "$BINFMT_IMAGE" --install arm64
-          docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Create the builder
+        run: docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,6 +50,8 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+            --label org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
+            --annotation index:org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
             --file spikes/s1/Containerfile --tag "$IMAGE:sha-$COMMIT" \
             --metadata-file "$RUNNER_TEMP/meta.json" spikes/s1
           echo "digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/meta.json")" >> "$GITHUB_OUTPUT"

@@ -6,8 +6,8 @@ Never paste into chat, a file, a PR, or a log: the App private key, any installa
 
 ## 0. Before the host steps (GitHub, once)
 
-1. The first run of the `S1 publish` workflow creates the GHCR package `suiteward-s1` as private. Make it public (GitHub, owner profile, Packages, `suiteward-s1`, Package settings, Change visibility), so the host needs no registry credential. The image contains no secret.
-2. When the `promote` job of that run waits in the `remote-poc` environment, approve it. That moves the `deploy` tag. The host cannot start until `ghcr.io/ignisdevne/suiteward-s1:deploy` exists.
+1. The first run of the `S1 publish` workflow creates the GHCR package `suiteward-s1` as private. Make it public (GitHub, owner profile, Packages, `suiteward-s1`, Package settings, Change visibility), so the host needs no registry credential. The image contains no secret. The image carries an `org.opencontainers.image.source` label that links the package to the repository. If the first run fails with `permission_denied: write_package`, open the package's settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
+2. When the `promote` job of that run waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for your approval holds the `s1-publish` concurrency group, so a later push queues behind it until you approve or reject. The host cannot start until `ghcr.io/ignisdevne/suiteward-s1:deploy` exists.
 
 ## 1. Open a session
 
@@ -31,26 +31,32 @@ systemctl --user is-system-running
 
 ## 2. Place the App key and the environment file
 
-Still as `suiteward`. Type the key into the terminal yourself; do not give it to the agent or GitHub.
+Still as `suiteward`. Type the key into the terminal yourself; do not give it to the agent or GitHub. First confirm that SSM Session Manager session logging (Systems Manager, Session Manager, Preferences: S3 and CloudWatch Logs) is off or acceptable to you, because the session transcript is where a pasted key could end up. For every block below that reads from the terminal: run the command, wait until the cursor stops, then paste.
+
+The key goes straight from the terminal into a Podman secret, so no plaintext file is written. Echo is switched off so the PEM is not displayed (and so not logged):
 
 ```
-umask 077
-mkdir -p ~/.config/suiteward-s1
-cat > ~/.config/suiteward-s1/app-key.pem
+stty -echo
+podman secret create suiteward-s1-app-key -
 ```
 
-Paste the full PEM (including the BEGIN and END lines) into the session, press Enter, then Ctrl-D. Then create the Podman secret and delete the file:
+Paste the full PEM (including the BEGIN and END lines), press Enter, then Ctrl-D. Then:
 
 ```
-podman secret create suiteward-s1-app-key ~/.config/suiteward-s1/app-key.pem
-shred -u ~/.config/suiteward-s1/app-key.pem
+stty echo
 podman secret ls
 ```
 
-The secret is stored in the `suiteward` user's Podman store (mode 0600, on the encrypted volume) and mounted into the container as `/run/secrets/app-key`. Now the non-secret configuration:
+If the secret already exists (a re-run), add `--replace` to `podman secret create`. The secret is stored in the `suiteward` user's Podman store (mode 0600, on the encrypted volume) and mounted into the container as `/run/secrets/app-key`. Now the non-secret configuration:
 
 ```
+mkdir -p ~/.config/suiteward-s1
 cat > ~/.config/suiteward-s1/env <<'EOF'
+```
+
+Wait until the cursor stops, then paste these lines, including the closing `EOF`:
+
+```
 S1_APP_ID=5257122
 S1_INSTALLATION_ID=169774099
 S1_REPO=IgnisDevNE/SuiteWardQ
@@ -60,12 +66,21 @@ EOF
 
 ## 3. Install the quadlet and enable auto-update
 
-Copy the contents of `spikes/s1/deploy/suiteward-s1.container` (from the repository, on your workstation) into place; for example open `cat > ~/.config/containers/systemd/suiteward-s1.container`, paste, Ctrl-D:
+Copy the contents of `spikes/s1/deploy/suiteward-s1.container` (from the repository, on your workstation) into place: run the `cat` command, wait until the cursor stops, paste, then press Ctrl-D on an empty line:
 
 ```
 mkdir -p ~/.config/containers/systemd
 cat > ~/.config/containers/systemd/suiteward-s1.container
 ```
+
+Ubuntu 24.04 ships Podman 4.9.x, and the quadlet generator skips a unit it cannot parse (you would only see "unit not found"). Check the version and dry-run the generator first; it prints the generated unit or the error:
+
+```
+podman --version
+/usr/lib/systemd/system-generators/podman-system-generator --user --dryrun
+```
+
+Uncertain: `Secret=...,type=mount,target=,uid=,mode=` and `AutoUpdate=registry` are old quadlet features, but I could not confirm that 4.9 accepts every key used (`NoNewPrivileges`, `ReadOnly`, `DropCapability`, `EnvironmentFile`); the dry run is the check. If a key is rejected, remove that line from the quadlet and report which one.
 
 Then:
 
@@ -106,31 +121,32 @@ curl http://127.0.0.1:8080/status
 
 ## 6. Check that it is outbound-only
 
-As `suiteward` on the host:
+Run these as `ssm-user` (type `exit` to leave the `suiteward` shell), because `sudo` is needed to see process names:
 
 ```
-ss -tlnp
+sudo ss -tlnp
 ```
 
-Every listener must be on `127.0.0.1` or `::1` (the container's `127.0.0.1:8080` and `cloudflared`'s local metrics). No `0.0.0.0` or `[::]` listener may belong to the container. Also confirm from the AWS console or `aws ec2 describe-security-groups` that the instance's security group has no inbound rules. Established connections of the service:
+Every listener must be on `127.0.0.1` or `::1`. The published status port appears as a loopback listener owned by `rootlessport` (Podman's port forwarder), not by the container; `cloudflared` shows its local metrics port. Any `0.0.0.0` or `[::]` listener other than the system and SSM ones you recognize must be explained. Also confirm from the AWS console or `aws ec2 describe-security-groups` that the instance's security group has no inbound rules. Established connections:
 
 ```
-ss -tnp state established
+sudo ss -tnp state established
 ```
 
-Only connections to GitHub (`api.github.com`, port 443) should come from the container. One more check, whether containers can reach the instance metadata service (the host uses IMDSv2 with hop limit 1):
+This shows IP addresses, not hostnames: the service's outbound connections should be to GitHub API addresses on port 443 (compare with `dig +short api.github.com`). One more check, whether containers can reach the instance metadata service (the host uses IMDSv2 with hop limit 1). As `suiteward`:
 
 ```
-podman run --rm docker.io/curlimages/curl -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/api/token
+podman run --rm docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/api/token
 ```
 
-`000` (or anything other than `200`) means blocked. `200` means a container can obtain a metadata token, which contradicts D-DEPLOY (rootless networking can hide the extra hop from the hop limit); report it, do not fix it, and never run commands that print metadata credentials.
+The image is pinned by digest (`curlimages/curl`, resolved 2026-10-09). The command prints one line, the HTTP status. `000` (or anything other than `200`) means blocked. `200` means a container can obtain a metadata token, which contradicts D-DEPLOY (rootless networking can hide the extra hop from the hop limit); report it, do not fix it, and never run commands that print metadata credentials.
 
 ## What to paste back to the orchestrator
 
 - Output of `systemctl --user status suiteward-s1.service --no-pager`.
 - The JSON from `/status`.
-- `ss -tlnp` and the three-line result of the metadata check.
+- `sudo ss -tlnp` and the one-line status code of the metadata check.
+- The output of `podman --version` and the generator dry run (it contains no secret).
 - A `journalctl` excerpt (about 30 lines around a poll and around a restart).
 - Time observations: how long the first pull and start took, and how long `deploy` promotion took to reach the host.
 
@@ -141,4 +157,5 @@ podman run --rm docker.io/curlimages/curl -s -m 3 -X PUT -H 'X-aws-ec2-metadata-
 - The phase page says the image is published to GHCR through the bot. The workflow publishes with the Actions `GITHUB_TOKEN` and `packages: write` (App installation tokens are not documented for ghcr.io); the `ignisdevne[bot]` App is not involved.
 - GHCR packages start private. This spike makes the package public so the host stores no registry credential; D-DEPLOY says nothing about visibility. A private package would require a `read:packages` credential on the host.
 - Promotion is the `promote` job bound to the `remote-poc` environment, not a separate workflow; no host credential is stored in GitHub, as D-DEPLOY requires.
+- The `remote-poc` environment cannot enable "prevent self-review": the owner is its only required reviewer and also triggers the pushes, so the approval is the owner confirming their own run. The control is the owner's deliberate click, not separation of duties.
 - Hardening beyond D-DEPLOY: the quadlet also sets a read-only root filesystem, `DropCapability=ALL`, and `NoNewPrivileges`.

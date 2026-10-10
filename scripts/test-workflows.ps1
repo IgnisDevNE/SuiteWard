@@ -13,6 +13,11 @@ try {
     $rejected = $false
     try { & (Join-Path $PSScriptRoot 'check-workflows.ps1') -Directory $testRoot } catch { $rejected = $true }
     if (-not $rejected) { throw 'A broken workflow was accepted.' }
+    # The .yaml extension is a workflow too.
+    Move-Item -LiteralPath (Join-Path $testRoot 'z-broken.yml') -Destination (Join-Path $testRoot 'z-broken.yaml')
+    $rejected = $false
+    try { & (Join-Path $PSScriptRoot 'check-workflows.ps1') -Directory $testRoot } catch { $rejected = $true }
+    if (-not $rejected) { throw 'A broken .yaml workflow was accepted.' }
     & (Join-Path $PSScriptRoot 'check-workflows.ps1')
     Write-Host 'Workflow validation checks passed.'
 } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force }

@@ -1,6 +1,6 @@
 # Co-located run (this PC, Podman)
 
-The co-located target runs the same image next to the developer's tools. The App key stays under `C:\Users\magal\.suiteward-s1\` and is mounted read-only; it is never passed on a command line, in an environment variable, or through the agent.
+The co-located target runs the same image next to the developer's tools. The App key stays under `C:\Users\magal\.suiteward-s1\` and is mounted read-only; it is never passed on a command line or in an environment variable, and it is not given to the agent. The folder is readable by other tools running as you on this PC; that is the accepted co-located tier (D-TRUST).
 
 ## One time
 

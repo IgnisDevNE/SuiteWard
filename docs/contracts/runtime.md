@@ -7,17 +7,17 @@ One binary, `suiteward`, runs the API and the workers. This document fixes the s
 
 ## Settings
 
-Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret setting can instead be given as `SUITEWARD_<NAME>_FILE`, the path of a file whose content (trailing newline trimmed) is the value; setting both forms is an error. Settings are read once at startup, from an injected environment (a lookup function and the list of variables), never from the process environment inside `internal/config`, so tests do not depend on it. Validation reports every problem at once, names the variable, and never prints a secret value. An unrecognized `SUITEWARD_*` variable is logged as a warning at startup, except the names the development tooling sets (`SUITEWARD_TEST_*`, `SUITEWARD_TOOLS_*`, `SUITEWARD_HOOK_*`); it is not an error, because those variables exist in development shells and CI.
+Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret setting can instead be given as `SUITEWARD_<NAME>_FILE`, the path of a file whose content (trailing newline trimmed) is the value; setting both forms is an error. A variable that is set but empty counts as unset, in both the plain and the `_FILE` form (so compose-style `${VAR:-}` interpolation behaves). Settings are read once at startup, from an injected environment (a lookup function and the list of variables), never from the process environment inside `internal/config`, so tests do not depend on it. Validation reports every problem at once, names the variable, and never prints a secret value. An unrecognized `SUITEWARD_*` variable is logged as a warning at startup, except the names the development tooling sets (`SUITEWARD_TEST_*`, `SUITEWARD_TOOLS_*`, `SUITEWARD_HOOK_*`); it is not an error, because those variables exist in development shells and CI.
 
 | Name | Secret | Default | Rule |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | yes | none (required) | PostgreSQL URL accepted by pgx. |
 | `ARTIFACT_DIR` | no | none (required) | Absolute path of the artifact store. |
-| `HTTP_ADDR` | no | `127.0.0.1:8080` | `host:port`. |
+| `HTTP_ADDR` | no | `127.0.0.1:8080` | `host:port` (the port is validated when listening). |
 | `SHUTDOWN_TIMEOUT` | no | `30s` | Go duration, 1s to 10m. |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, `error`. |
 | `JOB_WORKERS` | no | `4` | Integer 1 to 64. |
-| `JOB_TIMEOUT` | no | `1m` | Per-attempt limit. River rescues a job that stayed running for `JOB_TIMEOUT` plus one minute. |
+| `JOB_TIMEOUT` | no | `1m` | Go duration, 1s to 1h; per-attempt limit. River rescues a job that stayed running for `JOB_TIMEOUT` plus one minute. |
 | `JOB_MAX_ATTEMPTS` | no | `5` | Integer 1 to 25. |
 | `OUTBOX_MAX_ATTEMPTS` | no | `8` | Integer 1 to 25. |
 | `OUTBOX_POLL_INTERVAL` | no | `5s` | Go duration, 1s to 1h. |

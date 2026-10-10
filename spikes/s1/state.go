@@ -76,6 +76,14 @@ func loadState(path string) (*state, error) {
 	if s.Promotions == nil {
 		s.Promotions = []json.RawMessage{}
 	}
+	for n, ps := range s.Pulls {
+		if ps == nil {
+			return nil, fmt.Errorf("parse state: pull %d is null", n)
+		}
+		if ps.Judged == nil {
+			ps.Judged = map[int64]string{}
+		}
+	}
 	return s, nil
 }
 

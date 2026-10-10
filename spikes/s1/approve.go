@@ -26,9 +26,6 @@ func (a *app) judge(c comment, ref string) (isCommand bool, reason string) {
 // never re-judged. Otherwise the earliest valid approval of the current ref wins, which is also how a ref that
 // returns to an earlier value regains its approval. Each command's verdict is logged once per updated_at.
 func (a *app) scanApproval(number int, ps *pullState, cs []comment) {
-	if ps.Judged == nil {
-		ps.Judged = map[int64]string{}
-	}
 	byID := make(map[int64]comment, len(cs))
 	var winner *comment
 	for i, c := range cs {

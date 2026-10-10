@@ -141,7 +141,7 @@ func (c *client) call(ctx context.Context, method, path, bearer string, body []b
 		// The transport error names the URL but never a header.
 		return nil, fmt.Errorf("%s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // the body is read to the end below; a close error cannot change the outcome
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: read body: %w", method, path, err)

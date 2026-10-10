@@ -120,7 +120,7 @@ func (d *driver) do(ctx context.Context, bearer, method, path string, in, out an
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err) // names the URL, never a header
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // the body is read to the end below; a close error cannot change the outcome
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	d.after, d.status = time.Now(), resp.StatusCode
 	if err != nil {
@@ -432,10 +432,13 @@ func (d *driver) dispatch(ctx context.Context, cmd string, a []string, outside b
 	if err != nil || id <= 0 {
 		return nil, fmt.Errorf("%q is not a comment id", a[1])
 	}
-	if cmd == "delete" {
+	switch cmd {
+	case "delete":
 		return d.delete(ctx, id)
+	case "edit":
+		return d.edit(ctx, id, strings.Join(a[2:], " "))
 	}
-	return d.edit(ctx, id, strings.Join(a[2:], " "))
+	return nil, fmt.Errorf("command %q has no handler", cmd) // unreachable: the table above lists exactly the handled commands
 }
 
 // run executes one subcommand and prints its JSON line to out. The repository is checked before the key is read.

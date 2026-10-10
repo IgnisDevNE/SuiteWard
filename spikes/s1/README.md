@@ -21,6 +21,15 @@ Because the App cannot be the human owner, volume runs set `S1_OWNER_LOGIN=suite
 
 Tests (no network): `go test ./...` inside `spikes/s1` (covers the program and the driver).
 
+Lint: `./scripts/dev.ps1 lint` and `check` run `golangci-lint` on the root module only, so the spike (its own module) is linted by hand with the root config and the pinned toolchain on `PATH`:
+
+```powershell
+# from the repository root; the versions below are the pinned ones at the time of writing
+$env:PATH = "$env:LOCALAPPDATA\SuiteWard\tools\go\1.27.2\windows-amd64\go\bin;" + $env:PATH
+cd spikes/s1
+& "$env:LOCALAPPDATA\SuiteWard\tools\golangci-lint\2.14.0\windows-amd64\golangci-lint-2.14.0-windows-amd64\golangci-lint.exe" run --config ../../.golangci.yml ./...
+```
+
 ## Behavior beyond the contract
 
 - One GET per cycle on `/repos/{r}/pulls?state=open&per_page=100` (first page only) and one on `/repos/{r}/git/trees/{head}?recursive=1` per open PR, each with `If-None-Match` when a body is cached. The cache is memory only: after a restart the first request of every URL is unconditional (the ETags in the state file are kept, but a 304 needs a body to reuse). A truncated tree is an error.

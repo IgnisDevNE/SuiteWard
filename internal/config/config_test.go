@@ -327,9 +327,9 @@ func TestLoadWarnsAboutUnrecognizedNames(t *testing.T) {
 		t.Fatalf("unrecognized names must not be errors: %v", err)
 	}
 	want := []string{
-		"unrecognized setting SUITEWARD_DATABASE_URL_FILE_X",
-		"unrecognized setting SUITEWARD_JOB_WORKER",
-		"unrecognized setting SUITEWARD_TYPO",
+		"SUITEWARD_DATABASE_URL_FILE_X",
+		"SUITEWARD_JOB_WORKER",
+		"SUITEWARD_TYPO",
 	}
 	if !slices.Equal(warnings, want) {
 		t.Fatalf("warnings = %q, want %q", warnings, want)
@@ -351,7 +351,7 @@ func TestLoadWarningsNeverCarryValues(t *testing.T) {
 func TestLoadIgnoresEnvironEntriesOutsideTheNamespace(t *testing.T) {
 	vars := required(t)
 	lookup := func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
-	_, warnings, err := Load(lookup, []string{"NOEQUALS", "=C:=x", "PATH=/bin"}, nil)
+	_, warnings, err := Load(lookup, []string{"NOEQUALS", "=C:=x", "PATH=/bin"}, func(string) ([]byte, error) { return nil, fs.ErrNotExist })
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("err %v warnings %v", err, warnings)
 	}
@@ -405,5 +405,16 @@ func TestLoadHTTPAddrPortMustBeInRange(t *testing.T) {
 		if (err == nil) != ok {
 			t.Errorf("HTTP_ADDR=%q: error = %v, want accepted=%v", addr, err, ok)
 		}
+	}
+}
+
+func TestLoadRejectsMissingDependencies(t *testing.T) {
+	lookup := func(string) (string, bool) { return "", false }
+	readFile := func(string) ([]byte, error) { return nil, fs.ErrNotExist }
+	if _, _, err := Load(nil, nil, readFile); err == nil || !strings.Contains(err.Error(), "lookup") {
+		t.Errorf("nil lookup: error = %v, want one naming lookup", err)
+	}
+	if _, _, err := Load(lookup, nil, nil); err == nil || !strings.Contains(err.Error(), "readFile") {
+		t.Errorf("nil readFile: error = %v, want one naming readFile", err)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverqueue "github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-	"github.com/riverqueue/river/rivertype"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 )
@@ -75,8 +74,9 @@ type Runtime struct {
 }
 
 // NewRuntime builds the River client over pool. The relay is a periodic job
-// that runs at startup and then every OutboxPollInterval; at most one relay
-// job is outstanding at a time.
+// that runs at startup and then every OutboxPollInterval. Relay runs are
+// serialized by the single worker of their queue, and concurrent relays of
+// several processes are safe because claims use SKIP LOCKED.
 func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime, error) {
 	if pool == nil || store == nil || config.Logger == nil {
 		return nil, errors.New("river runtime requires a connection pool, an outbox store and a logger")
@@ -103,8 +103,7 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	riverqueue.AddWorker(workers, &relayWorker{relay: relay})
 	relayJob := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(config.OutboxPollInterval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: []rivertype.JobState{
-				rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRetryable, rivertype.JobStateRunning, rivertype.JobStateScheduled}}}
+			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1}
 		},
 		&riverqueue.PeriodicJobOpts{ID: "outbox_relay", RunOnStart: true})
 	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{

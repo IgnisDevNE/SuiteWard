@@ -98,7 +98,7 @@ Queue parameters: `project`, `content`, `complexity`, `expected_outcome` (`commi
 
 ## Approval
 
-For `medium`, `high` and `ludicrous` the orchestrator shows the complete prompt in chat and queues it only after the owner's explicit yes, which is Orbit's own convention for those tiers; a `low` prompt may be queued directly. In every case the owner's approval in the Orbit dashboard is the gate before a run starts. A queued prompt is never a message to other people, but it carries only what the task needs: no secret, no token, nothing from `.local/`.
+For `medium`, `high` and `ludicrous` the orchestrator shows the complete prompt in chat and queues it only after the owner's explicit yes, which is Orbit's own convention for those tiers; a `low` prompt may be queued directly. In every case the owner's approval in the Orbit dashboard is the gate before a run starts. Orbit may also ask for its own confirmations (a shared-worktree or coordinator confirmation, a prompt left in `needs_input`): those are the owner's decisions, so the orchestrator shows the question and does not answer it through `orbit_queue_prompt` (`confirm_id`). A queued prompt is never a message to other people, but it carries only what the task needs: no secret, no token, nothing from `.local/`.
 
 ## Lifecycle
 

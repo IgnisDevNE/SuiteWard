@@ -101,7 +101,8 @@ func btoi(b bool) int {
 	return 0
 }
 
-// GitHub can report base.sha equal to head.sha on a merged PR; the fact is recorded, not interpreted.
+// Expectation pending live runs (not an observed fact): GitHub may report base.sha equal to head.sha on a merged PR.
+// If it does, the program records it as reported and does not interpret it.
 func TestMergeRecordsHeadEqualToBase(t *testing.T) {
 	h := newHarness(t)
 	h.gh.trees["aaaa"] = treeJSON(entryX)

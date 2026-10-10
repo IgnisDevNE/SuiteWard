@@ -62,6 +62,16 @@ func TestSubcommands(t *testing.T) {
 			_, _ = w.Write([]byte(`{"token":"` + fakeToken + `"}`))
 		case key == "GET "+repo+"/contents/README.md":
 			_, _ = w.Write([]byte(`{}`))
+		case key == "GET "+repo+"/contents/tests/push-1.txt":
+			_, _ = w.Write([]byte(`{"sha":"blob1"}`))
+		case key == "DELETE "+repo+"/contents/tests/push-1.txt":
+			_, _ = w.Write([]byte(`{"commit":{"sha":"c3"}}`))
+		case key == "GET "+repo+"/pulls/9/commits":
+			_, _ = w.Write([]byte(`[{"sha":"c1"},{"sha":"c2"}]`))
+		case key == "GET "+repo+"/commits/c2":
+			_, _ = w.Write([]byte(`{"parents":[{"sha":"c1"}],"files":[{"filename":"other/x.txt","status":"added"}]}`))
+		case key == "GET "+repo+"/commits/c1":
+			_, _ = w.Write([]byte(`{"parents":[{"sha":"base0"}],"files":[{"filename":"other/y.txt","status":"added"},{"filename":"tests/push-1.txt","status":"added"}]}`))
 		case strings.HasPrefix(key, "GET "+repo+"/contents/"):
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 		case key == "GET "+repo+"/git/ref/heads/main":
@@ -107,6 +117,8 @@ func TestSubcommands(t *testing.T) {
 		{[]string{"edit", "9", "77", "changed"}, `PATCH /repos/IgnisDevNE/SuiteWardQ/issues/comments/77 {"body":"changed"}`, map[string]any{"updated_at": "2026-01-02T00:00:00Z"}},
 		{[]string{"delete", "9", "77"}, "DELETE /repos/IgnisDevNE/SuiteWardQ/issues/comments/77", map[string]any{"comment_id": 77.0}},
 		{[]string{"merge", "9", "squash"}, `PUT /repos/IgnisDevNE/SuiteWardQ/pulls/9/merge {"merge_method":"squash"}`, map[string]any{"merge_commit_sha": "m1", "requested_method": "squash", "merged": true}},
+		{[]string{"comment", "9", "keep", "-outside"}, `POST /repos/IgnisDevNE/SuiteWardQ/issues/9/comments {"body":"keep -outside"}`, map[string]any{"comment_id": 77.0}},
+		{[]string{"revert", "9"}, "DELETE /repos/IgnisDevNE/SuiteWardQ/contents/tests/push-1.txt", map[string]any{"pr": 9.0, "action": "delete", "path": "tests/push-1.txt", "head_sha": "c3"}},
 		{[]string{"close", "9"}, `PATCH /repos/IgnisDevNE/SuiteWardQ/pulls/9 {"state":"closed"}`, map[string]any{"pr": 9.0}},
 	}
 	for _, tc := range cases {
@@ -160,9 +172,66 @@ func TestBadArgumentsRequestNothing(t *testing.T) {
 	}))
 	defer srv.Close()
 	keyFile := writeKey(t)
-	for _, args := range [][]string{{}, {"nope"}, {"open"}, {"open", "../x"}, {"push", "x"}, {"merge", "9", "fast"}, {"edit", "9", "77"}, {"comment", "9"}, {"seed", "extra"}, {"close", "9", "-outside"}} {
+	for _, args := range [][]string{{}, {"nope"}, {"open"}, {"open", "../x"}, {"push", "x"}, {"merge", "9", "fast"}, {"edit", "9", "77"}, {"comment", "9"}, {"seed", "extra"}, {"close", "9", "-outside"}, {"revert"}, {"revert", "9", "x"}} {
 		if err := run(args, env(srv.URL, keyFile, onlyRepo), io.Discard); err == nil {
 			t.Errorf("%v: no error", args)
 		}
+	}
+}
+
+// A PR whose last tests/ change modified a file is reverted by writing the base content back over the head's blob.
+func TestRevertRestoresAModifiedFile(t *testing.T) {
+	var put string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		const repo = "/repos/IgnisDevNE/SuiteWardQ"
+		switch key := r.Method + " " + r.URL.Path + "?" + r.URL.RawQuery; key {
+		case "POST /app/installations/7/access_tokens?":
+			_, _ = w.Write([]byte(`{"token":"` + fakeToken + `"}`))
+		case "GET " + repo + "/pulls/10?":
+			_, _ = w.Write([]byte(`{"head":{"ref":"feat10"}}`))
+		case "GET " + repo + "/pulls/10/commits?per_page=100":
+			_, _ = w.Write([]byte(`[{"sha":"d1"}]`))
+		case "GET " + repo + "/commits/d1?":
+			_, _ = w.Write([]byte(`{"parents":[{"sha":"base0"}],"files":[{"filename":"tests/a.txt","status":"modified"}]}`))
+		case "GET " + repo + "/contents/tests/a.txt?ref=feat10":
+			_, _ = w.Write([]byte(`{"sha":"blobH","content":"bmV3Cg=="}`))
+		case "GET " + repo + "/contents/tests/a.txt?ref=base0":
+			_, _ = w.Write([]byte(`{"sha":"blobB","content":"YQo=\n"}`))
+		case "PUT " + repo + "/contents/tests/a.txt?":
+			put = string(b)
+			_, _ = w.Write([]byte(`{"commit":{"sha":"d2"}}`))
+		default:
+			t.Errorf("unexpected request %s", key)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := run([]string{"revert", "10"}, env(srv.URL, writeKey(t), onlyRepo), &out); err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]string
+	if err := json.Unmarshal([]byte(put), &body); err != nil || body["content"] != "YQo=" || body["sha"] != "blobH" || body["branch"] != "feat10" {
+		t.Errorf("put body %s (%v)", put, err)
+	}
+	if !strings.Contains(out.String(), `"action":"restore"`) || !strings.Contains(out.String(), `"head_sha":"d2"`) {
+		t.Errorf("output %s", out.String())
+	}
+}
+
+func TestErrorMessagesAreTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/access_tokens") {
+			_, _ = w.Write([]byte(`{"token":"` + fakeToken + `"}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"` + strings.Repeat("x", 300) + `"}`))
+	}))
+	defer srv.Close()
+	err := run([]string{"comment", "9", "hi"}, env(srv.URL, writeKey(t), onlyRepo), io.Discard)
+	if err == nil || strings.Count(err.Error(), "x") != 200 {
+		t.Fatalf("error %v, want the message cut to 200 characters", err)
 	}
 }

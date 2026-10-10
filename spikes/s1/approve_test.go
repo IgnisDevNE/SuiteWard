@@ -29,6 +29,8 @@ func TestApprovalComments(t *testing.T) {
 		{"malformed: unknown verb", "magalz", "/suiteward ship " + ref, "failure", false, "malformed"},
 		{"malformed: extra words", "magalz", "/suiteward approve " + ref + " please", "failure", false, "malformed"},
 		{"not a command", "magalz", "looks good to me", "", false, ""},
+		{"quoted first line", "magalz", "> /suiteward approve " + ref, "", false, ""},
+		{"different-case login", "Magalz", "/suiteward approve " + ref, "failure", false, "wrong_author"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,5 +115,37 @@ func TestApprovalFollowsTheRef(t *testing.T) {
 	h.cycle()
 	if got := h.lastCheck(); !strings.Contains(got, `"head_sha":"cccc"`) || !strings.Contains(got, `"conclusion":"success"`) {
 		t.Fatalf("reverted head must be approved again, got %s", got)
+	}
+}
+
+// Two valid approvals of the current ref: the earliest comment in the list is the one recorded.
+func TestEarliestValidApprovalWins(t *testing.T) {
+	h := newHarness(t)
+	h.gh.trees["aaaa"] = treeJSON(entryX)
+	body := "/suiteward approve " + refOf(entryX)
+	h.gh.comments = []fakeComment{
+		{id: 7, login: "magalz", body: body, updatedAt: "2026-01-01T00:00:00Z"},
+		{id: 8, login: "magalz", body: body, updatedAt: "2026-01-02T00:00:00Z"},
+	}
+	h.cycle()
+	if got := h.a.st.Pulls[5].ApprovedCommentID; got != 7 {
+		t.Fatalf("approved comment %d, want 7", got)
+	}
+}
+
+// The owner login is compared as a plain, case-sensitive string, so a bot login works and a case variant does not.
+func TestOwnerLoginIsAnExactMatch(t *testing.T) {
+	for _, tc := range []struct {
+		login string
+		want  string
+	}{{"suitewardq-spike[bot]", "success"}, {"SuiteWardQ-Spike[bot]", "failure"}} {
+		h := newHarness(t)
+		h.a.cfg.ownerLogin = "suitewardq-spike[bot]"
+		h.gh.trees["aaaa"] = treeJSON(entryX)
+		h.gh.comments = []fakeComment{{id: 7, login: tc.login, body: "/suiteward approve " + refOf(entryX), updatedAt: "2026-01-01T00:00:00Z"}}
+		h.cycle()
+		if got := h.lastCheck(); !strings.Contains(got, `"conclusion":"`+tc.want+`"`) {
+			t.Errorf("login %q: check %s, want %s", tc.login, got, tc.want)
+		}
 	}
 }

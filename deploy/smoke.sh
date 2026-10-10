@@ -12,6 +12,8 @@ set -u
 BASE=${SMOKE_BASE:-http://127.0.0.1:8081}
 CTR=${SMOKE_CONTAINER:-suiteward}
 READY_TIMEOUT=${SMOKE_READY_TIMEOUT:-120}
+# Optional: the version /status must report, for example sha-<commit> of the image that was just deployed.
+EXPECT_VERSION=${SMOKE_VERSION:-}
 
 promote=0
 for arg; do
@@ -57,6 +59,9 @@ wait_ready() {
 
 check_status() { # step
 	body=$(curl -fsS -m 5 "$BASE/status") || die "$1" "GET /status failed"
+	version=$(printf '%s' "$body" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -n 1)
+	[ -n "$version" ] || die "$1" "no version in $body"
+	[ -z "$EXPECT_VERSION" ] || [ "$version" = "$EXPECT_VERSION" ] || die "$1" "version $version, want $EXPECT_VERSION"
 	schema=$(num schemaVersion "$body")
 	[ -n "$schema" ] || die "$1" "no schemaVersion in $body"
 	discarded=$(num discarded "$body")
@@ -77,7 +82,7 @@ ok healthz
 
 begin
 check_status status
-ok status "schema version $schema, no failed or discarded"
+ok status "version $version, schema version $schema, no failed or discarded"
 
 begin
 out=$(podman exec "$CTR" /suiteward probe </dev/null 2>&1) || die probe "$(last "$out")"

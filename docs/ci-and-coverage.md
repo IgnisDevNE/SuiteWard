@@ -18,7 +18,7 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 | Job | Behavior |
 | --- | --- |
 | Inspect repository | Compare tracked files with the base revision to select foundation or Go verification. Removing an existing Go module or source cannot silently disable the Go checks. |
-| Foundation, Windows and Linux | Parse all PowerShell scripts; validate the workflow with actionlint and documentation links; run the tests for CI classification and gate behavior, coverage argument handling, Go, persistence, and development tooling safety and isolation, and the bot-token script. |
+| Foundation, Windows and Linux | Parse all PowerShell scripts; validate every workflow file with actionlint and the documentation links; run the tests for CI classification and gate behavior, coverage argument handling, Go, persistence, and development tooling safety and isolation, and the bot-token script. |
 | Go, Windows and Linux | Verify formatting, analyze, lint, build and run portable tests; verify fresh sqlc output. A module without real packages fails. |
 | Race, security, and coverage | Test the exact event head against an isolated PostgreSQL service with integration tests, verify fresh sqlc output, scan vulnerabilities, preserve the coverage report, and upload it to Codecov. |
 | CI / Gate | Always evaluate all prerequisite results. Accept skipped Go jobs only when the successful classifier established foundation-only applicability. Failures, cancellations, missing classification, and unexpected skips fail the gate. |

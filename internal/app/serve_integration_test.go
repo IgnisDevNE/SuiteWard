@@ -3,8 +3,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,6 +21,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
 func TestServeMigratesAFreshDatabaseAndReports(t *testing.T) {
@@ -64,6 +68,21 @@ func TestServeMigratesAFreshDatabaseAndReports(t *testing.T) {
 			t.Fatalf("shutdown step %q is missing or out of order (position %d after %d):\n%s", step, position, last, s.logs.String())
 		}
 		last = position
+	}
+}
+
+func TestServeWarnsAboutUnrecognizedSettings(t *testing.T) {
+	vars := serveVars(t, newDatabase(t))
+	vars["SUITEWARD_HTTP_ADRESS"] = "typo"
+	vars["SUITEWARD_TEST_ANYTHING"] = "set by the development tooling"
+	s := startRun(t, vars)
+	s.waitReady()
+	entry, _ := s.logs.find("unrecognized setting")
+	if entry == nil || entry["level"] != "WARN" || entry["name"] != "SUITEWARD_HTTP_ADRESS" {
+		t.Fatalf("the typo was not logged as a warning: %v\n%s", entry, s.logs.String())
+	}
+	if strings.Contains(s.logs.String(), "SUITEWARD_TEST_ANYTHING") {
+		t.Fatalf("a development-tooling variable was reported as unrecognized:\n%s", s.logs.String())
 	}
 }
 
@@ -354,4 +373,94 @@ func jsonLines(t *testing.T, output string) []map[string]any {
 		lines = append(lines, decoded)
 	}
 	return lines
+}
+
+func TestShutdownReportsAServerThatDoesNotDrain(t *testing.T) {
+	vars := serveVars(t, newDatabase(t))
+	vars["SUITEWARD_SHUTDOWN_TIMEOUT"] = "1s"
+	s := startRun(t, vars)
+	s.waitReady()
+	// A request that never completes keeps its connection busy.
+	conn, err := net.Dial("tcp", s.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }() // a failed close only means the server already dropped it
+	if _, err := conn.Write([]byte("GET /status HTTP/1.1\r\nHost: suiteward\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if code := s.stop(); code != 1 {
+		t.Fatalf("a stop with an undrained server exited %d; want 1:\n%s", code, s.logs.String())
+	}
+	if entry, _ := s.logs.find("http server stopped"); entry != nil {
+		t.Fatalf("an undrained server was reported as stopped:\n%s", s.logs.String())
+	}
+	if entry, _ := s.logs.find("database pool closed"); entry == nil {
+		t.Fatalf("River and the pool must still stop after a failed drain:\n%s", s.logs.String())
+	}
+}
+
+func TestShutdownGivesUpOnAJobThatIgnoresCancellation(t *testing.T) {
+	databaseURL := newDatabase(t)
+	vars := serveVars(t, databaseURL)
+	vars["SUITEWARD_SHUTDOWN_TIMEOUT"] = "1s"
+	started, release := make(chan struct{}), make(chan struct{})
+	s := startServe(t, vars, map[string]river.Handler{"deaf": func(context.Context, json.RawMessage) error {
+		close(started)
+		<-release
+		return nil
+	}})
+	s.waitReady()
+	enqueue(t, databaseURL, "deaf", 0)
+	waitChan(t, started, "the job to start")
+
+	code := s.stop()
+	close(release)
+	if code != 1 {
+		t.Fatalf("a stop that could not cancel a job exited %d; want 1:\n%s", code, s.logs.String())
+	}
+	if entry, _ := s.logs.find("database pool closed"); entry != nil {
+		t.Fatalf("the pool was closed under a running job:\n%s", s.logs.String())
+	}
+}
+
+func TestAReservedHandlerKindIsFatal(t *testing.T) {
+	handlers := map[string]river.Handler{river.ProbeKind: func(context.Context, json.RawMessage) error { return nil }}
+	vars := serveVars(t, newDatabase(t))
+	cfg, _, err := config.Load(testEnv(vars).Lookup, testEnv(vars).Environ, testEnv(vars).ReadFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs logBuffer
+	if code := serve(t.Context(), cfg, newLogger(&logs, cfg.LogLevel), handlers); code != 1 {
+		t.Fatalf("serve with a handler on the reserved probe kind exited %d; want 1:\n%s", code, logs.String())
+	}
+}
+
+type brokenOutput struct{}
+
+func (brokenOutput) Write([]byte) (int, error) { return 0, errors.New("stdout closed") }
+
+func TestProbeReportsAnOutputFailure(t *testing.T) {
+	databaseURL := newDatabase(t)
+	s := startRun(t, serveVars(t, databaseURL))
+	s.waitReady()
+	s.stop()
+	var stderr bytes.Buffer
+	if code := Run(t.Context(), []string{"probe", "--no-wait"}, s.env(), brokenOutput{}, &stderr); code != 1 || !strings.Contains(stderr.String(), "stdout closed") {
+		t.Fatalf("probe with a broken stdout exited %d, stderr %q; want 1 and the cause", code, stderr.String())
+	}
+}
+
+func TestProbeFailsWhenItCannotEnqueue(t *testing.T) {
+	databaseURL := newDatabase(t)
+	s := startRun(t, serveVars(t, databaseURL))
+	s.waitReady()
+	s.stop()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var stderr bytes.Buffer
+	if code := Run(ctx, []string{"probe"}, s.env(), io.Discard, &stderr); code != 1 {
+		t.Fatalf("probe with a canceled context exited %d, stderr %q; want 1", code, stderr.String())
+	}
 }

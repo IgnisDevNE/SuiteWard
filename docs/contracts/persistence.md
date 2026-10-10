@@ -242,7 +242,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (R1-D1 creates one migration `00001_governance.sql`)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |

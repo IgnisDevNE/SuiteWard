@@ -44,7 +44,7 @@ Accepted 2026-10-05: [ADR 0027](../decisions/0027-agent-human-trust-separation.m
 
 ### D-MIGRATIONS: Migration tooling
 
-Superseded by R1. Goose, pgx and sqlc stay ([ADR 0026](../decisions/0026-versioned-postgresql-migrations.md)); the migrations are reset to a single normalized `00001` described in the [persistence contract](../contracts/persistence.md).
+Superseded by R1. Goose, pgx and sqlc stay ([ADR 0026](../decisions/0026-versioned-postgresql-migrations.md)); the migrations were reset to a single normalized `00001` (River and the outbox were added in M1.2) described in the [persistence contract](../contracts/persistence.md).
 
 ### D-M0-COVERAGE: Coverage policy
 

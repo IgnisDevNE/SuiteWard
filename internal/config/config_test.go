@@ -348,10 +348,10 @@ func TestLoadWarningsNeverCarryValues(t *testing.T) {
 	}
 }
 
-func TestLoadIgnoresMalformedEnvironEntries(t *testing.T) {
+func TestLoadIgnoresEnvironEntriesOutsideTheNamespace(t *testing.T) {
 	vars := required(t)
 	lookup := func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
-	_, warnings, err := Load(lookup, []string{"SUITEWARD_NOEQUALS", "=C:=x"}, nil)
+	_, warnings, err := Load(lookup, []string{"NOEQUALS", "=C:=x", "PATH=/bin"}, nil)
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("err %v warnings %v", err, warnings)
 	}
@@ -366,7 +366,7 @@ func TestConfigNeverRendersTheDatabaseURL(t *testing.T) {
 		"%v":  fmt.Sprintf("%v", cfg),
 		"%+v": fmt.Sprintf("%+v", cfg),
 		"%#v": fmt.Sprintf("%#v", cfg),
-		"%s":  fmt.Sprintf("%s", cfg.DatabaseURL),
+		"%s":  cfg.DatabaseURL.String(),
 	}
 	var jsonOut, textOut bytes.Buffer
 	slog.New(slog.NewJSONHandler(&jsonOut, nil)).Info("config", "config", cfg)
@@ -394,5 +394,16 @@ func TestOSWiresTheProcessEnvironment(t *testing.T) {
 	}
 	if _, err := readFile(filepath.Join(t.TempDir(), "absent")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("readFile error = %v", err)
+	}
+}
+
+func TestLoadHTTPAddrPortMustBeInRange(t *testing.T) {
+	for addr, ok := range map[string]bool{"127.0.0.1:1": true, ":65535": true, "[::1]:8080": true, "h:0": false, "h:65536": false, "h:http": false} {
+		vars := required(t)
+		vars["SUITEWARD_HTTP_ADDR"] = addr
+		_, _, err := fakeEnv{vars: vars}.load()
+		if (err == nil) != ok {
+			t.Errorf("HTTP_ADDR=%q: error = %v, want accepted=%v", addr, err, ok)
+		}
 	}
 }

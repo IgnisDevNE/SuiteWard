@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 )
@@ -142,5 +143,16 @@ func TestAFailedReleaseDoesNotHideTheAbortError(t *testing.T) {
 
 	if err := relayFor(t, store).RunOnce(t.Context()); !errors.Is(err, boom) {
 		t.Fatalf("RunOnce = %v, want the original outcome error", err)
+	}
+}
+
+func TestTruncateNeverSplitsACharacter(t *testing.T) {
+	text := strings.Repeat("€", 500) // three bytes each: 1024 falls inside a character
+	got := truncate(text)
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "…") || len(got) > maxErrorBytes+len("…") {
+		t.Fatalf("truncate = %d bytes, valid UTF-8 %v, want a short valid text ending in an ellipsis", len(got), utf8.ValidString(got))
+	}
+	if short := "short"; truncate(short) != short {
+		t.Error("a short text was changed")
 	}
 }

@@ -38,3 +38,6 @@ func NewRelay(config RelayConfig) (*Relay, error) { return &Relay{}, nil }
 
 // RunOnce claims and delivers every due message.
 func (r *Relay) RunOnce(ctx context.Context) error { return errors.New("not implemented") }
+
+// backoff is the delay before the next attempt after attempts failed attempts.
+func backoff(attempts int) time.Duration { return 0 }

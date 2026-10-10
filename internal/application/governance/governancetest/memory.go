@@ -31,7 +31,7 @@ var (
 
 // NewMemory returns an empty store; Seed adds Suites before any unit of work.
 func NewMemory() *Memory {
-	return &Memory{data: data{suites: map[suiteKey]*suiteData{}, byOp: map[contract.OperationID]governance.OperationReceipt{}, bySource: map[contract.SourceCommandID]governance.OperationReceipt{}}}
+	return &Memory{data: data{suites: map[suiteKey]*suiteData{}, byOp: map[contract.OperationID]governance.OperationReceipt{}, bySource: map[contract.SourceCommandID]governance.OperationReceipt{}, outbox: map[string]governance.OutboxMessage{}}}
 }
 
 // FailNext makes the next write of the next unit of work fail with err after
@@ -59,6 +59,8 @@ type data struct {
 	suites   map[suiteKey]*suiteData
 	byOp     map[contract.OperationID]governance.OperationReceipt
 	bySource map[contract.SourceCommandID]governance.OperationReceipt
+	jobs     []governance.Job
+	outbox   map[string]governance.OutboxMessage
 }
 
 type suiteData struct {
@@ -78,7 +80,7 @@ type proposalData struct {
 }
 
 func (d data) clone() data {
-	c := data{suites: map[suiteKey]*suiteData{}, byOp: maps.Clone(d.byOp), bySource: maps.Clone(d.bySource)}
+	c := data{suites: map[suiteKey]*suiteData{}, byOp: maps.Clone(d.byOp), bySource: maps.Clone(d.bySource), jobs: slices.Clone(d.jobs), outbox: maps.Clone(d.outbox)}
 	for key, s := range d.suites {
 		next := *s
 		next.history = maps.Clone(s.history)
@@ -322,19 +324,56 @@ func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) e
 
 var _ QueueInspector = (*Memory)(nil)
 
-func (m *Memory) QueuedJobKinds(context.Context) ([]string, error) { return nil, nil }
+func (m *Memory) QueuedJobKinds(context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kinds := make([]string, len(m.data.jobs))
+	for i, job := range m.data.jobs {
+		kinds[i] = job.Kind
+	}
+	slices.Sort(kinds)
+	return kinds, nil
+}
 
-func (m *Memory) OutboxKeys(context.Context) ([]string, error) { return nil, nil }
+func (m *Memory) OutboxKeys(context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Sorted(maps.Keys(m.data.outbox)), nil
+}
 
-func (t *tx) Enqueue(context.Context, governance.Job) error { return errors.New("not implemented") }
+func (t *tx) Enqueue(ctx context.Context, job governance.Job) error {
+	if err := t.live(ctx); err != nil {
+		return err
+	}
+	if err := job.Validate(); err != nil {
+		return err
+	}
+	t.d.jobs = append(t.d.jobs, job)
+	return t.injected()
+}
 
-func (t *tx) Outbox(context.Context, governance.OutboxMessage) error {
-	return errors.New("not implemented")
+func (t *tx) Outbox(ctx context.Context, message governance.OutboxMessage) error {
+	if err := t.live(ctx); err != nil {
+		return err
+	}
+	if err := message.Validate(); err != nil {
+		return err
+	}
+	if _, taken := t.d.outbox[message.Key]; taken {
+		return fmt.Errorf("%w: outbox key %q", governance.ErrOperationConflict, message.Key)
+	}
+	t.d.outbox[message.Key] = message
+	return t.injected()
 }
 
 // written bumps the Suite revision and applies an injected failure.
 func (t *tx) written() error {
 	t.s.revision++
+	return t.injected()
+}
+
+// injected applies the failure injected by FailNext, once.
+func (t *tx) injected() error {
 	if err := t.fail; err != nil {
 		t.fail = nil
 		return err

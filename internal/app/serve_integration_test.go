@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -410,6 +411,52 @@ func TestShutdownReportsAServerThatDoesNotDrain(t *testing.T) {
 	}
 	if entry, _ := s.logs.find("database pool closed"); entry == nil {
 		t.Fatalf("River and the pool must still stop after a failed drain:\n%s", s.logs.String())
+	}
+}
+
+// Readiness cannot be observed over HTTP once the shutdown has begun: net/http drops a request it reads after
+// Server.Shutdown started (and the listener is closed first), so the order is checked on the server's own hook.
+func TestReadinessTurnsUnavailableBeforeTheServerDrains(t *testing.T) {
+	databaseURL := newDatabase(t)
+	env := testEnv(serveVars(t, databaseURL))
+	cfg, _, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrations.Up(t.Context(), databaseURL); err != nil {
+		t.Fatal(err)
+	}
+	pool, store, err := connect(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs logBuffer
+	logger := newLogger(&logs, cfg.LogLevel)
+	runtime, err := river.NewRuntime(pool, store, river.Config{
+		Logger: logger, Workers: cfg.JobWorkers, JobTimeout: cfg.JobTimeout,
+		OutboxMaxAttempts: cfg.OutboxMaxAttempts, OutboxPollInterval: cfg.OutboxPollInterval, OutboxLease: cfg.OutboxLease,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	a := &api{store: store, logger: logger}
+	srv := &http.Server{Handler: newRouter(a)}
+	var readyWhenDraining []bool
+	srv.RegisterOnShutdown(func() { readyWhenDraining = append(readyWhenDraining, !a.stopping.Load()) })
+
+	if err := shutdown(logger, a, srv, runtime, pool, 30*time.Second); err != nil {
+		t.Fatalf("shutdown: %v\n%s", err, logs.String())
+	}
+	if len(readyWhenDraining) != 1 || readyWhenDraining[0] {
+		t.Fatalf("readiness was still up when the server began to drain: %v", readyWhenDraining)
+	}
+	recorder := httptest.NewRecorder()
+	a.readyz(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if body := strings.TrimSpace(recorder.Body.String()); recorder.Code != http.StatusServiceUnavailable || body != `{"reason":"shutting down","status":"unavailable"}` {
+		t.Fatalf("GET /readyz after the shutdown = %d %s; want 503 shutting down", recorder.Code, body)
 	}
 }
 

@@ -389,6 +389,19 @@ func TestShutdownReportsAServerThatDoesNotDrain(t *testing.T) {
 	if _, err := conn.Write([]byte("GET /status HTTP/1.1\r\nHost: suiteward\r\n")); err != nil {
 		t.Fatal(err)
 	}
+	// Accepting is in order: once a second connection is served, the stalled one has been accepted
+	// and tracked, so the shutdown cannot miss it.
+	second, err := net.Dial("tcp", s.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }() // a failed close only means the server already dropped it
+	if _, err := second.Write([]byte("GET /healthz HTTP/1.1\r\nHost: suiteward\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if response, err := io.ReadAll(second); err != nil || !strings.HasPrefix(string(response), "HTTP/1.1 200") {
+		t.Fatalf("the second connection was not served: %q, %v", response, err)
+	}
 	if code := s.stop(); code != 1 {
 		t.Fatalf("a stop with an undrained server exited %d; want 1:\n%s", code, s.logs.String())
 	}
@@ -434,6 +447,9 @@ func TestAReservedHandlerKindIsFatal(t *testing.T) {
 	var logs logBuffer
 	if code := serve(t.Context(), cfg, newLogger(&logs, cfg.LogLevel), handlers); code != 1 {
 		t.Fatalf("serve with a handler on the reserved probe kind exited %d; want 1:\n%s", code, logs.String())
+	}
+	if !strings.Contains(logs.String(), "reserved") {
+		t.Fatalf("the fatal error does not say the kind is reserved:\n%s", logs.String())
 	}
 }
 

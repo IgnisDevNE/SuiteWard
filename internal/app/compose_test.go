@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -23,16 +24,20 @@ func TestOSEnvReadsTheProcessEnvironment(t *testing.T) {
 
 func TestConnectRejectsUnusableSettings(t *testing.T) {
 	valid := config.Config{DatabaseURL: "postgres://nobody@127.0.0.1:1/none", ArtifactDir: t.TempDir(), JobMaxAttempts: 5}
-	for name, mutate := range map[string]func(*config.Config){
-		"blank artifact directory": func(c *config.Config) { c.ArtifactDir = "" },
-		"negative job attempts":    func(c *config.Config) { c.JobMaxAttempts = -1 },
-		"malformed database URL":   func(c *config.Config) { c.DatabaseURL = "postgres://%" },
+	// Each case must be refused by its own step, before the unreachable database is tried.
+	for name, test := range map[string]struct {
+		mutate func(*config.Config)
+		step   string
+	}{
+		"blank artifact directory": {func(c *config.Config) { c.ArtifactDir = "" }, "open the artifact store"},
+		"negative job attempts":    {func(c *config.Config) { c.JobMaxAttempts = -1 }, "create the River insert client"},
+		"malformed database URL":   {func(c *config.Config) { c.DatabaseURL = "postgres://%" }, "open the connection pool"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := valid
-			mutate(&cfg)
-			if _, _, err := connect(context.Background(), cfg); err == nil {
-				t.Fatal("connect accepted unusable settings")
+			test.mutate(&cfg)
+			if _, _, err := connect(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), test.step) {
+				t.Fatalf("connect = %v; want a refusal at %q", err, test.step)
 			}
 		})
 	}

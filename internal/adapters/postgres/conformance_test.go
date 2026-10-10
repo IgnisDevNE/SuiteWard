@@ -8,6 +8,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance/governancetest"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -25,7 +28,7 @@ func TestPostgresConformance(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		return &failingStore{Store: governancetest.Store(w.store)}
+		return &failingStore{Store: governancetest.Store(w.store), pool: w.pool}
 	})
 }
 
@@ -35,11 +38,32 @@ func TestPostgresConformance(t *testing.T) {
 // then reports the failure, which the unit of work must roll back.
 type failingStore struct {
 	governancetest.Store
+	pool *pgxpool.Pool
 	mu   sync.Mutex
 	next error
 }
 
-var _ governancetest.FailNexter = (*failingStore)(nil)
+var (
+	_ governancetest.FailNexter     = (*failingStore)(nil)
+	_ governancetest.QueueInspector = (*failingStore)(nil)
+)
+
+// column returns one text column of every committed row, sorted.
+func (s *failingStore) column(ctx context.Context, query string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+func (s *failingStore) QueuedJobKinds(ctx context.Context) ([]string, error) {
+	return s.column(ctx, "SELECT kind FROM river_job ORDER BY kind")
+}
+
+func (s *failingStore) OutboxKeys(ctx context.Context) ([]string, error) {
+	return s.column(ctx, "SELECT key FROM outbox ORDER BY key")
+}
 
 func (s *failingStore) FailNext(err error) {
 	s.mu.Lock()
@@ -74,6 +98,14 @@ func (t *failingTx) afterWrite(err error) error {
 
 func (t *failingTx) AppendConsent(ctx context.Context, write governance.ConsentWrite) error {
 	return t.afterWrite(t.Tx.AppendConsent(ctx, write))
+}
+
+func (t *failingTx) Enqueue(ctx context.Context, job governance.Job) error {
+	return t.afterWrite(t.Tx.Enqueue(ctx, job))
+}
+
+func (t *failingTx) Outbox(ctx context.Context, message governance.OutboxMessage) error {
+	return t.afterWrite(t.Tx.Outbox(ctx, message))
 }
 
 func (t *failingTx) RecordPromotion(ctx context.Context, write governance.PromotionWrite) error {

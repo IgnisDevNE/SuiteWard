@@ -320,6 +320,12 @@ func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) e
 	return t.written()
 }
 
+var _ QueueInspector = (*Memory)(nil)
+
+func (m *Memory) QueuedJobKinds(context.Context) ([]string, error) { return nil, nil }
+
+func (m *Memory) OutboxKeys(context.Context) ([]string, error) { return nil, nil }
+
 func (t *tx) Enqueue(context.Context, governance.Job) error { return errors.New("not implemented") }
 
 func (t *tx) Outbox(context.Context, governance.OutboxMessage) error {

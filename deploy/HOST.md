@@ -60,8 +60,7 @@ Do this before the services start. D-DEPLOY says IMDSv2 with hop limit 1 keeps c
 First the S1 check, as `suiteward` (open a shell as in section 1), before the rule exists. It must print `200`, which shows the check can see the problem:
 
 ```
-podman run --rm docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}
-' http://169.254.169.254/latest/api/token
+podman run --rm docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/api/token
 ```
 
 Then, as `ssm-user` (type `exit` to leave the `suiteward` shell), make sure `nft` exists:

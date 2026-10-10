@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,7 +49,12 @@ func startRuntime(t *testing.T, w *world, config river.Config) *river.Runtime {
 // waitStatus waits until a system job and message reach the given states.
 func waitStatus(t *testing.T, w *world, id int64, key string, want postgres.SystemStatus) {
 	t.Helper()
-	deadline := time.Now().Add(40 * time.Second)
+	waitStatusWithin(t, w, id, key, want, 40*time.Second)
+}
+
+func waitStatusWithin(t *testing.T, w *world, id int64, key string, want postgres.SystemStatus, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
 	var got postgres.SystemStatus
 	for time.Now().Before(deadline) {
 		var err error
@@ -60,7 +66,7 @@ func waitStatus(t *testing.T, w *world, id int64, key string, want postgres.Syst
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("status = %+v after 40s, want %+v", got, want)
+	t.Fatalf("status = %+v after %v, want %+v", got, within, want)
 }
 
 func TestProbeJobAndMessageAreProcessed(t *testing.T) {
@@ -150,6 +156,34 @@ func TestJobOfAKilledProcessIsRescued(t *testing.T) {
 	waitStatus(t, w, id, "m1", postgres.SystemStatus{JobState: "completed", OutboxState: "delivered"})
 	if got := w.scalar("SELECT attempt::text FROM river_job WHERE id=$1", id); got != "2" {
 		t.Fatalf("attempt = %s, want the rescued job to run as attempt 2", got)
+	}
+}
+
+// A handler that never returns stands in for a process killed during a job:
+// its attempt is rescued once RescueStuckJobsAfter has passed and runs again.
+// River's rescuer ticks every 30 seconds, which this test has to wait for.
+func TestJobWhoseHandlerNeverReturnsIsRescued(t *testing.T) {
+	w := newWorld(t, 5)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	var calls atomic.Int32
+	config := testConfig(&logCapture{})
+	config.JobTimeout, config.RescueStuckJobsAfter = 500*time.Millisecond, time.Second
+	config.Handlers = map[string]river.Handler{"stuck": func(context.Context, json.RawMessage) error {
+		if calls.Add(1) == 1 {
+			<-release // ignores its context: the attempt of a dead process
+		}
+		return nil
+	}}
+	startRuntime(t, w, config)
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) }) // runs before the runtime stops
+	id := w.enqueue("m1", "stuck", river.ProbeKind, time.Time{})
+
+	waitStatusWithin(t, w, id, "m1", postgres.SystemStatus{JobState: "completed", OutboxState: "delivered"}, 90*time.Second)
+	releaseOnce.Do(func() { close(release) })
+	time.Sleep(500 * time.Millisecond) // the stale attempt reports its end
+	if got := w.scalar("SELECT state::text || ' ' || attempt FROM river_job WHERE id=$1", id); got != "completed 2" || calls.Load() != 2 {
+		t.Fatalf("job %q after %d handler calls, want completed on attempt 2 after two calls, untouched by the stale first attempt", got, calls.Load())
 	}
 }
 

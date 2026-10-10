@@ -134,7 +134,7 @@ Limits: `go-format.ps1` formats only files inside the checkout that launched the
 
 ## Running the service
 
-`suiteward serve` and `suiteward probe` are described in the [runtime contract](contracts/runtime.md). To run the real image on this PC build it with `podman build -f deploy/Containerfile --build-arg VERSION=dev -t localhost/suiteward:local .`, start the co-located stack with `./deploy/local.ps1 -Image localhost/suiteward:local` (one stack per machine; it generates the database password into Podman secrets) and run the smoke test inside the Podman machine with `Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"`. The remote verification host follows [deploy/HOST.md](../deploy/HOST.md). The smoke script's failure-path self-test, `deploy/smoke_test.sh`, runs as part of `check`.
+`suiteward serve` and `suiteward probe` are described in the [runtime contract](contracts/runtime.md). To run the real image on this PC build it with `podman build -f deploy/Containerfile -t localhost/suiteward:local .` (it reports version `dev`; pass `--build-arg VERSION=sha-<commit>` to stamp another), start the co-located stack with `./deploy/local.ps1 -Image localhost/suiteward:local` (one stack per machine; it generates the database password into Podman secrets) and run the smoke test inside the Podman machine with `Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"` (to assert the reported version, use `podman machine ssh "SMOKE_VERSION=<version> sh -s"`). The remote verification host follows [deploy/HOST.md](../deploy/HOST.md). The smoke script's failure-path self-test, `deploy/smoke_test.sh`, runs as part of `check`.
 
 ## Verification boundaries
 

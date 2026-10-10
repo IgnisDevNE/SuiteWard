@@ -18,7 +18,9 @@ case $url in
 */healthz) echo '{"status":"ok"}' ;;
 */status)
 	[ -e "$FAKE_DIR/restarted" ] && FAKE_FAILED=${FAKE_FAILED_AFTER_RESTART:-${FAKE_FAILED:-0}}
-	echo "{\"version\":\"test\",\"schemaVersion\":7,\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}}" ;;
+	version='"version":"test",'
+	[ "${FAKE_NO_VERSION:-}" = 1 ] && version=
+	echo "{${version}\"schemaVersion\":7,\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}}" ;;
 *) exit 22 ;;
 esac
 EOF
@@ -83,6 +85,9 @@ expect_ok "expected version matches" "version test"
 
 run SMOKE_VERSION=sha-abc sh "$smoke"
 expect_fail "expected version differs" "FAIL status: version test, want sha-abc"
+
+run FAKE_NO_VERSION=1 sh "$smoke"
+expect_fail "status without a version" "FAIL status: no version"
 
 run FAKE_DISCARDED=2 sh "$smoke"
 expect_fail "discarded jobs" "FAIL status"

@@ -88,4 +88,5 @@ Invoke-Podman run --detach --replace --name suiteward --network suiteward --rest
     $Image | Out-Null
 
 Write-Host "Started suiteward-db and suiteward ($Image). Status: curl http://127.0.0.1:8081/status"
-Write-Host 'If curl cannot connect (WSL port forwarding), run the smoke test inside the machine: podman machine ssh "sh -s" < deploy/smoke.sh'
+Write-Host 'If curl cannot connect (WSL port forwarding), run the smoke test inside the machine (PowerShell does not accept `<`):'
+Write-Host '  cmd /c ''podman machine ssh "sh -s" < deploy\smoke.sh'''

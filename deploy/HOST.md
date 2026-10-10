@@ -140,7 +140,7 @@ Re-verify with the S1 check, as `suiteward` (open a shell as in section 1):
 podman run --rm docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/api/token
 ```
 
-It must print `000` (anything but `200`; S1 got `200`). Then confirm the SSM agent still works, which proves the rule does not touch it: as `ssm-user`, `sudo systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service` prints `active`, and a second `aws ssm start-session` from your workstation still opens. Optionally reboot the instance once and repeat `sudo nft list table inet suiteward_imds` to confirm the rule persists; the unit is enabled, so the rule is loaded at every boot. Never run commands that print metadata credentials.
+Run it a second time with `--network suiteward` added right after `--rm`, which is the network the service itself uses. Both must print `000` (anything but `200`; S1 got `200`). Then confirm the SSM agent still works, which proves the rule does not touch it: as `ssm-user`, `sudo systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service` prints `active`, and a second `aws ssm start-session` from your workstation still opens. Optionally reboot the instance once and repeat `sudo nft list table inet suiteward_imds` to confirm the rule persists; the unit is enabled, so the rule is loaded at every boot. Never run commands that print metadata credentials.
 
 ## 6. Smoke test and what to paste back
 
@@ -153,7 +153,7 @@ sh ~/smoke.sh
 
 It waits for `/readyz`, checks `/healthz` and `/status` (zero failed and discarded), runs a probe through the worker, restarts the service with a delayed probe still pending and checks the probe completes afterwards, and prints a summary block with a timestamp and elapsed milliseconds per step. It exits non-zero and names the failing step otherwise. Once a later image has been promoted, run `sh ~/smoke.sh --promote` to also run `podman auto-update` once and report the image digest before and after.
 
-Paste back: the whole summary block; the output of `systemctl --user status suiteward-db.service suiteward.service --no-pager`; `podman --version` and the generator dry run (they contain no secret); the one-line IMDS status code; `sudo ss -tlnp` (every listener on `127.0.0.1` or `::1` except the system and SSM ones you recognise; the published port shows as `rootlessport`); about 30 `journalctl` lines of the service around the restart; and how long the first pull and start took.
+Paste back: the whole summary block; the output of `systemctl --user status suiteward-db.service suiteward.service --no-pager`; `podman --version` and the generator dry run (they contain no secret); the two one-line IMDS status codes; `podman inspect suiteward --format '{{.Config.StopTimeout}}'` (must print 45, the contract needs it above the 30 s shutdown timeout); `sudo ss -tlnp` (every listener on `127.0.0.1` or `::1` except the system and SSM ones you recognise; the published port shows as `rootlessport`); about 30 `journalctl` lines of the service around the restart; and how long the first pull and start took.
 
 ## 7. Reach `/status`
 

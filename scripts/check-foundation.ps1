@@ -25,6 +25,13 @@ try {
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
     & (Join-Path $PSScriptRoot 'test-bot-token.ps1')
     & (Join-Path $PSScriptRoot 'test-hooks.ps1')
+    $sh = Get-Command sh -ErrorAction SilentlyContinue
+    if ($sh) {
+        & $sh.Source deploy/smoke_test.sh
+        if ($LASTEXITCODE -ne 0) { throw 'The deploy smoke self-test failed' }
+    } elseif ($IsWindows) {
+        Write-Warning 'sh was not found: the deploy smoke self-test was skipped (the Linux CI job runs it).'
+    } else { throw 'sh is required to run the deploy smoke self-test' }
     Write-Host 'Foundation scripts, workflows, and documentation are valid.'
     $global:LASTEXITCODE = 0
 } finally { Pop-Location }

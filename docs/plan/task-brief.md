@@ -1,6 +1,6 @@
 # Task brief template
 
-The orchestrator writes one brief per task and sends it to the `sw-implementer` subagent. The same brief is given to `sw-reviewer`. Keep it short: a brief that needs more than a page usually describes more than one task.
+The orchestrator writes one brief per task and sends it to the `sw-implementer` subagent, or turns it into an [Orbit prompt](orbit.md#prompt-format). The same brief is given to `sw-reviewer`. Keep it short: a brief that needs more than a page usually describes more than one task.
 
 ```markdown
 # <Phase>-<Task>: <title>

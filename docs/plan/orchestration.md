@@ -9,6 +9,7 @@ The main Claude session orchestrates SuiteWard work. It delegates exploration, i
 | `sw-scout` | Haiku, medium effort | Read-only discovery: Memtrace, then gopls, then targeted reads; structured summaries. |
 | `sw-implementer` | Sonnet, high effort | One task per worktree, test-first. |
 | `sw-reviewer` | Sonnet, high effort | Independent review of each task and of the phase diff. |
+| Orbit executor (optional) | per prompt complexity | Runs queued prompts built from briefs in isolated worktrees, through MCP. Its output is evidence, not authority. See [Orbit executor](orbit.md). |
 | Hooks and `./scripts/dev.ps1` | none | Formatting after edits, repeated-failure reminders, checks, lint. |
 
 Subagents inherit the advisor. The ponytail plugin injects its keep-it-small rules into the orchestrator, `sw-implementer` and `sw-reviewer` (`PONYTAIL_SUBAGENT_MATCHER`). It is declared in `.claude/settings.json` from `DietrichGebert/ponytail` at tag `v5.1.0` with automatic updates off; the audited commit is `9cc65d03aa2da1db7121b912d03596409ee340b8` (a tag pin, not a cryptographic one: re-audit before changing the tag). Each machine installs it once with `claude plugin install ponytail@ponytail --scope project` after trusting the project. The gopls MCP server in `.mcp.json` is pre-approved through `enabledMcpjsonServers` in `.claude/settings.json`; it needs the pinned tools (`./scripts/dev.ps1 tools`).
@@ -30,7 +31,7 @@ Two consequences of the configuration:
 
 1. Brief: goal, owned files, consumed contracts, acceptance, verification.
 2. Worktree and branch `task/<Phase>-<Task>` created from the phase branch.
-3. `sw-implementer` works test-first and runs `./scripts/dev.ps1 check` (and `persistence` when applicable).
+3. `sw-implementer` works test-first and runs `./scripts/dev.ps1 check` (and `persistence` when applicable). A task routed to Orbit runs this step through the [Orbit lifecycle](orbit.md#lifecycle); the orchestrator's own verification, the review and the merge are unchanged.
 4. `sw-reviewer` reviews. Blocking findings go back to the implementer for at most two fix rounds; then the orchestrator decides, or escalates to the user.
 5. The orchestrator merges the task branch into the phase branch with `--no-ff`.
 6. When the phase's tasks are merged, the orchestrator runs the phase checks on the final revision.

@@ -69,11 +69,20 @@ run sh "$smoke"
 expect_ok "success path" "PASS"
 logged "^restart suiteward" || bad "success path" "service was not restarted"
 logged "probe --wait 42-probe-abc" || bad "success path" "pending probe was not awaited after the restart"
+contains "status: ok, elapsed [0-9]* ms, version test, schema version 7" || bad "success path" "status does not report the version"
 contains "time to ready after restart, including the restart" || bad "success path" "ready-after-restart does not say its clock includes the restart"
+contains "delayed job 42-probe-abc survived the restart" || bad "success path" "the pending step does not say that a delayed job survived"
+contains "does not show when the outbox message was delivered" || bad "success path" "the pending step claims more than a delayed job surviving"
 if contains "elapsed"; then pass "timings reported"; else bad "timings reported" "no elapsed time in the output"; fi
 
 run FAKE_READYZ=down sh "$smoke"
 expect_fail "readyz never answers" "FAIL readyz"
+
+run SMOKE_VERSION=test sh "$smoke"
+expect_ok "expected version matches" "version test"
+
+run SMOKE_VERSION=sha-abc sh "$smoke"
+expect_fail "expected version differs" "FAIL status: version test, want sha-abc"
 
 run FAKE_DISCARDED=2 sh "$smoke"
 expect_fail "discarded jobs" "FAIL status"
@@ -111,6 +120,14 @@ run FAKE_DRAIN_STDIN=1 sh -s < "$smoke"
 expect_ok "script piped to sh -s" "PASS"
 run FAKE_DRAIN_STDIN=1 sh -s -- --promote < "$smoke"
 expect_ok "script piped to sh -s with --promote" "promote"
+
+# PowerShell appends a line ending to what it pipes (`Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"`), and the
+# remote bash then runs that stray line (`$'\r': command not found`, exit 127 after a passing run). The script must end the
+# shell itself; a marker line stands for whatever the transport appends.
+{ cat "$smoke"; echo 'echo STRAY-LINE-AFTER-THE-SCRIPT'; } > "$tmp/smoke_stray.sh"
+run sh -s < "$tmp/smoke_stray.sh"
+expect_ok "script piped with a stray line after it" "PASS"
+if contains "STRAY-LINE-AFTER-THE-SCRIPT"; then bad "script piped with a stray line after it" "the shell ran what followed the script"; fi
 
 run sh "$smoke" --bogus
 expect_fail "unknown flag" "usage"

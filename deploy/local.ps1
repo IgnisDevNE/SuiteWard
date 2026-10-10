@@ -5,6 +5,7 @@
 #   ./deploy/local.ps1 -Image localhost/suiteward:local  start a locally built image
 #   ./deploy/local.ps1 -Down                             remove the containers, keep the state
 #   ./deploy/local.ps1 -Down -Purge                      also remove the volumes, secrets and network
+# One stack per machine: the names and the port 8081 are fixed, a second run replaces the first and -Purge removes its volumes.
 # Keep the flags in step with the quadlets: read-only root, no capabilities, stop timeouts, memory limits.
 #Requires -Version 7.2
 param(

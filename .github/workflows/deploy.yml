@@ -3,11 +3,12 @@
 # No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
 # The image is cross-compiled on the build platform and the runtime stage has no RUN, so no QEMU is needed.
 # A run waiting for the owner's approval of `promote` holds the deploy-publish concurrency group; approving moves `deploy` only to that run's digest.
+# The trigger lists the branches the `remote-poc` environment accepts (D-DEPLOY); `main` is added to both when the owner decides.
 name: Deploy
 
 on:
   push:
-    branches: [phase/M1.2, main]
+    branches: [phase/M1.2]
     paths:
       - 'cmd/**'
       - 'internal/**'

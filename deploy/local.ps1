@@ -87,6 +87,7 @@ Invoke-Podman run --detach --replace --name suiteward --network suiteward --rest
     --publish 127.0.0.1:8081:8080 `
     $Image | Out-Null
 
-Write-Host "Started suiteward-db and suiteward ($Image). Status: curl http://127.0.0.1:8081/status"
-Write-Host 'If curl cannot connect (WSL port forwarding), run the smoke test inside the machine (PowerShell does not accept `<`):'
-Write-Host '  cmd /c ''podman machine ssh "sh -s" < deploy\smoke.sh'''
+Write-Host "Started suiteward-db and suiteward ($Image)."
+Write-Host 'The port is published inside the Podman machine; a rootful machine does not forward it to this PC. Run the smoke test inside it:'
+Write-Host '  Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"'
+Write-Host 'Add SMOKE_VERSION=sha-<commit> before sh to also assert the version /status reports.'

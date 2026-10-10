@@ -15,10 +15,16 @@ type Handler func(ctx context.Context, args json.RawMessage) error
 
 // ProbeHandler only logs; it exists to verify the runtime through the real worker.
 func ProbeHandler(logger *slog.Logger) Handler {
-	return func(ctx context.Context, args json.RawMessage) error { return nil }
+	return func(ctx context.Context, _ json.RawMessage) error {
+		logger.InfoContext(ctx, "probe job ran")
+		return nil
+	}
 }
 
 // ProbePublisher only logs.
 func ProbePublisher(logger *slog.Logger) Publisher {
-	return func(ctx context.Context, key string, payload json.RawMessage) error { return nil }
+	return func(ctx context.Context, key string, _ json.RawMessage) error {
+		logger.InfoContext(ctx, "probe message published", "key", key)
+		return nil
+	}
 }

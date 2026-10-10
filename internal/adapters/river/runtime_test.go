@@ -124,8 +124,9 @@ func TestScheduledJobSurvivesARestart(t *testing.T) {
 	if err := first.Stop(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if status, err := w.store.SystemStatus(t.Context(), id, "m1"); err != nil || status.JobState != "scheduled" {
-		t.Fatalf("after the stop: %+v, %v; want the job still scheduled", status, err)
+	// River may already have moved a job due within its scheduling horizon to available; it must not have run.
+	if status, err := w.store.SystemStatus(t.Context(), id, "m1"); err != nil || (status.JobState != "scheduled" && status.JobState != "available") {
+		t.Fatalf("after the stop: %+v, %v; want the job waiting for its time", status, err)
 	}
 
 	startRuntime(t, w, testConfig(&logCapture{}))

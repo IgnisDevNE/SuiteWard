@@ -61,6 +61,15 @@ type Config struct {
 	OutboxLease        time.Duration
 	// GitHub is nil when the synchronization settings are not configured.
 	GitHub *GitHub
+	// MCP is nil when MCP_TOKEN is unset: no local MCP listener.
+	MCP *MCP
+}
+
+// MCP holds the settings of the local MCP listener (see docs/contracts/runtime.md, "Local MCP").
+type MCP struct {
+	Addr           string
+	Token          Secret
+	AllowedOrigins []string
 }
 
 // GitHub holds the interim M1.4 operator configuration of the GitHub App
@@ -114,6 +123,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	c.OutboxPollInterval = number(l, "OUTBOX_POLL_INTERVAL", "5s", time.Second, time.Hour, time.ParseDuration)
 	c.OutboxLease = number(l, "OUTBOX_LEASE", "1m", 5*time.Second, 0, time.ParseDuration)
 	c.GitHub = l.github()
+	c.MCP = l.mcp(c.HTTPAddr)
 
 	warnings := l.unrecognized(environ)
 	if len(l.errs) > 0 {
@@ -241,6 +251,11 @@ func (l *loader) github() *GitHub {
 		g.Repositories = l.repositories("GITHUB_REPOSITORIES", repositories)
 	}
 	return &g
+}
+
+// mcp reads the local MCP settings; nil when MCP_TOKEN is unset.
+func (l *loader) mcp(httpAddr string) *MCP {
+	return nil
 }
 
 func (l *loader) positive(name, value string) int64 {

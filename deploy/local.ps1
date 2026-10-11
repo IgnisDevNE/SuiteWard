@@ -105,7 +105,8 @@ $githubArgs = @()
 if ($github) {
     if (-not (Test-Podman secret exists suiteward-github-app-key)) {
         if (-not $GitHubAppKeyFile) { throw 'The secret suiteward-github-app-key does not exist: pass -GitHubAppKeyFile.' }
-        $pem = [IO.File]::ReadAllText($GitHubAppKeyFile)
+        # .NET resolves a relative path against the process directory, not PowerShell's current location.
+        $pem = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $GitHubAppKeyFile).ProviderPath)
         if ($pem -notmatch '-----BEGIN (RSA )?PRIVATE KEY-----') { throw "$GitHubAppKeyFile is not a PEM private key (PKCS#1 or PKCS#8)." }
         New-PodmanSecret suiteward-github-app-key $pem
         Remove-Variable pem

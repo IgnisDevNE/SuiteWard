@@ -62,9 +62,9 @@ func (e *BudgetExhaustedError) Error() string {
 func (e *BudgetExhaustedError) Unwrap() error { return ErrBudgetExhausted }
 
 // RateLimitedError is a 403 or 429 carrying X-RateLimit-Remaining: 0 or
-// Retry-After. Until is when GitHub allows the next request: Retry-After when
-// present, else X-RateLimit-Reset; it is zero when GitHub sent neither in a
-// parsable form.
+// Retry-After. Until is when GitHub allows the next request in local time:
+// Retry-After when present, else X-RateLimit-Reset; it is zero when GitHub sent
+// neither in a parsable form.
 type RateLimitedError struct {
 	Status int
 	Until  time.Time
@@ -139,6 +139,13 @@ func (b *Budget) acquire() error {
 	}
 	b.inFlight++
 	return nil
+}
+
+// local converts a time in GitHub's clock to the local clock.
+func (b *Budget) local(t time.Time) time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return t.Add(b.offset)
 }
 
 // release returns a reservation whose request got no response.
@@ -343,18 +350,20 @@ func (c *Client) interpret(a answer, value string) (Response, error) {
 	return Response{}, &StatusError{Status: a.status, Body: body}
 }
 
-// retryTime prefers Retry-After (seconds or an HTTP date) over X-RateLimit-Reset (Unix seconds).
+// retryTime prefers Retry-After (seconds or an HTTP date) over X-RateLimit-Reset
+// (Unix seconds) and returns local time: the date and the reset are in GitHub's
+// clock and are shifted by the offset the response's Date just updated.
 func (c *Client) retryTime(retryAfter []string, reset string) time.Time {
 	if len(retryAfter) > 0 {
 		if s, err := strconv.Atoi(retryAfter[0]); err == nil && s >= 0 {
 			return c.budget.clock().Add(time.Duration(s) * time.Second)
 		}
 		if at, err := http.ParseTime(retryAfter[0]); err == nil {
-			return at
+			return c.budget.local(at)
 		}
 	}
 	if r, err := strconv.ParseInt(reset, 10, 64); err == nil {
-		return time.Unix(r, 0)
+		return c.budget.local(time.Unix(r, 0))
 	}
 	return time.Time{}
 }

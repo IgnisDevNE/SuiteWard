@@ -430,6 +430,9 @@ Property every reconstitution test must check: state produced by domain operatio
 | `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent kinds, FK to `consent_results`), receipt jsonb (immutable receipt payload with explicit json tags) |
 | `promotions` | operation_id (unique; no FK, because seeded history has no receipt) | immutable | version_id (FK to `suite_versions`), proposal_id + revision_id (FK to `proposal_revisions`, which holds the binding), carrier, source, target, recorded_at, corrects_version_id; unique version and unique reference |
 | `outbox` (M1.2) | key (global) | immutable except delivery state: `state` (`pending`, `delivered`, `failed`), `attempts`, `next_attempt_at`, `last_error`, `finished_at`; terminal states never change; no delete | project_id, suite_id, kind, payload jsonb, created_at |
+| `github_repositories` (M1.4) | repo (`owner/name`) | observation state; the row is the per-repository lock of a cycle | installation_id, last_success, last_error (enumerated `FailureKind`), last_status, wait_until |
+| `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since |
+| `github_comment_versions` (M1.4) | (repo, comment_id, updated_at) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body, body_digest (checked), first_seen, not_seen_since |
 
 River's own tables (`river_job` and the rest) are created by vendored goose migrations and owned by River.
 

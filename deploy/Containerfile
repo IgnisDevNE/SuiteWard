@@ -21,8 +21,10 @@ COPY --from=build /out/suiteward /suiteward
 # Empty directories owned by the nonroot user, so a fresh named volume mounted at /data is writable.
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV SUITEWARD_HTTP_ADDR=0.0.0.0:8080 \
+	SUITEWARD_MCP_ADDR=0.0.0.0:8090 \
 	SUITEWARD_ARTIFACT_DIR=/data/artifacts
 USER 65532:65532
-# The database URL is a mounted secret file: SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url.
+# The database URL, the GitHub App key and the MCP token are mounted secret files (SUITEWARD_DATABASE_URL_FILE, SUITEWARD_GITHUB_APP_KEY_FILE,
+# SUITEWARD_MCP_TOKEN_FILE); the image holds no secret and no GitHub value.
 ENTRYPOINT ["/suiteward"]
 CMD ["serve"]

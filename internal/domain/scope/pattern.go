@@ -21,6 +21,9 @@ type Pattern struct {
 	raw      string
 	segments []string
 	isDir    bool
+	// belowOnly marks a trailing "/**" (not itself a directory pattern): the
+	// stripped base must be followed by at least one component, as in gitignore.
+	belowOnly bool
 }
 
 // ParsePattern validates and compiles a gitignore-style pattern.
@@ -30,7 +33,8 @@ type Pattern struct {
 // the pattern's last character) anchors the pattern to the repository root,
 // otherwise it matches at any depth; a trailing "/" restricts the pattern to
 // files beneath a matching directory; "**" as a whole segment matches zero
-// or more path segments, while "*", "?" and "[...]" follow path.Match within
+// or more path segments (a trailing "/**" needs at least one component after
+// its base, as in gitignore), while "*", "?" and "[...]" follow path.Match within
 // a single segment.
 func ParsePattern(s string) (Pattern, error) {
 	if strings.TrimSpace(s) == "" {
@@ -74,13 +78,21 @@ func ParsePattern(s string) (Pattern, error) {
 		segments = append([]string{"**"}, segments...)
 	}
 
-	return Pattern{raw: s, segments: segments, isDir: isDir}, nil
+	belowOnly := !isDir && segments[len(segments)-1] == "**"
+	if belowOnly {
+		segments = segments[:len(segments)-1]
+	}
+
+	return Pattern{raw: s, segments: segments, isDir: isDir, belowOnly: belowOnly}, nil
 }
 
 // Match reports whether path, a repository-relative, "/"-separated file
-// path, is covered by p. When path is not a valid manifest path it returns
-// artifact.ErrInvalidPath, never a silent false.
+// path, is covered by p. The zero Pattern returns ErrInvalidPattern and an
+// invalid path returns artifact.ErrInvalidPath, never a silent false.
 func (p Pattern) Match(path string) (bool, error) {
+	if p.IsZero() {
+		return false, fmt.Errorf("%w: zero pattern", ErrInvalidPattern)
+	}
 	if !artifact.ValidPath(path) {
 		return false, fmt.Errorf("%w: %q", artifact.ErrInvalidPath, path)
 	}
@@ -90,14 +102,19 @@ func (p Pattern) Match(path string) (bool, error) {
 			// The pattern matched a directory; every file beneath it matches (rule 4).
 			return true, nil
 		}
-		if !p.isDir {
+		if !p.isDir && !p.belowOnly {
 			// The pattern consumed the whole path: a file match, unless the
-			// pattern names a directory (trailing "/"), which never matches
-			// a file of that same name.
+			// pattern names a directory (trailing "/") or needs a component
+			// beneath its base (trailing "/**").
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// IsZero reports whether the pattern is absent.
+func (p Pattern) IsZero() bool {
+	return p.raw == ""
 }
 
 // String returns the validated pattern's original source text, unnormalized.
@@ -135,6 +152,7 @@ func matchEnds(segments, components []string) []int {
 		if component >= len(components) {
 			return
 		}
+		// Every segment was validated by path.Match at parse time, so it cannot fail.
 		if ok, _ := path.Match(segments[segment], components[component]); ok {
 			walk(segment+1, component+1)
 		}

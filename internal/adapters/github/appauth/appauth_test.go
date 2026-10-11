@@ -918,3 +918,31 @@ func TestCancellingTheMintingCallerReturnsContextCanceledAndCachesNothing(t *tes
 		t.Errorf("the cancelled mint was cached: %d requests", n)
 	}
 }
+
+func TestPrintingAnInstallationWhileMintingIsRaceFree(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: t0}
+	g := newFakeGitHub(t, issuing(clock))
+	inst := newInstallation(t, clock, g)
+	stop := make(chan struct{})
+	printed := make(chan struct{})
+	go func() {
+		defer close(printed)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = fmt.Sprint(inst)
+			}
+		}
+	}()
+	for range 20 {
+		if _, err := inst.Token(context.Background()); err != nil {
+			t.Fatalf("Token: %v", err)
+		}
+		clock.Set(clock.Now().Add(time.Hour)) // past the renewal point: the next call mints
+	}
+	close(stop)
+	<-printed
+}

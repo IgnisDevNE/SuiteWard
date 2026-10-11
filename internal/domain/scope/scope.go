@@ -1,7 +1,6 @@
 package scope
 
 import (
-	"errors"
 	"encoding/binary"
 	"fmt"
 	"slices"
@@ -133,7 +132,19 @@ func patternSet(patterns []Pattern) []string {
 	return slices.Compact(set)
 }
 
-// MayCoverBelow is a stub.
+// MayCoverBelow reports whether some file path beneath dir may be in the
+// effective scope: true when any default, include or runner pattern
+// MayMatchBelow dir. Excludes are ignored on purpose: an exclude cannot make a
+// link inside dir safe, because the link target is outside SuiteWard's view.
+// An invalid dir returns artifact.ErrInvalidPath.
 func (s Scope) MayCoverBelow(dir string) (bool, error) {
-	return false, errors.New("not implemented")
+	if !artifact.ValidPath(dir) {
+		return false, fmt.Errorf("%w: %q", artifact.ErrInvalidPath, dir)
+	}
+	for _, p := range s.protecting() {
+		if may, err := p.MayMatchBelow(dir); err != nil || may {
+			return may, err
+		}
+	}
+	return false, nil
 }

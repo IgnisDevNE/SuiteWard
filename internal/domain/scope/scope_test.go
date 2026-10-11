@@ -211,7 +211,7 @@ func TestScopeMayCoverBelow(t *testing.T) {
 
 func TestScopeMayCoverBelowRejectsInvalidDir(t *testing.T) {
 	s := scopeOf(t, "version: 1\ninclude: ['**']\n")
-	for _, dir := range []string{"", "/a", "a//b", "a\b", "../x"} {
+	for _, dir := range []string{"", "/a", "a//b", `a\b`, "../x"} {
 		t.Run(dir, func(t *testing.T) {
 			got, err := s.MayCoverBelow(dir)
 			if !errors.Is(err, artifact.ErrInvalidPath) {

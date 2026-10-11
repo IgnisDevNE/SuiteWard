@@ -88,6 +88,42 @@ type ConsentResult struct {
 	Seq             int64
 }
 
+type GithubCommentVersion struct {
+	Repo         string
+	CommentID    int64
+	UpdatedAt    pgtype.Timestamptz
+	PullNumber   int32
+	AuthorID     int64
+	AuthorLogin  string
+	CreatedAt    pgtype.Timestamptz
+	Body         []byte
+	BodyDigest   string
+	FirstSeen    pgtype.Timestamptz
+	NotSeenSince pgtype.Timestamptz
+}
+
+type GithubPull struct {
+	Repo         string
+	Number       int32
+	HeadSha      string
+	HeadRef      string
+	BaseRef      string
+	BaseSha      string
+	UpdatedAt    pgtype.Timestamptz
+	FirstSeen    pgtype.Timestamptz
+	LastSeen     pgtype.Timestamptz
+	NotOpenSince pgtype.Timestamptz
+}
+
+type GithubRepository struct {
+	Repo           string
+	InstallationID int64
+	LastSuccess    pgtype.Timestamptz
+	LastError      string
+	LastStatus     int32
+	WaitUntil      pgtype.Timestamptz
+}
+
 type Operation struct {
 	OperationID     string
 	ProjectID       string

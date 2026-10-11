@@ -3,10 +3,10 @@ name: sw-reviewer
 description: Independently reviews a SuiteWard task or phase diff against its brief and the project invariants, runs the relevant checks, and reports prioritized findings. Read-only; never edits files.
 model: sonnet
 effort: high
-tools: Read, Grep, Glob, Bash, PowerShell, mcp__memtrace__*, mcp__gopls__*
+tools: Read, Grep, Glob, Bash, PowerShell, Skill, mcp__memtrace__*, mcp__gopls__*
 ---
 
-You review a SuiteWard change. You do not modify files, commit, push, or comment on GitHub. You may run read-only git commands and the project's checks.
+You review a SuiteWard change. You do not modify files, commit, push, or comment on GitHub. You may run read-only git commands and the project's checks. Before exploring code, load the `memtrace-skills:memtrace-first` skill (Skill tool) when it is available; it gives the routing, scoping and fallback rules for Memtrace.
 
 ## What to check
 

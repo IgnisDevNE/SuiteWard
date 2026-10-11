@@ -1,7 +1,7 @@
 # Governance persistence contract
 
-- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" (frozen by M1.3-C0) and "Baseline proposals" (frozen before M1.3-C2) below.
-- **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite), M1.3-C1 (proposal revision write), M1.3-C2 (baseline proposals).
+- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" (frozen by M1.3-C0) and "Baseline proposals" (frozen before M1.3-C2) below, and for phase M1.4 by "GitHub observations" (frozen by M1.4-B0).
+- **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite), M1.3-C1 (proposal revision write), M1.3-C2 (baseline proposals), M1.4-B1 (observation store), M1.4-B2 (reconciliation).
 
 ## Principles
 
@@ -299,6 +299,107 @@ There are no new `Tx` methods and no migration. The first canonical is then crea
 
 Tests: the full path on the in-memory fake (tree, `ProposeBaseline`, approval through `ProcessConsent`, a seeded assessment, `Bootstrap`, a canonical whose manifest equals the inventory's); a repeated call with the same tree writes nothing; a changed protected file creates a new revision; an existing canonical is rejected; a failing or mismatching `Put` writes nothing. On PostgreSQL with the filesystem store: the inventory's revision and assessment are seeded (assessments have no write path until M1.6), `ProposeBaseline` on the same tree returns the seeded reference with `Committed` false and still stores the bytes, and `Bootstrap` succeeds, so `RecordPromotion` verifies the bytes `ProposeBaseline` wrote.
 
+## GitHub observations (M1.4; normative)
+
+What synchronization saw on GitHub: evidence for later phases, never authority. These writes are not governance facts: they do not go through `Tx`, do not take a Suite lock, do not advance any Suite revision (principle 4 covers governance facts only) and are not linked to a project or Suite. Rows are keyed by repository `owner/name` and installation id; the trusted association between an installation, a repository and a Suite is D-IDENTITY's (M1.5). Migration `00011_github_observations.sql`; `SupportedVersion` becomes 11.
+
+The port lives in `internal/application/githubsync` (not `sync`, which would shadow the standard library) with an in-memory fake and a conformance suite run against both the fake and PostgreSQL:
+
+```go
+// Cycle is one complete, successful cycle of one repository: every page of
+// every listing in it succeeded.
+type Cycle struct {
+	Repo           string
+	InstallationID int64
+	At             time.Time            // observation time, from the injected clock
+	OpenPulls      []ObservedPull       // the complete open listing
+	Comments       map[int][]ObservedComment // for each open pull number, its complete comment listing
+}
+
+type ObservedPull struct {
+	Number                   int
+	HeadSHA, HeadRef         string
+	BaseRef, BaseSHA         string
+	UpdatedAt                time.Time
+}
+
+type ObservedComment struct {
+	CommentID              int64
+	AuthorID               int64
+	AuthorLogin            string
+	CreatedAt, UpdatedAt   time.Time
+	Body                   string
+}
+
+type FailureKind string // rate_limited, budget_exhausted, unauthorized, forbidden, not_found, unprocessable, status, transport, decode
+
+type Failure struct {
+	Repo           string
+	InstallationID int64
+	At             time.Time
+	Kind           FailureKind
+	Status         int       // the HTTP status for kind status (and the typed kinds), else 0
+	WaitUntil      time.Time // set for rate_limited and budget_exhausted
+}
+
+type Store interface {
+	// Repository returns the stored state, or found false before its first cycle.
+	Repository(ctx context.Context, repo string) (RepositoryState, bool, error)
+	// RecordCycle stores one finished cycle of one repository atomically: the
+	// repository state, the open pulls seen, the pulls no longer open, and the
+	// comment versions seen. A repeated call with the same observations changes nothing.
+	RecordCycle(ctx context.Context, cycle Cycle) error
+	// RecordFailure stores a failed cycle (its classification and wait-until) without touching observations.
+	RecordFailure(ctx context.Context, failure Failure) error
+	Pulls(ctx context.Context, repo string) ([]PullState, error)
+	Comments(ctx context.Context, repo string, number int) ([]CommentVersion, error)
+}
+
+type RepositoryState struct {
+	Repo           string    // owner/name
+	InstallationID int64
+	LastSuccess    time.Time // zero before the first successful cycle
+	LastError      FailureKind // empty after a successful cycle; a fixed classification, never text GitHub sent
+	LastStatus     int
+	WaitUntil      time.Time // zero when not waiting (from RateLimitedError.Until or BudgetExhaustedError.Reset)
+}
+
+type PullState struct {
+	Number                    int
+	HeadSHA, HeadRef          string
+	BaseRef, BaseSHA          string
+	UpdatedAt                 time.Time // GitHub's
+	FirstSeen, LastSeen       time.Time // observation times
+	NotOpenSince              time.Time // zero while open; set at the first cycle the PR was absent from the open list
+}
+
+type CommentVersion struct {
+	PullNumber  int
+	CommentID   int64
+	AuthorID    int64
+	AuthorLogin string
+	CreatedAt   time.Time // GitHub's; never changes for an id
+	UpdatedAt   time.Time // GitHub's; a new value is a new version (an edit)
+	Body        string
+	BodyDigest  artifact.Digest
+	FirstSeen   time.Time
+	NotSeenSince time.Time // zero while the comment appears in its PR's full listing; set at the first full listing without it
+}
+```
+
+- **Complete listings only.** A cycle is recorded only when every page of every listing in it succeeded; otherwise the reconciliation records a `Failure` and no observation changes. The store computes the absence marks from the complete sets of the `Cycle`.
+- **Serialized per repository.** `RecordCycle` and `RecordFailure` lock the repository's `github_repositories` row (inserting it on first use) for the whole transaction and compute the marks inside it, so two cycles of the same repository (a tick and an MCP-requested sync) never mark or clear from a stale view; the later commit wins consistently.
+- **Pulls:** upserted by `(repo, number)`; the head, refs, `updated_at` and `last_seen` change, `first_seen` never does. A pull absent from the cycle's open listing gets `not_open_since` (merged or closed is not asserted here: merge detection belongs to M1.7); a pull that reappears clears it.
+- **Comments are append-only versions** keyed by `(repo, comment_id, updated_at, body_digest)`: an edit adds a version, the earlier body stays (two edits within one second of GitHub's `updated_at` are still two versions; the latest version is the one with the largest `updated_at`, ties broken by `first_seen`), so an approval comment edited after it was processed remains visible as such. `created_at` must be equal across versions of one id (a different one is an error and the cycle is not recorded). Absence is judged only within a pull listed in the cycle: a comment missing from its open pull's listing gets `not_seen_since` on its latest version, and reappearing clears it. The comments of a pull that is not open in the cycle are left untouched. A deletion is never a row removal. The body is stored as raw bytes (`bytea`), whatever they contain (a NUL or invalid UTF-8 never fails a cycle), with `body_digest` = `artifact.Hash` of those bytes.
+- **Errors:** an invalid `Cycle` or `Failure` (failing `Validate`, or a pull number outside 1..2^31−1 in a read) wraps `githubsync.ErrInvalidObservation`; a `created_at` that differs across versions of one id wraps `githubsync.ErrCreationTimeChanged`; both stores return the same sentinels. `FailureKind` values are the stored codes, enumerated by a `CHECK` constraint.
+- **Failure classification:** `last_error` is the `FailureKind` (from the `rest` and `github` errors: `ErrRateLimited`, `ErrBudgetExhausted`, `ErrUnauthorized`, `ErrForbidden`, `ErrNotFound`, `ErrUnprocessable`, another status, a transport error, a decode error) with the status where there is one; never error text, so nothing GitHub sent and no secret is stored.
+- **Listing:** each cycle lists the open pulls and, for each open pull, its comments in full (conditional GETs, so an unchanged listing costs a 304 and nothing on GitHub's budget). No `since` and no local clock are used for what to fetch; observation times (`first_seen`, `last_seen`, `not_*_since`) come from the injected clock and are never compared with GitHub's times.
+- **Failures:** a cycle that fails records `last_error` and, for a rate limit or exhausted budget, `wait_until`, without touching observations. The next cycle of that repository starts no earlier than `wait_until`, across restarts.
+
+Tables (observation state, outside the governance immutability rules except where stated): `github_repositories` (repo, installation_id, last_success, last_error, last_status, wait_until), `github_pulls` (repo, number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since), `github_comment_versions` (repo, comment_id, updated_at, pull_number, author_id, author_login, created_at, body, body_digest, first_seen, not_seen_since; a trigger rejects every `UPDATE` that changes a column other than `not_seen_since`, and `DELETE` and `TRUNCATE`).
+
+The conformance suite (fake and PostgreSQL) covers: a first cycle creates the state; a repeated identical cycle changes nothing; a head change updates the pull and keeps `first_seen`; a pull missing from the open listing gets `not_open_since` and reappearing clears it; an edit adds a version and keeps the earlier body; a different `created_at` for an id is an error and records nothing; a comment missing from its open pull's listing gets `not_seen_since`, and the comments of a pull no longer open are untouched; a failure records its kind, status and wait-until without touching observations, and a later success clears the error and the wait; two concurrent `RecordCycle` calls of one repository leave a state equal to one of them applied last. PostgreSQL adds the trigger rejections.
+
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
 ```go
@@ -316,7 +417,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -330,10 +431,13 @@ Property every reconstitution test must check: state produced by domain operatio
 | `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent kinds, FK to `consent_results`), receipt jsonb (immutable receipt payload with explicit json tags) |
 | `promotions` | operation_id (unique; no FK, because seeded history has no receipt) | immutable | version_id (FK to `suite_versions`), proposal_id + revision_id (FK to `proposal_revisions`, which holds the binding), carrier, source, target, recorded_at, corrects_version_id; unique version and unique reference |
 | `outbox` (M1.2) | key (global) | immutable except delivery state: `state` (`pending`, `delivered`, `failed`), `attempts`, `next_attempt_at`, `last_error`, `finished_at`; terminal states never change; no delete | project_id, suite_id, kind, payload jsonb, created_at |
+| `github_repositories` (M1.4) | repo (`owner/name`) | observation state; the row is the per-repository lock of a cycle | installation_id, last_success, last_error (enumerated `FailureKind`), last_status, wait_until |
+| `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since |
+| `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 
 River's own tables (`river_job` and the rest) are created by vendored goose migrations and owned by River.
 
-All enumerations are `text` with `CHECK` constraints. Immutable and append-only tables reject `UPDATE`, `DELETE` and `TRUNCATE` by trigger. `migrations.SupportedVersion` is the single exported schema version used by both the migrator and the schema-readiness check.
+All enumerations are `text` with `CHECK` constraints. Immutable and append-only tables reject `UPDATE`, `DELETE` and `TRUNCATE` by trigger (`github_comment_versions` accepts an `UPDATE` of `not_seen_since` only). `migrations.SupportedVersion` is the single exported schema version used by both the migrator and the schema-readiness check.
 
 ## Behaviors that must stay covered
 

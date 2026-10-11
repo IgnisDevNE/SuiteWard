@@ -1,0 +1,223 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
+)
+
+const (
+	// githubBudget is the share of the installation's rate limit this process may use (D-SYNC).
+	githubBudget = 0.5
+	// githubTimeout bounds one request, so a hung connection cannot hold a cycle until its job ends.
+	githubTimeout = 30 * time.Second
+	// tickMargin is what a tick leaves of JOB_TIMEOUT to record its last cycles and return.
+	tickMargin = 5 * time.Second
+)
+
+// repositoryStatus is one entry of the github section of /status.
+type repositoryStatus struct {
+	Repo        string `json:"repo"`
+	LastSuccess string `json:"lastSuccess,omitempty"`
+	LastError   string `json:"lastError,omitempty"` // the classification and status, never text GitHub sent
+	WaitUntil   string `json:"waitUntil,omitempty"`
+}
+
+// repositoryReader is the part of the observation store /status reads.
+type repositoryReader interface {
+	Repository(ctx context.Context, repo string) (githubsync.RepositoryState, bool, error)
+}
+
+// githubStatus reports what synchronization last saw of the configured repositories.
+type githubStatus struct {
+	repos []string
+	store repositoryReader
+}
+
+// report returns one entry per configured repository, in configuration order;
+// a repository that has no cycle yet has only its name.
+func (g *githubStatus) report(ctx context.Context) ([]repositoryStatus, error) {
+	entries := make([]repositoryStatus, 0, len(g.repos))
+	for _, repo := range g.repos {
+		state, _, err := g.store.Repository(ctx, repo)
+		if err != nil {
+			return nil, fmt.Errorf("read the synchronization state of %s: %w", repo, err)
+		}
+		entry := repositoryStatus{Repo: repo}
+		if !state.LastSuccess.IsZero() {
+			entry.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
+		}
+		entry.LastError = lastErrorText(state)
+		if !state.WaitUntil.IsZero() {
+			entry.WaitUntil = state.WaitUntil.UTC().Format(time.RFC3339)
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// lastErrorText is the classification of the last failed cycle and its HTTP
+// status, never text GitHub sent; empty after a success. /status and the MCP
+// status tool both show it.
+func lastErrorText(state githubsync.RepositoryState) string {
+	text := string(state.LastError)
+	if text != "" && state.LastStatus != 0 {
+		text += fmt.Sprintf(" (HTTP %d)", state.LastStatus)
+	}
+	return text
+}
+
+// githubSync is the GitHub side of the service, composed only when the GitHub settings are set.
+type githubSync struct {
+	reconciler *githubsync.Reconciler
+	repos      []string
+	jobTimeout time.Duration
+}
+
+// composeGitHub builds the App installation, the REST client with the
+// process-wide budget and the reader of the GitHub settings, and the
+// reconciler over store. Synchronization is read-only: the token requests the
+// metadata, pull requests and contents permissions at read level.
+func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+	app, err := appauth.NewApp(g.AppID, []byte(g.AppKey.Reveal()), time.Now)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub App: %w", err)
+	}
+	names := make([]string, len(g.Repositories))
+	for i, repo := range g.Repositories {
+		_, names[i], _ = strings.Cut(repo, "/") // the settings guarantee owner/name; the installation takes the name only
+	}
+	httpClient := &http.Client{Timeout: githubTimeout}
+	installation, err := app.Installation(g.InstallationID, names, map[string]string{"metadata": "read", "pull_requests": "read", "contents": "read"}, httpClient, g.APIURL)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub installation: %w", err)
+	}
+	budget, err := rest.NewBudget(githubBudget, time.Now)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub budget: %w", err)
+	}
+	client, err := rest.NewClient(func(ctx context.Context) (value, identity string, err error) {
+		token, err := installation.Token(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		return token.Reveal(), token.Identity(), nil
+	}, httpClient, g.APIURL, budget)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub client: %w", err)
+	}
+	reader, err := github.NewReader(client)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
+	}
+	reconciler, err := githubsync.NewReconciler(githubReader{reader}, store, time.Now, g.InstallationID)
+	if err != nil {
+		return nil, fmt.Errorf("compose the synchronization: %w", err)
+	}
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout}, nil
+}
+
+// tick is the github_sync_tick job: one cycle of every configured repository.
+func (s *githubSync) tick(ctx context.Context) error {
+	return s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+}
+
+// syncRepo is the github_sync_repo job. A repository that is not configured is
+// an error: the job never calls GitHub for it.
+func (s *githubSync) syncRepo(ctx context.Context, repo string) error {
+	if !slices.Contains(s.repos, repo) {
+		return fmt.Errorf("repository %q is not one of the configured repositories", repo)
+	}
+	return s.reconciler.SyncRepo(ctx, repo)
+}
+
+// tickDeadline is how long a tick may start repositories: JOB_TIMEOUT minus
+// 5 s, and at least half of JOB_TIMEOUT, which the settings allow to be 1 s.
+func tickDeadline(jobTimeout time.Duration) time.Duration {
+	return max(jobTimeout-tickMargin, jobTimeout/2)
+}
+
+// githubReader adapts the GitHub adapter to the synchronization's Reader port
+// and classifies its errors.
+type githubReader struct{ reader *github.Reader }
+
+func (r githubReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, error) {
+	pulls, err := r.reader.OpenPulls(ctx, repo)
+	if err != nil {
+		return nil, classifyReadError(err)
+	}
+	observed := make([]githubsync.ObservedPull, len(pulls))
+	for i, p := range pulls {
+		observed[i] = githubsync.ObservedPull{Number: p.Number, HeadSHA: p.HeadSHA, HeadRef: p.HeadRef, BaseRef: p.BaseRef, BaseSHA: p.BaseSHA, UpdatedAt: p.UpdatedAt}
+	}
+	return observed, nil
+}
+
+func (r githubReader) PullComments(ctx context.Context, repo string, number int) ([]githubsync.ObservedComment, error) {
+	// No since: every cycle lists the comments in full, so no local clock decides what to fetch.
+	comments, err := r.reader.PullComments(ctx, repo, number, time.Time{})
+	if err != nil {
+		return nil, classifyReadError(err)
+	}
+	observed := make([]githubsync.ObservedComment, len(comments))
+	for i, c := range comments {
+		observed[i] = githubsync.ObservedComment{CommentID: c.ID, AuthorID: c.AuthorID, AuthorLogin: c.AuthorLogin, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, Body: c.Body}
+	}
+	return observed, nil
+}
+
+// classifyReadError turns an error of the GitHub adapter into a
+// *githubsync.ReadError: the fixed classification, the status where there is
+// one and the time to wait for a rate limit or an exhausted budget, never text
+// GitHub sent. An error that matches nothing known (a network failure, an
+// unreadable body, a malformed token answer) is a transport failure.
+func classifyReadError(err error) error {
+	var (
+		limited   *rest.RateLimitedError
+		exhausted *rest.BudgetExhaustedError
+		status    *rest.StatusError
+		token     *appauth.StatusError
+	)
+	switch {
+	case errors.As(err, &limited):
+		return &githubsync.ReadError{Kind: githubsync.FailureRateLimited, Status: limited.Status, WaitUntil: limited.Until}
+	case errors.As(err, &exhausted):
+		return &githubsync.ReadError{Kind: githubsync.FailureBudgetExhausted, WaitUntil: exhausted.Reset}
+	case errors.As(err, &status):
+		return statusFailure(status.Status)
+	case errors.As(err, &token):
+		return statusFailure(token.Status)
+	case errors.Is(err, appauth.ErrPermissionsMismatch):
+		return &githubsync.ReadError{Kind: githubsync.FailureForbidden}
+	case errors.Is(err, github.ErrInvalidResponse):
+		return &githubsync.ReadError{Kind: githubsync.FailureDecode}
+	default:
+		return &githubsync.ReadError{Kind: githubsync.FailureTransport}
+	}
+}
+
+// statusFailure classifies an HTTP status the way the rest errors do.
+func statusFailure(status int) *githubsync.ReadError {
+	kind := githubsync.FailureStatus
+	switch status {
+	case http.StatusUnauthorized:
+		kind = githubsync.FailureUnauthorized
+	case http.StatusForbidden:
+		kind = githubsync.FailureForbidden
+	case http.StatusNotFound:
+		kind = githubsync.FailureNotFound
+	case http.StatusUnprocessableEntity:
+		kind = githubsync.FailureUnprocessable
+	}
+	return &githubsync.ReadError{Kind: kind, Status: status}
+}

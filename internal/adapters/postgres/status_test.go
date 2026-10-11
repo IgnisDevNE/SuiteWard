@@ -22,12 +22,12 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 		t.Fatalf("an empty database counts %v and %v; want nothing", counts.Jobs, counts.Outbox)
 	}
 
-	// Two probes stay available, one is completed, one discarded; the relay job is not counted.
+	// Two probes stay available, one is completed, one discarded; the relay and the synchronization tick are not counted.
 	jobIDs := map[string]int64{}
-	for _, name := range []string{"available-1", "available-2", "completed", "discarded", "relay"} {
-		kind := "probe"
-		if name == "relay" {
-			kind = "outbox_relay"
+	for _, name := range []string{"available-1", "available-2", "completed", "discarded", "relay", "tick"} {
+		kind := map[string]string{"relay": "outbox_relay", "tick": "github_sync_tick"}[name]
+		if kind == "" {
+			kind = "probe"
 		}
 		id, err := w.store.EnqueueSystem(t.Context(),
 			governance.Job{Kind: kind, Args: []byte(`{}`)},
@@ -37,7 +37,7 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 		}
 		jobIDs[name] = id
 	}
-	for name, state := range map[string]string{"completed": "completed", "discarded": "discarded", "relay": "completed"} {
+	for name, state := range map[string]string{"completed": "completed", "discarded": "discarded", "relay": "completed", "tick": "completed"} {
 		if _, err := w.pool.Exec(t.Context(), "UPDATE river_job SET state = $1::river_job_state, finalized_at = now() WHERE id = $2", state, jobIDs[name]); err != nil {
 			t.Fatal(err)
 		}
@@ -53,9 +53,9 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := map[string]int64{"available": 2, "completed": 1, "discarded": 1}; !maps.Equal(counts.Jobs, want) {
-		t.Fatalf("job counts = %v; want %v (the outbox_relay job is excluded)", counts.Jobs, want)
+		t.Fatalf("job counts = %v; want %v (the outbox_relay and github_sync_tick jobs are excluded)", counts.Jobs, want)
 	}
-	if want := map[string]int64{postgres.OutboxPending: 3, postgres.OutboxDelivered: 1, postgres.OutboxFailed: 1}; !maps.Equal(counts.Outbox, want) {
+	if want := map[string]int64{postgres.OutboxPending: 4, postgres.OutboxDelivered: 1, postgres.OutboxFailed: 1}; !maps.Equal(counts.Outbox, want) {
 		t.Fatalf("outbox counts = %v; want %v", counts.Outbox, want)
 	}
 }
@@ -81,11 +81,11 @@ func TestSchemaVersionRequiresTheSupportedVersion(t *testing.T) {
 	if version, err := w.store.SchemaVersion(t.Context()); err != nil || version != migrations.SupportedVersion {
 		t.Fatalf("SchemaVersion = %d, %v; want %d", version, err, migrations.SupportedVersion)
 	}
-	if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES (11, true)"); err != nil {
+	if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)", migrations.SupportedVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.store.SchemaVersion(t.Context()); !errors.Is(err, postgres.ErrSchemaNotReady) {
-		t.Fatalf("SchemaVersion on schema version 11 = %v; want ErrSchemaNotReady", err)
+		t.Fatalf("SchemaVersion on a schema newer than SupportedVersion = %v; want ErrSchemaNotReady", err)
 	}
 	w.pool.Close()
 	// An unreadable database is not a schema mismatch: readiness tells them apart.

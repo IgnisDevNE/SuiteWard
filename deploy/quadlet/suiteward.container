@@ -1,4 +1,4 @@
-# The SuiteWard service. Outbound only: the single published port is bound to loopback and reached through SSM port forwarding.
+# The SuiteWard service. Outbound only: both published ports (8081 HTTP, 8091 MCP) are bound to loopback and reached through SSM port forwarding.
 # Quadlet 4.9 has no Notify=healthy, so the database is ordered with Requires/After only. If it is not accepting connections yet,
 # the service exits 1 at startup (no retry loop inside the process) and Restart=always tries again.
 [Unit]
@@ -17,9 +17,19 @@ AutoUpdate=registry
 Network=suiteward.network
 # The container listens on all its interfaces; the host side is loopback only.
 PublishPort=127.0.0.1:8081:8080
-# The full database URL is a podman secret mounted as a file; it is never an environment variable.
+# The MCP listener (image default SUITEWARD_MCP_ADDR=0.0.0.0:8090); it still needs its bearer token.
+PublishPort=127.0.0.1:8091:8090
+# The full database URL, the GitHub App key and the MCP token are podman secrets mounted as files; they are never environment variables.
 Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400
 Environment=SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url
+Secret=suiteward-github-app-key,type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400
+Environment=SUITEWARD_GITHUB_APP_KEY_FILE=/run/secrets/github-app-key
+Secret=suiteward-mcp-token,type=mount,target=/run/secrets/mcp-token,uid=65532,mode=0400
+Environment=SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token
+# SUITEWARD_GITHUB_APP_ID, SUITEWARD_GITHUB_INSTALLATION_ID and SUITEWARD_GITHUB_REPOSITORIES (not secrets) come from a file the owner
+# writes on the host (deploy/HOST.md, section 4a); the values are never committed. A missing file makes podman fail the start, which
+# Restart=always repeats and the journal shows; it never runs silently without GitHub.
+EnvironmentFile=/etc/suiteward/github.env
 Volume=suiteward-data.volume:/data
 ReadOnly=true
 DropCapability=ALL

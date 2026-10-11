@@ -1,5 +1,6 @@
 #!/bin/sh
-# Smoke test of the running SuiteWard stack: readiness, status, a probe through the real worker, and a
+# Smoke test of the running SuiteWard stack: readiness, status, the GitHub synchronization (every configured repository
+# synchronized once), the MCP listener's unauthenticated answers, a probe through the real worker, and a
 # delayed probe job that must survive a restart. Needs only podman, curl and coreutils; reads nothing from the
 # environment but the SMOKE_* knobs below. Run it on the target:
 #   sh deploy/smoke.sh [--promote]
@@ -14,6 +15,12 @@ CTR=${SMOKE_CONTAINER:-suiteward}
 READY_TIMEOUT=${SMOKE_READY_TIMEOUT:-120}
 # Optional: the version /status must report, for example sha-<commit> of the image that was just deployed.
 EXPECT_VERSION=${SMOKE_VERSION:-}
+# Both targets run with GitHub configured: the github step waits until every repository in /status has a lastSuccess.
+# SMOKE_GITHUB=0 skips it, only for a stack that was started without the GitHub settings.
+GITHUB=${SMOKE_GITHUB:-1}
+GITHUB_TIMEOUT=${SMOKE_GITHUB_TIMEOUT:-120}
+# The MCP listener's published port. The mcp step sends no token and never reads one.
+MCP_BASE=${SMOKE_MCP_BASE:-http://127.0.0.1:8091}
 
 promote=0
 for arg; do
@@ -57,6 +64,32 @@ wait_ready() {
 	done
 }
 
+# Waits until every repository in the /status github array has a lastSuccess; dies on a lastError, an absent or empty array, or the timeout.
+check_github() {
+	end=$(($(now_ms) + GITHUB_TIMEOUT * 1000))
+	while :; do
+		body=$(curl -fsS -m 5 "$BASE/status") || die github "GET /status failed"
+		printf '%s' "$body" | grep -q '"github" *: *\[' || die github "no github section in /status (start the stack with the GitHub settings, or set SMOKE_GITHUB=0)"
+		# One object per repository, with no nested brackets: cut the array out and put one object on each line.
+		section=$(printf '%s' "$body" | sed 's/.*"github" *: *\[\([^]]*\)\].*/\1/')
+		entries=$(printf '%s' "$section" | sed "s/},{/}\\$nl{/g")
+		repos=$(($(printf '%s\n' "$entries" | grep -c '"repo" *:')))
+		[ "$repos" -gt 0 ] || die github "no repositories in the github section"
+		bad=$(printf '%s\n' "$entries" | grep '"lastError" *:' | head -n 1)
+		if [ -n "$bad" ]; then
+			die github "$(printf '%s' "$bad" | sed -n 's/.*"repo" *: *"\([^"]*\)".*/\1/p') has lastError: $(printf '%s' "$bad" | sed -n 's/.*"lastError" *: *"\([^"]*\)".*/\1/p')"
+		fi
+		synced=$(($(printf '%s\n' "$entries" | grep -c '"lastSuccess" *:')))
+		[ "$synced" -lt "$repos" ] || return 0
+		[ "$(now_ms)" -lt "$end" ] || die github "no lastSuccess for $((repos - synced)) of $repos repositories within ${GITHUB_TIMEOUT}s"
+		sleep 1
+	done
+}
+
+# The HTTP status of one unauthenticated request to the MCP endpoint; 000 when nothing answers.
+mcp_code() { curl -sS -m 5 -o /dev/null -w '%{http_code}' "$@" "$MCP_BASE/mcp" </dev/null 2>/dev/null; }
+mcp_post() { mcp_code -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}' "$@"; }
+
 check_status() { # step
 	body=$(curl -fsS -m 5 "$BASE/status") || die "$1" "GET /status failed"
 	version=$(printf '%s' "$body" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -n 1)
@@ -83,6 +116,21 @@ ok healthz
 begin
 check_status status
 ok status "version $version, schema version $schema, no failed or discarded"
+
+begin
+if [ "$GITHUB" = 0 ]; then
+	ok github "skipped (SMOKE_GITHUB=0)"
+else
+	check_github
+	ok github "$repos repositories synchronized"
+fi
+
+begin
+code=$(mcp_post)
+[ "$code" = 401 ] || die mcp "POST without a token answered $code, want 401"
+code=$(mcp_post -H 'Origin: http://evil.example')
+[ "$code" = 403 ] || die mcp "POST with a foreign Origin answered $code, want 403"
+ok mcp "without a token 401, foreign Origin 403"
 
 begin
 out=$(podman exec "$CTR" /suiteward probe </dev/null 2>&1) || die probe "$(last "$out")"

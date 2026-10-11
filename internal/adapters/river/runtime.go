@@ -37,6 +37,12 @@ type Config struct {
 	Now                  func() time.Time             // nil means time.Now
 	Handlers             map[string]Handler           // by job kind, added to the probe handler; the probe kind is reserved
 	Publishers           map[string]Publisher         // by message kind, added to the probe publisher; the probe kind is reserved
+	// SyncTick and SyncRepo are the GitHub synchronization jobs (SyncTickKind every SyncInterval, SyncRepoKind per request);
+	// both are set or both nil, and nil registers neither.
+	SyncTick       func(ctx context.Context) error
+	SyncRepo       func(ctx context.Context, repo string) error
+	SyncInterval   time.Duration // zero means one minute
+	JobMaxAttempts int           // JOB_MAX_ATTEMPTS, for the jobs this runtime defines; zero means River's default
 }
 
 // rescueStuckJobsAfter is when River rescues a job that stayed running.
@@ -75,6 +81,7 @@ func (w *relayWorker) Work(ctx context.Context, _ *riverqueue.Job[relayArgs]) er
 // Runtime runs the River workers and the outbox relay.
 type Runtime struct {
 	client *riverqueue.Client[pgx.Tx]
+	sync   bool // the synchronization jobs are registered
 }
 
 // NewRuntime builds the River client over pool. The relay is a periodic job
@@ -121,15 +128,19 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1}
 		},
 		&riverqueue.PeriodicJobOpts{ID: "outbox_relay", RunOnStart: true})
+	syncJobs, err := addSync(workers, config)
+	if err != nil {
+		return nil, err
+	}
 	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
-		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy,
+		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
 		Queues:       map[string]riverqueue.QueueConfig{riverqueue.QueueDefault: {MaxWorkers: config.Workers}, outboxQueue: {MaxWorkers: 1}},
-		PeriodicJobs: []*riverqueue.PeriodicJob{relayJob},
+		PeriodicJobs: append([]*riverqueue.PeriodicJob{relayJob}, syncJobs...),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create the River client: %w", err)
 	}
-	return &Runtime{client: client}, nil
+	return &Runtime{client: client, sync: len(syncJobs) > 0}, nil
 }
 
 // Start begins processing jobs and relaying the outbox. It returns once started.

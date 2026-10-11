@@ -705,3 +705,45 @@ func TestTreeFeedsInventoryBuild(t *testing.T) {
 		t.Errorf("%d requests, want the tree and two blobs: %v", got, gh.uris())
 	}
 }
+
+func TestTreeRejectsAnAnswerWithoutItsList(t *testing.T) {
+	cases := map[string]string{
+		"no tree key": `{"sha":"9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d","truncated":false}`,
+		"null tree":   `{"sha":"9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d","tree":null,"truncated":false}`,
+		"null answer": `null`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			reader, _ := newReader(t, map[string]reply{treeURI: ok([]byte(body))})
+			tree, err := reader.Tree(t.Context(), repo, commitSHA)
+			if !errors.Is(err, github.ErrInvalidResponse) {
+				t.Fatalf("Tree = %v, %v; want ErrInvalidResponse", tree, err)
+			}
+		})
+	}
+}
+
+func TestTreeAcceptsAnEmptyList(t *testing.T) {
+	reader, _ := newReader(t, map[string]reply{treeURI: ok([]byte(`{"sha":"9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d","tree":[],"truncated":false}`))})
+
+	tree, err := reader.Tree(t.Context(), repo, commitSHA)
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+	if entries, err := tree.Entries(t.Context()); err != nil || len(entries) != 0 {
+		t.Errorf("Entries = %+v, %v; want none", entries, err)
+	}
+}
+
+func TestListingsRejectANullPage(t *testing.T) {
+	reader, _ := newReader(t, map[string]reply{
+		pullsURI + "1":    ok([]byte("null")),
+		commentsURI + "1": ok([]byte("null")),
+	})
+	if pulls, err := reader.OpenPulls(t.Context(), repo); !errors.Is(err, github.ErrInvalidResponse) {
+		t.Errorf("OpenPulls = %+v, %v; want ErrInvalidResponse", pulls, err)
+	}
+	if comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{}); !errors.Is(err, github.ErrInvalidResponse) {
+		t.Errorf("PullComments = %+v, %v; want ErrInvalidResponse", comments, err)
+	}
+}

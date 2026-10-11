@@ -79,6 +79,7 @@ func NewBudget(fraction float64, clock func() time.Time) (*Budget, error) // D-S
 
 - `OpenPulls(ctx, repo) ([]Pull, error)`: `Pull{Number, HeadSHA, HeadRef, BaseRef, BaseSHA, UpdatedAt}` from `GET /repos/{repo}/pulls?state=open&per_page=100&page=N`, pages until one has fewer than 100 items (`rest.Response` carries no headers, so `Link` is not used).
 - `PullComments(ctx, repo, number, since) ([]Comment, error)`: `Comment{ID, AuthorLogin, AuthorID, Body, CreatedAt, UpdatedAt}` from `GET /repos/{repo}/issues/{n}/comments`, paged the same way, with `since` when set.
+- A listing reads at most 100 pages (10,000 items); more is an invalid response, not a silent cut. Pages are not a snapshot, so each `Number` (pulls) and `ID` (comments) is returned once, the later occurrence winning.
 - `Tree(ctx, repo, commitSHA) (inventory.Tree, error)`: `GET /repos/{repo}/git/trees/{sha}?recursive=1` through `GetImmutable`; mode `100644`/`100755` → `inventory.File`, `120000` → `inventory.Symlink`, `160000` → `inventory.Submodule`; `tree` entries are directories and skipped; any other mode is an error. A `truncated: true` answer is an error, never a partial tree. `Read` fetches the blob of a listed file (`GET /repos/{repo}/git/blobs/{sha}` through `GetImmutable`, base64) only when called, so only covered files are read.
 
 ## Configuration (interim, M1.4)

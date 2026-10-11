@@ -46,6 +46,9 @@ var (
 // maxErrorBody bounds the response body kept in an error.
 const maxErrorBody = 512
 
+// maxBody bounds any response body read into memory; a variable only so tests can lower it.
+var maxBody int64 = 64 << 20
+
 // BudgetExhaustedError is returned by Get, without calling GitHub, while the
 // requests used in the current window are at the budget.
 type BudgetExhaustedError struct{ Reset time.Time }
@@ -227,6 +230,12 @@ func (c *Client) Get(ctx context.Context, path string) (Response, error) {
 		return Response{}, fmt.Errorf("github GET %s: %w", path, err)
 	}
 	return out, nil
+}
+
+// GetImmutable performs a GET for a SHA-addressed path (git trees and blobs):
+// it sends no If-None-Match and neither reads nor writes the ETag cache.
+func (c *Client) GetImmutable(ctx context.Context, path string) (Response, error) {
+	return Response{}, errors.New("not implemented")
 }
 
 type answer struct {

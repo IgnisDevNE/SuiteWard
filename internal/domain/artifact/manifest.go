@@ -39,7 +39,7 @@ func NewManifest(entries []Entry) (Manifest, error) {
 	encoded := []byte("suiteward.manifest.v1\x00")
 	encoded = binary.BigEndian.AppendUint64(encoded, uint64(len(ordered)))
 	for i, entry := range ordered {
-		if !validPath(entry.Path) {
+		if !ValidPath(entry.Path) {
 			return Manifest{}, fmt.Errorf("%w: %q", ErrInvalidPath, entry.Path)
 		}
 		if i > 0 && ordered[i-1].Path == entry.Path {
@@ -70,7 +70,10 @@ func (m Manifest) IsZero() bool {
 	return m.digest.IsZero()
 }
 
-func validPath(path string) bool {
+// ValidPath reports whether path is a well-formed repository-relative,
+// slash-separated file path: valid UTF-8, free of NUL, backslash and colon,
+// and free of empty, "." or ".." segments.
+func ValidPath(path string) bool {
 	if !utf8.ValidString(path) || strings.ContainsAny(path, "\x00\\:") {
 		return false
 	}

@@ -1,7 +1,7 @@
 # Governance persistence contract
 
-- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" below (frozen by M1.3-C0).
-- **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite), M1.3-C1 (proposal revision write).
+- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" (frozen by M1.3-C0) and "Baseline proposals" (frozen before M1.3-C2) below.
+- **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite), M1.3-C1 (proposal revision write), M1.3-C2 (baseline proposals).
 
 ## Principles
 
@@ -264,6 +264,40 @@ A revision carries no operation id: identity is the revision id inside its propo
 Store write semantics of `AppendProposalRevision`: insert the proposal row when it is absent, then the revision with the next sequence number of its proposal; bump the Suite revision once. A reference outside the locked Suite is `ErrInvalidRequest`. A revision id that already exists, or a carrier that differs from the stored proposal's, is `ErrProposalConflict` (the use case rules both out first, so either means a broken caller). Reads of the proposal inside the same unit of work see the new revision.
 
 The conformance suite gains: the first revision creates the proposal; a second revision becomes current and older ones stay resolvable; a duplicate revision id and another carrier conflict; a foreign Suite is rejected; each append advances the revision by exactly one; rollback removes the proposal and its revisions. The use-case tests add: an unchanged coverage writes nothing; the same coverage under another carrier is rejected, not ignored; a policy or canonical mismatch is rejected; and a proposal blocked by `PromotionReasonCanonicalChanged` is revised against the new canonical and promotes only after a fresh exact approval of the new revision (R1 used a stand-in proposal for this).
+
+## Baseline proposals (M1.3; normative)
+
+The existing-baseline bootstrap gets its proposal from an inventory of the pinned principal-branch commit (ADR 0010, ADR 0013). Declared in `internal/application/governance` (for example `baseline.go`); `governance` imports `internal/application/inventory`, never the reverse.
+
+```go
+// ContentWriter stores artifact bytes under their digest. It is idempotent:
+// storing the same bytes again succeeds. filesystem.Store implements it.
+type ContentWriter interface {
+	Put(ctx context.Context, digest artifact.Digest, content io.Reader) error
+}
+
+type BaselineRequest struct {
+	Reference contract.ProposalReference // the proposal and its new revision id
+	Carrier   contract.ApprovalCarrierID // the PR that hosts the approval
+	Origin    contract.SourceRevision    // the pinned principal-branch commit
+	Tree      inventory.Tree             // that commit's source tree
+}
+
+type BaselineResult struct {
+	Revise   ReviseResult               // as returned by the shared revision logic
+	Contract contract.ProtectedContract // inventory.Contract(), to pass to Bootstrap as PromoteRequest.Proposed
+}
+```
+
+Use case `ProposeBaseline(ctx, UnitOfWork, ContentWriter, BaselineRequest) (BaselineResult, error)`:
+
+1. `inventory.Build(ctx, request.Tree)`; its errors are wrapped with `%w` (an invalid declaration or an unsafe entry writes nothing).
+2. For every manifest entry, read the bytes from the tree, re-hash them, and `Put` them. A digest that does not match the manifest entry fails with nothing written to the store or the database. Content is stored before any database write: an orphan blob after a later failure is harmless, a version row without its bytes is not.
+3. Inside one `Do`: the Suite must have no current canonical (otherwise `ErrInvalidRequest`: a baseline is only for bootstrap). Build the binding from the reference, `ExpectedCanonical` empty, the inventory's manifest digest and scope digest, the governing policy revision, and covered inputs `{}`; `contract.NewProposalRevision(binding, Origin, Carrier)`. Then apply exactly the logic of `ReviseProposal` steps 1–4, through one unexported function shared by both use cases, so a repeated baseline with the same coverage writes nothing.
+
+There are no new `Tx` methods and no migration. The first canonical is then created by `Bootstrap` with `Integration` of kind existing baseline and `Proposed = BaselineResult.Contract`, after approval and integrity assessment as before.
+
+Tests: the full path on the in-memory fake (tree, `ProposeBaseline`, approval through `ProcessConsent`, a seeded assessment, `Bootstrap`, a canonical whose manifest equals the inventory's); a repeated call with the same tree writes nothing; a changed protected file creates a new revision; an existing canonical is rejected; a failing or mismatching `Put` writes nothing. On PostgreSQL with the filesystem store: the inventory's revision and assessment are seeded (assessments have no write path until M1.6), `ProposeBaseline` on the same tree returns the seeded reference with `Committed` false and still stores the bytes, and `Bootstrap` succeeds, so `RecordPromotion` verifies the bytes `ProposeBaseline` wrote.
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 

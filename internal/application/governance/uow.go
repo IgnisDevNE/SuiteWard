@@ -64,8 +64,8 @@ type OutboxMessage struct {
 }
 
 // Seeder writes trusted initial state. It is the only writer of policies,
-// proposals, assessments and historical versions until the
-// GitHub-facing phases add their own write paths.
+// assessments and historical versions until the GitHub-facing phases add their
+// own write paths; proposals also have AppendProposalRevision.
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }

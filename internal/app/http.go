@@ -35,7 +35,8 @@ type store interface {
 type api struct {
 	store    store
 	logger   *slog.Logger
-	stopping atomic.Bool // set when shutdown begins: readiness turns 503 first
+	github   *githubStatus // nil when the GitHub settings are not set
+	stopping atomic.Bool   // set when shutdown begins: readiness turns 503 first
 }
 
 func newRouter(a *api) http.Handler {
@@ -78,10 +79,17 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		a.storeFailed(w, r, err)
 		return
 	}
-	a.respond(w, r, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"version": Version, "schemaVersion": version,
 		"jobs": perState(jobStates, counts.Jobs), "outbox": perState(outboxStates, counts.Outbox),
-	})
+	}
+	if a.github != nil {
+		if body["github"], err = a.github.report(ctx); err != nil {
+			a.storeFailed(w, r, err)
+			return
+		}
+	}
+	a.respond(w, r, http.StatusOK, body)
 }
 
 // perState lists every state of states with its count, zero when absent.

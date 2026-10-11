@@ -73,11 +73,22 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	if err != nil {
 		return err
 	}
-	runtime, err := river.NewRuntime(pool, store, river.Config{
-		Logger: logger, Workers: cfg.JobWorkers, JobTimeout: cfg.JobTimeout,
+	riverConfig := river.Config{
+		Logger: logger, Workers: cfg.JobWorkers, JobTimeout: cfg.JobTimeout, JobMaxAttempts: cfg.JobMaxAttempts,
 		OutboxMaxAttempts: cfg.OutboxMaxAttempts, OutboxPollInterval: cfg.OutboxPollInterval, OutboxLease: cfg.OutboxLease,
 		Handlers: handlers,
-	})
+	}
+	a := &api{store: store, logger: logger}
+	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
+		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, store)
+		if err != nil {
+			pool.Close()
+			return err
+		}
+		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
+		a.github = &githubStatus{repos: gh.repos, store: store}
+	}
+	runtime, err := river.NewRuntime(pool, store, riverConfig)
 	if err != nil {
 		pool.Close()
 		return fmt.Errorf("compose the job runtime: %w", err)
@@ -87,7 +98,6 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		pool.Close()
 		return fmt.Errorf("start the job runtime: %w", err)
 	}
-	a := &api{store: store, logger: logger}
 	srv := &http.Server{Handler: newRouter(a), ReadHeaderTimeout: readHeaderTimeout}
 	serveErr := listenAndServe(ctx, cfg.HTTPAddr, srv, logger)
 	return errors.Join(serveErr, shutdown(logger, a, srv, runtime, pool, cfg.ShutdownTimeout))

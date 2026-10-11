@@ -4,7 +4,9 @@ package githubsynctest
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"runtime/debug"
 	"sync"
@@ -166,6 +168,9 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) githubsync.Store) 
 		{"FailureBeforeTheFirstCycleCreatesTheRepository", gsFailureFirst},
 		{"LaterSuccessClearsTheErrorAndTheWait", gsRecovery},
 		{"InvalidInputIsRejectedWithoutEffects", gsInvalidInput},
+		{"CommentBodiesKeepTheirRawBytes", gsRawBodies},
+		{"TwoBodiesAtOneUpdatedAtAreTwoVersionsAndTheLaterSeenIsLatest", gsSameUpdatedAt},
+		{"PullNumberOutsideTheStoredRangeIsInvalidOnRead", gsCommentsPullRange},
 		{"RepositoriesAreIndependent", gsIndependentRepositories},
 		{"CanceledContextRecordsNothing", gsCanceled},
 		{"ConcurrentCyclesOfOneRepositoryEndAsOneAppliedLast", gsConcurrent},
@@ -278,10 +283,69 @@ func gsCreatedAtChange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	// The pull changes in the same cycle, so a partial write would be visible.
 	forged := gsComment(10, "approved", 1)
 	forged.CreatedAt = gsTime(50)
-	if err := e.store.RecordCycle(context.Background(), gsCycle(2, gsPulls(gsPull(1, "moved")), gsListing{1: gsComments(forged)})); err == nil {
-		e.t.Fatal("a different created_at for a known comment id was recorded")
+	err := e.store.RecordCycle(context.Background(), gsCycle(2, gsPulls(gsPull(1, "moved")), gsListing{1: gsComments(forged)}))
+	if !errors.Is(err, githubsync.ErrCreationTimeChanged) {
+		e.t.Fatalf("a different created_at for a known comment id gave %v, want ErrCreationTimeChanged", err)
 	}
 	e.requireView(e.view(), before)
+}
+
+// gsRawBodies: a body is bytes, whatever they contain; a NUL or invalid UTF-8
+// must neither fail the cycle nor change on the way back.
+func gsRawBodies(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+	nul, invalid, empty := gsComment(10, "a\x00b", 0), gsComment(11, "a\xffb", 0), gsComment(12, "", 0)
+	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(nul, invalid, empty)}))
+
+	want := []githubsync.CommentVersion{gsVersion(1, nul, 1, time.Time{}), gsVersion(1, invalid, 1, time.Time{}), gsVersion(1, empty, 1, time.Time{})}
+	if got := e.view().Comments[1]; !reflect.DeepEqual(got, want) {
+		e.t.Fatalf("versions\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// gsSameUpdatedAt: GitHub's updated_at has one-second resolution, so two edits
+// can share it. Each distinct body is a version; the one seen last is the latest.
+func gsSameUpdatedAt(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+	first := gsComment(10, "first", 0)
+	second := first
+	second.Body = "second"
+	listing := func(at int, comments ...githubsync.ObservedComment) {
+		e.record(gsCycle(at, gsPulls(gsPull(1, "a")), gsListing{1: comments}))
+	}
+
+	listing(1, first)
+	listing(2, second)
+	want := []githubsync.CommentVersion{gsVersion(1, first, 1, time.Time{}), gsVersion(1, second, 2, time.Time{})}
+	if got := e.view().Comments[1]; !reflect.DeepEqual(got, want) {
+		e.t.Fatalf("two bodies at one updated_at\n got %+v\nwant %+v", got, want)
+	}
+
+	listing(3, second) // the same body again adds nothing
+	if got := e.view().Comments[1]; !reflect.DeepEqual(got, want) {
+		e.t.Fatalf("a repeated body\n got %+v\nwant %+v", got, want)
+	}
+
+	listing(4) // gone: only the latest version is marked
+	want[1] = gsVersion(1, second, 2, gsTime(4))
+	if got := e.view().Comments[1]; !reflect.DeepEqual(got, want) {
+		e.t.Fatalf("after the comment disappeared\n got %+v\nwant %+v", got, want)
+	}
+
+	listing(5, first) // back as the earlier body: no new version, every mark cleared
+	want[1] = gsVersion(1, second, 2, time.Time{})
+	if got := e.view().Comments[1]; !reflect.DeepEqual(got, want) {
+		e.t.Fatalf("after the earlier body came back\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func gsCommentsPullRange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+	for _, number := range []int{0, -1, math.MaxInt32 + 1} {
+		if _, err := e.store.Comments(context.Background(), gsRepo, number); !errors.Is(err, githubsync.ErrInvalidObservation) {
+			e.t.Fatalf("Comments of pull %d gave %v, want ErrInvalidObservation", number, err)
+		}
+	}
+	if _, err := e.store.Comments(context.Background(), gsRepo, math.MaxInt32); err != nil {
+		e.t.Fatalf("Comments of the highest pull number: %v", err)
+	}
 }
 
 func gsCommentAbsent(e *gsEnv, _ func(*testing.T) githubsync.Store) {
@@ -391,21 +455,40 @@ func gsInvalidInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 		"comment without a time": valid(func(c *githubsync.Cycle) {
 			c.Comments[1] = gsComments(githubsync.ObservedComment{CommentID: 10})
 		}),
+		"pull number 0": valid(func(c *githubsync.Cycle) {
+			c.OpenPulls, c.Comments = gsPulls(gsPull(0, "a")), gsListing{0: nil}
+		}),
+		"negative pull number": valid(func(c *githubsync.Cycle) {
+			c.OpenPulls, c.Comments = gsPulls(gsPull(-1, "a")), gsListing{-1: nil}
+		}),
+		"pull number above the stored range": valid(func(c *githubsync.Cycle) {
+			c.OpenPulls, c.Comments = gsPulls(gsPull(math.MaxInt32+1, "a")), gsListing{math.MaxInt32 + 1: nil}
+		}),
+		"comment id 0":        valid(func(c *githubsync.Cycle) { c.Comments[1] = gsComments(gsComment(0, "x", 0)) }),
+		"negative comment id": valid(func(c *githubsync.Cycle) { c.Comments[1] = gsComments(gsComment(-5, "x", 0)) }),
+		"comment without a CreatedAt": valid(func(c *githubsync.Cycle) {
+			comment := gsComment(10, "x", 0)
+			comment.CreatedAt = time.Time{}
+			c.Comments[1] = gsComments(comment)
+		}),
 	}
 	for name, cycle := range cycles {
-		if err := e.store.RecordCycle(ctx, cycle); err == nil {
-			e.t.Fatalf("cycle with %s was recorded", name)
+		if err := e.store.RecordCycle(ctx, cycle); !errors.Is(err, githubsync.ErrInvalidObservation) {
+			e.t.Fatalf("cycle with %s gave %v, want ErrInvalidObservation", name, err)
 		}
 	}
 	failures := map[string]githubsync.Failure{
-		"unknown kind":    {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: "boom"},
-		"no kind":         {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1)},
-		"invalid status":  {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureStatus, Status: 42},
-		"no installation": {Repo: gsRepo, At: gsTime(1), Kind: githubsync.FailureStatus, Status: 500},
+		"unknown kind":     {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: "boom"},
+		"no kind":          {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1)},
+		"invalid status":   {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureStatus, Status: 42},
+		"status above 599": {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureStatus, Status: 600},
+		"negative status":  {Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureStatus, Status: -1},
+		"no repository":    {Repo: " ", InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureTransport},
+		"no installation":  {Repo: gsRepo, At: gsTime(1), Kind: githubsync.FailureStatus, Status: 500},
 	}
 	for name, failure := range failures {
-		if err := e.store.RecordFailure(ctx, failure); err == nil {
-			e.t.Fatalf("failure with %s was recorded", name)
+		if err := e.store.RecordFailure(ctx, failure); !errors.Is(err, githubsync.ErrInvalidObservation) {
+			e.t.Fatalf("failure with %s gave %v, want ErrInvalidObservation", name, err)
 		}
 	}
 	e.requireView(e.view(), gsNothing())

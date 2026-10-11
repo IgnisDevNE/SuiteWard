@@ -35,7 +35,7 @@ var governanceRows = map[string]map[string]any{
 	"outbox":                  {"key": "k1", "kind": "probe", "payload": `{}`},
 	"github_repositories":     {"repo": "acme/widgets", "installation_id": 42},
 	"github_pulls":            {"repo": "acme/widgets", "number": 1, "head_sha": "head", "head_ref": "feature", "base_ref": "main", "base_sha": "base", "updated_at": "2026-10-02T12:00:00Z", "first_seen": "2026-10-02T12:00:00Z", "last_seen": "2026-10-02T12:00:00Z"},
-	"github_comment_versions": {"repo": "acme/widgets", "comment_id": 10, "updated_at": "2026-10-02T12:00:00Z", "pull_number": 1, "author_id": 7, "author_login": "reviewer", "created_at": "2026-10-02T11:00:00Z", "body": "hello", "body_digest": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", "first_seen": "2026-10-02T12:00:00Z"},
+	"github_comment_versions": {"repo": "acme/widgets", "comment_id": 10, "updated_at": "2026-10-02T12:00:00Z", "pull_number": 1, "author_id": 7, "author_login": "reviewer", "created_at": "2026-10-02T11:00:00Z", "body": []byte("hello"), "body_digest": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", "first_seen": "2026-10-02T12:00:00Z"},
 	"promotions":              {"operation_id": "promo-op", "project_id": "project", "suite_id": "suite", "version_id": "v1", "proposal_id": "p1", "revision_id": "r1", "carrier_id": "pr-1", "source_revision": "sha-1", "target_id": "main", "recorded_at": "2026-10-02T12:00:00Z", "corrects_version_id": nil},
 }
 

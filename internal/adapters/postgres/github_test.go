@@ -92,7 +92,7 @@ func TestGitHubObservationConstraints(t *testing.T) {
 		{"pull of an unknown repository", "github_pulls", "23503", "github_pulls_repo_fkey", map[string]any{"repo": "a/b"}},
 		{"pull number", "github_pulls", "23514", "github_pulls_number_check", map[string]any{"number": 0}},
 		{"comment on an unknown pull", "github_comment_versions", "23503", "github_comment_versions_pull_fkey", map[string]any{"comment_id": 11, "pull_number": 2}},
-		{"digest of other bytes", "github_comment_versions", "23514", "github_comment_versions_body_digest_check", map[string]any{"comment_id": 11, "body": "other"}},
+		{"digest of other bytes", "github_comment_versions", "23514", "github_comment_versions_body_digest_check", map[string]any{"comment_id": 11, "body": []byte("other")}},
 		{"comment id", "github_comment_versions", "23514", "github_comment_versions_comment_id_check", map[string]any{"comment_id": 0}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -104,6 +104,18 @@ func TestGitHubObservationConstraints(t *testing.T) {
 			schemaRequireError(t, insertRow(t.Context(), transaction, test.table, test.row), test.code, test.constraint)
 		})
 	}
+}
+
+// Two bodies at one updated_at are two versions; the same body twice is one.
+func TestGitHubCommentVersionKeyIncludesTheBodyDigest(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	seedGitHubRows(t, database)
+	other := map[string]any{"body": []byte("other"), "body_digest": "sha256:d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa"}
+	mustInsert(t, database.conn, "github_comment_versions", other)
+	schemaRequireError(t, insertRow(t.Context(), database.conn, "github_comment_versions", other), "23505", "github_comment_versions_pkey")
 }
 
 // Observations are not governance facts: they write no governance table, no
@@ -176,7 +188,7 @@ func TestRecordCycleWaitsForTheRepositoryRow(t *testing.T) {
 			go func() { done <- record.run(w) }()
 			waiting := false
 			for deadline := time.Now().Add(10 * time.Second); !waiting && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-				if err := w.db.conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%github_repositories%' AND pid <> pg_backend_pid())").Scan(&waiting); err != nil {
+				if err := w.db.conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%INSERT INTO github_repositories%' AND pid <> pg_backend_pid())").Scan(&waiting); err != nil {
 					t.Fatal(err)
 				}
 			}

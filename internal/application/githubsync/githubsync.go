@@ -16,6 +16,15 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
 
+var (
+	// ErrInvalidObservation marks a Cycle or Failure the store cannot record
+	// (it fails Validate) and a pull number outside the stored range.
+	ErrInvalidObservation = errors.New("invalid GitHub observation")
+	// ErrCreationTimeChanged marks a comment whose created_at differs from the
+	// one stored for its id: GitHub never changes it, so the cycle is not recorded.
+	ErrCreationTimeChanged = errors.New("GitHub comment creation time changed")
+)
+
 // Cycle is one complete, successful cycle of one repository: every page of
 // every listing in it succeeded.
 type Cycle struct {

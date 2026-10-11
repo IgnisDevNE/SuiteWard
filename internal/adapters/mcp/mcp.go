@@ -19,14 +19,24 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MaxBodyBytes is the largest request body the handler reads.
 const MaxBodyBytes = 64 << 10
+
+// minTokenBytes is the shortest accepted token (MCP_TOKEN).
+const minTokenBytes = 32
 
 // Reasons a SyncResult is not queued.
 const (
@@ -84,11 +94,95 @@ type SyncResult struct {
 	WaitUntil time.Time `json:"waitUntil,omitzero"`
 }
 
-var errNotImplemented = errors.New("mcp: not implemented")
+// errBackend is the tool error for any other backend failure.
+var errBackend = errors.New("mcp: the request failed; see the service log")
 
 // NewHandler returns the MCP handler. backend must not be nil, token must
 // hold at least 32 bytes, and every allowed origin must be an absolute
-// scheme://host[:port].
+// scheme://host[:port]; origins match case-insensitively.
 func NewHandler(backend Backend, token []byte, allowedOrigins []string, version string) (http.Handler, error) {
-	return nil, errNotImplemented
+	if backend == nil {
+		return nil, fmt.Errorf("%w: nil backend", ErrInvalidArgument)
+	}
+	if len(token) < minTokenBytes {
+		return nil, fmt.Errorf("%w: token shorter than %d bytes", ErrInvalidArgument, minTokenBytes)
+	}
+	origins := make(map[string]bool, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		if !validOrigin(origin) {
+			return nil, fmt.Errorf("%w: origin %q is not scheme://host[:port]", ErrInvalidArgument, origin)
+		}
+		origins[strings.ToLower(origin)] = true
+	}
+
+	server := sdk.NewServer(&sdk.Implementation{Name: "suiteward", Version: version}, nil)
+	sdk.AddTool(server, &sdk.Tool{
+		Name:        "status",
+		Description: "What SuiteWard observed: per configured repository its last synchronization and open pull requests. Not authority.",
+	}, func(ctx context.Context, _ *sdk.CallToolRequest, _ struct{}) (*sdk.CallToolResult, StatusView, error) {
+		view, err := backend.Status(ctx)
+		if err != nil {
+			return nil, StatusView{}, errBackend
+		}
+		return nil, view, nil
+	})
+	sdk.AddTool(server, &sdk.Tool{
+		Name:        "sync",
+		Description: "Ask SuiteWard to synchronize one configured repository now; it does not wait for the cycle.",
+	}, func(ctx context.Context, _ *sdk.CallToolRequest, args syncArgs) (*sdk.CallToolResult, SyncResult, error) {
+		result, err := backend.RequestSync(ctx, args.Repo)
+		switch {
+		case err == nil:
+			return nil, result, nil
+		case errors.Is(err, ErrUnknownRepository):
+			return nil, SyncResult{}, ErrUnknownRepository
+		case errors.Is(err, ErrNotConfigured):
+			return nil, SyncResult{}, ErrNotConfigured
+		default:
+			return nil, SyncResult{}, errBackend
+		}
+	})
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{
+		Stateless:           true,
+		JSONResponse:        true,
+		MaxRequestBodyBytes: MaxBodyBytes,
+	}))
+	return &handler{next: mux, token: bytes.Clone(token), origins: origins}, nil
+}
+
+type syncArgs struct {
+	Repo string `json:"repo" jsonschema:"a configured repository, owner/name"`
+}
+
+// validOrigin reports whether origin is exactly scheme://host[:port].
+func validOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	return err == nil && u.Scheme != "" && u.Hostname() != "" && strings.EqualFold(origin, u.Scheme+"://"+u.Host)
+}
+
+type handler struct {
+	next    http.Handler
+	token   []byte
+	origins map[string]bool
+}
+
+func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if values, present := r.Header["Origin"]; present && (len(values) != 1 || !h.origins[strings.ToLower(values[0])]) {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+	scheme, credential, found := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(credential), h.token) != 1 {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	if r.ContentLength > MaxBodyBytes {
+		http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
+	h.next.ServeHTTP(w, r)
 }

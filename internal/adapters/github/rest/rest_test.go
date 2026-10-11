@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 )
@@ -82,7 +83,10 @@ func newClient(t *testing.T, tok rest.TokenFunc, baseURL string, b *rest.Budget)
 	return c
 }
 
+// setRateLimit writes GitHub's rate-limit headers and a Date of t0: the server's
+// clock agrees with the injected one unless a test says otherwise.
 func setRateLimit(w http.ResponseWriter, limit, remaining int, reset time.Time) {
+	w.Header().Set("Date", t0.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
 	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
@@ -105,6 +109,11 @@ func TestNewClientRejectsInvalidArguments(t *testing.T) {
 		{"relative base URL", tok, http.DefaultClient, "/api/v3", b},
 		{"base URL without scheme", tok, http.DefaultClient, "api.github.com", b},
 		{"base URL without host", tok, http.DefaultClient, "https://", b},
+		{"base URL with a query", tok, http.DefaultClient, "https://api.github.com?x=1", b},
+		{"base URL with an empty query", tok, http.DefaultClient, "https://api.github.com?", b},
+		{"base URL with a fragment", tok, http.DefaultClient, "https://api.github.com#frag", b},
+		{"base URL with an empty fragment", tok, http.DefaultClient, "https://api.github.com#", b},
+		{"base URL with user info", tok, http.DefaultClient, "https://user:secret@api.github.com", b},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,6 +124,30 @@ func TestNewClientRejectsInvalidArguments(t *testing.T) {
 	}
 	if _, err := rest.NewClient(tok, http.DefaultClient, "https://github.example.com/api/v3", b); err != nil {
 		t.Fatalf("NewClient rejected valid arguments: %v", err)
+	}
+}
+
+// The base URL can carry credentials; no NewClient error may print any part of it.
+func TestNewClientErrorsDoNotPrintTheBaseURL(t *testing.T) {
+	tok := newTokens().Token
+	b := newBudget(t, 0.5, &clock{now: t0})
+	for _, baseURL := range []string{
+		"user:s3cr3t@api.github.com",
+		"/s3cr3t/api",
+		"https://",
+		"https://user:s3cr3t@api.github.com",
+		"https://api.github.com?token=s3cr3t",
+		"https://api.github.com#s3cr3t",
+		"https://api.github.com/%zz-s3cr3t",
+	} {
+		_, err := rest.NewClient(tok, http.DefaultClient, baseURL, b)
+		if err == nil {
+			t.Errorf("NewClient accepted %q", baseURL)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cr3t") || strings.Contains(err.Error(), "api.github.com") {
+			t.Errorf("NewClient(%q) error prints the base URL: %v", baseURL, err)
+		}
 	}
 }
 
@@ -293,6 +326,7 @@ type rateLimitedServer struct {
 	used  int
 	reset time.Time
 	hits  int
+	date  func() time.Time // the server's clock for Date; nil means t0
 }
 
 func (s *rateLimitedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -301,13 +335,20 @@ func (s *rateLimitedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.hits++
 	w.Header().Set("ETag", `"`+r.URL.Path+`"`)
 	if r.Header.Get("If-None-Match") == `"`+r.URL.Path+`"` {
-		setRateLimit(w, s.limit, s.limit-s.used, s.reset)
+		s.rateLimit(w)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 	s.used++
-	setRateLimit(w, s.limit, s.limit-s.used, s.reset)
+	s.rateLimit(w)
 	_, _ = w.Write([]byte("body"))
+}
+
+func (s *rateLimitedServer) rateLimit(w http.ResponseWriter) {
+	setRateLimit(w, s.limit, s.limit-s.used, s.reset)
+	if s.date != nil {
+		w.Header().Set("Date", s.date().UTC().Format(http.TimeFormat))
+	}
 }
 
 func (s *rateLimitedServer) newWindow(reset time.Time) {
@@ -435,7 +476,11 @@ func TestBudgetIsSharedByClients(t *testing.T) {
 	}
 }
 
+// GitHub's clock is two minutes behind the local one: every Until is local time,
+// whether it comes from X-RateLimit-Reset, an HTTP-date Retry-After (both in
+// GitHub's time) or a Retry-After in seconds (relative to now).
 func TestGetReturnsTypedErrors(t *testing.T) {
+	const skew = 2 * time.Minute
 	reset := t0.Add(30 * time.Minute)
 	sentinels := []error{rest.ErrUnauthorized, rest.ErrForbidden, rest.ErrNotFound, rest.ErrUnprocessable, rest.ErrRateLimited, rest.ErrBudgetExhausted}
 	cases := []struct {
@@ -450,10 +495,11 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 		{name: "403 without rate-limit signals", status: 403, remaining: "4000", want: rest.ErrForbidden},
 		{name: "404", status: 404, remaining: "4000", want: rest.ErrNotFound},
 		{name: "422", status: 422, remaining: "4000", want: rest.ErrUnprocessable},
-		{name: "403 with remaining 0", status: 403, remaining: "0", want: rest.ErrRateLimited, until: reset},
+		{name: "403 with remaining 0", status: 403, remaining: "0", want: rest.ErrRateLimited, until: reset.Add(skew)},
 		{name: "403 with Retry-After", status: 403, remaining: "4000", retryAfter: "60", want: rest.ErrRateLimited, until: t0.Add(time.Minute)},
 		{name: "429 with Retry-After", status: 429, retryAfter: "30", want: rest.ErrRateLimited, until: t0.Add(30 * time.Second)},
-		{name: "429 with remaining 0", status: 429, remaining: "0", want: rest.ErrRateLimited, until: reset},
+		{name: "429 with remaining 0", status: 429, remaining: "0", want: rest.ErrRateLimited, until: reset.Add(skew)},
+		{name: "429 with an HTTP-date Retry-After", status: 429, retryAfter: t0.Add(-skew + 90*time.Second).UTC().Format(http.TimeFormat), want: rest.ErrRateLimited, until: t0.Add(90 * time.Second)},
 		{name: "429 without signals", status: 429, remaining: "4000"},
 		{name: "500", status: 500, remaining: "4000"},
 		{name: "409", status: 409},
@@ -463,6 +509,7 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				hits.Add(1)
+				w.Header().Set("Date", t0.Add(-skew).UTC().Format(http.TimeFormat))
 				if tc.remaining != "" {
 					w.Header().Set("X-RateLimit-Limit", "5000")
 					w.Header().Set("X-RateLimit-Remaining", tc.remaining)
@@ -597,5 +644,589 @@ func TestGetRejectsPathWithoutLeadingSlash(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("server saw %d requests, want 1", hits.Load())
+	}
+}
+
+// The window ends in the server's time: each response's Date gives the offset
+// between the local clock and GitHub's, so a host whose clock runs ahead keeps
+// the cap until GitHub's reset, and the error reports the reset in local time.
+func TestBudgetHoldsUntilTheServersResetWhenTheLocalClockRunsAhead(t *testing.T) {
+	const skew = 2 * time.Minute
+	reset := t0.Add(time.Hour)
+	clk := &clock{now: t0.Add(skew)}
+	gh := &rateLimitedServer{limit: 10, reset: reset, date: func() time.Time { return clk.Now().Add(-skew) }}
+	srv := httptest.NewServer(gh)
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, clk))
+
+	for i := range 5 {
+		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
+			t.Fatalf("Get %d within the budget: %v", i, err)
+		}
+	}
+	refused := func() {
+		t.Helper()
+		_, err := c.Get(context.Background(), "/p/next")
+		var be *rest.BudgetExhaustedError
+		if !errors.As(err, &be) || !be.Reset.Equal(reset.Add(skew)) {
+			t.Fatalf("err = %#v, want ErrBudgetExhausted until the reset in local time %v", err, reset.Add(skew))
+		}
+	}
+	refused()
+	clk.Set(reset) // past the reset on the local clock, before it on GitHub's
+	refused()
+	clk.Set(reset.Add(skew - time.Second))
+	refused()
+	if gh.Hits() != 5 {
+		t.Fatalf("server saw %d requests, want 5", gh.Hits())
+	}
+
+	clk.Set(reset.Add(skew)) // the error's Reset: a caller that waits until it is let through
+	gh.newWindow(reset.Add(time.Hour))
+	if _, err := c.Get(context.Background(), "/p/after"); err != nil {
+		t.Fatalf("Get at the reported reset: %v", err)
+	}
+}
+
+// A request answered just after the reset can carry the old reset with nothing
+// remaining; the budget must not stop for good because of it.
+func TestBudgetDoesNotStopForGoodOnALateAnswerFromTheOldWindow(t *testing.T) {
+	reset := t0.Add(time.Hour)
+	clk := &clock{now: t0}
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch hits.Add(1) {
+		case 1:
+			setRateLimit(w, 10, 9, reset)
+		case 2: // sent inside the window, answered after it with the old reset
+			clk.Set(reset.Add(time.Second))
+			setRateLimit(w, 10, 0, reset)
+			w.Header().Set("Date", clk.Now().UTC().Format(http.TimeFormat))
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			setRateLimit(w, 10, 10, reset.Add(time.Hour))
+			w.Header().Set("Date", clk.Now().UTC().Format(http.TimeFormat))
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, clk))
+	ctx := context.Background()
+
+	if _, err := c.Get(ctx, "/a"); err != nil {
+		t.Fatalf("Get /a: %v", err)
+	}
+	if _, err := c.Get(ctx, "/b"); !errors.Is(err, rest.ErrRateLimited) {
+		t.Fatalf("Get /b: err = %v, want ErrRateLimited", err)
+	}
+	if _, err := c.Get(ctx, "/c"); err != nil {
+		t.Fatalf("Get /c after the reset: %v (the budget stopped for good)", err)
+	}
+}
+
+// A response from an older window that arrives after the window was replaced
+// must not roll it back.
+func TestBudgetIgnoresALaggingResponseFromAnOlderWindow(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch hits.Add(1) {
+		case 1:
+			setRateLimit(w, 10, 9, t0.Add(time.Hour))
+		case 2:
+			setRateLimit(w, 10, 9, t0.Add(2*time.Hour))
+		case 3: // the lagging answer of the first window, nothing remaining
+			setRateLimit(w, 10, 0, t0.Add(time.Hour))
+		default:
+			setRateLimit(w, 10, 8, t0.Add(2*time.Hour))
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+
+	for i := range 4 {
+		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
+			t.Fatalf("Get %d: %v (a lagging answer rolled the window back)", i, err)
+		}
+	}
+}
+
+func TestGetImmutableBypassesTheETagCache(t *testing.T) {
+	var mu sync.Mutex
+	var inm []string
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		inm = append(inm, r.Header.Get("If-None-Match"))
+		if r.Header.Get("If-None-Match") == `"etag-1"` {
+			w.Header().Set("ETag", `"etag-1"`)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		n++
+		w.Header().Set("ETag", fmt.Sprintf(`"etag-%d"`, n))
+		_, _ = fmt.Fprintf(w, "body-%d", n)
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+	ctx := context.Background()
+
+	if got, err := c.Get(ctx, "/p"); err != nil || string(got.Body) != "body-1" {
+		t.Fatalf("Get: %+v, %v", got, err)
+	}
+	got, err := c.GetImmutable(ctx, "/p")
+	if err != nil || got.Status != http.StatusOK || got.NotModified || string(got.Body) != "body-2" || got.ETag != `"etag-2"` {
+		t.Fatalf("GetImmutable = %+v, %v; want a fresh 200 with the new body", got, err)
+	}
+	if got, err := c.GetImmutable(ctx, "/fresh"); err != nil || string(got.Body) != "body-3" {
+		t.Fatalf("GetImmutable on a new path: %+v, %v", got, err)
+	}
+	// The cache holds what Get stored, untouched by GetImmutable, and nothing for /fresh.
+	if got, err := c.Get(ctx, "/p"); err != nil || !got.NotModified || string(got.Body) != "body-1" {
+		t.Fatalf("Get after GetImmutable = %+v, %v; want the 304 answered from the original cache entry", got, err)
+	}
+	if _, err := c.Get(ctx, "/fresh"); err != nil {
+		t.Fatalf("Get /fresh: %v", err)
+	}
+	want := []string{"", "", "", `"etag-1"`, ""}
+	if fmt.Sprint(inm) != fmt.Sprint(want) {
+		t.Fatalf("If-None-Match per request = %q, want %q", inm, want)
+	}
+}
+
+func TestGetImmutableTreats304AsAnError(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			w.Header().Set("ETag", `"etag-1"`)
+			_, _ = w.Write([]byte("cached"))
+			return
+		}
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+
+	if _, err := c.Get(context.Background(), "/p"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got, err := c.GetImmutable(context.Background(), "/p"); err == nil {
+		t.Fatalf("GetImmutable returned %+v for a 304", got)
+	}
+}
+
+func TestGetImmutableSharesHeadersBudgetAndTypedErrors(t *testing.T) {
+	var mu sync.Mutex
+	var seen []http.Header
+	gh := &rateLimitedServer{limit: 4, reset: t0.Add(time.Hour)}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Clone())
+		mu.Unlock()
+		if r.URL.Path == "/missing" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		gh.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+	ctx := context.Background()
+
+	if _, err := c.GetImmutable(ctx, "/missing"); !errors.Is(err, rest.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	for _, path := range []string{"/a", "/b"} {
+		if _, err := c.GetImmutable(ctx, path); err != nil {
+			t.Fatalf("GetImmutable %s: %v", path, err)
+		}
+	}
+	if _, err := c.GetImmutable(ctx, "/c"); !errors.Is(err, rest.ErrBudgetExhausted) {
+		t.Fatalf("err = %v, want ErrBudgetExhausted", err)
+	}
+	if _, err := c.Get(ctx, "/d"); !errors.Is(err, rest.ErrBudgetExhausted) {
+		t.Fatalf("Get after GetImmutable spent the shared budget: err = %v", err)
+	}
+	if _, err := c.GetImmutable(ctx, "relative"); err == nil {
+		t.Fatal("GetImmutable accepted a path without a leading slash")
+	}
+	for i, h := range seen {
+		if h.Get("Authorization") != "Bearer "+tokenValue || h.Get("Accept") != "application/vnd.github+json" || h.Get("X-GitHub-Api-Version") != "2022-11-28" {
+			t.Errorf("request %d headers = %v", i, h)
+		}
+	}
+}
+
+func TestBodiesOverTheLimitAreAnErrorNotTruncated(t *testing.T) {
+	const limit = 8
+	rest.LimitBodiesTo(t, limit)
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   int
+		ok     bool
+	}{
+		{"2xx at the limit", 200, limit, true},
+		{"2xx over the limit", 200, limit + 1, false},
+		{"error status over the limit", 500, limit + 1, false},
+		{"error status at the limit", 500, limit, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(strings.Repeat("x", tc.body)))
+			}))
+			defer srv.Close()
+			c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+			for name, get := range map[string]func(context.Context, string) (rest.Response, error){"Get": c.Get, "GetImmutable": c.GetImmutable} {
+				got, err := get(context.Background(), "/p")
+				var se *rest.StatusError
+				switch {
+				case tc.ok && tc.status == 200:
+					if err != nil || len(got.Body) != limit {
+						t.Errorf("%s: %+v, %v; want the full body", name, got, err)
+					}
+				case tc.ok:
+					if !errors.As(err, &se) || len(se.Body) != limit {
+						t.Errorf("%s: err = %v, want a StatusError carrying the body", name, err)
+					}
+				default:
+					if err == nil || errors.As(err, &se) || !strings.Contains(err.Error(), "8 bytes") {
+						t.Errorf("%s: err = %v, want an error naming the 8-byte limit", name, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+// A body that never ends must stop at the limit instead of filling memory.
+func TestStreamingBodyStopsAtTheLimit(t *testing.T) {
+	rest.LimitBodiesTo(t, 1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := []byte(strings.Repeat("x", 512))
+		for r.Context().Err() == nil {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+		}
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := c.Get(ctx, "/p"); err == nil || !strings.Contains(err.Error(), "1024 bytes") {
+		t.Fatalf("err = %v, want an error naming the 1024-byte limit", err)
+	}
+}
+
+func TestReturnedBodiesAreCopies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"etag-1"`)
+		if r.Header.Get("If-None-Match") != "" {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write([]byte("original"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+	ctx := context.Background()
+
+	first, err := c.Get(ctx, "/p")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	first.Body[0] = 'X' // the 200 body must not alias the cache
+	second, err := c.Get(ctx, "/p")
+	if err != nil || string(second.Body) != "original" {
+		t.Fatalf("304 after mutating the 200 body = %q, %v", second.Body, err)
+	}
+	second.Body[0] = 'Y' // the 304 body must not alias the cache either
+	third, err := c.Get(ctx, "/p")
+	if err != nil || string(third.Body) != "original" {
+		t.Fatalf("304 after mutating a 304 body = %q, %v", third.Body, err)
+	}
+}
+
+func TestRetryAfterAsHTTPDate(t *testing.T) {
+	until := t0.Add(90 * time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Date", t0.UTC().Format(http.TimeFormat))
+		w.Header().Set("Retry-After", until.UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+
+	_, err := c.Get(context.Background(), "/p")
+	var rl *rest.RateLimitedError
+	if !errors.As(err, &rl) || !rl.Until.Equal(until) {
+		t.Fatalf("err = %#v, want a RateLimitedError until %v", err, until)
+	}
+}
+
+func TestErrorBodyTruncationKeepsRunesWhole(t *testing.T) {
+	body := strings.Repeat("x", 511) + "é" // the rune spans bytes 511 and 512
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+
+	_, err := c.Get(context.Background(), "/p")
+	var se *rest.StatusError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want a *StatusError", err)
+	}
+	if !utf8.ValidString(se.Body) || se.Body != body[:511] {
+		t.Fatalf("truncated body has %d bytes, want the 511 whole bytes before the rune", len(se.Body))
+	}
+}
+
+// The tests below pin behavior that already holds.
+
+func TestResponseWithoutRateLimitHeadersLeavesTheBudgetUnchanged(t *testing.T) {
+	var headerless atomic.Bool
+	var remaining atomic.Int32
+	remaining.Store(3)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !headerless.Load() {
+			setRateLimit(w, 4, int(remaining.Add(-1)+1), t0.Add(time.Hour))
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0})) // cap of 2
+	ctx := context.Background()
+
+	if _, err := c.Get(ctx, "/learn"); err != nil { // reports 3 remaining: used 1
+		t.Fatalf("Get: %v", err)
+	}
+	headerless.Store(true)
+	for i := range 5 {
+		if _, err := c.Get(ctx, fmt.Sprintf("/headerless/%d", i)); err != nil {
+			t.Fatalf("headerless Get %d: %v", i, err)
+		}
+	}
+	headerless.Store(false)
+	if _, err := c.Get(ctx, "/second"); err != nil { // used 1 < 2; reports 2 remaining: used 2
+		t.Fatalf("Get after headerless answers: %v", err)
+	}
+	if _, err := c.Get(ctx, "/third"); !errors.Is(err, rest.ErrBudgetExhausted) {
+		t.Fatalf("err = %v, want ErrBudgetExhausted at the same count as before", err)
+	}
+}
+
+func TestCancelledContextReleasesItsReservation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		setRateLimit(w, 2, 2, t0.Add(time.Hour))
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0})) // cap of 1
+	if _, err := c.Get(context.Background(), "/learn"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Get(ctx, "/cancelled"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if _, err := c.Get(context.Background(), "/after"); err != nil {
+		t.Fatalf("Get after a cancelled one: %v (the reservation leaked)", err)
+	}
+}
+
+func TestETagCacheEntryLifecycle(t *testing.T) {
+	var mu sync.Mutex
+	var inm []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inm = append(inm, r.Header.Get("If-None-Match"))
+		step := len(inm)
+		mu.Unlock()
+		switch step {
+		case 1, 4:
+			w.Header().Set("ETag", `"etag-1"`)
+		case 3:
+			w.Header().Set("ETag", `"etag-error"`)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+	get := func() { _, _ = c.Get(context.Background(), "/p") }
+
+	get() // 1: stores etag-1
+	get() // 2: a 200 without an ETag removes the entry
+	get() // 3: no entry; an error status with an ETag stores nothing
+	get() // 4: no entry; stores etag-1
+	get() // 5: the entry is back
+	want := []string{"", `"etag-1"`, "", "", `"etag-1"`}
+	if fmt.Sprint(inm) != fmt.Sprint(want) {
+		t.Fatalf("If-None-Match per request = %q, want %q", inm, want)
+	}
+}
+
+func TestConcurrentGetsAndTokenRotationAreRaceFree(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"`+r.URL.Path+`"`)
+		setRateLimit(w, 1_000_000, 1_000_000, t0.Add(time.Hour))
+		if r.Header.Get("If-None-Match") != "" {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	tok := newTokens()
+	c := newClient(t, tok.Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range 20 {
+				if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", (i+j)%4)); err != nil {
+					t.Errorf("Get: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for j := range 40 {
+			tok.rotate(tokenValue, fmt.Sprintf("identity-%d", j%3))
+		}
+	}()
+	wg.Wait()
+}
+
+// One response with a wildly wrong Date (a stale intermediary) must not move the
+// budget's window: GitHub's windows last at most an hour, so a Date further from
+// the local clock than that is ignored.
+func TestBudgetIgnoresADateFarFromTheLocalClock(t *testing.T) {
+	reset := t0.Add(time.Hour)
+	for _, tc := range []struct {
+		name string
+		date time.Duration // from the local clock
+	}{
+		{"stale intermediary, 5 hours behind", -5 * time.Hour},
+		{"5 hours ahead", 5 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clk := &clock{now: t0}
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if hits.Add(1) == 1 {
+					setRateLimit(w, 10, 5, reset) // used 5: at the cap of 5
+					w.Header().Set("Date", t0.Add(tc.date).UTC().Format(http.TimeFormat))
+				} else {
+					setRateLimit(w, 10, 10, reset.Add(time.Hour))
+					w.Header().Set("Date", clk.Now().UTC().Format(http.TimeFormat))
+				}
+				_, _ = w.Write([]byte("body"))
+			}))
+			defer srv.Close()
+			c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, clk))
+			ctx := context.Background()
+
+			if _, err := c.Get(ctx, "/a"); err != nil {
+				t.Fatalf("Get /a: %v", err)
+			}
+			_, err := c.Get(ctx, "/b")
+			var be *rest.BudgetExhaustedError
+			if !errors.As(err, &be) || !be.Reset.Equal(reset) {
+				t.Fatalf("Get /b: err = %#v, want ErrBudgetExhausted until the reset %v", err, reset)
+			}
+			clk.Set(reset)
+			if _, err := c.Get(ctx, "/b"); err != nil {
+				t.Fatalf("Get /b right after the reset: %v", err)
+			}
+		})
+	}
+}
+
+// A 304 costs nothing on GitHub's side: its headers neither change the count nor
+// establish a window.
+func TestBudgetIgnoresRateLimitHeadersOf304(t *testing.T) {
+	reset := t0.Add(time.Hour)
+	for _, tc := range []struct {
+		name     string
+		okLimits bool // the 200 carries rate-limit headers (a window is known)
+	}{
+		{"window known", true},
+		{"no window yet", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("ETag", `"a"`)
+				if r.Header.Get("If-None-Match") != "" {
+					setRateLimit(w, 10, 0, reset) // a 304 claiming everything is used
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				if tc.okLimits {
+					setRateLimit(w, 10, 9, reset)
+				}
+				_, _ = w.Write([]byte("body"))
+			}))
+			defer srv.Close()
+			c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+			ctx := context.Background()
+
+			if _, err := c.Get(ctx, "/a"); err != nil {
+				t.Fatalf("Get /a: %v", err)
+			}
+			if got, err := c.Get(ctx, "/a"); err != nil || !got.NotModified {
+				t.Fatalf("conditional Get /a = %+v, %v", got, err)
+			}
+			if _, err := c.Get(ctx, "/b"); err != nil {
+				t.Fatalf("Get /b after a 304: %v (the 304's headers were counted)", err)
+			}
+		})
+	}
+}
+
+// A response without a usable Date says nothing about the clocks: the previous offset stays.
+func TestBudgetKeepsTheOffsetWithoutAUsableDate(t *testing.T) {
+	const skew = 2 * time.Minute
+	reset := t0.Add(time.Hour)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := int(hits.Add(1))
+		setRateLimit(w, 10, 10-n, reset) // used n
+		switch n {
+		case 1:
+			w.Header().Set("Date", t0.Add(-skew).UTC().Format(http.TimeFormat))
+		case 2:
+			w.Header()["Date"] = nil // the server sends none
+		default:
+			w.Header().Set("Date", "not a date")
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+
+	for i := range 5 {
+		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
+			t.Fatalf("Get %d: %v", i, err)
+		}
+	}
+	_, err := c.Get(context.Background(), "/next")
+	var be *rest.BudgetExhaustedError
+	if !errors.As(err, &be) || !be.Reset.Equal(reset.Add(skew)) {
+		t.Fatalf("err = %#v, want ErrBudgetExhausted until %v (the first Date's offset)", err, reset.Add(skew))
 	}
 }

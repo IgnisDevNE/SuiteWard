@@ -70,7 +70,7 @@ func TestConcurrentProposalRevisionsKeepOneGaplessSequence(t *testing.T) {
 						t.Fatalf("suite revision = %d, want %d", got, before+2)
 					}
 					if got := w.count("proposal_revisions"); got != revisions+2 {
-						t.Fatalf("stored revisions = %d, want %d", got, wantRevisions)
+						t.Fatalf("stored revisions = %d, want %d", got, revisions+2)
 					}
 					rows, err := w.pool.Query(t.Context(), "SELECT seq FROM proposal_revisions WHERE proposal_id = 'p1' ORDER BY seq")
 					if err != nil {

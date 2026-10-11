@@ -68,7 +68,7 @@ func TestLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBudget: %v", err)
 	}
-	newClient := func(permissions map[string]string) (*appauth.Installation, *rest.Client) {
+	newClient := func(t *testing.T, permissions map[string]string) (*appauth.Installation, *rest.Client) {
 		inst, err := app.Installation(installationID, []string{name}, permissions, httpClient, apiURL)
 		if err != nil {
 			t.Fatalf("Installation: %v", err)
@@ -85,7 +85,7 @@ func TestLive(t *testing.T) {
 		}
 		return inst, client
 	}
-	inst, client := newClient(readPermissions)
+	inst, client := newClient(t, readPermissions)
 	reader, err := github.NewReader(client)
 	if err != nil {
 		t.Fatalf("NewReader: %v", err)
@@ -188,9 +188,13 @@ func TestLive(t *testing.T) {
 		if number == 0 || sha == "" {
 			t.Fatal("no pull number or commit sha: an earlier step failed")
 		}
-		_, narrow := newClient(map[string]string{"metadata": "read"})
+		_, narrow := newClient(t, map[string]string{"metadata": "read"})
 		for _, path := range []string{"/repos/" + repo + "/pulls/" + strconv.Itoa(number), "/repos/" + repo + "/commits/" + sha} {
-			_, err := narrow.Get(stepCtx(t), path)
+			resp, err := narrow.Get(stepCtx(t), path)
+			if err == nil {
+				t.Errorf("metadata-only token on %s answered %d, want a 403 or 404", path, resp.Status)
+				continue
+			}
 			var se *rest.StatusError
 			if !errors.As(err, &se) || (se.Status != http.StatusForbidden && se.Status != http.StatusNotFound) {
 				t.Errorf("metadata-only token on %s: want a 403 or 404 StatusError, got %s", path, failure(err))
@@ -223,11 +227,16 @@ func liveInt(t *testing.T, name string) int64 {
 	return n
 }
 
-// failure renders an error without a GitHub answer body, which a StatusError carries.
+// failure renders an error without a GitHub answer body, which a StatusError or
+// a RateLimitedError carries.
 func failure(err error) string {
 	var se *rest.StatusError
-	if errors.As(err, &se) {
+	var rl *rest.RateLimitedError
+	switch {
+	case errors.As(err, &se):
 		return "status " + strconv.Itoa(se.Status)
+	case errors.As(err, &rl):
+		return "rate limited, status " + strconv.Itoa(rl.Status) + ", until " + rl.Until.UTC().Format(time.RFC3339)
 	}
 	return err.Error()
 }

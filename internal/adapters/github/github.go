@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -27,8 +28,13 @@ var (
 	ErrInvalidResponse = errors.New("github: invalid response")
 )
 
-// pageSize is per_page of every listing; a shorter page is the last one.
-const pageSize = 100
+const (
+	// pageSize is per_page of every listing; a shorter page is the last one.
+	pageSize = 100
+	// maxPages bounds a listing at 10,000 items; a server that never ends a
+	// listing is answering wrongly, not holding more.
+	maxPages = 100
+)
 
 var (
 	repoPart = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -101,7 +107,7 @@ func (r *Reader) OpenPulls(ctx context.Context, repo string) ([]Pull, error) {
 		return nil, fmt.Errorf("open pull requests of %s: %w", repo, err)
 	}
 	pulls := make([]Pull, 0, len(raw))
-	for _, p := range raw {
+	for _, p := range latest(raw, func(p pullJSON) int { return p.Number }) {
 		switch {
 		case p.Number <= 0:
 			return nil, fmt.Errorf("%w: pull request of %s without a number", ErrInvalidResponse, repo)
@@ -152,7 +158,7 @@ func (r *Reader) PullComments(ctx context.Context, repo string, number int, sinc
 		return nil, fmt.Errorf("comments of pull request %d of %s: %w", number, repo, err)
 	}
 	comments := make([]Comment, 0, len(raw))
-	for _, c := range raw {
+	for _, c := range latest(raw, func(c commentJSON) int64 { return c.ID }) {
 		switch {
 		case c.ID <= 0:
 			return nil, fmt.Errorf("%w: comment of pull request %d of %s without an id", ErrInvalidResponse, number, repo)
@@ -170,11 +176,21 @@ func (r *Reader) PullComments(ctx context.Context, repo string, number int, sinc
 	return comments, nil
 }
 
+// latest keeps one item per key, the last one listed: an item shifted onto
+// the next page while listing appears twice, and the later read is newer.
+func latest[T any, K comparable](items []T, key func(T) K) []T {
+	byKey := make(map[K]T, len(items))
+	for _, item := range items {
+		byKey[key(item)] = item
+	}
+	return slices.Collect(maps.Values(byKey))
+}
+
 // readPages reads pages 1, 2, … of a listing until one holds fewer than
-// pageSize items; the result is never nil.
+// pageSize items, or fails after maxPages; the result is never nil.
 func readPages[T any](ctx context.Context, client *rest.Client, path func(page int) string) ([]T, error) {
 	all := []T{}
-	for page := 1; ; page++ {
+	for page := 1; page <= maxPages; page++ {
 		p := path(page)
 		resp, err := client.Get(ctx, p)
 		if err != nil {
@@ -192,6 +208,7 @@ func readPages[T any](ctx context.Context, client *rest.Client, path func(page i
 			return all, nil
 		}
 	}
+	return nil, fmt.Errorf("%w: the listing at %s runs past %d pages", ErrInvalidResponse, path(maxPages), maxPages)
 }
 
 // decode unmarshals body; its error names the path only, since the decoder's

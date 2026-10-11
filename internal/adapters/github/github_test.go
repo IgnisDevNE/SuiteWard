@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -745,5 +746,114 @@ func TestListingsRejectANullPage(t *testing.T) {
 	}
 	if comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{}); !errors.Is(err, github.ErrInvalidResponse) {
 		t.Errorf("PullComments = %+v, %v; want ErrInvalidResponse", comments, err)
+	}
+}
+
+// fullPages routes pages 1 through last of a listing to the same full page.
+func fullPages(uri string, page []byte, last int) map[string]reply {
+	routes := map[string]reply{}
+	for p := 1; p <= last; p++ {
+		routes[uri+strconv.Itoa(p)] = ok(page)
+	}
+	return routes
+}
+
+func TestListingsStopAfterTheirPageLimit(t *testing.T) {
+	// Pages 1 through 100 are routed; a 101st request fails the fake.
+	reader, gh := newReader(t, map[string]reply{})
+	for uri, reply := range fullPages(pullsURI, generatedPage(t, "pulls.json", "number", 1, 100), 100) {
+		gh.routes[uri] = reply
+	}
+	for uri, reply := range fullPages(commentsURI, generatedPage(t, "comments.json", "id", 1, 100), 100) {
+		gh.routes[uri] = reply
+	}
+
+	pulls, err := reader.OpenPulls(t.Context(), repo)
+	if !errors.Is(err, github.ErrInvalidResponse) {
+		t.Errorf("OpenPulls = %d pulls, %v; want ErrInvalidResponse", len(pulls), err)
+	} else if !strings.Contains(err.Error(), "/pulls") {
+		t.Errorf("error %q does not name the path", err)
+	}
+	if got := len(gh.requests()); got != 100 {
+		t.Errorf("OpenPulls sent %d requests, want 100", got)
+	}
+
+	comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	if !errors.Is(err, github.ErrInvalidResponse) {
+		t.Errorf("PullComments = %d comments, %v; want ErrInvalidResponse", len(comments), err)
+	} else if !strings.Contains(err.Error(), "/comments") {
+		t.Errorf("error %q does not name the path", err)
+	}
+	if got := len(gh.requests()); got != 200 {
+		t.Errorf("after PullComments %d requests in all, want 200", got)
+	}
+}
+
+func TestOpenPullsReturnsEachNumberOnceTheLaterWinning(t *testing.T) {
+	// Pull 100 moved onto page 2 while listing and changed in between.
+	later := items(t, "pulls.json")[0]
+	later["number"] = 100
+	object(later, "head")["ref"] = "later"
+	next := items(t, "pulls.json")[0]
+	next["number"] = 101
+	reader, _ := newReader(t, map[string]reply{
+		pullsURI + "1": ok(generatedPage(t, "pulls.json", "number", 1, 100)),
+		pullsURI + "2": ok(encode(t, []map[string]any{later, next})),
+	})
+
+	pulls, err := reader.OpenPulls(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("OpenPulls: %v", err)
+	}
+	var want []int
+	for n := 1; n <= 101; n++ {
+		want = append(want, n)
+	}
+	if got := pullNumbers(pulls); !slices.Equal(got, want) {
+		t.Errorf("numbers = %v, want 1 to 101 once each", got)
+	}
+	if got := pulls[99].HeadRef; got != "later" {
+		t.Errorf("pull 100 head ref = %q, want the later occurrence", got)
+	}
+}
+
+func TestPullCommentsReturnsEachIDOnceTheLaterWinning(t *testing.T) {
+	later := items(t, "comments.json")[0]
+	later["id"] = 100
+	later["body"] = "later"
+	next := items(t, "comments.json")[0]
+	next["id"] = 101
+	reader, _ := newReader(t, map[string]reply{
+		commentsURI + "1": ok(generatedPage(t, "comments.json", "id", 1, 100)),
+		commentsURI + "2": ok(encode(t, []map[string]any{later, next})),
+	})
+
+	comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	if err != nil {
+		t.Fatalf("PullComments: %v", err)
+	}
+	var want []int64
+	for id := int64(1); id <= 101; id++ {
+		want = append(want, id)
+	}
+	if got := commentIDs(comments); !slices.Equal(got, want) {
+		t.Errorf("IDs = %v, want 1 to 101 once each", got)
+	}
+	if got := comments[99].Body; got != "later" {
+		t.Errorf("comment 100 body = %q, want the later occurrence", got)
+	}
+}
+
+func TestTreeWithADuplicatePathIsRejectedByInventory(t *testing.T) {
+	const sha = "77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa"
+	entry := `{"path":"tests/a_test.go","mode":"100644","type":"blob","sha":"` + sha + `"}`
+	reader, _ := newReader(t, map[string]reply{treeURI: ok([]byte(`{"tree":[` + entry + `,` + entry + `],"truncated":false}`))})
+	tree, err := reader.Tree(t.Context(), repo, commitSHA)
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+
+	if inv, err := inventory.Build(t.Context(), tree); !errors.Is(err, inventory.ErrInvalidTree) {
+		t.Errorf("Build = %+v, %v; want ErrInvalidTree", inv, err)
 	}
 }

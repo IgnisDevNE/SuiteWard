@@ -29,7 +29,7 @@ func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 }
 
 // Counts reports the job and outbox totals the status endpoint serves. The
-// outbox relay's own periodic jobs are not counted.
+// outbox relay's and the GitHub synchronization tick's own jobs are not counted.
 func (s *Store) Counts(ctx context.Context) (Counts, error) {
 	q := dbgen.New(s.pool)
 	jobs, err := q.CountJobsByState(ctx)

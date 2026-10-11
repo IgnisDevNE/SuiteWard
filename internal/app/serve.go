@@ -158,10 +158,11 @@ func listenAndServe(ctx context.Context, addr string, srv *http.Server, logger *
 }
 
 // shutdown stops the service within one budget of timeout: readiness turns
-// 503, the HTTP server and the MCP server (when there is one) drain, River stops softly (running jobs finish), then
-// the pool closes. When the budget runs out River is stopped with
-// cancellation, for at most forceGrace more, and the error says so. A River
-// that cannot be stopped still holds the pool, so the pool stays open then.
+// 503, the HTTP server and then the MCP server (when there is one) drain,
+// River stops softly (running jobs finish), then the pool closes. When the
+// budget runs out River is stopped with cancellation, for at most forceGrace
+// more, and the error says so. A River that cannot be stopped still holds the
+// pool, so the pool stays open then.
 func shutdown(logger *slog.Logger, a *api, srv *http.Server, runtime *river.Runtime, pool *pgxpool.Pool, timeout time.Duration, mcpServers ...*http.Server) error {
 	a.stopping.Store(true)
 	logger.Info("shutting down", "timeout", timeout.String())

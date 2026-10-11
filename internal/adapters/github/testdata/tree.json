@@ -1,0 +1,17 @@
+{
+  "sha": "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d",
+  "url": "https://api.github.com/repos/octo-org/octo-repo/git/trees/9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d",
+  "tree": [
+    { "path": ".suiteward.yml", "mode": "100644", "type": "blob", "sha": "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0", "size": 32, "url": "https://api.github.com/repos/octo-org/octo-repo/git/blobs/d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0" },
+    { "path": "README.md", "mode": "100644", "type": "blob", "sha": "aa11bb22cc33dd44ee55ff6600aa11bb22cc33dd", "size": 120, "url": "https://api.github.com/repos/octo-org/octo-repo/git/blobs/aa11bb22cc33dd44ee55ff6600aa11bb22cc33dd" },
+    { "path": "docs", "mode": "040000", "type": "tree", "sha": "0d0c0b0a090807060504030201000f0e0d0c0b0a", "url": "https://api.github.com/repos/octo-org/octo-repo/git/trees/0d0c0b0a090807060504030201000f0e0d0c0b0a" },
+    { "path": "docs/link", "mode": "120000", "type": "blob", "sha": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e", "size": 12, "url": "https://api.github.com/repos/octo-org/octo-repo/git/blobs/5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e" },
+    { "path": "scripts", "mode": "040000", "type": "tree", "sha": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "url": "https://api.github.com/repos/octo-org/octo-repo/git/trees/1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b" },
+    { "path": "scripts/run.sh", "mode": "100755", "type": "blob", "sha": "77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa", "size": 48, "url": "https://api.github.com/repos/octo-org/octo-repo/git/blobs/77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa" },
+    { "path": "tests", "mode": "040000", "type": "tree", "sha": "2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c", "url": "https://api.github.com/repos/octo-org/octo-repo/git/trees/2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c" },
+    { "path": "tests/a_test.go", "mode": "100644", "type": "blob", "sha": "b82e9a34624d830a4bd24b63ceb1deb0ad14c863", "size": 110, "url": "https://api.github.com/repos/octo-org/octo-repo/git/blobs/b82e9a34624d830a4bd24b63ceb1deb0ad14c863" },
+    { "path": "vendor", "mode": "040000", "type": "tree", "sha": "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d", "url": "https://api.github.com/repos/octo-org/octo-repo/git/trees/3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d" },
+    { "path": "vendor/lib", "mode": "160000", "type": "commit", "sha": "4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e" }
+  ],
+  "truncated": false
+}

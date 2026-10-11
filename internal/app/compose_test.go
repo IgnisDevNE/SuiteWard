@@ -49,7 +49,7 @@ func TestListenAndServeReportsAServerThatStopsOnItsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := listenAndServe(context.Background(), "127.0.0.1:0", srv, logger); err == nil {
+	if err := listenAndServe(context.Background(), "127.0.0.1:0", srv, logger, nil); err == nil {
 		t.Fatal("listenAndServe returned nil although the server stopped by itself")
 	}
 }

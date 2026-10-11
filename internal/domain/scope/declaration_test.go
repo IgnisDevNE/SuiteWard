@@ -50,6 +50,11 @@ func TestParseDeclarationRejectsInvalidForms(t *testing.T) {
 		{name: "same runner pattern twice", raw: "version: 1\nrunner: [Makefile, Makefile]\n"},
 		{name: "two documents", raw: "version: 1\n---\nversion: 1\n"},
 		{name: "second document that is not a declaration", raw: "version: 1\n---\n- a\n"},
+		{name: "empty trailing document", raw: "version: 1\n---\n"},
+		{name: "merge key alone", raw: "<<: {version: 1}\n"},
+		{name: "merge key supplying include", raw: "version: 1\n<<: {include: [a]}\n"},
+		{name: "merge key with a list of mappings", raw: "version: 1\n<<: [{include: [a]}, {exclude: [b]}]\n"},
+		{name: "merge key after an explicit include", raw: "version: 1\ninclude: [a]\n<<: {include: [b]}\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

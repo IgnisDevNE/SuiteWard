@@ -26,26 +26,19 @@ type Declaration struct {
 	runner  []Pattern
 }
 
-// document is schema version 1. Fields are nodes, not Go values, because
-// yaml.v3 would coerce any scalar into a string and a whole float into an int.
-type document struct {
-	Version yaml.Node `yaml:"version"`
-	Include yaml.Node `yaml:"include"`
-	Exclude yaml.Node `yaml:"exclude"`
-	Runner  yaml.Node `yaml:"runner"`
-}
-
 // ParseDeclaration validates raw as a schema version 1 declaration: a single
 // YAML mapping with the integer key version (1) and the optional pattern
-// sequences include, exclude and runner, and nothing else.
+// sequences include, exclude and runner, and nothing else. The mapping is
+// walked as nodes, not decoded into a struct: yaml.v3 would coerce any scalar
+// into a string, a whole float into an int, and expand merge keys (<<) into
+// keys the file does not spell out.
 func ParseDeclaration(raw []byte) (Declaration, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return Declaration{}, fmt.Errorf("%w: empty", ErrInvalidDeclaration)
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	decoder.KnownFields(true)
-	var doc document
-	if err := decoder.Decode(&doc); err != nil {
+	var root yaml.Node
+	if err := decoder.Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {
 			return Declaration{}, fmt.Errorf("%w: no document", ErrInvalidDeclaration)
 		}
@@ -56,18 +49,39 @@ func ParseDeclaration(raw []byte) (Declaration, error) {
 		return Declaration{}, fmt.Errorf("%w: more than one YAML document", ErrInvalidDeclaration)
 	}
 
-	if err := checkVersion(doc.Version); err != nil {
+	top := root.Content[0]
+	if top.Kind != yaml.MappingNode {
+		return Declaration{}, fmt.Errorf("%w: the document must be a mapping", ErrInvalidDeclaration)
+	}
+	fields := make(map[string]yaml.Node, len(top.Content)/2)
+	for i := 0; i < len(top.Content); i += 2 {
+		key, value := top.Content[i], top.Content[i+1]
+		if key.Kind != yaml.ScalarNode || key.ShortTag() != "!!str" {
+			return Declaration{}, fmt.Errorf("%w: unsupported key at line %d", ErrInvalidDeclaration, key.Line)
+		}
+		switch key.Value {
+		case "version", "include", "exclude", "runner":
+		default:
+			return Declaration{}, fmt.Errorf("%w: unknown key %q at line %d", ErrInvalidDeclaration, key.Value, key.Line)
+		}
+		if _, dup := fields[key.Value]; dup {
+			return Declaration{}, fmt.Errorf("%w: key %q appears twice", ErrInvalidDeclaration, key.Value)
+		}
+		fields[key.Value] = *value
+	}
+
+	if err := checkVersion(fields["version"]); err != nil {
 		return Declaration{}, err
 	}
-	include, err := parseList("include", doc.Include)
+	include, err := parseList("include", fields["include"])
 	if err != nil {
 		return Declaration{}, err
 	}
-	exclude, err := parseList("exclude", doc.Exclude)
+	exclude, err := parseList("exclude", fields["exclude"])
 	if err != nil {
 		return Declaration{}, err
 	}
-	runner, err := parseList("runner", doc.Runner)
+	runner, err := parseList("runner", fields["runner"])
 	if err != nil {
 		return Declaration{}, err
 	}

@@ -37,6 +37,12 @@ type Config struct {
 	Now                  func() time.Time             // nil means time.Now
 	Handlers             map[string]Handler           // by job kind, added to the probe handler; the probe kind is reserved
 	Publishers           map[string]Publisher         // by message kind, added to the probe publisher; the probe kind is reserved
+	// SyncTick and SyncRepo are the GitHub synchronization jobs (SyncTickKind every SyncInterval, SyncRepoKind per request);
+	// both are set or both nil, and nil registers neither.
+	SyncTick       func(ctx context.Context) error
+	SyncRepo       func(ctx context.Context, repo string) error
+	SyncInterval   time.Duration // zero means one minute
+	JobMaxAttempts int           // JOB_MAX_ATTEMPTS, for the jobs this runtime defines; zero means River's default
 }
 
 // rescueStuckJobsAfter is when River rescues a job that stayed running.

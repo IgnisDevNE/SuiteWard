@@ -879,12 +879,18 @@ func TestNoTokenValueIsPrintedInAnyPosition(t *testing.T) {
 	}
 }
 
-func TestZeroTokenHasNoValue(t *testing.T) {
+func TestRevealOnTheZeroTokenFailsLoudly(t *testing.T) {
 	t.Parallel()
 	var tok appauth.Token
-	if tok.Reveal() != "" {
-		t.Errorf("zero Token reveals %q", tok.Reveal())
+	if s := renderings(tok); strings.Contains(s, "ghs_") {
+		t.Errorf("zero Token prints a value: %s", s)
 	}
+	defer func() {
+		if recover() == nil {
+			t.Error("Reveal on the zero Token returned instead of panicking")
+		}
+	}()
+	_ = tok.Reveal()
 }
 
 func TestCancellingTheMintingCallerReturnsContextCanceledAndCachesNothing(t *testing.T) {

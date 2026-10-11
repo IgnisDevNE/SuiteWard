@@ -285,13 +285,9 @@ type Token struct {
 }
 
 // Reveal returns the bearer value, only for the Authorization header. The
-// zero Token, returned beside an error, has none.
-func (t Token) Reveal() string {
-	if t.value == nil {
-		return ""
-	}
-	return *t.value
-}
+// zero Token, returned beside an error, has none: revealing it panics rather
+// than send an empty credential.
+func (t Token) Reveal() string { return *t.value }
 
 // Identity is a stable id of this token, derived from but never equal to the value.
 func (t Token) Identity() string { return t.identity }

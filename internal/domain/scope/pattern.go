@@ -97,7 +97,8 @@ func (p Pattern) Match(path string) (bool, error) {
 		return false, fmt.Errorf("%w: %q", artifact.ErrInvalidPath, path)
 	}
 	components := strings.Split(path, "/")
-	for _, consumed := range matchEnds(p.segments, components) {
+	ends, _ := matchEnds(p.segments, components)
+	for _, consumed := range ends {
 		if consumed < len(components) {
 			// The pattern matched a directory; every file beneath it matches (rule 4).
 			return true, nil
@@ -124,12 +125,15 @@ func (p Pattern) String() string {
 
 // matchEnds returns every component count consumed by a full alignment of
 // segments against the start of components, honoring "**" as zero or more
-// segments. It is memoized because adjacent "**" segments would otherwise
-// revisit the same (segment, component) position many times.
-func matchEnds(segments, components []string) []int {
+// segments. It also reports whether a segment other than "**" is still
+// unmatched once every component is consumed (a deeper path could satisfy it).
+// It is memoized because adjacent "**" segments would otherwise revisit the
+// same (segment, component) position many times.
+func matchEnds(segments, components []string) ([]int, bool) {
 	type state struct{ segment, component int }
 	ends := make(map[int]struct{})
 	visited := make(map[state]bool)
+	open := false
 
 	var walk func(segment, component int)
 	walk = func(segment, component int) {
@@ -139,6 +143,9 @@ func matchEnds(segments, components []string) []int {
 		}
 		visited[key] = true
 
+		if component == len(components) && segment < len(segments) && segments[segment] != "**" {
+			open = true
+		}
 		if segment == len(segments) {
 			ends[component] = struct{}{}
 			return
@@ -163,5 +170,22 @@ func matchEnds(segments, components []string) []int {
 	for end := range ends {
 		result = append(result, end)
 	}
-	return result
+	return result, open
+}
+
+// MayMatchBelow reports whether some valid file path beneath dir (starting
+// with dir + "/") would satisfy Match. It is exact: true when the pattern is
+// exhausted at or above dir (a directory match covers everything beneath it),
+// or when segments remain once dir is consumed, since a deeper path can
+// satisfy them. The zero Pattern returns ErrInvalidPattern and an invalid dir
+// returns artifact.ErrInvalidPath.
+func (p Pattern) MayMatchBelow(dir string) (bool, error) {
+	if p.IsZero() {
+		return false, fmt.Errorf("%w: zero pattern", ErrInvalidPattern)
+	}
+	if !artifact.ValidPath(dir) {
+		return false, fmt.Errorf("%w: %q", artifact.ErrInvalidPath, dir)
+	}
+	ends, open := matchEnds(p.segments, strings.Split(dir, "/"))
+	return len(ends) > 0 || open, nil
 }

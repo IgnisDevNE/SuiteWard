@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,8 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
 	}
-	if len(names) != 2 || !(names[0] == "status" && names[1] == "sync" || names[0] == "sync" && names[1] == "status") {
+	slices.Sort(names)
+	if !slices.Equal(names, []string{"status", "sync"}) {
 		t.Fatalf("tools/list = %v; want status and sync", names)
 	}
 

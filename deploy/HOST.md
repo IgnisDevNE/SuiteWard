@@ -1,13 +1,13 @@
-# Remote host (isolated target): owner runbook for M1.2
+# Remote host (isolated target): owner runbook for M1.2 and M1.4
 
-Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, Podman 4.9.3, rootless for the unprivileged `suiteward` user. No inbound ports and no SSH daemon: you administer it through SSM Session Manager from your own workstation. This runs the product image and its PostgreSQL as two rootless containers from the Quadlet units in `deploy/quadlet/`. The only secret it needs is a generated database password, and you never type it.
+Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, Podman 4.9.3, rootless for the unprivileged `suiteward` user. No inbound ports and no SSH daemon: you administer it through SSM Session Manager from your own workstation. This runs the product image and its PostgreSQL as two rootless containers from the Quadlet units in `deploy/quadlet/`. It needs three secrets, all Podman secrets mounted as files: a generated database password (section 3, you never type it), the GitHub App's private key and a generated MCP token (section 4a, M1.4). The three non-secret GitHub settings live in a host file you write (section 4a).
 
-Never paste into chat, a file, a PR, or a log: any password or database URL, a GitHub or AWS credential, an SSM session token. An agent never holds host access; you run these steps in your own session and paste back only the outputs listed in section 6.
+Never paste into chat, a file, a PR, or a log: any password or database URL, a GitHub or AWS credential (the App key, the MCP token), an SSM session token. The only place the App key and the MCP token go is your own Session Manager terminal on the host, as the steps below say. An agent never holds host access; you run these steps in your own session and paste back only the outputs listed in section 6.
 
 ## 0. Before the host steps (GitHub, once)
 
 1. The first run of the `Deploy` workflow creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the first run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2` (and `main`, once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
+2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4` (M1.4 builds from it) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
 
 ## 1. Open a session
 
@@ -136,6 +136,62 @@ Run the curl check from above again as `suiteward`. It must now print `000` (any
 
 Limits of the rule: it covers IPv4 only, which is enough because the IPv6 metadata endpoint is off by default on EC2. The table lives in the kernel until reboot and is reloaded by the enabled unit. If `/etc/nftables.conf` on this host starts with `flush ruleset`, restarting `nftables.service` drops the table; load it again with `sudo systemctl restart suiteward-imds-block.service`. Optionally reboot the instance once and repeat `sudo nft list table inet suiteward_imds` to confirm the rule is loaded at boot. Never run commands that print metadata credentials.
 
+## 4a. GitHub and MCP settings (M1.4)
+
+Before the updated `suiteward.container` is installed (section 5; on a host that already runs M1.2, before you replace that file). The unit now mounts two more Podman secrets and reads one env file, and all three are mandatory: a missing secret or a missing file makes `podman` refuse to start the container, which `Restart=always` repeats every five seconds and the journal shows. It does not run silently without GitHub. The GitHub settings are all set or all unset (runtime contract): an env file with only some of them makes `serve` exit at startup, and `smoke.sh` then fails at `readyz` after its timeout.
+
+**The three non-secret settings.** As `ssm-user` (type `exit` to leave the `suiteward` shell). Run the first command, wait until the cursor stops, paste the three lines with the placeholders replaced (the App id and installation id from the App's settings page, the repositories as `owner/name`, comma-separated, 1 to 20, no spaces or quotes), then press Ctrl-D on an empty line:
+
+```
+sudo mkdir -p /etc/suiteward
+sudo tee /etc/suiteward/github.env >/dev/null
+```
+
+```
+SUITEWARD_GITHUB_APP_ID=<app id>
+SUITEWARD_GITHUB_INSTALLATION_ID=<installation id>
+SUITEWARD_GITHUB_REPOSITORIES=<owner/name>,<owner/name>
+```
+
+The file holds no secret (the quadlet reads it as `EnvironmentFile=/etc/suiteward/github.env`, readable by the `suiteward` user). Never commit these values.
+
+**The App key.** As `suiteward`. Copy the App's private key (PEM) to the host through your own session: run the `cat`, wait until the cursor stops, paste the whole PEM from the file on your workstation, press Ctrl-D on an empty line. The next command reads that file into the secret and the last one destroys it; the key is never echoed:
+
+```
+(umask 077; cat > ~/app-key.pem)
+podman secret create suiteward-github-app-key ~/app-key.pem
+shred -u ~/app-key.pem
+```
+
+Check the shape without showing the value; it must print `1`:
+
+```
+podman secret inspect --showsecret \
+  --format '{{.SecretData}}' suiteward-github-app-key |
+  grep -Ec '^-----BEGIN (RSA )?PRIVATE KEY-----$'
+```
+
+**The MCP token.** Generated on the host, 32 random bytes hex-encoded (64 characters, above the 32-byte minimum), straight into the secret. `printf` drops the newline that `openssl` appends; with a newline the secret would be 65 bytes and the client would need it too:
+
+```
+printf '%s' "$(openssl rand -hex 32)" |
+  podman secret create suiteward-mcp-token -
+podman secret inspect --showsecret \
+  --format '{{.SecretData}}' suiteward-mcp-token |
+  grep -Ecx '[0-9a-f]{64}'
+```
+
+It must print `1`. Run each creation once (`podman secret create` refuses an existing name; to replace a secret, `podman secret rm` it, create it again and `systemctl --user restart suiteward.service`).
+
+**Where the client gets the token.** The token never goes in the repository and never in chat. Podman 4.9.3 supports `--showsecret` (section 3 already uses it), so you read it once on the host, in your own Session Manager terminal, and put it in your own secret store (your password manager); nothing else keeps a copy:
+
+```
+podman secret inspect --showsecret \
+  --format '{{.SecretData}}' suiteward-mcp-token
+```
+
+That prints the token to the terminal. If Session Manager session logging (S3 or CloudWatch) is on for this instance, treat the token as exposed to that log, and replace it as above once the verification is done. On the client side `claude mcp add --transport http` sends it as `Authorization: Bearer <token>` (section 7); Claude Code stores that header in its own configuration on your workstation, not in a repository.
+
 ## 5. Install the quadlets and start
 
 Copy the five files in `deploy/quadlet/` from the repository (on your workstation) into place, one `cat` per file: run the command, wait until the cursor stops, paste the file's content, then press Ctrl-D on an empty line.
@@ -156,7 +212,7 @@ podman --version
 /usr/lib/systemd/system-generators/podman-system-generator --user --dryrun
 ```
 
-The units use only keys the 4.9 documentation lists; the memory limits and stop timeouts go through `PodmanArgs` because 4.9 has no key for them, and there is no `Notify=healthy`. The dry run is the check. If a key is rejected, remove that line, start anyway, and report which one. Pre-pull the images (a first pull can exceed systemd's start timeout), then start. The service requires the database, which pulls in the network and both volumes:
+The units use only keys the 4.9 documentation lists (`Secret`, `Environment`, `EnvironmentFile` and `PublishPort` are in the Podman v4.9.3 `podman-systemd.unit(5)` container section); the memory limits and stop timeouts go through `PodmanArgs` because 4.9 has no key for them, and there is no `Notify=healthy`. The dry run is the check. If a key is rejected, remove that line, start anyway, and report which one. Pre-pull the images (a first pull can exceed systemd's start timeout), then start. The service requires the database, which pulls in the network and both volumes:
 
 ```
 podman pull docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
@@ -177,6 +233,14 @@ podman inspect suiteward-db --format '{{.HostConfig.Memory}}'
 
 The first must print `netavark`; the second must print `402653184` (384 MiB). If either differs, report it with the dry-run output; do not improvise a fix. Then re-run the S1 curl check from section 4 with `--network suiteward` added right after `--rm`, which is the network the service itself uses; it must print `000` too.
 
+The service now also needs outbound HTTPS to `https://api.github.com`. The IMDS rule of section 4 rejects only `169.254.169.254` for the `suiteward` user and leaves every other destination alone, so GitHub stays reachable; check it from the same network the service uses (an unauthenticated `GET /zen`, which prints `200`; `403` would mean the shared unauthenticated rate limit is used up, and `000` that the host cannot reach GitHub, so stop and report it):
+
+```
+podman run --rm --network suiteward docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 10 -o /dev/null -w '%{http_code}\n' https://api.github.com/zen
+```
+
+On a host that already runs M1.2: do section 4a, then `cat` the new `suiteward.container` over the old one (as above), `systemctl --user daemon-reload` and `systemctl --user restart suiteward.service`. The image must be the M1.4 one (`podman pull ghcr.io/ignisdevne/suiteward:deploy`, or `systemctl --user start podman-auto-update.service`): an M1.2 image ignores the new settings and never opens port 8090, so the smoke test fails at `github`.
+
 Generated units start at boot through linger; `enable` is not used on them. If the service fails once while the database is still initialising, `Restart=always` retries every five seconds; that is expected on the very first start. `suiteward-db` must show `(healthy)`. The auto-update timer is daily by default; `systemctl --user start podman-auto-update.service` runs one update now, and `podman auto-update --dry-run` shows what would change. Logs:
 
 ```
@@ -186,16 +250,16 @@ journalctl --user -u suiteward-db.service -n 50 --no-pager
 
 ## 6. Smoke test and what to paste back
 
-The service listens on loopback port 8081. Copy `deploy/smoke.sh` from the repository into place (same `cat` and paste, then Ctrl-D), as `suiteward`:
+The service listens on loopback port 8081 (HTTP) and 8091 (MCP). Copy `deploy/smoke.sh` from the repository into place (same `cat` and paste, then Ctrl-D), as `suiteward`:
 
 ```
 cat > ~/smoke.sh
 sh ~/smoke.sh
 ```
 
-It waits for `/readyz`, checks `/healthz` and `/status` (zero failed and discarded), runs a probe through the worker (the outbox relay is a periodic job, so a probe takes from about a second to several seconds to be delivered), enqueues a probe whose job is delayed by 20 s, restarts the service and checks that the delayed job still ran afterwards, and prints a summary block with a timestamp and elapsed milliseconds per step. That step proves a delayed job survives a restart; it does not show whether the probe's outbox message was relayed before or after the restart, so it is no proof of outbox durability. `/status` reports the image version as `sha-<commit>`; to assert it, run `SMOKE_VERSION=sha-<commit> sh ~/smoke.sh`, with the commit the `Deploy` run built (`podman inspect suiteward --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'` prints the commit of the running image; a local build without the version argument reports `dev`). It exits non-zero and names the failing step otherwise. Once a later image has been promoted, run `sh ~/smoke.sh --promote` to also run `podman auto-update` once and report the image digest before and after.
+It waits for `/readyz`, checks `/healthz` and `/status` (zero failed and discarded), then two M1.4 steps. `github` waits (up to `SMOKE_GITHUB_TIMEOUT`, 120 s by default) until every repository in the `github` array of `/status` shows `lastSuccess`; it fails at once on a `lastError` and when `/status` has no `github` array (this host must run with GitHub configured; `SMOKE_GITHUB=0` skips only the step, for a stack started without the GitHub settings). `mcp` sends three requests to `http://127.0.0.1:8091/mcp` (`SMOKE_MCP_BASE`) and never reads the token: a POST without a token must answer 401, a POST with `Origin: http://evil.example` 403, and a GET the code in `SMOKE_MCP_GET_CODE` (405 by default; the handler task records what the SDK really answers). Then it runs a probe through the worker (the outbox relay is a periodic job, so a probe takes from about a second to several seconds to be delivered), enqueues a probe whose job is delayed by 20 s, restarts the service and checks that the delayed job still ran afterwards, and prints a summary block with a timestamp and elapsed milliseconds per step. That step proves a delayed job survives a restart; it does not show whether the probe's outbox message was relayed before or after the restart, so it is no proof of outbox durability. `/status` reports the image version as `sha-<commit>`; to assert it, run `SMOKE_VERSION=sha-<commit> sh ~/smoke.sh`, with the commit the `Deploy` run built (`podman inspect suiteward --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'` prints the commit of the running image; a local build without the version argument reports `dev`). It exits non-zero and names the failing step otherwise. Once a later image has been promoted, run `sh ~/smoke.sh --promote` to also run `podman auto-update` once and report the image digest before and after.
 
-Paste back: the whole summary block; the output of `systemctl --user status suiteward-db.service suiteward.service --no-pager`; `podman --version` and the generator dry run (they contain no secret); the one-line IMDS status codes (200 before the rule, 000 after, on both networks); `podman inspect suiteward --format '{{.Config.StopTimeout}}'` (must print 45, the contract needs it above the 30 s shutdown timeout); `sudo ss -tlnp` (every listener on `127.0.0.1` or `::1` except the system and SSM ones you recognise; the published port shows as `rootlessport`); about 30 `journalctl` lines of the service around the restart; and how long the first pull and start took.
+Paste back: the whole summary block (it now holds the `github` and `mcp` lines; if either step fails, add `journalctl --user -u suiteward.service -n 50 --no-pager`: log lines carry no secret, and a restart loop shows its cause there); the output of `systemctl --user status suiteward-db.service suiteward.service --no-pager`; `podman --version` and the generator dry run (they contain no secret); the one-line IMDS status codes (200 before the rule, 000 after, on both networks); `podman inspect suiteward --format '{{.Config.StopTimeout}}'` (must print 45, the contract needs it above the 30 s shutdown timeout); `sudo ss -tlnp` (every listener on `127.0.0.1` or `::1` except the system and SSM ones you recognise; the published port shows as `rootlessport`); about 30 `journalctl` lines of the service around the restart; and how long the first pull and start took.
 
 ## 7. Reach `/status`
 
@@ -205,6 +269,14 @@ From your workstation, in a second terminal:
 aws ssm start-session --target i-0f556162ae6b59b22 --region us-east-2 --document-name AWS-StartPortForwardingSession --parameters portNumber=8081,localPortNumber=8081
 curl http://127.0.0.1:8081/status
 ```
+
+M1.4 adds the MCP listener, forwarded the same way (a second terminal, or a second session). The token is your own to give the client; it never goes in a file of the repository:
+
+```
+aws ssm start-session --target i-0f556162ae6b59b22 --region us-east-2 --document-name AWS-StartPortForwardingSession --parameters portNumber=8091,localPortNumber=8091
+```
+
+The real Claude Code smoke of the phase runs against `http://127.0.0.1:8091/mcp` with the token from section 4a (`claude mcp add --transport http suiteward http://127.0.0.1:8091/mcp --header "Authorization: Bearer <token>"`, then `tools/list`, `status` and `sync` in a session). An agent never receives the token: you run that client yourself, or tell the orchestrator only the outcome.
 
 ## 8. A stale run waiting for approval
 

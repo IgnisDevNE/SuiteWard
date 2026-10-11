@@ -24,6 +24,7 @@ const (
 	redacted = "[redacted]"
 
 	maxGitHubRepositories = 20 // D-SYNC
+	minMCPTokenBytes      = 32
 )
 
 var gitHubRepository = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
@@ -254,8 +255,45 @@ func (l *loader) github() *GitHub {
 }
 
 // mcp reads the local MCP settings; nil when MCP_TOKEN is unset.
+// MCP_ADDR and MCP_ALLOWED_ORIGINS without a token are errors: nothing would use them.
 func (l *loader) mcp(httpAddr string) *MCP {
-	return nil
+	token, hasToken := l.present("MCP_TOKEN", true)
+	addr, hasAddr := l.present("MCP_ADDR", false)
+	origins, hasOrigins := l.present("MCP_ALLOWED_ORIGINS", false)
+	if !hasToken {
+		if hasAddr {
+			l.fail("MCP_ADDR", fmt.Errorf("is set without %sMCP_TOKEN, so nothing would use it", prefix))
+		}
+		if hasOrigins {
+			l.fail("MCP_ALLOWED_ORIGINS", fmt.Errorf("is set without %sMCP_TOKEN, so nothing would use it", prefix))
+		}
+		return nil
+	}
+
+	m := MCP{Addr: "127.0.0.1:8090", Token: Secret(token)}
+	// An empty value here was already reported by raw.
+	if token != "" && len(token) < minMCPTokenBytes {
+		l.fail("MCP_TOKEN", fmt.Errorf("must be at least %d bytes", minMCPTokenBytes))
+	}
+	if addr != "" {
+		m.Addr = addr
+	}
+	if _, _, err := net.SplitHostPort(m.Addr); err != nil {
+		l.fail("MCP_ADDR", err)
+	} else if m.Addr == httpAddr { // exact text only: two spellings of one address fail when listening
+		l.fail("MCP_ADDR", fmt.Errorf("must differ from %sHTTP_ADDR", prefix))
+	}
+	if origins != "" {
+		m.AllowedOrigins = strings.Split(origins, ",")
+		for i, origin := range m.AllowedOrigins {
+			m.AllowedOrigins[i] = strings.TrimSpace(origin)
+			if !validOrigin(m.AllowedOrigins[i]) {
+				// No value: it may carry user info.
+				l.fail("MCP_ALLOWED_ORIGINS", fmt.Errorf("item %d is not an absolute scheme://host[:port] origin without path, query, fragment or user info", i+1))
+			}
+		}
+	}
+	return &m
 }
 
 func (l *loader) positive(name, value string) int64 {
@@ -347,6 +385,12 @@ func (l *loader) unrecognized(environ []string) []string {
 func validDatabaseURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql")
+}
+
+// validOrigin reports whether s is exactly scheme://host[:port], as the MCP handler requires.
+func validOrigin(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme != "" && u.Hostname() != "" && strings.EqualFold(s, u.Scheme+"://"+u.Host)
 }
 
 func validAPIURL(s string) bool {

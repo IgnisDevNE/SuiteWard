@@ -87,3 +87,10 @@ func (b ApprovalBinding) Equal(other ApprovalBinding) bool {
 		b.input.PolicyRevision == other.input.PolicyRevision &&
 		maps.Equal(b.input.CoveredInputs, other.input.CoveredInputs)
 }
+
+// SameCoverage compares what consent covers: manifest, scope, covered inputs,
+// expected canonical and policy revision. The reference is ignored, so two
+// revisions of one proposal can cover the same thing; absence cannot satisfy it.
+func (b ApprovalBinding) SameCoverage(other ApprovalBinding) bool {
+	return false // not implemented
+}

@@ -1,6 +1,6 @@
 # Decision register
 
-- **Updated:** 2026-10-10 (phase M1.2: D-DEPLOY settled from S1)
+- **Updated:** 2026-10-11 (phase M1.3: D-SCOPE-DEFAULTS accepted)
 
 These gates record product and implementation choices that accepted ADRs deliberately left open. They do not reopen accepted ADRs. The integrator can resolve implementation choices within accepted policy; changes to product authority, scope, or release commitments need the project owner. Do not choose an unresolved product policy to unblock a task; record the decision needed and take independent ready work.
 
@@ -33,6 +33,16 @@ Accepted 2026-10-05.
 - A symlink or submodule inside the scope makes the declaration invalid; the governing scope stays in force.
 - Approval binds the raw declaration bytes plus the normalized rules.
 - A candidate omission cannot remove existing protection; reducing the scope requires approval like any other change (ADR 0013).
+
+### D-SCOPE-DEFAULTS: Which files the protected defaults cover
+
+Accepted 2026-10-11 (owner, phase M1.3). The ADR 0013 amendment protects the workflows, the test runner configuration and the scripts that run tests; which runner files exist depends on the project's ecosystem, so SuiteWard does not guess them.
+
+- `.suiteward.yml` is always in scope: no exclude removes it, and changing or deleting it never disables protection (ADR 0013).
+- `.github/workflows/**` is a fixed default.
+- The declaration has a `runner` list of patterns that the owner fills with the runner configuration and test scripts.
+- Once canonical, removing `.github/workflows/**` or a `runner` entry from the scope, by exclusion or by deleting the entry, is a scope reduction and needs approval like any other change.
+- The declaration is YAML, parsed with `go.yaml.in/yaml/v3`; its schema is fixed by the M1.3-A2 brief.
 
 ### D-APPROVAL-CONTEXT: Approval binding for implementation-only changes
 

@@ -38,6 +38,7 @@ type Tx interface {
 
 	AppendConsent(context.Context, ConsentWrite) error
 	RecordPromotion(context.Context, PromotionWrite) error
+	AppendProposalRevision(context.Context, ProposalWrite) error
 
 	// Enqueue and Outbox are written in the same transaction as the facts
 	// above. Neither advances the Suite revision.
@@ -63,8 +64,8 @@ type OutboxMessage struct {
 }
 
 // Seeder writes trusted initial state. It is the only writer of policies,
-// proposals, assessments and historical versions until the
-// GitHub-facing phases add their own write paths.
+// assessments and historical versions until the GitHub-facing phases add their
+// own write paths; proposals also have AppendProposalRevision.
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }
@@ -153,6 +154,22 @@ type PromotionWrite struct {
 	Version contract.SuiteVersion
 }
 
+// ProposalWrite appends one revision to a proposal of the locked Suite. When
+// it is the proposal's first revision, the proposal is created with the
+// revision's carrier.
+type ProposalWrite struct {
+	Revision contract.ProposalRevision
+}
+
+type ReviseRequest struct {
+	Revision contract.ProposalRevision // its binding's reference names the proposal and the new revision id
+}
+
+type ReviseResult struct {
+	Current   contract.ProposalReference // the proposal's current revision after the call
+	Committed bool                       // false when nothing was written
+}
+
 type PromoteResult struct {
 	Outcome   contract.PromotionOutcome
 	Reason    contract.PromotionReason
@@ -175,4 +192,5 @@ var (
 	ErrOperationConflict = errors.New("operation identity conflict")
 	ErrVersionConflict   = errors.New("version identity conflict")
 	ErrNotFound          = errors.New("governance aggregate not found")
+	ErrProposalConflict  = errors.New("proposal revision conflict")
 )

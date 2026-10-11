@@ -322,6 +322,35 @@ func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) e
 	return t.written()
 }
 
+func (t *tx) AppendProposalRevision(ctx context.Context, w governance.ProposalWrite) error {
+	if err := t.live(ctx); err != nil {
+		return err
+	}
+	revision := w.Revision
+	reference := revision.Binding().Reference()
+	if revision.IsZero() || reference.ProjectID != t.key.project || reference.SuiteID != t.key.suite {
+		return fmt.Errorf("%w: a proposal revision belongs to the locked suite", governance.ErrInvalidRequest)
+	}
+	p, found := t.s.proposals[reference.ProposalID]
+	if !found {
+		proposal, err := contract.NewProposal(revision)
+		if err != nil {
+			return fmt.Errorf("%w: %w", governance.ErrInvalidRequest, err)
+		}
+		t.s.proposals[reference.ProposalID] = &proposalData{proposal: proposal, assessments: map[assessmentKey]contract.IntegrityAssessment{}, aliases: map[contract.OperationID]contract.SourceCommandID{}}
+		return t.written()
+	}
+	next, err := p.proposal.Revise(revision)
+	switch {
+	case errors.Is(err, contract.ErrProposalContextMismatch), errors.Is(err, contract.ErrRevisionExists):
+		return fmt.Errorf("%w: %w", governance.ErrProposalConflict, err)
+	case err != nil:
+		return fmt.Errorf("%w: %w", governance.ErrInvalidRequest, err)
+	}
+	p.proposal = next
+	return t.written()
+}
+
 var _ QueueInspector = (*Memory)(nil)
 
 func (m *Memory) QueuedJobKinds(context.Context) ([]string, error) {

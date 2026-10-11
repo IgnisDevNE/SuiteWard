@@ -108,6 +108,10 @@ func (t *failingTx) Outbox(ctx context.Context, message governance.OutboxMessage
 	return t.afterWrite(t.Tx.Outbox(ctx, message))
 }
 
+func (t *failingTx) AppendProposalRevision(ctx context.Context, write governance.ProposalWrite) error {
+	return t.afterWrite(t.Tx.AppendProposalRevision(ctx, write))
+}
+
 func (t *failingTx) RecordPromotion(ctx context.Context, write governance.PromotionWrite) error {
 	return t.afterWrite(t.Tx.RecordPromotion(ctx, write))
 }

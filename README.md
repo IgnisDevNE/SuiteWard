@@ -26,8 +26,9 @@ Delivered:
 - **Persistence (M1.01, R1).** PostgreSQL and filesystem adapters behind a normalized unit-of-work port, tested against a real database.
 - **GitHub walking skeleton (S1).** An end-to-end spike on both verification targets; the findings are in [s1-github](docs/spikes/s1-github.md).
 - **Runtime (M1.2).** `suiteward serve` and `suiteward probe`: configuration from the environment and secret files, migrations on start, River jobs enqueued in the same transaction as the governance write, a publication outbox with a relay, `/healthz`, `/readyz` and `/status`, graceful shutdown, and one container image built in CI, deployed and smoke-tested locally under Podman and on an isolated remote host.
+- **Scope and inventory (M1.3).** `.suiteward.yml` parsing with protected defaults, the exact protected inventory of a source tree, classification of a candidate as unchanged, protected change or scope reduction, proposal revisions, and the baseline proposal that feeds the existing-baseline bootstrap.
 
-Not implemented yet: the GitHub integration in the service, owner enrollment and TOTP, `.suiteward.yml` scope handling, the approval, check, and promotion flows on GitHub, and canonical test execution. Next are M1.3 (protected scope and baseline bootstrap) and M1.4 (GitHub App authentication and pull request discovery). The roadmap is in the [delivery plan](docs/plan/README.md) and the open product gates are in the [decision register](docs/plan/decisions.md).
+Not implemented yet: the GitHub integration in the service, owner enrollment and TOTP, the approval, check, and promotion flows on GitHub, integrity assessment, and canonical test execution. Next is M1.4 (GitHub App authentication and pull request discovery). The roadmap is in the [delivery plan](docs/plan/README.md) and the open product gates are in the [decision register](docs/plan/decisions.md).
 
 ## Architecture
 

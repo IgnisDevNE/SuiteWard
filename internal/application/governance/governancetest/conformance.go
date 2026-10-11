@@ -71,6 +71,13 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"PromotionRoundTrip", cfPromotionRoundTrip},
 		{"UnknownAggregatesAreNotFound", cfNotFound},
 		{"TransactionIsUnusableAfterTheUnitOfWork", cfTransactionClosed},
+		{"FirstProposalRevisionCreatesTheProposal", cfProposalFirstRevision},
+		{"SecondProposalRevisionBecomesCurrent", cfProposalSecondRevision},
+		{"DuplicateProposalRevisionConflicts", cfProposalDuplicateRevision},
+		{"ProposalRevisionOfAnotherCarrierConflicts", cfProposalOtherCarrier},
+		{"ProposalRevisionOutsideTheLockedSuiteIsInvalid", cfProposalForeignSuite},
+		{"ProposalRevisionsAdvanceTheRevisionByOne", cfProposalRevisionAdvances},
+		{"ProposalRevisionsRollBack", cfProposalRollback},
 		{"QueuedWorkCommitsWithTheFact", cfQueueCommitsWithTheFact},
 		{"QueuedWorkRollsBackWithTheFact", cfQueueRollsBackWithTheFact},
 		{"QueuedWorkAloneCommitsWithoutAdvancingTheRevision", cfQueueAloneCommits},
@@ -1373,4 +1380,217 @@ func cfTransactionClosed(e *cfEnv) {
 		e.t.Error("a transaction can still be written after its unit of work ended")
 	}
 	e.requireSameView(before, e.view(probe))
+}
+
+// Proposal revisions written through AppendProposalRevision.
+
+// proposal reads a proposal in its own unit of work.
+func (e *cfEnv) proposal(id contract.ProposalID) (contract.Proposal, error) {
+	var proposal contract.Proposal
+	err := e.do(func(ctx context.Context, tx governance.Tx) (err error) {
+		proposal, _, err = tx.Proposal(ctx, id)
+		return err
+	})
+	return proposal, err
+}
+
+// requireProposal fails unless the stored proposal holds exactly the given revisions, oldest first.
+func (e *cfEnv) requireProposal(id contract.ProposalID, want ...contract.ProposalRevision) {
+	e.t.Helper()
+	proposal, err := e.proposal(id)
+	if err != nil {
+		e.t.Fatalf("load proposal %q: %v", id, err)
+	}
+	got := proposal.Revisions()
+	if len(got) != len(want) {
+		e.t.Fatalf("proposal %q has %d revisions, want %d", id, len(got), len(want))
+	}
+	for i := range want {
+		if !cfSameRevision(got[i], want[i]) {
+			e.t.Fatalf("revision %d of proposal %q differs from the written one", i+1, id)
+		}
+	}
+}
+
+func (e *cfEnv) requireNoProposal(id contract.ProposalID) {
+	e.t.Helper()
+	if _, err := e.proposal(id); !errors.Is(err, governance.ErrNotFound) {
+		e.t.Fatalf("proposal %q = %v, want not found", id, err)
+	}
+}
+
+func (e *cfEnv) appendRevision(revision contract.ProposalRevision) error {
+	return e.do(func(ctx context.Context, tx governance.Tx) error {
+		return tx.AppendProposalRevision(ctx, governance.ProposalWrite{Revision: revision})
+	})
+}
+
+func cfProposalFirstRevision(e *cfEnv) {
+	c := e.candidate("p1", "", "v1")
+	e.seedSimple(cfProject, cfSuite)
+	first := c.proposal.Current()
+	e.requireNoProposal("p1")
+	before := e.revision()
+
+	if err := e.appendRevision(first); err != nil {
+		e.t.Fatalf("append first revision: %v", err)
+	}
+	e.requireProposal("p1", first)
+	e.requireWrites(before, 1)
+	proposal, err := e.proposal("p1")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if got, err := proposal.Resolve(c.current(), c.carrier); err != nil || !cfSameRevision(got, first) {
+		e.t.Errorf("resolve the first revision = %v, %v, want it as current", got, err)
+	}
+}
+
+func cfProposalSecondRevision(e *cfEnv) {
+	c := e.candidate("p1", "", "v1", "revision-1", "revision-2")
+	e.seedSimple(cfProject, cfSuite)
+	revisions := c.proposal.Revisions()
+	before := e.revision()
+	for i, revision := range revisions {
+		if err := e.appendRevision(revision); err != nil {
+			e.t.Fatalf("append revision %d: %v", i+1, err)
+		}
+	}
+	e.requireProposal("p1", revisions...)
+	e.requireWrites(before, 2)
+	proposal, err := e.proposal("p1")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if got := proposal.Current(); !cfSameRevision(got, revisions[1]) {
+		e.t.Error("the second revision is not the current one")
+	}
+	if got, err := proposal.Lookup(c.reference("revision-1"), c.carrier); err != nil || !cfSameRevision(got, revisions[0]) {
+		e.t.Errorf("lookup of the older revision = %v, %v, want it to stay resolvable", got, err)
+	}
+	if _, err := proposal.Resolve(c.reference("revision-1"), c.carrier); !errors.Is(err, contract.ErrSupersededRevision) {
+		e.t.Errorf("resolve of the older revision = %v, want superseded", err)
+	}
+}
+
+func cfProposalDuplicateRevision(e *cfEnv) {
+	c := e.candidate("p1", "", "v1", "revision-1", "revision-2")
+	e.seedSimple(cfProject, cfSuite)
+	revisions := c.proposal.Revisions()
+	if err := e.appendRevision(revisions[0]); err != nil {
+		e.t.Fatal(err)
+	}
+	before := e.revision()
+	if err := e.appendRevision(revisions[0]); !errors.Is(err, governance.ErrProposalConflict) {
+		e.t.Fatalf("append of an existing revision id = %v, want a proposal conflict", err)
+	}
+	e.requireProposal("p1", revisions[0])
+	e.requireWrites(before, 0)
+	// The conflict left nothing in the way of the next revision.
+	if err := e.appendRevision(revisions[1]); err != nil {
+		e.t.Fatalf("append after a conflict: %v", err)
+	}
+	e.requireProposal("p1", revisions...)
+}
+
+func cfProposalOtherCarrier(e *cfEnv) {
+	c := e.candidate("p1", "", "v1", "revision-1", "revision-2")
+	e.seedSimple(cfProject, cfSuite)
+	revisions := c.proposal.Revisions()
+	if err := e.appendRevision(revisions[0]); err != nil {
+		e.t.Fatal(err)
+	}
+	before := e.revision()
+	elsewhere := cfMust(contract.NewProposalRevision(c.bindings["revision-2"], c.origin, "another-carrier"))
+	if err := e.appendRevision(elsewhere); !errors.Is(err, governance.ErrProposalConflict) {
+		e.t.Fatalf("append under another carrier = %v, want a proposal conflict", err)
+	}
+	e.requireProposal("p1", revisions[0])
+	e.requireWrites(before, 0)
+}
+
+func cfProposalForeignSuite(e *cfEnv) {
+	e.seedSimple(cfProject, cfSuite)
+	before := e.revision()
+	for _, foreign := range []cfCandidate{
+		cfNewCandidate(cfProject, "other-suite", "p1", "", "v1"),
+		cfNewCandidate("other-project", cfSuite, "p2", "", "v1"),
+	} {
+		if err := e.appendRevision(foreign.proposal.Current()); !errors.Is(err, governance.ErrInvalidRequest) {
+			e.t.Errorf("append of a revision of %s/%s = %v, want an invalid request", foreign.project, foreign.suite, err)
+		}
+		e.requireNoProposal(foreign.proposalID())
+	}
+	e.requireWrites(before, 0)
+}
+
+func cfProposalRevisionAdvances(e *cfEnv) {
+	c := e.candidate("p1", "", "v1", "revision-1", "revision-2")
+	e.seedSimple(cfProject, cfSuite)
+	revisions := c.proposal.Revisions()
+	before := e.revision()
+	err := e.do(func(ctx context.Context, tx governance.Tx) error {
+		for i, revision := range revisions {
+			if err := tx.AppendProposalRevision(ctx, governance.ProposalWrite{Revision: revision}); err != nil {
+				return fmt.Errorf("append revision %d: %w", i+1, err)
+			}
+			state, err := tx.Suite(ctx)
+			if err != nil {
+				return err
+			}
+			if got, want := state.Canonical.Suite().Revision(), before+contract.StateRevision(i+1); got != want {
+				e.t.Errorf("revision after append %d = %d, want %d", i+1, got, want)
+			}
+			proposal, _, err := tx.Proposal(ctx, "p1")
+			if err != nil {
+				return fmt.Errorf("read own write %d: %w", i+1, err)
+			}
+			if got := proposal.Revisions(); len(got) != i+1 || !cfSameRevision(proposal.Current(), revision) {
+				e.t.Errorf("own revision %d not visible as current among %d revisions", i+1, len(got))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.requireWrites(before, 2)
+	e.requireProposal("p1", revisions...)
+}
+
+func cfProposalRollback(e *cfEnv) {
+	c := e.candidate("p1", "", "v1", "revision-1", "revision-2")
+	e.seedSimple(cfProject, cfSuite)
+	revisions := c.proposal.Revisions()
+	before := e.revision()
+
+	err := e.do(func(ctx context.Context, tx governance.Tx) error {
+		for _, revision := range revisions {
+			if err := tx.AppendProposalRevision(ctx, governance.ProposalWrite{Revision: revision}); err != nil {
+				return err
+			}
+		}
+		return errCfAbort
+	})
+	if !errors.Is(err, errCfAbort) {
+		e.t.Fatalf("error = %v, want the error of the unit of work", err)
+	}
+	e.requireNoProposal("p1")
+	e.requireWrites(before, 0)
+
+	if fail, ok := e.store.(FailNexter); ok {
+		boom := errors.New("conformance: injected write failure")
+		fail.FailNext(boom)
+		if err := e.appendRevision(revisions[0]); !errors.Is(err, boom) {
+			e.t.Fatalf("append error = %v, want the injected failure", err)
+		}
+		e.requireNoProposal("p1")
+		e.requireWrites(before, 0)
+	}
+
+	// Nothing of the failed attempts is left in the way of the same work.
+	if err := e.appendRevision(revisions[0]); err != nil {
+		e.t.Fatalf("append after a rollback: %v", err)
+	}
+	e.requireProposal("p1", revisions[0])
 }

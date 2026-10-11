@@ -154,3 +154,43 @@ func TestApprovalBindingPreservesAcceptedIdentifierBytes(t *testing.T) {
 		t.Fatal("accepted identifier bytes were normalized")
 	}
 }
+
+func TestApprovalBindingSameCoverageIgnoresOnlyTheReference(t *testing.T) {
+	base := mustBinding(t, proposalBindingInput())
+	cases := []struct {
+		name   string
+		change func(*contract.BindingInput)
+		same   bool
+	}{
+		{"identical", func(*contract.BindingInput) {}, true},
+		{"project", func(i *contract.BindingInput) { i.Reference.ProjectID = "project-2" }, true},
+		{"proposal", func(i *contract.BindingInput) { i.Reference.ProposalID = "proposal-2" }, true},
+		{"revision", func(i *contract.BindingInput) { i.Reference.RevisionID = "revision-2" }, true},
+		{"baseline", func(i *contract.BindingInput) { i.ExpectedCanonical = "version-2" }, false},
+		{"absent baseline", func(i *contract.BindingInput) { i.ExpectedCanonical = "" }, false},
+		{"manifest", func(i *contract.BindingInput) { i.Manifest = artifact.Hash([]byte("other manifest")) }, false},
+		{"scope", func(i *contract.BindingInput) { i.Scope = artifact.Hash([]byte("other scope")) }, false},
+		{"policy", func(i *contract.BindingInput) { i.PolicyRevision = "policy-2" }, false},
+		{"context value", func(i *contract.BindingInput) { i.CoveredInputs["runner"] = "runner-2" }, false},
+		{"context addition", func(i *contract.BindingInput) { i.CoveredInputs["explicit-source"] = "source-1" }, false},
+		{"context removal", func(i *contract.BindingInput) { delete(i.CoveredInputs, "runner") }, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			input := proposalBindingInput()
+			tt.change(&input)
+			other := mustBinding(t, input)
+			if base.SameCoverage(other) != tt.same || other.SameCoverage(base) != tt.same {
+				t.Fatalf("SameCoverage = %v, want %v", !tt.same, tt.same)
+			}
+		})
+	}
+}
+
+func TestApprovalBindingAbsenceHasNoCoverage(t *testing.T) {
+	base := mustBinding(t, proposalBindingInput())
+	var zero contract.ApprovalBinding
+	if base.SameCoverage(zero) || zero.SameCoverage(base) || zero.SameCoverage(zero) {
+		t.Fatal("an absent binding must not cover anything")
+	}
+}

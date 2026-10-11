@@ -445,6 +445,48 @@ func (t *tx) RecordPromotion(ctx context.Context, write governance.PromotionWrit
 	return t.bump(ctx, pgtype.Text{String: string(write.Version.ID()), Valid: true})
 }
 
+func (t *tx) AppendProposalRevision(ctx context.Context, write governance.ProposalWrite) error {
+	revision := write.Revision
+	binding := revision.Binding()
+	reference := binding.Reference()
+	if revision.IsZero() || !t.inScope(reference) {
+		return fmt.Errorf("%w: a proposal revision belongs to the locked suite", governance.ErrInvalidRequest)
+	}
+	covered, err := encodeCoveredInputs(binding)
+	if err != nil {
+		return invalidRequest("covered inputs of the revision", err)
+	}
+	scope := dbgen.GetProposalParams{ProjectID: string(t.project), SuiteID: string(t.suite), ProposalID: string(reference.ProposalID)}
+	seq := int64(1)
+	stored, err := t.q.GetProposal(ctx, scope)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if err := t.q.InsertProposal(ctx, dbgen.InsertProposalParams{ProjectID: scope.ProjectID, SuiteID: scope.SuiteID, ProposalID: scope.ProposalID, CarrierID: string(revision.Carrier())}); err != nil {
+			return translateWrite("insert proposal", err)
+		}
+	case err != nil:
+		return fmt.Errorf("load proposal: %w", err)
+	case stored.CarrierID != string(revision.Carrier()):
+		return fmt.Errorf("%w: proposal %q is carried by another change", governance.ErrProposalConflict, reference.ProposalID)
+	default:
+		// The Suite lock serializes writers, so the next number cannot be taken.
+		revisions, err := t.q.ListProposalRevisions(ctx, dbgen.ListProposalRevisionsParams(scope))
+		if err != nil {
+			return fmt.Errorf("load proposal revisions: %w", err)
+		}
+		if len(revisions) > 0 {
+			seq = revisions[len(revisions)-1].Seq + 1
+		}
+	}
+	if err := t.q.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: scope.ProjectID, SuiteID: scope.SuiteID, ProposalID: scope.ProposalID,
+		RevisionID: string(reference.RevisionID), Seq: seq, Origin: string(revision.Origin()), CarrierID: string(revision.Carrier()),
+		ManifestDigest: binding.ManifestDigest().String(), ScopeDigest: binding.ScopeDigest().String(), CoveredInputs: covered,
+		ExpectedVersionID: optionalText(string(binding.ExpectedCanonical())), PolicyRevisionID: string(binding.PolicyRevisionID())}); err != nil {
+		return translateWrite("insert proposal revision", err)
+	}
+	return t.bump(ctx, pgtype.Text{})
+}
+
 // exactMicroseconds reports whether PostgreSQL's timestamptz keeps the time exactly.
 func exactMicroseconds(moment time.Time) bool { return moment.Equal(moment.Truncate(time.Microsecond)) }
 

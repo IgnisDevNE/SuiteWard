@@ -51,6 +51,11 @@ const maxErrorBody = 512
 // maxBody bounds any response body read into memory; a variable only so tests can lower it.
 var maxBody int64 = 64 << 20
 
+// maxClockOffset bounds the offset a Date header may set: windows last at most
+// an hour, so a Date further from the local clock is a stale or broken
+// intermediary and is ignored.
+const maxClockOffset = time.Hour
+
 // BudgetExhaustedError is returned by Get, without calling GitHub, while the
 // requests used in the current window are at the budget.
 type BudgetExhaustedError struct{ Reset time.Time }
@@ -102,8 +107,8 @@ func (e *StatusError) Unwrap() error { return statusKinds[e.Status] }
 // headers of each response; until the first response, and once a window has
 // ended until the next response, it does not refuse. The window ends in
 // GitHub's time: the Date header of each response gives the offset between the
-// local clock and GitHub's, so a skewed clock neither ends a window early nor
-// disables the cap. It is safe for concurrent use.
+// local clock and GitHub's (ignored when more than an hour apart), so a skewed
+// clock neither ends a window early nor disables the cap. It is safe for concurrent use.
 type Budget struct {
 	fraction float64
 	clock    func() time.Time
@@ -162,7 +167,9 @@ func (b *Budget) record(status int, h http.Header) {
 	defer b.mu.Unlock()
 	b.inFlight--
 	if date, err := http.ParseTime(h.Get("Date")); err == nil {
-		b.offset = b.clock().Sub(date)
+		if off := b.clock().Sub(date); off.Abs() <= maxClockOffset {
+			b.offset = off
+		}
 	}
 	if status == http.StatusNotModified {
 		return

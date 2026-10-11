@@ -75,6 +75,10 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[{"number":1,"head":{"ref":"feature","sha":"` + sha40a + `"},"base":{"ref":"main","sha":"` + sha40b + `"},"updated_at":"2026-10-10T10:00:00Z"}]`))
 	case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/issues/1/comments":
 		f.restAuth = append(f.restAuth, r.Header.Get("Authorization"))
+		if r.URL.Query().Has("since") { // every cycle lists the comments in full: no local clock decides what to fetch
+			http.Error(w, "since is not used", http.StatusBadRequest)
+			return
+		}
 		_, _ = w.Write([]byte(`[{"id":501,"user":{"login":"octo","id":9},"body":"` + fakeCommentBody + `","created_at":"2026-10-10T10:00:00Z","updated_at":"2026-10-10T10:05:00Z"}]`))
 	default:
 		http.NotFound(w, r)
@@ -93,7 +97,7 @@ func githubVars(t *testing.T, vars map[string]string, f *fakeGitHub) (key string
 	vars["SUITEWARD_GITHUB_APP_KEY"] = key
 	vars["SUITEWARD_GITHUB_INSTALLATION_ID"] = "42"
 	vars["SUITEWARD_GITHUB_REPOSITORIES"] = "acme/widgets"
-	vars["SUITEWARD_GITHUB_API_URL"] = f.server.URL
+	vars["SUITEWARD_GITHUB_API_URL"] = f.server.URL + "/" // a trailing slash must not double up in the request paths
 	return key
 }
 

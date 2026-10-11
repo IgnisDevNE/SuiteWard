@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -135,8 +136,8 @@ func (c Cycle) Validate() error {
 	}
 	open := make(map[int]bool, len(c.OpenPulls))
 	for _, pull := range c.OpenPulls {
-		if pull.Number <= 0 || open[pull.Number] {
-			return fmt.Errorf("github cycle lists pull %d twice or with an invalid number", pull.Number)
+		if pull.Number <= 0 || pull.Number > math.MaxInt32 || open[pull.Number] {
+			return fmt.Errorf("github cycle lists pull %d twice or outside the pull number range", pull.Number)
 		}
 		open[pull.Number] = true
 	}

@@ -81,11 +81,11 @@ func TestSchemaVersionRequiresTheSupportedVersion(t *testing.T) {
 	if version, err := w.store.SchemaVersion(t.Context()); err != nil || version != migrations.SupportedVersion {
 		t.Fatalf("SchemaVersion = %d, %v; want %d", version, err, migrations.SupportedVersion)
 	}
-	if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES (11, true)"); err != nil {
+	if _, err := w.db.conn.Exec(t.Context(), "INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)", migrations.SupportedVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.store.SchemaVersion(t.Context()); !errors.Is(err, postgres.ErrSchemaNotReady) {
-		t.Fatalf("SchemaVersion on schema version 11 = %v; want ErrSchemaNotReady", err)
+		t.Fatalf("SchemaVersion on a schema newer than SupportedVersion = %v; want ErrSchemaNotReady", err)
 	}
 	w.pool.Close()
 	// An unreadable database is not a schema mismatch: readiness tells them apart.

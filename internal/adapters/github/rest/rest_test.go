@@ -83,7 +83,10 @@ func newClient(t *testing.T, tok rest.TokenFunc, baseURL string, b *rest.Budget)
 	return c
 }
 
+// setRateLimit writes GitHub's rate-limit headers and a Date of t0: the server's
+// clock agrees with the injected one unless a test says otherwise.
 func setRateLimit(w http.ResponseWriter, limit, remaining int, reset time.Time) {
+	w.Header().Set("Date", t0.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
 	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
@@ -121,6 +124,30 @@ func TestNewClientRejectsInvalidArguments(t *testing.T) {
 	}
 	if _, err := rest.NewClient(tok, http.DefaultClient, "https://github.example.com/api/v3", b); err != nil {
 		t.Fatalf("NewClient rejected valid arguments: %v", err)
+	}
+}
+
+// The base URL can carry credentials; no NewClient error may print any part of it.
+func TestNewClientErrorsDoNotPrintTheBaseURL(t *testing.T) {
+	tok := newTokens().Token
+	b := newBudget(t, 0.5, &clock{now: t0})
+	for _, baseURL := range []string{
+		"user:s3cr3t@api.github.com",
+		"/s3cr3t/api",
+		"https://",
+		"https://user:s3cr3t@api.github.com",
+		"https://api.github.com?token=s3cr3t",
+		"https://api.github.com#s3cr3t",
+		"https://api.github.com/%zz-s3cr3t",
+	} {
+		_, err := rest.NewClient(tok, http.DefaultClient, baseURL, b)
+		if err == nil {
+			t.Errorf("NewClient accepted %q", baseURL)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cr3t") || strings.Contains(err.Error(), "api.github.com") {
+			t.Errorf("NewClient(%q) error prints the base URL: %v", baseURL, err)
+		}
 	}
 }
 
@@ -299,6 +326,7 @@ type rateLimitedServer struct {
 	used  int
 	reset time.Time
 	hits  int
+	date  func() time.Time // the server's clock for Date; nil means t0
 }
 
 func (s *rateLimitedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -307,13 +335,20 @@ func (s *rateLimitedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.hits++
 	w.Header().Set("ETag", `"`+r.URL.Path+`"`)
 	if r.Header.Get("If-None-Match") == `"`+r.URL.Path+`"` {
-		setRateLimit(w, s.limit, s.limit-s.used, s.reset)
+		s.rateLimit(w)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 	s.used++
-	setRateLimit(w, s.limit, s.limit-s.used, s.reset)
+	s.rateLimit(w)
 	_, _ = w.Write([]byte("body"))
+}
+
+func (s *rateLimitedServer) rateLimit(w http.ResponseWriter) {
+	setRateLimit(w, s.limit, s.limit-s.used, s.reset)
+	if s.date != nil {
+		w.Header().Set("Date", s.date().UTC().Format(http.TimeFormat))
+	}
 }
 
 func (s *rateLimitedServer) newWindow(reset time.Time) {
@@ -606,25 +641,107 @@ func TestGetRejectsPathWithoutLeadingSlash(t *testing.T) {
 	}
 }
 
-// A host whose clock runs ahead of GitHub's must not lose the cap: once the
-// local clock passes the reset the next response re-establishes the window, so
-// only the requests in flight pass before the cap applies again.
-func TestBudgetHoldsWhenLocalClockRunsAheadOfTheReset(t *testing.T) {
-	gh := &rateLimitedServer{limit: 10, reset: t0.Add(time.Hour)}
+// The window ends in the server's time: each response's Date gives the offset
+// between the local clock and GitHub's, so a host whose clock runs ahead keeps
+// the cap until GitHub's reset, and the error reports the reset in local time.
+func TestBudgetHoldsUntilTheServersResetWhenTheLocalClockRunsAhead(t *testing.T) {
+	const skew = 2 * time.Minute
+	reset := t0.Add(time.Hour)
+	clk := &clock{now: t0.Add(skew)}
+	gh := &rateLimitedServer{limit: 10, reset: reset, date: func() time.Time { return clk.Now().Add(-skew) }}
 	srv := httptest.NewServer(gh)
 	defer srv.Close()
-	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0.Add(2 * time.Hour)}))
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, clk))
 
 	for i := range 5 {
 		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
 			t.Fatalf("Get %d within the budget: %v", i, err)
 		}
 	}
-	if _, err := c.Get(context.Background(), "/p/next"); !errors.Is(err, rest.ErrBudgetExhausted) {
-		t.Fatalf("Get over the budget under clock skew: err = %v, want ErrBudgetExhausted", err)
+	refused := func() {
+		t.Helper()
+		_, err := c.Get(context.Background(), "/p/next")
+		var be *rest.BudgetExhaustedError
+		if !errors.As(err, &be) || !be.Reset.Equal(reset.Add(skew)) {
+			t.Fatalf("err = %#v, want ErrBudgetExhausted until the reset in local time %v", err, reset.Add(skew))
+		}
 	}
+	refused()
+	clk.Set(reset) // past the reset on the local clock, before it on GitHub's
+	refused()
+	clk.Set(reset.Add(skew - time.Second))
+	refused()
 	if gh.Hits() != 5 {
 		t.Fatalf("server saw %d requests, want 5", gh.Hits())
+	}
+
+	clk.Set(reset.Add(skew)) // the error's Reset: a caller that waits until it is let through
+	gh.newWindow(reset.Add(time.Hour))
+	if _, err := c.Get(context.Background(), "/p/after"); err != nil {
+		t.Fatalf("Get at the reported reset: %v", err)
+	}
+}
+
+// A request answered just after the reset can carry the old reset with nothing
+// remaining; the budget must not stop for good because of it.
+func TestBudgetDoesNotStopForGoodOnALateAnswerFromTheOldWindow(t *testing.T) {
+	reset := t0.Add(time.Hour)
+	clk := &clock{now: t0}
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch hits.Add(1) {
+		case 1:
+			setRateLimit(w, 10, 9, reset)
+		case 2: // sent inside the window, answered after it with the old reset
+			clk.Set(reset.Add(time.Second))
+			setRateLimit(w, 10, 0, reset)
+			w.Header().Set("Date", clk.Now().UTC().Format(http.TimeFormat))
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			setRateLimit(w, 10, 10, reset.Add(time.Hour))
+			w.Header().Set("Date", clk.Now().UTC().Format(http.TimeFormat))
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, clk))
+	ctx := context.Background()
+
+	if _, err := c.Get(ctx, "/a"); err != nil {
+		t.Fatalf("Get /a: %v", err)
+	}
+	if _, err := c.Get(ctx, "/b"); !errors.Is(err, rest.ErrRateLimited) {
+		t.Fatalf("Get /b: err = %v, want ErrRateLimited", err)
+	}
+	if _, err := c.Get(ctx, "/c"); err != nil {
+		t.Fatalf("Get /c after the reset: %v (the budget stopped for good)", err)
+	}
+}
+
+// A response from an older window that arrives after the window was replaced
+// must not roll it back.
+func TestBudgetIgnoresALaggingResponseFromAnOlderWindow(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch hits.Add(1) {
+		case 1:
+			setRateLimit(w, 10, 9, t0.Add(time.Hour))
+		case 2:
+			setRateLimit(w, 10, 9, t0.Add(2*time.Hour))
+		case 3: // the lagging answer of the first window, nothing remaining
+			setRateLimit(w, 10, 0, t0.Add(time.Hour))
+		default:
+			setRateLimit(w, 10, 8, t0.Add(2*time.Hour))
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+
+	for i := range 4 {
+		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
+			t.Fatalf("Get %d: %v (a lagging answer rolled the window back)", i, err)
+		}
 	}
 }
 

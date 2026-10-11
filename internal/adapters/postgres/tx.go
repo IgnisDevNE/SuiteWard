@@ -445,6 +445,10 @@ func (t *tx) RecordPromotion(ctx context.Context, write governance.PromotionWrit
 	return t.bump(ctx, pgtype.Text{String: string(write.Version.ID()), Valid: true})
 }
 
+func (t *tx) AppendProposalRevision(ctx context.Context, _ governance.ProposalWrite) error {
+	return errors.New("postgres: AppendProposalRevision is not implemented")
+}
+
 // exactMicroseconds reports whether PostgreSQL's timestamptz keeps the time exactly.
 func exactMicroseconds(moment time.Time) bool { return moment.Equal(moment.Truncate(time.Microsecond)) }
 

@@ -8,15 +8,16 @@ import (
 
 // Two approved proposals share one baseline. There is no admission gate: the
 // first promotion wins and the canonical compare-and-set blocks the other until
-// it is rebased onto the new canonical and approved again.
+// it has a new revision against the new canonical and a fresh exact approval.
 func TestConcurrentProposalsResolveByCanonicalCompareAndSet(t *testing.T) {
 	first := newCandidate(t, "p1", "", protectedOf(t, "first"))
 	second := newCandidate(t, "p2", "", protectedOf(t, "second"))
-	// A revision needs a store write path that does not exist yet, so a new
-	// proposal against version-1 stands in for the rebased second proposal.
-	rebased := newCandidate(t, "p2-rebased", "version-1", protectedOf(t, "second"))
-	w := newWorld(t, first, second, rebased)
-	for _, c := range []candidate{first, second, rebased} {
+	// The second proposal's revision-2 is bound to version-1. Its evidence is
+	// seeded with the proposal because assessments have no write path yet.
+	revised := newCandidate(t, "p2", "version-1", protectedOf(t, "second"), "revision-2")
+	second.assessments = append(second.assessments, revised.assessments...)
+	w := newWorld(t, first, second)
+	for _, c := range []candidate{first, second} {
 		w.approve(c)
 	}
 
@@ -38,9 +39,25 @@ func TestConcurrentProposalsResolveByCanonicalCompareAndSet(t *testing.T) {
 		t.Fatalf("current version = %q, want version-1", w.currentVersion())
 	}
 
-	retried := w.promote(rebased.mergedRequest(t, "promote-3", "version-2"))
+	revision := w.revise(revised.proposal.Current())
+	if !revision.Committed || revision.Current != second.reference("revision-2") {
+		t.Fatalf("revise = %+v, want a committed revision-2", revision)
+	}
+	w.requireWrites(before, 1)
+
+	unapproved := w.promote(revised.mergedRequest(t, "promote-3", "version-2"))
+	if unapproved.Outcome != contract.PromotionBlocked || unapproved.Reason != contract.PromotionReasonApprovalMissing || unapproved.Committed {
+		t.Fatalf("promotion of revision-2 without approval = %+v, want an uncommitted block for a missing approval", unapproved)
+	}
+	w.requireWrites(before, 1)
+
+	approval := w.consent(w.command(revised, "revision-2", "approve-p2-r2", "comment-p2-r2", contract.ApproveConsent, 1))
+	if !approval.Receipt.CurrentApprovalEligible {
+		t.Fatalf("approval of revision-2 is not eligible: %v", approval.Receipt.Result.Reason())
+	}
+	retried := w.promote(revised.mergedRequest(t, "promote-3", "version-2"))
 	if retried.Outcome != contract.PromotionProposed || !retried.Committed {
-		t.Fatalf("rebased promotion = %+v, want a committed promotion", retried)
+		t.Fatalf("promotion of the approved revision-2 = %+v, want a committed promotion", retried)
 	}
 	if w.currentVersion() != "version-2" {
 		t.Fatalf("current version = %q, want version-2", w.currentVersion())

@@ -322,6 +322,10 @@ func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) e
 	return t.written()
 }
 
+func (t *tx) AppendProposalRevision(ctx context.Context, _ governance.ProposalWrite) error {
+	return errors.New("governancetest: AppendProposalRevision is not implemented")
+}
+
 var _ QueueInspector = (*Memory)(nil)
 
 func (m *Memory) QueuedJobKinds(context.Context) ([]string, error) {

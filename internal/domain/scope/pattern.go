@@ -100,6 +100,11 @@ func (p Pattern) Match(path string) (bool, error) {
 	return false, nil
 }
 
+// IsZero reports whether the pattern is absent.
+func (p Pattern) IsZero() bool {
+	panic("not implemented")
+}
+
 // String returns the validated pattern's original source text, unnormalized.
 func (p Pattern) String() string {
 	return p.raw

@@ -44,12 +44,42 @@ func TestPatternMatch(t *testing.T) {
 		{"a/**/b matches zero segments between", "a/**/b", "a/b", true},
 		{"a/**/b matches several segments between", "a/**/b", "a/x/y/b", true},
 		{"segment wildcard matches within a segment", "*.go", "a.go", true},
-		{"segment wildcard does not cross a directory boundary", "dir*/file.go", "dirZZZ/file.go", true},
+		{"segment wildcard matches a whole directory component", "dir*/file.go", "dirZZZ/file.go", true},
 		{"segment wildcard does not match a differently shaped path", "dir*/file.go", "dirZZZ_file.go", false},
 		{"segment question mark matches one rune", "fixture?.go", "fixture1.go", true},
 		{"segment question mark rejects extra runes", "fixture?.go", "fixture12.go", false},
 		{"segment class matches a listed rune", "file[12].go", "file1.go", true},
 		{"segment class rejects an unlisted rune", "file[12].go", "file3.go", false},
+
+		// Trailing "/**" needs at least one component after the base (gitignore).
+		{"trailing /** does not match the base itself", "tests/**", "tests", false},
+		{"trailing /** matches a direct child", "tests/**", "tests/x", true},
+		{"trailing /** matches a nested child", "tests/**", "tests/a/b", true},
+		{"anchored trailing /** does not match the base itself", "/a/**", "a", false},
+		{"lone ** matches a nested path", "**", "a/b", true},
+		{"lone ** matches a single component", "**", "a", true},
+		{"leading **/ matches the bare name", "**/x", "x", true},
+		{"leading **/ matches a nested name", "**/x", "y/x", true},
+		{"a/**/b matches zero middle segments", "a/**/b", "a/b", true},
+		{"a/**/b matches one middle segment", "a/**/b", "a/x/b", true},
+		{"a/**/b does not match a different tail", "a/**/b", "a/x/c", false},
+		{"a/**/b does not match another root", "a/**/b", "z/a/b", false},
+		{"**/fixtures does not match a longer name", "**/fixtures", "x/fixturesx/a.go", false},
+		{"**/fixtures does not match elsewhere", "**/fixtures", "x/y/a.go", false},
+
+		// Trailing slash on a "**" pattern names a directory.
+		{"**/ matches a file at the root", "**/", "a", true},
+		{"tests/**/ does not match the base", "tests/**/", "tests", false},
+		{"tests/**/ matches a child", "tests/**/", "tests/x", true},
+
+		// A trailing slash alone does not anchor; an interior slash does.
+		{"a/ matches beneath a nested directory", "a/", "x/a/b", true},
+		{"a/ does not match a file of that name", "a/", "a", false},
+		{"/src/* matches a nested file", "/src/*", "src/x/y.go", true},
+		{"/src/* does not match the base", "/src/*", "src", false},
+		{"segment wildcard does not cross a directory boundary", "/a*c", "a/b/c", false},
+		{"unanchored segment wildcard does not cross a directory boundary", "a*b", "a/x/b", false},
+		{"literal does not match a longer component", "docs", "docsx/a.md", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -86,6 +116,8 @@ func TestParsePatternRejectsInvalidForms(t *testing.T) {
 		{"double star mixed prefix", "a**"},
 		{"double star mixed suffix", "**.go"},
 		{"malformed class", "a[b"},
+		{"class spanning a separator", "a[/]b"},
+		{"class containing a separator", "[a/b]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,5 +171,25 @@ func TestPatternStringReturnsSourceText(t *testing.T) {
 				t.Errorf("String() = %q, want %q", got, source)
 			}
 		})
+	}
+}
+
+func TestZeroPatternNeverMatches(t *testing.T) {
+	var pattern scope.Pattern
+	if _, err := pattern.Match("a/b"); !errors.Is(err, scope.ErrInvalidPattern) {
+		t.Fatalf("Pattern{}.Match error = %v, want ErrInvalidPattern", err)
+	}
+}
+
+func TestPatternIsZero(t *testing.T) {
+	if !(scope.Pattern{}).IsZero() {
+		t.Error("Pattern{}.IsZero() = false, want true")
+	}
+	pattern, err := scope.ParsePattern("docs")
+	if err != nil {
+		t.Fatalf("ParsePattern() error = %v, want nil", err)
+	}
+	if pattern.IsZero() {
+		t.Error("parsed Pattern.IsZero() = true, want false")
 	}
 }

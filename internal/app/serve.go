@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
@@ -79,14 +80,16 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		Handlers: handlers,
 	}
 	a := &api{store: store, logger: logger}
+	backend := &mcpBackend{store: store, now: time.Now, timeout: storeTimeout, logger: logger}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
-		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, store)
+		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger})
 		if err != nil {
 			pool.Close()
 			return err
 		}
 		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
 		a.github = &githubStatus{repos: gh.repos, store: store}
+		backend.repos = gh.repos
 	}
 	runtime, err := river.NewRuntime(pool, store, riverConfig)
 	if err != nil {
@@ -98,13 +101,45 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		pool.Close()
 		return fmt.Errorf("start the job runtime: %w", err)
 	}
+	backend.inserter = runtime
 	srv := &http.Server{Handler: newRouter(a), ReadHeaderTimeout: readHeaderTimeout}
-	serveErr := listenAndServe(ctx, cfg.HTTPAddr, srv, logger)
-	return errors.Join(serveErr, shutdown(logger, a, srv, runtime, pool, cfg.ShutdownTimeout))
+	var (
+		mcpServers []*http.Server
+		mcpFailed  <-chan error // nil without MCP: never ready
+	)
+	if cfg.MCP != nil { // contract-optional: the listener runs whenever MCP_TOKEN is set, GitHub or not
+		mcpSrv, failed, err := startMCP(*cfg.MCP, backend, logger)
+		if err != nil {
+			return errors.Join(err, shutdown(logger, a, srv, runtime, pool, cfg.ShutdownTimeout))
+		}
+		mcpServers, mcpFailed = []*http.Server{mcpSrv}, failed
+	}
+	serveErr := listenAndServe(ctx, cfg.HTTPAddr, srv, logger, mcpFailed)
+	return errors.Join(serveErr, shutdown(logger, a, srv, runtime, pool, cfg.ShutdownTimeout, mcpServers...))
 }
 
-// listenAndServe serves until ctx is canceled. It returns nil for that cancellation.
-func listenAndServe(ctx context.Context, addr string, srv *http.Server, logger *slog.Logger) error {
+// startMCP listens on the MCP address and serves the handler in the
+// background. A listen failure is returned, so serve fails at startup; failed
+// receives the error of a server that stops on its own.
+func startMCP(settings config.MCP, backend mcp.Backend, logger *slog.Logger) (srv *http.Server, failed <-chan error, err error) {
+	handler, err := mcp.NewHandler(backend, []byte(settings.Token.Reveal()), settings.AllowedOrigins, Version)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compose the MCP handler: %w", err)
+	}
+	listener, err := net.Listen("tcp", settings.Addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listen on %s for MCP: %w", settings.Addr, err)
+	}
+	srv = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	stopped := make(chan error, 1)
+	go func() { stopped <- srv.Serve(listener) }()
+	logger.Info("mcp listening", "addr", listener.Addr().String())
+	return srv, stopped, nil
+}
+
+// listenAndServe serves until ctx is canceled or mcpFailed reports a failure
+// (a nil channel never does). It returns nil for the cancellation.
+func listenAndServe(ctx context.Context, addr string, srv *http.Server, logger *slog.Logger, mcpFailed <-chan error) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
@@ -117,15 +152,18 @@ func listenAndServe(ctx context.Context, addr string, srv *http.Server, logger *
 		return nil
 	case err := <-failed:
 		return fmt.Errorf("http server: %w", err)
+	case err := <-mcpFailed:
+		return fmt.Errorf("mcp server: %w", err)
 	}
 }
 
 // shutdown stops the service within one budget of timeout: readiness turns
-// 503, the HTTP server drains, River stops softly (running jobs finish), then
-// the pool closes. When the budget runs out River is stopped with
-// cancellation, for at most forceGrace more, and the error says so. A River
-// that cannot be stopped still holds the pool, so the pool stays open then.
-func shutdown(logger *slog.Logger, a *api, srv *http.Server, runtime *river.Runtime, pool *pgxpool.Pool, timeout time.Duration) error {
+// 503, the HTTP server and then the MCP server (when there is one) drain,
+// River stops softly (running jobs finish), then the pool closes. When the
+// budget runs out River is stopped with cancellation, for at most forceGrace
+// more, and the error says so. A River that cannot be stopped still holds the
+// pool, so the pool stays open then.
+func shutdown(logger *slog.Logger, a *api, srv *http.Server, runtime *river.Runtime, pool *pgxpool.Pool, timeout time.Duration, mcpServers ...*http.Server) error {
 	a.stopping.Store(true)
 	logger.Info("shutting down", "timeout", timeout.String())
 	budget, cancel := context.WithTimeout(context.Background(), timeout)
@@ -135,6 +173,13 @@ func shutdown(logger *slog.Logger, a *api, srv *http.Server, runtime *river.Runt
 		errs = append(errs, fmt.Errorf("drain the http server: %w", err))
 	} else {
 		logger.Info("http server stopped")
+	}
+	for _, mcpSrv := range mcpServers {
+		if err := mcpSrv.Shutdown(budget); err != nil {
+			errs = append(errs, fmt.Errorf("drain the mcp server: %w", err))
+		} else {
+			logger.Info("mcp server stopped")
+		}
 	}
 	forced := false
 	if err := runtime.Stop(budget); err != nil {

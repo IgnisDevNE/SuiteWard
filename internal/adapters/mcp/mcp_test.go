@@ -664,6 +664,32 @@ func TestGetAndDeleteDoNotOpenAStream(t *testing.T) {
 	}
 }
 
+// TestTheTokenIsCheckedBeforeMethodAndPath locks the middleware order that
+// deploy/smoke.sh relies on: a request without the token is 401 whatever its
+// method or path, never the SDK's 405 or the mux's 404.
+func TestTheTokenIsCheckedBeforeMethodAndPath(t *testing.T) {
+	t.Parallel()
+	backend := configuredBackend()
+	server := newServer(t, backend, nil)
+	for _, request := range []struct{ method, path string }{
+		{http.MethodGet, "/mcp"},
+		{http.MethodDelete, "/mcp"},
+		{http.MethodPost, "/other"},
+		{http.MethodGet, "/"},
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), request.method, server.URL+request.path, nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		if status, _, _ := send(t, server, req); status != http.StatusUnauthorized {
+			t.Errorf("%s %s without a token: status %d, want 401", request.method, request.path, status)
+		}
+	}
+	if backend.callCount() != 0 {
+		t.Fatal("backend called without authentication")
+	}
+}
+
 func TestOnlyTheMCPPathIsServed(t *testing.T) {
 	t.Parallel()
 	server := newServer(t, configuredBackend(), nil)

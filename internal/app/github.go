@@ -57,18 +57,24 @@ func (g *githubStatus) report(ctx context.Context) ([]repositoryStatus, error) {
 		if !state.LastSuccess.IsZero() {
 			entry.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
 		}
-		if state.LastError != "" {
-			entry.LastError = string(state.LastError)
-			if state.LastStatus != 0 {
-				entry.LastError += fmt.Sprintf(" (HTTP %d)", state.LastStatus)
-			}
-		}
+		entry.LastError = lastErrorText(state)
 		if !state.WaitUntil.IsZero() {
 			entry.WaitUntil = state.WaitUntil.UTC().Format(time.RFC3339)
 		}
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// lastErrorText is the classification of the last failed cycle and its HTTP
+// status, never text GitHub sent; empty after a success. /status and the MCP
+// status tool both show it.
+func lastErrorText(state githubsync.RepositoryState) string {
+	text := string(state.LastError)
+	if text != "" && state.LastStatus != 0 {
+		text += fmt.Sprintf(" (HTTP %d)", state.LastStatus)
+	}
+	return text
 }
 
 // githubSync is the GitHub side of the service, composed only when the GitHub settings are set.

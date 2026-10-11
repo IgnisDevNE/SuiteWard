@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -36,6 +37,8 @@ type fakeGitHub struct {
 	// pullsFail, when set, answers the open pull listing with this status, headers and the secret body.
 	pullsFail        int
 	pullsFailHeaders map[string]string
+	// gate, when set before the service starts, holds every open pull listing until a value is sent on it.
+	gate chan struct{}
 }
 
 func newFakeGitHub(t *testing.T) *fakeGitHub {
@@ -47,6 +50,13 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 }
 
 func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
+	if f.gate != nil && r.URL.Path == "/repos/acme/widgets/pulls" {
+		select {
+		case <-f.gate:
+		case <-r.Context().Done():
+			return
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch {
@@ -221,6 +231,22 @@ func TestAFailedCycleShowsOnlyItsClassification(t *testing.T) {
 			}
 			if strings.Contains(s.logs.String(), fakeErrorBody) || strings.Contains(s.logs.String(), fakeToken) {
 				t.Fatalf("the logs carry text GitHub sent or the token:\n%s", s.logs.String())
+			}
+			// One warn line per recorded failure: repo, kind and status, nothing GitHub sent.
+			kind, status, _ := strings.Cut(strings.TrimSuffix(test.wantError, ")"), " (HTTP ")
+			var warnings int
+			for _, line := range strings.Split(s.logs.String(), "\n") {
+				var entry map[string]any
+				if json.Unmarshal([]byte(line), &entry) != nil || entry["msg"] != "github synchronization failed" {
+					continue
+				}
+				warnings++
+				if entry["level"] != "WARN" || entry["repo"] != "acme/widgets" || entry["kind"] != kind || fmt.Sprint(entry["status"]) != status {
+					t.Errorf("failure log = %v; want a warning with repo acme/widgets, kind %s and status %s", entry, kind, status)
+				}
+			}
+			if warnings != 1 {
+				t.Fatalf("%d failure log lines; want exactly one:\n%s", warnings, s.logs.String())
 			}
 		})
 	}

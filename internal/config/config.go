@@ -255,14 +255,17 @@ func (l *loader) github() *GitHub {
 }
 
 // mcp reads the local MCP settings; nil when MCP_TOKEN is unset.
-// MCP_ADDR and MCP_ALLOWED_ORIGINS without a token are errors: nothing would use them.
+// MCP_ADDR without a token is accepted (the image sets it by default) and still validated;
+// MCP_ALLOWED_ORIGINS without a token is an error: nothing would use it.
 func (l *loader) mcp(httpAddr string) *MCP {
 	token, hasToken := l.present("MCP_TOKEN", true)
 	addr, hasAddr := l.present("MCP_ADDR", false)
 	origins, hasOrigins := l.present("MCP_ALLOWED_ORIGINS", false)
 	if !hasToken {
 		if hasAddr {
-			l.fail("MCP_ADDR", fmt.Errorf("is set without %sMCP_TOKEN, so nothing would use it", prefix))
+			if _, _, err := net.SplitHostPort(addr); err != nil {
+				l.fail("MCP_ADDR", err)
+			}
 		}
 		if hasOrigins {
 			l.fail("MCP_ALLOWED_ORIGINS", fmt.Errorf("is set without %sMCP_TOKEN, so nothing would use it", prefix))

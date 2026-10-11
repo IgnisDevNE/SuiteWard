@@ -193,7 +193,7 @@ func TestServeMCPWithoutGitHubSaysNotConfigured(t *testing.T) {
 }
 
 func TestServeWithoutAMCPTokenListensOnNoMCPAddress(t *testing.T) {
-	// Without a token MCP_ADDR cannot be set, so the only address that could be opened is the default.
+	// Without a token nothing listens, so the only address worth probing is the default.
 	const defaultAddr = "127.0.0.1:8090"
 	conn, err := net.DialTimeout("tcp", defaultAddr, time.Second)
 	inUse := err == nil

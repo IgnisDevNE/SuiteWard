@@ -145,10 +145,17 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 	if len(repositories) == 0 {
 		return nil, errors.New("appauth: at least one repository is required")
 	}
+	seen := make(map[string]bool, len(repositories))
 	for _, r := range repositories {
 		if r == "" || strings.Contains(r, "/") {
 			return nil, fmt.Errorf("appauth: repository %q must be a name without the owner", r)
 		}
+		// GitHub repository names are case-insensitive.
+		key := strings.ToLower(r)
+		if seen[key] {
+			return nil, fmt.Errorf("appauth: repository %q is listed twice", r)
+		}
+		seen[key] = true
 	}
 	if len(permissions) == 0 {
 		return nil, errors.New("appauth: permissions are required; an empty map grants everything the App has")
@@ -164,6 +171,10 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
 		return nil, errors.New("appauth: base URL must be an absolute http(s) URL")
+	}
+	// The endpoint is the base path plus a fixed suffix: a query, fragment or user info would corrupt or leak it.
+	if strings.ContainsAny(baseURL, "?#") || base.User != nil {
+		return nil, errors.New("appauth: base URL must not carry a query, a fragment or user info")
 	}
 	perms := maps.Clone(permissions)
 	body, err := json.Marshal(struct {
@@ -185,7 +196,8 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 }
 
 // Format renders the Installation without its token or key, whatever the verb.
-func (i *Installation) Format(f fmt.State, _ rune) {
+// The value receiver covers both Installation and *Installation.
+func (i Installation) Format(f fmt.State, _ rune) {
 	_, _ = fmt.Fprintf(f, "appauth.Installation{id: %d, permissions: %v}", i.id, i.permissions)
 }
 
@@ -245,25 +257,34 @@ func (i *Installation) mint(ctx context.Context) (Token, error) {
 	if out.Token == "" {
 		return Token{}, errors.New("appauth: access_tokens answer has no token")
 	}
-	if !out.ExpiresAt.After(now) {
-		return Token{}, errors.New("appauth: access_tokens answer is already expired")
+	// A token inside the renewal window would be re-minted on every call.
+	if !out.ExpiresAt.After(now.Add(renewBefore)) {
+		return Token{}, errors.New("appauth: access_tokens answer expires inside the renewal window")
 	}
 	if !maps.Equal(out.Permissions, i.permissions) {
 		return Token{}, fmt.Errorf("%w: requested %v, granted %v", ErrPermissionsMismatch, i.permissions, out.Permissions)
 	}
 	sum := sha256.Sum256([]byte(out.Token))
-	return Token{value: out.Token, expiresAt: out.ExpiresAt, identity: hex.EncodeToString(sum[:8])}, nil
+	return Token{value: &out.Token, expiresAt: out.ExpiresAt, identity: hex.EncodeToString(sum[:8])}, nil
 }
 
 // Token is an installation token whose value is never rendered.
 type Token struct {
-	value     string
+	// value is a pointer to a string: fmt prints an unexported field of this
+	// type as an address under every verb, where a plain string field would be printed.
+	value     *string
 	expiresAt time.Time
 	identity  string
 }
 
-// Reveal returns the bearer value, only for the Authorization header.
-func (t Token) Reveal() string { return t.value }
+// Reveal returns the bearer value, only for the Authorization header. The
+// zero Token, returned beside an error, has none.
+func (t Token) Reveal() string {
+	if t.value == nil {
+		return ""
+	}
+	return *t.value
+}
 
 // Identity is a stable id of this token, derived from but never equal to the value.
 func (t Token) Identity() string { return t.identity }

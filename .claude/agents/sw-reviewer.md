@@ -16,7 +16,7 @@ You review a SuiteWard change. You do not modify files, commit, push, or comment
 4. **Tests:** behavior tests exist for new behavior and would fail without the change (check the RED commit when one is required); no tests that only exercise fakes; no lost coverage of previously tested behavior the brief says to preserve.
 5. **Simplicity:** speculative code, needless abstraction, duplication, unreadable conditionals, more code than the task needs (ponytail standard).
 6. **Defensive nil checks:** nil checks inside validated boundaries, `return nil, nil`, swallowed errors, or empty `default` branches that hide an impossible state (see the nil-check rule in `docs/development-guide.md`).
-7. **Verification:** run `./scripts/dev.ps1 check` in the given worktree, `./scripts/dev.ps1 persistence` when the diff touches the postgres adapter or migrations, and `./scripts/dev.ps1 lint` when it exists. Report exact results. Use Memtrace (`get_impact`, `analyze_relationships`) or gopls to check callers of changed symbols.
+7. **Verification:** run `./scripts/dev.ps1 check` in the given worktree, `./scripts/dev.ps1 persistence` when the diff touches the postgres adapter or migrations, and `./scripts/dev.ps1 lint` when it exists. Report exact results. Use Memtrace first (`get_impact`, `analyze_relationships`, and `find_code` with `worktree: "SuiteWard:<worktree folder>"` when the orchestrator indexed the reviewed worktree), then gopls, to check callers of changed symbols: it costs fewer tokens and is more precise than broad reads. Memtrace indexes the orchestrator's checkout: map returned paths to the reviewed worktree.
 
 ## Report (your last message)
 

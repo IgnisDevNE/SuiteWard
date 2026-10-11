@@ -376,6 +376,30 @@ func TestInstallationRejectsInvalidArguments(t *testing.T) {
 			_, err := app.Installation(installationID, repositories, syncPerms, client, "ftp://api.github.example")
 			return err
 		},
+		"base URL with a query": func() error {
+			_, err := app.Installation(installationID, repositories, syncPerms, client, base+"/api/v3?x=1")
+			return err
+		},
+		"base URL with an empty query": func() error {
+			_, err := app.Installation(installationID, repositories, syncPerms, client, base+"/api/v3?")
+			return err
+		},
+		"base URL with a fragment": func() error {
+			_, err := app.Installation(installationID, repositories, syncPerms, client, base+"/api/v3#frag")
+			return err
+		},
+		"base URL with user info": func() error {
+			_, err := app.Installation(installationID, repositories, syncPerms, client, "https://user:pass@api.github.example")
+			return err
+		},
+		"duplicate repository": func() error {
+			_, err := app.Installation(installationID, []string{"alpha", "beta", "alpha"}, syncPerms, client, base)
+			return err
+		},
+		"duplicate repository differing in case": func() error {
+			_, err := app.Installation(installationID, []string{"alpha", "Alpha"}, syncPerms, client, base)
+			return err
+		},
 	}
 	for name, call := range cases {
 		if call() == nil {
@@ -624,6 +648,18 @@ func TestTokenFailuresAreErrorsAndNothingIsCached(t *testing.T) {
 		{"no token", http.StatusCreated, func(now time.Time) string { return tokenBody("", now.Add(time.Hour), syncPerms) }, 0, nil},
 		{"already expired", http.StatusCreated, func(now time.Time) string { return tokenBody(tokenValue(1), now.Add(-time.Minute), syncPerms) }, 0, nil},
 		{"not JSON", http.StatusCreated, func(time.Time) string { return "<html>" }, 0, nil},
+		{"no expires_at", http.StatusCreated, func(time.Time) string {
+			return fmt.Sprintf(`{"token":%q,"permissions":{"metadata":"read","pull_requests":"read","contents":"read"}}`, tokenValue(1))
+		}, 0, nil},
+		{"malformed expires_at", http.StatusCreated, func(time.Time) string {
+			return fmt.Sprintf(`{"token":%q,"expires_at":"tomorrow","permissions":{"metadata":"read","pull_requests":"read","contents":"read"}}`, tokenValue(1))
+		}, 0, nil},
+		{"expires inside the renewal window", http.StatusCreated, func(now time.Time) string {
+			return tokenBody(tokenValue(1), now.Add(4*time.Minute), syncPerms)
+		}, 0, nil},
+		{"expires at the renewal point", http.StatusCreated, func(now time.Time) string {
+			return tokenBody(tokenValue(1), now.Add(5*time.Minute), syncPerms)
+		}, 0, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -798,5 +834,87 @@ func TestIdentityIsStableAndDiffersPerToken(t *testing.T) {
 	}
 	if second.Identity() == id {
 		t.Errorf("Identity did not change on rotation")
+	}
+}
+
+// renderings prints v in every verb position the package must survive.
+func renderings(v any) string {
+	return fmt.Sprintf("%v %+v %#v %s %q %x %d", v, v, v, v, v, v, v)
+}
+
+func TestNoTokenValueIsPrintedInAnyPosition(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: t0}
+	g := newFakeGitHub(t, issuing(clock))
+	inst := newInstallation(t, clock, g)
+	tok, err := inst.Token(context.Background())
+	if err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	// An unexported field is printed by reflection, which cannot call methods.
+	type hasToken struct{ tok appauth.Token }
+	type hasInstallation struct{ inst *appauth.Installation }
+	type hasInstallationValue struct{ inst appauth.Installation }
+	rendered := map[string]string{
+		"installation pointer":          renderings(inst),
+		"installation value":            renderings(*inst),
+		"unexported token field":        renderings(hasToken{tok}),
+		"unexported token field ptr":    renderings(&hasToken{tok}),
+		"unexported installation ptr":   renderings(hasInstallation{inst}),
+		"unexported installation val":   renderings(hasInstallationValue{*inst}),
+		"token slice":                   renderings([]appauth.Token{tok}),
+		"token map":                     renderings(map[string]appauth.Token{"k": tok}),
+		"installation value in a slice": renderings([]appauth.Installation{*inst}),
+	}
+	for where, s := range rendered {
+		if strings.Contains(s, tokenValue(1)) {
+			t.Errorf("%s prints the token value: %s", where, s)
+		}
+	}
+	if tok.Reveal() != tokenValue(1) {
+		t.Errorf("Reveal = %q, want the token value", tok.Reveal())
+	}
+	if again, err := inst.Token(context.Background()); err != nil || again.Reveal() != tokenValue(1) {
+		t.Errorf("the cached token lost its value: %v", err)
+	}
+}
+
+func TestZeroTokenHasNoValue(t *testing.T) {
+	t.Parallel()
+	var tok appauth.Token
+	if tok.Reveal() != "" {
+		t.Errorf("zero Token reveals %q", tok.Reveal())
+	}
+}
+
+func TestCancellingTheMintingCallerReturnsContextCanceledAndCachesNothing(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: t0}
+	arrived := make(chan struct{}, 1)
+	g := newFakeGitHub(t, func(n int, r *http.Request) (int, string) {
+		if n == 1 {
+			arrived <- struct{}{}
+			<-r.Context().Done()
+		}
+		return issuing(clock)(n, r)
+	})
+	inst := newInstallation(t, clock, g)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := inst.Token(ctx)
+		done <- err
+	}()
+	<-arrived
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	tok, err := inst.Token(context.Background())
+	if err != nil {
+		t.Fatalf("next Token: %v", err)
+	}
+	if n := len(g.requests()); n != 2 || tok.Reveal() != tokenValue(2) {
+		t.Errorf("the cancelled mint was cached: %d requests", n)
 	}
 }

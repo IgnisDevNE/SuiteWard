@@ -1111,3 +1111,122 @@ func TestConcurrentGetsAndTokenRotationAreRaceFree(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+// One response with a wildly wrong Date (a stale intermediary) must not move the
+// budget's window: GitHub's windows last at most an hour, so a Date further from
+// the local clock than that is ignored.
+func TestBudgetIgnoresADateFarFromTheLocalClock(t *testing.T) {
+	reset := t0.Add(time.Hour)
+	for _, tc := range []struct {
+		name string
+		date time.Duration // from the local clock
+	}{
+		{"stale intermediary, 5 hours behind", -5 * time.Hour},
+		{"5 hours ahead", 5 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clk := &clock{now: t0}
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if hits.Add(1) == 1 {
+					setRateLimit(w, 10, 5, reset) // used 5: at the cap of 5
+					w.Header().Set("Date", t0.Add(tc.date).UTC().Format(http.TimeFormat))
+				} else {
+					setRateLimit(w, 10, 10, reset.Add(time.Hour))
+					w.Header().Set("Date", clk.Now().UTC().Format(http.TimeFormat))
+				}
+				_, _ = w.Write([]byte("body"))
+			}))
+			defer srv.Close()
+			c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, clk))
+			ctx := context.Background()
+
+			if _, err := c.Get(ctx, "/a"); err != nil {
+				t.Fatalf("Get /a: %v", err)
+			}
+			_, err := c.Get(ctx, "/b")
+			var be *rest.BudgetExhaustedError
+			if !errors.As(err, &be) || !be.Reset.Equal(reset) {
+				t.Fatalf("Get /b: err = %#v, want ErrBudgetExhausted until the reset %v", err, reset)
+			}
+			clk.Set(reset)
+			if _, err := c.Get(ctx, "/b"); err != nil {
+				t.Fatalf("Get /b right after the reset: %v", err)
+			}
+		})
+	}
+}
+
+// A 304 costs nothing on GitHub's side: its headers neither change the count nor
+// establish a window.
+func TestBudgetIgnoresRateLimitHeadersOf304(t *testing.T) {
+	reset := t0.Add(time.Hour)
+	for _, tc := range []struct {
+		name     string
+		okLimits bool // the 200 carries rate-limit headers (a window is known)
+	}{
+		{"window known", true},
+		{"no window yet", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("ETag", `"a"`)
+				if r.Header.Get("If-None-Match") != "" {
+					setRateLimit(w, 10, 0, reset) // a 304 claiming everything is used
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				if tc.okLimits {
+					setRateLimit(w, 10, 9, reset)
+				}
+				_, _ = w.Write([]byte("body"))
+			}))
+			defer srv.Close()
+			c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+			ctx := context.Background()
+
+			if _, err := c.Get(ctx, "/a"); err != nil {
+				t.Fatalf("Get /a: %v", err)
+			}
+			if got, err := c.Get(ctx, "/a"); err != nil || !got.NotModified {
+				t.Fatalf("conditional Get /a = %+v, %v", got, err)
+			}
+			if _, err := c.Get(ctx, "/b"); err != nil {
+				t.Fatalf("Get /b after a 304: %v (the 304's headers were counted)", err)
+			}
+		})
+	}
+}
+
+// A response without a usable Date says nothing about the clocks: the previous offset stays.
+func TestBudgetKeepsTheOffsetWithoutAUsableDate(t *testing.T) {
+	const skew = 2 * time.Minute
+	reset := t0.Add(time.Hour)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := int(hits.Add(1))
+		setRateLimit(w, 10, 10-n, reset) // used n
+		switch n {
+		case 1:
+			w.Header().Set("Date", t0.Add(-skew).UTC().Format(http.TimeFormat))
+		case 2:
+			w.Header()["Date"] = nil // the server sends none
+		default:
+			w.Header().Set("Date", "not a date")
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+
+	for i := range 5 {
+		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
+			t.Fatalf("Get %d: %v", i, err)
+		}
+	}
+	_, err := c.Get(context.Background(), "/next")
+	var be *rest.BudgetExhaustedError
+	if !errors.As(err, &be) || !be.Reset.Equal(reset.Add(skew)) {
+		t.Fatalf("err = %#v, want ErrBudgetExhausted until %v (the first Date's offset)", err, reset.Add(skew))
+	}
+}

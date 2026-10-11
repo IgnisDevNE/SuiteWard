@@ -35,8 +35,13 @@ type BaselineResult struct {
 // version row without its bytes is not. A baseline of coverage the proposal
 // already has changes nothing, as with ReviseProposal.
 func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter, request BaselineRequest) (BaselineResult, error) {
-	if uow == nil || content == nil || request.Tree == nil {
-		return BaselineResult{}, ErrInvalidRequest
+	switch {
+	case uow == nil:
+		return BaselineResult{}, fmt.Errorf("%w: no unit of work", ErrInvalidRequest)
+	case content == nil:
+		return BaselineResult{}, fmt.Errorf("%w: no content writer", ErrInvalidRequest)
+	case request.Tree == nil:
+		return BaselineResult{}, fmt.Errorf("%w: no tree", ErrInvalidRequest)
 	}
 	inv, err := inventory.Build(ctx, request.Tree)
 	if err != nil {

@@ -3,6 +3,7 @@ package governance_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -106,7 +107,13 @@ func TestBaselineFromAnInventoryBootstrapsTheFirstCanonical(t *testing.T) {
 
 func TestRepeatedBaselineOfTheSameTreeWritesNothing(t *testing.T) {
 	w := newWorld(t)
+	start := w.revision()
 	first := w.propose(newFakeWriter(), baselineRequest("revision-1", "pinned-commit", baselineTree("v1")))
+	// The world has no proposal yet, so this is the create path.
+	if !first.Revise.Committed || !w.hasProposal(baselineProposal) {
+		t.Fatalf("first = %+v, proposal stored %v; want a committed creation", first.Revise, w.hasProposal(baselineProposal))
+	}
+	w.requireWrites(start, 1)
 	before := w.revision()
 
 	again := w.propose(newFakeWriter(), baselineRequest("revision-2", "pinned-later", baselineTree("v1")))
@@ -231,15 +238,17 @@ func TestBaselineRejectsMissingCollaborators(t *testing.T) {
 		uow     governance.UnitOfWork
 		content governance.ContentWriter
 		request governance.BaselineRequest
+		missing string
 	}{
-		{"unit of work", nil, newFakeWriter(), request},
-		{"content writer", w.mem, nil, request},
-		{"tree", w.mem, newFakeWriter(), noTree},
+		{"unit of work", nil, newFakeWriter(), request, "no unit of work"},
+		{"content writer", w.mem, nil, request, "no content writer"},
+		{"tree", w.mem, newFakeWriter(), noTree, "no tree"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := governance.ProposeBaseline(context.Background(), test.uow, test.content, test.request); !errors.Is(err, governance.ErrInvalidRequest) {
-				t.Fatalf("error = %v, want an invalid request", err)
+			_, err := governance.ProposeBaseline(context.Background(), test.uow, test.content, test.request)
+			if !errors.Is(err, governance.ErrInvalidRequest) || !strings.Contains(err.Error(), test.missing) {
+				t.Fatalf("error = %v, want an invalid request naming %q", err, test.missing)
 			}
 		})
 	}

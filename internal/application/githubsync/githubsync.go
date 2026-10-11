@@ -93,7 +93,9 @@ type Store interface {
 	RecordFailure(ctx context.Context, failure Failure) error
 	// Pulls returns every pull ever seen in repo, ordered by number.
 	Pulls(ctx context.Context, repo string) ([]PullState, error)
-	// Comments returns every version of every comment seen on a pull, ordered by comment id and then updated_at.
+	// Comments returns every version of every comment seen on a pull, ordered by
+	// comment id, updated_at and first_seen, then by body digest. A pull number
+	// outside 1 to 2^31-1 is ErrInvalidObservation.
 	Comments(ctx context.Context, repo string, number int) ([]CommentVersion, error)
 }
 
@@ -126,44 +128,57 @@ type CommentVersion struct {
 	AuthorLogin  string
 	CreatedAt    time.Time // GitHub's; never changes for an id
 	UpdatedAt    time.Time // GitHub's; a new value is a new version (an edit)
-	Body         string
+	Body         string    // the raw bytes, whatever they contain (a NUL or invalid UTF-8 included)
 	BodyDigest   artifact.Digest
 	FirstSeen    time.Time
 	NotSeenSince time.Time // zero while the comment appears in its PR's full listing; set at the first full listing without it
 }
 
+// ValidatePullNumber rejects a pull number outside what the store keeps
+// (1 to 2^31-1).
+func ValidatePullNumber(number int) error {
+	if number < 1 || number > math.MaxInt32 {
+		return fmt.Errorf("%w: pull number %d is outside 1 to %d", ErrInvalidObservation, number, math.MaxInt32)
+	}
+	return nil
+}
+
 // Validate rejects a cycle the store cannot record consistently: a missing
-// repository, installation or time, a pull listed twice, a comment listing for
-// a pull that is not open (or none for one that is), or a comment id listed
-// twice or with an unset time.
+// repository, installation or time, a pull number out of range or listed
+// twice, a comment listing for a pull that is not open (or none for one that
+// is), or a comment id that is not positive, is listed twice, or has an unset
+// time. The error wraps ErrInvalidObservation.
 func (c Cycle) Validate() error {
 	if err := validateRepository(c.Repo, c.InstallationID); err != nil {
 		return err
 	}
 	if c.At.IsZero() {
-		return errors.New("github cycle has no observation time")
+		return fmt.Errorf("%w: cycle has no observation time", ErrInvalidObservation)
 	}
 	open := make(map[int]bool, len(c.OpenPulls))
 	for _, pull := range c.OpenPulls {
-		if pull.Number <= 0 || pull.Number > math.MaxInt32 || open[pull.Number] {
-			return fmt.Errorf("github cycle lists pull %d twice or outside the pull number range", pull.Number)
+		if err := ValidatePullNumber(pull.Number); err != nil {
+			return err
+		}
+		if open[pull.Number] {
+			return fmt.Errorf("%w: cycle lists pull %d twice", ErrInvalidObservation, pull.Number)
 		}
 		open[pull.Number] = true
 	}
 	for number := range c.Comments {
 		if !open[number] {
-			return fmt.Errorf("github cycle lists comments of pull %d, which is not open in the cycle", number)
+			return fmt.Errorf("%w: cycle lists comments of pull %d, which is not open in the cycle", ErrInvalidObservation, number)
 		}
 	}
 	seen := map[int64]bool{}
 	for number := range open {
 		listing, ok := c.Comments[number]
 		if !ok {
-			return fmt.Errorf("github cycle has no comment listing for open pull %d", number)
+			return fmt.Errorf("%w: cycle has no comment listing for open pull %d", ErrInvalidObservation, number)
 		}
 		for _, comment := range listing {
 			if comment.CommentID <= 0 || seen[comment.CommentID] || comment.CreatedAt.IsZero() || comment.UpdatedAt.IsZero() {
-				return fmt.Errorf("github cycle has comment %d twice, with an invalid id or without a time", comment.CommentID)
+				return fmt.Errorf("%w: cycle has comment %d twice, with an invalid id or without a time", ErrInvalidObservation, comment.CommentID)
 			}
 			seen[comment.CommentID] = true
 		}
@@ -171,7 +186,9 @@ func (c Cycle) Validate() error {
 	return nil
 }
 
-// Validate rejects a failure the store cannot classify.
+// Validate rejects a failure the store cannot classify. The error wraps
+// ErrInvalidObservation. A wait kind may carry no WaitUntil: whether a missing
+// reset means "wait" is the reconciliation's decision, not the store's.
 func (f Failure) Validate() error {
 	if err := validateRepository(f.Repo, f.InstallationID); err != nil {
 		return err
@@ -180,17 +197,17 @@ func (f Failure) Validate() error {
 	case FailureRateLimited, FailureBudgetExhausted, FailureUnauthorized, FailureForbidden, FailureNotFound,
 		FailureUnprocessable, FailureStatus, FailureTransport, FailureDecode:
 	default:
-		return fmt.Errorf("github failure has unknown kind %q", f.Kind)
+		return fmt.Errorf("%w: failure has unknown kind %q", ErrInvalidObservation, f.Kind)
 	}
 	if f.Status != 0 && (f.Status < 100 || f.Status > 599) {
-		return fmt.Errorf("github failure has invalid status %d", f.Status)
+		return fmt.Errorf("%w: failure has invalid status %d", ErrInvalidObservation, f.Status)
 	}
 	return nil
 }
 
 func validateRepository(repo string, installation int64) error {
 	if strings.TrimSpace(repo) == "" || installation <= 0 {
-		return errors.New("github observation has no repository or installation")
+		return fmt.Errorf("%w: no repository or installation", ErrInvalidObservation)
 	}
 	return nil
 }

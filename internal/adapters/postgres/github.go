@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -37,7 +36,7 @@ type commentRow struct {
 	AuthorID    int64     `json:"author_id"`
 	AuthorLogin string    `json:"author_login"`
 	CreatedAt   time.Time `json:"created_at"`
-	Body        string    `json:"body"`
+	Body        []byte    `json:"body"` // encoding/json writes bytes as base64; the SQL decodes it
 	BodyDigest  string    `json:"body_digest"`
 }
 
@@ -118,7 +117,7 @@ func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) 
 	for number, listing := range cycle.Comments {
 		for _, comment := range listing {
 			comments = append(comments, commentRow{CommentID: comment.CommentID, UpdatedAt: comment.UpdatedAt, PullNumber: number, AuthorID: comment.AuthorID,
-				AuthorLogin: comment.AuthorLogin, CreatedAt: comment.CreatedAt, Body: comment.Body, BodyDigest: artifact.Hash([]byte(comment.Body)).String()})
+				AuthorLogin: comment.AuthorLogin, CreatedAt: comment.CreatedAt, Body: []byte(comment.Body), BodyDigest: artifact.Hash([]byte(comment.Body)).String()})
 			seen = append(seen, comment.CommentID)
 		}
 	}
@@ -131,7 +130,7 @@ func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) 
 		return fmt.Errorf("check GitHub comment creation times: %w", err)
 	}
 	if len(changed) > 0 {
-		return fmt.Errorf("GitHub comment %d changed its creation time", changed[0])
+		return fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, changed[0])
 	}
 	if err := q.ClearCommentsNotSeen(ctx, dbgen.ClearCommentsNotSeenParams{Repo: cycle.Repo, CommentIds: seen}); err != nil {
 		return fmt.Errorf("clear GitHub comment absence: %w", err)
@@ -176,8 +175,8 @@ func (s *Store) Pulls(ctx context.Context, repo string) ([]githubsync.PullState,
 
 // Comments implements githubsync.Store.
 func (s *Store) Comments(ctx context.Context, repo string, number int) ([]githubsync.CommentVersion, error) {
-	if number < 1 || number > math.MaxInt32 {
-		return nil, fmt.Errorf("invalid GitHub pull number %d", number)
+	if err := githubsync.ValidatePullNumber(number); err != nil {
+		return nil, err
 	}
 	rows, err := dbgen.New(s.pool).ListGitHubComments(ctx, dbgen.ListGitHubCommentsParams{Repo: repo, PullNumber: int32(number)})
 	if err != nil {
@@ -190,7 +189,7 @@ func (s *Store) Comments(ctx context.Context, repo string, number int) ([]github
 			return nil, fmt.Errorf("read GitHub comment %d: stored digest: %w", row.CommentID, err)
 		}
 		versions[i] = githubsync.CommentVersion{PullNumber: int(row.PullNumber), CommentID: row.CommentID, AuthorID: row.AuthorID, AuthorLogin: row.AuthorLogin,
-			CreatedAt: observedTime(row.CreatedAt), UpdatedAt: observedTime(row.UpdatedAt), Body: row.Body, BodyDigest: digest,
+			CreatedAt: observedTime(row.CreatedAt), UpdatedAt: observedTime(row.UpdatedAt), Body: string(row.Body), BodyDigest: digest,
 			FirstSeen: observedTime(row.FirstSeen), NotSeenSince: observedTime(row.NotSeenSince)}
 	}
 	return versions, nil

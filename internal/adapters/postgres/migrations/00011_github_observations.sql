@@ -36,8 +36,9 @@ CREATE TABLE github_pulls (
     CONSTRAINT github_pulls_number_check CHECK (number > 0)
 );
 
--- A comment version is keyed by (repo, comment_id, updated_at): an edit is a
--- new row and the earlier body stays. Only not_seen_since may change, and the
+-- A comment version is keyed by (repo, comment_id, updated_at, body_digest): an edit is a
+-- new row and the earlier body stays, even for two edits within one second of
+-- updated_at. The body is raw bytes. Only not_seen_since may change, and the
 -- stored digest must be the digest of the stored body.
 CREATE TABLE github_comment_versions (
     repo text NOT NULL,
@@ -47,14 +48,14 @@ CREATE TABLE github_comment_versions (
     author_id bigint NOT NULL,
     author_login text NOT NULL,
     created_at timestamptz NOT NULL,
-    body text NOT NULL,
+    body bytea NOT NULL,
     body_digest text NOT NULL,
     first_seen timestamptz NOT NULL,
     not_seen_since timestamptz,
-    CONSTRAINT github_comment_versions_pkey PRIMARY KEY (repo, comment_id, updated_at),
+    CONSTRAINT github_comment_versions_pkey PRIMARY KEY (repo, comment_id, updated_at, body_digest),
     CONSTRAINT github_comment_versions_pull_fkey FOREIGN KEY (repo, pull_number) REFERENCES github_pulls (repo, number),
     CONSTRAINT github_comment_versions_comment_id_check CHECK (comment_id > 0),
-    CONSTRAINT github_comment_versions_body_digest_check CHECK (body_digest = 'sha256:' || encode(sha256(convert_to(body, 'UTF8')), 'hex'))
+    CONSTRAINT github_comment_versions_body_digest_check CHECK (body_digest = 'sha256:' || encode(sha256(body), 'hex'))
 );
 
 -- Comments are read and marked per pull.

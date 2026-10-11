@@ -88,9 +88,9 @@ func (q *Queries) GetGitHubRepository(ctx context.Context, repo string) (GithubR
 const insertCommentVersions = `-- name: InsertCommentVersions :exec
 INSERT INTO github_comment_versions (repo, comment_id, updated_at, pull_number, author_id, author_login, created_at, body, body_digest, first_seen)
 SELECT $1::text, (c->>'comment_id')::bigint, (c->>'updated_at')::timestamptz, (c->>'pull_number')::int, (c->>'author_id')::bigint,
-       c->>'author_login', (c->>'created_at')::timestamptz, c->>'body', c->>'body_digest', $2::timestamptz
+       c->>'author_login', (c->>'created_at')::timestamptz, decode(c->>'body', 'base64'), c->>'body_digest', $2::timestamptz
 FROM jsonb_array_elements($3::jsonb) AS c
-ON CONFLICT (repo, comment_id, updated_at) DO NOTHING
+ON CONFLICT (repo, comment_id, updated_at, body_digest) DO NOTHING
 `
 
 type InsertCommentVersionsParams struct {
@@ -99,7 +99,7 @@ type InsertCommentVersionsParams struct {
 	Comments []byte
 }
 
-// A repeated version, same id and same updated_at, changes nothing.
+// A repeated version (same id, updated_at and body) changes nothing. The body travels base64-encoded: it is raw bytes.
 func (q *Queries) InsertCommentVersions(ctx context.Context, arg InsertCommentVersionsParams) error {
 	_, err := q.db.Exec(ctx, insertCommentVersions, arg.Repo, arg.At, arg.Comments)
 	return err
@@ -108,7 +108,7 @@ func (q *Queries) InsertCommentVersions(ctx context.Context, arg InsertCommentVe
 const listGitHubComments = `-- name: ListGitHubComments :many
 SELECT pull_number, comment_id, author_id, author_login, created_at, updated_at, body, body_digest, first_seen, not_seen_since
 FROM github_comment_versions WHERE repo = $1 AND pull_number = $2
-ORDER BY comment_id, updated_at
+ORDER BY comment_id, updated_at, first_seen, body_digest COLLATE "C"
 `
 
 type ListGitHubCommentsParams struct {
@@ -123,7 +123,7 @@ type ListGitHubCommentsRow struct {
 	AuthorLogin  string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
-	Body         string
+	Body         []byte
 	BodyDigest   string
 	FirstSeen    pgtype.Timestamptz
 	NotSeenSince pgtype.Timestamptz
@@ -214,7 +214,8 @@ WHERE v.repo = $2
   AND v.pull_number = ANY($3::int[])
   AND v.not_seen_since IS NULL
   AND v.comment_id <> ALL($4::bigint[])
-  AND v.updated_at = (SELECT max(latest.updated_at) FROM github_comment_versions latest WHERE latest.repo = v.repo AND latest.comment_id = v.comment_id)
+  AND NOT EXISTS (SELECT 1 FROM github_comment_versions later WHERE later.repo = v.repo AND later.comment_id = v.comment_id
+                  AND (later.updated_at, later.first_seen, later.body_digest COLLATE "C") > (v.updated_at, v.first_seen, v.body_digest COLLATE "C"))
 `
 
 type MarkCommentsNotSeenParams struct {
@@ -225,7 +226,7 @@ type MarkCommentsNotSeenParams struct {
 }
 
 // A comment of a pull listed in the cycle that the pull's full listing lacks:
-// the first absence is marked on its latest version.
+// the first absence is marked on its latest version: the largest updated_at, then first_seen, then body_digest.
 func (q *Queries) MarkCommentsNotSeen(ctx context.Context, arg MarkCommentsNotSeenParams) error {
 	_, err := q.db.Exec(ctx, markCommentsNotSeen,
 		arg.At,

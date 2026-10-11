@@ -71,7 +71,7 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 			for _, comment := range listing {
 				for _, version := range r.versions {
 					if version.CommentID == comment.CommentID && !version.CreatedAt.Equal(comment.CreatedAt) {
-						return fmt.Errorf("GitHub comment %d changed its creation time", comment.CommentID)
+						return fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, comment.CommentID)
 					}
 				}
 			}
@@ -112,27 +112,35 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 	}
 	for number, listing := range cycle.Comments {
 		for _, comment := range listing {
+			version := githubsync.CommentVersion{PullNumber: number, CommentID: comment.CommentID, AuthorID: comment.AuthorID, AuthorLogin: comment.AuthorLogin,
+				CreatedAt: comment.CreatedAt, UpdatedAt: comment.UpdatedAt, Body: comment.Body, BodyDigest: artifact.Hash([]byte(comment.Body)), FirstSeen: cycle.At}
 			known := slices.ContainsFunc(r.versions, func(v githubsync.CommentVersion) bool {
-				return v.CommentID == comment.CommentID && v.UpdatedAt.Equal(comment.UpdatedAt)
+				return v.CommentID == version.CommentID && v.UpdatedAt.Equal(version.UpdatedAt) && v.BodyDigest == version.BodyDigest
 			})
 			if !known {
-				r.versions = append(r.versions, githubsync.CommentVersion{PullNumber: number, CommentID: comment.CommentID, AuthorID: comment.AuthorID, AuthorLogin: comment.AuthorLogin,
-					CreatedAt: comment.CreatedAt, UpdatedAt: comment.UpdatedAt, Body: comment.Body, BodyDigest: artifact.Hash([]byte(comment.Body)), FirstSeen: cycle.At})
+				r.versions = append(r.versions, version)
 			}
 		}
 	}
-	latest := map[int64]time.Time{}
+	latest := map[int64]githubsync.CommentVersion{}
 	for _, v := range r.versions {
-		if v.UpdatedAt.After(latest[v.CommentID]) {
-			latest[v.CommentID] = v.UpdatedAt
+		if best, ok := latest[v.CommentID]; !ok || versionOrder(v, best) > 0 {
+			latest[v.CommentID] = v
 		}
 	}
 	for i, v := range r.versions {
-		if _, listed := cycle.Comments[v.PullNumber]; listed && !seen[v.CommentID] && v.NotSeenSince.IsZero() && v.UpdatedAt.Equal(latest[v.CommentID]) {
+		if _, listed := cycle.Comments[v.PullNumber]; listed && !seen[v.CommentID] && v.NotSeenSince.IsZero() && versionOrder(v, latest[v.CommentID]) == 0 {
 			r.versions[i].NotSeenSince = cycle.At
 		}
 	}
 	return nil
+}
+
+// versionOrder orders the versions of one comment: by GitHub's updated_at, then
+// by when they were first seen, then by body digest, so the latest version of
+// a comment is deterministic even for two edits within one second.
+func versionOrder(a, b githubsync.CommentVersion) int {
+	return cmp.Or(a.UpdatedAt.Compare(b.UpdatedAt), a.FirstSeen.Compare(b.FirstSeen), cmp.Compare(a.BodyDigest.String(), b.BodyDigest.String()))
 }
 
 // RecordFailure implements githubsync.Store.
@@ -173,6 +181,9 @@ func (m *Memory) Comments(ctx context.Context, repo string, number int) ([]githu
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := githubsync.ValidatePullNumber(number); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	versions := []githubsync.CommentVersion{}
@@ -184,7 +195,7 @@ func (m *Memory) Comments(ctx context.Context, repo string, number int) ([]githu
 		}
 	}
 	slices.SortFunc(versions, func(a, b githubsync.CommentVersion) int {
-		return cmp.Or(cmp.Compare(a.CommentID, b.CommentID), a.UpdatedAt.Compare(b.UpdatedAt))
+		return cmp.Or(cmp.Compare(a.CommentID, b.CommentID), versionOrder(a, b))
 	})
 	return versions, nil
 }

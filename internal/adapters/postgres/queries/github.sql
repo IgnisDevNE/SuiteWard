@@ -63,16 +63,16 @@ WHERE repo = sqlc.arg(repo)
   AND comment_id = ANY(sqlc.arg(comment_ids)::bigint[])
   AND not_seen_since IS NOT NULL;
 
--- A repeated version, same id and same updated_at, changes nothing.
+-- A repeated version (same id, updated_at and body) changes nothing. The body travels base64-encoded: it is raw bytes.
 -- name: InsertCommentVersions :exec
 INSERT INTO github_comment_versions (repo, comment_id, updated_at, pull_number, author_id, author_login, created_at, body, body_digest, first_seen)
 SELECT sqlc.arg(repo)::text, (c->>'comment_id')::bigint, (c->>'updated_at')::timestamptz, (c->>'pull_number')::int, (c->>'author_id')::bigint,
-       c->>'author_login', (c->>'created_at')::timestamptz, c->>'body', c->>'body_digest', sqlc.arg(at)::timestamptz
+       c->>'author_login', (c->>'created_at')::timestamptz, decode(c->>'body', 'base64'), c->>'body_digest', sqlc.arg(at)::timestamptz
 FROM jsonb_array_elements(sqlc.arg(comments)::jsonb) AS c
-ON CONFLICT (repo, comment_id, updated_at) DO NOTHING;
+ON CONFLICT (repo, comment_id, updated_at, body_digest) DO NOTHING;
 
 -- A comment of a pull listed in the cycle that the pull's full listing lacks:
--- the first absence is marked on its latest version.
+-- the first absence is marked on its latest version: the largest updated_at, then first_seen, then body_digest.
 -- name: MarkCommentsNotSeen :exec
 UPDATE github_comment_versions v
 SET not_seen_since = sqlc.arg(at)::timestamptz
@@ -80,7 +80,8 @@ WHERE v.repo = sqlc.arg(repo)
   AND v.pull_number = ANY(sqlc.arg(listed_pulls)::int[])
   AND v.not_seen_since IS NULL
   AND v.comment_id <> ALL(sqlc.arg(listed_comments)::bigint[])
-  AND v.updated_at = (SELECT max(latest.updated_at) FROM github_comment_versions latest WHERE latest.repo = v.repo AND latest.comment_id = v.comment_id);
+  AND NOT EXISTS (SELECT 1 FROM github_comment_versions later WHERE later.repo = v.repo AND later.comment_id = v.comment_id
+                  AND (later.updated_at, later.first_seen, later.body_digest COLLATE "C") > (v.updated_at, v.first_seen, v.body_digest COLLATE "C"));
 
 -- name: GetGitHubRepository :one
 SELECT repo, installation_id, last_success, last_error, last_status, wait_until
@@ -93,4 +94,4 @@ FROM github_pulls WHERE repo = sqlc.arg(repo) ORDER BY number;
 -- name: ListGitHubComments :many
 SELECT pull_number, comment_id, author_id, author_login, created_at, updated_at, body, body_digest, first_seen, not_seen_since
 FROM github_comment_versions WHERE repo = sqlc.arg(repo) AND pull_number = sqlc.arg(pull_number)
-ORDER BY comment_id, updated_at;
+ORDER BY comment_id, updated_at, first_seen, body_digest COLLATE "C";

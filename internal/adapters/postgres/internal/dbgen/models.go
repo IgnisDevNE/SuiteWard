@@ -96,7 +96,7 @@ type GithubCommentVersion struct {
 	AuthorID     int64
 	AuthorLogin  string
 	CreatedAt    pgtype.Timestamptz
-	Body         string
+	Body         []byte
 	BodyDigest   string
 	FirstSeen    pgtype.Timestamptz
 	NotSeenSince pgtype.Timestamptz

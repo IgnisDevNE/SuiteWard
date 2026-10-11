@@ -1,0 +1,42 @@
+[
+  {
+    "url": "https://api.github.com/repos/octo-org/octo-repo/issues/comments/3001",
+    "html_url": "https://github.com/octo-org/octo-repo/pull/42#issuecomment-3001",
+    "issue_url": "https://api.github.com/repos/octo-org/octo-repo/issues/42",
+    "id": 3001,
+    "node_id": "IC_kwDOAbCdEf6AAAC5",
+    "user": {
+      "login": "hubot",
+      "id": 480938,
+      "node_id": "MDQ6VXNlcjQ4MDkzOA==",
+      "type": "User",
+      "site_admin": false
+    },
+    "created_at": "2026-10-02T15:00:00Z",
+    "updated_at": "2026-10-03T09:30:00Z",
+    "author_association": "CONTRIBUTOR",
+    "body": "Second thought: keep the old case too.",
+    "reactions": { "total_count": 0, "+1": 0, "-1": 0 },
+    "performed_via_github_app": null
+  },
+  {
+    "url": "https://api.github.com/repos/octo-org/octo-repo/issues/comments/2002",
+    "html_url": "https://github.com/octo-org/octo-repo/pull/42#issuecomment-2002",
+    "issue_url": "https://api.github.com/repos/octo-org/octo-repo/issues/42",
+    "id": 2002,
+    "node_id": "IC_kwDOAbCdEf6AAAfS",
+    "user": {
+      "login": "octocat",
+      "id": 583231,
+      "node_id": "MDQ6VXNlcjU4MzIzMQ==",
+      "type": "User",
+      "site_admin": false
+    },
+    "created_at": "2026-10-01T11:20:05Z",
+    "updated_at": "2026-10-01T11:20:05Z",
+    "author_association": "MEMBER",
+    "body": "Looks right to me.",
+    "reactions": { "total_count": 1, "+1": 1, "-1": 0 },
+    "performed_via_github_app": null
+  }
+]

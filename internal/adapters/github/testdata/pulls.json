@@ -1,0 +1,84 @@
+[
+  {
+    "url": "https://api.github.com/repos/octo-org/octo-repo/pulls/42",
+    "id": 2104395210,
+    "node_id": "PR_kwDOAbCdEf59bDHK",
+    "html_url": "https://github.com/octo-org/octo-repo/pull/42",
+    "number": 42,
+    "state": "open",
+    "locked": false,
+    "title": "Tighten the parser tests",
+    "user": {
+      "login": "octocat",
+      "id": 583231,
+      "node_id": "MDQ6VXNlcjU4MzIzMQ==",
+      "type": "User",
+      "site_admin": false
+    },
+    "body": "Adds boundary cases to the parser tests.",
+    "created_at": "2026-09-28T08:15:02Z",
+    "updated_at": "2026-10-02T14:03:41Z",
+    "closed_at": null,
+    "merged_at": null,
+    "merge_commit_sha": "6b1c2f4e1a0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b",
+    "draft": false,
+    "head": {
+      "label": "octocat:parser-tests",
+      "ref": "parser-tests",
+      "sha": "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+      "user": { "login": "octocat", "id": 583231, "type": "User" },
+      "repo": { "id": 812345678, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": true }
+    },
+    "base": {
+      "label": "octo-org:main",
+      "ref": "main",
+      "sha": "a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4",
+      "user": { "login": "octo-org", "id": 9919, "type": "Organization" },
+      "repo": { "id": 812345678, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": true }
+    },
+    "author_association": "MEMBER",
+    "auto_merge": null,
+    "active_lock_reason": null
+  },
+  {
+    "url": "https://api.github.com/repos/octo-org/octo-repo/pulls/7",
+    "id": 2098761234,
+    "node_id": "PR_kwDOAbCdEf59GKjS",
+    "html_url": "https://github.com/octo-org/octo-repo/pull/7",
+    "number": 7,
+    "state": "open",
+    "locked": false,
+    "title": "Update the runner",
+    "user": {
+      "login": "hubot",
+      "id": 480938,
+      "node_id": "MDQ6VXNlcjQ4MDkzOA==",
+      "type": "User",
+      "site_admin": false
+    },
+    "body": null,
+    "created_at": "2026-09-01T10:00:00Z",
+    "updated_at": "2026-09-30T09:45:12Z",
+    "closed_at": null,
+    "merged_at": null,
+    "merge_commit_sha": null,
+    "draft": true,
+    "head": {
+      "label": "octo-org:runner",
+      "ref": "runner",
+      "sha": "0123456789abcdef0123456789abcdef01234567",
+      "user": { "login": "octo-org", "id": 9919, "type": "Organization" },
+      "repo": { "id": 812345678, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": true }
+    },
+    "base": {
+      "label": "octo-org:release/1.x",
+      "ref": "release/1.x",
+      "sha": "fedcba9876543210fedcba9876543210fedcba98",
+      "user": { "login": "octo-org", "id": 9919, "type": "Organization" },
+      "repo": { "id": 812345678, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": true }
+    },
+    "author_association": "CONTRIBUTOR",
+    "auto_merge": null,
+    "active_lock_reason": null
+  }
+]

@@ -155,10 +155,10 @@ SUITEWARD_GITHUB_REPOSITORIES=<owner/name>,<owner/name>
 
 The file holds no secret (the quadlet reads it as `EnvironmentFile=/etc/suiteward/github.env`, readable by the `suiteward` user). Never commit these values.
 
-**The App key.** As `suiteward`. Copy the App's private key (PEM) to the host through your own session: run the `cat`, wait until the cursor stops, paste the whole PEM from the file on your workstation, press Ctrl-D on an empty line. The next command reads that file into the secret and the last one destroys it; the key is never echoed:
+**The App key.** As `suiteward`. Copy the App's private key (PEM) to the host through your own session. The first line turns the terminal echo off, so the key does not appear on screen (or in a Session Manager log that records output): run it, wait until the cursor stops, paste the whole PEM from the file on your workstation, press Enter, then Ctrl-D (you see nothing while you do). The next command reads that file into the secret and the last one destroys it; the key is never echoed:
 
 ```
-(umask 077; cat > ~/app-key.pem)
+stty -echo; (umask 077; cat > ~/app-key.pem); stty echo
 podman secret create suiteward-github-app-key ~/app-key.pem
 shred -u ~/app-key.pem
 ```

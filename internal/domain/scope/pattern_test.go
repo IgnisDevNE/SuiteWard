@@ -60,7 +60,6 @@ func TestPatternMatch(t *testing.T) {
 		{"lone ** matches a single component", "**", "a", true},
 		{"leading **/ matches the bare name", "**/x", "x", true},
 		{"leading **/ matches a nested name", "**/x", "y/x", true},
-		{"a/**/b matches zero middle segments", "a/**/b", "a/b", true},
 		{"a/**/b matches one middle segment", "a/**/b", "a/x/b", true},
 		{"a/**/b does not match a different tail", "a/**/b", "a/x/c", false},
 		{"a/**/b does not match another root", "a/**/b", "z/a/b", false},

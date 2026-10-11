@@ -33,7 +33,8 @@ type Pattern struct {
 // the pattern's last character) anchors the pattern to the repository root,
 // otherwise it matches at any depth; a trailing "/" restricts the pattern to
 // files beneath a matching directory; "**" as a whole segment matches zero
-// or more path segments, while "*", "?" and "[...]" follow path.Match within
+// or more path segments (a trailing "/**" needs at least one component after
+// its base, as in gitignore), while "*", "?" and "[...]" follow path.Match within
 // a single segment.
 func ParsePattern(s string) (Pattern, error) {
 	if strings.TrimSpace(s) == "" {

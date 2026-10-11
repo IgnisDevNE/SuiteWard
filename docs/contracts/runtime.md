@@ -1,6 +1,6 @@
 # Runtime contract
 
-- **Status:** frozen for phase M1.2 by M1.2-C0 (decision D-RUNTIME).
+- **Status:** frozen for phase M1.2 by M1.2-C0 (decision D-RUNTIME); GitHub settings added for phase M1.4 by M1.4-C0.
 - **Consumers:** M1.2-A (configuration), M1.2-B (jobs and outbox), M1.2-C (composition and lifecycle), M1.2-D (image, deployment, smoke).
 
 One binary, `suiteward`, runs the API and the workers. This document fixes the surface other tasks build against: settings, commands, endpoints, lifecycle and container conventions. The persistence side (jobs, outbox) is in the [persistence contract](persistence.md#jobs-and-outbox-m12-normative).
@@ -22,8 +22,13 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | `OUTBOX_MAX_ATTEMPTS` | no | `8` | Integer 1 to 25. |
 | `OUTBOX_POLL_INTERVAL` | no | `5s` | Go duration, 1s to 1h. |
 | `OUTBOX_LEASE` | no | `1m` | Go duration, at least `5s`. |
+| `GITHUB_APP_ID` (M1.4) | no | none | Positive integer. The GitHub settings are all set or all unset; when unset, `serve` runs without synchronization. |
+| `GITHUB_APP_KEY` (M1.4) | yes | none | The App's RSA private key in PEM (PKCS#1 or PKCS#8); normally given as `GITHUB_APP_KEY_FILE`. |
+| `GITHUB_INSTALLATION_ID` (M1.4) | no | none | Positive integer. |
+| `GITHUB_REPOSITORIES` (M1.4) | no | none | Comma-separated `owner/name`, 1 to 20 (D-SYNC), no duplicates. |
+| `GITHUB_API_URL` (M1.4) | no | `https://api.github.com` | Absolute `https` URL (an `http` URL is accepted only for a loopback host, for tests). |
 
-Later phases add settings (for example GitHub App identifiers and the key file) under the same rules.
+Later phases add settings under the same rules. The GitHub settings of M1.4 are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide (see [github](github.md#configuration-interim-m14)).
 
 ## Commands
 

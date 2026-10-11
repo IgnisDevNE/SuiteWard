@@ -1,6 +1,7 @@
 package scope
 
 import (
+	"errors"
 	"encoding/binary"
 	"fmt"
 	"slices"
@@ -130,4 +131,9 @@ func patternSet(patterns []Pattern) []string {
 	}
 	slices.Sort(set)
 	return slices.Compact(set)
+}
+
+// MayCoverBelow is a stub.
+func (s Scope) MayCoverBelow(dir string) (bool, error) {
+	return false, errors.New("not implemented")
 }

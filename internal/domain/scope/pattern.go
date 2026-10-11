@@ -165,3 +165,8 @@ func matchEnds(segments, components []string) []int {
 	}
 	return result
 }
+
+// MayMatchBelow is a stub.
+func (p Pattern) MayMatchBelow(dir string) (bool, error) {
+	return false, errors.New("not implemented")
+}

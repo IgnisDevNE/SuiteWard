@@ -192,3 +192,74 @@ func TestPatternIsZero(t *testing.T) {
 		t.Error("parsed Pattern.IsZero() = true, want false")
 	}
 }
+
+func TestPatternMayMatchBelow(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		dir     string
+		want    bool
+	}{
+		{"trailing /** below its base", "tests/**", "tests", true},
+		{"trailing /** below a different directory", "tests/**", "test", false},
+		{"trailing /** below a directory beneath its base", "tests/**", "tests/a", true},
+		{"anchored glob below its directory", "/src/*.go", "src", true},
+		{"anchored glob below an unrelated directory", "/src/*.go", "lib", false},
+		{"anchored glob cannot cross a second slash", "/src/*.go", "src/x", false},
+		{"unanchored name below a nested directory", "docs", "a/b", true},
+		{"anchored name below its own directory", "/docs", "docs", true},
+		{"anchored name below another directory", "/docs", "a", false},
+		{"middle ** below its first component", "a/**/b", "a", true},
+		{"middle ** below a deeper directory", "a/**/b", "a/x/y", true},
+		{"middle ** below an unrelated directory", "a/**/b", "c", false},
+		{"unanchored directory pattern below its directory", "a/", "a", true},
+		{"unanchored directory pattern below a nested directory", "a/", "x/a", true},
+		{"anchored directory pattern below its first component", "/a/b/", "a", true},
+		{"anchored directory pattern below its directory", "/a/b/", "a/b", true},
+		{"anchored directory pattern below a sibling", "/a/b/", "a/c", false},
+		{"anchored directory pattern below a directory beneath it", "/a/b/", "a/b/c", true},
+		{"lone ** below any directory", "**", "a/b", true},
+		{"unanchored glob below any directory", "*.yml", "a/b", true},
+		{"unanchored glob below a top-level directory", "*.yml", "a", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pattern, err := scope.ParsePattern(tt.pattern)
+			if err != nil {
+				t.Fatalf("ParsePattern(%q) error = %v, want nil", tt.pattern, err)
+			}
+			got, err := pattern.MayMatchBelow(tt.dir)
+			if err != nil {
+				t.Fatalf("MayMatchBelow(%q) error = %v, want nil", tt.dir, err)
+			}
+			if got != tt.want {
+				t.Errorf("%q.MayMatchBelow(%q) = %v, want %v", tt.pattern, tt.dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPatternMayMatchBelowRejectsInvalidDir(t *testing.T) {
+	pattern, err := scope.ParsePattern("docs/**")
+	if err != nil {
+		t.Fatalf("ParsePattern() error = %v, want nil", err)
+	}
+	for _, dir := range []string{"", "/a", "a//b", "a/./b", `a\b`, "../a"} {
+		t.Run(dir, func(t *testing.T) {
+			got, err := pattern.MayMatchBelow(dir)
+			if !errors.Is(err, artifact.ErrInvalidPath) {
+				t.Fatalf("MayMatchBelow(%q) error = %v, want ErrInvalidPath", dir, err)
+			}
+			if got {
+				t.Fatalf("MayMatchBelow(%q) = true alongside an error", dir)
+			}
+		})
+	}
+}
+
+func TestZeroPatternNeverMayMatchBelow(t *testing.T) {
+	var pattern scope.Pattern
+	if _, err := pattern.MayMatchBelow("a"); !errors.Is(err, scope.ErrInvalidPattern) {
+		t.Fatalf("Pattern{}.MayMatchBelow error = %v, want ErrInvalidPattern", err)
+	}
+}

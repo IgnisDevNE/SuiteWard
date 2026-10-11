@@ -177,3 +177,49 @@ func TestReductions(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeMayCoverBelow(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		dir  string
+		want bool
+	}{
+		{"default workflows directory below .github", absent, ".github", true},
+		{"default workflows directory below workflows", absent, ".github/workflows", true},
+		{"default workflows directory below a directory beneath it", absent, ".github/workflows/sub", true},
+		{"no declaration below an unprotected directory", absent, "src", false},
+		{"the declaration file default does not cover every directory", absent, "a", false},
+		{"include below its directory", "version: 1\ninclude: [/src/**]\n", "src", true},
+		{"include does not cover another directory", "version: 1\ninclude: [/src/**]\n", "lib", false},
+		{"runner below its directory", "version: 1\nrunner: [/scripts/]\n", "scripts", true},
+		{"exclude does not change the answer", "version: 1\ninclude: [/src/**]\nexclude: [/src/**]\n", "src", true},
+		{"exclude alone covers nothing", "version: 1\nexclude: [/src/**]\n", "src", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := scopeOf(t, tt.raw).MayCoverBelow(tt.dir)
+			if err != nil {
+				t.Fatalf("MayCoverBelow(%q) error = %v, want nil", tt.dir, err)
+			}
+			if got != tt.want {
+				t.Errorf("MayCoverBelow(%q) = %v, want %v", tt.dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScopeMayCoverBelowRejectsInvalidDir(t *testing.T) {
+	s := scopeOf(t, "version: 1\ninclude: ['**']\n")
+	for _, dir := range []string{"", "/a", "a//b", "a\b", "../x"} {
+		t.Run(dir, func(t *testing.T) {
+			got, err := s.MayCoverBelow(dir)
+			if !errors.Is(err, artifact.ErrInvalidPath) {
+				t.Fatalf("MayCoverBelow(%q) error = %v, want ErrInvalidPath", dir, err)
+			}
+			if got {
+				t.Fatalf("MayCoverBelow(%q) = true alongside an error", dir)
+			}
+		})
+	}
+}

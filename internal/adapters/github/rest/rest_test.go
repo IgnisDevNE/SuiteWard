@@ -476,7 +476,11 @@ func TestBudgetIsSharedByClients(t *testing.T) {
 	}
 }
 
+// GitHub's clock is two minutes behind the local one: every Until is local time,
+// whether it comes from X-RateLimit-Reset, an HTTP-date Retry-After (both in
+// GitHub's time) or a Retry-After in seconds (relative to now).
 func TestGetReturnsTypedErrors(t *testing.T) {
+	const skew = 2 * time.Minute
 	reset := t0.Add(30 * time.Minute)
 	sentinels := []error{rest.ErrUnauthorized, rest.ErrForbidden, rest.ErrNotFound, rest.ErrUnprocessable, rest.ErrRateLimited, rest.ErrBudgetExhausted}
 	cases := []struct {
@@ -491,10 +495,11 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 		{name: "403 without rate-limit signals", status: 403, remaining: "4000", want: rest.ErrForbidden},
 		{name: "404", status: 404, remaining: "4000", want: rest.ErrNotFound},
 		{name: "422", status: 422, remaining: "4000", want: rest.ErrUnprocessable},
-		{name: "403 with remaining 0", status: 403, remaining: "0", want: rest.ErrRateLimited, until: reset},
+		{name: "403 with remaining 0", status: 403, remaining: "0", want: rest.ErrRateLimited, until: reset.Add(skew)},
 		{name: "403 with Retry-After", status: 403, remaining: "4000", retryAfter: "60", want: rest.ErrRateLimited, until: t0.Add(time.Minute)},
 		{name: "429 with Retry-After", status: 429, retryAfter: "30", want: rest.ErrRateLimited, until: t0.Add(30 * time.Second)},
-		{name: "429 with remaining 0", status: 429, remaining: "0", want: rest.ErrRateLimited, until: reset},
+		{name: "429 with remaining 0", status: 429, remaining: "0", want: rest.ErrRateLimited, until: reset.Add(skew)},
+		{name: "429 with an HTTP-date Retry-After", status: 429, retryAfter: t0.Add(-skew + 90*time.Second).UTC().Format(http.TimeFormat), want: rest.ErrRateLimited, until: t0.Add(90 * time.Second)},
 		{name: "429 without signals", status: 429, remaining: "4000"},
 		{name: "500", status: 500, remaining: "4000"},
 		{name: "409", status: 409},
@@ -504,6 +509,7 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				hits.Add(1)
+				w.Header().Set("Date", t0.Add(-skew).UTC().Format(http.TimeFormat))
 				if tc.remaining != "" {
 					w.Header().Set("X-RateLimit-Limit", "5000")
 					w.Header().Set("X-RateLimit-Remaining", tc.remaining)
@@ -949,6 +955,7 @@ func TestReturnedBodiesAreCopies(t *testing.T) {
 func TestRetryAfterAsHTTPDate(t *testing.T) {
 	until := t0.Add(90 * time.Second)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Date", t0.UTC().Format(http.TimeFormat))
 		w.Header().Set("Retry-After", until.UTC().Format(http.TimeFormat))
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))

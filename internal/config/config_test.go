@@ -488,3 +488,307 @@ func TestLoadReturnsWarningsTogetherWithAnError(t *testing.T) {
 		t.Errorf("Config = %+v, want the zero value on error", cfg)
 	}
 }
+
+const githubKey = "-----BEGIN RSA PRIVATE KEY-----\nTOPSECRETKEYBODY\n-----END RSA PRIVATE KEY-----"
+
+// githubVars returns the required settings plus a complete GitHub configuration.
+func githubVars(t *testing.T) map[string]string {
+	t.Helper()
+	vars := required(t)
+	vars["SUITEWARD_GITHUB_APP_ID"] = "12345"
+	vars["SUITEWARD_GITHUB_APP_KEY"] = githubKey
+	vars["SUITEWARD_GITHUB_INSTALLATION_ID"] = "67890"
+	vars["SUITEWARD_GITHUB_REPOSITORIES"] = "acme/api"
+	return vars
+}
+
+func TestLoadGitHubIsAbsentWhenUnset(t *testing.T) {
+	cfg, warnings, err := fakeEnv{vars: required(t)}.load()
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("Load: warnings %v, error %v", warnings, err)
+	}
+	if cfg.GitHub != nil {
+		t.Fatalf("GitHub = %+v, want it absent", cfg.GitHub)
+	}
+}
+
+func TestLoadGitHubReadsEverySetting(t *testing.T) {
+	vars := githubVars(t)
+	delete(vars, "SUITEWARD_GITHUB_APP_KEY")
+	vars["SUITEWARD_GITHUB_APP_KEY_FILE"] = "/k"
+	vars["SUITEWARD_GITHUB_REPOSITORIES"] = " acme/api , acme/web.site,ACME/x_y-z "
+	vars["SUITEWARD_GITHUB_API_URL"] = "https://ghe.example.com/api/v3"
+	cfg, warnings, err := fakeEnv{vars: vars, files: map[string]string{"/k": githubKey + "\n"}}.load()
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("Load: warnings %v, error %v", warnings, err)
+	}
+	if cfg.GitHub == nil {
+		t.Fatal("GitHub is absent")
+	}
+	g := cfg.GitHub
+	if g.AppID != 12345 || g.InstallationID != 67890 || g.AppKey.Reveal() != githubKey ||
+		g.APIURL != "https://ghe.example.com/api/v3" || !slices.Equal(g.Repositories, []string{"acme/api", "acme/web.site", "ACME/x_y-z"}) {
+		t.Fatalf("GitHub = %+v, want the values given", g)
+	}
+}
+
+func TestLoadGitHubAPIURLDefaultsToGitHub(t *testing.T) {
+	cfg, _, err := fakeEnv{vars: githubVars(t)}.load()
+	if err != nil || cfg.GitHub == nil || cfg.GitHub.APIURL != "https://api.github.com" {
+		t.Fatalf("GitHub = %+v, error %v, want the default API URL", cfg.GitHub, err)
+	}
+}
+
+func TestLoadGitHubSettingsAreAllOrNone(t *testing.T) {
+	names := []string{"APP_ID", "APP_KEY", "INSTALLATION_ID", "REPOSITORIES"}
+	for mask := 1; mask < 15; mask++ {
+		vars := required(t)
+		full := githubVars(t)
+		var set, missing []string
+		for i, n := range names {
+			if mask&(1<<i) != 0 {
+				vars["SUITEWARD_GITHUB_"+n] = full["SUITEWARD_GITHUB_"+n]
+				set = append(set, "SUITEWARD_GITHUB_"+n)
+			} else {
+				missing = append(missing, "SUITEWARD_GITHUB_"+n)
+			}
+		}
+		_, _, err := fakeEnv{vars: vars}.load()
+		if err == nil {
+			t.Errorf("set %v: Load accepted a partial GitHub configuration", set)
+			continue
+		}
+		if strings.Contains(err.Error(), "\n") {
+			t.Errorf("set %v: want one error, got %v", set, err)
+		}
+		for _, m := range missing {
+			if !strings.Contains(err.Error(), m) {
+				t.Errorf("set %v: error does not name the missing %s: %v", set, m, err)
+			}
+		}
+		for _, s := range set {
+			if strings.Contains(err.Error(), s) {
+				t.Errorf("set %v: error names the present %s: %v", set, s, err)
+			}
+		}
+	}
+}
+
+func TestLoadGitHubUnusableKeyFileIsNotAlsoMissing(t *testing.T) {
+	vars := githubVars(t)
+	delete(vars, "SUITEWARD_GITHUB_APP_KEY")
+	vars["SUITEWARD_GITHUB_APP_KEY_FILE"] = "/missing"
+	_, _, err := fakeEnv{vars: vars}.load()
+	if err == nil || !strings.Contains(err.Error(), "SUITEWARD_GITHUB_APP_KEY_FILE") || strings.Contains(err.Error(), "\n") {
+		t.Fatalf("error = %v, want the single file error", err)
+	}
+}
+
+func TestLoadGitHubIDsArePositiveIntegers(t *testing.T) {
+	for _, name := range []string{"SUITEWARD_GITHUB_APP_ID", "SUITEWARD_GITHUB_INSTALLATION_ID"} {
+		for value, ok := range map[string]bool{"1": true, "9223372036854775807": true, "0": false, "-1": false, "abc": false, "1.5": false, "9223372036854775808": false} {
+			vars := githubVars(t)
+			vars[name] = value
+			cfg, _, err := fakeEnv{vars: vars}.load()
+			if (err == nil) != ok {
+				t.Errorf("%s=%s: error = %v, want accepted=%v", name, value, err, ok)
+			} else if err != nil && !strings.Contains(err.Error(), name) {
+				t.Errorf("%s=%s: error does not name the variable: %v", name, value, err)
+			} else if err == nil && cfg.GitHub == nil {
+				t.Errorf("%s=%s: GitHub is absent", name, value)
+			}
+		}
+	}
+}
+
+func TestLoadGitHubKeyIsNeverRendered(t *testing.T) {
+	vars := githubVars(t)
+	cfg, _, err := fakeEnv{vars: vars}.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitHub == nil {
+		t.Fatal("GitHub is absent")
+	}
+	renderings := map[string]string{
+		"%v":      fmt.Sprintf("%v", cfg),
+		"%+v":     fmt.Sprintf("%+v", cfg),
+		"%#v":     fmt.Sprintf("%#v", cfg),
+		"%v git":  fmt.Sprintf("%v", *cfg.GitHub),
+		"%+v git": fmt.Sprintf("%+v", *cfg.GitHub),
+		"%#v git": fmt.Sprintf("%#v", *cfg.GitHub),
+		"%s key":  cfg.GitHub.AppKey.String(),
+	}
+	var jsonOut, textOut bytes.Buffer
+	slog.New(slog.NewJSONHandler(&jsonOut, nil)).Info("config", "config", cfg)
+	slog.New(slog.NewTextHandler(&textOut, nil)).Info("config", "config", cfg, "github", *cfg.GitHub)
+	renderings["slog json"] = jsonOut.String()
+	renderings["slog text"] = textOut.String()
+	for how, out := range renderings {
+		if strings.Contains(out, "TOPSECRETKEYBODY") {
+			t.Errorf("%s leaks the key: %s", how, out)
+		}
+	}
+
+	// Errors never carry it, whether it comes from the plain or the file form.
+	vars["SUITEWARD_GITHUB_APP_ID"] = "bad"
+	vars["SUITEWARD_GITHUB_REPOSITORIES"] = "bad"
+	if _, _, err := (fakeEnv{vars: vars}).load(); err == nil || strings.Contains(err.Error(), "TOPSECRETKEYBODY") {
+		t.Errorf("error = %v, want one without the key", err)
+	}
+	delete(vars, "SUITEWARD_GITHUB_APP_KEY")
+	vars["SUITEWARD_GITHUB_APP_KEY_FILE"] = "/k"
+	if _, _, err := (fakeEnv{vars: vars, files: map[string]string{"/k": githubKey}}).load(); err == nil || strings.Contains(err.Error(), "TOPSECRETKEYBODY") {
+		t.Errorf("error = %v, want one without the key", err)
+	}
+}
+
+func TestLoadGitHubRepositories(t *testing.T) {
+	many := func(n int) string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = fmt.Sprintf("acme/repo%d", i)
+		}
+		return strings.Join(items, ",")
+	}
+	valid := map[string]int{
+		"acme/api":                  1,
+		"acme/a, acme/b":            2,
+		"Acme/a.b_c-d,acme/E":       2,
+		many(20):                    20,
+		"acme/.github":              1,
+		"acme/..hidden":             1,
+		"a/b":                       1,
+		"acme/a,\tacme/b ,acme/c  ": 3,
+	}
+	for value, n := range valid {
+		vars := githubVars(t)
+		vars["SUITEWARD_GITHUB_REPOSITORIES"] = value
+		cfg, _, err := fakeEnv{vars: vars}.load()
+		if err != nil || cfg.GitHub == nil || len(cfg.GitHub.Repositories) != n {
+			t.Errorf("%q: GitHub %+v, error %v, want %d repositories", value, cfg.GitHub, err, n)
+		}
+	}
+	invalid := map[string]string{ // value -> the item the error must name
+		"api":                 "api",
+		"acme/":               "acme/",
+		"/api":                "/api",
+		"acme/api/extra":      "acme/api/extra",
+		"acme/a b":            "acme/a b",
+		"acme/api,":           `""`,
+		",acme/api":           `""`,
+		"acme/api,,acme/web":  `""`,
+		"acme/a,acme/A":       "acme/A",
+		"acme/a,ACME/a":       "ACME/a",
+		"acme/a,other/b":      "other/b",
+		"acme/a,Other/b":      "Other/b",
+		"acme/ü":              "acme/ü",
+		"acme/.":              "acme/.",
+		"acme/..":             "acme/..",
+		"./api":               "./api",
+		"../api":              "../api",
+		many(21):              "21",
+		"acme/a;rm -rf /":     "acme/a;rm -rf /",
+		"https://acme/api":    "https://acme/api",
+		"acme/api, other/api": "other/api",
+	}
+	for value, item := range invalid {
+		vars := githubVars(t)
+		vars["SUITEWARD_GITHUB_REPOSITORIES"] = value
+		_, _, err := fakeEnv{vars: vars}.load()
+		if err == nil || !strings.Contains(err.Error(), "SUITEWARD_GITHUB_REPOSITORIES") || !strings.Contains(err.Error(), item) {
+			t.Errorf("%q: error = %v, want one naming the variable and %s", value, err, item)
+		}
+	}
+}
+
+func TestLoadGitHubAPIURL(t *testing.T) {
+	valid := []string{
+		"https://api.github.com",
+		"https://api.github.com/",
+		"https://ghe.example.com/api/v3",
+		"https://ghe.example.com:8443",
+		"http://localhost:8080",
+		"http://LocalHost",
+		"http://127.0.0.1:9999",
+		"http://127.1.2.3",
+		"http://[::1]:8080",
+		"https://localhost",
+	}
+	for _, value := range valid {
+		vars := githubVars(t)
+		vars["SUITEWARD_GITHUB_API_URL"] = value
+		cfg, _, err := fakeEnv{vars: vars}.load()
+		if err != nil || cfg.GitHub == nil || cfg.GitHub.APIURL != value {
+			t.Errorf("%q: GitHub %+v, error %v, want it accepted as given", value, cfg.GitHub, err)
+		}
+	}
+	invalid := []string{
+		"api.github.com",
+		"//api.github.com",
+		"/api",
+		"http://api.github.com",
+		"http://10.0.0.1",
+		"http://localhost.example.com",
+		"http://[2001:db8::1]",
+		"ftp://api.github.com",
+		"https://",
+		"https:///path",
+		"https://user:" + secretPassword + "@api.github.com",
+		"https://@api.github.com",
+		"https://api.github.com?x=" + secretPassword,
+		"https://api.github.com/?",
+		"https://api.github.com#" + secretPassword,
+		"https://api.github.com#",
+		"https://api.github.com/%zz" + secretPassword,
+		"https://exa mple.com/" + secretPassword,
+	}
+	for _, value := range invalid {
+		vars := githubVars(t)
+		vars["SUITEWARD_GITHUB_API_URL"] = value
+		_, _, err := fakeEnv{vars: vars}.load()
+		if err == nil || !strings.Contains(err.Error(), "SUITEWARD_GITHUB_API_URL") {
+			t.Errorf("%q: error = %v, want one naming the variable", value, err)
+			continue
+		}
+		if strings.Contains(err.Error(), secretPassword) || strings.Contains(err.Error(), value) {
+			t.Errorf("%q: error prints the value: %v", value, err)
+		}
+	}
+
+	// A bad URL is reported even while the rest of the GitHub settings are unset.
+	vars := required(t)
+	vars["SUITEWARD_GITHUB_API_URL"] = "http://example.com"
+	if _, _, err := (fakeEnv{vars: vars}).load(); err == nil || !strings.Contains(err.Error(), "SUITEWARD_GITHUB_API_URL") {
+		t.Errorf("unconfigured GitHub: error = %v, want the bad URL reported", err)
+	}
+}
+
+func TestLoadGitHubReportsEveryProblemAtOnce(t *testing.T) {
+	vars := githubVars(t)
+	vars["SUITEWARD_GITHUB_APP_ID"] = "0"
+	vars["SUITEWARD_GITHUB_INSTALLATION_ID"] = "x"
+	vars["SUITEWARD_GITHUB_REPOSITORIES"] = "nope"
+	vars["SUITEWARD_GITHUB_API_URL"] = "http://example.com"
+	vars["SUITEWARD_JOB_WORKERS"] = "0"
+	_, _, err := fakeEnv{vars: vars}.load()
+	if err == nil {
+		t.Fatal("Load accepted invalid settings")
+	}
+	for _, name := range []string{"GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_REPOSITORIES", "GITHUB_API_URL", "JOB_WORKERS"} {
+		if !strings.Contains(err.Error(), "SUITEWARD_"+name) {
+			t.Errorf("error does not name %s: %v", name, err)
+		}
+	}
+}
+
+func TestLoadGitHubRejectsFileFormForNonSecretSettings(t *testing.T) {
+	for _, name := range []string{"APP_ID", "INSTALLATION_ID", "REPOSITORIES", "API_URL"} {
+		vars := githubVars(t)
+		vars["SUITEWARD_GITHUB_"+name+"_FILE"] = "/f"
+		_, _, err := fakeEnv{vars: vars}.load()
+		if err == nil || !strings.Contains(err.Error(), "SUITEWARD_GITHUB_"+name+"_FILE") {
+			t.Errorf("%s_FILE: error = %v, want it rejected", name, err)
+		}
+	}
+}

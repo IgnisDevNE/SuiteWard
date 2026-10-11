@@ -8,7 +8,7 @@ SuiteWard reaches GitHub outbound only, as the operator's GitHub App installed o
 ## Packages
 
 - `internal/adapters/github/appauth` (A1): the App's JWT and installation tokens.
-- `internal/adapters/github/rest` (A2): HTTP transport with conditional requests, the shared budget and typed errors. It declares its own consumer-side `TokenSource` interface; `appauth` satisfies it structurally, so neither package imports the other.
+- `internal/adapters/github/rest` (A2): HTTP transport with conditional requests, the shared budget and typed errors. It takes the token as a function value (`TokenFunc`), so it never imports `appauth`; the composition (A4) adapts `(*appauth.Installation).Token` to it in one function literal.
 - `internal/adapters/github` (A3): typed reads used by M1.4–M1.7 and an `inventory.Tree` over the git trees API, built on `rest`.
 - `spikes/s1` may be read as a reference and is never imported; anything taken from it is redone test-first.
 
@@ -46,11 +46,11 @@ func (t Token) ExpiresAt() time.Time
 ## A2: REST client (`rest`)
 
 ```go
-type TokenSource interface {
-	Token(ctx context.Context) (interface{ Reveal() string; Identity() string }, error)
-}
+// TokenFunc returns the bearer value and a stable identity of the current
+// token; the identity changes when the token rotates and is never the value.
+type TokenFunc func(ctx context.Context) (value, identity string, err error)
 
-func NewClient(tokens TokenSource, httpClient *http.Client, baseURL string, budget *Budget) *Client
+func NewClient(token TokenFunc, httpClient *http.Client, baseURL string, budget *Budget) (*Client, error)
 
 // Get performs a conditional GET. A 304 returns the cached body with NotModified true.
 func (c *Client) Get(ctx context.Context, path string) (Response, error)
@@ -58,8 +58,10 @@ func (c *Client) Get(ctx context.Context, path string) (Response, error)
 type Response struct{ Status int; Body []byte; NotModified bool; ETag string }
 
 type Budget struct{ /* shared by every client of the process */ }
-func NewBudget(fraction float64) *Budget  // D-SYNC: 0.5
+func NewBudget(fraction float64, clock func() time.Time) (*Budget, error) // D-SYNC: 0.5; fraction in (0, 1]
 ```
+
+`NewClient` rejects a nil `token`, `httpClient` or `budget` and a base URL that is not absolute.
 
 - The ETag cache is keyed by request path and scoped to the token identity: when the identity changes, the cache is dropped (GitHub answers `Vary: Authorization`, so an ETag does not survive a rotation).
 - The budget reads `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` of each response. Once the requests used in the current window reach `fraction × limit`, `Get` returns `ErrBudgetExhausted` until the reset, without calling GitHub. A 304 costs nothing on GitHub's side and is not counted. The budget is per process (one instance serves at most 20 repositories, D-SYNC).

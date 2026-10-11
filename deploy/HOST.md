@@ -19,11 +19,13 @@ You land as `ssm-user`. Become the service user with its systemd user manager (t
 
 ```
 sudo loginctl enable-linger suiteward
-sudo -u suiteward -H env XDG_RUNTIME_DIR=/run/user/$(id -u suiteward) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u suiteward)/bus bash
+r=/run/user/$(id -u suiteward)
+sudo -u suiteward -H env XDG_RUNTIME_DIR=$r \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus bash
 systemctl --user is-system-running
 ```
 
-`is-system-running` must print `running` (or `degraded`); if the bus socket is missing, wait a few seconds and retry. Start every new session this way. Every block below runs as `suiteward` unless it says otherwise.
+The lines are short on purpose: long lines pasted into a Session Manager terminal can break. `is-system-running` must print `running` (or `degraded`); if the bus socket is missing, wait a few seconds and retry. Start every new session this way. Every block below runs as `suiteward` unless it says otherwise.
 
 ## 2. Remove the S1 spike (once)
 
@@ -44,14 +46,34 @@ podman rmi ghcr.io/ignisdevne/suiteward-s1:deploy
 
 ## 3. Create the database secrets
 
-One step generates the password and creates both Podman secrets from it, so you never see or type it and the two cannot disagree: `suiteward-db-password` (read by PostgreSQL) and `suiteward-database-url` (the full URL, read by the service).
+One chained command generates the password and creates both Podman secrets from it, so you never see or type it and the two cannot disagree: `suiteward-db-password` (read by PostgreSQL) and `suiteward-database-url` (the full URL, read by the service). A line ending in `&&` or `|` continues on the next one, and the chain stops at the first failure.
 
 ```
-pw=$(openssl rand -hex 24) && printf '%s' "$pw" | podman secret create suiteward-db-password - && printf 'postgres://suiteward:%s@suiteward-db:5432/suiteward?sslmode=disable' "$pw" | podman secret create suiteward-database-url - ; unset pw
+pw=$(openssl rand -hex 24) &&
+h='suiteward-db:5432/suiteward?sslmode=disable' &&
+printf '%s' "$pw" |
+  podman secret create suiteward-db-password - &&
+printf 'postgres://suiteward:%s@%s' "$pw" "$h" |
+  podman secret create suiteward-database-url -
+unset pw h
 podman secret ls
 ```
 
-Both names must be listed. Run this once. The database is initialised with the password on its first start and keeps it in the `suiteward-db-data` volume, so replacing a secret later locks the service out; to start over, stop `suiteward.service` and `suiteward-db.service` first (`systemctl --user stop suiteward.service suiteward-db.service`), then remove the volume (`podman volume rm suiteward-db-data`) and BOTH secrets (`podman secret rm suiteward-db-password suiteward-database-url`), then repeat this step. The step is only re-runnable after removing a first secret it created before failing, because `podman secret create` refuses an existing name. `sslmode=disable` is deliberate: the database listens only on the private `suiteward` network and its image carries no certificate.
+Both names must be listed. Then check the shape of both values without showing them; each `grep -c` prints only a count, and both must print `1` (48 hex characters, and the URL around them):
+
+```
+s='{{.SecretData}}'
+p='[0-9a-f]{48}'
+podman secret inspect --showsecret --format "$s" \
+  suiteward-db-password | grep -Ecx "$p"
+h='@suiteward-db:5432/suiteward[?]sslmode=disable'
+podman secret inspect --showsecret --format "$s" \
+  suiteward-database-url |
+  grep -Ecx "postgres://suiteward:$p$h"
+unset s p h
+```
+
+A `0` means a value is malformed: remove both secrets and repeat this section (nothing has started yet, so no volume holds the password). Run the creation once. The database is initialised with the password on its first start and keeps it in the `suiteward-db-data` volume, so replacing a secret later locks the service out; to start over, stop `suiteward.service` and `suiteward-db.service` first (`systemctl --user stop suiteward.service suiteward-db.service`), then remove the volume (`podman volume rm suiteward-db-data`) and BOTH secrets (`podman secret rm suiteward-db-password suiteward-database-url`), then repeat this step. The step is only re-runnable after removing a first secret it created before failing, because `podman secret create` refuses an existing name. `sslmode=disable` is deliberate: the database listens only on the private `suiteward` network and its image carries no certificate.
 
 ## 4. Block the metadata service for the `suiteward` user
 

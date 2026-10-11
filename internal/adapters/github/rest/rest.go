@@ -300,7 +300,7 @@ func (c *Client) send(ctx context.Context, path string, useCache bool) (answer, 
 	if err != nil {
 		return answer{}, "", err
 	}
-	defer func() { _ = resp.Body.Close() }() // the body is read to the end below; a close error cannot change the outcome
+	defer func() { _ = resp.Body.Close() }() // the body is read (up to the limit) below; a close error cannot change the outcome
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return answer{}, "", fmt.Errorf("read body: %w", err)

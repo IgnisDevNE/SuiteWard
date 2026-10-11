@@ -184,6 +184,9 @@ func readPages[T any](ctx context.Context, client *rest.Client, path func(page i
 		if err := decode(p, resp.Body, &items); err != nil {
 			return nil, err
 		}
+		if items == nil { // null decodes to nil; an empty page is []
+			return nil, fmt.Errorf("%w: the answer to %s is not a list", ErrInvalidResponse, p)
+		}
 		all = append(all, items...)
 		if len(items) < pageSize {
 			return all, nil
@@ -239,6 +242,9 @@ func (r *Reader) Tree(ctx context.Context, repo, commitSHA string) (inventory.Tr
 	}
 	if err := decode(path, resp.Body, &raw); err != nil {
 		return nil, err
+	}
+	if raw.Tree == nil { // a missing or null list decodes to nil; an empty tree is []
+		return nil, fmt.Errorf("%w: the answer to %s lists no tree", ErrInvalidResponse, path)
 	}
 	if raw.Truncated {
 		return nil, fmt.Errorf("%w: GitHub truncated the tree of %s at %s", inventory.ErrInvalidTree, repo, commitSHA)

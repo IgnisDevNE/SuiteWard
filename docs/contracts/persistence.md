@@ -1,7 +1,7 @@
 # Governance persistence contract
 
-- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0).
-- **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite).
+- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" below (frozen by M1.3-C0).
+- **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite), M1.3-C1 (proposal revision write).
 
 ## Principles
 
@@ -46,6 +46,8 @@ type Tx interface {
 
 	AppendConsent(context.Context, ConsentWrite) error
 	RecordPromotion(context.Context, PromotionWrite) error
+	// AppendProposalRevision (M1.3); see "Proposal revisions".
+	AppendProposalRevision(context.Context, ProposalWrite) error
 
 	// Enqueue and Outbox are written in the same transaction as the facts
 	// above (M1.2); see "Jobs and outbox".
@@ -54,8 +56,8 @@ type Tx interface {
 }
 
 // Seeder writes trusted initial state. It is the only writer of policies,
-// proposals, assessments and historical versions until the
-// GitHub-facing phases add their own write paths.
+// assessments and historical versions until the GitHub-facing phases add
+// their own write paths; proposals also have AppendProposalRevision (M1.3).
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }
@@ -170,7 +172,7 @@ var (
 )
 ```
 
-Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `Promote(ctx, UnitOfWork, PromoteRequest)`, `Bootstrap(ctx, UnitOfWork, PromoteRequest)` (existing-baseline only), `Correct(ctx, UnitOfWork, CorrectionRequest)`. Errors from the domain or the store are wrapped with `%w`, preserving the cause.
+Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `Promote(ctx, UnitOfWork, PromoteRequest)`, `Bootstrap(ctx, UnitOfWork, PromoteRequest)` (existing-baseline only), `Correct(ctx, UnitOfWork, CorrectionRequest)`, and since M1.3 `ReviseProposal(ctx, UnitOfWork, ReviseRequest)` (see "Proposal revisions"). Errors from the domain or the store are wrapped with `%w`, preserving the cause.
 
 ### Use-case semantics
 
@@ -225,6 +227,43 @@ Semantics:
 - River schema: River's own migrations are vendored into goose migrations (one migrator and one readiness check, ADR 0026), so `migrations.SupportedVersion` is the highest goose version and covers the River tables and the outbox. A test checks that a database migrated by goose passes River's own migrator validation. Upgrading River means adding a goose migration.
 
 The conformance suite gains: rollback removes the job and the outbox row together with the facts; a duplicate key conflicts; a job and a message written in a unit of work that writes nothing else are committed; neither changes the revision.
+
+## Proposal revisions (M1.3; normative)
+
+The first write path for proposals outside `Seed`. Declared in `internal/application/governance/uow.go`; the `Seeder` comment then says it is the only writer of policies, assessments and historical versions.
+
+```go
+// ProposalWrite appends one revision to a proposal of the locked Suite. When
+// it is the proposal's first revision, the proposal is created with the
+// revision's carrier.
+type ProposalWrite struct {
+	Revision contract.ProposalRevision
+}
+
+var ErrProposalConflict = errors.New("proposal revision conflict")
+
+type ReviseRequest struct {
+	Revision contract.ProposalRevision // its binding's reference names the proposal and the new revision id
+}
+
+type ReviseResult struct {
+	Current   contract.ProposalReference // the proposal's current revision after the call
+	Committed bool                       // false when nothing was written
+}
+```
+
+Use case `ReviseProposal(ctx, UnitOfWork, ReviseRequest) (ReviseResult, error)`, inside `Do`:
+
+1. The reference's project and Suite must be the locked ones, the binding's policy revision the governing one, and its expected canonical the Suite's current version (no version before bootstrap): a revision is always bound to the state it would be approved against. Otherwise `ErrInvalidRequest`, nothing written.
+2. Load the proposal. `ErrNotFound` → `contract.NewProposal(revision)` and `AppendProposalRevision`.
+3. When the current revision has the same proposal context (project, Suite, proposal) and carrier, and the same coverage (manifest digest, scope digest, covered inputs, expected canonical and policy revision; the origin and the revision id may differ), nothing is written and `Current` is the existing revision: repeated observation and implementation-only pushes create no revision (ADR 0013, D-APPROVAL-CONTEXT). Another carrier never takes this path.
+4. Otherwise `Proposal.Revise(revision)`; its errors are wrapped with `%w` and nothing is written (another carrier is `contract.ErrProposalContextMismatch`, a reused revision id is `contract.ErrRevisionExists`). Then `AppendProposalRevision`.
+
+A revision carries no operation id: identity is the revision id inside its proposal, and a retried request either matches step 3 or fails in step 4.
+
+Store write semantics of `AppendProposalRevision`: insert the proposal row when it is absent, then the revision with the next sequence number of its proposal; bump the Suite revision once. A reference outside the locked Suite is `ErrInvalidRequest`. A revision id that already exists, or a carrier that differs from the stored proposal's, is `ErrProposalConflict` (the use case rules both out first, so either means a broken caller). Reads of the proposal inside the same unit of work see the new revision.
+
+The conformance suite gains: the first revision creates the proposal; a second revision becomes current and older ones stay resolvable; a duplicate revision id and another carrier conflict; a foreign Suite is rejected; each append advances the revision by exactly one; rollback removes the proposal and its revisions. The use-case tests add: an unchanged coverage writes nothing; the same coverage under another carrier is rejected, not ignored; a policy or canonical mismatch is rejected; and a proposal blocked by `PromotionReasonCanonicalChanged` is revised against the new canonical and promotes only after a fresh exact approval of the new revision (R1 used a stand-in proposal for this).
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 

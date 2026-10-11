@@ -99,23 +99,22 @@ func (e *StatusError) Unwrap() error { return statusKinds[e.Status] }
 
 // Budget limits the requests of every client of the process to a fraction of
 // the installation's rate limit. It learns the window from the X-RateLimit-*
-// headers of each response; until the first response, and after the local clock
-// passes the window's reset until the next response, it does not refuse. A
-// response that repeats the lapsed window's reset shows the local clock runs
-// ahead of GitHub's: it re-establishes the window, which then holds until a
-// response carries a later reset. It is safe for concurrent use.
+// headers of each response; until the first response, and once a window has
+// ended until the next response, it does not refuse. The window ends in
+// GitHub's time: the Date header of each response gives the offset between the
+// local clock and GitHub's, so a skewed clock neither ends a window early nor
+// disables the cap. It is safe for concurrent use.
 type Budget struct {
 	fraction float64
 	clock    func() time.Time
 
 	mu       sync.Mutex
-	known    bool      // a window has been read from GitHub; reset, limit and used describe it
-	lapsed   bool      // the local clock passed reset: requests pass until a response arrives
-	pinned   bool      // re-established after a lapse: the local clock no longer ends it
-	limit    int       // X-RateLimit-Limit of the window
-	reset    time.Time // X-RateLimit-Reset of the window
-	used     int       // highest limit − remaining GitHub reported in the window
-	inFlight int       // requests sent and not yet answered
+	offset   time.Duration // local clock minus GitHub's, from the latest Date header; 0 until one is seen
+	known    bool          // a window has been read from GitHub; reset, limit and used describe it
+	limit    int           // X-RateLimit-Limit of the window
+	reset    time.Time     // X-RateLimit-Reset of the window, in GitHub's time
+	used     int           // highest limit − remaining GitHub reported in the window
+	inFlight int           // requests sent and not yet answered
 }
 
 // NewBudget returns a budget using fraction (in (0, 1]) of each rate-limit window.
@@ -134,11 +133,9 @@ func NewBudget(fraction float64, clock func() time.Time) (*Budget, error) {
 func (b *Budget) acquire() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.known && !b.lapsed && !b.pinned && !b.clock().Before(b.reset) {
-		b.lapsed = true
-	}
-	if b.known && !b.lapsed && float64(b.used+b.inFlight) >= b.fraction*float64(b.limit) {
-		return &BudgetExhaustedError{Reset: b.reset}
+	active := b.known && b.clock().Add(-b.offset).Before(b.reset)
+	if active && float64(b.used+b.inFlight) >= b.fraction*float64(b.limit) {
+		return &BudgetExhaustedError{Reset: b.reset.Add(b.offset)} // local time, so waiting until it succeeds
 	}
 	b.inFlight++
 	return nil
@@ -157,6 +154,9 @@ func (b *Budget) record(status int, h http.Header) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.inFlight--
+	if date, err := http.ParseTime(h.Get("Date")); err == nil {
+		b.offset = b.clock().Sub(date)
+	}
 	if status == http.StatusNotModified {
 		return
 	}
@@ -169,9 +169,7 @@ func (b *Budget) record(status int, h http.Header) {
 	reset := time.Unix(resetUnix, 0)
 	switch {
 	case !b.known || reset.After(b.reset):
-		b.known, b.lapsed, b.pinned, b.limit, b.reset, b.used = true, false, false, limit, reset, limit-remaining
-	case reset.Equal(b.reset) && b.lapsed:
-		b.lapsed, b.pinned, b.limit, b.used = false, true, limit, limit-remaining
+		b.known, b.limit, b.reset, b.used = true, limit, reset, limit-remaining
 	case reset.Equal(b.reset):
 		b.limit, b.used = limit, max(b.used, limit-remaining)
 	}
@@ -210,7 +208,7 @@ func NewClient(token TokenFunc, httpClient *http.Client, baseURL string, budget 
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil || !u.IsAbs() || u.Host == "" {
-		return nil, fmt.Errorf("github client: base URL %q is not absolute", baseURL)
+		return nil, errors.New("github client: base URL is not an absolute URL")
 	}
 	if strings.ContainsAny(baseURL, "?#") || u.User != nil {
 		return nil, errors.New("github client: base URL must not carry a query, a fragment or user info")

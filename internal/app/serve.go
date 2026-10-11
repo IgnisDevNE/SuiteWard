@@ -80,7 +80,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		Handlers: handlers,
 	}
 	a := &api{store: store, logger: logger}
-	backend := &mcpBackend{now: time.Now, timeout: storeTimeout, logger: logger}
+	backend := &mcpBackend{store: store, now: time.Now, timeout: storeTimeout, logger: logger}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger})
 		if err != nil {
@@ -89,7 +89,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		}
 		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
 		a.github = &githubStatus{repos: gh.repos, store: store}
-		backend.repos, backend.store = gh.repos, store
+		backend.repos = gh.repos
 	}
 	runtime, err := river.NewRuntime(pool, store, riverConfig)
 	if err != nil {

@@ -130,9 +130,16 @@ type Installation struct {
 	body        []byte
 	permissions map[string]string
 	http        *http.Client
-	// sem serializes minting so concurrent callers mint at most once; it guards cached.
-	sem    chan struct{}
-	cached Token
+	// cache is a pointer set once, so copying an Installation (the value
+	// receiver of Format) never reads the token state Token writes.
+	cache *tokenCache
+}
+
+// tokenCache is the mutable state of an Installation.
+type tokenCache struct {
+	// sem serializes minting so concurrent callers mint at most once; it guards token.
+	sem   chan struct{}
+	token Token
 }
 
 // Installation returns the token source of installation id. repositories are
@@ -191,7 +198,7 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 		body:        body,
 		permissions: perms,
 		http:        httpClient,
-		sem:         make(chan struct{}, 1),
+		cache:       &tokenCache{sem: make(chan struct{}, 1)},
 	}, nil
 }
 
@@ -205,20 +212,20 @@ func (i Installation) Format(f fmt.State, _ rune) {
 // or the cached one expires within five minutes.
 func (i *Installation) Token(ctx context.Context) (Token, error) {
 	select {
-	case i.sem <- struct{}{}:
+	case i.cache.sem <- struct{}{}:
 	case <-ctx.Done():
 		return Token{}, ctx.Err()
 	}
-	defer func() { <-i.sem }()
+	defer func() { <-i.cache.sem }()
 	// The zero Token expires at the zero time, so an empty cache always mints.
-	if i.app.clock().Before(i.cached.expiresAt.Add(-renewBefore)) {
-		return i.cached, nil
+	if i.app.clock().Before(i.cache.token.expiresAt.Add(-renewBefore)) {
+		return i.cache.token, nil
 	}
 	tok, err := i.mint(ctx)
 	if err != nil {
 		return Token{}, err
 	}
-	i.cached = tok
+	i.cache.token = tok
 	return tok, nil
 }
 

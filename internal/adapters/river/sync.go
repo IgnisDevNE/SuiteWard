@@ -82,7 +82,7 @@ func addSync(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.Per
 	tick := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
 			// A tick does not start while an earlier one runs; one that failed is not retried, the next tick is.
-			return syncTickArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1}
+			return syncTickArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: SyncTickKind, RunOnStart: true})
 	return append(jobs, tick), nil

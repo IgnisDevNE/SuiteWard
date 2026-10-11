@@ -16,11 +16,29 @@ case $url in
 	if [ "${FAKE_READYZ:-ok}" = down ] || { [ -e "$FAKE_DIR/restarted" ] && [ "${FAKE_READY_AFTER_RESTART:-ok}" = down ]; }; then exit 22; fi
 	echo '{"status":"ready","schemaVersion":7}' ;;
 */healthz) echo '{"status":"ok"}' ;;
+*/mcp)
+	# Unauthenticated probes only: the code depends on the method and the Origin header, as the real listener's does.
+	[ "${FAKE_MCP_DOWN:-}" = 1 ] && { printf 000; exit 7; }
+	case "$*" in
+	*"Origin: http://evil.example"*) printf '%s' "${FAKE_MCP_ORIGIN_CODE:-403}" ;;
+	*"-X POST"*) printf '%s' "${FAKE_MCP_POST_CODE:-401}" ;;
+	*) printf '%s' "${FAKE_MCP_GET_CODE:-405}" ;;
+	esac ;;
 */status)
 	[ -e "$FAKE_DIR/restarted" ] && FAKE_FAILED=${FAKE_FAILED_AFTER_RESTART:-${FAKE_FAILED:-0}}
+	# FAKE_GITHUB: ok (default), late (succeeds from the third /status on), pending, error, absent, empty.
+	echo x >> "$FAKE_DIR/status-calls"
+	github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b","lastSuccess":"2026-10-11T12:00:01Z"}]'
+	case ${FAKE_GITHUB:-ok} in
+	late) [ "$(wc -l < "$FAKE_DIR/status-calls")" -ge 3 ] || github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b"}]' ;;
+	pending) github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b"}]' ;;
+	error) github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b","lastError":"not_found (HTTP 404)"}]' ;;
+	empty) github=',"github":[]' ;;
+	absent) github= ;;
+	esac
 	version='"version":"test",'
 	[ "${FAKE_NO_VERSION:-}" = 1 ] && version=
-	echo "{${version}\"schemaVersion\":7,\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}}" ;;
+	echo "{${version}\"schemaVersion\":7,\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}${github}}" ;;
 *) exit 22 ;;
 esac
 EOF
@@ -52,7 +70,7 @@ chmod +x "$tmp/bin/curl" "$tmp/bin/podman"
 failures=0
 run() {
 	: > "$tmp/log"
-	rm -f "$tmp/restarted"
+	rm -f "$tmp/restarted" "$tmp/status-calls"
 	out=$(env PATH="$tmp/bin:$PATH" FAKE_LOG="$tmp/log" FAKE_DIR="$tmp" SMOKE_READY_TIMEOUT=1 "$@" 2>&1)
 	rc=$?
 }
@@ -77,8 +95,47 @@ contains "delayed job 42-probe-abc survived the restart" || bad "success path" "
 contains "does not show when the outbox message was delivered" || bad "success path" "the pending step claims more than a delayed job surviving"
 if contains "elapsed"; then pass "timings reported"; else bad "timings reported" "no elapsed time in the output"; fi
 
+# A service that restarts repeatedly (for example partial GitHub settings) never answers /readyz: the wait is bounded and ends in FAIL.
 run FAKE_READYZ=down sh "$smoke"
-expect_fail "readyz never answers" "FAIL readyz"
+expect_fail "readyz never answers (crash loop)" "FAIL readyz"
+
+run sh "$smoke"
+expect_ok "github synchronized" "github: ok, elapsed [0-9]* ms, 2 repositories synchronized"
+contains "mcp: ok, elapsed [0-9]* ms" || bad "mcp checks" "no mcp ok line"
+
+run FAKE_GITHUB=late SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
+expect_ok "github waits for the first cycle" "github: ok"
+
+run FAKE_GITHUB=pending SMOKE_GITHUB_TIMEOUT=1 sh "$smoke"
+expect_fail "github never succeeds" "FAIL github: no lastSuccess for 1 of 2 repositories within 1s"
+
+# The generous timeout shows the failure is immediate: a wait would run it out.
+run FAKE_GITHUB=error SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
+expect_fail "github reports an error" "FAIL github: acme/b has lastError"
+
+run FAKE_GITHUB=absent sh "$smoke"
+expect_fail "status has no github section" "FAIL github: no github section"
+
+run FAKE_GITHUB=empty sh "$smoke"
+expect_fail "github section has no repositories" "FAIL github: no repositories"
+
+run FAKE_GITHUB=absent SMOKE_GITHUB=0 sh "$smoke"
+expect_ok "github skipped for a stack without GitHub" "github: ok, elapsed [0-9]* ms, skipped (SMOKE_GITHUB=0)"
+
+run FAKE_MCP_POST_CODE=200 sh "$smoke"
+expect_fail "mcp accepts a request without a token" "FAIL mcp: POST without a token answered 200, want 401"
+
+run FAKE_MCP_ORIGIN_CODE=401 sh "$smoke"
+expect_fail "mcp does not reject a foreign origin" "FAIL mcp: POST with a foreign Origin answered 401, want 403"
+
+run FAKE_MCP_GET_CODE=200 sh "$smoke"
+expect_fail "mcp answers GET" "FAIL mcp: GET answered 200, want 405"
+
+run FAKE_MCP_GET_CODE=400 SMOKE_MCP_GET_CODE=400 sh "$smoke"
+expect_ok "mcp GET code is configurable" "mcp: ok"
+
+run FAKE_MCP_DOWN=1 sh "$smoke"
+expect_fail "mcp listener unreachable" "FAIL mcp: POST without a token answered 000"
 
 run SMOKE_VERSION=test sh "$smoke"
 expect_ok "expected version matches" "version test"

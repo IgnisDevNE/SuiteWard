@@ -169,14 +169,50 @@ func TestLoadMCPAllowedOrigins(t *testing.T) {
 	}
 }
 
-func TestLoadMCPAddrOrOriginsWithoutATokenAreErrors(t *testing.T) {
-	for name, value := range map[string]string{"MCP_ADDR": "127.0.0.1:9191", "MCP_ALLOWED_ORIGINS": "http://a.example"} {
-		vars := required(t)
-		vars["SUITEWARD_"+name] = value
-		_, _, err := fakeEnv{vars: vars}.load()
-		if err == nil || !strings.Contains(err.Error(), "SUITEWARD_"+name) || !strings.Contains(err.Error(), "SUITEWARD_MCP_TOKEN") {
-			t.Errorf("%s without a token: error = %v, want it to name both variables", name, err)
-		}
+func TestLoadMCPAddrWithoutATokenIsAcceptedAndListensNowhere(t *testing.T) {
+	vars := required(t)
+	vars["SUITEWARD_MCP_ADDR"] = "127.0.0.1:9191"
+	cfg, _, err := fakeEnv{vars: vars}.load()
+	if err != nil || cfg.MCP != nil {
+		t.Fatalf("Load = MCP %+v, %v; want success with no MCP settings", cfg.MCP, err)
+	}
+}
+
+func TestLoadMCPAddrWithoutATokenIsStillValidated(t *testing.T) {
+	vars := required(t)
+	vars["SUITEWARD_MCP_ADDR"] = "nonsense"
+	_, _, err := fakeEnv{vars: vars}.load()
+	if err == nil || !strings.Contains(err.Error(), "SUITEWARD_MCP_ADDR") || strings.Contains(err.Error(), "SUITEWARD_MCP_TOKEN") {
+		t.Fatalf("Load = %v, want an address error that does not blame the missing token", err)
+	}
+}
+
+func TestLoadMCPAddrMayEqualHTTPAddrWithoutAToken(t *testing.T) {
+	vars := required(t)
+	vars["SUITEWARD_HTTP_ADDR"] = "127.0.0.1:8085"
+	vars["SUITEWARD_MCP_ADDR"] = "127.0.0.1:8085"
+	cfg, _, err := fakeEnv{vars: vars}.load()
+	if err != nil || cfg.MCP != nil {
+		t.Fatalf("Load = MCP %+v, %v; want success with no MCP settings", cfg.MCP, err)
+	}
+}
+
+func TestLoadMCPImageDefaultsWithoutATokenLoad(t *testing.T) {
+	vars := required(t)
+	vars["SUITEWARD_HTTP_ADDR"] = "0.0.0.0:8080"
+	vars["SUITEWARD_MCP_ADDR"] = "0.0.0.0:8090"
+	cfg, _, err := fakeEnv{vars: vars}.load()
+	if err != nil || cfg.MCP != nil {
+		t.Fatalf("Load = MCP %+v, %v; want success with no MCP settings", cfg.MCP, err)
+	}
+}
+
+func TestLoadMCPAllowedOriginsWithoutATokenIsAnError(t *testing.T) {
+	vars := required(t)
+	vars["SUITEWARD_MCP_ALLOWED_ORIGINS"] = "http://a.example"
+	_, _, err := fakeEnv{vars: vars}.load()
+	if err == nil || !strings.Contains(err.Error(), "SUITEWARD_MCP_ALLOWED_ORIGINS") || !strings.Contains(err.Error(), "SUITEWARD_MCP_TOKEN") {
+		t.Fatalf("Load = %v, want an error naming both variables", err)
 	}
 }
 

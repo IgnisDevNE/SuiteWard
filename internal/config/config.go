@@ -8,9 +8,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,7 +22,11 @@ import (
 const (
 	prefix   = "SUITEWARD_"
 	redacted = "[redacted]"
+
+	maxGitHubRepositories = 20 // D-SYNC
 )
+
+var gitHubRepository = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
 // toolingPrefixes name variables that development shells and CI set; they are never warned about.
 var toolingPrefixes = []string{prefix + "TEST_", prefix + "TOOLS_", prefix + "HOOK_"}
@@ -107,6 +113,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	c.OutboxMaxAttempts = number(l, "OUTBOX_MAX_ATTEMPTS", "8", 1, 25, strconv.Atoi)
 	c.OutboxPollInterval = number(l, "OUTBOX_POLL_INTERVAL", "5s", time.Second, time.Hour, time.ParseDuration)
 	c.OutboxLease = number(l, "OUTBOX_LEASE", "1m", 5*time.Second, 0, time.ParseDuration)
+	c.GitHub = l.github()
 
 	warnings := l.unrecognized(environ)
 	if len(l.errs) > 0 {
@@ -184,6 +191,96 @@ func (l *loader) optional(name, def string) string {
 	return def
 }
 
+// present is raw for a setting that may be absent: set is also true when the
+// value is set but unusable, which raw has already reported.
+func (l *loader) present(name string, secret bool) (value string, set bool) {
+	reported := len(l.errs)
+	value, ok := l.raw(name, secret)
+	return value, ok || len(l.errs) > reported
+}
+
+// github reads the interim M1.4 GitHub settings: the first four are all set
+// or all unset (nil), the API URL is checked either way.
+func (l *loader) github() *GitHub {
+	apiURL := l.optional("GITHUB_API_URL", "https://api.github.com")
+	if !validAPIURL(apiURL) {
+		// No cause and no value: url.Parse errors quote the whole URL.
+		l.fail("GITHUB_API_URL", errors.New("must be an absolute https URL (http only for a loopback host) without query, fragment or user info"))
+	}
+
+	g := GitHub{APIURL: apiURL}
+	appID, hasID := l.present("GITHUB_APP_ID", false)
+	key, hasKey := l.present("GITHUB_APP_KEY", true)
+	installationID, hasInstallation := l.present("GITHUB_INSTALLATION_ID", false)
+	repositories, hasRepositories := l.present("GITHUB_REPOSITORIES", false)
+	var missing []string
+	for _, s := range []struct {
+		name string
+		set  bool
+	}{{"GITHUB_APP_ID", hasID}, {"GITHUB_APP_KEY", hasKey}, {"GITHUB_INSTALLATION_ID", hasInstallation}, {"GITHUB_REPOSITORIES", hasRepositories}} {
+		if !s.set {
+			missing = append(missing, prefix+s.name)
+		}
+	}
+	if len(missing) == 4 {
+		return nil
+	}
+	if len(missing) > 0 {
+		l.fail("GITHUB_*", fmt.Errorf("set all of the GitHub settings or none; missing %s", strings.Join(missing, ", ")))
+	}
+
+	// An empty value here was already reported by raw.
+	g.AppKey = Secret(key)
+	if appID != "" {
+		g.AppID = l.positive("GITHUB_APP_ID", appID)
+	}
+	if installationID != "" {
+		g.InstallationID = l.positive("GITHUB_INSTALLATION_ID", installationID)
+	}
+	if repositories != "" {
+		g.Repositories = l.repositories("GITHUB_REPOSITORIES", repositories)
+	}
+	return &g
+}
+
+func (l *loader) positive(name, value string) int64 {
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n < 1 {
+		l.fail(name, errors.New("must be a positive integer"))
+		return 0
+	}
+	return n
+}
+
+// repositories parses comma-separated owner/name items: at most
+// maxGitHubRepositories, no duplicates, one owner (an installation token covers one account).
+func (l *loader) repositories(name, value string) []string {
+	items := strings.Split(value, ",")
+	if len(items) > maxGitHubRepositories {
+		l.fail(name, fmt.Errorf("%d items, at most %d are allowed", len(items), maxGitHubRepositories))
+		return nil
+	}
+	seen := map[string]bool{}
+	var owner string
+	for i, item := range items {
+		item = strings.TrimSpace(item)
+		items[i] = item
+		itemOwner, repo, _ := strings.Cut(item, "/")
+		switch lower := strings.ToLower(item); {
+		case !gitHubRepository.MatchString(item) || itemOwner == "." || itemOwner == ".." || repo == "." || repo == "..":
+			l.fail(name, fmt.Errorf("%q is not an owner/name pair", item))
+		case seen[lower]:
+			l.fail(name, fmt.Errorf("%q is listed twice", item))
+		case owner != "" && !strings.EqualFold(owner, itemOwner):
+			l.fail(name, fmt.Errorf("%q has another owner than the first item", item))
+		default:
+			seen[lower] = true
+			owner = itemOwner
+		}
+	}
+	return items
+}
+
 func (l *loader) logLevel(name, def string) slog.Level {
 	switch v := l.optional(name, def); v {
 	case "debug":
@@ -235,4 +332,21 @@ func (l *loader) unrecognized(environ []string) []string {
 func validDatabaseURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql")
+}
+
+func validAPIURL(s string) bool {
+	u, err := url.Parse(s)
+	// A User of nil is how net/url says there is no user info.
+	if err != nil || strings.ContainsAny(s, "?#") || u.User != nil || u.Hostname() == "" {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		addr, err := netip.ParseAddr(u.Hostname())
+		return strings.EqualFold(u.Hostname(), "localhost") || (err == nil && addr.IsLoopback())
+	default:
+		return false
+	}
 }

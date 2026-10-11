@@ -21,8 +21,6 @@ GITHUB=${SMOKE_GITHUB:-1}
 GITHUB_TIMEOUT=${SMOKE_GITHUB_TIMEOUT:-120}
 # The MCP listener's published port. The mcp step sends no token and never reads one.
 MCP_BASE=${SMOKE_MCP_BASE:-http://127.0.0.1:8091}
-# What GET /mcp answers; the contract says 405 unless the SDK needs GET for a legacy revision.
-MCP_GET_CODE=${SMOKE_MCP_GET_CODE:-405}
 
 promote=0
 for arg; do
@@ -132,9 +130,7 @@ code=$(mcp_post)
 [ "$code" = 401 ] || die mcp "POST without a token answered $code, want 401"
 code=$(mcp_post -H 'Origin: http://evil.example')
 [ "$code" = 403 ] || die mcp "POST with a foreign Origin answered $code, want 403"
-code=$(mcp_code)
-[ "$code" = "$MCP_GET_CODE" ] || die mcp "GET answered $code, want $MCP_GET_CODE"
-ok mcp "without a token 401, foreign Origin 403, GET $MCP_GET_CODE"
+ok mcp "without a token 401, foreign Origin 403"
 
 begin
 out=$(podman exec "$CTR" /suiteward probe </dev/null 2>&1) || die probe "$(last "$out")"

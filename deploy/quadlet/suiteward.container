@@ -27,7 +27,7 @@ Environment=SUITEWARD_GITHUB_APP_KEY_FILE=/run/secrets/github-app-key
 Secret=suiteward-mcp-token,type=mount,target=/run/secrets/mcp-token,uid=65532,mode=0400
 Environment=SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token
 # SUITEWARD_GITHUB_APP_ID, SUITEWARD_GITHUB_INSTALLATION_ID and SUITEWARD_GITHUB_REPOSITORIES (not secrets) come from a file the owner
-# writes on the host (deploy/HOST.md, section 5); the values are never committed. A missing file makes podman fail the start, which
+# writes on the host (deploy/HOST.md, section 4a); the values are never committed. A missing file makes podman fail the start, which
 # Restart=always repeats and the journal shows; it never runs silently without GitHub.
 EnvironmentFile=/etc/suiteward/github.env
 Volume=suiteward-data.volume:/data

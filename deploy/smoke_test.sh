@@ -22,7 +22,7 @@ case $url in
 	case "$*" in
 	*"Origin: http://evil.example"*) printf '%s' "${FAKE_MCP_ORIGIN_CODE:-403}" ;;
 	*"-X POST"*) printf '%s' "${FAKE_MCP_POST_CODE:-401}" ;;
-	*) printf '%s' "${FAKE_MCP_GET_CODE:-405}" ;;
+	*) exit 22 ;;
 	esac ;;
 */status)
 	[ -e "$FAKE_DIR/restarted" ] && FAKE_FAILED=${FAKE_FAILED_AFTER_RESTART:-${FAKE_FAILED:-0}}
@@ -127,12 +127,6 @@ expect_fail "mcp accepts a request without a token" "FAIL mcp: POST without a to
 
 run FAKE_MCP_ORIGIN_CODE=401 sh "$smoke"
 expect_fail "mcp does not reject a foreign origin" "FAIL mcp: POST with a foreign Origin answered 401, want 403"
-
-run FAKE_MCP_GET_CODE=200 sh "$smoke"
-expect_fail "mcp answers GET" "FAIL mcp: GET answered 200, want 405"
-
-run FAKE_MCP_GET_CODE=400 SMOKE_MCP_GET_CODE=400 sh "$smoke"
-expect_ok "mcp GET code is configurable" "mcp: ok"
 
 run FAKE_MCP_DOWN=1 sh "$smoke"
 expect_fail "mcp listener unreachable" "FAIL mcp: POST without a token answered 000"

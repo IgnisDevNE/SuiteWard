@@ -53,6 +53,19 @@ type Config struct {
 	OutboxMaxAttempts  int
 	OutboxPollInterval time.Duration
 	OutboxLease        time.Duration
+	// GitHub is nil when the synchronization settings are not configured.
+	GitHub *GitHub
+}
+
+// GitHub holds the interim M1.4 operator configuration of the GitHub App
+// (see docs/contracts/github.md); it does not establish a trusted installation.
+type GitHub struct {
+	AppID          int64
+	AppKey         Secret
+	InstallationID int64
+	// Repositories are owner/name items, trimmed, all of one owner.
+	Repositories []string
+	APIURL       string
 }
 
 // Load validates the environment against the settings table of the runtime

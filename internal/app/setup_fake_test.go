@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -67,6 +68,7 @@ type setupGitHub struct {
 	rulesStatus    int    // 200 unless set
 	rulesLimited   bool   // the effective rules answer a rate limit: 403 with no requests remaining
 	repoLimited    bool   // the repository read answers a rate limit: 403 with no requests remaining
+	repoBudget     bool   // the repository read reports a rate-limit window that is used up to the budget, so the next request is refused locally
 	classic        string // body of the classic protection; 404 unless set
 	protectionMint int    // status of the token request that asks for administration; 0 grants it
 	mismatch       bool   // the protection token is granted other permissions than the requested ones
@@ -129,6 +131,11 @@ func (f *setupGitHub) serve(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			fail(http.StatusForbidden)
 			return
+		}
+		if f.repoBudget {
+			w.Header().Set("X-RateLimit-Limit", "100")
+			w.Header().Set("X-RateLimit-Remaining", "10")
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
 		}
 		if f.repoStatus != 0 {
 			fail(f.repoStatus)

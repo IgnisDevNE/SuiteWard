@@ -398,3 +398,45 @@ func TestMCPStatusShowsTheLatestProtectionOfEachRepository(t *testing.T) {
 		t.Fatal("Status succeeded although the protection results cannot be read")
 	}
 }
+
+func TestProtectionCheckSkipsARepositoryThatTheSharedBudgetRefuses(t *testing.T) {
+	fake := newSetupGitHub(t)
+	fake.repoBudget = true
+	r := newProtectionRun(t, fake)
+	r.enroll(t)
+
+	if err := r.check.run(t.Context()); err != nil {
+		t.Fatalf("run = %v; want a nil error: an exhausted budget is a wait, not a failure", err)
+	}
+
+	if got := r.results(t); len(got) != 0 {
+		t.Fatalf("stored %+v; want nothing recorded until the next run", got)
+	}
+	// The repository read taught the budget its window; the next request is refused without calling GitHub.
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for _, request := range fake.requests {
+		if strings.Contains(request, "/rules/") || strings.Contains(request, "/protection ") {
+			t.Fatalf("GitHub was asked %q although the budget was exhausted", request)
+		}
+	}
+}
+
+func TestProtectionCheckRecordsUnknownForAnEnrolledRepositoryItCannotReadAfterARestart(t *testing.T) {
+	fake := newSetupGitHub(t)
+	fake.repoStatus = http.StatusInternalServerError
+	r := newProtectionRun(t, fake) // a fresh process: it has read no repository yet, but setup stored the enrolled ids
+	r.enroll(t)
+
+	if err := r.check.run(t.Context()); err != nil {
+		t.Fatalf("run = %v; want a nil error", err)
+	}
+
+	want := storedResult(protection.Unknown())
+	if got := r.results(t); !reflect.DeepEqual(got, []owner.ProtectionResult{want}) {
+		t.Fatalf("stored %+v; want %+v: the enrollment names the repository", got, want)
+	}
+	if id, known := r.ids.lookup(setupWidgetsRepo); !known || id != setupRepoID {
+		t.Fatalf("lookup = %d, %v; want /status to find the stored result too", id, known)
+	}
+}

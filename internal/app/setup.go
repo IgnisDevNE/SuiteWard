@@ -16,7 +16,6 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -102,7 +101,7 @@ func (f setupFlags) options(repos []string) (setupOptions, error) {
 	return setupOptions{owner: strings.TrimSpace(f.owner), testChecks: checks}, nil
 }
 
-// setupReaders are the two GitHub readers of setup: the synchronization
+// setupReaders are the two GitHub readers of setup and the protection check: the synchronization
 // token's, for the lookups, and the protection token's. They share one budget.
 type setupReaders struct{ read, protect *github.Reader }
 
@@ -347,8 +346,7 @@ func evaluateProtection(ctx context.Context, logger *slog.Logger, protect *githu
 	read, err := protect.Protection(ctx, name, repo.DefaultBranch)
 	if err != nil {
 		logReadFailure(ctx, logger, "github protection read failed", name, err)
-		kind := readFailure(err).Kind
-		return protection.Unknown(), kind == githubsync.FailureRateLimited || kind == githubsync.FailureBudgetExhausted
+		return protection.Unknown(), waits(err)
 	}
 	facts, err := protectionFacts(read, repo.Private)
 	if err != nil {

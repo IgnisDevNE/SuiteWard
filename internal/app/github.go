@@ -49,7 +49,7 @@ type githubStatus struct {
 
 // report returns one entry per configured repository, in configuration order;
 // a repository that has no cycle yet has only its name.
-func (g *githubStatus) report(ctx context.Context, _ map[string]owner.ProtectionResult) ([]repositoryStatus, error) {
+func (g *githubStatus) report(ctx context.Context, protections map[string]owner.ProtectionResult) ([]repositoryStatus, error) {
 	entries := make([]repositoryStatus, 0, len(g.repos))
 	for _, repo := range g.repos {
 		state, _, err := g.store.Repository(ctx, repo)
@@ -61,6 +61,11 @@ func (g *githubStatus) report(ctx context.Context, _ map[string]owner.Protection
 			entry.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
 		}
 		entry.LastError = lastErrorText(state)
+		if result, verified := protections[repo]; verified {
+			entry.Protection = &protectionStatus{
+				Result: result.Result, Findings: result.Findings, Caveats: result.Caveats, CheckedAt: result.CheckedAt.UTC().Format(time.RFC3339),
+			}
+		}
 		if !state.WaitUntil.IsZero() {
 			entry.WaitUntil = state.WaitUntil.UTC().Format(time.RFC3339)
 		}
@@ -83,6 +88,8 @@ func lastErrorText(state githubsync.RepositoryState) string {
 // githubSync is the GitHub side of the service, composed only when the GitHub settings are set.
 type githubSync struct {
 	reconciler *githubsync.Reconciler
+	readers    setupReaders // shared with the protection check: one budget for every token
+	appID      int64
 	repos      []string
 	jobTimeout time.Duration
 }
@@ -145,24 +152,21 @@ func (a githubAccess) reader(permissions map[string]string) (*github.Reader, err
 	return reader, nil
 }
 
-// composeGitHub builds the App installation, the REST client with the
-// process-wide budget and the reader of the GitHub settings, and the
+// composeGitHub builds the App installation, the REST clients with the
+// process-wide budget and the readers of the GitHub settings, and the
 // reconciler over store. Synchronization is read-only: the token requests the
-// metadata, pull requests and contents permissions at read level.
+// metadata, pull requests and contents permissions at read level; the
+// protection check uses the other reader (Metadata and Administration read).
 func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
-	access, err := newGitHubAccess(g)
+	readers, err := composeSetupReaders(g) // one access, so one budget, for the synchronization and the protection check
 	if err != nil {
 		return nil, err
 	}
-	reader, err := access.reader(syncPermissions)
-	if err != nil {
-		return nil, err
-	}
-	reconciler, err := githubsync.NewReconciler(githubReader{reader}, store, time.Now, g.InstallationID)
+	reconciler, err := githubsync.NewReconciler(githubReader{readers.read}, store, time.Now, g.InstallationID)
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout}, nil
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, appID: g.AppID}, nil
 }
 
 // tick is the github_sync_tick job: one cycle of every configured repository.

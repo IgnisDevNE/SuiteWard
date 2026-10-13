@@ -1,9 +1,9 @@
--- The service's own bookkeeping jobs are not work: the relay's periodic job (outbox_relay, owned by the River adapter)
--- and the GitHub synchronization tick (github_sync_tick).
+-- The service's own bookkeeping jobs are not work: the relay's periodic job (outbox_relay, owned by the River adapter),
+-- the GitHub synchronization tick (github_sync_tick) and the protection verification (github_protection_check).
 -- name: CountJobsByState :many
 SELECT state::text AS state, count(*) AS total
 FROM river_job
-WHERE kind NOT IN ('outbox_relay', 'github_sync_tick')
+WHERE kind NOT IN ('outbox_relay', 'github_sync_tick', 'github_protection_check')
 GROUP BY state;
 
 -- name: CountOutboxByState :many

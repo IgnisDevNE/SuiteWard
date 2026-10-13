@@ -14,9 +14,9 @@ SuiteWard reaches GitHub outbound only, as the operator's GitHub App installed o
 
 ## Permissions (D-GITHUB-ACCESS)
 
-The App holds Metadata read, Pull requests read, Contents read and Checks write; no Administration, Issues or webhooks. Measured on a private repository (s1-github, permission matrix): `GET /pulls?state=open` and `GET /issues/{pr}/comments` need Pull requests read, `GET /git/trees/{sha}?recursive=1` needs Contents read, `POST /check-runs` needs Checks write. Measured 2026-10-11 by the opt-in live test (`internal/adapters/github/live_test.go`, `-tags=live`) on a private repository with a token narrowed to Metadata, Pull requests and Contents read: `GET /pulls/{n}` and `GET /commits/{sha}` answer 200, and both answer 403 to a Metadata-only token; the granted permission map equals the requested one. `PATCH /check-runs` is not measured yet; it must be asserted before the check-run write relies on it.
+The App holds Metadata read, Pull requests read, Contents read, Administration read (M1.5, protection verification) and Checks write; no Administration write, Issues or webhooks. Measured on a private repository (s1-github, permission matrix): `GET /pulls?state=open` and `GET /issues/{pr}/comments` need Pull requests read, `GET /git/trees/{sha}?recursive=1` needs Contents read, `POST /check-runs` needs Checks write. Measured 2026-10-11 by the opt-in live test (`internal/adapters/github/live_test.go`, `-tags=live`) on a private repository with a token narrowed to Metadata, Pull requests and Contents read: `GET /pulls/{n}` and `GET /commits/{sha}` answer 200, and both answer 403 to a Metadata-only token; the granted permission map equals the requested one. `PATCH /check-runs` is not measured yet; it must be asserted before the check-run write relies on it.
 
-Every token request carries an explicit, non-empty `permissions` map and the `repositories` list (an empty map grants everything the App has). Each use requests the narrowest map: synchronization is read-only and requests `metadata`, `pull_requests` and `contents` read; `checks: write` is requested only by check publication (M1.6).
+Every token request carries an explicit, non-empty `permissions` map and the `repositories` list (an empty map grants everything the App has). Each use requests the narrowest map: synchronization is read-only and requests `metadata`, `pull_requests` and `contents` read; protection verification requests `metadata` and `administration` read (M1.5); `checks: write` is requested only by check publication (M1.6). All tokens of one installation share the one process-wide `rest.Budget`, because the rate limit belongs to the installation.
 
 ## A1: App authentication (`appauth`)
 
@@ -84,4 +84,19 @@ func NewBudget(fraction float64, clock func() time.Time) (*Budget, error) // D-S
 
 ## Configuration (interim, M1.4)
 
-Settings added to the runtime contract: `GITHUB_APP_ID`, `GITHUB_APP_KEY` (secret, `_FILE` form expected), `GITHUB_INSTALLATION_ID`, `GITHUB_REPOSITORIES` (comma-separated `owner/name`, at most 20), `GITHUB_API_URL` (default `https://api.github.com`). These are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide. SuiteWard does not discover installations (`GET /app/installations`) and does not trust whatever installed the App.
+Settings added to the runtime contract: `GITHUB_APP_ID`, `GITHUB_APP_KEY` (secret, `_FILE` form expected), `GITHUB_INSTALLATION_ID`, `GITHUB_REPOSITORIES` (comma-separated `owner/name`, at most 20), `GITHUB_API_URL` (default `https://api.github.com`). Under D-IDENTITY (M1.5) the operator-configured installation is the trusted one; `setup` confirms that it covers every configured repository. SuiteWard does not discover installations (`GET /app/installations`) and does not trust whatever installed the App.
+
+## M1.5: owner lookup and protection reads (normative)
+
+Measured 2026-10-13 by `TestLiveProtectionReads` (`-tags=live`) on the S1 test repositories; results in the [M1.5 page](../plan/phases/M1.5.md).
+
+- **Owner lookup** (`Reader.User(ctx, login) (User, error)`, synchronization token): `GET /users/{login}` returns `User{ID int64, Login string, Type string}`. Setup accepts only `Type == "User"` (an `Organization` or `Bot` is an error) and stores the numeric id; the login is display only.
+- **Repository** (`Reader.Repository(ctx, repo) (Repository, error)`, synchronization token): `GET /repos/{r}` returns `Repository{ID int64, FullName string, Private bool, DefaultBranch string}`. The numeric id is the project identity (D-IDENTITY).
+- **Protection** (`Reader.Protection(ctx, repo, branch) (Protection, error)`, protection token): the effective rules (`GET /repos/{r}/rules/branches/{branch}`, which GitHub limits to active rulesets at repository and organization level) and the classic protection (`GET /repos/{r}/branches/{branch}/protection`), returned as typed facts, not a verdict:
+  - `Rules`: per `required_status_checks` rule, its ruleset id, each required check's context and integration id (absent is 0), and the strict flag; `FromRuleset` is true when any rule came from a ruleset;
+  - `Classic`: `Absent` (404), `Unreadable` (403), or present with each required check's context and app id, the strict flag and `enforce_admins`;
+  - `RulesForbidden`: the effective rules answered 403 (the private-repository-on-Free case of D-PROTECTION).
+
+  Any other status is a `rest` error. Bodies are bounded and decoded into these types only; a decode failure names only the path. A wrapped `rest` status error can still carry part of GitHub's answer (token redacted), so callers never print or store a read error: they record `protection.Unknown()` and log only the repository and the status. The effective rules are read with `per_page=100` and followed page by page up to the listings' page bound.
+- **Evaluation** is a pure function outside the adapter (the D-PROTECTION results and findings; M1.5-C2).
+- **Paths:** the branch name is path-escaped (`url.PathEscape`), so a branch with `/` is read correctly.

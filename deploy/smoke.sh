@@ -15,6 +15,8 @@ CTR=${SMOKE_CONTAINER:-suiteward}
 READY_TIMEOUT=${SMOKE_READY_TIMEOUT:-120}
 # Optional: the version /status must report, for example sha-<commit> of the image that was just deployed.
 EXPECT_VERSION=${SMOKE_VERSION:-}
+# Optional: the tier /status must report: isolated on the host, co-located on this PC. Unset, any of the two passes.
+EXPECT_TIER=${SMOKE_TIER:-}
 # Both targets run with GitHub configured: the github step waits until every repository in /status has a lastSuccess.
 # SMOKE_GITHUB=0 skips it, only for a stack that was started without the GitHub settings.
 GITHUB=${SMOKE_GITHUB:-1}
@@ -70,9 +72,25 @@ check_github() {
 	while :; do
 		body=$(curl -fsS -m 5 "$BASE/status") || die github "GET /status failed"
 		printf '%s' "$body" | grep -q '"github" *: *\[' || die github "no github section in /status (start the stack with the GitHub settings, or set SMOKE_GITHUB=0)"
-		# One object per repository, with no nested brackets: cut the array out and put one object on each line.
-		section=$(printf '%s' "$body" | sed 's/.*"github" *: *\[\([^]]*\)\].*/\1/')
-		entries=$(printf '%s' "$section" | sed "s/},{/}\\$nl{/g")
+		# Entries hold nested arrays and objects (protection): walk from "github":[ to the ] that closes it, outside strings,
+		# and start a new line at each object directly inside the array.
+		entries=$(printf '%s' "$body" | awk '
+			{
+				if (!match($0, /"github" *: *\[/)) exit
+				s = substr($0, RSTART + RLENGTH); depth = 1
+				for (i = 1; i <= length(s); i++) {
+					c = substr(s, i, 1)
+					if (esc) esc = 0
+					else if (c == "\\" && str) esc = 1
+					else if (c == "\"") str = !str
+					else if (!str) {
+						if (c == "{" || c == "[") { if (c == "{" && depth == 1) printf "\n"; depth++ }
+						else if (c == "}" || c == "]") { if (--depth == 0) break }
+					}
+					printf "%s", c
+				}
+				printf "\n"
+			}')
 		repos=$(($(printf '%s\n' "$entries" | grep -c '"repo" *:')))
 		[ "$repos" -gt 0 ] || die github "no repositories in the github section"
 		bad=$(printf '%s\n' "$entries" | grep '"lastError" *:' | head -n 1)
@@ -116,6 +134,17 @@ ok healthz
 begin
 check_status status
 ok status "version $version, schema version $schema, no failed or discarded"
+
+begin
+body=$(curl -fsS -m 5 "$BASE/status") || die tier "GET /status failed"
+tier=$(printf '%s' "$body" | sed -n 's/.*"tier" *: *"\([^"]*\)".*/\1/p' | head -n 1)
+[ -n "$tier" ] || die tier "no tier in $body"
+if [ -n "$EXPECT_TIER" ]; then
+	[ "$tier" = "$EXPECT_TIER" ] || die tier "$tier, want $EXPECT_TIER"
+else
+	[ "$tier" = isolated ] || [ "$tier" = co-located ] || die tier "$tier, want isolated or co-located"
+fi
+ok tier "$tier"
 
 begin
 if [ "$GITHUB" = 0 ]; then

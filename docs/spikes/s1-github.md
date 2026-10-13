@@ -1,10 +1,10 @@
 # S1 findings: GitHub walking skeleton
 
-- **Status:** draft for the owner's review. Everything listed under "Not measured" at the end was not done.
+- **Status:** reviewed. Its proposals were applied to the [decision register](../plan/decisions.md): D-GITHUB-ACCESS and D-DEPLOY (2026-10-10/11), D-CHECKS (2026-10-13), the D-PROTECTION input (partly, 2026-10-13); D-INTEGRATION and the D-SYNC numbers are still open. Everything listed under "Not measured" at the end was not done in S1; M1.4's live test measured the pull and commit reads, and M1.5-P0 the protection reads.
 - **Phase:** [S1](../plan/phases/S1.md). Code: `spikes/s1/` (throwaway, separate module, never imported by `internal/`).
 - **Measured:** 2026-10-10 against `IgnisDevNE/SuiteWardQ` (public) and `IgnisDevNE/SuiteWardQ-private` with the test App `SuiteWardQ Spike` (not the production App).
 
-This document proposes decision-register updates. It does not apply them: [decisions.md](../plan/decisions.md) is unchanged and each proposal below needs the owner's review.
+This document proposed decision-register updates; the status line above says which were applied.
 
 ## What was run
 

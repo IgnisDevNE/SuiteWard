@@ -15,6 +15,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
 )
 
 var mcpNow = time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
@@ -60,7 +61,7 @@ func (f failingObservations) Pulls(ctx context.Context, _ string) ([]githubsync.
 }
 
 func testBackend(store observations, inserter syncInserter, logs *bytes.Buffer, repos ...string) *mcpBackend {
-	return &mcpBackend{repos: repos, store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug)}
+	return &mcpBackend{repos: repos, owners: ownertest.NewMemory(), store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug), ids: &repositoryIDs{}}
 }
 
 func recordCycle(t *testing.T, store *githubsynctest.Memory, repo string, pulls ...int) {
@@ -88,6 +89,25 @@ func TestMCPStatusWithoutGitHubSaysNotConfigured(t *testing.T) {
 	}
 	if view.GitHubConfigured || view.Repositories == nil || len(view.Repositories) != 0 {
 		t.Fatalf("Status = %+v; want not configured and an empty, non-nil repository list", view)
+	}
+}
+
+func TestMCPStatusReportsTheConfiguredTierWithAndWithoutGitHub(t *testing.T) {
+	for name, repos := range map[string][]string{"without GitHub": nil, "with GitHub": {"acme/ok"}} {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			b := testBackend(githubsynctest.NewMemory(), &fakeInserter{}, &logs, repos...)
+			b.tier = "isolated"
+
+			view, err := b.Status(t.Context())
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.Tier != "isolated" {
+				t.Fatalf("Status tier = %q; want isolated", view.Tier)
+			}
+		})
 	}
 }
 
@@ -164,7 +184,7 @@ func TestMCPStatusLastErrorMatchesTheHTTPStatusSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpEntries, err := (&githubStatus{repos: repos, store: store}).report(t.Context())
+	httpEntries, err := (&githubStatus{repos: repos, store: store}).report(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

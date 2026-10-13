@@ -83,6 +83,7 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 	vars := serveVars(t, databaseURL)
 	githubVars(t, vars, fake)
 	mcpServeVars(vars)
+	vars["SUITEWARD_INSTALLATION_TIER"] = "isolated"
 	s := startRun(t, vars)
 	s.waitReady()
 	fake.gate <- struct{}{} // the tick that runs at start
@@ -104,7 +105,8 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 
 	_, text := callMCP(t, session, "status", nil)
 	var view struct {
-		GitHubConfigured bool `json:"githubConfigured"`
+		Tier             string `json:"tier"`
+		GitHubConfigured bool   `json:"githubConfigured"`
 		Repositories     []struct {
 			Repo        string `json:"repo"`
 			LastSuccess string `json:"lastSuccess"`
@@ -119,6 +121,9 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(text), &view); err != nil {
 		t.Fatalf("status text is not JSON: %v\n%s", err, text)
+	}
+	if view.Tier != "isolated" {
+		t.Fatalf("status = %s; want the configured tier isolated", text)
 	}
 	if !view.GitHubConfigured || len(view.Repositories) != 1 {
 		t.Fatalf("status = %s; want GitHub configured with one repository", text)

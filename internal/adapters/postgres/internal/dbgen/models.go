@@ -102,6 +102,14 @@ type GithubCommentVersion struct {
 	NotSeenSince pgtype.Timestamptz
 }
 
+type GithubProtectionResult struct {
+	RepositoryID int64
+	Result       string
+	Findings     []string
+	Caveats      []string
+	CheckedAt    pgtype.Timestamptz
+}
+
 type GithubPull struct {
 	Repo         string
 	Number       int32
@@ -145,6 +153,25 @@ type Outbox struct {
 	LastError     pgtype.Text
 	CreatedAt     pgtype.Timestamptz
 	FinishedAt    pgtype.Timestamptz
+}
+
+type OwnerEnrollment struct {
+	Singleton        bool
+	Generation       int64
+	AccountID        int64
+	Login            string
+	Secret           []byte
+	Tier             string
+	PolicyRevisionID string
+	EnrolledAt       pgtype.Timestamptz
+}
+
+type OwnerTestCheck struct {
+	RepositoryID     int64
+	PolicyRevisionID string
+	ProjectID        string
+	Repo             string
+	TestCheck        string
 }
 
 type Policy struct {
@@ -254,4 +281,10 @@ type SuiteVersion struct {
 	VersionID      string
 	ManifestDigest string
 	Manifest       []byte
+}
+
+type TotpConsumedStep struct {
+	AccountID  int64
+	Step       int64
+	ConsumedAt pgtype.Timestamptz
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
@@ -27,10 +28,11 @@ const (
 
 // repositoryStatus is one entry of the github section of /status.
 type repositoryStatus struct {
-	Repo        string `json:"repo"`
-	LastSuccess string `json:"lastSuccess,omitempty"`
-	LastError   string `json:"lastError,omitempty"` // the classification and status, never text GitHub sent
-	WaitUntil   string `json:"waitUntil,omitempty"`
+	Repo        string            `json:"repo"`
+	LastSuccess string            `json:"lastSuccess,omitempty"`
+	LastError   string            `json:"lastError,omitempty"` // the classification and status, never text GitHub sent
+	WaitUntil   string            `json:"waitUntil,omitempty"`
+	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
 }
 
 // repositoryReader is the part of the observation store /status reads.
@@ -42,11 +44,12 @@ type repositoryReader interface {
 type githubStatus struct {
 	repos []string
 	store repositoryReader
+	ids   *repositoryIDs // learned by the protection check
 }
 
 // report returns one entry per configured repository, in configuration order;
 // a repository that has no cycle yet has only its name.
-func (g *githubStatus) report(ctx context.Context) ([]repositoryStatus, error) {
+func (g *githubStatus) report(ctx context.Context, protections map[string]owner.ProtectionResult) ([]repositoryStatus, error) {
 	entries := make([]repositoryStatus, 0, len(g.repos))
 	for _, repo := range g.repos {
 		state, _, err := g.store.Repository(ctx, repo)
@@ -58,6 +61,11 @@ func (g *githubStatus) report(ctx context.Context) ([]repositoryStatus, error) {
 			entry.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
 		}
 		entry.LastError = lastErrorText(state)
+		if result, verified := protections[repo]; verified {
+			entry.Protection = &protectionStatus{
+				Result: result.Result, Findings: result.Findings, Caveats: result.Caveats, CheckedAt: result.CheckedAt.UTC().Format(time.RFC3339),
+			}
+		}
 		if !state.WaitUntil.IsZero() {
 			entry.WaitUntil = state.WaitUntil.UTC().Format(time.RFC3339)
 		}
@@ -80,31 +88,52 @@ func lastErrorText(state githubsync.RepositoryState) string {
 // githubSync is the GitHub side of the service, composed only when the GitHub settings are set.
 type githubSync struct {
 	reconciler *githubsync.Reconciler
+	readers    setupReaders // shared with the protection check: one budget for every token
+	appID      int64
 	repos      []string
 	jobTimeout time.Duration
 }
 
-// composeGitHub builds the App installation, the REST client with the
-// process-wide budget and the reader of the GitHub settings, and the
-// reconciler over store. Synchronization is read-only: the token requests the
-// metadata, pull requests and contents permissions at read level.
-func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+// The permission maps of the installation tokens (D-GITHUB-ACCESS): each use
+// requests the narrowest one. appauth copies the map it is given.
+var (
+	// syncPermissions is the read-only map of synchronization.
+	syncPermissions = map[string]string{"metadata": "read", "pull_requests": "read", "contents": "read"}
+	// protectionPermissions is the map of protection verification.
+	protectionPermissions = map[string]string{"metadata": "read", "administration": "read"}
+)
+
+// githubAccess is what every token of the GitHub settings shares: the App, the
+// repository names, the HTTP client and the one process-wide budget.
+type githubAccess struct {
+	settings   config.GitHub
+	app        appauth.App
+	names      []string
+	httpClient *http.Client
+	budget     *rest.Budget
+}
+
+func newGitHubAccess(g config.GitHub) (githubAccess, error) {
 	app, err := appauth.NewApp(g.AppID, []byte(g.AppKey.Reveal()), time.Now)
 	if err != nil {
-		return nil, fmt.Errorf("compose the GitHub App: %w", err)
+		return githubAccess{}, fmt.Errorf("compose the GitHub App: %w", err)
 	}
 	names := make([]string, len(g.Repositories))
 	for i, repo := range g.Repositories {
 		_, names[i], _ = strings.Cut(repo, "/") // the settings guarantee owner/name; the installation takes the name only
 	}
-	httpClient := &http.Client{Timeout: githubTimeout}
-	installation, err := app.Installation(g.InstallationID, names, map[string]string{"metadata": "read", "pull_requests": "read", "contents": "read"}, httpClient, g.APIURL)
-	if err != nil {
-		return nil, fmt.Errorf("compose the GitHub installation: %w", err)
-	}
 	budget, err := rest.NewBudget(githubBudget, time.Now)
 	if err != nil {
-		return nil, fmt.Errorf("compose the GitHub budget: %w", err)
+		return githubAccess{}, fmt.Errorf("compose the GitHub budget: %w", err)
+	}
+	return githubAccess{settings: g, app: app, names: names, httpClient: &http.Client{Timeout: githubTimeout}, budget: budget}, nil
+}
+
+// reader builds the reader of a token narrowed to permissions.
+func (a githubAccess) reader(permissions map[string]string) (*github.Reader, error) {
+	installation, err := a.app.Installation(a.settings.InstallationID, a.names, permissions, a.httpClient, a.settings.APIURL)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub installation: %w", err)
 	}
 	client, err := rest.NewClient(func(ctx context.Context) (value, identity string, err error) {
 		token, err := installation.Token(ctx)
@@ -112,7 +141,7 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 			return "", "", err
 		}
 		return token.Reveal(), token.Identity(), nil
-	}, httpClient, g.APIURL, budget)
+	}, a.httpClient, a.settings.APIURL, a.budget)
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub client: %w", err)
 	}
@@ -120,11 +149,24 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
-	reconciler, err := githubsync.NewReconciler(githubReader{reader}, store, time.Now, g.InstallationID)
+	return reader, nil
+}
+
+// composeGitHub builds the App installation, the REST clients with the
+// process-wide budget and the readers of the GitHub settings, and the
+// reconciler over store. Synchronization is read-only: the token requests the
+// metadata, pull requests and contents permissions at read level; the
+// protection check uses the other reader (Metadata and Administration read).
+func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+	readers, err := composeSetupReaders(g) // one access, so one budget, for the synchronization and the protection check
+	if err != nil {
+		return nil, err
+	}
+	reconciler, err := githubsync.NewReconciler(githubReader{readers.read}, store, time.Now, g.InstallationID)
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout}, nil
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, appID: g.AppID}, nil
 }
 
 // tick is the github_sync_tick job: one cycle of every configured repository.
@@ -181,7 +223,10 @@ func (r githubReader) PullComments(ctx context.Context, repo string, number int)
 // one and the time to wait for a rate limit or an exhausted budget, never text
 // GitHub sent. An error that matches nothing known (a network failure, an
 // unreadable body, a malformed token answer) is a transport failure.
-func classifyReadError(err error) error {
+func classifyReadError(err error) error { return readFailure(err) }
+
+// readFailure is the classification of classifyReadError as its concrete type.
+func readFailure(err error) *githubsync.ReadError {
 	var (
 		limited   *rest.RateLimitedError
 		exhausted *rest.BudgetExhaustedError

@@ -26,7 +26,8 @@ case $url in
 	esac ;;
 */status)
 	[ -e "$FAKE_DIR/restarted" ] && FAKE_FAILED=${FAKE_FAILED_AFTER_RESTART:-${FAKE_FAILED:-0}}
-	# FAKE_GITHUB: ok (default), late (succeeds from the third /status on), pending, error, absent, empty.
+	# FAKE_GITHUB: ok (default), late (succeeds from the third /status on), pending, error, absent, empty, and nested,
+	# nested-pending, nested-error: the same with the protection object (arrays inside) that each entry carries.
 	echo x >> "$FAKE_DIR/status-calls"
 	github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b","lastSuccess":"2026-10-11T12:00:01Z"}]'
 	case ${FAKE_GITHUB:-ok} in
@@ -34,11 +35,30 @@ case $url in
 	pending) github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b"}]' ;;
 	error) github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b","lastError":"not_found (HTTP 404)"}]' ;;
 	empty) github=',"github":[]' ;;
+	nested*)
+		first='{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z","protection":{"result":"findings","findings":["missing-test-check"],"caveats":["ruleset-bypass-unverified"],"checkedAt":"2026-10-11T12:00:00Z"}}'
+		prot='"protection":{"result":"findings","findings":["missing-test-check","unprotected-main"],"caveats":["ruleset-bypass-unverified"],"checkedAt":"2026-10-11T12:00:01Z"}'
+		case $FAKE_GITHUB in
+		nested) second="{\"repo\":\"acme/b\",\"lastSuccess\":\"2026-10-11T12:00:01Z\",$prot}" ;;
+		nested-pending) second="{\"repo\":\"acme/b\",$prot}" ;;
+		nested-error) second="{\"repo\":\"acme/b\",\"lastError\":\"not_found (HTTP 404)\",$prot}" ;;
+		esac
+		github=",\"github\":[$first,$second]" ;;
+	strings*)
+		# Closers (more than the nesting is deep, after an escaped quote), openers and an escaped backslash inside a string must not move the walker.
+		first='{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z","protection":{"result":"findings","caveats":["a \"]]]}}} b [{ c \\ d \\"],"checkedAt":"2026-10-11T12:00:00Z"}}'
+		second='{"repo":"acme/b","lastSuccess":"2026-10-11T12:00:01Z"}'
+		[ "$FAKE_GITHUB" = strings-error ] && second='{"repo":"acme/b","lastError":"not_found (HTTP 404)"}'
+		github=",\"github\":[$first,$second]" ;;
 	absent) github= ;;
 	esac
 	version='"version":"test",'
 	[ "${FAKE_NO_VERSION:-}" = 1 ] && version=
-	echo "{${version}\"schemaVersion\":7,\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}${github}}" ;;
+	# FAKE_TIER: co-located (default), isolated, absent, or any other text. tierNote is a decoy: only the "tier" key counts.
+	tier=",\"tier\":\"${FAKE_TIER:-co-located}\",\"tierNote\":\"re-run setup\""
+	[ "${FAKE_TIER:-}" = absent ] && tier=",\"tierNote\":\"re-run setup\""
+	# printf, not echo: dash's echo would turn the escaped backslashes of the strings case into a lone \ before ".
+	printf '%s\n' "{${version}\"schemaVersion\":7${tier},\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}${github}}" ;;
 *) exit 22 ;;
 esac
 EOF
@@ -113,6 +133,23 @@ expect_fail "github never succeeds" "FAIL github: no lastSuccess for 1 of 2 repo
 run FAKE_GITHUB=error SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
 expect_fail "github reports an error" "FAIL github: acme/b has lastError"
 
+# Each entry carries a protection object with arrays of its own: the array of repositories must not end at the first ].
+run FAKE_GITHUB=nested sh "$smoke"
+expect_ok "github with nested protection objects" "github: ok, elapsed [0-9]* ms, 2 repositories synchronized"
+
+run FAKE_GITHUB=nested-error SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
+expect_fail "github error on a later repository with nested protection" "FAIL github: acme/b has lastError: not_found (HTTP 404)"
+
+run FAKE_GITHUB=nested-pending SMOKE_GITHUB_TIMEOUT=1 sh "$smoke"
+expect_fail "github pending on a later repository with nested protection" "FAIL github: no lastSuccess for 1 of 2 repositories within 1s"
+
+# Brackets, braces, \" and \\ inside a string (a caveat text) must not end or deepen the walk.
+run FAKE_GITHUB=strings sh "$smoke"
+expect_ok "github with brackets and escapes inside strings" "github: ok, elapsed [0-9]* ms, 2 repositories synchronized"
+
+run FAKE_GITHUB=strings-error SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
+expect_fail "github error after brackets and escapes inside strings" "FAIL github: acme/b has lastError: not_found (HTTP 404)"
+
 run FAKE_GITHUB=absent sh "$smoke"
 expect_fail "status has no github section" "FAIL github: no github section"
 
@@ -139,6 +176,21 @@ expect_fail "expected version differs" "FAIL status: version test, want sha-abc"
 
 run FAKE_NO_VERSION=1 sh "$smoke"
 expect_fail "status without a version" "FAIL status: no version"
+
+run sh "$smoke"
+expect_ok "tier reported" "tier: ok, elapsed [0-9]* ms, co-located"
+
+run FAKE_TIER=isolated SMOKE_TIER=isolated sh "$smoke"
+expect_ok "tier matches the expected one" "tier: ok, elapsed [0-9]* ms, isolated"
+
+run FAKE_TIER=co-located SMOKE_TIER=isolated sh "$smoke"
+expect_fail "tier differs from the expected one" "FAIL tier: co-located, want isolated"
+
+run FAKE_TIER=absent sh "$smoke"
+expect_fail "status without a tier" "FAIL tier: no tier"
+
+run FAKE_TIER=bogus sh "$smoke"
+expect_fail "tier is neither isolated nor co-located" "FAIL tier: bogus, want isolated or co-located"
 
 run FAKE_DISCARDED=2 sh "$smoke"
 expect_fail "discarded jobs" "FAIL status"

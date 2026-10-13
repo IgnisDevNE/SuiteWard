@@ -47,6 +47,15 @@ func (Secret) GoString() string { return redacted }
 // MarshalText hides the value from JSON and slog encoders.
 func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
+// Tier is the declared installation tier (D-TIER): never detected.
+type Tier string
+
+// The two installation tiers.
+const (
+	TierIsolated  Tier = "isolated"
+	TierCoLocated Tier = "co-located"
+)
+
 // Config holds every validated setting.
 type Config struct {
 	DatabaseURL        Secret
@@ -60,6 +69,7 @@ type Config struct {
 	OutboxMaxAttempts  int
 	OutboxPollInterval time.Duration
 	OutboxLease        time.Duration
+	Tier               Tier
 	// GitHub is nil when the synchronization settings are not configured.
 	GitHub *GitHub
 	// MCP is nil when MCP_TOKEN is unset: no local MCP listener.
@@ -123,6 +133,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	c.OutboxMaxAttempts = number(l, "OUTBOX_MAX_ATTEMPTS", "8", 1, 25, strconv.Atoi)
 	c.OutboxPollInterval = number(l, "OUTBOX_POLL_INTERVAL", "5s", time.Second, time.Hour, time.ParseDuration)
 	c.OutboxLease = number(l, "OUTBOX_LEASE", "1m", 5*time.Second, 0, time.ParseDuration)
+	c.Tier = l.tier("INSTALLATION_TIER")
 	c.GitHub = l.github()
 	c.MCP = l.mcp(c.HTTPAddr)
 
@@ -335,6 +346,17 @@ func (l *loader) repositories(name, value string) []string {
 		}
 	}
 	return items
+}
+
+// tier reads the declared installation tier: exactly isolated or co-located, default co-located.
+func (l *loader) tier(name string) Tier {
+	switch v := Tier(l.optional(name, string(TierCoLocated))); v {
+	case TierIsolated, TierCoLocated:
+		return v
+	default:
+		l.fail(name, fmt.Errorf("%q is not one of %s, %s", v, TierIsolated, TierCoLocated))
+		return TierCoLocated
+	}
 }
 
 func (l *loader) logLevel(name, def string) slog.Level {

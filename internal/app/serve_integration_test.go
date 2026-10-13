@@ -72,6 +72,22 @@ func TestServeMigratesAFreshDatabaseAndReports(t *testing.T) {
 	}
 }
 
+func TestServeReportsTheConfiguredTier(t *testing.T) {
+	for _, test := range []struct{ setting, want string }{{"", "co-located"}, {"isolated", "isolated"}} {
+		t.Run(test.want, func(t *testing.T) {
+			vars := serveVars(t, newDatabase(t))
+			if test.setting != "" {
+				vars["SUITEWARD_INSTALLATION_TIER"] = test.setting
+			}
+			s := startRun(t, vars)
+			s.waitReady()
+			if got := s.status()["tier"]; got != test.want {
+				t.Fatalf("GET /status tier = %v; want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestServeWarnsAboutUnrecognizedSettings(t *testing.T) {
 	vars := serveVars(t, newDatabase(t))
 	vars["SUITEWARD_HTTP_ADRESS"] = "typo"
@@ -442,7 +458,7 @@ func TestReadinessTurnsUnavailableBeforeTheServerDrains(t *testing.T) {
 	if err := runtime.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{store: store, logger: logger}
+	a := &api{store: store, owners: store, logger: logger}
 	srv := &http.Server{Handler: newRouter(a)}
 	// Server.Shutdown starts each hook in its own goroutine and does not wait for it, so the hook reports on a channel.
 	readyWhenDraining := make(chan bool, 1)

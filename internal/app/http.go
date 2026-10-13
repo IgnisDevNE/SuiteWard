@@ -35,6 +35,8 @@ type store interface {
 type api struct {
 	store    store
 	logger   *slog.Logger
+	tier     string // the configured installation tier
+	owners   ownerReader
 	github   *githubStatus // nil when the GitHub settings are not set
 	stopping atomic.Bool   // set when shutdown begins: readiness turns 503 first
 }
@@ -79,12 +81,29 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		a.storeFailed(w, r, err)
 		return
 	}
+	enrollment, enrolled, err := a.owners.Current(ctx)
+	if err != nil {
+		a.storeFailed(w, r, err)
+		return
+	}
+	tier, note := effectiveTier(a.tier, enrollment, enrolled)
 	body := map[string]any{
-		"version": Version, "schemaVersion": version,
+		"version": Version, "schemaVersion": version, "tier": tier,
 		"jobs": perState(jobStates, counts.Jobs), "outbox": perState(outboxStates, counts.Outbox),
 	}
+	if note != "" {
+		body["tierNote"] = note
+	}
+	if enrolled {
+		body["owner"] = map[string]any{"login": enrollment.Owner.Login, "accountId": enrollment.Owner.AccountID, "enrolledAt": enrollment.EnrolledAt.UTC().Format(time.RFC3339)}
+	}
 	if a.github != nil {
-		if body["github"], err = a.github.report(ctx); err != nil {
+		protections, err := storedProtection(ctx, a.owners, a.github.ids, a.github.repos)
+		if err != nil {
+			a.storeFailed(w, r, err)
+			return
+		}
+		if body["github"], err = a.github.report(ctx, protections); err != nil {
 			a.storeFailed(w, r, err)
 			return
 		}

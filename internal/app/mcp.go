@@ -32,17 +32,32 @@ type mcpBackend struct {
 	now      func() time.Time
 	timeout  time.Duration
 	logger   *slog.Logger
+	tier     string // the configured installation tier
+	owners   ownerReader
+	ids      *repositoryIDs // learned by the protection check; nil without the GitHub settings
 }
 
 // Status reports the configured repositories in configuration order, each
 // with its open pulls. Comment bodies are never read.
 func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	enrollment, enrolled, err := b.owners.Current(ctx)
+	if err != nil {
+		return mcp.StatusView{}, b.failed(ctx, "read the owner", "", err)
+	}
 	view := mcp.StatusView{GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
+	view.Tier, view.TierNote = effectiveTier(b.tier, enrollment, enrolled)
+	if enrolled {
+		view.Owner = &mcp.OwnerStatus{Login: enrollment.Owner.Login, AccountID: enrollment.Owner.AccountID, EnrolledAt: enrollment.EnrolledAt.UTC()}
+	}
 	if !view.GitHubConfigured {
 		return view, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, b.timeout)
-	defer cancel()
+	protections, err := storedProtection(ctx, b.owners, b.ids, b.repos)
+	if err != nil {
+		return mcp.StatusView{}, b.failed(ctx, "read the protection results", "", err)
+	}
 	for _, repo := range b.repos {
 		state, _, err := b.store.Repository(ctx, repo)
 		if err != nil {
@@ -60,6 +75,9 @@ func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
 			if pull.NotOpenSince.IsZero() { // the closed ones stay in the store as evidence, not in the status
 				entry.Pulls = append(entry.Pulls, mcp.Pull{Number: pull.Number, HeadSHA: pull.HeadSHA, BaseRef: pull.BaseRef, UpdatedAt: pull.UpdatedAt.UTC()})
 			}
+		}
+		if result, verified := protections[repo]; verified {
+			entry.Protection = &mcp.ProtectionStatus{Result: result.Result, Findings: result.Findings, Caveats: result.Caveats, CheckedAt: result.CheckedAt.UTC()}
 		}
 		view.Repositories = append(view.Repositories, entry)
 	}
@@ -99,6 +117,9 @@ func (b *mcpBackend) RequestSync(ctx context.Context, repo string) (mcp.SyncResu
 // handler turns it into a fixed tool error that points to this log line.
 func (b *mcpBackend) failed(ctx context.Context, what, repo string, err error) error {
 	b.logger.ErrorContext(ctx, "mcp request failed", "action", what, "repo", repo, "error", err)
+	if repo == "" {
+		return fmt.Errorf("%s: %w", what, err)
+	}
 	return fmt.Errorf("%s of %s: %w", what, repo, err)
 }
 

@@ -199,6 +199,9 @@ func at(hour int) time.Time { return time.Date(2026, 10, 11, hour, 0, 0, 0, time
 func configuredBackend() *fakeBackend {
 	return &fakeBackend{
 		view: mcp.StatusView{
+			Tier:             "co-located",
+			TierNote:         "note",
+			Owner:            &mcp.OwnerStatus{Login: "octo", AccountID: 884695, EnrolledAt: at(6)},
 			GitHubConfigured: true,
 			Repositories: []mcp.RepositoryStatus{
 				{
@@ -334,7 +337,7 @@ func TestStatusReturnsTheBackendView(t *testing.T) {
 	t.Parallel()
 	cases := map[string]*fakeBackend{
 		"configured":     configuredBackend(),
-		"not configured": {view: mcp.StatusView{GitHubConfigured: false, Repositories: []mcp.RepositoryStatus{}}},
+		"not configured": {view: mcp.StatusView{Tier: "co-located", GitHubConfigured: false, Repositories: []mcp.RepositoryStatus{}}},
 	}
 	for name, backend := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -353,7 +356,7 @@ func TestStatusJSONUsesTheContractNames(t *testing.T) {
 	session := connect(t, newServer(t, configuredBackend(), nil))
 	text := resultText(t, callTool(t, session, "status", map[string]any{}))
 	for _, field := range []string{
-		`"githubConfigured":true`, `"repo":"acme/api"`, `"lastSuccess":"2026-10-11T09:00:00Z"`,
+		`"tier":"co-located"`, `"tierNote":"note"`, `"login":"octo"`, `"accountId":884695`, `"enrolledAt":"2026-10-11T06:00:00Z"`, `"githubConfigured":true`, `"repo":"acme/api"`, `"lastSuccess":"2026-10-11T09:00:00Z"`,
 		`"lastError":"rate limited"`, `"waitUntil":"2026-10-11T10:00:00Z"`, `"number":9`,
 		`"headSha":"` + strings.Repeat("b", 40) + `"`, `"baseRef":"release"`,
 		`"updatedAt":"2026-10-11T07:00:00Z"`, `"notOpenSince":"2026-10-11T09:00:00Z"`,
@@ -759,6 +762,17 @@ func TestTokenIsNeverLoggedOrReturned(t *testing.T) {
 			if strings.Contains(body, secret) {
 				t.Errorf("response carries %q: %s", secret, body)
 			}
+		}
+	}
+}
+
+func TestStatusOmitsTheOwnerAndTheNoteWhenThereIsNone(t *testing.T) {
+	t.Parallel()
+	backend := &fakeBackend{view: mcp.StatusView{Tier: "co-located", Repositories: []mcp.RepositoryStatus{}}}
+	text := resultText(t, callTool(t, connect(t, newServer(t, backend, nil)), "status", map[string]any{}))
+	for _, field := range []string{`"owner"`, `"tierNote"`} {
+		if strings.Contains(text, field) {
+			t.Errorf("status JSON has %s without an enrollment: %s", field, text)
 		}
 	}
 }

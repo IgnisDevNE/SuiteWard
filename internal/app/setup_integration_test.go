@@ -28,8 +28,12 @@ func (c *codeFromOutput) Read(p []byte) (int, error) {
 	if c.reads > 2 {
 		return 0, io.EOF
 	}
-	lines := strings.Split(c.out.String(), "\n")
-	if len(lines) < 2 {
+	// setup reads ahead, so the secret may not be printed yet: wait for it, as an owner would.
+	var lines []string
+	for deadline := time.Now().Add(30 * time.Second); len(lines) < 3 && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		lines = strings.Split(c.out.String(), "\n") // two lines and the empty rest after the last newline
+	}
+	if len(lines) < 3 {
 		return 0, io.ErrNoProgress
 	}
 	secret, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(lines[1])

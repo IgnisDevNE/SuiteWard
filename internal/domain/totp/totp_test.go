@@ -63,8 +63,28 @@ func TestCodeRejectsNegativeStep(t *testing.T) {
 	if _, err := totp.Code(rfcSecret, 0); err != nil {
 		t.Fatalf("Code(step 0) error = %v", err)
 	}
-	if code, err := totp.Code(rfcSecret, -1); err == nil {
-		t.Fatalf("Code(step -1) = %q, want an error", code)
+	if code, err := totp.Code(rfcSecret, -1); !errors.Is(err, totp.ErrInvalidStep) {
+		t.Fatalf("Code(step -1) = %q, %v, want ErrInvalidStep", code, err)
+	}
+}
+
+func TestVerifyNearTheEpoch(t *testing.T) {
+	code, err := totp.Code(rfcSecret, 0)
+	if err != nil {
+		t.Fatalf("Code(step 0) error = %v", err)
+	}
+	// At unix second 10 the window is steps -1 to 1; step -1 precedes the epoch
+	// and is skipped.
+	step, err := totp.Verify(rfcSecret, code, time.Unix(10, 0), 1)
+	if err != nil || step != 0 {
+		t.Fatalf("Verify near the epoch = %d, %v, want step 0", step, err)
+	}
+}
+
+func TestVerifyZeroTimeIsInvalidCode(t *testing.T) {
+	_, err := totp.Verify(rfcSecret, rfcCode, time.Time{}, 1)
+	if !errors.Is(err, totp.ErrInvalidCode) {
+		t.Fatalf("Verify(zero time) error = %v, want ErrInvalidCode", err)
 	}
 }
 
@@ -139,6 +159,8 @@ func TestVerifyRejectsMalformedCodes(t *testing.T) {
 		{name: "letter", code: "12a456"},
 		{name: "leading space", code: " 123456"},
 		{name: "fullwidth digit", code: "12345６"},
+		{name: "two fullwidth digits, 6 bytes", code: "１２"},
+		{name: "non-ASCII last byte, 6 bytes", code: "1234é"},
 		{name: "empty", code: ""},
 	}
 	for _, tt := range tests {

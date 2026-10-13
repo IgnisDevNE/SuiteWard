@@ -53,6 +53,9 @@ var ErrInvalidSecret = errors.New("totp: invalid secret")
 // tolerance window.
 var ErrInvalidCode = errors.New("totp: invalid code")
 
+// ErrInvalidStep reports a step before the Unix epoch, which has no code.
+var ErrInvalidStep = errors.New("totp: invalid step")
+
 // NewSecret reads a secret of exactly SecretBytes from r.
 func NewSecret(r io.Reader) ([]byte, error) {
 	secret := make([]byte, SecretBytes)

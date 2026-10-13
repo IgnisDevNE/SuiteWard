@@ -420,7 +420,7 @@ type ProjectPolicy struct {
 
 type Enrollment struct {
 	Owner      Owner
-	Secret     []byte          // the TOTP secret, exactly totp.SecretBytes
+	Secret     Secret          // the TOTP secret, exactly 20 bytes (totp.SecretBytes); Secret is a []byte that never renders
 	Projects   []ProjectPolicy // one per configured repository, distinct ids, at least one
 	Step       int64           // the TOTP step verified during setup; consumed in the same transaction
 	Tier       string          // "isolated" or "co-located": the INSTALLATION_TIER at enrollment
@@ -429,7 +429,7 @@ type Enrollment struct {
 
 type State struct {
 	Owner          Owner
-	Secret         []byte
+	Secret         Secret
 	Projects       []ProjectPolicy
 	Tier           string
 	PolicyRevision contract.PolicyRevisionID // the governing revision of every project, "setup-<n>"
@@ -476,7 +476,8 @@ Rules:
 - **One owner per instance.** `owner_enrollment` has at most one row; `Enroll` replaces it and the secret. Earlier policy revisions stay (policies are immutable); the new revision is the governing one for each project from then on, and pending consent bound to an earlier revision no longer matches (`contract.NewApprovalBinding` includes the policy revision).
 - **Consumed steps are never purged in the MVP.** A command is verified against its comment's `created_at` and may be processed long after (an outage, a wait, a restart catch-up), so a time-based purge could let a code be used twice; the rows are small.
 - **The secret is stored as bytes inside the instance** and is never logged, returned by `/status`, MCP or an error. Encryption at rest is not part of the MVP; the isolated tier keeps the database out of the agent's reach (ADR 0027).
-- **Protection results** are the latest per repository; they are status, not evidence, and are replaced on each verification.
+- **Protection results** are the latest per repository; they are status, not evidence, and are replaced on each verification. Findings and caveats are strictly increasing (sorted, no duplicates) and come back as empty, non-nil lists.
+- **Validation** also rejects a zero `EnrolledAt`, a zero `at` in `ConsumeStep` and a zero `CheckedAt` with `ErrInvalidState`. `Secret` redacts itself in every `fmt` verb, `encoding.TextMarshaler`, JSON and `slog`. The result, finding and caveat codes are the constants of `internal/application/protection`.
 
 Tables (`00012_owner.sql`): `owner_enrollment` (singleton key, generation, account_id, login, secret bytea of exactly 20 bytes, tier, policy_revision_id, enrolled_at), `owner_test_checks` (repository_id, project_id, repo, test_check, policy_revision_id; FK to `policies`), `totp_consumed_steps` ((account_id, step) primary key, consumed_at; insert-only, no delete), `github_protection_results` (repository_id primary key, result, findings text[], caveats text[], checked_at). Conformance names: enroll and read back; re-enroll replaces the secret, increments the generation and appends policy revisions; re-enroll with another owner while a project has a Suite is rejected; an invalid enrollment writes nothing; a used step is rejected by `Enroll` and by `ConsumeStep`; `ConsumeStep` without an owner; concurrent `ConsumeStep` of one step (exactly one wins, PostgreSQL); protection result replaced and listed.
 

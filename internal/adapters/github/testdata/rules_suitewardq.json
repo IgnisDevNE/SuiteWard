@@ -1,0 +1,27 @@
+[
+  {
+    "type": "deletion",
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "IgnisDevNE/SuiteWardQ",
+    "ruleset_id": 9120451
+  },
+  {
+    "type": "non_fast_forward",
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "IgnisDevNE/SuiteWardQ",
+    "ruleset_id": 9120451
+  },
+  {
+    "type": "required_status_checks",
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "IgnisDevNE/SuiteWardQ",
+    "ruleset_id": 9120451,
+    "parameters": {
+      "strict_required_status_checks_policy": true,
+      "do_not_enforce_on_create": false,
+      "required_status_checks": [
+        {"context": "SuiteWard Spike / Contract", "integration_id": 5257122}
+      ]
+    }
+  }
+]

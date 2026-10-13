@@ -43,9 +43,10 @@ type reply struct {
 	status int
 	body   []byte
 	etag   string
+	header map[string]string
 }
 
-type request struct{ uri, ifNoneMatch string }
+type request struct{ uri, ifNoneMatch, authorization string }
 
 // fakeGitHub serves fixed routes by request URI and fails the test on any
 // other request, so an unexpected page, query or blob read is caught.
@@ -60,7 +61,7 @@ type fakeGitHub struct {
 func (g *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.RequestURI()
 	g.mu.Lock()
-	g.seen = append(g.seen, request{uri: uri, ifNoneMatch: r.Header.Get("If-None-Match")})
+	g.seen = append(g.seen, request{uri: uri, ifNoneMatch: r.Header.Get("If-None-Match"), authorization: r.Header.Get("Authorization")})
 	g.mu.Unlock()
 	answer, found := g.routes[uri]
 	if !found {
@@ -76,6 +77,9 @@ func (g *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", answer.etag)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	for k, v := range answer.header {
+		w.Header().Set(k, v)
+	}
 	w.WriteHeader(cmp.Or(answer.status, http.StatusOK))
 	_, _ = w.Write(answer.body)
 }

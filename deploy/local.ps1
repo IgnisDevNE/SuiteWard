@@ -149,5 +149,5 @@ Invoke-Podman run --detach --replace --name suiteward --network suiteward --rest
 Write-Host "Started suiteward-db and suiteward ($Image), GitHub $($github ? 'configured' : 'not configured')."
 Write-Host 'The port is published inside the Podman machine and may not be reachable from this PC (it was not on the WSL machine this was tested on). Run the smoke test inside the machine:'
 Write-Host '  Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"'
-Write-Host 'Add SMOKE_VERSION=sha-<commit> before sh to also assert the version /status reports, and SMOKE_GITHUB=0 for a start without GitHub.'
+Write-Host 'Add SMOKE_TIER=co-located before sh to assert the tier, SMOKE_VERSION=sha-<commit> to also assert the version /status reports, and SMOKE_GITHUB=0 for a start without GitHub.'
 Write-Host "The MCP listener is on 127.0.0.1:8091 inside the machine; the token for a client is in $tokenFile (it is not printed)."

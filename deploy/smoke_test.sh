@@ -39,8 +39,8 @@ case $url in
 	version='"version":"test",'
 	[ "${FAKE_NO_VERSION:-}" = 1 ] && version=
 	# FAKE_TIER: co-located (default), isolated, absent, or any other text. tierNote is a decoy: only the "tier" key counts.
-	tier=",\"tier\":\"${FAKE_TIER:-co-located}\",\"tierNote\":\"tier\""
-	[ "${FAKE_TIER:-}" = absent ] && tier=
+	tier=",\"tier\":\"${FAKE_TIER:-co-located}\",\"tierNote\":\"re-run setup\""
+	[ "${FAKE_TIER:-}" = absent ] && tier=",\"tierNote\":\"re-run setup\""
 	echo "{${version}\"schemaVersion\":7${tier},\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}${github}}" ;;
 *) exit 22 ;;
 esac

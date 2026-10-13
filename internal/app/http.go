@@ -35,6 +35,7 @@ type store interface {
 type api struct {
 	store    store
 	logger   *slog.Logger
+	tier     string        // the configured installation tier
 	github   *githubStatus // nil when the GitHub settings are not set
 	stopping atomic.Bool   // set when shutdown begins: readiness turns 503 first
 }
@@ -80,7 +81,7 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := map[string]any{
-		"version": Version, "schemaVersion": version,
+		"version": Version, "schemaVersion": version, "tier": a.tier,
 		"jobs": perState(jobStates, counts.Jobs), "outbox": perState(outboxStates, counts.Outbox),
 	}
 	if a.github != nil {

@@ -72,6 +72,22 @@ func TestServeMigratesAFreshDatabaseAndReports(t *testing.T) {
 	}
 }
 
+func TestServeReportsTheConfiguredTier(t *testing.T) {
+	for _, test := range []struct{ setting, want string }{{"", "co-located"}, {"isolated", "isolated"}} {
+		t.Run(test.want, func(t *testing.T) {
+			vars := serveVars(t, newDatabase(t))
+			if test.setting != "" {
+				vars["SUITEWARD_INSTALLATION_TIER"] = test.setting
+			}
+			s := startRun(t, vars)
+			s.waitReady()
+			if got := s.status()["tier"]; got != test.want {
+				t.Fatalf("GET /status tier = %v; want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestServeWarnsAboutUnrecognizedSettings(t *testing.T) {
 	vars := serveVars(t, newDatabase(t))
 	vars["SUITEWARD_HTTP_ADRESS"] = "typo"

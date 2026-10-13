@@ -91,6 +91,25 @@ func TestMCPStatusWithoutGitHubSaysNotConfigured(t *testing.T) {
 	}
 }
 
+func TestMCPStatusReportsTheConfiguredTierWithAndWithoutGitHub(t *testing.T) {
+	for name, repos := range map[string][]string{"without GitHub": nil, "with GitHub": {"acme/ok"}} {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			b := testBackend(githubsynctest.NewMemory(), &fakeInserter{}, &logs, repos...)
+			b.tier = "isolated"
+
+			view, err := b.Status(t.Context())
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.Tier != "isolated" {
+				t.Fatalf("Status tier = %q; want isolated", view.Tier)
+			}
+		})
+	}
+}
+
 func TestMCPStatusReportsRepositoriesInConfigurationOrderWithOnlyOpenPulls(t *testing.T) {
 	store := githubsynctest.NewMemory()
 	recordCycle(t, store, "acme/second", 1, 2)

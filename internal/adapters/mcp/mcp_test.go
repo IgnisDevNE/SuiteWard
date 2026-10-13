@@ -199,6 +199,7 @@ func at(hour int) time.Time { return time.Date(2026, 10, 11, hour, 0, 0, 0, time
 func configuredBackend() *fakeBackend {
 	return &fakeBackend{
 		view: mcp.StatusView{
+			Tier:             "isolated",
 			GitHubConfigured: true,
 			Repositories: []mcp.RepositoryStatus{
 				{
@@ -334,7 +335,7 @@ func TestStatusReturnsTheBackendView(t *testing.T) {
 	t.Parallel()
 	cases := map[string]*fakeBackend{
 		"configured":     configuredBackend(),
-		"not configured": {view: mcp.StatusView{GitHubConfigured: false, Repositories: []mcp.RepositoryStatus{}}},
+		"not configured": {view: mcp.StatusView{Tier: "co-located", GitHubConfigured: false, Repositories: []mcp.RepositoryStatus{}}},
 	}
 	for name, backend := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -353,7 +354,7 @@ func TestStatusJSONUsesTheContractNames(t *testing.T) {
 	session := connect(t, newServer(t, configuredBackend(), nil))
 	text := resultText(t, callTool(t, session, "status", map[string]any{}))
 	for _, field := range []string{
-		`"githubConfigured":true`, `"repo":"acme/api"`, `"lastSuccess":"2026-10-11T09:00:00Z"`,
+		`"tier":"isolated"`, `"githubConfigured":true`, `"repo":"acme/api"`, `"lastSuccess":"2026-10-11T09:00:00Z"`,
 		`"lastError":"rate limited"`, `"waitUntil":"2026-10-11T10:00:00Z"`, `"number":9`,
 		`"headSha":"` + strings.Repeat("b", 40) + `"`, `"baseRef":"release"`,
 		`"updatedAt":"2026-10-11T07:00:00Z"`, `"notOpenSince":"2026-10-11T09:00:00Z"`,

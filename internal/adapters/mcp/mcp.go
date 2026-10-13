@@ -61,9 +61,10 @@ type Backend interface {
 	RequestSync(ctx context.Context, repo string) (SyncResult, error)
 }
 
-// StatusView is what SuiteWard observed. Without GitHub settings
-// GitHubConfigured is false and Repositories is empty.
+// StatusView is what SuiteWard observed: the configured installation Tier
+// and, without GitHub settings, GitHubConfigured false and no Repositories.
 type StatusView struct {
+	Tier             string             `json:"tier"`
 	GitHubConfigured bool               `json:"githubConfigured"`
 	Repositories     []RepositoryStatus `json:"repositories"`
 }

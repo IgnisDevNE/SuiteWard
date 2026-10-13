@@ -83,6 +83,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		OutboxMaxAttempts:  8,
 		OutboxPollInterval: 5 * time.Second,
 		OutboxLease:        time.Minute,
+		Tier:               TierCoLocated,
 	}
 	if cfg != want {
 		t.Fatalf("Config = %+v, want %+v", cfg, want)
@@ -101,6 +102,7 @@ func TestLoadReadsEverySetting(t *testing.T) {
 		"SUITEWARD_OUTBOX_MAX_ATTEMPTS":  "12",
 		"SUITEWARD_OUTBOX_POLL_INTERVAL": "10s",
 		"SUITEWARD_OUTBOX_LEASE":         "90s",
+		"SUITEWARD_INSTALLATION_TIER":    "isolated",
 	} {
 		vars[k] = v
 	}
@@ -120,9 +122,38 @@ func TestLoadReadsEverySetting(t *testing.T) {
 		OutboxMaxAttempts:  12,
 		OutboxPollInterval: 10 * time.Second,
 		OutboxLease:        90 * time.Second,
+		Tier:               TierIsolated,
 	}
 	if cfg != want {
 		t.Fatalf("Config = %+v, want %+v", cfg, want)
+	}
+}
+
+func TestLoadInstallationTier(t *testing.T) {
+	for _, test := range []struct {
+		value   string
+		want    Tier
+		invalid bool
+	}{
+		{value: "isolated", want: TierIsolated},
+		{value: "co-located", want: TierCoLocated},
+		{value: "Isolated", invalid: true},
+		{value: "CO-LOCATED", invalid: true},
+		{value: " isolated", invalid: true},
+		{value: "colocated", invalid: true},
+		{value: "remote", invalid: true},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			vars := required(t)
+			vars["SUITEWARD_INSTALLATION_TIER"] = test.value
+			cfg, _, err := fakeEnv{vars: vars}.load()
+			switch {
+			case test.invalid && (err == nil || !strings.Contains(err.Error(), "SUITEWARD_INSTALLATION_TIER")):
+				t.Fatalf("Load(%q) error = %v; want one naming SUITEWARD_INSTALLATION_TIER", test.value, err)
+			case !test.invalid && (err != nil || cfg.Tier != test.want):
+				t.Fatalf("Load(%q) = tier %q, error %v; want tier %q", test.value, cfg.Tier, err, test.want)
+			}
+		})
 	}
 }
 
@@ -173,6 +204,7 @@ func TestLoadReportsAllInvalidValuesAndNeverTheSecret(t *testing.T) {
 		"SUITEWARD_OUTBOX_MAX_ATTEMPTS":  "many",
 		"SUITEWARD_OUTBOX_POLL_INTERVAL": "2h",
 		"SUITEWARD_OUTBOX_LEASE":         "1s",
+		"SUITEWARD_INSTALLATION_TIER":    "Isolated",
 	}
 	_, _, err := fakeEnv{vars: cases}.load()
 	if err == nil {
@@ -299,12 +331,13 @@ func TestLoadRejectsBothSecretForms(t *testing.T) {
 func TestLoadRejectsFileFormForNonSecretSettings(t *testing.T) {
 	vars := required(t)
 	vars["SUITEWARD_LOG_LEVEL_FILE"] = "/level"
+	vars["SUITEWARD_INSTALLATION_TIER_FILE"] = "/tier"
 	vars["SUITEWARD_ARTIFACT_DIR_FILE"] = "/dir"
 	_, warnings, err := fakeEnv{vars: vars, files: map[string]string{"/dir": absDir(t)}}.load()
 	if err == nil {
 		t.Fatal("_FILE form of a non-secret setting was accepted")
 	}
-	for _, name := range []string{"SUITEWARD_ARTIFACT_DIR_FILE", "SUITEWARD_LOG_LEVEL_FILE"} {
+	for _, name := range []string{"SUITEWARD_ARTIFACT_DIR_FILE", "SUITEWARD_INSTALLATION_TIER_FILE", "SUITEWARD_LOG_LEVEL_FILE"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error does not name %s: %v", name, err)
 		}

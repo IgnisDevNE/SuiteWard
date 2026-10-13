@@ -32,12 +32,13 @@ type mcpBackend struct {
 	now      func() time.Time
 	timeout  time.Duration
 	logger   *slog.Logger
+	tier     string
 }
 
 // Status reports the configured repositories in configuration order, each
 // with its open pulls. Comment bodies are never read.
 func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
-	view := mcp.StatusView{GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
+	view := mcp.StatusView{Tier: b.tier, GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
 	if !view.GitHubConfigured {
 		return view, nil
 	}

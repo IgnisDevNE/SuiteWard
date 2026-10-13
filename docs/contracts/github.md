@@ -84,7 +84,7 @@ func NewBudget(fraction float64, clock func() time.Time) (*Budget, error) // D-S
 
 ## Configuration (interim, M1.4)
 
-Settings added to the runtime contract: `GITHUB_APP_ID`, `GITHUB_APP_KEY` (secret, `_FILE` form expected), `GITHUB_INSTALLATION_ID`, `GITHUB_REPOSITORIES` (comma-separated `owner/name`, at most 20), `GITHUB_API_URL` (default `https://api.github.com`). These are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide. SuiteWard does not discover installations (`GET /app/installations`) and does not trust whatever installed the App.
+Settings added to the runtime contract: `GITHUB_APP_ID`, `GITHUB_APP_KEY` (secret, `_FILE` form expected), `GITHUB_INSTALLATION_ID`, `GITHUB_REPOSITORIES` (comma-separated `owner/name`, at most 20), `GITHUB_API_URL` (default `https://api.github.com`). Under D-IDENTITY (M1.5) the operator-configured installation is the trusted one; `setup` confirms that it covers every configured repository. SuiteWard does not discover installations (`GET /app/installations`) and does not trust whatever installed the App.
 
 ## M1.5: owner lookup and protection reads (normative)
 
@@ -92,8 +92,8 @@ Measured 2026-10-13 by `TestLiveProtectionReads` (`-tags=live`) on the S1 test r
 
 - **Owner lookup** (`Reader.User(ctx, login) (User, error)`, synchronization token): `GET /users/{login}` returns `User{ID int64, Login string, Type string}`. Setup accepts only `Type == "User"` (an `Organization` or `Bot` is an error) and stores the numeric id; the login is display only.
 - **Repository** (`Reader.Repository(ctx, repo) (Repository, error)`, synchronization token): `GET /repos/{r}` returns `Repository{ID int64, FullName string, Private bool, DefaultBranch string}`. The numeric id is the project identity (D-IDENTITY).
-- **Protection** (`Reader.Protection(ctx, repo, branch) (Protection, error)`, protection token): the effective rules (`GET /repos/{r}/rules/branches/{branch}`), every ruleset they name (`GET /repos/{r}/rulesets/{id}`) and the classic protection (`GET /repos/{r}/branches/{branch}/protection`), returned as typed facts, not a verdict:
-  - `Rules`: per `required_status_checks` rule, the ruleset id and that ruleset's enforcement (`active`, `evaluate`, `disabled`), each required check's context and integration id (absent is 0), and the strict flag;
+- **Protection** (`Reader.Protection(ctx, repo, branch) (Protection, error)`, protection token): the effective rules (`GET /repos/{r}/rules/branches/{branch}`, which GitHub limits to active rulesets at repository and organization level) and the classic protection (`GET /repos/{r}/branches/{branch}/protection`), returned as typed facts, not a verdict:
+  - `Rules`: per `required_status_checks` rule, its ruleset id, each required check's context and integration id (absent is 0), and the strict flag; `FromRuleset` is true when any rule came from a ruleset;
   - `Classic`: `Absent` (404), `Unreadable` (403), or present with each required check's context and app id, the strict flag and `enforce_admins`;
   - `RulesForbidden`: the effective rules answered 403 (the private-repository-on-Free case of D-PROTECTION).
 

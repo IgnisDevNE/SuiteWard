@@ -423,14 +423,17 @@ type Enrollment struct {
 	Secret     []byte          // the TOTP secret, exactly totp.SecretBytes
 	Projects   []ProjectPolicy // one per configured repository, distinct ids, at least one
 	Step       int64           // the TOTP step verified during setup; consumed in the same transaction
+	Tier       string          // "isolated" or "co-located": the INSTALLATION_TIER at enrollment
 	EnrolledAt time.Time
 }
 
 type State struct {
-	Owner      Owner
-	Secret     []byte
-	Projects   []ProjectPolicy
-	EnrolledAt time.Time
+	Owner          Owner
+	Secret         []byte
+	Projects       []ProjectPolicy
+	Tier           string
+	PolicyRevision contract.PolicyRevisionID // the governing revision of every project, "setup-<n>"
+	EnrolledAt     time.Time
 }
 
 type ProtectionResult struct {
@@ -449,14 +452,17 @@ var (
 
 type Store interface {
 	// Enroll replaces the owner and the secret and appends, per project, a policy revision owned by
-	// contract.PrincipalID("github:<AccountID>") of kind Human with revision id "setup:<EnrolledAt RFC 3339 nano>",
-	// records each project's test check, and consumes Step for the new owner, in one transaction.
-	// An invalid enrollment is ErrInvalidState and writes nothing; a used Step is ErrStepUsed and writes nothing.
+	// contract.PrincipalID("github:<AccountID>") of kind Human with revision id "setup-<n>" (n is the enrollment
+	// generation: 1, then previous+1), records each project's test check and the tier, points the enrollment at the
+	// new revision, and consumes Step for the new owner, in one transaction. An invalid enrollment, or a project
+	// that already has a Suite while the owner changes, is ErrInvalidState and writes nothing; a used Step is
+	// ErrStepUsed and writes nothing.
 	Enroll(ctx context.Context, e Enrollment) error
 	// Current returns the enrolled state, or found false before setup.
 	Current(ctx context.Context) (State, bool, error)
 	// ConsumeStep records that the owner used the TOTP step: ErrStepUsed if it was used before (global single use
-	// per owner and step, across all commands, ADR 0027), ErrNotEnrolled without an owner.
+	// per owner and step, across all commands, ADR 0027), ErrNotEnrolled without an owner or when accountID is not
+	// the enrolled owner.
 	ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time) error
 	// RecordProtection stores the latest result of one repository, replacing the previous one.
 	RecordProtection(ctx context.Context, r ProtectionResult) error
@@ -472,7 +478,7 @@ Rules:
 - **The secret is stored as bytes inside the instance** and is never logged, returned by `/status`, MCP or an error. Encryption at rest is not part of the MVP; the isolated tier keeps the database out of the agent's reach (ADR 0027).
 - **Protection results** are the latest per repository; they are status, not evidence, and are replaced on each verification.
 
-Tables (`00012_owner.sql`): `owner_enrollment` (singleton key, account_id, login, secret bytea of exactly 20 bytes, enrolled_at), `owner_test_checks` (repository_id, project_id, repo, test_check, policy_revision_id; FK to `policies`), `totp_consumed_steps` ((account_id, step) primary key, consumed_at; insert-only, no delete), `github_protection_results` (repository_id primary key, result, findings text[], caveats text[], checked_at). Conformance names: enroll and read back; re-enroll replaces the secret and appends policy revisions; an invalid enrollment writes nothing; a used step is rejected by `Enroll` and by `ConsumeStep`; `ConsumeStep` without an owner; concurrent `ConsumeStep` of one step (exactly one wins, PostgreSQL); protection result replaced and listed.
+Tables (`00012_owner.sql`): `owner_enrollment` (singleton key, generation, account_id, login, secret bytea of exactly 20 bytes, tier, policy_revision_id, enrolled_at), `owner_test_checks` (repository_id, project_id, repo, test_check, policy_revision_id; FK to `policies`), `totp_consumed_steps` ((account_id, step) primary key, consumed_at; insert-only, no delete), `github_protection_results` (repository_id primary key, result, findings text[], caveats text[], checked_at). Conformance names: enroll and read back; re-enroll replaces the secret, increments the generation and appends policy revisions; re-enroll with another owner while a project has a Suite is rejected; an invalid enrollment writes nothing; a used step is rejected by `Enroll` and by `ConsumeStep`; `ConsumeStep` without an owner; concurrent `ConsumeStep` of one step (exactly one wins, PostgreSQL); protection result replaced and listed.
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
@@ -507,7 +513,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `outbox` (M1.2) | key (global) | immutable except delivery state: `state` (`pending`, `delivered`, `failed`), `attempts`, `next_attempt_at`, `last_error`, `finished_at`; terminal states never change; no delete | project_id, suite_id, kind, payload jsonb, created_at |
 | `github_repositories` (M1.4) | repo (`owner/name`) | observation state; the row is the per-repository lock of a cycle | installation_id, last_success, last_error (enumerated `FailureKind`), last_status, wait_until |
 | `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since |
-| `owner_enrollment` (M1.5) | singleton | replaced by `setup` | account_id, login, secret bytea (20 bytes), enrolled_at |
+| `owner_enrollment` (M1.5) | singleton | replaced by `setup` | generation, account_id, login, secret bytea (20 bytes), tier, policy_revision_id, enrolled_at |
 | `owner_test_checks` (M1.5) | (repository_id, policy_revision_id) | insert-only | project_id, repo, test_check; FK to `policies` |
 | `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |

@@ -7,7 +7,7 @@ Never paste into chat, a file, a PR, or a log: any password or database URL, a G
 ## 0. Before the host steps (GitHub, once)
 
 1. The first run of the `Deploy` workflow creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the first run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4` (M1.4 builds from it) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
+2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5` (each phase builds from its branch) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
 
 ## 1. Open a session
 

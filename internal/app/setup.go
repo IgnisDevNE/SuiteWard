@@ -16,6 +16,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -192,8 +193,12 @@ func (s *setup) lookups(ctx context.Context) (resolved, bool) {
 
 // logRead logs a failed GitHub read: the repository, the classification and the HTTP status.
 func (s *setup) logRead(ctx context.Context, msg, repo string, err error) {
+	logReadFailure(ctx, s.logger, msg, repo, err)
+}
+
+func logReadFailure(ctx context.Context, logger *slog.Logger, msg, repo string, err error) {
 	failure := readFailure(err)
-	s.logger.WarnContext(ctx, msg, "repo", repo, "kind", string(failure.Kind), "status", failure.Status)
+	logger.WarnContext(ctx, msg, "repo", repo, "kind", string(failure.Kind), "status", failure.Status)
 }
 
 // readLines sends the lines of r on the returned channel, which is closed at
@@ -320,31 +325,44 @@ func (s *setup) verifyProtection(ctx context.Context, found resolved) {
 		for _, instruction := range result.Instructions {
 			_, _ = fmt.Fprintf(s.stderr, "  - %s\n", instruction)
 		}
-		err := s.store.RecordProtection(ctx, owner.ProtectionResult{
-			RepositoryID: repo.ID, Result: string(result.Kind), Findings: codeStrings(result.Findings), Caveats: codeStrings(result.Caveats), CheckedAt: s.now(),
-		})
-		if err != nil {
+		if err := s.store.RecordProtection(ctx, protectionRecord(repo.ID, result, s.now())); err != nil {
 			s.logger.ErrorContext(ctx, "record the protection result", "repo", name, "error", err)
 			reportf(s.stderr, "the owner is enrolled, but the protection result of %s could not be stored; see the log\n", name)
 		}
 	}
 }
 
-// evaluate reads the protection of the default branch with the protection
-// token and evaluates it. A read that fails, for whatever reason, is the
-// result unknown: facts are mapped only from a successful read.
+// evaluate is evaluateProtection with the setup's collaborators; setup records a wait as unknown.
 func (s *setup) evaluate(ctx context.Context, name string, repo github.Repository, testCheck string) protection.Result {
-	read, err := s.readers.protect.Protection(ctx, name, repo.DefaultBranch)
+	result, _ := evaluateProtection(ctx, s.logger, s.readers.protect, s.cfg.GitHub.AppID, name, repo, testCheck)
+	return result
+}
+
+// evaluateProtection reads the protection of the default branch with the
+// protection token and evaluates it. A read that fails, for whatever reason,
+// is the result unknown: facts are mapped only from a successful read.
+// waiting is true when the read ended on a rate limit or an exhausted budget,
+// which the periodic check skips instead of recording.
+func evaluateProtection(ctx context.Context, logger *slog.Logger, protect *github.Reader, appID int64, name string, repo github.Repository, testCheck string) (result protection.Result, waiting bool) {
+	read, err := protect.Protection(ctx, name, repo.DefaultBranch)
 	if err != nil {
-		s.logRead(ctx, "github protection read failed", name, err)
-		return protection.Unknown()
+		logReadFailure(ctx, logger, "github protection read failed", name, err)
+		kind := readFailure(err).Kind
+		return protection.Unknown(), kind == githubsync.FailureRateLimited || kind == githubsync.FailureBudgetExhausted
 	}
 	facts, err := protectionFacts(read, repo.Private)
 	if err != nil {
-		s.logger.WarnContext(ctx, "github protection answer is not usable", "repo", name)
-		return protection.Unknown()
+		logger.WarnContext(ctx, "github protection answer is not usable", "repo", name)
+		return protection.Unknown(), false
 	}
-	return protection.Evaluate(facts, s.cfg.GitHub.AppID, testCheck)
+	return protection.Evaluate(facts, appID, testCheck), false
+}
+
+// protectionRecord is the stored form of an evaluation.
+func protectionRecord(repositoryID int64, result protection.Result, checkedAt time.Time) owner.ProtectionResult {
+	return owner.ProtectionResult{
+		RepositoryID: repositoryID, Result: string(result.Kind), Findings: codeStrings(result.Findings), Caveats: codeStrings(result.Caveats), CheckedAt: checkedAt,
+	}
 }
 
 func codeStrings(codes []protection.Code) []string {

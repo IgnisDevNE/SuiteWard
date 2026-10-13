@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 )
 
 // readPermissions is the map internal/app (composeGitHub) requests; keep them equal.
@@ -425,6 +427,143 @@ func TestLiveProtectionReads(t *testing.T) {
 			}
 			if probe(t, client, "/users/"+ownerLogin, &user) {
 				t.Logf("owner id %d, type %q", user.ID, user.Type)
+			}
+		})
+	}
+}
+
+// TestLiveProtectionResults runs the production protection path against the real
+// App: the {metadata: read, administration: read} token, Reader.Repository,
+// Reader.Protection on the default branch, the mapping into protection.Facts and
+// protection.Evaluate, then asserts the kind and the exact findings.
+// SUITEWARD_TEST_GITHUB_EXPECT is a semicolon-separated list of
+// owner/name=<test check>=<kind>[:<finding>,<finding>], for example
+// IgnisDevNE/SuiteWardQ=CI=findings:missing-contract-check,missing-test-check.
+// It logs the result kind, findings, caveats and instructions (fixed sentences),
+// never GitHub text, a token, a key or a body. It needs no pull request.
+func TestLiveProtectionResults(t *testing.T) {
+	appID := liveInt(t, "SUITEWARD_TEST_GITHUB_APP_ID")
+	installationID := liveInt(t, "SUITEWARD_TEST_GITHUB_INSTALLATION_ID")
+	keyFile := liveEnv(t, "SUITEWARD_TEST_GITHUB_APP_KEY_FILE")
+	apiURL := os.Getenv("SUITEWARD_TEST_GITHUB_API_URL")
+	if apiURL == "" {
+		apiURL = "https://api.github.com"
+	}
+	type expectation struct {
+		repo, name, testCheck string
+		kind                  protection.Kind
+		findings              []string
+	}
+	kinds := []protection.Kind{protection.KindEnforced, protection.KindFindings, protection.KindEnforcementUnavailable, protection.KindUnknown}
+	var expected []expectation
+	for _, entry := range strings.Split(liveEnv(t, "SUITEWARD_TEST_GITHUB_EXPECT"), ";") {
+		parts := strings.SplitN(strings.TrimSpace(entry), "=", 3)
+		if len(parts) != 3 {
+			t.Fatal("SUITEWARD_TEST_GITHUB_EXPECT must be a semicolon-separated list of owner/name=<test check>=<kind>[:<finding>,<finding>]")
+		}
+		owner, name, ok := strings.Cut(parts[0], "/")
+		kind, findings, _ := strings.Cut(parts[2], ":")
+		e := expectation{repo: parts[0], name: name, testCheck: parts[1], kind: protection.Kind(kind)}
+		if findings != "" {
+			e.findings = strings.Split(findings, ",")
+			slices.Sort(e.findings)
+		}
+		if !ok || owner == "" || name == "" || e.testCheck == "" || !slices.Contains(kinds, e.kind) {
+			t.Fatal("SUITEWARD_TEST_GITHUB_EXPECT must be a semicolon-separated list of owner/name=<test check>=<kind>[:<finding>,<finding>]")
+		}
+		expected = append(expected, e)
+	}
+	key, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("read SUITEWARD_TEST_GITHUB_APP_KEY_FILE: %v", err)
+	}
+	app, err := appauth.NewApp(appID, key, time.Now)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	httpClient := &http.Client{Timeout: 20 * time.Second}
+	budget, err := rest.NewBudget(0.5, time.Now)
+	if err != nil {
+		t.Fatalf("NewBudget: %v", err)
+	}
+	// The map internal/app (protectionPermissions) requests; keep them equal.
+	protectionPermissions := map[string]string{"metadata": "read", "administration": "read"}
+
+	for _, e := range expected {
+		t.Run(e.repo, func(t *testing.T) {
+			inst, err := app.Installation(installationID, []string{e.name}, protectionPermissions, httpClient, apiURL)
+			if err != nil {
+				t.Fatalf("Installation: %v", err)
+			}
+			client, err := rest.NewClient(func(ctx context.Context) (string, string, error) {
+				tok, err := inst.Token(ctx)
+				if err != nil {
+					return "", "", err
+				}
+				return tok.Reveal(), tok.Identity(), nil
+			}, httpClient, apiURL, budget)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			if _, err := inst.Token(stepCtx(t)); err != nil {
+				t.Fatalf("Token (also fails when granted permissions differ from %v): %s", protectionPermissions, failure(err))
+			}
+			reader, err := github.NewReader(client)
+			if err != nil {
+				t.Fatalf("NewReader: %v", err)
+			}
+			repo, err := reader.Repository(stepCtx(t), e.repo)
+			if err != nil {
+				t.Fatalf("Repository: %s", failure(err))
+			}
+			read, err := reader.Protection(stepCtx(t), e.repo, repo.DefaultBranch)
+			if err != nil {
+				t.Fatalf("Protection: %s", failure(err))
+			}
+
+			// Field by field, as protectionFacts in internal/app/setup.go (unexported).
+			checks := func(in []github.Check) []protection.Check {
+				var out []protection.Check
+				for _, c := range in {
+					out = append(out, protection.Check{Context: c.Context, SourceID: c.SourceID})
+				}
+				return out
+			}
+			var state protection.ClassicState
+			switch read.Classic.State {
+			case github.ClassicAbsent:
+				state = protection.ClassicAbsent
+			case github.ClassicUnreadable:
+				state = protection.ClassicUnreadable
+			case github.ClassicPresent:
+				state = protection.ClassicPresent
+			default:
+				t.Fatalf("unknown classic protection state %d", read.Classic.State)
+			}
+			facts := protection.Facts{
+				Private: repo.Private, RulesForbidden: read.RulesForbidden, FromRuleset: read.FromRuleset,
+				Classic: protection.Classic{State: state, Checks: checks(read.Classic.Checks), Strict: read.Classic.Strict, EnforceAdmins: read.Classic.EnforceAdmins},
+			}
+			for _, rule := range read.Rules {
+				facts.Rules = append(facts.Rules, protection.Rule{RulesetID: rule.RulesetID, Checks: checks(rule.Checks), Strict: rule.Strict})
+			}
+
+			result := protection.Evaluate(facts, appID, e.testCheck)
+			t.Logf("result kind %s", result.Kind)
+			var got []string
+			for _, f := range result.Findings {
+				t.Logf("finding %s", f)
+				got = append(got, string(f))
+			}
+			for _, c := range result.Caveats {
+				t.Logf("caveat %s", c)
+			}
+			for _, in := range result.Instructions {
+				t.Logf("instruction: %s", in)
+			}
+			slices.Sort(got)
+			if result.Kind != e.kind || !slices.Equal(got, e.findings) {
+				t.Errorf("got kind %s with findings %v, want kind %s with findings %v", result.Kind, got, e.kind, e.findings)
 			}
 		})
 	}

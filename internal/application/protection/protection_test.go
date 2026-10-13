@@ -11,7 +11,9 @@ const (
 	test = "unit-tests"
 )
 
-func rule(strict bool, checks ...Check) Rule { return Rule{RulesetID: 1, Strict: strict, Checks: checks} }
+func rule(strict bool, checks ...Check) Rule {
+	return Rule{RulesetID: 1, Strict: strict, Checks: checks}
+}
 
 func contract(id int64) Check { return Check{Context: ContractCheck, SourceID: id} }
 

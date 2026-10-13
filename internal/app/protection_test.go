@@ -42,7 +42,7 @@ func newProtectionRun(t *testing.T, fake *setupGitHub) *protectionRun {
 	r := &protectionRun{fake: fake, store: ownertest.NewMemory(), ids: &repositoryIDs{}}
 	r.check = &protectionCheck{
 		repos: settings.Repositories, appID: setupAppID, readers: readers, store: r.store, ids: r.ids,
-		logger: newLogger(&r.logs, slog.LevelDebug), now: func() time.Time { return setupNow },
+		logger: newLogger(&r.logs, slog.LevelDebug), now: func() time.Time { return setupNow }, within: time.Hour,
 	}
 	return r
 }
@@ -438,5 +438,74 @@ func TestProtectionCheckRecordsUnknownForAnEnrolledRepositoryItCannotReadAfterAR
 	}
 	if id, known := r.ids.lookup(setupWidgetsRepo); !known || id != setupRepoID {
 		t.Fatalf("lookup = %d, %v; want /status to find the stored result too", id, known)
+	}
+}
+
+// afterRecord runs a hook once a result has been stored: the first repository is finished.
+type afterRecord struct {
+	owner.Store
+	hook func()
+}
+
+func (a afterRecord) RecordProtection(ctx context.Context, p owner.ProtectionResult) error {
+	err := a.Store.RecordProtection(ctx, p)
+	if err == nil {
+		a.hook()
+	}
+	return err
+}
+
+// requestedAny reports whether any request reached path.
+func (f *setupGitHub) requestedAny(path string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, request := range f.requests {
+		if strings.Contains(request, " "+path+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestProtectionCheckStartsNoRepositoryAfterItsDeadline(t *testing.T) {
+	r := newProtectionRun(t, newSetupGitHub(t))
+	r.enroll(t)
+	r.check.repos = []string{setupWidgetsRepo, "acme/other"}
+	r.check.within = time.Minute
+	now := setupNow
+	r.check.now = func() time.Time { return now }
+	r.check.store = afterRecord{Store: r.store, hook: func() { now = now.Add(time.Hour) }} // the first repository takes longer than the deadline
+
+	if err := r.check.run(t.Context()); err != nil {
+		t.Fatalf("run = %v; want a nil error: reaching the deadline is not a failure", err)
+	}
+
+	if got := r.results(t); len(got) != 1 || got[0].RepositoryID != setupRepoID {
+		t.Fatalf("stored %+v; want only the repository that finished", got)
+	}
+	if r.fake.requestedAny("/repos/acme/other") {
+		t.Fatal("the second repository was read after the deadline")
+	}
+	if !strings.Contains(r.logs.String(), `"skipped":1`) {
+		t.Fatalf("logs = %s; want a line naming the one skipped repository", r.logs.String())
+	}
+}
+
+func TestProtectionCheckKeepsWhatItFinishedWhenCancelledBetweenRepositories(t *testing.T) {
+	r := newProtectionRun(t, newSetupGitHub(t))
+	r.enroll(t)
+	r.check.repos = []string{setupWidgetsRepo, "acme/other"}
+	ctx, cancel := context.WithCancel(t.Context())
+	r.check.store = afterRecord{Store: r.store, hook: cancel}
+
+	if err := r.check.run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run = %v; want the cancellation", err)
+	}
+
+	if got := r.results(t); len(got) != 1 || got[0].RepositoryID != setupRepoID {
+		t.Fatalf("stored %+v; want the finished repository only, nothing for the unfinished one", got)
+	}
+	if r.fake.requestedAny("/repos/acme/other") {
+		t.Fatal("the second repository was read after the cancellation")
 	}
 }

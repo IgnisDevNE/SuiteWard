@@ -48,6 +48,7 @@ type protectionCheck struct {
 	ids     *repositoryIDs
 	logger  *slog.Logger
 	now     func() time.Time
+	within  time.Duration // how long the run may start repositories; tickDeadline of JOB_TIMEOUT
 }
 
 func (c *protectionCheck) run(ctx context.Context) error {

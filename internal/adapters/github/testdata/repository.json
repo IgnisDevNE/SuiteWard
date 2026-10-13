@@ -1,11 +1,8 @@
 {
   "id": 1081726354,
-  "node_id": "R_kgDOQ0xy3Q",
   "name": "SuiteWardQ",
   "full_name": "IgnisDevNE/SuiteWardQ",
   "private": false,
-  "owner": {"login": "IgnisDevNE", "id": 245112070, "type": "Organization"},
-  "html_url": "https://github.com/IgnisDevNE/SuiteWardQ",
   "default_branch": "main",
   "visibility": "public"
 }

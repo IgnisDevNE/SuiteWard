@@ -444,14 +444,20 @@ func TestReadinessTurnsUnavailableBeforeTheServerDrains(t *testing.T) {
 	}
 	a := &api{store: store, logger: logger}
 	srv := &http.Server{Handler: newRouter(a)}
-	var readyWhenDraining []bool
-	srv.RegisterOnShutdown(func() { readyWhenDraining = append(readyWhenDraining, !a.stopping.Load()) })
+	// Server.Shutdown starts each hook in its own goroutine and does not wait for it, so the hook reports on a channel.
+	readyWhenDraining := make(chan bool, 1)
+	srv.RegisterOnShutdown(func() { readyWhenDraining <- !a.stopping.Load() })
 
 	if err := shutdown(logger, a, srv, runtime, pool, 30*time.Second); err != nil {
 		t.Fatalf("shutdown: %v\n%s", err, logs.String())
 	}
-	if len(readyWhenDraining) != 1 || readyWhenDraining[0] {
-		t.Fatalf("readiness was still up when the server began to drain: %v", readyWhenDraining)
+	select {
+	case ready := <-readyWhenDraining:
+		if ready {
+			t.Fatal("readiness was still up when the server began to drain")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shutdown hook did not run")
 	}
 	recorder := httptest.NewRecorder()
 	a.readyz(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))

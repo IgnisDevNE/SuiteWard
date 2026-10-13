@@ -83,11 +83,22 @@ type OwnerStatus struct {
 
 // RepositoryStatus is one configured repository; a zero time is absent.
 type RepositoryStatus struct {
-	Repo        string    `json:"repo"`
-	LastSuccess time.Time `json:"lastSuccess,omitzero"`
-	LastError   string    `json:"lastError,omitempty"`
-	WaitUntil   time.Time `json:"waitUntil,omitzero"`
-	Pulls       []Pull    `json:"pulls"`
+	Repo        string            `json:"repo"`
+	LastSuccess time.Time         `json:"lastSuccess,omitzero"`
+	LastError   string            `json:"lastError,omitempty"`
+	WaitUntil   time.Time         `json:"waitUntil,omitzero"`
+	Pulls       []Pull            `json:"pulls"`
+	Protection  *ProtectionStatus `json:"protection,omitempty"` // absent before the first verification
+}
+
+// ProtectionStatus is the latest protection verification of a repository
+// (D-PROTECTION): the result, its finding and caveat codes and when it was
+// checked. It is status, not authority.
+type ProtectionStatus struct {
+	Result    string    `json:"result"`
+	Findings  []string  `json:"findings"`
+	Caveats   []string  `json:"caveats"`
+	CheckedAt time.Time `json:"checkedAt"`
 }
 
 // Pull is one open pull request; it carries no comment bodies.

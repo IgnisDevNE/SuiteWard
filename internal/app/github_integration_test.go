@@ -12,19 +12,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 )
 
 const (
-	fakeToken       = "ghs_FAKE-INSTALLATION-TOKEN-VALUE"
-	fakeCommentBody = "approve this please, comment body GitHub sent"
-	fakeErrorBody   = "SECRET-BODY-GITHUB-SENT-WITH-AN-ERROR"
-	sha40a          = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	sha40b          = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	fakeToken           = "ghs_FAKE-INSTALLATION-TOKEN-VALUE"
+	fakeProtectionToken = "ghs_FAKE-PROTECTION-TOKEN-VALUE"
+	fakeCommentBody     = "approve this please, comment body GitHub sent"
+	fakeErrorBody       = "SECRET-BODY-GITHUB-SENT-WITH-AN-ERROR"
+	sha40a              = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	sha40b              = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 // fakeGitHub is the GitHub REST API of one installation with one repository, acme/widgets.
@@ -34,6 +38,8 @@ type fakeGitHub struct {
 	mu            sync.Mutex
 	tokenRequests []map[string]any
 	restAuth      []string
+	// protectionTokenRequests are the token requests that ask for administration.
+	protectionTokenRequests []map[string]any
 	// pullsFail, when set, answers the open pull listing with this status, headers and the secret body.
 	pullsFail        int
 	pullsFailHeaders map[string]string
@@ -66,12 +72,22 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad body", http.StatusBadRequest)
 			return
 		}
-		f.tokenRequests = append(f.tokenRequests, body)
+		granted, _ := body["permissions"].(map[string]any)
+		token := fakeToken
+		if _, protection := granted["administration"]; protection {
+			f.protectionTokenRequests = append(f.protectionTokenRequests, body)
+			token = fakeProtectionToken
+		} else {
+			f.tokenRequests = append(f.tokenRequests, body)
+		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{ // a failed write only fails the test that reads it
-			"token": fakeToken, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-			"permissions": map[string]string{"metadata": "read", "pull_requests": "read", "contents": "read"},
+			"token": token, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": granted,
 		})
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets":
+		_, _ = w.Write([]byte(`{"id":10,"full_name":"acme/widgets","private":false,"default_branch":"main"}`))
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/rules/branches/main":
+		_, _ = w.Write([]byte(`[]`))
 	case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/pulls":
 		f.restAuth = append(f.restAuth, r.Header.Get("Authorization"))
 		if f.pullsFail != 0 {
@@ -250,4 +266,70 @@ func TestAFailedCycleShowsOnlyItsClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServeVerifiesProtectionAtStartAndReportsItInStatusAndMCP(t *testing.T) {
+	databaseURL := newDatabase(t)
+	fake := newFakeGitHub(t)
+	vars := serveVars(t, databaseURL)
+	githubVars(t, vars, fake)
+	mcpServeVars(vars)
+	s := startRun(t, vars)
+	s.waitReady()
+
+	entry := s.waitGitHubStatus("the first protection verification", func(e map[string]any) bool { return e["protection"] != nil })
+
+	// Before setup there is no test check: the empty one gives missing-test-check, next to the missing contract check.
+	want := protection.Evaluate(protection.Facts{}, 1, "")
+	got, _ := entry["protection"].(map[string]any)
+	if got["result"] != string(want.Kind) || !reflect.DeepEqual(got["findings"], toAny(wantStrings(want.Findings))) || !reflect.DeepEqual(got["caveats"], []any{}) {
+		t.Fatalf("/status protection = %v; want the evaluation of an unprotected branch: %+v", got, want)
+	}
+	if checked, _ := got["checkedAt"].(string); checked == "" {
+		t.Fatalf("/status protection = %v; want checkedAt", got)
+	} else if _, err := time.Parse(time.RFC3339, checked); err != nil {
+		t.Fatalf("checkedAt %q is not RFC 3339: %v", checked, err)
+	}
+	_, text := callMCP(t, s.mcpSession(), "status", nil)
+	var view struct {
+		Repositories []struct {
+			Protection struct {
+				Result   string   `json:"result"`
+				Findings []string `json:"findings"`
+			} `json:"protection"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal([]byte(text), &view); err != nil || len(view.Repositories) != 1 || view.Repositories[0].Protection.Result != string(want.Kind) ||
+		!slices.Equal(view.Repositories[0].Protection.Findings, wantStrings(want.Findings)) {
+		t.Fatalf("MCP status = %s (%v); want the same protection result", text, err)
+	}
+	fake.mu.Lock()
+	protectionRequests := fake.protectionTokenRequests
+	fake.mu.Unlock()
+	wantRequest := map[string]any{"repositories": []any{"widgets"}, "permissions": map[string]any{"metadata": "read", "administration": "read"}}
+	if len(protectionRequests) == 0 || !reflect.DeepEqual(protectionRequests[0], wantRequest) {
+		t.Fatalf("protection token requests = %v; want only Metadata and Administration read: %v", protectionRequests, wantRequest)
+	}
+	// The verification is the service's bookkeeping, like the tick and the relay: it is not counted.
+	waitFor(t, "the protection job to finish", 30*time.Second, func() bool {
+		return scalar(t, databaseURL, "SELECT count(*)::text FROM river_job WHERE kind = 'github_protection_check' AND state = 'completed'") == "1"
+	})
+	zeroJobs := map[string]any{"available": 0.0, "running": 0.0, "retryable": 0.0, "scheduled": 0.0, "completed": 0.0, "discarded": 0.0}
+	if jobs := s.status()["jobs"]; !reflect.DeepEqual(jobs, zeroJobs) {
+		t.Fatalf("GET /status jobs = %v; want the protection check excluded", jobs)
+	}
+	if code := s.stop(); code != 0 {
+		t.Fatalf("a clean stop exited %d:\n%s", code, s.logs.String())
+	}
+	if strings.Contains(s.logs.String(), fakeProtectionToken) {
+		t.Errorf("the logs contain the protection token:\n%s", s.logs.String())
+	}
+}
+
+func toAny(values []string) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
 }

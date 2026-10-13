@@ -34,6 +34,7 @@ type mcpBackend struct {
 	logger   *slog.Logger
 	tier     string // the configured installation tier
 	owners   ownerReader
+	ids      *repositoryIDs // learned by the protection check; nil without the GitHub settings
 }
 
 // Status reports the configured repositories in configuration order, each

@@ -13,6 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
@@ -27,10 +28,11 @@ const (
 
 // repositoryStatus is one entry of the github section of /status.
 type repositoryStatus struct {
-	Repo        string `json:"repo"`
-	LastSuccess string `json:"lastSuccess,omitempty"`
-	LastError   string `json:"lastError,omitempty"` // the classification and status, never text GitHub sent
-	WaitUntil   string `json:"waitUntil,omitempty"`
+	Repo        string            `json:"repo"`
+	LastSuccess string            `json:"lastSuccess,omitempty"`
+	LastError   string            `json:"lastError,omitempty"` // the classification and status, never text GitHub sent
+	WaitUntil   string            `json:"waitUntil,omitempty"`
+	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
 }
 
 // repositoryReader is the part of the observation store /status reads.
@@ -42,11 +44,12 @@ type repositoryReader interface {
 type githubStatus struct {
 	repos []string
 	store repositoryReader
+	ids   *repositoryIDs // learned by the protection check
 }
 
 // report returns one entry per configured repository, in configuration order;
 // a repository that has no cycle yet has only its name.
-func (g *githubStatus) report(ctx context.Context) ([]repositoryStatus, error) {
+func (g *githubStatus) report(ctx context.Context, _ map[string]owner.ProtectionResult) ([]repositoryStatus, error) {
 	entries := make([]repositoryStatus, 0, len(g.repos))
 	for _, repo := range g.repos {
 		state, _, err := g.store.Repository(ctx, repo)

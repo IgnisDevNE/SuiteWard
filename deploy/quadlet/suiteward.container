@@ -30,6 +30,8 @@ Environment=SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token
 # writes on the host (deploy/HOST.md, section 4a); the values are never committed. A missing file makes podman fail the start, which
 # Restart=always repeats and the journal shows; it never runs silently without GitHub.
 EnvironmentFile=/etc/suiteward/github.env
+# D-TIER: this host is the isolated tier (only the owner has a shell here); the tier is declared, never detected.
+Environment=SUITEWARD_INSTALLATION_TIER=isolated
 Volume=suiteward-data.volume:/data
 ReadOnly=true
 DropCapability=ALL

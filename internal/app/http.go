@@ -35,7 +35,8 @@ type store interface {
 type api struct {
 	store    store
 	logger   *slog.Logger
-	tier     string        // the configured installation tier
+	tier     string // the configured installation tier
+	owners   ownerReader
 	github   *githubStatus // nil when the GitHub settings are not set
 	stopping atomic.Bool   // set when shutdown begins: readiness turns 503 first
 }

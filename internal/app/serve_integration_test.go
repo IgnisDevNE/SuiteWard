@@ -458,7 +458,7 @@ func TestReadinessTurnsUnavailableBeforeTheServerDrains(t *testing.T) {
 	if err := runtime.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{store: store, logger: logger}
+	a := &api{store: store, owners: store, logger: logger}
 	srv := &http.Server{Handler: newRouter(a)}
 	// Server.Shutdown starts each hook in its own goroutine and does not wait for it, so the hook reports on a channel.
 	readyWhenDraining := make(chan bool, 1)

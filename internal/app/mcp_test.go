@@ -15,6 +15,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
 )
 
 var mcpNow = time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
@@ -60,7 +61,7 @@ func (f failingObservations) Pulls(ctx context.Context, _ string) ([]githubsync.
 }
 
 func testBackend(store observations, inserter syncInserter, logs *bytes.Buffer, repos ...string) *mcpBackend {
-	return &mcpBackend{repos: repos, store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug)}
+	return &mcpBackend{repos: repos, owners: ownertest.NewMemory(), store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug)}
 }
 
 func recordCycle(t *testing.T, store *githubsynctest.Memory, repo string, pulls ...int) {

@@ -32,7 +32,8 @@ type mcpBackend struct {
 	now      func() time.Time
 	timeout  time.Duration
 	logger   *slog.Logger
-	tier     string
+	tier     string // the configured installation tier
+	owners   ownerReader
 }
 
 // Status reports the configured repositories in configuration order, each

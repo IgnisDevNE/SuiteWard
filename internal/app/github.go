@@ -84,27 +84,46 @@ type githubSync struct {
 	jobTimeout time.Duration
 }
 
-// composeGitHub builds the App installation, the REST client with the
-// process-wide budget and the reader of the GitHub settings, and the
-// reconciler over store. Synchronization is read-only: the token requests the
-// metadata, pull requests and contents permissions at read level.
-func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+// The permission maps of the installation tokens (D-GITHUB-ACCESS): each use
+// requests the narrowest one. appauth copies the map it is given.
+var (
+	// syncPermissions is the read-only map of synchronization.
+	syncPermissions = map[string]string{"metadata": "read", "pull_requests": "read", "contents": "read"}
+	// protectionPermissions is the map of protection verification.
+	protectionPermissions = map[string]string{"metadata": "read", "administration": "read"}
+)
+
+// githubAccess is what every token of the GitHub settings shares: the App, the
+// repository names, the HTTP client and the one process-wide budget.
+type githubAccess struct {
+	settings   config.GitHub
+	app        appauth.App
+	names      []string
+	httpClient *http.Client
+	budget     *rest.Budget
+}
+
+func newGitHubAccess(g config.GitHub) (githubAccess, error) {
 	app, err := appauth.NewApp(g.AppID, []byte(g.AppKey.Reveal()), time.Now)
 	if err != nil {
-		return nil, fmt.Errorf("compose the GitHub App: %w", err)
+		return githubAccess{}, fmt.Errorf("compose the GitHub App: %w", err)
 	}
 	names := make([]string, len(g.Repositories))
 	for i, repo := range g.Repositories {
 		_, names[i], _ = strings.Cut(repo, "/") // the settings guarantee owner/name; the installation takes the name only
 	}
-	httpClient := &http.Client{Timeout: githubTimeout}
-	installation, err := app.Installation(g.InstallationID, names, map[string]string{"metadata": "read", "pull_requests": "read", "contents": "read"}, httpClient, g.APIURL)
-	if err != nil {
-		return nil, fmt.Errorf("compose the GitHub installation: %w", err)
-	}
 	budget, err := rest.NewBudget(githubBudget, time.Now)
 	if err != nil {
-		return nil, fmt.Errorf("compose the GitHub budget: %w", err)
+		return githubAccess{}, fmt.Errorf("compose the GitHub budget: %w", err)
+	}
+	return githubAccess{settings: g, app: app, names: names, httpClient: &http.Client{Timeout: githubTimeout}, budget: budget}, nil
+}
+
+// reader builds the reader of a token narrowed to permissions.
+func (a githubAccess) reader(permissions map[string]string) (*github.Reader, error) {
+	installation, err := a.app.Installation(a.settings.InstallationID, a.names, permissions, a.httpClient, a.settings.APIURL)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub installation: %w", err)
 	}
 	client, err := rest.NewClient(func(ctx context.Context) (value, identity string, err error) {
 		token, err := installation.Token(ctx)
@@ -112,13 +131,29 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 			return "", "", err
 		}
 		return token.Reveal(), token.Identity(), nil
-	}, httpClient, g.APIURL, budget)
+	}, a.httpClient, a.settings.APIURL, a.budget)
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub client: %w", err)
 	}
 	reader, err := github.NewReader(client)
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
+	}
+	return reader, nil
+}
+
+// composeGitHub builds the App installation, the REST client with the
+// process-wide budget and the reader of the GitHub settings, and the
+// reconciler over store. Synchronization is read-only: the token requests the
+// metadata, pull requests and contents permissions at read level.
+func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+	access, err := newGitHubAccess(g)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := access.reader(syncPermissions)
+	if err != nil {
+		return nil, err
 	}
 	reconciler, err := githubsync.NewReconciler(githubReader{reader}, store, time.Now, g.InstallationID)
 	if err != nil {
@@ -181,7 +216,10 @@ func (r githubReader) PullComments(ctx context.Context, repo string, number int)
 // one and the time to wait for a rate limit or an exhausted budget, never text
 // GitHub sent. An error that matches nothing known (a network failure, an
 // unreadable body, a malformed token answer) is a transport failure.
-func classifyReadError(err error) error {
+func classifyReadError(err error) error { return readFailure(err) }
+
+// readFailure is the classification of classifyReadError as its concrete type.
+func readFailure(err error) *githubsync.ReadError {
 	var (
 		limited   *rest.RateLimitedError
 		exhausted *rest.BudgetExhaustedError

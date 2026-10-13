@@ -61,12 +61,24 @@ type Backend interface {
 	RequestSync(ctx context.Context, repo string) (SyncResult, error)
 }
 
-// StatusView is what SuiteWard observed: the configured installation Tier
-// and, without GitHub settings, GitHubConfigured false and no Repositories.
+// StatusView is what SuiteWard observed: the effective installation Tier (with
+// a TierNote when it differs from the configured one), the Owner once setup
+// has run and, without GitHub settings, GitHubConfigured false and no
+// Repositories.
 type StatusView struct {
 	Tier             string             `json:"tier"`
+	TierNote         string             `json:"tierNote,omitempty"`
+	Owner            *OwnerStatus       `json:"owner,omitempty"`
 	GitHubConfigured bool               `json:"githubConfigured"`
 	Repositories     []RepositoryStatus `json:"repositories"`
+}
+
+// OwnerStatus is the enrolled owner: the login is display only, the account
+// id is the identity.
+type OwnerStatus struct {
+	Login      string    `json:"login"`
+	AccountID  int64     `json:"accountId"`
+	EnrolledAt time.Time `json:"enrolledAt"`
 }
 
 // RepositoryStatus is one configured repository; a zero time is absent.

@@ -32,18 +32,27 @@ type mcpBackend struct {
 	now      func() time.Time
 	timeout  time.Duration
 	logger   *slog.Logger
-	tier     string
+	tier     string // the configured installation tier
+	owners   ownerReader
 }
 
 // Status reports the configured repositories in configuration order, each
 // with its open pulls. Comment bodies are never read.
 func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
-	view := mcp.StatusView{Tier: b.tier, GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
+	ctx, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	enrollment, enrolled, err := b.owners.Current(ctx)
+	if err != nil {
+		return mcp.StatusView{}, b.failed(ctx, "read the owner", "", err)
+	}
+	view := mcp.StatusView{GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
+	view.Tier, view.TierNote = effectiveTier(b.tier, enrollment, enrolled)
+	if enrolled {
+		view.Owner = &mcp.OwnerStatus{Login: enrollment.Owner.Login, AccountID: enrollment.Owner.AccountID, EnrolledAt: enrollment.EnrolledAt.UTC()}
+	}
 	if !view.GitHubConfigured {
 		return view, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, b.timeout)
-	defer cancel()
 	for _, repo := range b.repos {
 		state, _, err := b.store.Repository(ctx, repo)
 		if err != nil {
@@ -100,6 +109,9 @@ func (b *mcpBackend) RequestSync(ctx context.Context, repo string) (mcp.SyncResu
 // handler turns it into a fixed tool error that points to this log line.
 func (b *mcpBackend) failed(ctx context.Context, what, repo string, err error) error {
 	b.logger.ErrorContext(ctx, "mcp request failed", "action", what, "repo", repo, "error", err)
+	if repo == "" {
+		return fmt.Errorf("%s: %w", what, err)
+	}
 	return fmt.Errorf("%s of %s: %w", what, repo, err)
 }
 

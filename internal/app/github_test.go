@@ -16,6 +16,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
@@ -132,7 +133,7 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/down", InstallationID: 2, At: at, Kind: githubsync.FailureTransport}); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
@@ -156,7 +157,7 @@ func (failingRepositories) Repository(context.Context, string) (githubsync.Repos
 }
 
 func TestStatusIsUnavailableWhenTheObservationsCannotBeRead(t *testing.T) {
-	a := &api{logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 

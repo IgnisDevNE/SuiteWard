@@ -150,7 +150,11 @@ func (s *setup) run(ctx context.Context) int {
 	if !ok {
 		return 1
 	}
-	secret, step, ok := s.enrollmentCode(found.user.Login)
+	lines := readLines(ctx, s.stdin)
+	if !s.confirm(ctx, lines) {
+		return 1
+	}
+	secret, step, ok := s.enrollmentCode(ctx, lines, found.user.Login)
 	if !ok {
 		return 1
 	}
@@ -192,10 +196,53 @@ func (s *setup) logRead(ctx context.Context, msg, repo string, err error) {
 	s.logger.WarnContext(ctx, msg, "repo", repo, "kind", string(failure.Kind), "status", failure.Status)
 }
 
+// readLines sends the lines of r on the returned channel, which is closed at
+// the end of the input. The reader goroutine stops when ctx is cancelled, so a
+// terminal that never answers cannot hold setup after a signal; it may stay
+// blocked in Read until the process exits.
+func readLines(ctx context.Context, r io.Reader) <-chan string {
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return lines
+}
+
+// nextLine waits for the next line of input. It reports false at the end of
+// the input and when ctx is cancelled.
+func nextLine(ctx context.Context, lines <-chan string) (string, bool) {
+	select {
+	case line, ok := <-lines:
+		return line, ok
+	case <-ctx.Done():
+		return "", false
+	}
+}
+
+// confirm warns that the secret is printed next and waits for Enter. Anything
+// else, the end of the input or a cancellation aborts before the secret exists.
+func (s *setup) confirm(ctx context.Context, lines <-chan string) bool {
+	reportf(s.stderr, "warning: the TOTP secret is printed next. A recorded terminal session (for example Session Manager logging) keeps it, so the logging must already be off.\n")
+	_, _ = fmt.Fprint(s.stderr, "Press Enter to print the secret, or type anything else to abort: ") // a failed write to stderr cannot be reported anywhere else
+	if line, ok := nextLine(ctx, lines); !ok || strings.TrimSpace(line) != "" {
+		reportf(s.stderr, "\naborted; nothing was printed or written.\n")
+		return false
+	}
+	return true
+}
+
 // enrollmentCode generates the TOTP secret, prints it once and reads a code
 // that verifies against it, at most totpAttempts times. It returns the secret
 // and the step that matched.
-func (s *setup) enrollmentCode(login string) (secret []byte, step int64, ok bool) {
+func (s *setup) enrollmentCode(ctx context.Context, lines <-chan string, login string) (secret []byte, step int64, ok bool) {
 	secret, err := totp.NewSecret(s.random)
 	if err != nil {
 		reportf(s.stderr, "could not generate the TOTP secret\n")
@@ -208,20 +255,19 @@ func (s *setup) enrollmentCode(login string) (secret []byte, step int64, ok bool
 		s.logger.Error("build the TOTP URI", "error", err)
 		return nil, 0, false
 	}
-	reportf(s.stderr, "warning: a recorded terminal session (for example Session Manager logging) keeps the TOTP secret printed next. If this session is recorded, press Ctrl-C now, disable the logging, and run setup again.\n")
 	if _, err := fmt.Fprintf(s.stdout, "%s\n%s\n", uri, base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)); err != nil {
 		reportf(s.stderr, "could not write the TOTP enrollment to the output\n")
 		return nil, 0, false
 	}
 	reportf(s.stderr, "add it to your authenticator app (the otpauth:// URI above, or the base32 secret), then confirm with a code.\n")
 
-	lines := bufio.NewScanner(s.stdin)
 	for attempt := 1; attempt <= totpAttempts; attempt++ {
 		_, _ = fmt.Fprintf(s.stderr, "Enter the 6-digit code (attempt %d of %d): ", attempt, totpAttempts) // a failed write to stderr cannot be reported anywhere else
-		if !lines.Scan() {
+		line, more := nextLine(ctx, lines)
+		if !more {
 			break
 		}
-		step, err := totp.Verify(secret, strings.TrimSpace(lines.Text()), s.now(), totpTolerance)
+		step, err := totp.Verify(secret, strings.TrimSpace(line), s.now(), totpTolerance)
 		switch {
 		case err == nil:
 			return secret, step, true

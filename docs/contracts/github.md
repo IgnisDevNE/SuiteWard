@@ -97,6 +97,6 @@ Measured 2026-10-13 by `TestLiveProtectionReads` (`-tags=live`) on the S1 test r
   - `Classic`: `Absent` (404), `Unreadable` (403), or present with each required check's context and app id, the strict flag and `enforce_admins`;
   - `RulesForbidden`: the effective rules answered 403 (the private-repository-on-Free case of D-PROTECTION).
 
-  Any other status is a `rest` error. Bodies are bounded and decoded into these types only; no GitHub text reaches an error, a log or `/status`.
+  Any other status is a `rest` error. Bodies are bounded and decoded into these types only; a decode failure names only the path. A wrapped `rest` status error can still carry part of GitHub's answer (token redacted), so callers never print or store a read error: they record `protection.Unknown()` and log only the repository and the status. The effective rules are read with `per_page=100` and followed page by page up to the listings' page bound.
 - **Evaluation** is a pure function outside the adapter (the D-PROTECTION results and findings; M1.5-C2).
 - **Paths:** the branch name is path-escaped (`url.PathEscape`), so a branch with `/` is read correctly.

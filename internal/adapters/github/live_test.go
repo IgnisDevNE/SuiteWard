@@ -233,8 +233,8 @@ func TestLiveProtectionReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBudget: %v", err)
 	}
-	newClient := func(t *testing.T, name string) (*appauth.Installation, *rest.Client) {
-		inst, err := app.Installation(installationID, []string{name}, readPermissions, httpClient, apiURL)
+	newClient := func(t *testing.T, name string, permissions map[string]string) (*appauth.Installation, *rest.Client) {
+		inst, err := app.Installation(installationID, []string{name}, permissions, httpClient, apiURL)
 		if err != nil {
 			t.Fatalf("Installation: %v", err)
 		}
@@ -257,122 +257,160 @@ func TestLiveProtectionReads(t *testing.T) {
 			t.Fatal("SUITEWARD_TEST_GITHUB_REPOS must be a comma-separated owner/name list")
 		}
 	}
+	// The second map is a copy: readPermissions must stay equal to production.
+	withAdministration := map[string]string{"administration": "read"}
+	for k, v := range readPermissions {
+		withAdministration[k] = v
+	}
+	maps := []struct {
+		label       string
+		permissions map[string]string
+	}{{"read", readPermissions}, {"read+administration", withAdministration}}
 	for _, repo := range repos {
 		_, name, _ := strings.Cut(repo, "/")
 		t.Run(repo, func(t *testing.T) {
-			inst, client := newClient(t, name)
-			if _, err := inst.Token(stepCtx(t)); err != nil {
-				t.Fatalf("Token (also fails when granted permissions differ from %v): %s", readPermissions, failure(err))
-			}
+			for _, m := range maps {
+				t.Run(m.label, func(t *testing.T) {
+					inst, client := newClient(t, name, m.permissions)
+					if _, err := inst.Token(stepCtx(t)); err != nil {
+						t.Fatalf("Token (also fails when granted permissions differ from %v): %s", m.permissions, failure(err))
+					}
 
-			var info struct {
-				Private       bool   `json:"private"`
-				Visibility    string `json:"visibility"`
-				DefaultBranch string `json:"default_branch"`
-			}
-			if !probe(t, client, "/repos/"+repo, &info) || info.DefaultBranch == "" {
-				t.Fatal("no default branch: the other steps are skipped")
-			}
-			t.Logf("private %t, visibility %q, default branch %q", info.Private, info.Visibility, info.DefaultBranch)
-			branch := info.DefaultBranch
+					var info struct {
+						Private       bool   `json:"private"`
+						Visibility    string `json:"visibility"`
+						DefaultBranch string `json:"default_branch"`
+					}
+					if !probe(t, client, "/repos/"+repo, &info) || info.DefaultBranch == "" {
+						t.Fatal("no default branch: the other steps are skipped")
+					}
+					t.Logf("private %t, visibility %q, default branch %q", info.Private, info.Visibility, info.DefaultBranch)
+					branch := info.DefaultBranch
 
-			var rules []struct {
-				Type              string `json:"type"`
-				RulesetSourceType string `json:"ruleset_source_type"`
-				Parameters        struct {
-					Strict *bool `json:"strict_required_status_checks_policy"`
-					Checks []struct {
-						Context       string `json:"context"`
-						IntegrationID *int64 `json:"integration_id"`
-					} `json:"required_status_checks"`
-				} `json:"parameters"`
-			}
-			if probe(t, client, "/repos/"+repo+"/rules/branches/"+branch, &rules) {
-				t.Logf("%d effective rules", len(rules))
-				for _, r := range rules {
-					t.Logf("rule type %q, ruleset source type %q", r.Type, r.RulesetSourceType)
-					if r.Type != "required_status_checks" {
-						continue
+					var rules []struct {
+						Type              string `json:"type"`
+						RulesetSourceType string `json:"ruleset_source_type"`
+						Parameters        struct {
+							Strict *bool `json:"strict_required_status_checks_policy"`
+							Checks []struct {
+								Context       string `json:"context"`
+								IntegrationID *int64 `json:"integration_id"`
+							} `json:"required_status_checks"`
+						} `json:"parameters"`
 					}
-					t.Logf("  strict policy %s", optionalBool(r.Parameters.Strict))
-					for _, c := range r.Parameters.Checks {
-						t.Logf("  required check %q, integration id %s", c.Context, optionalID(c.IntegrationID))
+					if probe(t, client, "/repos/"+repo+"/rules/branches/"+branch, &rules) {
+						t.Logf("%d effective rules", len(rules))
+						for _, r := range rules {
+							t.Logf("rule type %q, ruleset source type %q", r.Type, r.RulesetSourceType)
+							if r.Type != "required_status_checks" {
+								continue
+							}
+							t.Logf("  strict policy %s", optionalBool(r.Parameters.Strict))
+							for _, c := range r.Parameters.Checks {
+								t.Logf("  required check %q, integration id %s", c.Context, optionalID(c.IntegrationID))
+							}
+						}
 					}
-				}
-			}
 
-			var rulesets []struct {
-				ID int64 `json:"id"`
-			}
-			if probe(t, client, "/repos/"+repo+"/rulesets?includes_parents=true", &rulesets) {
-				t.Logf("%d rulesets", len(rulesets))
-				for _, rs := range rulesets {
-					var detail struct {
-						Enforcement  string `json:"enforcement"`
-						Target       string `json:"target"`
-						BypassActors []struct {
-							ActorType  string `json:"actor_type"`
-							BypassMode string `json:"bypass_mode"`
-						} `json:"bypass_actors"`
+					var rulesets []struct {
+						ID int64 `json:"id"`
 					}
-					if !probe(t, client, "/repos/"+repo+"/rulesets/"+strconv.FormatInt(rs.ID, 10), &detail) {
-						continue
+					if probe(t, client, "/repos/"+repo+"/rulesets?includes_parents=true", &rulesets) {
+						t.Logf("%d rulesets", len(rulesets))
+						for _, rs := range rulesets {
+							var detail struct {
+								Enforcement          string          `json:"enforcement"`
+								Target               string          `json:"target"`
+								CurrentUserCanBypass json.RawMessage `json:"current_user_can_bypass"`
+								BypassActors         []struct {
+									ActorID    *int64 `json:"actor_id"`
+									ActorType  string `json:"actor_type"`
+									BypassMode string `json:"bypass_mode"`
+								} `json:"bypass_actors"`
+							}
+							if !probe(t, client, "/repos/"+repo+"/rulesets/"+strconv.FormatInt(rs.ID, 10), &detail) {
+								continue
+							}
+							t.Logf("ruleset %d: enforcement %q, target %q, %d bypass actors", rs.ID, detail.Enforcement, detail.Target, len(detail.BypassActors))
+							if len(detail.CurrentUserCanBypass) > 0 {
+								t.Logf("  current_user_can_bypass %s", detail.CurrentUserCanBypass)
+							}
+							for _, b := range detail.BypassActors {
+								t.Logf("  bypass actor id %s, type %q, mode %q", optionalID(b.ActorID), b.ActorType, b.BypassMode)
+							}
+						}
 					}
-					t.Logf("ruleset %d: enforcement %q, target %q, %d bypass actors", rs.ID, detail.Enforcement, detail.Target, len(detail.BypassActors))
-					for _, b := range detail.BypassActors {
-						t.Logf("  bypass actor type %q, mode %q", b.ActorType, b.BypassMode)
-					}
-				}
-			}
 
-			var protection struct {
-				RequiredStatusChecks *struct {
-					Strict bool `json:"strict"`
-					Checks []struct {
-						Context string `json:"context"`
-						AppID   *int64 `json:"app_id"`
-					} `json:"checks"`
-				} `json:"required_status_checks"`
-				EnforceAdmins *struct {
-					Enabled bool `json:"enabled"`
-				} `json:"enforce_admins"`
-			}
-			if probe(t, client, "/repos/"+repo+"/branches/"+branch+"/protection", &protection) {
-				if rsc := protection.RequiredStatusChecks; rsc == nil {
-					t.Log("classic protection has no required_status_checks")
-				} else {
-					t.Logf("classic protection strict %t", rsc.Strict)
-					for _, c := range rsc.Checks {
-						t.Logf("  required check %q, app id %s", c.Context, optionalID(c.AppID))
+					var protection struct {
+						RequiredStatusChecks *struct {
+							Strict bool `json:"strict"`
+							Checks []struct {
+								Context string `json:"context"`
+								AppID   *int64 `json:"app_id"`
+							} `json:"checks"`
+						} `json:"required_status_checks"`
+						EnforceAdmins *struct {
+							Enabled bool `json:"enabled"`
+						} `json:"enforce_admins"`
+						RequiredPullRequestReviews *struct{} `json:"required_pull_request_reviews"`
+						AllowForcePushes           *struct {
+							Enabled bool `json:"enabled"`
+						} `json:"allow_force_pushes"`
+						Restrictions *struct {
+							Users []json.RawMessage `json:"users"`
+							Teams []json.RawMessage `json:"teams"`
+							Apps  []json.RawMessage `json:"apps"`
+						} `json:"restrictions"`
 					}
-				}
-				if protection.EnforceAdmins == nil {
-					t.Log("classic protection has no enforce_admins")
-				} else {
-					t.Logf("classic protection enforce_admins %t", protection.EnforceAdmins.Enabled)
-				}
-			}
+					if probe(t, client, "/repos/"+repo+"/branches/"+branch+"/protection", &protection) {
+						if rsc := protection.RequiredStatusChecks; rsc == nil {
+							t.Log("classic protection has no required_status_checks")
+						} else {
+							t.Logf("classic protection strict %t", rsc.Strict)
+							for _, c := range rsc.Checks {
+								t.Logf("  required check %q, app id %s", c.Context, optionalID(c.AppID))
+							}
+						}
+						if protection.EnforceAdmins == nil {
+							t.Log("classic protection has no enforce_admins")
+						} else {
+							t.Logf("classic protection enforce_admins %t", protection.EnforceAdmins.Enabled)
+						}
+						t.Logf("classic protection required_pull_request_reviews present %t", protection.RequiredPullRequestReviews != nil)
+						if protection.AllowForcePushes == nil {
+							t.Log("classic protection has no allow_force_pushes")
+						} else {
+							t.Logf("classic protection allow_force_pushes %t", protection.AllowForcePushes.Enabled)
+						}
+						if r := protection.Restrictions; r == nil {
+							t.Log("classic protection has no restrictions")
+						} else {
+							t.Logf("classic protection restrictions: %d users, %d teams, %d apps", len(r.Users), len(r.Teams), len(r.Apps))
+						}
+					}
 
-			var summary struct {
-				Protected  bool `json:"protected"`
-				Protection *struct {
-					RequiredStatusChecks *struct {
-						Contexts []string `json:"contexts"`
-						Checks   []struct {
-							Context string `json:"context"`
-							AppID   *int64 `json:"app_id"`
-						} `json:"checks"`
-					} `json:"required_status_checks"`
-				} `json:"protection"`
-			}
-			if probe(t, client, "/repos/"+repo+"/branches/"+branch, &summary) {
-				t.Logf("branch protected %t", summary.Protected)
-				if p := summary.Protection; p != nil && p.RequiredStatusChecks != nil {
-					t.Logf("  branch summary lists %d contexts", len(p.RequiredStatusChecks.Contexts))
-					for _, c := range p.RequiredStatusChecks.Checks {
-						t.Logf("  required check %q, app id %s", c.Context, optionalID(c.AppID))
+					var summary struct {
+						Protected  bool `json:"protected"`
+						Protection *struct {
+							RequiredStatusChecks *struct {
+								Contexts []string `json:"contexts"`
+								Checks   []struct {
+									Context string `json:"context"`
+									AppID   *int64 `json:"app_id"`
+								} `json:"checks"`
+							} `json:"required_status_checks"`
+						} `json:"protection"`
 					}
-				}
+					if probe(t, client, "/repos/"+repo+"/branches/"+branch, &summary) {
+						t.Logf("branch protected %t", summary.Protected)
+						if p := summary.Protection; p != nil && p.RequiredStatusChecks != nil {
+							t.Logf("  branch summary lists %d contexts", len(p.RequiredStatusChecks.Contexts))
+							for _, c := range p.RequiredStatusChecks.Checks {
+								t.Logf("  required check %q, app id %s", c.Context, optionalID(c.AppID))
+							}
+						}
+					}
+				})
 			}
 		})
 	}
@@ -380,7 +418,7 @@ func TestLiveProtectionReads(t *testing.T) {
 	if ownerLogin != "" {
 		t.Run("owner", func(t *testing.T) {
 			_, name, _ := strings.Cut(repos[0], "/")
-			_, client := newClient(t, name)
+			_, client := newClient(t, name, readPermissions)
 			var user struct {
 				ID   int64  `json:"id"`
 				Type string `json:"type"`

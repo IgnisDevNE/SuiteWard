@@ -63,9 +63,14 @@ func (c *protectionCheck) run(ctx context.Context) error {
 			c.ids.set(project.Repo, project.RepositoryID)
 		}
 	}
-	for _, name := range c.repos {
+	deadline := c.now().Add(c.within)
+	for i, name := range c.repos {
 		if err := ctx.Err(); err != nil { // a cancelled job must not record what its cancelled reads classify as failures
 			return err
+		}
+		if !c.now().Before(deadline) { // like the tick: the rest wait for the next run, which is not a failure
+			c.logger.WarnContext(ctx, "github protection check stopped at its deadline", "skipped", len(c.repos)-i)
+			return nil
 		}
 		if err := c.verify(ctx, name, enrollment.Projects); err != nil {
 			return err

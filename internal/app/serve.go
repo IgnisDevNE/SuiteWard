@@ -90,7 +90,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		}
 		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
 		ids := &repositoryIDs{}
-		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now}
+		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now, within: tickDeadline(cfg.JobTimeout)}
 		riverConfig.ProtectionCheck = check.run
 		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids}
 		backend.repos = gh.repos

@@ -321,9 +321,9 @@ func TestLiveProtectionReads(t *testing.T) {
 						t.Logf("%d rulesets", len(rulesets))
 						for _, rs := range rulesets {
 							var detail struct {
-								Enforcement          string          `json:"enforcement"`
-								Target               string          `json:"target"`
-								CurrentUserCanBypass json.RawMessage `json:"current_user_can_bypass"`
+								Enforcement          string  `json:"enforcement"`
+								Target               string  `json:"target"`
+								CurrentUserCanBypass *string `json:"current_user_can_bypass"`
 								BypassActors         []struct {
 									ActorID    *int64 `json:"actor_id"`
 									ActorType  string `json:"actor_type"`
@@ -334,9 +334,7 @@ func TestLiveProtectionReads(t *testing.T) {
 								continue
 							}
 							t.Logf("ruleset %d: enforcement %q, target %q, %d bypass actors", rs.ID, detail.Enforcement, detail.Target, len(detail.BypassActors))
-							if len(detail.CurrentUserCanBypass) > 0 {
-								t.Logf("  current_user_can_bypass %s", detail.CurrentUserCanBypass)
-							}
+							t.Logf("  current_user_can_bypass %s", bypassEnum(detail.CurrentUserCanBypass))
 							for _, b := range detail.BypassActors {
 								t.Logf("  bypass actor id %s, type %q, mode %q", optionalID(b.ActorID), b.ActorType, b.BypassMode)
 							}
@@ -601,6 +599,18 @@ func optionalID(id *int64) string {
 		return "absent"
 	}
 	return strconv.FormatInt(*id, 10)
+}
+
+// bypassEnum logs only the documented values of current_user_can_bypass, never a raw fragment.
+func bypassEnum(s *string) string {
+	if s == nil {
+		return "absent"
+	}
+	switch *s {
+	case "always", "pull_requests_only", "never":
+		return *s
+	}
+	return "other"
 }
 
 func optionalBool(b *bool) string {

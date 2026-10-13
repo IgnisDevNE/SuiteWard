@@ -157,7 +157,8 @@ func (s *setup) run(ctx context.Context) int {
 	if !s.enroll(ctx, found, secret, step) {
 		return 1
 	}
-	return s.verifyProtection(ctx, found)
+	s.verifyProtection(ctx, found)
+	return 0
 }
 
 // lookups resolves the owner, which must be a User, and every configured
@@ -263,10 +264,9 @@ func (s *setup) enroll(ctx context.Context, found resolved, secret []byte, step 
 }
 
 // verifyProtection evaluates and records the protection of every repository
-// and prints each result with its instructions. It returns the exit code: 0,
-// unless a result could not be stored.
-func (s *setup) verifyProtection(ctx context.Context, found resolved) int {
-	code := 0
+// and prints each result with its instructions. A result that cannot be stored
+// is reported and logged, not an exit code: the enrollment has succeeded.
+func (s *setup) verifyProtection(ctx context.Context, found resolved) {
 	for i, repo := range found.repos {
 		name := s.cfg.GitHub.Repositories[i]
 		result := s.evaluate(ctx, name, repo, s.options.testChecks[name])
@@ -280,10 +280,8 @@ func (s *setup) verifyProtection(ctx context.Context, found resolved) int {
 		if err != nil {
 			s.logger.ErrorContext(ctx, "record the protection result", "repo", name, "error", err)
 			reportf(s.stderr, "the owner is enrolled, but the protection result of %s could not be stored; see the log\n", name)
-			code = 1
 		}
 	}
-	return code
 }
 
 // evaluate reads the protection of the default branch with the protection

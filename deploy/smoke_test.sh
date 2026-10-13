@@ -26,7 +26,8 @@ case $url in
 	esac ;;
 */status)
 	[ -e "$FAKE_DIR/restarted" ] && FAKE_FAILED=${FAKE_FAILED_AFTER_RESTART:-${FAKE_FAILED:-0}}
-	# FAKE_GITHUB: ok (default), late (succeeds from the third /status on), pending, error, absent, empty.
+	# FAKE_GITHUB: ok (default), late (succeeds from the third /status on), pending, error, absent, empty, and nested,
+	# nested-pending, nested-error: the same with the protection object (arrays inside) that each entry carries.
 	echo x >> "$FAKE_DIR/status-calls"
 	github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b","lastSuccess":"2026-10-11T12:00:01Z"}]'
 	case ${FAKE_GITHUB:-ok} in
@@ -34,6 +35,15 @@ case $url in
 	pending) github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b"}]' ;;
 	error) github=',"github":[{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z"},{"repo":"acme/b","lastError":"not_found (HTTP 404)"}]' ;;
 	empty) github=',"github":[]' ;;
+	nested*)
+		first='{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z","protection":{"result":"findings","findings":["missing-test-check"],"caveats":["ruleset-bypass-unverified"],"checkedAt":"2026-10-11T12:00:00Z"}}'
+		prot='"protection":{"result":"findings","findings":["missing-test-check","unprotected-main"],"caveats":["ruleset-bypass-unverified"],"checkedAt":"2026-10-11T12:00:01Z"}'
+		case $FAKE_GITHUB in
+		nested) second="{\"repo\":\"acme/b\",\"lastSuccess\":\"2026-10-11T12:00:01Z\",$prot}" ;;
+		nested-pending) second="{\"repo\":\"acme/b\",$prot}" ;;
+		nested-error) second="{\"repo\":\"acme/b\",\"lastError\":\"not_found (HTTP 404)\",$prot}" ;;
+		esac
+		github=",\"github\":[$first,$second]" ;;
 	absent) github= ;;
 	esac
 	version='"version":"test",'
@@ -115,6 +125,16 @@ expect_fail "github never succeeds" "FAIL github: no lastSuccess for 1 of 2 repo
 # The generous timeout shows the failure is immediate: a wait would run it out.
 run FAKE_GITHUB=error SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
 expect_fail "github reports an error" "FAIL github: acme/b has lastError"
+
+# Each entry carries a protection object with arrays of its own: the array of repositories must not end at the first ].
+run FAKE_GITHUB=nested sh "$smoke"
+expect_ok "github with nested protection objects" "github: ok, elapsed [0-9]* ms, 2 repositories synchronized"
+
+run FAKE_GITHUB=nested-error SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
+expect_fail "github error on a later repository with nested protection" "FAIL github: acme/b has lastError: not_found (HTTP 404)"
+
+run FAKE_GITHUB=nested-pending SMOKE_GITHUB_TIMEOUT=1 sh "$smoke"
+expect_fail "github pending on a later repository with nested protection" "FAIL github: no lastSuccess for 1 of 2 repositories within 1s"
 
 run FAKE_GITHUB=absent sh "$smoke"
 expect_fail "status has no github section" "FAIL github: no github section"

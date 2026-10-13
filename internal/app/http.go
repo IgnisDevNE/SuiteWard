@@ -81,9 +81,21 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		a.storeFailed(w, r, err)
 		return
 	}
+	enrollment, enrolled, err := a.owners.Current(ctx)
+	if err != nil {
+		a.storeFailed(w, r, err)
+		return
+	}
+	tier, note := effectiveTier(a.tier, enrollment, enrolled)
 	body := map[string]any{
-		"version": Version, "schemaVersion": version, "tier": a.tier,
+		"version": Version, "schemaVersion": version, "tier": tier,
 		"jobs": perState(jobStates, counts.Jobs), "outbox": perState(outboxStates, counts.Outbox),
+	}
+	if note != "" {
+		body["tierNote"] = note
+	}
+	if enrolled {
+		body["owner"] = map[string]any{"login": enrollment.Owner.Login, "accountId": enrollment.Owner.AccountID, "enrolledAt": enrollment.EnrolledAt.UTC().Format(time.RFC3339)}
 	}
 	if a.github != nil {
 		if body["github"], err = a.github.report(ctx); err != nil {

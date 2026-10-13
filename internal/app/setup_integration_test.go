@@ -1,0 +1,95 @@
+//go:build integration
+
+package app
+
+import (
+	"encoding/base32"
+	"io"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
+)
+
+// codeFromOutput reads the code of the secret that setup printed: it answers
+// the prompt by computing the code from the second line of out, as an
+// authenticator app would. setup prints the secret before it reads.
+type codeFromOutput struct {
+	out  *logBuffer
+	done bool
+}
+
+func (c *codeFromOutput) Read(p []byte) (int, error) {
+	if c.done {
+		return 0, io.EOF
+	}
+	c.done = true
+	lines := strings.Split(c.out.String(), "\n")
+	if len(lines) < 2 {
+		return 0, io.ErrNoProgress
+	}
+	secret, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(lines[1])
+	if err != nil {
+		return 0, err
+	}
+	code, err := totp.Code(secret, totp.Step(time.Now()))
+	if err != nil {
+		return 0, err
+	}
+	return copy(p, code+"\n"), nil
+}
+
+func TestSetupEnrollsAndServeReportsTheOwnerAndTheTier(t *testing.T) {
+	databaseURL := newDatabase(t)
+	fake := newSetupGitHub(t)
+	vars := serveVars(t, databaseURL)
+	for name, value := range fake.vars() {
+		vars[name] = value
+	}
+
+	// Before setup there is no owner.
+	before := startRun(t, vars)
+	before.waitReady()
+	if status := before.status(); status["owner"] != nil || status["tier"] != "co-located" || status["tierNote"] != nil {
+		t.Fatalf("GET /status before setup = %v; want the default tier and no owner", status)
+	}
+	if code := before.stop(); code != 0 {
+		t.Fatalf("a clean stop exited %d:\n%s", code, before.logs.String())
+	}
+
+	var stdout, stderr logBuffer
+	env := testEnv(vars)
+	env.Stdin = &codeFromOutput{out: &stdout}
+	args := []string{"setup", "--owner", "octo", "--test-check", setupWidgetsRepo + "=" + setupTestCheck}
+	if code := Run(t.Context(), args, env, &stdout, &stderr); code != 0 {
+		t.Fatalf("setup exited %d:\n%s", code, stderr.String())
+	}
+	if lines := strings.Split(strings.TrimSpace(stdout.String()), "\n"); len(lines) != 2 || !strings.HasPrefix(lines[0], "otpauth://totp/SuiteWard:octo?") {
+		t.Fatalf("stdout = %q; want the URI and the secret", stdout.String())
+	}
+	if got := scalar(t, databaseURL, "SELECT result FROM github_protection_results WHERE repository_id = $1", setupRepoID); got != "findings" {
+		t.Fatalf("stored protection result = %q; want findings (no rules in the fake)", got)
+	}
+	for what, secret := range map[string]string{"the database password": password(t, databaseURL), "a token": setupReadToken} {
+		if strings.Contains(stdout.String()+stderr.String(), secret) {
+			t.Errorf("setup printed %s:\n%s\n%s", what, stdout.String(), stderr.String())
+		}
+	}
+
+	// The configured tier is now isolated while the enrollment says co-located.
+	vars["SUITEWARD_INSTALLATION_TIER"] = "isolated"
+	after := startRun(t, vars)
+	after.waitReady()
+	status := after.status()
+	owner, _ := status["owner"].(map[string]any)
+	if owner["login"] != "octo" || owner["accountId"] != float64(setupOwnerID) || owner["enrolledAt"] == nil {
+		t.Fatalf("GET /status owner = %v; want octo, %d and an enrollment time", status["owner"], setupOwnerID)
+	}
+	if status["tier"] != "co-located" || status["tierNote"] == nil {
+		t.Fatalf("GET /status tier = %v, note %v; want co-located with a note to re-run setup", status["tier"], status["tierNote"])
+	}
+	if code := after.stop(); code != 0 {
+		t.Fatalf("a clean stop exited %d:\n%s", code, after.logs.String())
+	}
+}

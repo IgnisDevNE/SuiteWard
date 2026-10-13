@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -18,30 +19,37 @@ var Version = "dev"
 
 const usage = `usage: suiteward serve
        suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
+       suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]
 `
 
-// Env is the process environment that the settings are read from.
+// Env is the process environment that the settings are read from, and the
+// input of the interactive commands.
 type Env struct {
 	Lookup   func(string) (string, bool)
 	Environ  []string
 	ReadFile func(string) ([]byte, error)
+	Stdin    io.Reader
 }
 
-// OSEnv is the real process environment and filesystem.
+// OSEnv is the real process environment, filesystem and standard input.
 func OSEnv() Env {
 	lookup, environ, readFile := config.OS()
-	return Env{Lookup: lookup, Environ: environ, ReadFile: readFile}
+	return Env{Lookup: lookup, Environ: environ, ReadFile: readFile, Stdin: os.Stdin}
 }
 
 // Run executes one command (args without the program name) and returns the
 // process exit code of the runtime contract. serve logs JSON to stdout; probe
-// prints JSON lines to stdout; usage and problems go to stderr.
+// prints JSON lines to stdout; setup prints only the TOTP enrollment to stdout
+// and logs JSON to stderr; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
 	command := ""
 	if len(args) > 0 {
 		command = args[0]
 	}
-	var probe probeOptions
+	var (
+		probe probeOptions
+		flags setupFlags
+	)
 	switch command {
 	case "serve":
 		if len(args) != 1 {
@@ -52,12 +60,21 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		if probe, err = parseProbe(args[1:], stderr); err != nil {
 			return 2
 		}
+	case "setup":
+		var err error
+		if flags, err = parseSetup(args[1:], stderr); err != nil {
+			return 2
+		}
 	default:
 		return usageError(stderr)
 	}
 
 	cfg, warnings, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
-	logger := newLogger(stdout, cfg.LogLevel)
+	logs := stdout
+	if command == "setup" { // stdout carries the TOTP secret and nothing else
+		logs = stderr
+	}
+	logger := newLogger(logs, cfg.LogLevel)
 	if command == "serve" {
 		for _, name := range warnings {
 			logger.Warn("unrecognized setting", "name", name)
@@ -67,13 +84,27 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		reportf(stderr, "invalid settings:\n%v\n", err)
 		return 1
 	}
+	var setupOpts setupOptions
+	if command == "setup" {
+		if cfg.GitHub == nil {
+			reportf(stderr, "setup needs the GitHub settings (SUITEWARD_GITHUB_*)\n")
+			return usageError(stderr)
+		}
+		if setupOpts, err = flags.options(cfg.GitHub.Repositories); err != nil {
+			reportf(stderr, "%v\n", err)
+			return usageError(stderr)
+		}
+	}
 	// The cause is dropped: pgx redacts only up to the first @, so for an unencoded @ in the password it echoes the rest.
 	if _, err := pgxpool.ParseConfig(cfg.DatabaseURL.Reveal()); err != nil {
 		reportf(stderr, "invalid settings:\nSUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string\n")
 		return 1
 	}
-	if command == "serve" {
+	switch command {
+	case "serve":
 		return serve(ctx, cfg, logger, nil)
+	case "setup":
+		return runSetup(ctx, cfg, setupOpts, env.Stdin, stdout, stderr, logger)
 	}
 	return runProbe(ctx, cfg, probe, stdout, stderr)
 }

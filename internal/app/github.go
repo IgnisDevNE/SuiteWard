@@ -216,7 +216,10 @@ func (r githubReader) PullComments(ctx context.Context, repo string, number int)
 // one and the time to wait for a rate limit or an exhausted budget, never text
 // GitHub sent. An error that matches nothing known (a network failure, an
 // unreadable body, a malformed token answer) is a transport failure.
-func classifyReadError(err error) error {
+func classifyReadError(err error) error { return readFailure(err) }
+
+// readFailure is the classification of classifyReadError as its concrete type.
+func readFailure(err error) *githubsync.ReadError {
 	var (
 		limited   *rest.RateLimitedError
 		exhausted *rest.BudgetExhaustedError

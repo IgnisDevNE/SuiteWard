@@ -111,7 +111,7 @@ func (f *setupGitHub) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{"token": token, "expires_at": setupNow.Add(2 * time.Hour).Format(time.RFC3339), "permissions": granted})
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": token, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": granted})
 	case r.URL.Path == "/users/octo":
 		if f.userStatus != 0 {
 			fail(f.userStatus)

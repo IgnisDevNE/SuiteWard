@@ -368,7 +368,7 @@ func TestSetupStoresEachProtectionResultAndExitsZero(t *testing.T) {
 			if _, found := r.enrolled(t); !found {
 				t.Fatal("the owner was not enrolled")
 			}
-			want := owner.ProtectionResult{RepositoryID: setupRepoID, Result: string(test.want.Kind), Findings: codeStrings(test.want.Findings), Caveats: codeStrings(test.want.Caveats), CheckedAt: setupNow}
+			want := owner.ProtectionResult{RepositoryID: setupRepoID, Result: string(test.want.Kind), Findings: wantStrings(test.want.Findings), Caveats: wantStrings(test.want.Caveats), CheckedAt: setupNow}
 			if got := r.protection(t); !reflect.DeepEqual(got, []owner.ProtectionResult{want}) {
 				t.Fatalf("stored %+v; want %+v", got, want)
 			}
@@ -392,7 +392,7 @@ func TestSetupStoresEachProtectionResultAndExitsZero(t *testing.T) {
 	}
 }
 
-func codeStrings(codes []protection.Code) []string {
+func wantStrings(codes []protection.Code) []string {
 	out := make([]string, len(codes))
 	for i, c := range codes {
 		out[i] = string(c)

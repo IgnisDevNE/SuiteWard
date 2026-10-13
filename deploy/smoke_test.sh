@@ -44,6 +44,12 @@ case $url in
 		nested-error) second="{\"repo\":\"acme/b\",\"lastError\":\"not_found (HTTP 404)\",$prot}" ;;
 		esac
 		github=",\"github\":[$first,$second]" ;;
+	strings*)
+		# Closers (more than the nesting is deep, after an escaped quote), openers and an escaped backslash inside a string must not move the walker.
+		first='{"repo":"acme/a","lastSuccess":"2026-10-11T12:00:00Z","protection":{"result":"findings","caveats":["a \"]]]}}} b [{ c \\ d \\"],"checkedAt":"2026-10-11T12:00:00Z"}}'
+		second='{"repo":"acme/b","lastSuccess":"2026-10-11T12:00:01Z"}'
+		[ "$FAKE_GITHUB" = strings-error ] && second='{"repo":"acme/b","lastError":"not_found (HTTP 404)"}'
+		github=",\"github\":[$first,$second]" ;;
 	absent) github= ;;
 	esac
 	version='"version":"test",'
@@ -135,6 +141,13 @@ expect_fail "github error on a later repository with nested protection" "FAIL gi
 
 run FAKE_GITHUB=nested-pending SMOKE_GITHUB_TIMEOUT=1 sh "$smoke"
 expect_fail "github pending on a later repository with nested protection" "FAIL github: no lastSuccess for 1 of 2 repositories within 1s"
+
+# Brackets, braces, \" and \\ inside a string (a caveat text) must not end or deepen the walk.
+run FAKE_GITHUB=strings sh "$smoke"
+expect_ok "github with brackets and escapes inside strings" "github: ok, elapsed [0-9]* ms, 2 repositories synchronized"
+
+run FAKE_GITHUB=strings-error SMOKE_GITHUB_TIMEOUT=30 sh "$smoke"
+expect_fail "github error after brackets and escapes inside strings" "FAIL github: acme/b has lastError: not_found (HTTP 404)"
 
 run FAKE_GITHUB=absent sh "$smoke"
 expect_fail "status has no github section" "FAIL github: no github section"

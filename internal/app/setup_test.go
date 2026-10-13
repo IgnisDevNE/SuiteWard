@@ -448,20 +448,20 @@ func TestSetupEnrollmentFailuresExitOneWithFixedMessages(t *testing.T) {
 	}
 }
 
-func TestSetupFailsWhenAProtectionResultCannotBeStoredAfterEnrolling(t *testing.T) {
+func TestSetupStillSucceedsWhenAProtectionResultCannotBeStoredAfterEnrolling(t *testing.T) {
 	r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")
 	r.wrap = func(s owner.Store) owner.Store {
 		return failingStore{Store: s, record: errors.New("dial tcp db.internal:5432: password=hunter2")}
 	}
 
-	if code := r.run(t); code != 1 {
-		t.Fatalf("setup exited %d; want 1 for a database failure", code)
+	if code := r.run(t); code != 0 {
+		t.Fatalf("setup exited %d; want 0: the enrollment succeeded, and the protection job records the result again", code)
 	}
 
 	if _, found := r.enrolled(t); !found {
 		t.Fatal("the enrollment was lost")
 	}
-	if !strings.Contains(r.stderr.String(), setupWidgetsRepo) || strings.Contains(r.stderr.String(), "hunter2") {
+	if !strings.Contains(r.stderr.String(), setupWidgetsRepo+" could not be stored") || strings.Contains(r.stderr.String(), "hunter2") {
 		t.Fatalf("stderr = %q; want the repository and not the cause", r.stderr.String())
 	}
 }

@@ -14,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
 )
 
 // Tiers an enrollment can record: the INSTALLATION_TIER at enrollment.
@@ -23,29 +25,23 @@ const (
 	TierCoLocated = "co-located"
 )
 
-// Results of a protection verification (D-PROTECTION).
+// Results, findings and caveats of a protection verification (D-PROTECTION),
+// as the strings the store keeps. The protection package owns the codes.
 const (
-	ResultEnforced               = "enforced"
-	ResultFindings               = "findings"
-	ResultEnforcementUnavailable = "enforcement-unavailable"
-	ResultUnknown                = "unknown"
-)
+	ResultEnforced               = string(protection.KindEnforced)
+	ResultFindings               = string(protection.KindFindings)
+	ResultEnforcementUnavailable = string(protection.KindEnforcementUnavailable)
+	ResultUnknown                = string(protection.KindUnknown)
 
-// Finding and caveat codes of a protection verification (D-PROTECTION).
-const (
-	FindingMissingContractCheck = "missing-contract-check"
-	FindingMissingTestCheck     = "missing-test-check"
-	FindingNotUpToDate          = "not-up-to-date"
-	FindingAdminBypass          = "admin-bypass"
-	CaveatRulesetBypass         = "ruleset-bypass-unverified"
+	FindingMissingContractCheck = string(protection.MissingContractCheck)
+	FindingMissingTestCheck     = string(protection.MissingTestCheck)
+	FindingNotUpToDate          = string(protection.NotUpToDate)
+	FindingAdminBypass          = string(protection.AdminBypass)
+	CaveatRulesetBypass         = string(protection.RulesetBypassUnverified)
 )
 
 // MaxTestCheckBytes bounds a project's required test check name.
 const MaxTestCheckBytes = 200
-
-// secretBytes is the TOTP secret length; it must equal totp.SecretBytes once
-// that package lands.
-const secretBytes = 20
 
 var (
 	ErrStepUsed     = errors.New("owner: TOTP step already used")
@@ -131,8 +127,8 @@ func invalid(format string, args ...any) error {
 // Validate reports why the enrollment cannot be recorded, as ErrInvalidState.
 func (e Enrollment) Validate() error {
 	switch {
-	case len(e.Secret) != secretBytes:
-		return invalid("the TOTP secret must be %d bytes", secretBytes)
+	case len(e.Secret) != totp.SecretBytes:
+		return invalid("the TOTP secret must be %d bytes", totp.SecretBytes)
 	case e.Owner.AccountID <= 0:
 		return invalid("the owner account id must be positive")
 	case e.Tier != TierIsolated && e.Tier != TierCoLocated:

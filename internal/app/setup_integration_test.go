@@ -12,19 +12,22 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
 )
 
-// codeFromOutput reads the code of the secret that setup printed: it answers
-// the prompt by computing the code from the second line of out, as an
-// authenticator app would. setup prints the secret before it reads.
+// codeFromOutput answers setup as an owner would: Enter at the confirmation,
+// then the code of the secret on the second line of out, as an authenticator
+// app computes it. setup prints the secret before it reads the code.
 type codeFromOutput struct {
-	out  *logBuffer
-	done bool
+	out   *logBuffer
+	reads int
 }
 
 func (c *codeFromOutput) Read(p []byte) (int, error) {
-	if c.done {
+	c.reads++
+	if c.reads == 1 {
+		return copy(p, "\n"), nil
+	}
+	if c.reads > 2 {
 		return 0, io.EOF
 	}
-	c.done = true
 	lines := strings.Split(c.out.String(), "\n")
 	if len(lines) < 2 {
 		return 0, io.ErrNoProgress

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"reflect"
@@ -102,15 +103,22 @@ type setupRun struct {
 	store                *ownertest.Memory
 	wrap                 func(owner.Store) owner.Store
 	stdin                string
+	reader               io.Reader // replaces stdin when set
 	stdout, stderr, logs bytes.Buffer
 	tier                 config.Tier
 }
 
-func newSetupRun(fake *setupGitHub, stdin string) *setupRun {
-	return &setupRun{fake: fake, store: ownertest.NewMemory(), stdin: stdin, tier: config.TierCoLocated}
+// newSetupRun answers the confirmation with Enter, then sends codes.
+func newSetupRun(fake *setupGitHub, codes string) *setupRun {
+	return &setupRun{fake: fake, store: ownertest.NewMemory(), stdin: "\n" + codes, tier: config.TierCoLocated}
 }
 
 func (r *setupRun) run(t *testing.T) int {
+	t.Helper()
+	return r.runWith(t, t.Context())
+}
+
+func (r *setupRun) runWith(t *testing.T, ctx context.Context) int {
 	t.Helper()
 	settings := r.fake.settings()
 	readers, err := composeSetupReaders(settings)
@@ -123,10 +131,10 @@ func (r *setupRun) run(t *testing.T) int {
 	}
 	s := &setup{
 		cfg: config.Config{Tier: r.tier, GitHub: &settings}, options: setupOptions{owner: "octo", testChecks: map[string]string{setupWidgetsRepo: setupTestCheck}},
-		store: store, readers: readers, stdin: strings.NewReader(r.stdin), stdout: &r.stdout, stderr: &r.stderr,
+		store: store, readers: readers, stdin: r.input(), stdout: &r.stdout, stderr: &r.stderr,
 		logger: newLogger(&r.logs, slog.LevelDebug), now: func() time.Time { return setupNow }, random: fixedRandom(),
 	}
-	return s.run(t.Context())
+	return s.run(ctx)
 }
 
 func (r *setupRun) enrolled(t *testing.T) (owner.State, bool) {
@@ -496,5 +504,98 @@ func TestProtectionFactsMapsEveryFieldAndClassicState(t *testing.T) {
 	}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("protectionFacts = %+v, %v; want %+v", got, err, want)
+	}
+}
+
+// input is the stdin of the run: the text, or the reader that replaces it.
+func (r *setupRun) input() io.Reader {
+	if r.reader != nil {
+		return r.reader
+	}
+	return strings.NewReader(r.stdin)
+}
+
+func TestSetupAbortsBeforeTheSecretIsGeneratedUnlessTheOwnerConfirms(t *testing.T) {
+	for name, stdin := range map[string]string{
+		"end of input":           "",
+		"a non-empty line":       "no\n",
+		"a code instead":         rightCode(t) + "\n" + rightCode(t) + "\n",
+		"yes is not a confirmer": "yes\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newSetupRun(newSetupGitHub(t), "")
+			r.stdin = stdin
+
+			if code := r.run(t); code != 1 {
+				t.Fatalf("setup exited %d; want 1", code)
+			}
+
+			if r.stdout.String() != "" {
+				t.Fatalf("stdout = %q; the secret was printed without a confirmation", r.stdout.String())
+			}
+			if _, found := r.enrolled(t); found || len(r.protection(t)) != 0 {
+				t.Fatal("something was written without a confirmation")
+			}
+			if !strings.Contains(r.stderr.String(), "Session Manager") {
+				t.Fatalf("stderr = %q; want the logging warning before the confirmation", r.stderr.String())
+			}
+			r.requireNothingSecret(t, rightCode(t))
+		})
+	}
+}
+
+func TestSetupWarnsBeforeTheSecretAndPromisesNoAbort(t *testing.T) {
+	r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")
+
+	if code := r.run(t); code != 0 {
+		t.Fatalf("setup exited %d:\n%s", code, r.stderr.String())
+	}
+
+	if strings.Contains(r.stderr.String(), "Ctrl-C") {
+		t.Fatalf("stderr = %q; the warning must not promise an abort that cannot happen", r.stderr.String())
+	}
+	if !strings.Contains(r.stderr.String(), "Session Manager") {
+		t.Fatalf("stderr = %q; want the logging warning", r.stderr.String())
+	}
+}
+
+// cancelAtTheCodePrompt answers the confirmation, then cancels the context and
+// blocks, as a terminal does while the owner reads the secret.
+type cancelAtTheCodePrompt struct {
+	cancel  context.CancelFunc
+	release chan struct{}
+	reads   int
+}
+
+func (c *cancelAtTheCodePrompt) Read(p []byte) (int, error) {
+	c.reads++
+	if c.reads == 1 {
+		return copy(p, "\n"), nil
+	}
+	c.cancel()
+	<-c.release
+	return 0, io.EOF
+}
+
+func TestSetupStopsAtTheCodePromptWhenTheContextIsCancelled(t *testing.T) {
+	r := newSetupRun(newSetupGitHub(t), "")
+	ctx, cancel := context.WithCancel(t.Context())
+	reader := &cancelAtTheCodePrompt{cancel: cancel, release: make(chan struct{})}
+	t.Cleanup(func() { close(reader.release) })
+	r.reader = reader
+	done := make(chan int, 1)
+
+	go func() { done <- r.runWith(t, ctx) }()
+
+	select {
+	case code := <-done:
+		if code != 1 {
+			t.Fatalf("setup exited %d; want 1", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("setup did not return after the context was cancelled")
+	}
+	if _, found := r.enrolled(t); found || len(r.protection(t)) != 0 {
+		t.Fatal("something was written after the context was cancelled")
 	}
 }

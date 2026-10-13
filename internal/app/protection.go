@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -53,6 +54,13 @@ func (c *protectionCheck) run(ctx context.Context) error {
 	enrollment, _, err := c.store.Current(ctx) // before setup the state is empty: no project, so no test check
 	if err != nil {
 		return fmt.Errorf("read the enrollment: %w", err)
+	}
+	// What setup stored identifies the repositories before any read of this process has: a repository that cannot be
+	// read is still recorded, and /status finds its result. A successful read overwrites the id.
+	for _, project := range enrollment.Projects {
+		if slices.Contains(c.repos, project.Repo) {
+			c.ids.set(project.Repo, project.RepositoryID)
+		}
 	}
 	for _, name := range c.repos {
 		if err := ctx.Err(); err != nil { // a cancelled job must not record what its cancelled reads classify as failures

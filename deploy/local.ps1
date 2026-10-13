@@ -15,6 +15,7 @@
 # client at $env:LOCALAPPDATA\SuiteWard\mcp-token (readable by this user only, outside the repository). It is never printed.
 # One stack per machine: the names and the ports 8081 and 8091 are fixed, a second run replaces the first and -Purge removes its volumes.
 # Keep the flags in step with the quadlets: read-only root, no capabilities, stop timeouts, memory limits.
+# D-TIER: this PC is the co-located tier (the agent shares it with the owner), declared here and never detected.
 #Requires -Version 7.2
 param(
     [string]$Image = 'ghcr.io/ignisdevne/suiteward:deploy',
@@ -139,6 +140,7 @@ Invoke-Podman run --detach --replace --name suiteward --network suiteward --rest
     --secret 'suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400' `
     --env SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token `
     --secret 'suiteward-mcp-token,type=mount,target=/run/secrets/mcp-token,uid=65532,mode=0400' `
+    --env SUITEWARD_INSTALLATION_TIER=co-located `
     @githubArgs `
     --volume suiteward-data:/data `
     --publish 127.0.0.1:8081:8080 --publish 127.0.0.1:8091:8090 `

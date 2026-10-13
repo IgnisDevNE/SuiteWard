@@ -11,12 +11,14 @@
 //   - Code derives the RFC 4226 HOTP code of a step, zero-padded to 6 digits.
 //   - Verify accepts a code of a step within tolerance (0 to 2) of the step of
 //     at, compares every candidate in constant time and returns the matching
-//     step, the current step first.
+//     step, the current step first; steps before the Unix epoch are skipped.
 //   - URI builds the otpauth:// key URI for an authenticator app.
 //
 // A secret of the wrong length is ErrInvalidSecret; a malformed or
-// non-matching code is ErrInvalidCode. No error text contains a secret or a
-// code.
+// non-matching code (including any time whose window lies before the epoch)
+// is ErrInvalidCode; Code of a step before the epoch is ErrInvalidStep. Code
+// and Verify return no other error than these sentinels and the tolerance
+// range error. No error text contains a secret or a code.
 package totp
 
 import (
@@ -83,7 +85,7 @@ func Code(secret []byte, step int64) (string, error) {
 		return "", err
 	}
 	if step < 0 {
-		return "", errors.New("totp: negative step")
+		return "", fmt.Errorf("%w: %d is before the epoch", ErrInvalidStep, step)
 	}
 	var counter [8]byte
 	binary.BigEndian.PutUint64(counter[:], uint64(step))
@@ -114,6 +116,9 @@ func Verify(secret []byte, code string, at time.Time, tolerance int) (int64, err
 	var match int64
 	for distance := 0; distance <= tolerance; distance++ {
 		for _, step := range candidates(current, int64(distance)) {
+			if step < 0 {
+				continue
+			}
 			candidate, err := Code(secret, step)
 			if err != nil {
 				return 0, err

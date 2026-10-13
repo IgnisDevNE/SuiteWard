@@ -34,6 +34,7 @@ type mcpBackend struct {
 	logger   *slog.Logger
 	tier     string // the configured installation tier
 	owners   ownerReader
+	ids      *repositoryIDs // learned by the protection check; nil without the GitHub settings
 }
 
 // Status reports the configured repositories in configuration order, each
@@ -53,6 +54,10 @@ func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
 	if !view.GitHubConfigured {
 		return view, nil
 	}
+	protections, err := storedProtection(ctx, b.owners, b.ids, b.repos)
+	if err != nil {
+		return mcp.StatusView{}, b.failed(ctx, "read the protection results", "", err)
+	}
 	for _, repo := range b.repos {
 		state, _, err := b.store.Repository(ctx, repo)
 		if err != nil {
@@ -70,6 +75,9 @@ func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
 			if pull.NotOpenSince.IsZero() { // the closed ones stay in the store as evidence, not in the status
 				entry.Pulls = append(entry.Pulls, mcp.Pull{Number: pull.Number, HeadSHA: pull.HeadSHA, BaseRef: pull.BaseRef, UpdatedAt: pull.UpdatedAt.UTC()})
 			}
+		}
+		if result, verified := protections[repo]; verified {
+			entry.Protection = &mcp.ProtectionStatus{Result: result.Result, Findings: result.Findings, Caveats: result.Caveats, CheckedAt: result.CheckedAt.UTC()}
 		}
 		view.Repositories = append(view.Repositories, entry)
 	}

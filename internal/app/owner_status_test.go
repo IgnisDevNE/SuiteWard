@@ -94,6 +94,10 @@ func (f failingOwners) Current(context.Context) (owner.State, bool, error) {
 	return owner.State{}, false, f.cause
 }
 
+func (f failingOwners) Protection(context.Context) ([]owner.ProtectionResult, error) {
+	return nil, f.cause
+}
+
 func TestStatusIsUnavailableWhenTheOwnerCannotBeRead(t *testing.T) {
 	a := &api{logger: quietLogger(), owners: failingOwners{errors.New("dial tcp db.internal:5432: password=hunter2")}, store: fakeStore{version: 12}}
 

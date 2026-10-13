@@ -61,7 +61,7 @@ func (f failingObservations) Pulls(ctx context.Context, _ string) ([]githubsync.
 }
 
 func testBackend(store observations, inserter syncInserter, logs *bytes.Buffer, repos ...string) *mcpBackend {
-	return &mcpBackend{repos: repos, owners: ownertest.NewMemory(), store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug)}
+	return &mcpBackend{repos: repos, owners: ownertest.NewMemory(), store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug), ids: &repositoryIDs{}}
 }
 
 func recordCycle(t *testing.T, store *githubsynctest.Memory, repo string, pulls ...int) {
@@ -184,7 +184,7 @@ func TestMCPStatusLastErrorMatchesTheHTTPStatusSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpEntries, err := (&githubStatus{repos: repos, store: store}).report(t.Context())
+	httpEntries, err := (&githubStatus{repos: repos, store: store}).report(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ const tierNote = "The configured tier and the tier recorded at enrollment differ
 // ownerReader is the part of the owner store /status and MCP status read.
 type ownerReader interface {
 	Current(ctx context.Context) (owner.State, bool, error)
+	Protection(ctx context.Context) ([]owner.ProtectionResult, error)
 }
 
 // effectiveTier is the tier /status reports: co-located when either the

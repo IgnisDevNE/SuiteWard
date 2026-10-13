@@ -12,7 +12,7 @@ import (
 const countJobsByState = `-- name: CountJobsByState :many
 SELECT state::text AS state, count(*) AS total
 FROM river_job
-WHERE kind NOT IN ('outbox_relay', 'github_sync_tick')
+WHERE kind NOT IN ('outbox_relay', 'github_sync_tick', 'github_protection_check')
 GROUP BY state
 `
 
@@ -21,8 +21,8 @@ type CountJobsByStateRow struct {
 	Total int64
 }
 
-// The service's own bookkeeping jobs are not work: the relay's periodic job (outbox_relay, owned by the River adapter)
-// and the GitHub synchronization tick (github_sync_tick).
+// The service's own bookkeeping jobs are not work: the relay's periodic job (outbox_relay, owned by the River adapter),
+// the GitHub synchronization tick (github_sync_tick) and the protection verification (github_protection_check).
 func (q *Queries) CountJobsByState(ctx context.Context) ([]CountJobsByStateRow, error) {
 	rows, err := q.db.Query(ctx, countJobsByState)
 	if err != nil {

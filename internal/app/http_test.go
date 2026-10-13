@@ -77,12 +77,12 @@ func TestReadyzReportsReadinessWithoutLeakingCauses(t *testing.T) {
 }
 
 func TestStatusReportsEveryStateEvenAtZero(t *testing.T) {
-	a := &api{logger: quietLogger(), store: fakeStore{version: 10, counts: postgres.Counts{
+	a := &api{logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10, counts: postgres.Counts{
 		Jobs:   map[string]int64{"completed": 3, "discarded": 1, "cancelled": 9, "pending": 8},
 		Outbox: map[string]int64{"delivered": 2},
 	}}}
 	code, body := call(t, a, http.MethodGet, "/status")
-	want := `{"version":"` + Version + `","schemaVersion":10,
+	want := `{"version":"` + Version + `","schemaVersion":10,"tier":"isolated",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":3,"discarded":1},
 		"outbox":{"pending":0,"delivered":2,"failed":0}}`
 	if code != http.StatusOK || !jsonEqual(t, body, want) {

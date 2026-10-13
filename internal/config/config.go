@@ -47,6 +47,15 @@ func (Secret) GoString() string { return redacted }
 // MarshalText hides the value from JSON and slog encoders.
 func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
+// Tier is the declared installation tier (D-TIER): never detected.
+type Tier string
+
+// The two installation tiers.
+const (
+	TierIsolated  Tier = "isolated"
+	TierCoLocated Tier = "co-located"
+)
+
 // Config holds every validated setting.
 type Config struct {
 	DatabaseURL        Secret
@@ -60,6 +69,7 @@ type Config struct {
 	OutboxMaxAttempts  int
 	OutboxPollInterval time.Duration
 	OutboxLease        time.Duration
+	Tier               Tier
 	// GitHub is nil when the synchronization settings are not configured.
 	GitHub *GitHub
 	// MCP is nil when MCP_TOKEN is unset: no local MCP listener.

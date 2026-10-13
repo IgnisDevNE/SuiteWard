@@ -132,11 +132,11 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/down", InstallationID: 2, At: at, Kind: githubsync.FailureTransport}); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store}}
+	a := &api{logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
-	want := `{"version":"` + Version + `","schemaVersion":11,
+	want := `{"version":"` + Version + `","schemaVersion":11,"tier":"co-located",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 		"outbox":{"pending":0,"delivered":0,"failed":0},
 		"github":[

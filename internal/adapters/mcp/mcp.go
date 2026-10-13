@@ -64,6 +64,7 @@ type Backend interface {
 // StatusView is what SuiteWard observed. Without GitHub settings
 // GitHubConfigured is false and Repositories is empty.
 type StatusView struct {
+	Tier             string             `json:"-"`
 	GitHubConfigured bool               `json:"githubConfigured"`
 	Repositories     []RepositoryStatus `json:"repositories"`
 }

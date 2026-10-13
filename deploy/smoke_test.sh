@@ -38,7 +38,10 @@ case $url in
 	esac
 	version='"version":"test",'
 	[ "${FAKE_NO_VERSION:-}" = 1 ] && version=
-	echo "{${version}\"schemaVersion\":7,\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}${github}}" ;;
+	# FAKE_TIER: co-located (default), isolated, absent, or any other text. tierNote is a decoy: only the "tier" key counts.
+	tier=",\"tier\":\"${FAKE_TIER:-co-located}\",\"tierNote\":\"re-run setup\""
+	[ "${FAKE_TIER:-}" = absent ] && tier=",\"tierNote\":\"re-run setup\""
+	echo "{${version}\"schemaVersion\":7${tier},\"jobs\":{\"available\":0,\"running\":0,\"retryable\":0,\"scheduled\":0,\"completed\":2,\"discarded\":${FAKE_DISCARDED:-0}},\"outbox\":{\"pending\":0,\"delivered\":2,\"failed\":${FAKE_FAILED:-0}}${github}}" ;;
 *) exit 22 ;;
 esac
 EOF
@@ -139,6 +142,21 @@ expect_fail "expected version differs" "FAIL status: version test, want sha-abc"
 
 run FAKE_NO_VERSION=1 sh "$smoke"
 expect_fail "status without a version" "FAIL status: no version"
+
+run sh "$smoke"
+expect_ok "tier reported" "tier: ok, elapsed [0-9]* ms, co-located"
+
+run FAKE_TIER=isolated SMOKE_TIER=isolated sh "$smoke"
+expect_ok "tier matches the expected one" "tier: ok, elapsed [0-9]* ms, isolated"
+
+run FAKE_TIER=co-located SMOKE_TIER=isolated sh "$smoke"
+expect_fail "tier differs from the expected one" "FAIL tier: co-located, want isolated"
+
+run FAKE_TIER=absent sh "$smoke"
+expect_fail "status without a tier" "FAIL tier: no tier"
+
+run FAKE_TIER=bogus sh "$smoke"
+expect_fail "tier is neither isolated nor co-located" "FAIL tier: bogus, want isolated or co-located"
 
 run FAKE_DISCARDED=2 sh "$smoke"
 expect_fail "discarded jobs" "FAIL status"

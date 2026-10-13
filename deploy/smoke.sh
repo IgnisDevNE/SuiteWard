@@ -15,6 +15,8 @@ CTR=${SMOKE_CONTAINER:-suiteward}
 READY_TIMEOUT=${SMOKE_READY_TIMEOUT:-120}
 # Optional: the version /status must report, for example sha-<commit> of the image that was just deployed.
 EXPECT_VERSION=${SMOKE_VERSION:-}
+# Optional: the tier /status must report: isolated on the host, co-located on this PC. Unset, any of the two passes.
+EXPECT_TIER=${SMOKE_TIER:-}
 # Both targets run with GitHub configured: the github step waits until every repository in /status has a lastSuccess.
 # SMOKE_GITHUB=0 skips it, only for a stack that was started without the GitHub settings.
 GITHUB=${SMOKE_GITHUB:-1}
@@ -116,6 +118,17 @@ ok healthz
 begin
 check_status status
 ok status "version $version, schema version $schema, no failed or discarded"
+
+begin
+body=$(curl -fsS -m 5 "$BASE/status") || die tier "GET /status failed"
+tier=$(printf '%s' "$body" | sed -n 's/.*"tier" *: *"\([^"]*\)".*/\1/p' | head -n 1)
+[ -n "$tier" ] || die tier "no tier in $body"
+if [ -n "$EXPECT_TIER" ]; then
+	[ "$tier" = "$EXPECT_TIER" ] || die tier "$tier, want $EXPECT_TIER"
+else
+	[ "$tier" = isolated ] || [ "$tier" = co-located ] || die tier "$tier, want isolated or co-located"
+fi
+ok tier "$tier"
 
 begin
 if [ "$GITHUB" = 0 ]; then

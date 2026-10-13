@@ -400,6 +400,86 @@ Tables (observation state, outside the governance immutability rules except wher
 
 The conformance suite (fake and PostgreSQL) covers: a first cycle creates the state; a repeated identical cycle changes nothing; a head change updates the pull and keeps `first_seen`; a pull missing from the open listing gets `not_open_since` and reappearing clears it; an edit adds a version and keeps the earlier body; a different `created_at` for an id is an error and records nothing; a comment missing from its open pull's listing gets `not_seen_since`, and the comments of a pull no longer open are untouched; a failure records its kind, status and wait-until without touching observations, and a later success clears the error and the wait; two concurrent `RecordCycle` calls of one repository leave a state equal to one of them applied last. PostgreSQL adds the trigger rejections.
 
+## Owner, TOTP and protection results (M1.5; normative)
+
+Package `internal/application/owner` declares the port; the fake `ownertest.NewMemory` and the conformance suite `ownertest.RunConformance` live in `internal/application/owner/ownertest`; the PostgreSQL adapter implements it in migration `00012` (`SupportedVersion` 12). These are trusted local writes made by `setup` and the protection job, not governance facts carried by `Tx`, except that the policy revisions written here are the policies governance reads.
+
+```go
+package owner
+
+type Owner struct {
+	AccountID int64  // GitHub numeric account id, > 0
+	Login     string // display only
+}
+
+type ProjectPolicy struct {
+	RepositoryID int64  // GitHub numeric repository id, > 0; the project is contract.ProjectID("github-repo:<id>")
+	Repo         string // owner/name, display only
+	TestCheck    string // the repository's required project test check, non-empty, at most 200 bytes
+}
+
+type Enrollment struct {
+	Owner      Owner
+	Secret     []byte          // the TOTP secret, exactly totp.SecretBytes
+	Projects   []ProjectPolicy // one per configured repository, distinct ids, at least one
+	Step       int64           // the TOTP step verified during setup; consumed in the same transaction
+	Tier       string          // "isolated" or "co-located": the INSTALLATION_TIER at enrollment
+	EnrolledAt time.Time
+}
+
+type State struct {
+	Owner          Owner
+	Secret         []byte
+	Projects       []ProjectPolicy
+	Tier           string
+	PolicyRevision contract.PolicyRevisionID // the governing revision of every project, "setup-<n>"
+	EnrolledAt     time.Time
+}
+
+type ProtectionResult struct {
+	RepositoryID int64
+	Result       string   // "enforced", "findings", "enforcement-unavailable" or "unknown"
+	Findings     []string // D-PROTECTION finding codes, sorted, empty unless Result is "findings"
+	Caveats      []string // D-PROTECTION caveat codes, sorted
+	CheckedAt    time.Time
+}
+
+var (
+	ErrStepUsed     = errors.New("owner: TOTP step already used")
+	ErrInvalidState = errors.New("owner: invalid enrollment or result")
+	ErrNotEnrolled  = errors.New("owner: no owner enrolled")
+)
+
+type Store interface {
+	// Enroll replaces the owner and the secret and appends, per project, a policy revision owned by
+	// contract.PrincipalID("github:<AccountID>") of kind Human with revision id "setup-<n>" (n is the enrollment
+	// generation: 1, then previous+1), records each project's test check and the tier, points the enrollment at the
+	// new revision, and consumes Step for the new owner, in one transaction. An invalid enrollment, or a project
+	// that already has a Suite while the owner changes, is ErrInvalidState and writes nothing; a used Step is
+	// ErrStepUsed and writes nothing.
+	Enroll(ctx context.Context, e Enrollment) error
+	// Current returns the enrolled state, or found false before setup.
+	Current(ctx context.Context) (State, bool, error)
+	// ConsumeStep records that the owner used the TOTP step: ErrStepUsed if it was used before (global single use
+	// per owner and step, across all commands, ADR 0027), ErrNotEnrolled without an owner or when accountID is not
+	// the enrolled owner.
+	ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time) error
+	// RecordProtection stores the latest result of one repository, replacing the previous one.
+	RecordProtection(ctx context.Context, r ProtectionResult) error
+	// Protection returns the latest result per repository, ordered by repository id.
+	Protection(ctx context.Context) ([]ProtectionResult, error)
+}
+```
+
+Rules:
+
+- **One owner per instance.** `owner_enrollment` has at most one row; `Enroll` replaces it and the secret. Earlier policy revisions stay (policies are immutable); the new revision is the governing one for each project from then on, and pending consent bound to an earlier revision no longer matches (`contract.NewApprovalBinding` includes the policy revision).
+- **Consumed steps are never purged in the MVP.** A command is verified against its comment's `created_at` and may be processed long after (an outage, a wait, a restart catch-up), so a time-based purge could let a code be used twice; the rows are small.
+- **The secret is stored as bytes inside the instance** and is never logged, returned by `/status`, MCP or an error. Encryption at rest is not part of the MVP; the isolated tier keeps the database out of the agent's reach (ADR 0027).
+- **Protection results** are the latest per repository; they are status, not evidence, and are replaced on each verification.
+
+Tables (`00012_owner.sql`): `owner_enrollment` (singleton key, generation, account_id, login, secret bytea of exactly 20 bytes, tier, policy_revision_id, enrolled_at), `owner_test_checks` (repository_id, project_id, repo, test_check, policy_revision_id; FK to `policies`), `totp_consumed_steps` ((account_id, step) primary key, consumed_at; insert-only, no delete), `github_protection_results` (repository_id primary key, result, findings text[], caveats text[], checked_at). Conformance names: enroll and read back; re-enroll replaces the secret, increments the generation and appends policy revisions; re-enroll with another owner while a project has a Suite is rejected; an invalid enrollment writes nothing; a used step is rejected by `Enroll` and by `ConsumeStep`; `ConsumeStep` without an owner; concurrent `ConsumeStep` of one step (exactly one wins, PostgreSQL); protection result replaced and listed.
+
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
 ```go
@@ -417,7 +497,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -433,6 +513,10 @@ Property every reconstitution test must check: state produced by domain operatio
 | `outbox` (M1.2) | key (global) | immutable except delivery state: `state` (`pending`, `delivered`, `failed`), `attempts`, `next_attempt_at`, `last_error`, `finished_at`; terminal states never change; no delete | project_id, suite_id, kind, payload jsonb, created_at |
 | `github_repositories` (M1.4) | repo (`owner/name`) | observation state; the row is the per-repository lock of a cycle | installation_id, last_success, last_error (enumerated `FailureKind`), last_status, wait_until |
 | `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since |
+| `owner_enrollment` (M1.5) | singleton | replaced by `setup` | generation, account_id, login, secret bytea (20 bytes), tier, policy_revision_id, enrolled_at |
+| `owner_test_checks` (M1.5) | (repository_id, policy_revision_id) | insert-only | project_id, repo, test_check; FK to `policies` |
+| `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at |
+| `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 
 River's own tables (`river_job` and the rest) are created by vendored goose migrations and owned by River.

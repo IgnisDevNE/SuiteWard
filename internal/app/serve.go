@@ -79,8 +79,9 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		OutboxMaxAttempts: cfg.OutboxMaxAttempts, OutboxPollInterval: cfg.OutboxPollInterval, OutboxLease: cfg.OutboxLease,
 		Handlers: handlers,
 	}
-	a := &api{store: store, logger: logger}
-	backend := &mcpBackend{store: store, now: time.Now, timeout: storeTimeout, logger: logger}
+	tier := string(cfg.Tier)
+	a := &api{store: store, logger: logger, tier: tier}
+	backend := &mcpBackend{store: store, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger})
 		if err != nil {

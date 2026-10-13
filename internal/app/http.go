@@ -81,7 +81,7 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := map[string]any{
-		"version": Version, "schemaVersion": version,
+		"version": Version, "schemaVersion": version, "tier": a.tier,
 		"jobs": perState(jobStates, counts.Jobs), "outbox": perState(outboxStates, counts.Outbox),
 	}
 	if a.github != nil {

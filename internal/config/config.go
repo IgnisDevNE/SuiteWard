@@ -133,6 +133,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	c.OutboxMaxAttempts = number(l, "OUTBOX_MAX_ATTEMPTS", "8", 1, 25, strconv.Atoi)
 	c.OutboxPollInterval = number(l, "OUTBOX_POLL_INTERVAL", "5s", time.Second, time.Hour, time.ParseDuration)
 	c.OutboxLease = number(l, "OUTBOX_LEASE", "1m", 5*time.Second, 0, time.ParseDuration)
+	c.Tier = l.tier("INSTALLATION_TIER")
 	c.GitHub = l.github()
 	c.MCP = l.mcp(c.HTTPAddr)
 
@@ -345,6 +346,17 @@ func (l *loader) repositories(name, value string) []string {
 		}
 	}
 	return items
+}
+
+// tier reads the declared installation tier: exactly isolated or co-located, default co-located.
+func (l *loader) tier(name string) Tier {
+	switch v := Tier(l.optional(name, string(TierCoLocated))); v {
+	case TierIsolated, TierCoLocated:
+		return v
+	default:
+		l.fail(name, fmt.Errorf("%q is not one of %s, %s", v, TierIsolated, TierCoLocated))
+		return TierCoLocated
+	}
 }
 
 func (l *loader) logLevel(name, def string) slog.Level {

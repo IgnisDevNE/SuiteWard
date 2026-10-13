@@ -8,6 +8,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -96,22 +100,93 @@ type ProtectionResult struct {
 	CheckedAt    time.Time
 }
 
-var errNotImplemented = errors.New("owner: not implemented")
+// redacted is what a Secret renders as.
+const redacted = "[redacted]"
+
+// Format renders every verb as a placeholder.
+func (Secret) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redacted) }
+
+// MarshalText hides the value from JSON and slog encoders.
+func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
 // ProjectID is the project of a repository.
-func ProjectID(repositoryID int64) contract.ProjectID { return "" }
+func ProjectID(repositoryID int64) contract.ProjectID {
+	return contract.ProjectID("github-repo:" + strconv.FormatInt(repositoryID, 10))
+}
 
 // PrincipalID is the principal of an owner account.
-func PrincipalID(accountID int64) contract.PrincipalID { return "" }
+func PrincipalID(accountID int64) contract.PrincipalID {
+	return contract.PrincipalID("github:" + strconv.FormatInt(accountID, 10))
+}
 
 // RevisionID is the policy revision written by the enrollment of a generation.
-func RevisionID(generation int64) contract.PolicyRevisionID { return "" }
+func RevisionID(generation int64) contract.PolicyRevisionID {
+	return contract.PolicyRevisionID("setup-" + strconv.FormatInt(generation, 10))
+}
+
+func invalid(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrInvalidState, fmt.Sprintf(format, args...))
+}
 
 // Validate reports why the enrollment cannot be recorded, as ErrInvalidState.
-func (Enrollment) Validate() error { return fmt.Errorf("%w", errNotImplemented) }
+func (e Enrollment) Validate() error {
+	switch {
+	case len(e.Secret) != secretBytes:
+		return invalid("the TOTP secret must be %d bytes", secretBytes)
+	case e.Owner.AccountID <= 0:
+		return invalid("the owner account id must be positive")
+	case e.Tier != TierIsolated && e.Tier != TierCoLocated:
+		return invalid("the tier must be %q or %q", TierIsolated, TierCoLocated)
+	case len(e.Projects) == 0:
+		return invalid("at least one project is required")
+	case e.EnrolledAt.IsZero():
+		return invalid("the enrollment time is required")
+	}
+	seen := map[int64]bool{}
+	for _, p := range e.Projects {
+		switch {
+		case p.RepositoryID <= 0:
+			return invalid("the repository id must be positive")
+		case seen[p.RepositoryID]:
+			return invalid("repository %d is listed twice", p.RepositoryID)
+		case strings.TrimSpace(p.TestCheck) == "" || len(p.TestCheck) > MaxTestCheckBytes:
+			return invalid("the test check of repository %d must be 1 to %d bytes", p.RepositoryID, MaxTestCheckBytes)
+		}
+		seen[p.RepositoryID] = true
+	}
+	return nil
+}
 
 // Validate reports why the result cannot be recorded, as ErrInvalidState.
-func (ProtectionResult) Validate() error { return fmt.Errorf("%w", errNotImplemented) }
+func (r ProtectionResult) Validate() error {
+	switch {
+	case r.RepositoryID <= 0:
+		return invalid("the repository id must be positive")
+	case !slices.Contains([]string{ResultEnforced, ResultFindings, ResultEnforcementUnavailable, ResultUnknown}, r.Result):
+		return invalid("unknown result %q", r.Result)
+	case r.CheckedAt.IsZero():
+		return invalid("the check time is required")
+	case (r.Result == ResultFindings) != (len(r.Findings) > 0):
+		return invalid("findings are required for the result %q and only for it", ResultFindings)
+	}
+	if err := validCodes("finding", r.Findings, FindingMissingContractCheck, FindingMissingTestCheck, FindingNotUpToDate, FindingAdminBypass); err != nil {
+		return err
+	}
+	return validCodes("caveat", r.Caveats, CaveatRulesetBypass)
+}
+
+// validCodes requires codes to be known and strictly increasing.
+func validCodes(kind string, codes []string, known ...string) error {
+	for i, code := range codes {
+		if !slices.Contains(known, code) {
+			return invalid("unknown %s code %q", kind, code)
+		}
+		if i > 0 && codes[i-1] >= code {
+			return invalid("%s codes must be sorted and distinct", kind)
+		}
+	}
+	return nil
+}
 
 // Store is the owner, TOTP and protection-result store.
 type Store interface {

@@ -131,7 +131,7 @@ func TestSecretNeverRenders(t *testing.T) {
 	state := owner.State{Owner: e.Owner, Secret: raw, Projects: e.Projects, Tier: e.Tier, PolicyRevision: "setup-1", EnrolledAt: e.EnrolledAt}
 	wrapper := struct{ Inner owner.State }{state}
 
-	decimal := strings.Trim(fmt.Sprint([]byte(raw)), "[]")
+	decimal := strings.Trim(fmt.Sprintf("%d", raw), "[]")
 	leaks := []string{string(raw), hex.EncodeToString(raw), strings.ToUpper(hex.EncodeToString(raw)), base64.StdEncoding.EncodeToString(raw),
 		base64.RawStdEncoding.EncodeToString(raw), decimal}
 	var outputs []string

@@ -254,7 +254,6 @@ func cfRecordAssessmentWithOtherEvidenceConflicts(e *cfEnv) {
 
 	for name, evidence := range map[string]contract.IntegrityEvidence{
 		"another outcome": cfMust(contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), "source-1", c.bindings["revision-2"], contract.IntegrityFailed)),
-		"another emitter": cfMust(contract.NewIntegrityEvidence("verifier", "source-1", c.bindings["revision-2"], contract.IntegrityPassed)),
 		"another binding": cfMust(contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), "source-1", c.bindings["revision-1"], contract.IntegrityPassed)),
 	} {
 		e.run(name, func(e *cfEnv) {
@@ -516,4 +515,20 @@ func cfCorrectOutbox(e *cfEnv) {
 		e.t.Fatalf("replay = %+v, %v, want a duplicate", again, err)
 	}
 	e.requireQueued(nil, []string{"ack-correct"})
+}
+
+func cfRecordAssessmentRejectsAnotherEmitter(e *cfEnv) {
+	c := e.bare()
+	before := e.revision()
+	write := e.assessmentWrite(c, "revision-2", "source-1", contract.IntegrityPassed)
+	write.Evidence = cfMust(contract.NewIntegrityEvidence("verifier", "source-1", c.bindings["revision-2"], contract.IntegrityPassed))
+
+	if err := e.recordAssessment(write); !errors.Is(err, governance.ErrInvalidRequest) {
+		e.t.Fatalf("RecordAssessment = %v, want an invalid request for evidence not emitted by %q", err, governance.ServiceEmitter.ID())
+	}
+
+	e.requireWrites(before, 0)
+	if _, found := e.assessment(write.Reference, "source-1"); found {
+		e.t.Fatal("evidence from another emitter was stored")
+	}
 }

@@ -94,6 +94,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"RecordAssessmentKeepsEvidenceOfAnotherRevisionAsMismatch", cfRecordAssessmentKeepsEvidenceOfAnotherRevision},
 		{"RecordAssessmentIsIdempotent", cfRecordAssessmentIsIdempotent},
 		{"RecordAssessmentWithOtherEvidenceConflicts", cfRecordAssessmentWithOtherEvidenceConflicts},
+		{"RecordAssessmentRejectsAnotherEmitter", cfRecordAssessmentRejectsAnotherEmitter},
 		{"RecordAssessmentNeedsAKnownRevisionOfThisProposal", cfRecordAssessmentNeedsAKnownRevisionOfThisProposal},
 		{"RecordAssessmentAdvancesTheRevisionAndRollsBack", cfRecordAssessmentAdvancesTheRevisionAndRollsBack},
 		{"BootstrapNeedsTheRecordedAssessment", cfBootstrapNeedsTheRecordedAssessment},

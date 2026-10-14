@@ -527,9 +527,10 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 	if err != nil {
 		return err
 	}
+	// PostgreSQL keeps microseconds and the store refuses a promotion time it would have to round.
 	result, err := governance.Bootstrap(ctx, b.suites, governance.PromoteRequest{
 		OperationID: contract.OperationID("bootstrap:" + reference), Reference: s.reference, Carrier: s.carrier, Proposed: proposed,
-		AssessmentSource: s.origin, Integration: integration, NewVersionID: firstVersion, RecordedAt: b.now(), Outbox: []governance.OutboxMessage{message},
+		AssessmentSource: s.origin, Integration: integration, NewVersionID: firstVersion, RecordedAt: b.now().Truncate(time.Microsecond), Outbox: []governance.OutboxMessage{message},
 	})
 	if err != nil {
 		return fmt.Errorf("bootstrap the first canonical: %w", err)

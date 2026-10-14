@@ -147,6 +147,7 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 - Two SuiteWard instances must never watch the same repository.
 - Both post as the same App, and each has its own TOTP secret. So one would reject the owner's codes and, from M1.6b, publish `failure`.
 - HOST.md says so. A target that is not under verification runs without GitHub settings, or with other repositories.
+- The remote host (isolated) watches the test repositories by default (owner answer, 2026-10-14). The co-located stack runs with GitHub only during its own verification.
 
 **Owner change**
 - Changing the owner of a project that already has a Suite stays refused in the MVP, as `setup` does since M1.5.

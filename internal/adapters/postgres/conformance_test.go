@@ -115,3 +115,7 @@ func (t *failingTx) AppendProposalRevision(ctx context.Context, write governance
 func (t *failingTx) RecordPromotion(ctx context.Context, write governance.PromotionWrite) error {
 	return t.afterWrite(t.Tx.RecordPromotion(ctx, write))
 }
+
+func (t *failingTx) RecordAssessment(ctx context.Context, write governance.AssessmentWrite) error {
+	return t.afterWrite(t.Tx.RecordAssessment(ctx, write))
+}

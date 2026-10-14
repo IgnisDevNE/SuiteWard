@@ -164,3 +164,7 @@ func translateWrite(what string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }
+
+func (s *Store) CreateSuite(context.Context, contract.ProjectID, contract.SuiteID, contract.PolicyRevisionID, contract.IntegrationTargetID) error {
+	return errors.New("postgres: CreateSuite is not implemented")
+}

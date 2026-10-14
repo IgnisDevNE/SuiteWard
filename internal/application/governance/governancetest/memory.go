@@ -409,3 +409,11 @@ func (t *tx) injected() error {
 	}
 	return nil
 }
+
+func (m *Memory) CreateSuite(context.Context, contract.ProjectID, contract.SuiteID, contract.PolicyRevisionID, contract.IntegrationTargetID) error {
+	return errors.New("governancetest: CreateSuite is not implemented")
+}
+
+func (t *tx) RecordAssessment(context.Context, governance.AssessmentWrite) error {
+	return errors.New("governancetest: RecordAssessment is not implemented")
+}

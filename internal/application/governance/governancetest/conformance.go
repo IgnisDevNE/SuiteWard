@@ -86,6 +86,22 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"QueueWriteFailureRollsBack", cfQueueWriteFailureRollsBack},
 		{"QueuedWorkIsNotCommittedOnCancellation", cfQueueIsNotCommittedOnCancellation},
 		{"QueueIsUnusableAfterTheUnitOfWork", cfQueueIsUnusableAfterTheUnitOfWork},
+		{"CreateSuiteCreatesAnEmptySuite", cfCreateSuiteCreatesAnEmptySuite},
+		{"CreateSuiteIsIdempotent", cfCreateSuiteIsIdempotent},
+		{"CreateSuiteConflictsWithAnotherPolicyOrTarget", cfCreateSuiteConflicts},
+		{"CreateSuiteNeedsAnExistingPolicyAndNames", cfCreateSuiteNeedsAnExistingPolicy},
+		{"RecordAssessmentStoresAndReadsBack", cfRecordAssessmentStoresAndReadsBack},
+		{"RecordAssessmentKeepsEvidenceOfAnotherRevisionAsMismatch", cfRecordAssessmentKeepsEvidenceOfAnotherRevision},
+		{"RecordAssessmentIsIdempotent", cfRecordAssessmentIsIdempotent},
+		{"RecordAssessmentWithOtherEvidenceConflicts", cfRecordAssessmentWithOtherEvidenceConflicts},
+		{"RecordAssessmentNeedsAKnownRevisionOfThisProposal", cfRecordAssessmentNeedsAKnownRevisionOfThisProposal},
+		{"RecordAssessmentAdvancesTheRevisionAndRollsBack", cfRecordAssessmentAdvancesTheRevisionAndRollsBack},
+		{"BootstrapNeedsTheRecordedAssessment", cfBootstrapNeedsTheRecordedAssessment},
+		{"ConsentWritesItsOutboxOnlyForNewResults", cfConsentOutbox},
+		{"ConsentOutboxFailureRollsBackTheFact", cfConsentOutboxFailureRollsBackTheFact},
+		{"BootstrapWritesItsOutboxOnlyWithTheFact", cfPromotionOutbox},
+		{"PromotionWritesItsOutbox", cfPromoteOutbox},
+		{"PromotionOutboxFailureRollsBackTheFact", cfPromotionOutboxFailureRollsBackTheFact},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

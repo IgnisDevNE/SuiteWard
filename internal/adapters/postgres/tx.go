@@ -525,3 +525,7 @@ func (t *tx) Enqueue(ctx context.Context, job governance.Job) error {
 func (t *tx) Outbox(ctx context.Context, message governance.OutboxMessage) error {
 	return insertOutbox(ctx, t.q, pgtype.Text{String: string(t.project), Valid: true}, pgtype.Text{String: string(t.suite), Valid: true}, message)
 }
+
+func (t *tx) RecordAssessment(context.Context, governance.AssessmentWrite) error {
+	return errors.New("postgres: RecordAssessment is not implemented")
+}

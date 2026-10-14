@@ -561,7 +561,7 @@ func TestChecksKeepTheRecordWhenTheCanonicalMovedDuringTheAssessment(t *testing.
 	w := newCJWorld(t, true)
 	w.protectedPull()
 	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
-	w.check.suites = &movedSuites{UnitOfWork: w.suites}
+	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrCanonicalMoved}
 
 	if err := w.runChecks(); err != nil {
 		t.Fatalf("a moved canonical is retried, not a failure: %v", err)
@@ -573,24 +573,30 @@ func TestChecksKeepTheRecordWhenTheCanonicalMovedDuringTheAssessment(t *testing.
 	w.want(5, checks.Success, "ready", 2)
 }
 
-// movedSuites fails the second unit of work that carries a write with ErrCanonicalMoved, as AssessHead does when the
-// canonical moved after it read the tree; reads pass.
-type movedSuites struct{ governance.UnitOfWork }
+// movedSuites fails the writes of AssessHead with err (ErrCanonicalMoved when the
+// canonical moved after it read the tree, or another ErrConflict); reads pass.
+type movedSuites struct {
+	governance.UnitOfWork
+	err error
+}
 
 func (s *movedSuites) Do(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, fn func(context.Context, governance.Tx) error) error {
 	return s.UnitOfWork.Do(ctx, project, suite, func(ctx context.Context, tx governance.Tx) error {
-		return fn(ctx, &movedTx{Tx: tx})
+		return fn(ctx, &movedTx{Tx: tx, err: s.err})
 	})
 }
 
-type movedTx struct{ governance.Tx }
+type movedTx struct {
+	governance.Tx
+	err error
+}
 
 func (t *movedTx) AppendProposalRevision(context.Context, governance.ProposalWrite) error {
-	return governance.ErrCanonicalMoved
+	return t.err
 }
 
 func (t *movedTx) RecordAssessment(context.Context, governance.AssessmentWrite) error {
-	return governance.ErrCanonicalMoved
+	return t.err
 }
 
 func TestChecksIgnoreClosedPulls(t *testing.T) {
@@ -718,5 +724,44 @@ func TestTheChecksJobIsTheOnlyWriterOfCheckStates(t *testing.T) {
 		if !strings.HasSuffix(caller, "internal/app/checksjob.go") {
 			t.Fatalf("%s calls Publish; only the checks job may write check states", caller)
 		}
+	}
+}
+
+func TestChecksDoNotFailOnACommandThatIsNoRejection(t *testing.T) {
+	t.Run("no-suite", func(t *testing.T) {
+		w := newCJWorld(t, true)
+		w.protectedPull()
+		w.entry(5, 301, bootOwnerID, commands.NoSuite, "")
+
+		w.mustCheck()
+
+		w.want(5, checks.InProgress, "approval-missing", 1)
+	})
+	t.Run("a processed revoke with no active approval", func(t *testing.T) {
+		w := newCJWorld(t, true)
+		w.protectedPull()
+		if outcome := w.consent(contract.RevokeConsent, 301, 2, 1, 5); outcome != contract.ConsentNoActiveApproval {
+			t.Fatalf("outcome %v, want no active approval", outcome)
+		}
+
+		w.mustCheck()
+
+		w.want(5, checks.InProgress, "approval-missing", 1)
+	})
+}
+
+func TestChecksPublishAssessmentPendingForANewHeadWhoseAssessmentConflicted(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.tree(cjHead2, bootFiles("v2"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrConflict} // not ErrCanonicalMoved
+
+	if err := w.runChecks(); err != nil {
+		t.Fatalf("a conflict is retried, not a failure: %v", err)
+	}
+
+	w.want(5, checks.InProgress, "assessment-pending", 1)
+	if got := w.problems.lookup(bootRepo); got != "conflict" {
+		t.Fatalf("problem %q, want conflict", got)
 	}
 }

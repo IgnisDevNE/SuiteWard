@@ -121,9 +121,14 @@ func runProbe(ctx context.Context, cfg config.Config, o probeOptions, stdout, st
 	return code
 }
 
+// probeStore is the part of *postgres.Store that waitForProbe polls.
+type probeStore interface {
+	SystemStatus(ctx context.Context, jobID int64, outboxKey string) (postgres.SystemStatus, error)
+}
+
 // waitForProbe polls until the job is completed and the message delivered,
 // prints the final line with the states it saw, and returns the exit code.
-func waitForProbe(ctx context.Context, store *postgres.Store, o probeOptions, started time.Time, out *lines, stderr io.Writer) int {
+func waitForProbe(ctx context.Context, store probeStore, o probeOptions, started time.Time, out *lines, stderr io.Writer) int {
 	waitCtx, cancel := context.WithTimeout(ctx, o.timeout)
 	defer cancel()
 	ticker := time.NewTicker(probePoll)
@@ -146,7 +151,7 @@ func waitForProbe(ctx context.Context, store *postgres.Store, o probeOptions, st
 				reportf(stderr, "the probe failed: job %s, message %s\n", seen.JobState, seen.OutboxState)
 				return 2
 			}
-		case !errors.Is(err, context.DeadlineExceeded):
+		case !errors.Is(waitCtx.Err(), context.DeadlineExceeded): // the driver may report our deadline as its own i/o timeout
 			reportf(stderr, "%v\n", err)
 			return 1
 		}

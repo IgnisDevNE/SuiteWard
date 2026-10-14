@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"time"
 
@@ -34,12 +35,14 @@ type commandsJob struct {
 	owners     owner.Store
 	suites     governance.UnitOfWork
 	syncs      repositoryReader // the observation store: each repository's last successful cycle
+	repos      []string         // the configured repositories (GITHUB_REPOSITORIES)
 	bot        *botAccount
 	jobTimeout time.Duration
 	logger     *slog.Logger
 	now        func() time.Time
 
-	failing commandFailure // the candidate that failed last, in this process; runs never overlap
+	failing commandFailure  // the candidate that failed last, in this process; runs never overlap
+	warned  map[string]bool // enrolled repositories already reported as not configured
 }
 
 // commandFailure counts the consecutive failed attempts of one candidate.
@@ -113,6 +116,14 @@ func (j *commandsJob) run(ctx context.Context) error {
 func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (horizon time.Time, ready bool, err error) {
 	var earliest time.Time
 	for _, project := range enrollment.Projects {
+		// Fail closed: an enrolled repository holds the watermark back even after it left GITHUB_REPOSITORIES, so say why.
+		if !slices.Contains(j.repos, project.Repo) && !j.warned[project.Repo] {
+			if j.warned == nil {
+				j.warned = map[string]bool{}
+			}
+			j.warned[project.Repo] = true
+			j.logger.WarnContext(ctx, "github commands wait for an enrolled repository that is not configured in GITHUB_REPOSITORIES", "repo", project.Repo)
+		}
 		state, _, err := j.syncs.Repository(ctx, project.Repo)
 		if err != nil {
 			return time.Time{}, false, fmt.Errorf("read the synchronization state of %s: %w", project.Repo, err)
@@ -171,11 +182,14 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	reference := commandtext.Reference(command.Proposal, command.Revision)
 	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
 	if errors.Is(err, totp.ErrInvalidCode) {
+		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
 		return reject(commands.InvalidCode, 0, reference)
 	}
 	if err != nil {
 		return &opaque{what: "verify the code", cause: err}
 	}
+	// Logged before the step is consumed, so a replayed code also logs "verified" and is then rejected.
+	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
 	source := commentSource(m.CommentID)
 	// The comment's own time keeps a retry after a crash identical to the first call.
 	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {
@@ -221,6 +235,20 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 		return &opaque{what: "process the consent", cause: err}
 	}
 	return j.record(ctx, c, commands.Processed, operation, nil)
+}
+
+// measuredTolerance is how far logRejectedOffset looks, to measure whether commandTolerance is too narrow (before M1.8).
+const measuredTolerance = 2
+
+// logRejectedOffset logs, for measurement only, whether a wider window would have accepted a rejected code and at which
+// offset in steps from the comment's step. The result never changes the decision, and neither the code nor the secret is logged.
+func (j *commandsJob) logRejectedOffset(ctx context.Context, secret []byte, code string, c commands.Candidate) {
+	step, err := totp.Verify(secret, code, c.Comment.CreatedAt, measuredTolerance)
+	if err != nil {
+		j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", c.Comment.CommentID, "would_match", false)
+		return
+	}
+	j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", c.Comment.CommentID, "would_match", true, "offset", step-totp.Step(c.Comment.CreatedAt))
 }
 
 // consentRequest is the command of the owner's comment with the identifiers of D-COMMANDS.

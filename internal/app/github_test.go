@@ -133,7 +133,7 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/down", InstallationID: 2, At: at, Kind: githubsync.FailureTransport}); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}, problems: &bootstrapProblems{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
@@ -150,6 +150,25 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	}
 }
 
+func TestStatusShowsTheLastBootstrapProblemOfARepository(t *testing.T) {
+	problems := &bootstrapProblems{}
+	problems.set("acme/ok", "origin-not-passed")
+	problems.set("acme/down", "read-failed")
+	problems.clear("acme/down")
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
+		github: &githubStatus{repos: []string{"acme/ok", "acme/down"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: problems}}
+
+	code, body := call(t, a, http.MethodGet, "/status")
+
+	want := `{"version":"` + Version + `","schemaVersion":11,"tier":"co-located",
+		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
+		"outbox":{"pending":0,"delivered":0,"failed":0},
+		"github":[{"repo":"acme/ok","bootstrap":"origin-not-passed"},{"repo":"acme/down"}]}`
+	if code != http.StatusOK || !jsonEqual(t, body, want) {
+		t.Fatalf("GET /status = %d %s; want 200 %s", code, body, want)
+	}
+}
+
 type failingRepositories struct{}
 
 func (failingRepositories) Repository(context.Context, string) (githubsync.RepositoryState, bool, error) {
@@ -157,7 +176,7 @@ func (failingRepositories) Repository(context.Context, string) (githubsync.Repos
 }
 
 func TestStatusIsUnavailableWhenTheObservationsCannotBeRead(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}, problems: &bootstrapProblems{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 

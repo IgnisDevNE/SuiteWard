@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -212,19 +213,48 @@ func (t *githubTree) Read(ctx context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
+// bootstrapProblems keeps, per configured repository name, the classification code of the last problem that stopped
+// the bootstrap of its project. It is in memory only: /status shows it, and a restart forgets it until the next run.
+type bootstrapProblems struct {
+	mu     sync.Mutex
+	byRepo map[string]string
+}
+
+func (p *bootstrapProblems) set(repo, code string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.byRepo == nil {
+		p.byRepo = map[string]string{}
+	}
+	p.byRepo[repo] = code
+}
+
+func (p *bootstrapProblems) clear(repo string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.byRepo, repo)
+}
+
+func (p *bootstrapProblems) lookup(repo string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.byRepo[repo]
+}
+
 // bootstrapJob is the github_bootstrap job: for each enrolled project it creates the Suite, proposes the
 // protected baseline of the default branch on the lowest open pull request, and bootstraps the first canonical once
 // the owner approved it (ADR 0010, D-COMMANDS). Every step is safe to repeat after a crash.
 type bootstrapJob struct {
-	repos   []string // the configured repositories
-	reader  bootstrapReader
-	owners  owner.Store
-	suites  governance.UnitOfWork
-	content governance.ContentWriter
-	pulls   pullLister // the synchronization store: which pull requests are open
-	tier    string     // the configured INSTALLATION_TIER
-	logger  *slog.Logger
-	now     func() time.Time
+	repos    []string // the configured repositories
+	reader   bootstrapReader
+	owners   owner.Store
+	suites   governance.UnitOfWork
+	content  governance.ContentWriter
+	pulls    pullLister         // the synchronization store: which pull requests are open
+	tier     string             // the configured INSTALLATION_TIER
+	problems *bootstrapProblems // shown in /status
+	logger   *slog.Logger
+	now      func() time.Time
 }
 
 // run advances every enrolled, configured project. A GitHub read failure skips that project until the next run;
@@ -255,21 +285,30 @@ func (b *bootstrapJob) run(ctx context.Context) error {
 // project advances one project and returns only the failures that fail the run.
 func (b *bootstrapJob) project(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy) error {
 	err := b.advance(ctx, enrollment, p)
+	var stopped bootstrapStop
 	switch {
 	case err == nil:
+		b.problems.clear(p.Repo)
 		return nil
 	case ctx.Err() != nil: // a cancelled read is not a GitHub failure
 		return ctx.Err()
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, b.logger, "github bootstrap read failed", p.Repo, err)
+		b.problems.set(p.Repo, "read-failed")
 		return nil
 	case errors.Is(err, errRepositoryChanged):
 		b.logger.WarnContext(ctx, "github bootstrap skipped: the repository name no longer identifies the enrolled repository", "repo", p.Repo)
+		b.problems.set(p.Repo, "repository-changed")
 		return nil
 	case invalidSource(err):
 		b.logger.WarnContext(ctx, "github bootstrap skipped: the default branch cannot be proposed as a baseline", "repo", p.Repo)
+		b.problems.set(p.Repo, "invalid-source")
+		return nil
+	case errors.As(err, &stopped):
+		b.problems.set(p.Repo, string(stopped))
 		return nil
 	}
+	b.problems.set(p.Repo, "failed")
 	return err
 }
 
@@ -406,7 +445,10 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 		return fmt.Errorf("read the observed pull requests: %w", err)
 	}
 	open := openPulls(pulls)
-	if len(open) == 0 || (s.latest > 0 && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier })) {
+	if len(open) == 0 {
+		return bootstrapStop("no-open-pull-request")
+	}
+	if s.latest > 0 && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
 		return nil
 	}
 	branch, ok := strings.CutPrefix(string(s.target), targetPrefix)
@@ -431,7 +473,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	if len(inv.Manifest().Entries()) == 0 { // ADR 0010: never manufacture an empty canonical suite; Info because it repeats every run
 		b.logger.InfoContext(ctx, "github bootstrap awaiting an initial contract: the default branch has no protected files", "repo", p.Repo)
-		return nil
+		return bootstrapStop("awaiting-initial-contract")
 	}
 	tier, _ := effectiveTier(b.tier, enrollment, true)
 	number, pull := s.latest+1, open[0]
@@ -468,7 +510,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s baselineState) error {
 	if s.assessed && !s.passed {
 		b.logger.InfoContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.latest)
-		return nil
+		return bootstrapStop("origin-not-passed")
 	}
 	var inv inventory.Inventory
 	outcome := contract.IntegrityUnavailable
@@ -498,12 +540,12 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 	switch {
 	case errors.Is(err, governance.ErrConflict): // an earlier, different outcome stands; assessments are immutable
 		b.logger.WarnContext(ctx, "github bootstrap stopped: the recorded assessment of the origin disagrees with this read", "repo", p.Repo, "proposal", s.latest)
-		return nil
+		return bootstrapStop("assessment-conflict")
 	case err != nil:
 		return fmt.Errorf("record the assessment: %w", err)
 	case outcome != contract.IntegrityPassed:
 		b.logger.WarnContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.latest)
-		return nil
+		return bootstrapStop("origin-not-passed")
 	}
 	return b.bootstrap(ctx, p, s, inv)
 }
@@ -537,8 +579,38 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 	}
 	if result.Outcome != contract.PromotionProposed {
 		b.logger.WarnContext(ctx, "github bootstrap blocked", "repo", p.Repo, "proposal", s.latest, "reason", result.Reason)
-		return nil
+		return bootstrapStop(blockedCode(result.Reason))
 	}
 	b.logger.InfoContext(ctx, "github baseline promoted", "repo", p.Repo, "reference", reference, "version", string(firstVersion), "replayed", result.Duplicate)
 	return nil
 }
+
+// blockedReasons name the reasons of a blocked promotion in the codes of /status.
+var blockedReasons = map[contract.PromotionReason]string{
+	contract.PromotionReasonContextMismatch:         "context-mismatch",
+	contract.PromotionReasonProposalNotCurrent:      "proposal-not-current",
+	contract.PromotionReasonCanonicalChanged:        "canonical-changed",
+	contract.PromotionReasonPolicyChanged:           "policy-changed",
+	contract.PromotionReasonApprovalMissing:         "approval-missing",
+	contract.PromotionReasonAssessmentMismatch:      "assessment-mismatch",
+	contract.PromotionReasonIntegrityNotPassed:      "integrity-not-passed",
+	contract.PromotionReasonIntegrationMissing:      "integration-missing",
+	contract.PromotionReasonIntegrationMismatch:     "integration-mismatch",
+	contract.PromotionReasonCanonicalPresent:        "canonical-present",
+	contract.PromotionReasonEmptyInventory:          "empty-inventory",
+	contract.PromotionReasonCorrectionContextReused: "correction-context-reused",
+}
+
+// blockedCode is the classification code of a blocked promotion, naming the reason.
+func blockedCode(reason contract.PromotionReason) string {
+	if name, known := blockedReasons[reason]; known {
+		return "blocked-" + name
+	}
+	return "blocked"
+}
+
+// bootstrapStop is why a project's bootstrap stopped or is waiting, without failing the run: a fixed classification code for
+// /status, never text from GitHub. The step that stops logs its own reason.
+type bootstrapStop string
+
+func (s bootstrapStop) Error() string { return "bootstrap stopped: " + string(s) }

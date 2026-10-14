@@ -206,46 +206,46 @@ func TestAcknowledge(t *testing.T) {
 		notWant []string
 	}{
 		{
-			"approved and eligible",
+			"approved and requirement met",
 			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner, Eligible: true},
-			[]string{"Approval recorded for P42-R3 by @octo-owner.", "P42-R3 is now eligible for promotion.", "To withdraw this approval, comment:", "/suiteward revoke P42-R3 <code>", "`<code>`"},
-			[]string{"not yet eligible"},
+			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is met.", "To withdraw this approval, comment:", "/suiteward revoke P42-R3 <code>", "`<code>`"},
+			[]string{"not met", "eligible", "separate comment", "confirms"},
 		},
 		{
-			"approved and not yet eligible",
+			"approved and requirement not yet met",
 			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner},
-			[]string{"Approval recorded for P42-R3 by @octo-owner.", "P42-R3 is not yet eligible for promotion", "/suiteward revoke P42-R3 <code>"},
-			[]string{"is now eligible"},
+			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is not met yet.", "/suiteward revoke P42-R3 <code>"},
+			[]string{"is met", "eligible", "other requirements"},
 		},
 		{
 			"revoked and still eligible",
 			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Source: source, Owner: owner, Eligible: true},
-			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "P7-R1 remains eligible for promotion through other valid approval.", "/suiteward approve P7-R1 <code>"},
-			[]string{"awaiting valid approval", "/suiteward revoke"},
+			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "The approval requirement for P7-R1 is still met through other valid approval.", "/suiteward approve P7-R1 <code>"},
+			[]string{"is not met", "eligible", "/suiteward revoke"},
 		},
 		{
 			"revoked and no longer eligible",
 			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "Promotion of P7-R1 is awaiting valid approval."},
-			[]string{"remains eligible", "/suiteward revoke"},
+			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "The approval requirement for P7-R1 is not met."},
+			[]string{"still met", "eligible", "waits", "/suiteward revoke"},
 		},
 		{
 			"no active approval",
 			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Source: source, Owner: owner},
-			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "P7-R2 is not eligible for promotion."},
-			[]string{"/suiteward revoke"},
+			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "The approval requirement for P7-R2 is not met."},
+			[]string{"eligible", "/suiteward revoke"},
 		},
 		{
 			"no active approval while eligible",
 			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Source: source, Owner: owner, Eligible: true},
-			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "P7-R2 is eligible for promotion."},
-			[]string{"not eligible"},
+			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "The approval requirement for P7-R2 is met."},
+			[]string{"not met", "eligible"},
 		},
 		{
 			"rejected unauthorized",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.Unauthorized, Proposal: 3, Revision: 1, Source: source, Owner: owner},
-			[]string{"Command for P3-R1 rejected by policy: @octo-owner is not authorized for this action under the project's policy. Nothing changed.", "P3-R1 is not eligible for promotion."},
-			[]string{"/suiteward revoke"},
+			[]string{"Command for P3-R1 rejected by policy: @octo-owner is not authorized for this action under the project's policy. Nothing changed.", "The approval requirement for P3-R1 is not met."},
+			[]string{"eligible", "/suiteward revoke"},
 		},
 		{
 			"rejected unknown revision",
@@ -274,7 +274,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"rejected obsolete command while eligible",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.ObsoleteCommand, Proposal: 3, Revision: 1, Source: source, Owner: owner, Eligible: true},
-			[]string{"Command for P3-R1 rejected by policy: a later command for P3-R1 was already processed. Nothing changed.", "P3-R1 is eligible for promotion."},
+			[]string{"Command for P3-R1 rejected by policy: a later command for P3-R1 was already processed. Nothing changed.", "The approval requirement for P3-R1 is met."},
 			nil,
 		},
 		{

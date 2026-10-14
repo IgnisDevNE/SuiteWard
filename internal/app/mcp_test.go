@@ -184,7 +184,7 @@ func TestMCPStatusLastErrorMatchesTheHTTPStatusSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpEntries, err := (&githubStatus{repos: repos, store: store}).report(t.Context(), nil)
+	httpEntries, err := (&githubStatus{repos: repos, store: store, problems: &bootstrapProblems{}}).report(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

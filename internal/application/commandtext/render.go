@@ -115,7 +115,7 @@ func acknowledgment(a Ack) string {
 	}
 	switch a.Outcome {
 	case Approved:
-		status := "The approval requirement for " + ref + " is not met yet; other requirements are still pending."
+		status := "The approval requirement for " + ref + " is not met yet."
 		if a.Eligible {
 			status = "The approval requirement for " + ref + " is met; SuiteWard confirms a promotion in a separate comment."
 		}

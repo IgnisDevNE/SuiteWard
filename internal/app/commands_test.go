@@ -327,9 +327,29 @@ func (w *cjWorld) requireSilent(repositoryID, comment int64, d commands.Disposit
 	}
 }
 
+// logEntries decodes the log lines without their wall-clock time, which could contain a six-digit code by chance.
+func (w *cjWorld) logEntries() []map[string]any {
+	w.t.Helper()
+	var entries []map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(w.logs.Bytes()))
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			w.t.Fatalf("log is not JSON: %v", err)
+		}
+		delete(entry, "time")
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
 func (w *cjWorld) requireNothingLeaked(codes ...string) {
 	w.t.Helper()
-	texts := []string{w.logs.String()}
+	var texts []string
+	for _, entry := range w.logEntries() {
+		line, _ := json.Marshal(entry)
+		texts = append(texts, string(line))
+	}
 	for _, r := range w.ledger.records {
 		if r.ack != nil {
 			texts = append(texts, string(r.ack.Payload))
@@ -450,7 +470,7 @@ func TestCommandsJobAcceptsTheCodesOfTheToleranceAndNoOther(t *testing.T) {
 	}
 }
 
-// The offsets of the owner's codes are logged to measure the window before M1.8: an accepted code with its distance in
+// The offsets of the owner's codes are logged to measure the window before M1.8: a verified code with its distance in
 // steps from the comment's step, a rejected one with whether a window of 2 steps would have accepted it. Never the code.
 func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
 	w := newCjWorld(t)
@@ -465,16 +485,7 @@ func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
 	w.syncAll(comments)
 	w.mustRun()
 	logged := map[int64]map[string]any{}
-	decoder := json.NewDecoder(bytes.NewReader(w.logs.Bytes()))
-	var withoutTime []string // the log lines minus their wall-clock time, which could contain six digits by chance
-	for decoder.More() {
-		var entry map[string]any
-		if err := decoder.Decode(&entry); err != nil {
-			t.Fatalf("log is not JSON: %v", err)
-		}
-		delete(entry, "time")
-		line, _ := json.Marshal(entry)
-		withoutTime = append(withoutTime, string(line))
+	for _, entry := range w.logEntries() {
 		if message, _ := entry["msg"].(string); strings.HasPrefix(message, "github command code") {
 			logged[int64(entry["comment"].(float64))] = entry
 		}
@@ -485,8 +496,8 @@ func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
 		case entry == nil:
 			t.Errorf("offset %d: no log line for the code; logs: %s", offset, w.logs)
 		case offset >= -1 && offset <= 1: // accepted
-			if entry["msg"] != "github command code accepted" || entry["offset"] != float64(offset) {
-				t.Errorf("offset %d: log %v, want an accepted code at that offset", offset, entry)
+			if entry["msg"] != "github command code verified" || entry["offset"] != float64(offset) {
+				t.Errorf("offset %d: log %v, want a verified code at that offset", offset, entry)
 			}
 		case offset >= -2 && offset <= 2: // rejected, but inside the window of 2
 			if entry["msg"] != "github command code rejected" || entry["would_match"] != true || entry["offset"] != float64(offset) {
@@ -498,14 +509,7 @@ func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
 			}
 		}
 	}
-	w.requireNothingLeaked()
-	for _, line := range withoutTime {
-		for _, code := range append(codes, string(cjSecret)) {
-			if strings.Contains(line, code) {
-				t.Fatalf("a code or the secret appears in the log line %s", line)
-			}
-		}
-	}
+	w.requireNothingLeaked(append(codes, string(cjSecret))...)
 }
 
 func TestCommandsJobBindsACodeToTheFirstCommandThatUsesIt(t *testing.T) {

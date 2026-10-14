@@ -188,7 +188,7 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	if err != nil {
 		return &opaque{what: "verify the code", cause: err}
 	}
-	j.logger.InfoContext(ctx, "github command code accepted", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
+	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
 	source := commentSource(m.CommentID)
 	// The comment's own time keeps a retry after a crash identical to the first call.
 	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {

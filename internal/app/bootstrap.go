@@ -56,15 +56,17 @@ type bootstrapSummaryPayload struct {
 // bootstrapSummaryInputs mirror commandtext.Summary. Repository text (Branch, Paths, Include, Exclude) is cut to
 // maxSummaryText bytes and each list holds at most maxSummaryRun entries, so the payload stays within the outbox limit.
 type bootstrapSummaryInputs struct {
-	Proposal  int      `json:"proposal"`
-	Revision  int      `json:"revision"`
-	Origin    string   `json:"origin"` // the pinned 40-hex commit
-	Branch    string   `json:"branch"`
-	Protected int      `json:"protected"` // all protected files, of which Paths lists the first ones
-	Paths     []string `json:"paths"`
-	Include   []string `json:"include"` // the declared include rules
-	Exclude   []string `json:"exclude"` // the declared exclude rules
-	Tier      string   `json:"tier"`    // the effective tier: owner.TierIsolated or owner.TierCoLocated
+	Proposal     int      `json:"proposal"`
+	Revision     int      `json:"revision"`
+	Origin       string   `json:"origin"` // the pinned 40-hex commit
+	Branch       string   `json:"branch"`
+	Protected    int      `json:"protected"` // all protected files, of which Paths lists the first ones
+	Paths        []string `json:"paths"`
+	Include      []string `json:"include"` // the declared include rules
+	Exclude      []string `json:"exclude"` // the declared exclude rules
+	IncludeTotal int      `json:"includeTotal"`
+	ExcludeTotal int      `json:"excludeTotal"`
+	Tier         string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
 }
 
 // summary maps the inputs to the values the renderer takes.

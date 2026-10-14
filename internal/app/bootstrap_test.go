@@ -154,10 +154,11 @@ func (c *fakeBootContent) Put(_ context.Context, digest artifact.Digest, _ io.Re
 // committed, and injects a failure before, or a crash after, the commit of one numbered call.
 type probeSuites struct {
 	governance.UnitOfWork
-	calls    int
-	failAt   int // the call that fails before it reaches the store
-	crashAt  int // the call that commits and then reports a crash
-	messages []governance.OutboxMessage
+	calls     int
+	failAt    int                                      // the call that fails before it reaches the store
+	crashAt   int                                      // the call that commits and then reports a crash
+	createErr func(contract.IntegrationTargetID) error // when set, CreateSuite fails with it after the call is numbered
+	messages  []governance.OutboxMessage
 }
 
 func (p *probeSuites) next() int {
@@ -201,6 +202,9 @@ func (p *probeSuites) CreateSuite(ctx context.Context, project contract.ProjectI
 	call := p.next()
 	if call == p.failAt {
 		return errBootStore
+	}
+	if p.createErr != nil {
+		return p.createErr(target)
 	}
 	if err := p.UnitOfWork.CreateSuite(ctx, project, suite, policy, target); err != nil {
 		return err
@@ -576,12 +580,12 @@ func TestBootstrapProposesTheBaselineOnTheLowestOpenPullWithItsSummary(t *testin
 		t.Fatalf("payload target = %v", payload)
 	}
 	summary, _ := payload["summary"].(map[string]any)
-	if keys := slices.Sorted(maps.Keys(summary)); !slices.Equal(keys, []string{"branch", "exclude", "include", "origin", "paths", "proposal", "protected", "revision", "tier"}) {
+	if keys := slices.Sorted(maps.Keys(summary)); !slices.Equal(keys, []string{"branch", "exclude", "excludeTotal", "include", "includeTotal", "origin", "paths", "proposal", "protected", "revision", "tier"}) {
 		t.Fatalf("summary keys = %v", keys)
 	}
 	want := map[string]any{"proposal": float64(1), "revision": float64(1), "origin": bootHead, "branch": "main", "protected": float64(3), "tier": "isolated",
 		"paths":   []any{".github/workflows/ci.yml", ".suiteward.yml", "tests/a_test.go"},
-		"include": []any{"/tests/**"}, "exclude": []any{}}
+		"include": []any{"/tests/**"}, "exclude": []any{}, "includeTotal": float64(1), "excludeTotal": float64(0)}
 	for key, wanted := range want {
 		if fmt.Sprint(summary[key]) != fmt.Sprint(wanted) {
 			t.Errorf("summary %s = %v, want %v", key, summary[key], wanted)
@@ -914,7 +918,7 @@ func TestBootstrapSummaryNamesTheEffectiveTier(t *testing.T) {
 	}
 }
 
-func TestCutBytesStopsOnAUTF8Boundary(t *testing.T) {
+func TestCutBytesStopsOnAUTF8BoundaryAndMarksTheCut(t *testing.T) {
 	tests := map[string]string{
 		"ascii":        strings.Repeat("a", 400),
 		"two bytes":    strings.Repeat("é", 200),
@@ -924,24 +928,131 @@ func TestCutBytesStopsOnAUTF8Boundary(t *testing.T) {
 		"invalid mix":  strings.Repeat("a\xffb", 200),
 		"short":        "src/main.go",
 		"exactly 150":  strings.Repeat("a", 150),
+		"151 bytes":    strings.Repeat("a", 151),
 		"empty string": "",
 	}
 	for name, s := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := cutBytes(s, 150)
 
-			if len(got) > 150 || !strings.HasPrefix(s, got) || (s != "" && got == "") {
-				t.Fatalf("cutBytes = %d bytes %q of %d, want a non-empty prefix of at most 150 bytes", len(got), got, len(s))
+			if len(got) > 150 {
+				t.Fatalf("cutBytes = %d bytes, want at most 150 with the marker", len(got))
+			}
+			if len(s) <= 150 {
+				if got != s {
+					t.Fatal("a string within the limit was changed")
+				}
+				return
+			}
+			kept, marked := strings.CutSuffix(got, "\u2026")
+			if !marked || kept == "" || !strings.HasPrefix(s, kept) {
+				t.Fatalf("cutBytes = %q, want a non-empty prefix of the input followed by the marker", got)
 			}
 			if utf8.ValidString(s) && !utf8.ValidString(got) {
 				t.Fatal("a valid string was cut inside a rune")
 			}
-			if len(s) <= 150 && got != s {
-				t.Fatal("a string within the limit was shortened")
-			}
 		})
 	}
 }
+
+func TestBootstrapSummaryCountsTheRulesItDropsAndMarksWhatItCut(t *testing.T) {
+	long := strings.Repeat("r", 400)
+	rules := func(n int) []string {
+		list := []string{long}
+		for i := 1; i < n; i++ {
+			list = append(list, fmt.Sprintf("rule%d/**", i))
+		}
+		return list
+	}
+	message, err := newSummaryMessage(commentTarget{RepositoryID: 1, Repo: "a/b", Pull: 1},
+		bootstrapSummaryInputs{Proposal: 1, Revision: 1, Origin: bootHead, Branch: "main", Protected: 1, Paths: []string{long}, Include: rules(25), Exclude: rules(21), Tier: owner.TierIsolated})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded bootstrapSummaryPayload
+	if err := json.Unmarshal(message.Payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	s := decoded.Summary
+	if s.IncludeTotal != 25 || s.ExcludeTotal != 21 || len(s.Include) != 20 || len(s.Exclude) != 20 {
+		t.Fatalf("include %d of %d, exclude %d of %d; want 20 of 25 and 20 of 21", len(s.Include), s.IncludeTotal, len(s.Exclude), s.ExcludeTotal)
+	}
+	for _, shortened := range []string{s.Paths[0], s.Include[0], s.Exclude[0]} {
+		if !strings.HasSuffix(shortened, "\u2026") || len(shortened) > maxSummaryText {
+			t.Fatalf("a shortened entry is %q (%d bytes), want at most %d bytes ending in the marker", shortened, len(shortened), maxSummaryText)
+		}
+	}
+	if s.Include[1] != "rule1/**" {
+		t.Fatalf("a short rule changed to %q", s.Include[1])
+	}
+	rendered, err := s.summary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := commandtext.BootstrapSummary(rendered); !strings.Contains(body, "5 more are not listed") || !strings.Contains(body, "1 more are not listed") {
+		t.Fatalf("the rendered comment does not count the rules it left out:\n%s", body)
+	}
+}
+
+// A store error ends in river_job.errors, so it must not carry text the repository chose.
+func TestBootstrapErrorsNeverCarryRepositoryText(t *testing.T) {
+	const hostile = "HOSTILE-REPOSITORY-TEXT"
+	t.Run("a content store failure names a protected path", func(t *testing.T) {
+		w := newBootWorld(t)
+		w.openPulls(bootRepo, 4)
+		files := bootFiles("v1")
+		files[".github/workflows/"+hostile+".yml"] = "on: push\n" // sorts before ci.yml: the first path the store sees
+		w.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: files}
+		w.job.content = failingContent{}
+
+		err := w.run()
+
+		requireFailureWithoutText(t, err, hostile)
+		if !errors.Is(err, errBootContent) {
+			t.Fatalf("the cause was lost: %v", err)
+		}
+	})
+	t.Run("creating the suite names the default branch", func(t *testing.T) {
+		w := newBootWorld(t)
+		w.reader.repo(bootRepo).info.DefaultBranch = hostile
+		w.suites.createErr = func(target contract.IntegrationTargetID) error {
+			return fmt.Errorf("%w: targeting %q", errBootStore, target)
+		}
+
+		err := w.run()
+
+		requireFailureWithoutText(t, err, hostile)
+		if !errors.Is(err, errBootStore) {
+			t.Fatalf("the cause was lost: %v", err)
+		}
+	})
+	t.Run("a suite that targets something else than a branch", func(t *testing.T) {
+		w := newBootWorld(t)
+		w.seedSuite(bootRepoID, hostile)
+		w.openPulls(bootRepo, 4)
+
+		requireFailureWithoutText(t, w.run(), hostile)
+	})
+}
+
+func requireFailureWithoutText(t *testing.T, err error, text string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("the run did not fail")
+	}
+	if strings.Contains(err.Error(), text) {
+		t.Fatalf("the error carries repository text: %v", err)
+	}
+}
+
+var errBootContent = errors.New("disk full")
+
+// failingContent is a ContentWriter whose store is full.
+type failingContent struct{}
+
+func (failingContent) Put(context.Context, artifact.Digest, io.Reader) error { return errBootContent }
 
 // worstCase is a repository whose paths and rules are as large as JSON encoding can make them.
 func worstCase(unit string) bootstrapSummaryInputs {
@@ -982,6 +1093,14 @@ func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testin
 			}
 			if decoded.Summary.Branch == "" {
 				t.Fatal("the branch was cut to nothing")
+			}
+			if decoded.Summary.IncludeTotal != 40 || decoded.Summary.ExcludeTotal != 40 {
+				t.Fatalf("totals are %d and %d, want the 40 rules each list had", decoded.Summary.IncludeTotal, decoded.Summary.ExcludeTotal)
+			}
+			for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
+				if !strings.HasSuffix(entry, "2026") {
+					t.Fatalf("a cut entry has no marker: %q", entry)
+				}
 			}
 			rendered, err := decoded.Summary.summary()
 			if err != nil {

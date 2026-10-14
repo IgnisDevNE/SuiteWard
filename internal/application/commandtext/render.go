@@ -76,15 +76,16 @@ const (
 // and Exclude may be longer: the body lists the first 20 of each and counts the
 // rest.
 type Summary struct {
-	Proposal  int
-	Revision  int
-	Origin    string
-	Branch    string
-	Protected int
-	Paths     []string
-	Include   []string
-	Exclude   []string
-	Tier      Tier
+	Proposal                   int
+	Revision                   int
+	Origin                     string
+	Branch                     string
+	Protected                  int
+	Paths                      []string
+	Include                    []string
+	Exclude                    []string
+	IncludeTotal, ExcludeTotal int
+	Tier                       Tier
 }
 
 // Acknowledge renders the acknowledgment body of a processed command. It

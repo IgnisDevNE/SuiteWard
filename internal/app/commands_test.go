@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -446,6 +447,64 @@ func TestCommandsJobAcceptsTheCodesOfTheToleranceAndNoOther(t *testing.T) {
 	w.mustRun()
 	for i, want := range []commands.Disposition{commands.InvalidCode, commands.Processed, commands.Processed, commands.Processed, commands.InvalidCode} {
 		w.requireDisposition(cjID1, int64(500+i), want)
+	}
+}
+
+// The offsets of the owner's codes are logged to measure the window before M1.8: an accepted code with its distance in
+// steps from the comment's step, a rejected one with whether a window of 2 steps would have accepted it. Never the code.
+func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
+	w := newCjWorld(t)
+	offsets := []int64{-3, -2, -1, 0, 1, 2, 3}
+	var comments []cjComment
+	var codes []string
+	for i, offset := range offsets {
+		created := cjAt(10 + 5*i)
+		comments = append(comments, ownerCommand(int64(500+i), created, "approve", "P1-R2", offset))
+		codes = append(codes, cjCode(created, offset))
+	}
+	w.syncAll(comments)
+	w.mustRun()
+	logged := map[int64]map[string]any{}
+	decoder := json.NewDecoder(bytes.NewReader(w.logs.Bytes()))
+	var withoutTime []string // the log lines minus their wall-clock time, which could contain six digits by chance
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatalf("log is not JSON: %v", err)
+		}
+		delete(entry, "time")
+		line, _ := json.Marshal(entry)
+		withoutTime = append(withoutTime, string(line))
+		if message, _ := entry["msg"].(string); strings.HasPrefix(message, "github command code") {
+			logged[int64(entry["comment"].(float64))] = entry
+		}
+	}
+	for i, offset := range offsets {
+		entry := logged[int64(500+i)]
+		switch {
+		case entry == nil:
+			t.Errorf("offset %d: no log line for the code; logs: %s", offset, w.logs)
+		case offset >= -1 && offset <= 1: // accepted
+			if entry["msg"] != "github command code accepted" || entry["offset"] != float64(offset) {
+				t.Errorf("offset %d: log %v, want an accepted code at that offset", offset, entry)
+			}
+		case offset >= -2 && offset <= 2: // rejected, but inside the window of 2
+			if entry["msg"] != "github command code rejected" || entry["would_match"] != true || entry["offset"] != float64(offset) {
+				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would accept at that offset", offset, entry)
+			}
+		default:
+			if entry["msg"] != "github command code rejected" || entry["would_match"] != false || entry["offset"] != nil {
+				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would not accept", offset, entry)
+			}
+		}
+	}
+	w.requireNothingLeaked()
+	for _, line := range withoutTime {
+		for _, code := range append(codes, string(cjSecret)) {
+			if strings.Contains(line, code) {
+				t.Fatalf("a code or the secret appears in the log line %s", line)
+			}
+		}
 	}
 }
 

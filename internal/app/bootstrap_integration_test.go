@@ -47,7 +47,7 @@ func TestBootstrapJobOnPostgreSQLRunsTheFullSequence(t *testing.T) {
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
 	job := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated,
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
 	count := func(query string) string { return scalar(t, databaseURL, query) }
 
 	for range 2 {

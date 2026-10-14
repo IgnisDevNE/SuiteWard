@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -208,3 +209,14 @@ var (
 	ErrProposalConflict  = errors.New("proposal revision conflict")
 	ErrConflict          = errors.New("conflicting governance state")
 )
+
+// writeOutbox writes the messages of a use case in its own transaction, after
+// the facts that require them.
+func writeOutbox(ctx context.Context, tx Tx, messages []OutboxMessage) error {
+	for _, message := range messages {
+		if err := tx.Outbox(ctx, message); err != nil {
+			return fmt.Errorf("write outbox message %q: %w", message.Key, err)
+		}
+	}
+	return nil
+}

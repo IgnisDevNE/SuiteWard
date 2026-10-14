@@ -276,8 +276,8 @@ func cfRecordAssessmentNeedsAKnownRevisionOfThisProposal(e *cfEnv) {
 	good := e.assessmentWrite(c, "revision-2", "source-1", contract.IntegrityPassed)
 	unknownRevision := e.assessmentWrite(c, "revision-2", "source-1", contract.IntegrityPassed)
 	unknownRevision.Reference.RevisionID = "revision-9"
-	unknownProposal := good
-	unknownProposal.Reference.ProposalID = "p9"
+	ghost := cfNewCandidate(cfProject, cfSuite, "p9", "", "v1") // never seeded
+	unknownProposal := e.assessmentWrite(ghost, "revision-1", "source-1", contract.IntegrityPassed)
 	foreignEvidence := good
 	foreignEvidence.Evidence = cfMust(contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), "source-1", other.bindings["revision-1"], contract.IntegrityPassed))
 	otherSuite := good

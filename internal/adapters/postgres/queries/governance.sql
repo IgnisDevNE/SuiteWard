@@ -134,3 +134,14 @@ RETURNING revision;
 
 -- name: GetSchemaVersion :one
 SELECT schema_version()::bigint AS version;
+
+-- A new Suite: revision 0, no canonical. Nothing is written when it exists.
+-- name: InsertNewSuite :execrows
+INSERT INTO suites (project_id, suite_id, revision, current_version_id, target_id, policy_revision_id)
+VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), 0, NULL, sqlc.arg(target_id), sqlc.arg(policy_revision_id))
+ON CONFLICT (project_id, suite_id) DO NOTHING;
+
+-- Reads the Suite without locking it.
+-- name: GetSuite :one
+SELECT * FROM suites
+WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id);

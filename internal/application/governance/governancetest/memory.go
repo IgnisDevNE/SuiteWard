@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -19,9 +20,15 @@ import (
 // serializes every unit of work; each works on a copy that replaces the
 // stored state only when the unit of work succeeds.
 type Memory struct {
-	mu   sync.Mutex
-	data data
-	fail error
+	mu       sync.Mutex
+	data     data
+	policies map[policyKey]contract.Policy // every policy a Seed has registered, for CreateSuite
+	fail     error
+}
+
+type policyKey struct {
+	project  contract.ProjectID
+	revision contract.PolicyRevisionID
 }
 
 var (
@@ -31,7 +38,8 @@ var (
 
 // NewMemory returns an empty store; Seed adds Suites before any unit of work.
 func NewMemory() *Memory {
-	return &Memory{data: data{suites: map[suiteKey]*suiteData{}, byOp: map[contract.OperationID]governance.OperationReceipt{}, bySource: map[contract.SourceCommandID]governance.OperationReceipt{}, outbox: map[string]governance.OutboxMessage{}}}
+	return &Memory{data: data{suites: map[suiteKey]*suiteData{}, byOp: map[contract.OperationID]governance.OperationReceipt{}, bySource: map[contract.SourceCommandID]governance.OperationReceipt{}, outbox: map[string]governance.OutboxMessage{}},
+		policies: map[policyKey]contract.Policy{}}
 }
 
 // FailNext makes the next write of the next unit of work fail with err after
@@ -152,8 +160,36 @@ func (m *Memory) Seed(_ context.Context, seed governance.Seed) error {
 		s.proposals[id] = pd
 	}
 	m.data.suites[key] = s
+	m.policies[policyKey{key.project, state.Policy.RevisionID()}] = state.Policy
 	return nil
 }
+
+// CreateSuite creates an empty Suite under a policy that a Seed registered.
+func (m *Memory) CreateSuite(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, policy contract.PolicyRevisionID, target contract.IntegrationTargetID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if blank(string(project)) || blank(string(suite)) || blank(string(policy)) || blank(string(target)) {
+		return fmt.Errorf("%w: a suite needs a project, an id, a policy and a target", governance.ErrInvalidRequest)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	governing, known := m.policies[policyKey{project, policy}]
+	if !known {
+		return fmt.Errorf("%w: policy %q of project %q", governance.ErrNotFound, policy, project)
+	}
+	key := suiteKey{project, suite}
+	if existing, exists := m.data.suites[key]; exists {
+		if existing.policy.RevisionID() != policy || existing.target != target {
+			return fmt.Errorf("%w: suite %q of project %q is governed by policy %q targeting %q", governance.ErrConflict, suite, project, existing.policy.RevisionID(), existing.target)
+		}
+		return nil
+	}
+	m.data.suites[key] = &suiteData{policy: governing, target: target, history: map[contract.SuiteVersionID]contract.HistoricalCanonical{}, proposals: map[contract.ProposalID]*proposalData{}}
+	return nil
+}
+
+func blank(value string) bool { return strings.TrimSpace(value) == "" }
 
 type tx struct {
 	d      *data
@@ -351,6 +387,48 @@ func (t *tx) AppendProposalRevision(ctx context.Context, w governance.ProposalWr
 	return t.written()
 }
 
+func (t *tx) RecordAssessment(ctx context.Context, w governance.AssessmentWrite) error {
+	if err := t.live(ctx); err != nil {
+		return err
+	}
+	if err := w.Validate(t.key.project, t.key.suite); err != nil {
+		return err
+	}
+	p, ok := t.s.proposals[w.Reference.ProposalID]
+	if !ok {
+		return fmt.Errorf("%w: proposal %q", governance.ErrNotFound, w.Reference.ProposalID)
+	}
+	expected, ok := revisionBinding(p.proposal, w.Reference.RevisionID)
+	if !ok {
+		return fmt.Errorf("%w: revision %q of proposal %q", governance.ErrNotFound, w.Reference.RevisionID, w.Reference.ProposalID)
+	}
+	if cited, ok := revisionBinding(p.proposal, w.Evidence.Binding().Reference().RevisionID); !ok || !cited.Equal(w.Evidence.Binding()) {
+		return fmt.Errorf("%w: evidence cites a binding that is not a stored revision of proposal %q", governance.ErrInvalidRequest, w.Reference.ProposalID)
+	}
+	key := assessmentKey{w.Reference, w.Source}
+	if stored, exists := p.assessments[key]; exists {
+		if w.Matches(stored) {
+			return nil
+		}
+		return fmt.Errorf("%w: the assessment of %q at %q holds other evidence", governance.ErrConflict, w.Reference.RevisionID, w.Source)
+	}
+	assessment, err := contract.AssessIntegrity(w.Source, expected, &w.Evidence)
+	if err != nil {
+		return fmt.Errorf("%w: %w", governance.ErrInvalidRequest, err)
+	}
+	p.assessments[key] = assessment
+	return t.written()
+}
+
+func revisionBinding(proposal contract.Proposal, id contract.ProposalRevisionID) (contract.ApprovalBinding, bool) {
+	for _, revision := range proposal.Revisions() {
+		if revision.Binding().Reference().RevisionID == id {
+			return revision.Binding(), true
+		}
+	}
+	return contract.ApprovalBinding{}, false
+}
+
 var _ QueueInspector = (*Memory)(nil)
 
 func (m *Memory) QueuedJobKinds(context.Context) ([]string, error) {
@@ -408,12 +486,4 @@ func (t *tx) injected() error {
 		return err
 	}
 	return nil
-}
-
-func (m *Memory) CreateSuite(context.Context, contract.ProjectID, contract.SuiteID, contract.PolicyRevisionID, contract.IntegrationTargetID) error {
-	return errors.New("governancetest: CreateSuite is not implemented")
-}
-
-func (t *tx) RecordAssessment(context.Context, governance.AssessmentWrite) error {
-	return errors.New("governancetest: RecordAssessment is not implemented")
 }

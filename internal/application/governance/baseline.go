@@ -83,7 +83,10 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 			return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 		revised, err = reviseWithin(ctx, tx, state, revision)
-		return err
+		if err != nil || !revised.Committed {
+			return err
+		}
+		return writeOutbox(ctx, tx, request.Outbox)
 	})
 	if err != nil {
 		return BaselineResult{}, err

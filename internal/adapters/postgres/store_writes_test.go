@@ -11,6 +11,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 func (w *pgWorld) suiteRows(suite contract.SuiteID) int {
@@ -97,7 +98,8 @@ func TestBaselineOutboxCommitsWithTheRevisionAndRollsBackWithIt(t *testing.T) {
 		}
 		return governance.ProposeBaseline(t.Context(), w.store, w.content, request)
 	}
-	tree := mapTree{"tests/a_test.go": "package tests\n"}
+	declaration := "version: 1\ninclude: [/tests/**]\n"
+	tree := mapTree{scope.DeclarationPath: declaration, "tests/a_test.go": "package tests\n"}
 	before := w.revision()
 
 	if result, err := propose("revision-1", tree, "ack-1"); err != nil || !result.Revise.Committed {
@@ -111,7 +113,7 @@ func TestBaselineOutboxCommitsWithTheRevisionAndRollsBackWithIt(t *testing.T) {
 		t.Fatalf("unchanged proposal = %+v, %v with %d outbox rows, want no write", result.Revise, err, w.count("outbox"))
 	}
 
-	changed := mapTree{"tests/a_test.go": "package changed\n"}
+	changed := mapTree{scope.DeclarationPath: declaration, "tests/a_test.go": "package changed\n"}
 	if _, err := propose("revision-2", changed, "ack-1"); !errors.Is(err, governance.ErrOperationConflict) {
 		t.Fatalf("proposal with a taken outbox key = %v, want the key conflict", err)
 	}

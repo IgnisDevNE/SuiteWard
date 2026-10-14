@@ -2,6 +2,7 @@ package governance
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -23,4 +24,30 @@ type AssessmentWrite struct {
 	Reference contract.ProposalReference
 	Source    contract.SourceRevision
 	Evidence  contract.IntegrityEvidence // emitted by ServiceEmitter
+}
+
+// Validate reports ErrInvalidRequest when the write is incomplete, names
+// another Suite than the locked one, or carries evidence bound to another
+// proposal: an assessment and its evidence are both rebuilt from revisions of
+// one proposal.
+func (w AssessmentWrite) Validate(project contract.ProjectID, suite contract.SuiteID) error {
+	cited := w.Evidence.Binding().Reference()
+	switch {
+	case w.Reference.ProjectID != project || w.Reference.SuiteID != suite:
+		return fmt.Errorf("%w: an assessment belongs to the locked suite", ErrInvalidRequest)
+	case strings.TrimSpace(string(w.Reference.ProposalID)) == "" || strings.TrimSpace(string(w.Reference.RevisionID)) == "" || strings.TrimSpace(string(w.Source)) == "":
+		return fmt.Errorf("%w: an assessment names a proposal revision and a source", ErrInvalidRequest)
+	case w.Evidence.IsZero():
+		return fmt.Errorf("%w: an assessment carries evidence", ErrInvalidRequest)
+	case cited.ProjectID != project || cited.SuiteID != suite || cited.ProposalID != w.Reference.ProposalID:
+		return fmt.Errorf("%w: evidence cites a revision of another proposal", ErrInvalidRequest)
+	}
+	return nil
+}
+
+// Matches reports whether stored holds exactly the evidence of the write.
+func (w AssessmentWrite) Matches(stored contract.IntegrityAssessment) bool {
+	evidence, present := stored.Evidence()
+	return present && evidence.EmitterID() == w.Evidence.EmitterID() && evidence.Source() == w.Evidence.Source() &&
+		evidence.Outcome() == w.Evidence.Outcome() && evidence.Binding().Equal(w.Evidence.Binding())
 }

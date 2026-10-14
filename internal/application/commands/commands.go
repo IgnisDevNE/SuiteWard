@@ -114,3 +114,10 @@ func ValidatePending(horizon time.Time, limit int) error {
 	}
 	return nil
 }
+
+// AtStoredPrecision is the entry with its times at microsecond precision, which is all PostgreSQL stores: a retry
+// that carries the clock's nanoseconds is still the same entry.
+func (e Entry) AtStoredPrecision() Entry {
+	e.CreatedAt, e.DecidedAt = e.CreatedAt.Truncate(time.Microsecond), e.DecidedAt.Truncate(time.Microsecond)
+	return e
+}

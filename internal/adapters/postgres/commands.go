@@ -47,6 +47,12 @@ func (s *Store) Record(ctx context.Context, e commands.Entry, ack *governance.Ou
 	if err := e.Validate(); err != nil {
 		return err
 	}
+	if ack != nil {
+		if err := ack.Validate(); err != nil {
+			return err
+		}
+	}
+	e = e.AtStoredPrecision()
 	transaction, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin command ledger transaction: %w", err)

@@ -56,12 +56,15 @@ func (m *Memory) Pending(ctx context.Context, horizon time.Time, limit int) ([]c
 		return nil, err
 	}
 	state, enrolled, err := m.owners.Current(ctx)
-	if err != nil || !enrolled {
+	if err != nil {
 		return nil, err
+	}
+	if !enrolled {
+		return []commands.Candidate{}, nil // nobody is enrolled: no repository is observed for commands
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var pending []commands.Candidate
+	pending := []commands.Candidate{}
 	for _, project := range state.Projects {
 		pulls, err := m.observations.Pulls(ctx, project.Repo)
 		if err != nil {
@@ -104,6 +107,7 @@ func (m *Memory) Record(ctx context.Context, e commands.Entry, ack *governance.O
 	if err := e.Validate(); err != nil {
 		return err
 	}
+	e = e.AtStoredPrecision()
 	if ack != nil {
 		if err := ack.Validate(); err != nil {
 			return err

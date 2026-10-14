@@ -23,6 +23,7 @@ const (
 	EditedFirst
 	BootstrapPromoted
 	RevokedAfterPromotion
+	ApprovedAfterPromotion
 )
 
 // Rejection is the domain reason of a Rejected outcome.

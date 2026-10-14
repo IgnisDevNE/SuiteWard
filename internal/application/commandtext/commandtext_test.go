@@ -338,10 +338,17 @@ func TestAcknowledge(t *testing.T) {
 			[]string{"eligible"},
 		},
 		{
+			// True whether or not an approval was active, so it never says one was withdrawn.
 			"revoked after promotion",
 			commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "P7-R1 is already promoted", "canonical version remains unchanged", "does not undo the promotion", "separately approved rollback"},
-			[]string{"awaiting valid approval", "eligible", "no longer counts", "/suiteward"},
+			[]string{"Revoke command for P7-R1 by @octo-owner was recorded.", "P7-R1 is already promoted", "canonical version remains unchanged", "does not undo the promotion", "separately approved rollback"},
+			[]string{"awaiting valid approval", "eligible", "no longer counts", "withdrawn", "Revocation recorded", "/suiteward"},
+		},
+		{
+			"approved after promotion",
+			commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
+			[]string{"Approval recorded for P7-R1 by @octo-owner.", "P7-R1 is already promoted", "canonical version remains unchanged", "No further action is needed", "separately approved rollback"},
+			[]string{"awaiting", "eligible", "withdraw", "/suiteward", "<code>"},
 		},
 		{
 			"bootstrap promoted",
@@ -428,6 +435,10 @@ func TestAcknowledgePanicsOnImpossibleState(t *testing.T) {
 		{"revoked after promotion without reference", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Source: source, Owner: owner}},
 		{"eligibility after promotion", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Proposal: 1, Revision: 1, Source: source, Owner: owner, Eligible: true}},
 		{"rejection after promotion", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Rejection: commandtext.Unauthorized, Proposal: 1, Revision: 1, Source: source, Owner: owner}},
+		{"approved after promotion without reference", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Source: source, Owner: owner}},
+		{"eligibility on approved after promotion", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 1, Revision: 1, Source: source, Owner: owner, Eligible: true}},
+		{"version on approved after promotion", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 1, Revision: 1, Version: 1, Source: source, Owner: owner}},
+		{"no source on approved after promotion", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 1, Revision: 1, Owner: owner}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -681,7 +692,7 @@ func TestRenderedBodiesNeverEchoTheComment(t *testing.T) {
 	bodies := []string{}
 	for _, outcome := range []commandtext.Outcome{
 		commandtext.Approved, commandtext.Revoked, commandtext.NoActiveApproval,
-		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite, commandtext.RevokedAfterPromotion,
+		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite, commandtext.RevokedAfterPromotion, commandtext.ApprovedAfterPromotion,
 	} {
 		bodies = append(bodies, render(t, func() string {
 			return commandtext.Acknowledge(commandtext.Ack{Outcome: outcome, Proposal: c.Proposal, Revision: c.Revision, Source: source, Owner: owner})

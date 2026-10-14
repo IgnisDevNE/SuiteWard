@@ -169,7 +169,7 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	want := func(posted ...string) {
 		t.Helper()
 		if got := gh.posted(t, instance); strings.Join(got, "; ") != strings.Join(posted, "; ") {
-			t.Fatalf("posted runs\n got %v\nwant %v\noutbox: %s", got, posted, scalar(t, databaseURL, "SELECT coalesce(string_agg(key || ' ' || state || ' ' || coalesce(last_error, ''), '; ' ORDER BY id), 'empty') FROM outbox WHERE kind = 'github_check'"))
+			t.Fatalf("posted runs\n got %v\nwant %v\noutbox: %s", got, posted, scalar(t, databaseURL, "SELECT coalesce(string_agg(key || ' ' || state || ' ' || coalesce(last_error, ''), '; ' ORDER BY created_at, key), 'empty') FROM outbox WHERE kind = 'github_check'"))
 		}
 	}
 

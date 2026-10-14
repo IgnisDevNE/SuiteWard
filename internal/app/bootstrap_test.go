@@ -340,13 +340,17 @@ func (w *bootWorld) suiteExists() bool {
 
 func (w *bootWorld) proposal(n int) (proposal contract.Proposal, found bool) {
 	w.t.Helper()
-	w.read(func(ctx context.Context, tx governance.Tx) {
+	err := w.mem.Do(w.t.Context(), w.project(), "default", func(ctx context.Context, tx governance.Tx) error {
 		p, _, err := tx.Proposal(ctx, contract.ProposalID(fmt.Sprintf("P%d", n)))
-		if err != nil && !errors.Is(err, governance.ErrNotFound) {
-			w.t.Fatal(err)
-		}
 		proposal, found = p, err == nil
+		if errors.Is(err, governance.ErrNotFound) {
+			return nil
+		}
+		return err
 	})
+	if err != nil && !errors.Is(err, governance.ErrNotFound) { // no Suite means no proposal
+		w.t.Fatal(err)
+	}
 	return proposal, found
 }
 

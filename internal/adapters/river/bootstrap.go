@@ -1,6 +1,8 @@
 package river
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	riverqueue "github.com/riverqueue/river"
@@ -10,10 +12,39 @@ import (
 // (docs/contracts/runtime.md, "Command and bootstrap jobs (M1.6a)").
 const BootstrapKind = "github_bootstrap"
 
-// bootstrapInterval is the period of the bootstrap job.
-const bootstrapInterval = 60 * time.Second
+// defaultBootstrapInterval is the period of the bootstrap job.
+const defaultBootstrapInterval = 60 * time.Second
+
+type bootstrapArgs struct{}
+
+func (bootstrapArgs) Kind() string { return BootstrapKind }
+
+type bootstrapWorker struct {
+	riverqueue.WorkerDefaults[bootstrapArgs]
+	run func(ctx context.Context) error
+}
+
+func (w *bootstrapWorker) Work(ctx context.Context, _ *riverqueue.Job[bootstrapArgs]) error {
+	return w.run(ctx)
+}
 
 // addBootstrap registers the bootstrap job of config in workers and returns its periodic job (none when config has no bootstrap).
 func addBootstrap(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.PeriodicJob, err error) {
-	return nil, nil
+	if config.Bootstrap == nil {
+		return jobs, nil
+	}
+	if err := riverqueue.AddWorkerSafely(workers, &bootstrapWorker{run: config.Bootstrap}); err != nil {
+		return nil, fmt.Errorf("register the bootstrap: %w", err)
+	}
+	interval := config.BootstrapInterval
+	if interval <= 0 {
+		interval = defaultBootstrapInterval
+	}
+	run := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
+		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
+			// A run does not start while an earlier one runs; one that failed is not retried, the next run is.
+			return bootstrapArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
+		},
+		&riverqueue.PeriodicJobOpts{ID: BootstrapKind, RunOnStart: true})
+	return append(jobs, run), nil
 }

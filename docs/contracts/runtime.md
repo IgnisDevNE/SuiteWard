@@ -91,7 +91,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
 
 **`github_commands`**
 - Periodic every 15 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished. It is a single job, so commands are serialized across all repositories (D-COMMANDS).
-- It computes the sync watermark (D-COMMANDS) and takes `commands.Store.Pending` up to that horizon, in order. While an enrolled repository has never synchronized successfully there is no horizon: the run does nothing and logs a Warn naming that repository, because every command waits. For each candidate:
+- It computes the sync watermark (D-COMMANDS) and takes `commands.Store.Pending` up to that horizon, in order. While an enrolled repository has never synchronized successfully there is no horizon: the run does nothing and logs a Warn naming that repository, because every command waits. The horizon covers every enrolled repository, also one that is no longer in `GITHUB_REPOSITORIES` (fail closed); the first run to see such a repository logs a Warn naming it, once per repository per process. For each candidate:
   - **Before enrollment.** Record `before-enrollment` when the comment's `created_at` is before the current enrollment's `enrolled_at`. This covers S1's old commands and comments the owner wrote under a replaced secret.
   - **Not a command.** Record `not-command` when the author is the bot or the body has no command line.
   - **Not the owner.** Record `ignored-author` when the author is not the enrolled owner. It is otherwise ignored.

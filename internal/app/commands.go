@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"time"
 
@@ -41,6 +42,7 @@ type commandsJob struct {
 	now        func() time.Time
 
 	failing commandFailure // the candidate that failed last, in this process; runs never overlap
+	warned  map[string]bool // enrolled repositories already reported as not configured
 }
 
 // commandFailure counts the consecutive failed attempts of one candidate.
@@ -114,6 +116,14 @@ func (j *commandsJob) run(ctx context.Context) error {
 func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (horizon time.Time, ready bool, err error) {
 	var earliest time.Time
 	for _, project := range enrollment.Projects {
+		// Fail closed: an enrolled repository holds the watermark back even after it left GITHUB_REPOSITORIES, so say why.
+		if !slices.Contains(j.repos, project.Repo) && !j.warned[project.Repo] {
+			if j.warned == nil {
+				j.warned = map[string]bool{}
+			}
+			j.warned[project.Repo] = true
+			j.logger.WarnContext(ctx, "github commands wait for an enrolled repository that is not configured in GITHUB_REPOSITORIES", "repo", project.Repo)
+		}
 		state, _, err := j.syncs.Repository(ctx, project.Repo)
 		if err != nil {
 			return time.Time{}, false, fmt.Errorf("read the synchronization state of %s: %w", project.Repo, err)

@@ -35,3 +35,14 @@ func TestProbeReportsItsOwnExpiredDeadlineAsATimeoutWhateverTheDriverReturns(t *
 		t.Fatalf("waitForProbe printed %q; want a final line with the probe id and the states it saw", stdout.String())
 	}
 }
+
+func TestProbeCancelledByItsCallerIsAnError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	o := probeOptions{timeout: time.Minute, jobID: 7, key: "probe-k"}
+	code := waitForProbe(ctx, blockingStatus{}, o, time.Now(), &lines{encoder: json.NewEncoder(&stdout)}, &stderr)
+	if code != 1 || strings.Contains(stderr.String(), "timed out") {
+		t.Fatalf("waitForProbe exited %d, stderr %q; want 1 and no timeout message", code, stderr.String())
+	}
+}

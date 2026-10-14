@@ -151,7 +151,7 @@ func waitForProbe(ctx context.Context, store probeStore, o probeOptions, started
 				reportf(stderr, "the probe failed: job %s, message %s\n", seen.JobState, seen.OutboxState)
 				return 2
 			}
-		case !errors.Is(err, context.DeadlineExceeded):
+		case !errors.Is(waitCtx.Err(), context.DeadlineExceeded): // the driver may report our deadline as its own i/o timeout
 			reportf(stderr, "%v\n", err)
 			return 1
 		}

@@ -593,6 +593,33 @@ func TestBootstrapProposesTheBaselineOnTheLowestOpenPullWithItsSummary(t *testin
 	}
 }
 
+// ADR 0010: a repository without protected files keeps awaiting its initial contract; an empty baseline is never proposed.
+func TestBootstrapNeverProposesAnEmptyBaselineAndProposesOnceTheTreeProtectsAFile(t *testing.T) {
+	w := newBootWorld(t)
+	w.reader.repos[bootRepo].trees[bootHead] = &bootTree{files: map[string]string{"src/main.go": "package main\n"}}
+	w.openPulls(bootRepo, 4)
+
+	w.mustRun()
+	w.mustRun()
+
+	if _, found := w.proposal(1); found {
+		t.Fatal("an empty baseline was proposed")
+	}
+	w.requireOutbox()
+	if !strings.Contains(w.logs.String(), "awaiting an initial contract") || strings.Contains(w.logs.String(), "src/main.go") {
+		t.Fatalf("logs = %s, want the awaiting notice without paths", w.logs)
+	}
+
+	w.reader.repos[bootRepo].heads["main"] = bootMovedHead
+	w.reader.repos[bootRepo].trees[bootMovedHead] = &bootTree{files: bootFiles("v1")}
+	w.mustRun()
+
+	if _, found := w.proposal(1); !found {
+		t.Fatalf("no baseline was proposed after the tree gained protected files\nlogs: %s", w.logs)
+	}
+	w.requireOutbox(summaryKey)
+}
+
 func TestBootstrapSaysNothingTwiceForUnchangedCoverage(t *testing.T) {
 	w := proposedWorld(t)
 	before := maps.Clone(w.reader.calls)

@@ -2,8 +2,10 @@ package commandtext_test
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 )
@@ -11,6 +13,7 @@ import (
 const (
 	instance = "0123456789abcdef0123456789abcdef"
 	owner    = "octo-owner"
+	source   = 2345678901
 )
 
 // mustPanic fails unless f panics with something other than a stub's message.
@@ -204,135 +207,148 @@ func TestAcknowledge(t *testing.T) {
 	}{
 		{
 			"approved and eligible",
-			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Owner: owner, Eligible: true},
+			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner, Eligible: true},
 			[]string{"Approval recorded for P42-R3 by @octo-owner.", "P42-R3 is now eligible for promotion.", "To withdraw this approval, comment:", "/suiteward revoke P42-R3 <code>", "`<code>`"},
 			[]string{"not yet eligible"},
 		},
 		{
 			"approved and not yet eligible",
-			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner},
 			[]string{"Approval recorded for P42-R3 by @octo-owner.", "P42-R3 is not yet eligible for promotion", "/suiteward revoke P42-R3 <code>"},
 			[]string{"is now eligible"},
 		},
 		{
 			"revoked and still eligible",
-			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Owner: owner, Eligible: true},
+			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Source: source, Owner: owner, Eligible: true},
 			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "P7-R1 remains eligible for promotion through other valid approval.", "/suiteward approve P7-R1 <code>"},
 			[]string{"awaiting valid approval", "/suiteward revoke"},
 		},
 		{
 			"revoked and no longer eligible",
-			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Source: source, Owner: owner},
 			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "Promotion of P7-R1 is awaiting valid approval."},
 			[]string{"remains eligible", "/suiteward revoke"},
 		},
 		{
 			"no active approval",
-			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Source: source, Owner: owner},
 			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "P7-R2 is not eligible for promotion."},
 			[]string{"/suiteward revoke"},
 		},
 		{
 			"no active approval while eligible",
-			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Owner: owner, Eligible: true},
+			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Source: source, Owner: owner, Eligible: true},
 			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "P7-R2 is eligible for promotion."},
 			[]string{"not eligible"},
 		},
 		{
 			"rejected unauthorized",
-			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.Unauthorized, Proposal: 3, Revision: 1, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.Unauthorized, Proposal: 3, Revision: 1, Source: source, Owner: owner},
 			[]string{"Command for P3-R1 rejected by policy: @octo-owner is not authorized for this action under the project's policy. Nothing changed.", "P3-R1 is not eligible for promotion."},
 			[]string{"/suiteward revoke"},
 		},
 		{
 			"rejected unknown revision",
-			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.UnknownRevision, Proposal: 3, Revision: 9, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.UnknownRevision, Proposal: 3, Revision: 9, Source: source, Owner: owner},
 			[]string{"Command for P3-R9 rejected by policy: P3-R9 is not a revision of this project. Nothing changed.", "Check the reference"},
 			nil,
 		},
 		{
 			"rejected superseded revision",
-			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.SupersededRevision, Proposal: 3, Revision: 1, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.SupersededRevision, Proposal: 3, Revision: 1, Source: source, Owner: owner},
 			[]string{"Command for P3-R1 rejected by policy: P3-R1 has been superseded by a newer revision. Nothing changed.", "latest revision"},
 			nil,
 		},
 		{
 			"rejected context mismatch",
-			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.ContextMismatch, Proposal: 3, Revision: 1, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.ContextMismatch, Proposal: 3, Revision: 1, Source: source, Owner: owner},
 			[]string{"Command for P3-R1 rejected by policy: P3-R1 no longer matches its source or integration target. Nothing changed."},
 			nil,
 		},
 		{
 			"rejected policy mismatch",
-			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.PolicyMismatch, Proposal: 3, Revision: 1, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.PolicyMismatch, Proposal: 3, Revision: 1, Source: source, Owner: owner},
 			[]string{"Command for P3-R1 rejected by policy: the project's policy changed after P3-R1 was proposed. Nothing changed."},
 			nil,
 		},
 		{
 			"rejected obsolete command while eligible",
-			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.ObsoleteCommand, Proposal: 3, Revision: 1, Owner: owner, Eligible: true},
+			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.ObsoleteCommand, Proposal: 3, Revision: 1, Source: source, Owner: owner, Eligible: true},
 			[]string{"Command for P3-R1 rejected by policy: a later command for P3-R1 was already processed. Nothing changed.", "P3-R1 is eligible for promotion."},
 			nil,
 		},
 		{
 			"malformed unknown verb",
-			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Source: source, Owner: owner},
 			[]string{"Your `/suiteward` command was not understood: the action must be `approve` or `revoke`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`"},
 			[]string{"eligible"},
 		},
 		{
 			"malformed missing reference",
-			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingReference, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingReference, Source: source, Owner: owner},
 			[]string{"Your `/suiteward` command was not understood: the proposal reference is missing. Nothing changed."},
 			nil,
 		},
 		{
 			"malformed bad reference",
-			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadReference, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadReference, Source: source, Owner: owner},
 			[]string{"Your `/suiteward` command was not understood: the reference must have the form `P<n>-R<m>`. Nothing changed."},
 			nil,
 		},
 		{
 			"malformed missing code",
-			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingCode, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingCode, Source: source, Owner: owner},
 			[]string{"Your `/suiteward` command was not understood: the 6-digit confirmation code is missing. Nothing changed."},
 			nil,
 		},
 		{
 			"malformed bad code",
-			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadCode, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadCode, Source: source, Owner: owner},
 			[]string{"Your `/suiteward` command was not understood: the confirmation code must be exactly 6 digits. Nothing changed."},
 			nil,
 		},
 		{
 			"malformed extra text",
-			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.ExtraText, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.ExtraText, Source: source, Owner: owner},
 			[]string{"Your `/suiteward` command was not understood: nothing may follow the code on the command line. Nothing changed."},
 			nil,
 		},
 		{
 			"invalid code",
-			commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 4, Revision: 2, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
 			[]string{"The confirmation code for P4-R2 was not accepted; nothing changed.", "current code"},
 			[]string{"eligible"},
 		},
 		{
 			"replayed code",
-			commandtext.Ack{Outcome: commandtext.ReplayedCode, Proposal: 4, Revision: 2, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.ReplayedCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
 			[]string{"The confirmation code for P4-R2 was already used; each code works only once, so nothing changed.", "new code"},
 			[]string{"eligible"},
 		},
 		{
 			"no suite",
-			commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1, Source: source, Owner: owner},
 			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "bootstrap summary"},
 			[]string{"eligible"},
 		},
 		{
 			"edited first",
-			commandtext.Ack{Outcome: commandtext.EditedFirst, Owner: owner},
+			commandtext.Ack{Outcome: commandtext.EditedFirst, Source: source, Owner: owner},
 			[]string{"Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.", "new comment"},
 			[]string{"eligible"},
+		},
+		{
+			// True whether or not an approval was active, so it never says one was withdrawn.
+			"revoked after promotion",
+			commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
+			[]string{"Revoke command for P7-R1 by @octo-owner was recorded.", "P7-R1 is already promoted", "canonical version remains unchanged", "does not undo the promotion", "separately approved rollback"},
+			[]string{"awaiting valid approval", "eligible", "no longer counts", "withdrawn", "Revocation recorded", "/suiteward"},
+		},
+		{
+			"approved after promotion",
+			commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
+			[]string{"Approval recorded for P7-R1 by @octo-owner.", "P7-R1 is already promoted", "canonical version remains unchanged", "No further action is needed", "separately approved rollback"},
+			[]string{"awaiting", "eligible", "withdraw", "/suiteward", "<code>"},
 		},
 		{
 			"bootstrap promoted",
@@ -357,6 +373,17 @@ func TestAcknowledge(t *testing.T) {
 					t.Errorf("body contains %q:\n%s", w, body)
 				}
 			}
+			link := "[your command](#issuecomment-2345678901)"
+			if tc.ack.Outcome == commandtext.BootstrapPromoted {
+				if strings.Contains(body, "#issuecomment") {
+					t.Errorf("body links a command that did not trigger it:\n%s", body)
+				}
+			} else if !strings.Contains(body, link) {
+				t.Errorf("body lacks %q:\n%s", link, body)
+			}
+			if strings.Contains(body, "http") {
+				t.Errorf("body holds a host name or URL:\n%s", body)
+			}
 			checkBody(t, body)
 			if tc.ack.Outcome == commandtext.MalformedCommand || tc.ack.Outcome == commandtext.EditedFirst {
 				if regexp.MustCompile(`P[0-9]+-R[0-9]+`).MatchString(body) {
@@ -369,7 +396,7 @@ func TestAcknowledge(t *testing.T) {
 
 func TestApprovalRevokeLineIsInsideCode(t *testing.T) {
 	body := render(t, func() string {
-		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Owner: owner})
+		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner})
 	})
 	// Outside code GitHub would swallow <code> as an HTML tag, so the line must sit in a fenced block.
 	if !regexp.MustCompile("(?m)^```\n/suiteward revoke P42-R3 <code>\n```$").MatchString(body) {
@@ -382,20 +409,36 @@ func TestAcknowledgePanicsOnImpossibleState(t *testing.T) {
 		name string
 		ack  commandtext.Ack
 	}{
-		{"zero outcome", commandtext.Ack{Proposal: 1, Revision: 1, Owner: owner}},
-		{"unknown outcome", commandtext.Ack{Outcome: 99, Proposal: 1, Revision: 1, Owner: owner}},
-		{"approved without reference", commandtext.Ack{Outcome: commandtext.Approved, Owner: owner}},
-		{"revision out of range", commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 1, Revision: 1000000000, Owner: owner}},
-		{"rejected without reason", commandtext.Ack{Outcome: commandtext.Rejected, Proposal: 1, Revision: 1, Owner: owner}},
-		{"rejection on approval", commandtext.Ack{Outcome: commandtext.Approved, Rejection: commandtext.Unauthorized, Proposal: 1, Revision: 1, Owner: owner}},
-		{"malformed without reason", commandtext.Ack{Outcome: commandtext.MalformedCommand, Owner: owner}},
-		{"malformed with a reference", commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadCode, Proposal: 1, Revision: 1, Owner: owner}},
-		{"edited first with a reference", commandtext.Ack{Outcome: commandtext.EditedFirst, Proposal: 1, Revision: 1, Owner: owner}},
+		{"zero outcome", commandtext.Ack{Proposal: 1, Revision: 1, Source: source, Owner: owner}},
+		{"unknown outcome", commandtext.Ack{Outcome: 99, Proposal: 1, Revision: 1, Source: source, Owner: owner}},
+		{"approved without reference", commandtext.Ack{Outcome: commandtext.Approved, Source: source, Owner: owner}},
+		{"revision out of range", commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 1, Revision: 1000000000, Source: source, Owner: owner}},
+		{"rejected without reason", commandtext.Ack{Outcome: commandtext.Rejected, Proposal: 1, Revision: 1, Source: source, Owner: owner}},
+		{"rejection on approval", commandtext.Ack{Outcome: commandtext.Approved, Rejection: commandtext.Unauthorized, Proposal: 1, Revision: 1, Source: source, Owner: owner}},
+		{"malformed without reason", commandtext.Ack{Outcome: commandtext.MalformedCommand, Source: source, Owner: owner}},
+		{"malformed with a reference", commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadCode, Proposal: 1, Revision: 1, Source: source, Owner: owner}},
+		{"edited first with a reference", commandtext.Ack{Outcome: commandtext.EditedFirst, Proposal: 1, Revision: 1, Source: source, Owner: owner}},
 		{"promoted without version", commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Owner: owner}},
-		{"version on approval", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Version: 1, Owner: owner}},
-		{"eligibility on invalid code", commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 1, Revision: 1, Owner: owner, Eligible: true}},
-		{"empty owner", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1}},
-		{"owner with markup", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Owner: "x](https://e.test)"}},
+		{"version on approval", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Version: 1, Source: source, Owner: owner}},
+		{"eligibility on invalid code", commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 1, Revision: 1, Source: source, Owner: owner, Eligible: true}},
+		{"empty owner", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source}},
+		{"owner with markup", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source, Owner: "x](https://e.test)"}},
+		{"owner starting with underscore", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source, Owner: "_octo"}},
+		{"owner starting with hyphen", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source, Owner: "-octo"}},
+		{"owner of 40 characters", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source, Owner: "a" + strings.Repeat("b", 39)}},
+		{"owner with a space", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source, Owner: "octo owner"}},
+		{"no source command", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Owner: owner}},
+		{"negative source command", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: -5, Owner: owner}},
+		{"no source on malformed", commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadCode, Owner: owner}},
+		{"no source on edited first", commandtext.Ack{Outcome: commandtext.EditedFirst, Owner: owner}},
+		{"source on bootstrap promoted", commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Source: source, Owner: owner}},
+		{"revoked after promotion without reference", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Source: source, Owner: owner}},
+		{"eligibility after promotion", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Proposal: 1, Revision: 1, Source: source, Owner: owner, Eligible: true}},
+		{"rejection after promotion", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Rejection: commandtext.Unauthorized, Proposal: 1, Revision: 1, Source: source, Owner: owner}},
+		{"approved after promotion without reference", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Source: source, Owner: owner}},
+		{"eligibility on approved after promotion", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 1, Revision: 1, Source: source, Owner: owner, Eligible: true}},
+		{"version on approved after promotion", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 1, Revision: 1, Version: 1, Source: source, Owner: owner}},
+		{"no source on approved after promotion", commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 1, Revision: 1, Owner: owner}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -552,7 +595,10 @@ func TestMarker(t *testing.T) {
 	}{
 		{"ack key", "ack:12:34", "<!-- suiteward:" + instance + ":ack:12:34 -->"},
 		{"single letter", "a", "<!-- suiteward:" + instance + ":a -->"},
-		{"all allowed characters", "a0:_-z", "<!-- suiteward:" + instance + ":a0:_-z -->"},
+		{"bootstrap summary key", "bootstrap-summary:7:P4-R1", "<!-- suiteward:" + instance + ":bootstrap-summary:7:P4-R1 -->"},
+		{"bootstrap promoted key", "bootstrap-promoted:7:P4-R1", "<!-- suiteward:" + instance + ":bootstrap-promoted:7:P4-R1 -->"},
+		{"uppercase first letter", "Ack:1", "<!-- suiteward:" + instance + ":Ack:1 -->"},
+		{"all allowed characters", "aZ0:_-z", "<!-- suiteward:" + instance + ":aZ0:_-z -->"},
 		{"200 characters", "a" + strings.Repeat("b", 199), "<!-- suiteward:" + instance + ":a" + strings.Repeat("b", 199) + " -->"},
 	}
 	for _, tc := range cases {
@@ -618,6 +664,12 @@ func TestMarkerPanicsOnBadArguments(t *testing.T) {
 		{"key with space", instance, "ack 1"},
 		{"key closing the comment", instance, "ack-->"},
 		{"key with newline", instance, "ack\n"},
+		{"key starting with underscore", instance, "_ack"},
+		{"key starting with colon", instance, ":ack"},
+		{"key with closing angle bracket", instance, "ack>"},
+		{"key with bang", instance, "ack--!>"},
+		{"key with dot", instance, "ack.1"},
+		{"key with non-ASCII letter", instance, "acké"},
 		{"201-character key", instance, "a" + strings.Repeat("b", 200)},
 	}
 	for _, tc := range cases {
@@ -640,15 +692,15 @@ func TestRenderedBodiesNeverEchoTheComment(t *testing.T) {
 	bodies := []string{}
 	for _, outcome := range []commandtext.Outcome{
 		commandtext.Approved, commandtext.Revoked, commandtext.NoActiveApproval,
-		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite,
+		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite, commandtext.RevokedAfterPromotion, commandtext.ApprovedAfterPromotion,
 	} {
 		bodies = append(bodies, render(t, func() string {
-			return commandtext.Acknowledge(commandtext.Ack{Outcome: outcome, Proposal: c.Proposal, Revision: c.Revision, Owner: owner})
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: outcome, Proposal: c.Proposal, Revision: c.Revision, Source: source, Owner: owner})
 		}))
 	}
 	for rejection := commandtext.Unauthorized; rejection <= commandtext.ObsoleteCommand; rejection++ {
 		bodies = append(bodies, render(t, func() string {
-			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Rejected, Rejection: rejection, Proposal: c.Proposal, Revision: c.Revision, Owner: owner})
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Rejected, Rejection: rejection, Proposal: c.Proposal, Revision: c.Revision, Source: source, Owner: owner})
 		}))
 	}
 	bodies = append(bodies,
@@ -665,10 +717,10 @@ func TestRenderedBodiesNeverEchoTheComment(t *testing.T) {
 	}
 	bodies = append(bodies,
 		render(t, func() string {
-			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: broken.Reason, Owner: owner})
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: broken.Reason, Source: source, Owner: owner})
 		}),
 		render(t, func() string {
-			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.EditedFirst, Owner: owner})
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.EditedFirst, Source: source, Owner: owner})
 		}),
 	)
 	for i, body := range bodies {
@@ -680,5 +732,159 @@ func TestRenderedBodiesNeverEchoTheComment(t *testing.T) {
 				t.Errorf("body %d echoes %q:\n%s", i, leak, body)
 			}
 		}
+	}
+}
+
+// The comment ends at the first "-->" (or "--!>"). The key is the only
+// caller-supplied text inside it, so no byte that is not a letter, digit,
+// colon, underscore or hyphen may get through.
+func TestMarkerKeyCannotCloseTheCommentEarly(t *testing.T) {
+	for c := range 256 {
+		key := "ab--" + string([]byte{byte(c)}) + "cd"
+		func() {
+			defer func() { _ = recover() }()
+			marker := commandtext.Marker(instance, key)
+			if !strings.HasSuffix(marker, " -->") || strings.Contains(strings.TrimSuffix(marker, " -->"), ">") {
+				t.Errorf("key %q gives a marker that can close early: %q", key, marker)
+			}
+		}()
+	}
+	for _, key := range []string{"a-->", "a--!>", "ab -->", "ab--\n>"} {
+		mustPanic(t, func() { commandtext.Marker(instance, key) })
+	}
+	// Hyphens alone are fine: the marker still has exactly one terminator.
+	if got := render(t, func() string { return commandtext.Marker(instance, "a--b---") }); strings.Count(got, "-->") != 1 {
+		t.Errorf("Marker = %q, want exactly one -->", got)
+	}
+}
+
+func TestHasMarkerWithContractKeys(t *testing.T) {
+	for _, key := range []string{"bootstrap-summary:7:P4-R1", "bootstrap-promoted:7:P4-R1", "ack:7:2345678901"} {
+		body := "text\n\n" + "<!-- suiteward:" + instance + ":" + key + " -->\n"
+		var got bool
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("key %q panicked: %v", key, r)
+				}
+			}()
+			got = commandtext.HasMarker(body, instance, key)
+		}()
+		if !got {
+			t.Errorf("HasMarker does not find the marker for %q", key)
+		}
+	}
+}
+
+func TestAcknowledgeLinksTheSourceCommand(t *testing.T) {
+	for _, id := range []int64{1, 987654321012, 9223372036854775807} {
+		body := render(t, func() string {
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: id, Owner: owner})
+		})
+		want := "[your command](#issuecomment-" + strconv.FormatInt(id, 10) + ")"
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestAcknowledgeAcceptsGitHubLogins(t *testing.T) {
+	for _, login := range []string{"octocat", "a", "0", "octo-owner", "octocat_acme", "o_c-t_o", "a" + strings.Repeat("b", 38)} {
+		body := render(t, func() string {
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source, Owner: login})
+		})
+		if !strings.Contains(body, "by @"+login+".") {
+			t.Errorf("body lacks the login %q:\n%s", login, body)
+		}
+	}
+}
+
+const maxComment = 65536
+
+// A GitHub comment holds at most 65536 characters, so the largest summary the
+// types allow must fit whatever the repository's text is made of.
+func TestBootstrapSummaryFitsInAComment(t *testing.T) {
+	texts := map[string]string{
+		"plain":            "a",
+		"invalid UTF-8":    "\xff",
+		"backticks":        "`",
+		"bidi control":     "\u202e",
+		"newline":          "\n",
+		"3-byte printable": "\u20ac",
+	}
+	for name, unit := range texts {
+		t.Run(name, func(t *testing.T) {
+			long := func(n int) []string {
+				items := make([]string, n)
+				for i := range items {
+					items[i] = strings.Repeat(unit, 4096/len(unit))
+				}
+				return items
+			}
+			s := summary(20, long(20), commandtext.CoLocated)
+			s.Include, s.Exclude = long(20), long(20)
+			s.Branch = strings.Repeat(unit, 4096/len(unit))
+			body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+			if body == "" {
+				t.Fatal("empty body")
+			}
+			if len(body) >= maxComment {
+				t.Errorf("body has %d bytes, want fewer than %d", len(body), maxComment)
+			}
+			if !utf8.ValidString(body) {
+				t.Error("body is not valid UTF-8")
+			}
+			if !strings.Contains(body, "[shortened]") {
+				t.Errorf("shortened entries are not marked:\n%.600s", body)
+			}
+		})
+	}
+}
+
+func TestBootstrapSummaryBoundsTheScopeRules(t *testing.T) {
+	rules := func(prefix string, n int) []string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = prefix + strconv.Itoa(i) + "/**"
+		}
+		return items
+	}
+	s := summary(3, pathList(3), commandtext.Isolated)
+	s.Include, s.Exclude = rules("inc", 25), rules("exc", 21)
+	body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	for _, w := range []string{"inc19/**", "exc19/**", "5 more are not listed", "1 more are not listed"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	for _, w := range []string{"inc20/**", "inc24/**", "exc20/**"} {
+		if strings.Contains(body, w) {
+			t.Errorf("body lists %q beyond the bound:\n%s", w, body)
+		}
+	}
+	// Exactly 20 is not truncated.
+	s.Include, s.Exclude = rules("inc", 20), rules("exc", 20)
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if strings.Contains(body, "not listed") {
+		t.Errorf("20 rules are all listed, yet the body says some are not:\n%s", body)
+	}
+}
+
+func TestBootstrapSummaryShortensLongEntries(t *testing.T) {
+	s := summary(1, []string{strings.Repeat("p", 300), strings.Repeat("\u20ac", 150) + "tail"}, commandtext.Isolated)
+	s.Protected = 2
+	s.Include = []string{strings.Repeat("i", 301)}
+	body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if !strings.Contains(body, strings.Repeat("p", 300)+"\n") {
+		t.Errorf("a 300-byte path was shortened:\n%s", body)
+	}
+	if strings.Contains(body, "tail") {
+		t.Errorf("a long path was not shortened:\n%s", body)
+	}
+	if strings.Contains(body, strings.Repeat("i", 301)) || !strings.Contains(body, strings.Repeat("i", 300)+"\u2026 [shortened]") {
+		t.Errorf("a 301-byte rule was not shortened to 300 bytes and marked:\n%s", body)
+	}
+	if !utf8.ValidString(body) {
+		t.Error("shortening split a UTF-8 sequence")
 	}
 }

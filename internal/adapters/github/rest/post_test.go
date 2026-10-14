@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -217,27 +218,36 @@ func TestPostIsCountedInTheSharedBudget(t *testing.T) {
 
 func TestPostTokenSourceErrorIsWrappedAndReleasesItsReservation(t *testing.T) {
 	boom := errors.New("token source down")
-	var hits int
+	var mu sync.Mutex
+	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		hits++
-		setRateLimit(w, 10, 10-hits, t0.Add(time.Hour))
+		used := hits
+		mu.Unlock()
+		setRateLimit(w, 10, 10-used, t0.Add(time.Hour))
 		w.WriteHeader(http.StatusCreated)
 	}))
 	t.Cleanup(srv.Close)
-	failing := true
+	var failing atomic.Bool
 	token := func(context.Context) (string, string, error) {
-		if failing {
+		if failing.Load() {
 			return "", "", boom
 		}
 		return tokenValue, "identity-1", nil
 	}
-	// One request fits the budget: a failed attempt must give its reservation back.
-	client := newClient(t, token, srv.URL, newBudget(t, 0.1, &clock{now: t0}))
+	// 20% of 10 is two requests. One answered request makes the window known; the
+	// failed attempt must then give its reservation back, or the last Post is refused.
+	client := newClient(t, token, srv.URL, newBudget(t, 0.2, &clock{now: t0}))
 
+	if _, err := client.Post(t.Context(), "/p", []byte(`{}`)); err != nil {
+		t.Fatalf("first Post: %v", err)
+	}
+	failing.Store(true)
 	if _, err := client.Post(t.Context(), "/p", []byte(`{}`)); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the token source error", err)
 	}
-	failing = false
+	failing.Store(false)
 	if _, err := client.Post(t.Context(), "/p", []byte(`{}`)); err != nil {
 		t.Errorf("Post after a failed attempt: %v", err)
 	}

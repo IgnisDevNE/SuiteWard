@@ -208,8 +208,8 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"approved and requirement met",
 			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner, Eligible: true},
-			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is met; SuiteWard confirms a promotion in a separate comment.", "To withdraw this approval, comment:", "/suiteward revoke P42-R3 <code>", "`<code>`"},
-			[]string{"not met", "eligible"},
+			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is met.", "To withdraw this approval, comment:", "/suiteward revoke P42-R3 <code>", "`<code>`"},
+			[]string{"not met", "eligible", "separate comment", "confirms"},
 		},
 		{
 			"approved and requirement not yet met",
@@ -226,8 +226,8 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"revoked and no longer eligible",
 			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "The approval requirement for P7-R1 is not met; promotion waits for a valid approval."},
-			[]string{"still met", "eligible", "/suiteward revoke"},
+			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "The approval requirement for P7-R1 is not met."},
+			[]string{"still met", "eligible", "waits", "/suiteward revoke"},
 		},
 		{
 			"no active approval",

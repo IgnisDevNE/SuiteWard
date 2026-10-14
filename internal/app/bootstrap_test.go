@@ -554,6 +554,10 @@ func TestBootstrapProposesNothingWithoutAnOpenPull(t *testing.T) {
 	if w.reader.calls["head"] != 0 || w.reader.calls["tree"] != 0 {
 		t.Fatalf("the bootstrap read the branch %d times and the tree %d times without an open PR", w.reader.calls["head"], w.reader.calls["tree"])
 	}
+	w.requireProblem("no-open-pull-request")
+	w.openPulls(bootRepo, 4)
+	w.mustRun()
+	w.requireProblem("") // proposed: nothing is waiting any more
 }
 
 func TestBootstrapProposesTheBaselineOnTheLowestOpenPullWithItsSummary(t *testing.T) {
@@ -611,6 +615,7 @@ func TestBootstrapNeverProposesAnEmptyBaselineAndProposesOnceTheTreeProtectsAFil
 	if !strings.Contains(w.logs.String(), "awaiting an initial contract") || strings.Contains(w.logs.String(), "src/main.go") {
 		t.Fatalf("logs = %s, want the awaiting notice without paths", w.logs)
 	}
+	w.requireProblem("awaiting-initial-contract")
 
 	w.reader.repos[bootRepo].heads["main"] = bootMovedHead
 	w.reader.repos[bootRepo].trees[bootMovedHead] = &bootTree{files: bootFiles("v1")}
@@ -620,6 +625,7 @@ func TestBootstrapNeverProposesAnEmptyBaselineAndProposesOnceTheTreeProtectsAFil
 		t.Fatalf("no baseline was proposed after the tree gained protected files\nlogs: %s", w.logs)
 	}
 	w.requireOutbox(summaryKey)
+	w.requireProblem("")
 }
 
 func TestBootstrapSaysNothingTwiceForUnchangedCoverage(t *testing.T) {

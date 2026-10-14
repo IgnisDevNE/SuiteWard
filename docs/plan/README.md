@@ -1,6 +1,6 @@
 # Delivery plan
 
-- **Updated:** 2026-10-14 (phase M1.6a in verification; M1.5 completed; M1.6 split into M1.6a and M1.6b)
+- **Updated:** 2026-10-14 (phase M1.6a verified on both targets; M1.5 completed; M1.6 split into M1.6a and M1.6b)
 
 Each phase produces one PR, integrated with a merge commit after the user's authorization. Work inside a phase is orchestrated as described in [orchestration](orchestration.md): the main session writes [briefs](task-brief.md), `sw-implementer` subagents implement them test-first in their own worktrees, and `sw-reviewer` subagents review them. Open and accepted product choices live in the [decision register](decisions.md).
 
@@ -29,7 +29,7 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
-| [M1.6a](phases/M1.6a.md) | Existing-baseline bootstrap (never an empty baseline), `/suiteward approve` and `revoke` with TOTP, the command ledger and acknowledgment comments. **In verification:** the owner scenario on both targets is pending. | M1.3, M1.4, M1.5 |
+| [M1.6a](phases/M1.6a.md) | Existing-baseline bootstrap (never an empty baseline), `/suiteward approve` and `revoke` with TOTP, the command ledger and acknowledgment comments. **Verified** on both targets 2026-10-14 ([outcome](phases/M1.6a.md#outcome)); awaiting the merge. | M1.3, M1.4, M1.5 |
 | [M1.6b](phases/M1.6b.md) | Integrity assessment of each PR head and `SuiteWard / Contract` check publication through the outbox. | M1.6a |
 | [M1.7](phases/M1.7.md) | Merge detection and promotion for supported merge methods; explicit failure state for the others. | M1.6b |
 | [M1.8](phases/M1.8.md) | MVP acceptance: install guide, backup and re-bootstrap runbook, end-to-end run, dogfooding on SuiteWard. | M1.7 |

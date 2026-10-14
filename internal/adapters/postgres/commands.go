@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -96,6 +97,11 @@ func sameEntry(ctx context.Context, q *dbgen.Queries, e commands.Entry) error {
 		return fmt.Errorf("%w: comment %d of repository %d", commands.ErrConflict, e.CommentID, e.RepositoryID)
 	}
 	return nil
+}
+
+// LatestOwnerCommand implements commands.Store.
+func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (commands.Entry, bool, error) {
+	return commands.Entry{}, false, errors.New("postgres: not implemented")
 }
 
 // Instance implements commands.Store.

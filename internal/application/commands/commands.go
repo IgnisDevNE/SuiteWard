@@ -81,6 +81,11 @@ type Store interface {
 	// (repository, comment) with the same entry is success and writes nothing; with another entry it is
 	// ErrConflict. Entries are never updated or deleted.
 	Record(ctx context.Context, e Entry, ack *governance.OutboxMessage) error
+	// LatestOwnerCommand returns the entry of the command with the greatest comment id on the pull among the
+	// owner's ledger entries whose disposition is a command one (malformed, invalid-code, replayed-code,
+	// unknown-proposal, edited-first, no-suite, processed). Other dispositions never count, so an ordinary
+	// comment never hides an earlier rejected command. ErrInvalid for a non-positive id or a pull out of range.
+	LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (Entry, bool, error)
 	// Instance returns this installation's random identifier, created by migration 00013 and never changed.
 	Instance(ctx context.Context) (string, error)
 }
@@ -105,6 +110,11 @@ func (e Entry) Validate() error {
 	case (e.Disposition == Processed) != (e.Operation != ""):
 		return invalid("an operation is required for the disposition %q and only for it", Processed)
 	}
+	return nil
+}
+
+// ValidateLatest reports why LatestOwnerCommand cannot answer, as ErrInvalid.
+func ValidateLatest(repositoryID int64, pull int, ownerID int64) error {
 	return nil
 }
 

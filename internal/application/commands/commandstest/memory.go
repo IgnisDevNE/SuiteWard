@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -136,6 +137,13 @@ func sameEntry(a, b commands.Entry) bool {
 	return a.RepositoryID == b.RepositoryID && a.CommentID == b.CommentID && a.PullNumber == b.PullNumber && a.AuthorID == b.AuthorID &&
 		a.CreatedAt.Equal(b.CreatedAt) && a.BodyDigest == b.BodyDigest && a.Disposition == b.Disposition && a.Operation == b.Operation && a.DecidedAt.Equal(b.DecidedAt)
 }
+
+// LatestOwnerCommand implements commands.Store.
+func (m *Memory) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (commands.Entry, bool, error) {
+	return commands.Entry{}, false, errNotImplemented
+}
+
+var errNotImplemented = errors.New("commandstest: not implemented")
 
 // Instance implements commands.Store.
 func (m *Memory) Instance(ctx context.Context) (string, error) {

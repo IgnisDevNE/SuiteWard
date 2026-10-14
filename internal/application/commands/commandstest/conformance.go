@@ -383,6 +383,92 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		}
 	})
 
+	run("LatestOwnerCommand is the owner's command with the greatest comment id on the pull", func(e *cmdEnv) {
+		by := func(author int64, repository int64, comment int64, pull int, d commands.Disposition) {
+			x := entry(repository, comment, d)
+			x.AuthorID, x.PullNumber = author, pull
+			e.must(e.store.Record(e.ctx, x, nil))
+		}
+		latest := func(repository int64, pull int, want int64) {
+			e.t.Helper()
+			got, found, err := e.store.LatestOwnerCommand(e.ctx, repository, pull, ownerAccount)
+			e.must(err)
+			switch {
+			case want == 0 && found:
+				e.t.Fatalf("LatestOwnerCommand(%d, %d) = %+v; want none", repository, pull, got)
+			case want != 0 && (!found || got.CommentID != want || got.RepositoryID != repository || got.PullNumber != pull || got.AuthorID != ownerAccount):
+				e.t.Fatalf("LatestOwnerCommand(%d, %d) = %+v, found %v; want comment %d", repository, pull, got, found, want)
+			}
+		}
+		latest(10, 1, 0) // nothing recorded
+
+		// The order is the comment id, not the order of recording, creation or decision.
+		by(ownerAccount, 10, 5, 1, commands.Malformed)
+		by(ownerAccount, 10, 3, 1, commands.InvalidCode)
+		latest(10, 1, 5)
+		by(ownerAccount, 10, 9, 1, commands.Processed)
+		latest(10, 1, 9)
+		got, _, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount)
+		e.must(err)
+		if got.Disposition != commands.Processed || got.Operation == "" {
+			e.t.Fatalf("LatestOwnerCommand = %+v; want the whole processed entry", got)
+		}
+
+		// Another author, repository or pull never answers.
+		by(7, 10, 20, 1, commands.Malformed)
+		by(ownerAccount, 20, 21, 1, commands.Malformed)
+		by(ownerAccount, 10, 22, 2, commands.Malformed)
+		latest(10, 1, 9)
+		latest(10, 2, 22)
+		latest(20, 1, 21)
+		latest(10, 3, 0)
+		if _, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, 7); err != nil || !found {
+			e.t.Fatalf("LatestOwnerCommand for author 7 found %v, error %v; want its own command", found, err)
+		}
+	})
+
+	run("LatestOwnerCommand counts only the command dispositions", func(e *cmdEnv) {
+		counted := []commands.Disposition{commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.Processed}
+		ignored := []commands.Disposition{commands.NotCommand, commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor}
+		comment := int64(0)
+		record := func(d commands.Disposition) int64 {
+			comment++
+			x := entry(10, comment, d)
+			x.AuthorID = ownerAccount
+			e.must(e.store.Record(e.ctx, x, nil))
+			return comment
+		}
+		for _, d := range counted {
+			want := record(d)
+			// A comment of the owner that is not a command never clears an earlier command, however late it is.
+			for _, other := range ignored {
+				record(other)
+			}
+			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount)
+			e.must(err)
+			if !found || got.CommentID != want || got.Disposition != d {
+				e.t.Fatalf("after a %s command and ordinary comments: LatestOwnerCommand = %+v, found %v; want comment %d", d, got, found, want)
+			}
+		}
+	})
+
+	run("LatestOwnerCommand rejects an invalid request", func(e *cmdEnv) {
+		for name, args := range map[string]struct {
+			repository int64
+			pull       int
+			owner      int64
+		}{"repository": {0, 1, ownerAccount}, "pull": {10, 0, ownerAccount}, "huge pull": {10, 1 << 31, ownerAccount}, "owner": {10, 1, 0}} {
+			_, _, err := e.store.LatestOwnerCommand(e.ctx, args.repository, args.pull, args.owner)
+			if !errors.Is(err, commands.ErrInvalid) {
+				e.t.Fatalf("%s: error = %v; want ErrInvalid", name, err)
+			}
+		}
+		ctx, cancel := context.WithCancel(e.ctx)
+		cancel()
+		_, _, err := e.store.LatestOwnerCommand(ctx, 10, 1, ownerAccount)
+		e.requireErr(err, context.Canceled)
+	})
+
 	run("Instance is a stable 128-bit hexadecimal identifier", func(e *cmdEnv) {
 		id, err := e.store.Instance(e.ctx)
 		e.must(err)

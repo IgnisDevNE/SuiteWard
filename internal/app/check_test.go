@@ -278,16 +278,27 @@ func TestCheckPublisherPostsWhenTheReadbackHoldsAnotherRun(t *testing.T) {
 	}
 }
 
+// A head that no longer exists answers 422 to the readback, which comes first, and to the post.
 func TestCheckPublisherTreatsAVanishedHeadAsDelivered(t *testing.T) {
-	w := newChkWorld()
-	w.runner.postErr = &rest.StatusError{Status: 422, Body: cmtSecretText}
-	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
-	if err := w.deliver(m); err != nil {
-		t.Fatalf("a 422 is an error: %v", err)
-	}
-	logged := w.logs.String()
-	if !strings.Contains(logged, m.Key) || !strings.Contains(logged, chkHead) || strings.Contains(logged, cmtSecretText) {
-		t.Fatalf("the log should name the key and the head, never GitHub's text: %q", logged)
+	for name, set := range map[string]func(*fakeChecks, error){
+		"the readback": func(f *fakeChecks, err error) { f.runsErr = err },
+		"the post":     func(f *fakeChecks, err error) { f.postErr = err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newChkWorld()
+			set(w.runner, &rest.StatusError{Status: 422, Body: cmtSecretText})
+			m := chkMessage(t, checks.InProgress, "assessment-pending", "")
+			if err := w.deliver(m); err != nil {
+				t.Fatalf("a 422 is an error: %v", err)
+			}
+			if len(w.runner.posts()) != 0 {
+				t.Fatal("a run was posted for a head that does not exist")
+			}
+			logged := w.logs.String()
+			if !strings.Contains(logged, m.Key) || !strings.Contains(logged, chkHead) || strings.Contains(logged, cmtSecretText) {
+				t.Fatalf("the log should name the key and the head, never GitHub's text: %q", logged)
+			}
+		})
 	}
 }
 

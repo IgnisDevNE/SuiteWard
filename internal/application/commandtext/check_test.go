@@ -14,17 +14,19 @@ var checkReasons = []struct {
 	state  commandtext.CheckState
 	reason string
 	phrase string
+	next   string // a phrase of the next action
+	name   string // the state as the summary names it
 }{
-	{commandtext.CheckInProgress, "bootstrap-pending", "no approved baseline yet"},
-	{commandtext.CheckSuccess, "unchanged", "match the canonical contract"},
-	{commandtext.CheckSuccess, "ready", "ready for integration"},
-	{commandtext.CheckInProgress, "approval-missing", "no current approval"},
-	{commandtext.CheckInProgress, "not-current", "is not current"},
-	{commandtext.CheckInProgress, "assessment-pending", "has not finished assessing"},
-	{commandtext.CheckInProgress, "source-unavailable", "truncated the file tree"},
-	{commandtext.CheckFailure, "invalid-source", "is invalid"},
-	{commandtext.CheckFailure, "integrity-failed", "integrity assessment of this head failed"},
-	{commandtext.CheckFailure, "owner-command-rejected", "latest command on this pull request was rejected"},
+	{commandtext.CheckInProgress, "bootstrap-pending", "no approved baseline yet", "approves the baseline proposal", "in_progress"},
+	{commandtext.CheckSuccess, "unchanged", "match the canonical contract", "nothing is required", "success"},
+	{commandtext.CheckSuccess, "ready", "ready for integration", "integrate this pull request", "success"},
+	{commandtext.CheckInProgress, "approval-missing", "no current approval", "To approve this exact revision, comment:", "in_progress"},
+	{commandtext.CheckInProgress, "not-current", "is not current", "update the branch", "in_progress"},
+	{commandtext.CheckInProgress, "assessment-pending", "has not finished assessing", "nothing is required", "in_progress"},
+	{commandtext.CheckInProgress, "source-unavailable", "truncated the file tree", "reducing the number of files", "in_progress"},
+	{commandtext.CheckFailure, "invalid-source", "is invalid", "and push", "failure"},
+	{commandtext.CheckFailure, "integrity-failed", "integrity assessment of this head failed", "push a corrected head", "failure"},
+	{commandtext.CheckFailure, "owner-command-rejected", "latest command on this pull request was rejected", "with a new code", "failure"},
 }
 
 func check(state commandtext.CheckState, reason string) commandtext.Check {
@@ -55,6 +57,12 @@ func TestCheckSummaryStatesEveryReason(t *testing.T) {
 		titles[title] = tc.reason
 		if !strings.Contains(summary, tc.phrase) {
 			t.Errorf("%s: summary lacks %q:\n%s", tc.reason, tc.phrase, summary)
+		}
+		if !strings.Contains(summary, tc.next) {
+			t.Errorf("%s: summary does not state the next action (%q):\n%s", tc.reason, tc.next, summary)
+		}
+		if !strings.Contains(summary, "- State: `"+tc.name+"`") {
+			t.Errorf("%s: summary does not name the state %q:\n%s", tc.reason, tc.name, summary)
 		}
 		if !strings.Contains(summary, "P3-R2") || !strings.Contains(summary, "V4") {
 			t.Errorf("%s: summary names neither the revision nor the version:\n%s", tc.reason, summary)

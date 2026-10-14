@@ -41,7 +41,7 @@ type commandsJob struct {
 	logger     *slog.Logger
 	now        func() time.Time
 
-	failing commandFailure // the candidate that failed last, in this process; runs never overlap
+	failing commandFailure  // the candidate that failed last, in this process; runs never overlap
 	warned  map[string]bool // enrolled repositories already reported as not configured
 }
 

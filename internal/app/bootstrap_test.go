@@ -217,16 +217,17 @@ func (p *probeSuites) CreateSuite(ctx context.Context, project contract.ProjectI
 
 // bootWorld is one enrolled instance with a repository, a clock and fakes for every port of the job.
 type bootWorld struct {
-	t       *testing.T
-	mem     *governancetest.Memory
-	suites  *probeSuites
-	owners  *ownertest.Memory
-	pulls   *githubsynctest.Memory
-	reader  *fakeBootReader
-	content *fakeBootContent
-	logs    *bytes.Buffer
-	job     *bootstrapJob
-	cycles  int
+	t        *testing.T
+	mem      *governancetest.Memory
+	suites   *probeSuites
+	owners   *ownertest.Memory
+	pulls    *githubsynctest.Memory
+	reader   *fakeBootReader
+	content  *fakeBootContent
+	logs     *bytes.Buffer
+	job      *bootstrapJob
+	problems *bootstrapProblems
+	cycles   int
 }
 
 type bootOptions struct {
@@ -258,7 +259,8 @@ func newBootWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 	for _, id := range []int64{bootRepoID, bootOtherRepoID} { // the policy of each project, which CreateSuite finds only when a Seed registered it
 		w.registerPolicy(owner.ProjectID(id))
 	}
-	w.job = &bootstrapJob{repos: o.repos, reader: w.reader, owners: w.owners, suites: w.suites, content: w.content, pulls: w.pulls, tier: o.configTier,
+	w.problems = &bootstrapProblems{}
+	w.job = &bootstrapJob{repos: o.repos, reader: w.reader, owners: w.owners, suites: w.suites, content: w.content, pulls: w.pulls, tier: o.configTier, problems: w.problems,
 		logger: slog.New(slog.NewJSONHandler(w.logs, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
 	return w
 }
@@ -811,6 +813,125 @@ func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *te
 			t.Fatalf("canonical = %q (found %v) after the read recovered, want V1", version, found)
 		}
 	})
+}
+
+// requireProblem requires the last bootstrap problem of the main repository to be code ("" for none).
+func (w *bootWorld) requireProblem(code string) {
+	w.t.Helper()
+	if got := w.problems.lookup(bootRepo); got != code {
+		w.t.Fatalf("bootstrap problem = %q, want %q; logs: %s", got, code, w.logs)
+	}
+}
+
+func TestBootstrapKeepsTheLastProblemOfAGitHubReadUntilTheProjectRunsCleanly(t *testing.T) {
+	failures := map[string]struct {
+		fail func(*bootRepository)
+		code string
+	}{
+		"repository": {func(r *bootRepository) { r.repoErr = errors.New(bootSecret) }, "read-failed"},
+		"branch":     {func(r *bootRepository) { r.headErr = errors.New(bootSecret) }, "read-failed"},
+		"tree":       {func(r *bootRepository) { r.treeErr[bootHead] = errors.New(bootSecret) }, "read-failed"},
+		"invalid": {func(r *bootRepository) {
+			r.treeErr[bootHead] = fmt.Errorf("%w: %s", inventory.ErrInvalidTree, bootSecret)
+		}, "invalid-source"},
+		"changed": {func(r *bootRepository) { r.info.ID = 5555 }, "repository-changed"},
+	}
+	for name, test := range failures {
+		t.Run(name, func(t *testing.T) {
+			w := newBootWorld(t)
+			w.openPulls(bootRepo, 4)
+			good := w.reader.repo(bootRepo)
+			original := newBootRepository(bootRepo, bootRepoID)
+			test.fail(good)
+
+			w.mustRun()
+
+			w.requireProblem(test.code)
+			if strings.Contains(w.logs.String(), bootSecret) || strings.Contains(w.problems.lookup(bootRepo), bootSecret) {
+				t.Fatalf("GitHub text reached the problem or the logs: %s", w.logs)
+			}
+			w.mustRun()
+			w.requireProblem(test.code) // still failing: still shown
+			*good = *original
+			w.mustRun()
+			w.requireProblem("")
+		})
+	}
+}
+
+func TestBootstrapKeepsTheProblemOfAPromotionThatCannotProceed(t *testing.T) {
+	t.Run("read of the origin", func(t *testing.T) {
+		w := approvedWorld(t)
+		w.reader.repo(bootRepo).treeErr[bootHead] = errors.New(bootSecret)
+
+		w.mustRun()
+
+		w.requireProblem("read-failed")
+		delete(w.reader.repo(bootRepo).treeErr, bootHead)
+		w.mustRun()
+		w.requireProblem("")
+	})
+	t.Run("origin did not pass", func(t *testing.T) {
+		w := approvedWorld(t)
+		w.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: bootFiles("tampered")}
+
+		w.mustRun()
+		w.requireProblem("origin-not-passed")
+		w.mustRun() // the recorded outcome stops the run without reading GitHub
+		w.requireProblem("origin-not-passed")
+	})
+	t.Run("assessment conflict", func(t *testing.T) {
+		w := approvedWorld(t)
+		proposal, _ := w.proposal(1)
+		binding := proposal.Current().Binding()
+		evidence := bootMust(contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), contract.SourceRevision(bootHead), binding, contract.IntegrityPassed))
+		err := w.mem.Do(t.Context(), w.project(), "default", func(ctx context.Context, tx governance.Tx) error {
+			return tx.RecordAssessment(ctx, governance.AssessmentWrite{Reference: binding.Reference(), Source: contract.SourceRevision(bootHead), Evidence: evidence})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: bootFiles("tampered")} // this read disagrees with the recorded Passed
+
+		w.mustRun()
+
+		w.requireProblem("assessment-conflict")
+	})
+}
+
+func TestBootstrapKeepsTheProblemOfAFailedRunAndClearsItWhenTheProjectIsCanonical(t *testing.T) {
+	w := newBootWorld(t)
+	w.openPulls(bootRepo, 4)
+	w.suites.failAt = 1
+
+	if err := w.run(); !errors.Is(err, errBootStore) {
+		t.Fatalf("run = %v, want the store failure", err)
+	}
+	w.requireProblem("failed")
+
+	w.suites.failAt = 0
+	w.mustRun()
+	w.requireProblem("") // proposed, nothing wrong
+	w.approve(1, 4)
+	w.mustRun()
+	w.requireProblem("")
+	if _, found := w.canonical(); !found {
+		t.Fatal("the baseline was not promoted")
+	}
+}
+
+func TestBootstrapBlockedReasonsHaveDistinctCodes(t *testing.T) {
+	seen := map[string]contract.PromotionReason{}
+	for reason := contract.PromotionReasonContextMismatch; reason <= contract.PromotionReasonCorrectionContextReused; reason++ {
+		code := blockedCode(reason)
+		if !strings.HasPrefix(code, "blocked-") || len(code) == len("blocked-") {
+			t.Errorf("reason %d has code %q, want blocked-<reason>", reason, code)
+		}
+		if other, dup := seen[code]; dup {
+			t.Errorf("reasons %d and %d share the code %q", other, reason, code)
+		}
+		seen[code] = reason
+	}
 }
 
 func TestBootstrapContinuesWithTheNextProjectAfterAFailure(t *testing.T) {

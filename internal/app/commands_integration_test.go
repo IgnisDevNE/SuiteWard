@@ -49,7 +49,7 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated,
+	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
 		logger: logger, now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
 	if err := bootstrap.run(t.Context()); err != nil { // the Suite and the proposal P1-R1 that comment 101 approves
 		t.Fatal(err)

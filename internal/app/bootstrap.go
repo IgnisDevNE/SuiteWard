@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -212,19 +213,48 @@ func (t *githubTree) Read(ctx context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
+// bootstrapProblems keeps, per configured repository name, the classification code of the last problem that stopped
+// the bootstrap of its project. It is in memory only: /status shows it, and a restart forgets it until the next run.
+type bootstrapProblems struct {
+	mu     sync.Mutex
+	byRepo map[string]string
+}
+
+func (p *bootstrapProblems) set(repo, code string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.byRepo == nil {
+		p.byRepo = map[string]string{}
+	}
+	p.byRepo[repo] = code
+}
+
+func (p *bootstrapProblems) clear(repo string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.byRepo, repo)
+}
+
+func (p *bootstrapProblems) lookup(repo string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.byRepo[repo]
+}
+
 // bootstrapJob is the github_bootstrap job: for each enrolled project it creates the Suite, proposes the
 // protected baseline of the default branch on the lowest open pull request, and bootstraps the first canonical once
 // the owner approved it (ADR 0010, D-COMMANDS). Every step is safe to repeat after a crash.
 type bootstrapJob struct {
-	repos   []string // the configured repositories
-	reader  bootstrapReader
-	owners  owner.Store
-	suites  governance.UnitOfWork
-	content governance.ContentWriter
-	pulls   pullLister // the synchronization store: which pull requests are open
-	tier    string     // the configured INSTALLATION_TIER
-	logger  *slog.Logger
-	now     func() time.Time
+	repos    []string // the configured repositories
+	reader   bootstrapReader
+	owners   owner.Store
+	suites   governance.UnitOfWork
+	content  governance.ContentWriter
+	pulls    pullLister         // the synchronization store: which pull requests are open
+	tier     string             // the configured INSTALLATION_TIER
+	problems *bootstrapProblems // shown in /status
+	logger   *slog.Logger
+	now      func() time.Time
 }
 
 // run advances every enrolled, configured project. A GitHub read failure skips that project until the next run;
@@ -542,3 +572,6 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 	b.logger.InfoContext(ctx, "github baseline promoted", "repo", p.Repo, "reference", reference, "version", string(firstVersion), "replayed", result.Duplicate)
 	return nil
 }
+
+// blockedCode is the classification code of a blocked promotion, naming the reason.
+func blockedCode(contract.PromotionReason) string { return "" }

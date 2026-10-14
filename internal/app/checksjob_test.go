@@ -750,14 +750,32 @@ func TestChecksDoNotFailOnACommandThatIsNoRejection(t *testing.T) {
 	})
 }
 
-func TestChecksPublishAssessmentPendingForANewHeadWhoseAssessmentConflicted(t *testing.T) {
+func TestChecksFailTheStepOfAHeadWhoseAssessmentConflictedAndContinue(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.tree(cjHead2, bootFiles("v2"))
 	w.sync(map[int]string{4: bootHead, 5: cjHead2})
-	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrConflict} // not ErrCanonicalMoved
+	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrConflict} // deterministic, not ErrCanonicalMoved
+
+	err := w.runChecks()
+
+	if !errors.Is(err, governance.ErrConflict) {
+		t.Fatalf("run error %v, want the conflict: it is not retried", err)
+	}
+	w.wantNone(5)
+	w.want(4, checks.Success, "unchanged", 1) // the other pull request was still decided
+	if got := w.problems.lookup(bootRepo); got != "failed" {
+		t.Fatalf("problem %q, want failed", got)
+	}
+}
+
+func TestChecksRetryAHeadWhoseCanonicalMovedOnANewHead(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.tree(cjHead2, bootFiles("v2"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrCanonicalMoved}
 
 	if err := w.runChecks(); err != nil {
-		t.Fatalf("a conflict is retried, not a failure: %v", err)
+		t.Fatalf("a moved canonical is retried, not a failure: %v", err)
 	}
 
 	w.want(5, checks.InProgress, "assessment-pending", 1)

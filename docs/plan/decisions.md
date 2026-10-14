@@ -49,10 +49,10 @@ Accepted 2026-10-11 (owner, phase M1.3). The ADR 0013 amendment protects the wor
 
 Accepted 2026-10-11 (owner, from the S1 findings in [s1-github](../spikes/s1-github.md)).
 
-- The App holds Metadata read, Pull requests read, Contents read, Administration read (since 2026-10-13, for protection verification, D-PROTECTION) and Checks write; no Administration write, no Issues, no webhooks. Reading PR comments needs Pull requests read (Issues read alone is refused).
+- The App holds Metadata read, Pull requests read and write (write measured 2026-10-13, M1.6a-P0), Contents read, Administration read (since 2026-10-13, for protection verification, D-PROTECTION) and Checks write; no Administration write, no Issues, no webhooks. Reading PR comments needs Pull requests read (Issues read alone is refused).
 - Installation tokens are requested with the installed repositories and an explicit, non-empty permission map (an empty map grants everything the App has), the narrowest one per use: synchronization is read-only and requests neither Checks write nor Administration; protection verification requests only Metadata and Administration read.
 - A token lives one hour and is reused until five minutes before it expires.
-- The permission for posting an acknowledgement comment is measured in M1.6 and added only then.
+- Acknowledgement comments use Pull requests write, requested only by the comment publisher with `{metadata: read, pull_requests: write}`. M1.6a-P0 measured on 2026-10-13 that a token requesting `pull_requests: read` from the App that holds write is granted exactly read, so synchronization stays read-only, and that the same comment POST with the read map answers 403.
 - The GitHub adapter contract is [github](../contracts/github.md).
 
 ### D-COMMENT-EDIT: One comment is one action

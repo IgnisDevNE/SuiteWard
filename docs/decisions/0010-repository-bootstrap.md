@@ -101,3 +101,7 @@ The two bootstrap paths and first-real-PR approval experience are accepted.
 ## Amendment (2026-10-05, phase R1): first-test-PR path deferred
 
 The first-test-PR bootstrap path (a repository without an initial test contract) is deferred to post-MVP. The existing-baseline bootstrap above remains in the MVP.
+
+## Amendment (2026-10-14, phase M1.6b): first-test-PR path back in the MVP
+
+The owner moved the first-test-PR bootstrap path back into the MVP so that a repository without an initial contract can adopt SuiteWard from its first PR. It is phase M1.7b, after merge detection (M1.7) and before MVP acceptance (M1.8). Until then, a repository whose default branch has no protected files keeps awaiting its initial contract and its PRs show `in_progress`.

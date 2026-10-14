@@ -100,3 +100,22 @@ Measured 2026-10-13 by `TestLiveProtectionReads` (`-tags=live`) on the S1 test r
   Any other status is a `rest` error. Bodies are bounded and decoded into these types only; a decode failure names only the path. A wrapped `rest` status error can still carry part of GitHub's answer (token redacted), so callers never print or store a read error: they record `protection.Unknown()` and log only the repository and the status. The effective rules are read with `per_page=100` and followed page by page up to the listings' page bound.
 - **Evaluation** is a pure function outside the adapter (the D-PROTECTION results and findings; M1.5-C2).
 - **Paths:** the branch name is path-escaped (`url.PathEscape`), so a branch with `/` is read correctly.
+
+## M1.6a: comment writes (normative)
+
+The details are settled from the M1.6a-P0 measurement, recorded on the [M1.6a page](../plan/phases/M1.6a.md).
+
+- **Permission (expected; P0 confirms it).** The App needs **Pull requests: write** for acknowledgment comments. P0 also has to confirm that a token requesting `pull_requests: read`, from an App that holds `write`, is granted exactly `read`. If it is not, synchronization breaks once the permission is granted. Only the comment publisher requests it, with the token map `{metadata: read, pull_requests: write}`. Synchronization and protection keep their read maps.
+- **`rest` POST.**
+  - The method is `(*Client).Post(ctx, path string, body []byte) (Response, error)`.
+  - It uses no ETag cache and counts in the shared budget.
+  - The body is JSON, at most 64 KiB.
+  - A 201 is success.
+  - A 403 or 429 carrying the secondary-limit headers, or a `Retry-After` header, is a `RateLimitedError`.
+  - No request body or answer text reaches an error or a log.
+- **`Writer.PostComment(ctx, repo string, number int, body string) (commentID int64, err error)`.**
+  - It issues `POST /repos/{r}/issues/{number}/comments`.
+  - Before posting, `Writer.CommentsByAuthor(ctx, repo, number, authorID)` lists the bot's comments, and the publisher looks for its marker in them.
+- **Default branch head.** `Reader.BranchHead(ctx, repo, branch string) (sha string, err error)` reads `GET /repos/{r}/branches/{branch}` with the sync token. The bootstrap pins this SHA.
+- **Bot identity.** At composition, SuiteWard reads `GET /app`, which needs the App JWT and gives the slug. It then reads `GET /users/<slug>[bot]` to get the numeric account id. The command job uses that id to skip SuiteWard's own comments.
+- **Not measured, not used in M1.6a.** Check runs: M1.6b measures `POST /check-runs` with `checks: write`. `PATCH` is not used.

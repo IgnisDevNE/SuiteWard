@@ -1,6 +1,6 @@
 # Delivery plan
 
-- **Updated:** 2026-10-13 (phase M1.4 completed)
+- **Updated:** 2026-10-14 (phase M1.5 completed; M1.6 split into M1.6a and M1.6b)
 
 Each phase produces one PR, integrated with a merge commit after the user's authorization. Work inside a phase is orchestrated as described in [orchestration](orchestration.md): the main session writes [briefs](task-brief.md), `sw-implementer` subagents implement them test-first in their own worktrees, and `sw-reviewer` subagents review them. Open and accepted product choices live in the [decision register](decisions.md).
 
@@ -19,6 +19,7 @@ Phase pages are written by hand and kept short. A task listed on a page becomes 
 | [M1.2](phases/M1.2.md) | `suiteward serve` and `probe`: configuration, River jobs enqueued in the unit-of-work transaction, publication outbox, graceful shutdown, one image built in CI and smoke-tested on both verification targets. Results in the [phase page](phases/M1.2.md#outcome). |
 | [M1.3](phases/M1.3.md) | `.suiteward.yml` scope with protected defaults, the protected inventory of a source tree and its change classification, proposal revisions, and the baseline proposal for the existing-baseline bootstrap; first real tasks run through Orbit. Results and limitations in the [phase page](phases/M1.3.md#outcome). |
 | [M1.4](phases/M1.4.md) | GitHub synchronization: App authentication with an exact read-only permission map, a budgeted conditional REST client, open PRs, heads and append-only comment versions reconciled on a one-minute tick and on MCP request, `inventory.Tree` reads, and a local MCP endpoint (`status`, `sync`) on the official Go SDK; verified on both targets, with the real Claude Code client and a live test against the real App. Results in the [phase page](phases/M1.4.md#outcome). |
+| [M1.5](phases/M1.5.md) | Owner and trust: `suiteward setup` binds the owner and enrolls TOTP on the instance, the declared installation tier, and protection verification of rulesets and classic protection (results, findings, the bypass caveat) at setup and every 15 minutes; verified live and on both targets. Results in the [phase page](phases/M1.5.md#outcome). |
 
 Evidence for the earlier phases lives in [history](../history.md).
 
@@ -28,9 +29,9 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
-| [M1.5](phases/M1.5.md) | Owner setup, TOTP enrollment, installation tier, protection verification (including a required project test check). | S1, M1.4 |
-| [M1.6](phases/M1.6.md) | `/suiteward approve` and `revoke` with TOTP, integrity assessment, `SuiteWard / Contract` check publication through the outbox. | M1.3, M1.4, M1.5 |
-| [M1.7](phases/M1.7.md) | Merge detection and promotion for supported merge methods; explicit failure state for the others. | M1.6 |
+| [M1.6a](phases/M1.6a.md) | Existing-baseline bootstrap, `/suiteward approve` and `revoke` with TOTP, the command ledger and acknowledgment comments. | M1.3, M1.4, M1.5 |
+| [M1.6b](phases/M1.6b.md) | Integrity assessment of each PR head and `SuiteWard / Contract` check publication through the outbox. | M1.6a |
+| [M1.7](phases/M1.7.md) | Merge detection and promotion for supported merge methods; explicit failure state for the others. | M1.6b |
 | [M1.8](phases/M1.8.md) | MVP acceptance: install guide, backup and re-bootstrap runbook, end-to-end run, dogfooding on SuiteWard. | M1.7 |
 
 S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.

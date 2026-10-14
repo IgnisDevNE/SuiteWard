@@ -109,7 +109,20 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
   - The job fails only when the ledger itself cannot be read or written.
 
 **Outbox kind `github_comment`**
-- The payload holds the outbox key's subject: an operation id, a proposal reference or a ledger entry. The publisher renders the body at delivery from the stored facts.
+- **Payload.** The publisher receives only the key and the payload (`river.Publisher`). The payload is a JSON object with explicit tags. It never holds comment text, a code value or a secret. Every payload carries `repositoryId`, `repo` (`owner/name`) and `pull`, the PR to post on. The rest depends on the key:
+  - `ack:<repository id>:<comment id>` for a **processed** command: `project`, `suite`, `operation`, `comment` and `owner` (the owner's login at processing time). The publisher reads the receipt with `Tx.Receipt` inside `UnitOfWork.Do(project, suite)`. It renders from the receipt, which holds the outcome as evaluated at processing time (ADR 0011):
+    - `Result` gives approved, revoked, no active approval, or rejected with its reason;
+    - `CurrentApprovalEligible` gives the eligibility line;
+    - a non-empty `PromotedVersionID` selects `ApprovedAfterPromotion` for an approval, and `RevokedAfterPromotion` for a revocation, with or without an active approval.
+  - `ack:<repository id>:<comment id>` for a **rejected disposition** (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `edited-first`): `disposition`, `comment` and `owner`, plus `reason` (the malformed reason code) for `malformed`, and `reference` (`P<n>-R<m>`) when the command line parsed. These are system rows written by `commands.Store.Record`, so there is nothing to read back; the payload holds the decision.
+  - `bootstrap-summary:<repository id>:P<n>-R1`: `summary`, the inputs of the bootstrap summary. These are the proposal and revision numbers, `origin`, `branch`, `protected` (the count), `paths`, `include` and `exclude` (at most 20 each), and `tier`, the effective tier (D-IDENTITY: `co-located` when either the setting or the enrollment says so).
+    - The payload must stay within the outbox limit of 64 KiB after JSON encoding, whatever the repository holds. A payload over the limit would fail `ProposeBaseline` on every run.
+    - So the bootstrap cuts each path, rule and the branch to at most 150 bytes on a UTF-8 boundary before encoding. `json.Marshal` turns a control byte into a 6-byte escape and invalid UTF-8 into U+FFFD, and that is acceptable for display.
+    - A test pins the worst case: 20 paths and 20 rules of each kind, made of control bytes and invalid UTF-8.
+  - `bootstrap-promoted:<repository id>:P<n>-R1`: `reference` and `version` (`V1`).
+- **Rendering.** The publisher renders the body with the command-text package from these inputs.
+  - An acknowledgment links its source comment (`#issuecomment-<id>`, an issue comment id).
+  - A payload that does not parse, or does not match its key, is an error. The relay retries it and then marks it failed, and the error names the key, never the payload.
 - It posts with `Writer.PostComment` and the comment token. The body ends with the hidden marker `<!-- suiteward:<instance id>:<outbox key> -->`.
 - Before posting, it lists the PR's comments by the bot and skips the post when one already carries the same marker. Delivery is at least once (persistence contract), so posting is idempotent by marker.
 - The instance id keeps two installations that post as the same App from mistaking each other's comments for their own.

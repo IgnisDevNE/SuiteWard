@@ -76,7 +76,7 @@ func TestCheckPublisherOnPostgreSQLPostsTheCurrentGenerationOnce(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	gh := &checkGitHub{}
+	gh := &checkGitHub{runs: []map[string]any{}} // GitHub lists [], never null
 	server := httptest.NewServer(gh)
 	t.Cleanup(server.Close)
 	budget := cmtMust(rest.NewBudget(0.5, time.Now))
@@ -111,7 +111,8 @@ func TestCheckPublisherOnPostgreSQLPostsTheCurrentGenerationOnce(t *testing.T) {
 	pass() // nothing is pending: the second pass posts nothing
 	posted := gh.posted()
 	if len(posted) != 1 || posted[0]["status"] != "in_progress" || posted[0]["head_sha"] != chkHead || posted[0]["name"] != "SuiteWard / Contract" {
-		t.Fatalf("after the first generation: %v", posted)
+		t.Fatalf("after the first generation: %v; outbox: %s", posted,
+			scalar(t, databaseURL, "SELECT coalesce(string_agg(key || ' ' || state || ' ' || coalesce(last_error, ''), '; '), 'empty') FROM outbox"))
 	}
 	instance := cmtMust(store.Instance(t.Context()))
 	if posted[0]["external_id"] != "suiteward:"+instance+":check:1001:7:1" {

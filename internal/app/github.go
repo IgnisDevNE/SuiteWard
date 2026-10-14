@@ -34,6 +34,7 @@ type repositoryStatus struct {
 	WaitUntil   string            `json:"waitUntil,omitempty"`
 	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
 	Bootstrap   string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
+	Checks      string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
 }
 
 // repositoryReader is the part of the observation store /status reads.
@@ -47,6 +48,7 @@ type githubStatus struct {
 	store    repositoryReader
 	ids      *repositoryIDs // learned by the protection check
 	problems *bootstrapProblems
+	checks   *bootstrapProblems // the check job's problems, the same in-memory map type
 }
 
 // report returns one entry per configured repository, in configuration order;
@@ -64,6 +66,7 @@ func (g *githubStatus) report(ctx context.Context, protections map[string]owner.
 		}
 		entry.LastError = lastErrorText(state)
 		entry.Bootstrap = g.problems.lookup(repo)
+		entry.Checks = g.checks.lookup(repo)
 		if result, verified := protections[repo]; verified {
 			entry.Protection = &protectionStatus{
 				Result: result.Result, Findings: result.Findings, Caveats: result.Caveats, CheckedAt: result.CheckedAt.UTC().Format(time.RFC3339),

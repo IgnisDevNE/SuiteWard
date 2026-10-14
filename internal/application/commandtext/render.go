@@ -22,6 +22,7 @@ const (
 	NoSuite
 	EditedFirst
 	BootstrapPromoted
+	RevokedAfterPromotion
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -54,6 +55,7 @@ type Ack struct {
 	Revision  int
 	Version   int
 	Owner     string
+	Source    int64
 	Eligible  bool
 }
 

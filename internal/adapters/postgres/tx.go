@@ -569,7 +569,7 @@ func (t *tx) RecordAssessment(ctx context.Context, write governance.AssessmentWr
 func assessmentRow(reference contract.ProposalReference, source contract.SourceRevision, evidence *contract.IntegrityEvidence) (dbgen.InsertAssessmentParams, error) {
 	row := dbgen.InsertAssessmentParams{ProjectID: string(reference.ProjectID), SuiteID: string(reference.SuiteID), ProposalID: string(reference.ProposalID),
 		RevisionID: string(reference.RevisionID), Source: string(source)}
-	if evidence == nil {
+	if evidence == nil { // missing evidence: a seeded assessment stores all four evidence columns as null
 		return row, nil
 	}
 	outcome, err := integrityOutcomeCode(evidence.Outcome())

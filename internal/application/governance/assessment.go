@@ -8,9 +8,10 @@ import (
 )
 
 // ServiceEmitter is the principal that emits the integrity evidence SuiteWard
-// itself observes (D-COMMANDS).
+// itself observes (D-COMMANDS). RecordAssessment accepts no other emitter.
 var ServiceEmitter = mustPrincipal("suiteward", contract.Service)
 
+// mustPrincipal cannot panic for the built-in values: a non-blank id and a valid kind.
 func mustPrincipal(id contract.PrincipalID, kind contract.PrincipalKind) contract.Principal {
 	principal, err := contract.NewPrincipal(id, kind)
 	if err != nil {
@@ -27,9 +28,9 @@ type AssessmentWrite struct {
 }
 
 // Validate reports ErrInvalidRequest when the write is incomplete, names
-// another Suite than the locked one, or carries evidence bound to another
-// proposal: an assessment and its evidence are both rebuilt from revisions of
-// one proposal.
+// another Suite than the locked one, carries evidence not emitted by
+// ServiceEmitter, or carries evidence bound to another proposal: an assessment
+// and its evidence are both rebuilt from revisions of one proposal.
 func (w AssessmentWrite) Validate(project contract.ProjectID, suite contract.SuiteID) error {
 	cited := w.Evidence.Binding().Reference()
 	switch {
@@ -39,6 +40,8 @@ func (w AssessmentWrite) Validate(project contract.ProjectID, suite contract.Sui
 		return fmt.Errorf("%w: an assessment names a proposal revision and a source", ErrInvalidRequest)
 	case w.Evidence.IsZero():
 		return fmt.Errorf("%w: an assessment carries evidence", ErrInvalidRequest)
+	case w.Evidence.EmitterID() != ServiceEmitter.ID():
+		return fmt.Errorf("%w: evidence is emitted by %q, not %q", ErrInvalidRequest, w.Evidence.EmitterID(), ServiceEmitter.ID())
 	case cited.ProjectID != project || cited.SuiteID != suite || cited.ProposalID != w.Reference.ProposalID:
 		return fmt.Errorf("%w: evidence cites a revision of another proposal", ErrInvalidRequest)
 	}

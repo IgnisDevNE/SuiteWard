@@ -441,7 +441,7 @@ func ackOf(receipt governance.ConsentReceipt, ownerLogin string, comment int64) 
 	default:
 		return commandtext.Ack{}, errors.New("the receipt holds an unknown outcome")
 	}
-	// The renderer states eligibility only where the outcome evaluated it.
+	// The renderer states the approval requirement only where the outcome evaluated it.
 	ack.Eligible = receipt.CurrentApprovalEligible && ack.Outcome != commandtext.ApprovedAfterPromotion && ack.Outcome != commandtext.RevokedAfterPromotion
 	return ack, nil
 }

@@ -140,9 +140,11 @@ type PromotionReceipt struct {
 }
 
 type ConsentReceipt struct {
-	Result                  contract.CommandResult
-	EvaluatedReference      contract.ProposalReference
-	PolicyRevisionID        contract.PolicyRevisionID
+	Result             contract.CommandResult
+	EvaluatedReference contract.ProposalReference
+	PolicyRevisionID   contract.PolicyRevisionID
+	// CurrentApprovalEligible only means that a valid approval exists for the
+	// revision; it does not mean the revision can be promoted.
 	CurrentApprovalEligible bool
 	PromotedVersionID       contract.SuiteVersionID
 }

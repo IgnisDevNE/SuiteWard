@@ -48,8 +48,9 @@ const (
 //   - Source is the id of the comment that carried the command; the body links
 //     to it. It is required, except for BootstrapPromoted, which a later job
 //     posts and which must leave it zero.
-//   - Eligible is the revision's promotion eligibility after this outcome. It
-//     is rendered for Approved, Revoked, NoActiveApproval and Rejected, and must
+//   - Eligible is whether the revision's approval requirement is met after this
+//     outcome (a valid approval exists); it says nothing about promotion, which
+//     other requirements can still block. It is rendered for Approved, Revoked, NoActiveApproval and Rejected, and must
 //     be false for the other outcomes, which never evaluate it.
 type Ack struct {
 	Outcome   Outcome
@@ -107,15 +108,16 @@ func acknowledgment(a Ack) string {
 	if a.Outcome != MalformedCommand && a.Outcome != EditedFirst {
 		ref = Reference(a.Proposal, a.Revision)
 	}
-	eligibility := ref + " is not eligible for promotion."
+	// Only the approval requirement is stated: other requirements may still block promotion.
+	requirement := "The approval requirement for " + ref + " is not met."
 	if a.Eligible {
-		eligibility = ref + " is eligible for promotion."
+		requirement = "The approval requirement for " + ref + " is met."
 	}
 	switch a.Outcome {
 	case Approved:
-		status := ref + " is not yet eligible for promotion; other requirements are still pending."
+		status := "The approval requirement for " + ref + " is not met yet; other requirements are still pending."
 		if a.Eligible {
-			status = ref + " is now eligible for promotion."
+			status = "The approval requirement for " + ref + " is met; SuiteWard confirms a promotion in a separate comment."
 		}
 		return paragraphs(
 			"Approval recorded for "+ref+" by "+who+".\n"+status,
@@ -123,9 +125,9 @@ func acknowledgment(a Ack) string {
 			copyable("/suiteward revoke "+ref+" <code>"),
 		)
 	case Revoked:
-		status := "Promotion of " + ref + " is awaiting valid approval."
+		status := "The approval requirement for " + ref + " is not met; promotion waits for a valid approval."
 		if a.Eligible {
-			status = ref + " remains eligible for promotion through other valid approval."
+			status = "The approval requirement for " + ref + " is still met through other valid approval."
 		}
 		return paragraphs(
 			"Revocation recorded for "+ref+" by "+who+".\nYour approval no longer counts. "+status,
@@ -146,10 +148,10 @@ func acknowledgment(a Ack) string {
 			"Reversing the promotion needs "+rollback,
 		)
 	case NoActiveApproval:
-		return paragraphs("No active approval by " + who + " for " + ref + " to withdraw; nothing changed.\n" + eligibility + "\nNo action is needed.")
+		return paragraphs("No active approval by " + who + " for " + ref + " to withdraw; nothing changed.\n" + requirement + "\nNo action is needed.")
 	case Rejected:
 		reason, next := rejectionText(a.Rejection, ref, who)
-		return paragraphs("Command for " + ref + " rejected by policy: " + reason + ". Nothing changed.\n" + eligibility + "\n" + next)
+		return paragraphs("Command for " + ref + " rejected by policy: " + reason + ". Nothing changed.\n" + requirement + "\n" + next)
 	case MalformedCommand:
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
 			"Comment again with a current code, in the form `/suiteward approve <ref> <code>` or `/suiteward revoke <ref> <code>`.")

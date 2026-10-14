@@ -136,6 +136,30 @@ Limits: `go-format.ps1` formats only files inside the checkout that launched the
 
 `suiteward serve` and `suiteward probe` are described in the [runtime contract](contracts/runtime.md). To run the real image on this PC build it with `podman build -f deploy/Containerfile -t localhost/suiteward:local .` (it reports version `dev`; pass `--build-arg VERSION=sha-<commit>` to stamp another), start the co-located stack with `./deploy/local.ps1 -Image localhost/suiteward:local` (one stack per machine; it generates the database password into Podman secrets) and run the smoke test inside the Podman machine with `Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"` (to assert the reported version, use `podman machine ssh "SMOKE_VERSION=<version> sh -s"`). The remote verification host follows [deploy/HOST.md](../deploy/HOST.md). The smoke script's failure-path self-test, `deploy/smoke_test.sh`, runs as part of `check`.
 
+### Verifying M1.6a on the co-located stack
+
+Only one target may watch `IgnisDevNE/SuiteWardQ` at a time (D-COMMANDS). The host is the default watcher, so the co-located stack runs without GitHub except during its own verification. `deploy/local.ps1` already supports both: GitHub is configured only when all three non-secret parameters are given, and a run without them replaces the container with one without GitHub and keeps the state. The scenario itself is in [HOST.md, section 6b](../deploy/HOST.md#6b-pr-commands-and-bootstrap-m16a); the steps here are the stack side. Run them from the checkout, in PowerShell 7.
+
+1. **Stop the host's watching first** (HOST.md, 6b.1). Never run both with GitHub, not even briefly: two acknowledgments, and one instance rejects the code meant for the other.
+2. **Start the stack with GitHub.** The stack was purged after M1.5, so its App key secret does not exist and the key file is needed once (it is copied into a Podman secret and not kept elsewhere):
+
+   ```powershell
+   podman pull ghcr.io/ignisdevne/suiteward:deploy
+   ./deploy/local.ps1 -GitHubAppKeyFile <path to the PEM> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ
+   Get-Content -Raw deploy/smoke.sh | podman machine ssh "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"
+   ```
+
+   The pull avoids a stale cached `deploy` image. `<commit>` is the commit the `Deploy` run built.
+3. **Enroll with a fresh authenticator entry.** Never reuse the host's secret:
+
+   ```powershell
+   podman exec -it suiteward /suiteward setup --owner <login> --test-check IgnisDevNE/SuiteWardQ=<check>
+   ```
+
+   The warnings of HOST.md section 6a apply (the URI and the base32 secret are printed once; share no setup output).
+4. **Run the scenario** (HOST.md 6b.4). Read `/status` through the machine: `podman machine ssh "curl -s http://127.0.0.1:8081/status"`.
+5. **Close the verification PR, then stop the GitHub watching:** `./deploy/local.ps1` with no GitHub parameters (smoke test with `SMOKE_GITHUB=0`), or `./deploy/local.ps1 -Down`. Only then restore the host. `./deploy/local.ps1 -Down -Purge` also removes the App key secret and the state.
+
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.

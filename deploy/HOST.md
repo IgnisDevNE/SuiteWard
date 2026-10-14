@@ -1,4 +1,4 @@
-# Remote host (isolated target): owner runbook for M1.2, M1.4 and M1.5
+# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5 and M1.6a
 
 Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, Podman 4.9.3, rootless for the unprivileged `suiteward` user. No inbound ports and no SSH daemon: you administer it through SSM Session Manager from your own workstation. This runs the product image and its PostgreSQL as two rootless containers from the Quadlet units in `deploy/quadlet/`. It needs three secrets, all Podman secrets mounted as files: a generated database password (section 3, you never type it), the GitHub App's private key and a generated MCP token (section 4a, M1.4). The three non-secret GitHub settings live in a host file you write (section 4a).
 
@@ -7,7 +7,7 @@ Never paste into chat, a file, a PR, or a log: any password or database URL, a G
 ## 0. Before the host steps (GitHub, once)
 
 1. The first run of the `Deploy` workflow creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the first run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5` (each phase builds from its branch) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
+2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5`, `phase/M1.6a` (each phase builds from its branch) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
 
 ## 1. Open a session
 
@@ -295,6 +295,104 @@ curl -s http://127.0.0.1:8081/status
 If `tierNote` says to re-run setup, the enrollment and the setting disagree on the tier: run setup again.
 
 **Co-located target (this PC).** The same command through the Podman machine's container, `podman exec -it suiteward /suiteward setup --owner <login> --test-check <owner/name>=<check> ...`, with the same repositories you gave `deploy/local.ps1`. That tier is `co-located` (`deploy/local.ps1` declares it): the agent that works on this PC can run setup too, so SuiteWard reports reduced assurance.
+
+## 6b. PR commands and bootstrap (M1.6a)
+
+SuiteWard now posts comments in pull requests and acts on the owner's `/suiteward approve|revoke <ref> <code>` comments ([D-COMMANDS](../docs/plan/decisions.md)). You verify it on `IgnisDevNE/SuiteWardQ` with the owner scenario below, one target at a time. M1.6a adds no quadlet change, no secret and no setting: the image and the App's existing Pull requests: Read and write permission are enough.
+
+### 6b.1 One instance per repository
+
+Two instances must never watch the same repository. Both post as the same App and each has its own TOTP secret, so with two watchers:
+- both post an acknowledgment for every command (two comments for one command);
+- each checks your code against its own secret, so one of them answers the code meant for the other with an invalid-code acknowledgment.
+
+Rules:
+- The host is the default watcher of `SuiteWardQ`. The co-located stack runs with the GitHub settings only while you verify it (section 6b.5).
+- Only the target under test has the GitHub settings. Run the other target without GitHub, or stop it.
+
+Without GitHub:
+- **On the host:** stop the service. The quadlet always mounts the App key and reads `/etc/suiteward/github.env`, and the GitHub settings are all or none, so a host without GitHub is a stopped service. The database stays up and all state is kept. As `suiteward` (section 1):
+
+  ```
+  systemctl --user stop podman-auto-update.timer
+  systemctl --user stop suiteward.service
+  ```
+
+  Restore it with `systemctl --user start suiteward.service` and `systemctl --user start podman-auto-update.timer`, but only as 6b.5 step 5 says.
+- **Locally:** run `./deploy/local.ps1` with none of the GitHub parameters. It replaces the container with one without GitHub and keeps the state. `./deploy/local.ps1 -Down` stops the stack without removing anything. See [local development](../docs/local-development.md#verifying-m16a-on-the-co-located-stack).
+
+### 6b.2 Before you start (owner)
+
+1. Add `phase/M1.6a` to the deployment branches of the `remote-poc` environment (GitHub, repository Settings, Environments). Without it the `promote` job of the `Deploy` run is refused.
+2. Close PR #8 (left open by the P0 measurement) before opening the verification PR. The bootstrap proposes the baseline in the lowest-numbered open PR, so #8 would otherwise carry the summary.
+3. Keep your authenticator app at hand. It holds one entry per target (host and, later, co-located); use the entry that belongs to the target under test.
+
+### 6b.3 Deploy on the host
+
+1. **Before the deploy (done 2026-10-14):** on the running M1.5 image, `/status` showed no `lastError` in `github` and `outbox.failed` 0; the owner also saw both repositories synchronizing, with discarded 0. Repeat the check (`curl -s http://127.0.0.1:8081/status`) if the host was restarted since.
+2. Push to `phase/M1.6a`. Approve the `promote` job of the `Deploy` run of the phase head commit (section 0), because older queued runs may exist. That moves `deploy` to the digest that run built.
+3. On the host, as `suiteward` (section 1), pull the image and restart. The new image applies migration 00013 at start:
+
+   ```
+   podman pull ghcr.io/ignisdevne/suiteward:deploy
+   systemctl --user restart suiteward.service
+   SMOKE_TIER=isolated SMOKE_VERSION=sha-<commit> sh ~/smoke.sh
+   ```
+
+   `<commit>` is the commit the `Deploy` run built. The smoke test must pass.
+4. After the deploy, before verifying, check `/status` (section 7, or on the host):
+
+   ```
+   curl -s http://127.0.0.1:8081/status
+   ```
+
+   Confirm `schemaVersion` is 13, no entry of `github` shows `lastError`, and `outbox.failed` is 0. If any of these fails, stop and report; do not start the scenario.
+
+### 6b.4 The owner scenario, per target
+
+Run it on `SuiteWardQ`, on a fresh PR, with the target under test as the only watcher. The host first, then the co-located stack (6b.5).
+
+1. **Open a fresh PR** on `SuiteWardQ` (any change; it need not touch a protected file). It must be the lowest-numbered open PR, so close any other open PR first (6b.2 step 2).
+2. **The bootstrap summary.** It appears up to about 2 to 3 minutes after the PR is opened: the bootstrap reads the PRs of the last 60 s synchronization, then runs every 60 s, and the outbox relay posts the comment. SuiteWard comments on that PR: "SuiteWard bootstrap proposal P1-R1". It shows the pinned origin commit and branch, the number of protected files, the inventory and scope rules (at most 20 of each are listed), the installation tier (`isolated` on the host, `co-located` locally, with a warning about reduced assurance), and a copyable `/suiteward approve P1-R1 <code>`. Review it. Nothing is canonical yet.
+3. **Approve.** Comment `/suiteward approve P1-R1 <6-digit code>` with the current code of this target's authenticator entry. The command waits for the synchronization watermark (every repository must complete a synchronization cycle after your comment), about 2 to 3 minutes. Expect, in this order:
+   - an approval acknowledgment ("Approval recorded for P1-R1"), in about 2 to 3 minutes;
+   - then a "Bootstrap complete" comment, up to a minute later: `P1-R1` is canonical version `V1`.
+4. **Replay.** Comment the same command with the same code again, within 30 seconds of the first; a minute at best (a code is accepted only within one 30-second step either side of the comment's time). Expect an acknowledgment that the code was already used, and no change. A later retry fails as invalid-code instead, which is also correct.
+5. **Revoke after promotion.** Wait for the next code, then comment `/suiteward revoke P1-R1 <new code>`. Expect an acknowledgment that `P1-R1` is already promoted and the canonical version is unchanged; a revocation never undoes a promotion.
+6. **Another account (optional).** Comment `/suiteward approve P1-R1 123456` from an account that is not the owner. Expect no reply: it is only recorded in the ledger.
+7. **An edited command.** Comment `/suiteward revoke P1-R1 123456` (a made-up code) and edit the comment within seconds, before the next synchronization reads it. Expect an acknowledgment that it was edited before it was read and not processed. If you instead see an invalid-code acknowledgment, synchronization read it first; try again with a faster edit. The made-up code uses no step.
+8. **Check `/status`.** `outbox.delivered` grew by one per comment SuiteWard posted (summary, acknowledgments, promotion), and `outbox.failed` is 0. No `lastError` in `github`.
+9. **Close the PR** when this target is done, so that no other instance later reads your commands (6b.5 step 5).
+
+Paste back (no secrets): the PR numbers, what each comment said in one line, and the `/status` output of step 8. Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.
+
+### 6b.5 Co-located stack
+
+The stack was purged after M1.5, so it starts from nothing.
+
+1. **Stop the host's watching** ("Without GitHub" in 6b.1), and check that `systemctl --user is-active suiteward.service` prints `inactive`.
+2. **Start the stack with GitHub, enroll, verify, then stop its GitHub** as in [local development](../docs/local-development.md#verifying-m16a-on-the-co-located-stack). `suiteward setup` there needs a fresh authenticator entry: scan its URI into a new entry named so you can tell it from the host's. Never reuse the host's secret.
+3. **Run the scenario** (6b.4) on a fresh PR, with the co-located entry's codes.
+4. **Close the PR**, then put the stack back without GitHub (`./deploy/local.ps1`).
+5. **Restore the host** ("Without GitHub" in 6b.1), only after steps 3 and 4: the host reads comments of open PRs created after its own enrollment, and would answer the co-located commands with invalid-code acknowledgments.
+6. **Check the host again:** `/status` shows no `lastError` and `outbox.failed` 0 after a few minutes.
+
+Do not reboot the host during this section: a stop is not persistent across a reboot, so the host would come back watching with GitHub.
+
+A target that has bootstrapped keeps its Suite: it posts no new summary, so repeating the scenario needs a fresh database.
+
+### 6b.6 Troubleshooting
+
+- **No summary:** there is no open PR, or the Suite already has a canonical version (it is bootstrapped). A summary also needs a completed enrollment (`/status` shows `owner`).
+- **The carrier PR was closed before you approved:** the bootstrap moves to a new proposal on the lowest-numbered open PR, `P2-R1`. Approve the reference in the new summary.
+- **A command is never answered:** a repository has never synchronized, so the watermark has no horizon. Read `github` in `/status` (`lastError`, `waitUntil`); the command waits behind it and is processed once it clears. Commands are processed one at a time across all repositories, in comment order.
+- **An entry in `outbox.failed`:** a comment could not be posted. Read the service journal (`journalctl --user -u suiteward.service -n 100 --no-pager`; lines carry no GitHub text or secret) and report the key it names.
+- **An acknowledgment says the code was not accepted:** the clock. The code is checked at the comment's time with a tolerance of one 30-second step either side; check the authenticator's time sync. Also check that you used the entry of this target, not the other one.
+- **Two acknowledgments for one command, or an unexpected invalid-code:** two instances watch the repository. Stop one (6b.1).
+
+### 6b.7 Never
+
+No token, code, secret or setup output in tickets, logs or messages. The warning of section 6a stays in force: Session Manager session logging records the `otpauth://` URI and the base32 secret that `setup` prints, so turn it off before running `setup` here as well.
 
 ## 7. Reach `/status`
 

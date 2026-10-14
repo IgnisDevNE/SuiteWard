@@ -145,3 +145,16 @@ ON CONFLICT (project_id, suite_id) DO NOTHING;
 -- name: GetSuite :one
 SELECT * FROM suites
 WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id);
+
+-- name: ListProposalIDs :many
+SELECT proposal_id FROM proposals
+WHERE project_id = sqlc.arg(project_id) AND suite_id = sqlc.arg(suite_id);
+
+-- name: ListChangeProposalsOfCarrier :many
+SELECT p.proposal_id FROM proposals p
+WHERE p.project_id = sqlc.arg(project_id) AND p.suite_id = sqlc.arg(suite_id) AND p.carrier_id = sqlc.arg(carrier_id)
+  AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
+                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id AND r.expected_version_id IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM promotions m
+                  WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
+ORDER BY p.proposal_id;

@@ -141,10 +141,11 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
     - same head and canonical, but another Suite revision or owner command: `governance.HeadVerdict` (no tree read), or keep a stored `unchanged` result.
   - **State.**
     - `success`: the head is unchanged against the canonical (reason `unchanged`), or ready (reason `ready`).
-    - `in_progress`: reasons `approval-missing`, `canonical-changed`, `policy-changed`, `not-current`, `assessment-pending`.
+    - `in_progress`: reasons `approval-missing`, `canonical-changed`, `policy-changed`, `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated).
     - `failure`: reasons `invalid-source`, `integrity-failed`, `owner-command-rejected`.
   - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`.
-  - **Transient read failure** (GitHub, tree): keep the current record. A head with no record yet gets `in_progress`, reason `assessment-pending`.
+  - **Transient read failure** (GitHub, tree): when the stored head equals the open head, keep the record. When the open head is new (no record, or the record holds another head), publish `in_progress`, reason `assessment-pending`, for the new head, so the new SHA never stays without a check.
+  - **Lost publication.** When the current generation's message ended `failed` in the outbox, `Publish` re-sends the same state under the next generation.
   - Publish through `checks.Store.Publish` with a `github_check` message.
 - A store error fails the run after every repository was tried. The last error per repository is kept in memory and shown in `/status` (`github[].checks`).
 

@@ -663,7 +663,7 @@ func HeadVerdict(ctx context.Context, uow UnitOfWork, request HeadRequest) (Head
 
 - **No canonical.** Both return `ErrNoCanonical` (new sentinel). No proposal is created before a canonical exists (D-CHECKS).
 - **Governing scope.** Rebuilt from the canonical: the `.suiteward.yml` bytes named by the canonical manifest are read through `ContentReader` (no entry means `scope.NoDeclaration()`), parsed, and their scope digest must equal the canonical binding's; a mismatch is `ErrInvalidState`.
-- **Classification.** `inventory.Classify(governing, Tree)`. An invalid tree, an unsafe entry or an invalid declaration is returned wrapped (`inventory.ErrInvalidTree`, `ErrUnsafeEntry`, `scope.ErrInvalidDeclaration`) and maps to `failure`. `Unchanged` returns at once, with no write.
+- **Classification.** `inventory.Classify(governing, Tree)`. An invalid tree, an unsafe entry or an invalid declaration is returned wrapped (`inventory.ErrInvalidTree`, `ErrUnsafeEntry`, `scope.ErrInvalidDeclaration`) and maps to `failure`, except a tree GitHub truncated: the reader then also wraps `github.ErrTreeTruncated`, a GitHub limit rather than the owner's source, which maps to `in_progress`. `Unchanged` returns at once, with no write.
 - **The PR's proposal.** Inside one `Do`:
   - The PR's change proposal is the proposal whose carrier is `Carrier`, whose revisions expect a non-empty canonical (not a baseline) and that has no promotion. `Tx.ChangeProposalFor(ctx, carrier)` finds it. The bootstrap carrier PR therefore gets a new proposal for a protected change.
   - Without one, a new id is allocated with `Tx.NextProposalID(ctx)` (`P<max+1>`), under the Suite lock.
@@ -703,16 +703,19 @@ type Store interface {
 	// Publish stores r for its pull. When the head, State, Reason or Reference differ from the current record
 	// (or there is none) it advances the generation and writes message(generation) to the outbox in the same
 	// transaction, as a system row. Otherwise it updates Change, Revision, CommandID and DecidedAt only and
-	// writes no message. It returns the stored record and whether a message was written.
+	// writes no message. It also advances the generation and writes a message when the current generation's
+	// message ended `failed` in the outbox, so a lost publication is retried. It returns the stored record and
+	// whether a message was written.
 	Publish(ctx context.Context, r Result, at time.Time, message func(generation int64) (governance.OutboxMessage, error)) (Record, bool, error)
 }
 ```
 
 - **Table `pr_checks`.** Primary key (repository_id, pull_number). The row is current state, updated in place; the publications themselves are the outbox rows. `generation` only grows; `state` is a CHECK on the three codes; `head_sha` is 40 lowercase hex.
-- **Owner commands.** `commands.Store` gains `LatestOwnerCommand(ctx, repositoryID int64, pull int, ownerID int64) (Entry, bool, error)`: the owner-authored ledger entry with the greatest comment id on that pull, any disposition except `before-enrollment`.
+- **Owner commands.** `commands.Store` gains `LatestOwnerCommand(ctx, repositoryID int64, pull int, ownerID int64) (Entry, bool, error)`: the owner-authored ledger entry with the greatest comment id on that pull among the command dispositions (`malformed`, `invalid-code`, `replayed-code`, `unknown-proposal`, `edited-first`, `no-suite`, `processed`). `not-command`, `failed` and `before-enrollment` never count, so an ordinary comment never clears an owner-command `failure`.
 - **Conformance.**
   - Publish: the first record writes generation 1 and one message; an identical result writes none; a new head, state, reason or reference advances the generation by exactly one; concurrent publishes for one pull never write two messages for one generation; a failing message rolls the record back.
-  - `LatestOwnerCommand`: ordering and the author filter.
+  - Publish with an identical result after the current message failed: generation advances by one with a new message.
+  - `LatestOwnerCommand`: ordering, the author filter, and a rejected command followed by an owner `not-command` comment is still the latest command.
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 

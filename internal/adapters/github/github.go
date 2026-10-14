@@ -27,6 +27,9 @@ var (
 	// ErrInvalidResponse reports an answer that does not decode or lacks a
 	// required field.
 	ErrInvalidResponse = errors.New("github: invalid response")
+	// ErrTreeTruncated reports a recursive tree GitHub cut at its size limit;
+	// the error also matches inventory.ErrInvalidTree.
+	ErrTreeTruncated = errors.New("github: tree truncated")
 )
 
 const (
@@ -194,6 +197,18 @@ func latest[T any, K comparable](items []T, key func(T) K) []T {
 // readPages reads pages 1, 2, … of a listing until one holds fewer than
 // pageSize items, or fails after maxPages; the result is never nil.
 func readPages[T any](ctx context.Context, client *rest.Client, path func(page int) string) ([]T, error) {
+	return readPagesOf(ctx, client, path, func(p string, body []byte) ([]T, error) {
+		var items []T
+		if err := decode(p, body, &items); err != nil {
+			return nil, err
+		}
+		return items, nil
+	})
+}
+
+// readPagesOf is readPages for a listing whose items sit inside the answer;
+// items returns nil for an answer that is not a list.
+func readPagesOf[T any](ctx context.Context, client *rest.Client, path func(page int) string, items func(path string, body []byte) ([]T, error)) ([]T, error) {
 	all := []T{}
 	for page := 1; page <= maxPages; page++ {
 		p := path(page)
@@ -201,15 +216,15 @@ func readPages[T any](ctx context.Context, client *rest.Client, path func(page i
 		if err != nil {
 			return nil, err
 		}
-		var items []T
-		if err := decode(p, resp.Body, &items); err != nil {
+		got, err := items(p, resp.Body)
+		if err != nil {
 			return nil, err
 		}
-		if items == nil { // null decodes to nil; an empty page is []
+		if got == nil { // null decodes to nil; an empty page is []
 			return nil, fmt.Errorf("%w: the answer to %s is not a list", ErrInvalidResponse, p)
 		}
-		all = append(all, items...)
-		if len(items) < pageSize {
+		all = append(all, got...)
+		if len(got) < pageSize {
 			return all, nil
 		}
 	}
@@ -269,7 +284,7 @@ func (r *Reader) Tree(ctx context.Context, repo, commitSHA string) (inventory.Tr
 		return nil, fmt.Errorf("%w: the answer to %s lists no tree", ErrInvalidResponse, path)
 	}
 	if raw.Truncated {
-		return nil, fmt.Errorf("%w: GitHub truncated the tree of %s at %s", inventory.ErrInvalidTree, repo, commitSHA)
+		return nil, fmt.Errorf("%w: %w: GitHub truncated the tree of %s at %s", inventory.ErrInvalidTree, ErrTreeTruncated, repo, commitSHA)
 	}
 	t := &tree{client: r.client, repo: repo, byPath: make(map[string]treeEntry, len(raw.Tree))}
 	for _, e := range raw.Tree {

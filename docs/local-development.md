@@ -160,6 +160,14 @@ Only one target may watch `IgnisDevNE/SuiteWardQ` at a time (D-COMMANDS). The ho
 4. **Run the scenario** (HOST.md 6b.4). Read `/status` through the machine: `podman machine ssh "curl -s http://127.0.0.1:8081/status"`.
 5. **Close the verification PR, then stop the GitHub watching:** `./deploy/local.ps1` with no GitHub parameters (smoke test with `SMOKE_GITHUB=0`), or `./deploy/local.ps1 -Down`. Only then restore the host. `./deploy/local.ps1 -Down -Purge` also removes the App key secret and the state.
 
+### Verifying M1.6b on the co-located stack
+
+The scenario is in [HOST.md, section 6c](../deploy/HOST.md#6c-the-suiteward--contract-check-m16b); the stack side is the one of M1.6a above, with these differences:
+- the stack keeps its M1.6a enrollment, its authenticator entry and V1, so the setup step is not needed unless the stack was purged;
+- pull the new `deploy` image and re-run `./deploy/local.ps1` with `-GitHubAppId`, `-GitHubInstallationId` and `-GitHubRepositories` only: the App key secret from M1.6a is reused, so the PEM is not needed again; run the smoke test with `SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit>`;
+- `/status` must show `schemaVersion` 14 and no `checks` or `bootstrap` error;
+- stop the host's watching first and restore it only after the stack is back without GitHub (HOST.md 6b.1 and 6c.4).
+
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.

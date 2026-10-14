@@ -515,8 +515,8 @@ func TestCommandsJobDoesNothingWhileARepositoryHasNeverSynchronized(t *testing.T
 	if w.ledger.pendingCalls != 0 || w.botCall != 0 {
 		t.Fatalf("the run read %d pending lists and the bot %d times without a horizon", w.ledger.pendingCalls, w.botCall)
 	}
-	if !strings.Contains(w.logs.String(), `"level":"DEBUG"`) || !strings.Contains(w.logs.String(), cjRepo2) {
-		t.Fatalf("no Debug line says which repository blocks the commands; logs: %s", w.logs)
+	if !strings.Contains(w.logs.String(), `"level":"WARN"`) || !strings.Contains(w.logs.String(), cjRepo2) {
+		t.Fatalf("no Warn line says which repository blocks the commands; logs: %s", w.logs)
 	}
 }
 
@@ -602,17 +602,6 @@ func TestCommandsJobCountsOnlyConsecutiveFailuresOfOneCandidate(t *testing.T) {
 	w.requireProcessed(cjID1, 500) // four failures are not five
 }
 
-func TestCommandsJobGivesAnUnknownProposalNoAcknowledgment(t *testing.T) {
-	// Contract gap: ProcessConsent reports an unknown proposal (P9) as governance.ErrNotFound, like a missing Suite, and writes
-	// no receipt. The Suite exists, so this is not no-suite: the candidate takes the failure path.
-	w := newCjWorld(t)
-	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P9-R1", 0)})
-	for range 5 {
-		w.mustRun()
-	}
-	w.requireSilent(cjID1, 500, commands.Failed)
-}
-
 func TestCommandsJobFailsOnlyWhenTheLedgerCannotBeUsed(t *testing.T) {
 	t.Run("pending", func(t *testing.T) {
 		w := newCjWorld(t)
@@ -687,4 +676,31 @@ func TestCommandsJobTreatsAFailedSuiteProbeAsAStoreError(t *testing.T) {
 	w.suites.failAt = 2
 	w.mustRun()
 	w.requireNoEntry(cjID1, 500)
+}
+
+func TestCommandsJobRejectsAnUnknownProposalOfAnExistingSuite(t *testing.T) {
+	w := newCjWorld(t)
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P9-R1", 0)})
+	w.mustRun()
+	w.requireRejected(cjID1, 500, commands.UnknownProposal, 0, "P9-R1")
+	if len(w.owners.consumed) != 1 {
+		t.Fatalf("consumed %d steps; the code was valid, so its step is used", len(w.owners.consumed))
+	}
+	if keys, err := w.ledger.OutboxKeys(t.Context()); err != nil || len(keys) != 1 {
+		t.Fatalf("outbox keys %v, %v; want one acknowledgment", keys, err)
+	}
+	w.requireNothingLeaked(cjCode(cjAt(10), 0))
+}
+
+func TestCommandsJobRepeatsAnUnknownProposalAfterACrashOnce(t *testing.T) {
+	w := newCjWorld(t)
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P9-R1", 0)})
+	w.owners.crashAfter = true
+	w.mustRun() // the step is consumed, then the process "crashes"
+	w.requireNoEntry(cjID1, 500)
+	w.mustRun()
+	w.requireRejected(cjID1, 500, commands.UnknownProposal, 0, "P9-R1")
+	if keys, err := w.ledger.OutboxKeys(t.Context()); err != nil || len(keys) != 1 {
+		t.Fatalf("outbox keys %v, %v; want one acknowledgment", keys, err)
+	}
 }

@@ -226,7 +226,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 
 	run("Record stores every disposition", func(e *cmdEnv) {
 		all := []commands.Disposition{commands.NotCommand, commands.BeforeEnrollment, commands.NoSuite, commands.EditedFirst, commands.Failed,
-			commands.IgnoredAuthor, commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.Processed}
+			commands.IgnoredAuthor, commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.Processed}
 		for i, d := range all {
 			e.must(e.store.Record(e.ctx, entry(10, int64(i+1), d), nil))
 			e.must(e.store.Record(e.ctx, entry(10, int64(i+1), d), nil)) // stored: a repeat is the same entry

@@ -303,11 +303,27 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		e.requireErr(e.store.Record(e.ctx, entry(10, 2, commands.InvalidCode), &governance.OutboxMessage{Key: "ack-2", Kind: "Bad", Payload: json.RawMessage(`{}`)}),
 			governance.ErrInvalidRequest)
 		e.requireOutbox("ack-1")
+		// An invalid message is rejected before the ledger is consulted: a repeat or a conflict does not hide it.
+		invalid := &governance.OutboxMessage{Key: "ack-1", Kind: "Bad", Payload: json.RawMessage(`{}`)}
+		e.requireErr(e.store.Record(e.ctx, entry(10, 1, commands.Malformed), invalid), governance.ErrInvalidRequest)
+		e.requireErr(e.store.Record(e.ctx, entry(10, 1, commands.InvalidCode), invalid), governance.ErrInvalidRequest)
 		e.requirePending(100, 10, candidate(10, 5, first(2)), candidate(10, 5, first(3)))
 
 		// Nothing was left behind: the comment is recorded once its acknowledgment is good.
 		e.must(e.store.Record(e.ctx, entry(10, 2, commands.InvalidCode), ack("ack-2")))
 		e.requireOutbox("ack-1", "ack-2")
+	})
+
+	run("an identical repeat is success at the precision the store keeps", func(e *cmdEnv) {
+		// PostgreSQL keeps microseconds; the caller's clock has nanoseconds, and a retry carries the same value.
+		precise := entry(10, 1, commands.Malformed)
+		precise.CreatedAt, precise.DecidedAt = precise.CreatedAt.Add(321*time.Nanosecond), precise.DecidedAt.Add(789*time.Nanosecond)
+		e.must(e.store.Record(e.ctx, precise, ack("ack-1")))
+		e.must(e.store.Record(e.ctx, precise, ack("ack-1")))
+		e.requireOutbox("ack-1")
+		other := precise
+		other.DecidedAt = other.DecidedAt.Add(time.Microsecond)
+		e.requireErr(e.store.Record(e.ctx, other, nil), commands.ErrConflict)
 	})
 
 	run("concurrent Record of one comment: exactly one entry wins", func(e *cmdEnv) {

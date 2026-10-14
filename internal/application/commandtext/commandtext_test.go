@@ -214,8 +214,8 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"approved and requirement not yet met",
 			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner},
-			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is not met yet; other requirements are still pending.", "/suiteward revoke P42-R3 <code>"},
-			[]string{"is met", "eligible"},
+			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is not met yet.", "/suiteward revoke P42-R3 <code>"},
+			[]string{"is met", "eligible", "other requirements"},
 		},
 		{
 			"revoked and still eligible",

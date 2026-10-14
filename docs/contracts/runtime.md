@@ -137,11 +137,11 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
   - **No Suite or no canonical:** `in_progress`, reason `bootstrap-pending`.
   - **Otherwise** compare with `checks.Store.Current`:
     - same head, same canonical, same Suite revision and same latest owner command: nothing to do;
-    - new head or new canonical: read the head tree (`Reader.Tree`) and call `governance.AssessHead`;
-    - same head and canonical, but another Suite revision or owner command: `governance.HeadVerdict` (no tree read), or keep a stored `unchanged` result.
+    - a stored `unchanged` result for the same head and canonical: keep it without reading the tree (consent cannot change it);
+    - anything else: read the head tree (`Reader.Tree`) and call `governance.AssessHead`, which is idempotent.
   - **State.**
     - `success`: the head is unchanged against the canonical (reason `unchanged`), or ready (reason `ready`).
-    - `in_progress`: reasons `approval-missing`, `canonical-changed`, `policy-changed`, `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated).
+    - `in_progress`: reasons `approval-missing` (including a revision rebound after the canonical or the policy changed), `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated); `ErrConflict` from `AssessHead` keeps the current record and retries on the next run.
     - `failure`: reasons `invalid-source`, `integrity-failed`, `owner-command-rejected`.
   - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`.
   - **Transient read failure** (GitHub, tree): when the stored head equals the open head, keep the record. When the open head is new (no record, or the record holds another head), publish `in_progress`, reason `assessment-pending`, for the new head, so the new SHA never stays without a check.

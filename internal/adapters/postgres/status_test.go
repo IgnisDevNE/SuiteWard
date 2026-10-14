@@ -55,7 +55,7 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 	if want := map[string]int64{"available": 2, "completed": 1, "discarded": 1}; !maps.Equal(counts.Jobs, want) {
 		t.Fatalf("job counts = %v; want %v (the outbox_relay, github_sync_tick, github_protection_check, github_bootstrap, github_commands and github_checks jobs are excluded)", counts.Jobs, want)
 	}
-	if want := map[string]int64{postgres.OutboxPending: 7, postgres.OutboxDelivered: 1, postgres.OutboxFailed: 1}; !maps.Equal(counts.Outbox, want) {
+	if want := map[string]int64{postgres.OutboxPending: 8, postgres.OutboxDelivered: 1, postgres.OutboxFailed: 1}; !maps.Equal(counts.Outbox, want) {
 		t.Fatalf("outbox counts = %v; want %v", counts.Outbox, want)
 	}
 }

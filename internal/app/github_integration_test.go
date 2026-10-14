@@ -149,11 +149,24 @@ func TestServeSynchronizesGitHubAtStart(t *testing.T) {
 	key := githubVars(t, vars, fake)
 	s := startRun(t, vars)
 	s.waitReady()
+	// A comment the publisher cannot decode: the relay must still know the kind, so the failure is never "no publisher".
+	exec(t, databaseURL, "INSERT INTO outbox (key, kind, payload) VALUES ('composition-probe', 'github_comment', '{}')")
 
 	entry := s.waitGitHubStatus("the first cycle", func(e map[string]any) bool { return e["lastSuccess"] != nil })
 
 	if entry["repo"] != "acme/widgets" || entry["lastError"] != nil || entry["waitUntil"] != nil {
 		t.Fatalf("/status github entry = %v; want a success without error or wait", entry)
+	}
+	for _, kind := range []string{"github_bootstrap", "github_commands"} {
+		waitFor(t, kind+" job", 60*time.Second, func() bool {
+			return scalar(t, databaseURL, "SELECT count(*)::text FROM river_job WHERE kind = $1", kind) != "0"
+		})
+	}
+	waitFor(t, "the relay to attempt the comment", 60*time.Second, func() bool {
+		return scalar(t, databaseURL, "SELECT attempts::text FROM outbox WHERE key = 'composition-probe'") != "0"
+	})
+	if got := scalar(t, databaseURL, "SELECT coalesce(last_error, '') FROM outbox WHERE key = 'composition-probe'"); strings.Contains(got, "no publisher") {
+		t.Fatalf("the relay has no publisher for github_comment: %s", got)
 	}
 	if got := scalar(t, databaseURL, "SELECT count(*)::text FROM github_pulls WHERE repo = 'acme/widgets' AND number = 1 AND not_open_since IS NULL"); got != "1" {
 		t.Fatalf("%s observed pulls; want the open one", got)

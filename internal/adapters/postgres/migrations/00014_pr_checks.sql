@@ -26,6 +26,7 @@ CREATE TABLE pr_checks (
     CONSTRAINT pr_checks_repository_check CHECK (repository_id > 0),
     CONSTRAINT pr_checks_pull_check CHECK (pull_number > 0),
     CONSTRAINT pr_checks_head_check CHECK (head_sha ~ '^[0-9a-f]{40}$'),
+    CONSTRAINT pr_checks_reason_check CHECK (btrim(reason) <> ''),
     CONSTRAINT pr_checks_state_check CHECK (state IN ('success', 'in_progress', 'failure')),
     CONSTRAINT pr_checks_reference_check CHECK (reference ~ '^(P[0-9]+-R[0-9]+)?$'),
     CONSTRAINT pr_checks_revision_check CHECK (revision >= 0),

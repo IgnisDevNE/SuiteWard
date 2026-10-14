@@ -47,7 +47,7 @@ const (
 var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed}
 
 // Dispositions returns every disposition.
-func Dispositions() []Disposition { return nil }
+func Dispositions() []Disposition { return slices.Clone(dispositions) }
 
 // Entry is the decision about the first observed version of one comment.
 type Entry struct {

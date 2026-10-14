@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -88,6 +89,8 @@ func (r Result) Validate() error {
 	switch {
 	case !headSyntax.MatchString(r.HeadSHA):
 		return invalid("the head must be 40 lowercase hexadecimal digits")
+	case strings.TrimSpace(r.Reason) == "":
+		return invalid("the reason is required")
 	case r.State != Success && r.State != InProgress && r.State != Failure:
 		return invalid("unknown state %q", r.State)
 	case !referenceSyntax.MatchString(r.Reference):

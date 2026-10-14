@@ -5,11 +5,14 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks/checkstest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 )
 
 const checkHead = "0123456789abcdef0123456789abcdef01234567"
@@ -54,7 +57,6 @@ func TestCheckConstraints(t *testing.T) {
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	mustInsert(t, database.conn, "outbox", map[string]any{"key": "check:10:1:1"})
 	for _, test := range []struct {
 		name, constraint string
 		row              map[string]any
@@ -74,9 +76,6 @@ func TestCheckConstraints(t *testing.T) {
 			schemaRequireError(t, insertRow(t.Context(), database.conn, "pr_checks", test.row), "23514", test.constraint)
 		})
 	}
-	t.Run("the message must exist in the outbox", func(t *testing.T) {
-		schemaRequireError(t, insertRow(t.Context(), database.conn, "pr_checks", map[string]any{"message_key": "check:10:1:9"}), "23503", "pr_checks_message_fkey")
-	})
 	t.Run("one row per pull", func(t *testing.T) {
 		mustInsert(t, database.conn, "pr_checks", nil)
 		schemaRequireError(t, insertRow(t.Context(), database.conn, "pr_checks", nil), "23505", "pr_checks_pkey")
@@ -96,5 +95,18 @@ func TestCheckRowsAreUpdatedInPlaceNeverDeleted(t *testing.T) {
 	}
 	if ownerCount(w, "SELECT count(*) FROM pr_checks") != 1 {
 		t.Fatal("a rejected statement changed the rows")
+	}
+}
+
+func TestPublishFailsWhenTheCurrentMessageIsMissing(t *testing.T) {
+	w := newPGWorld(t)
+	mustInsert(t, w.pool, "pr_checks", nil) // its message check:10:1:1 was never written
+	r := checks.Result{RepositoryID: 10, PullNumber: 1, HeadSHA: checkHead, State: checks.InProgress, Reason: "approval-missing"}
+	_, _, err := w.store.Checks().Publish(t.Context(), r, time.Now(), func(int64) (governance.OutboxMessage, error) {
+		t.Fatal("the message was built for a ledger that is inconsistent")
+		return governance.OutboxMessage{}, nil
+	})
+	if err == nil {
+		t.Fatal("Publish accepted a record whose message is not in the outbox")
 	}
 }

@@ -115,7 +115,20 @@ func (e Entry) Validate() error {
 
 // ValidateLatest reports why LatestOwnerCommand cannot answer, as ErrInvalid.
 func ValidateLatest(repositoryID int64, pull int, ownerID int64) error {
+	if repositoryID <= 0 || ownerID <= 0 || pull < 1 || pull > math.MaxInt32 {
+		return invalid("the repository and owner ids must be positive and the pull number between 1 and %d", math.MaxInt32)
+	}
 	return nil
+}
+
+// IsCommand reports whether the disposition is the decision about a command of the owner (as opposed to an
+// ordinary comment, a failed candidate or a comment before enrollment).
+func (d Disposition) IsCommand() bool {
+	switch d {
+	case Malformed, InvalidCode, ReplayedCode, UnknownProposal, EditedFirst, NoSuite, Processed:
+		return true
+	}
+	return false
 }
 
 // ValidatePending reports why Pending cannot answer, as ErrInvalid.

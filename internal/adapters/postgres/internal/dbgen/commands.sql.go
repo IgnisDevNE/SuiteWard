@@ -87,6 +87,39 @@ func (q *Queries) InsertPRCommand(ctx context.Context, arg InsertPRCommandParams
 	return result.RowsAffected(), nil
 }
 
+const latestOwnerCommand = `-- name: LatestOwnerCommand :one
+SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at
+FROM pr_commands
+WHERE repository_id = $1 AND pull_number = $2 AND author_id = $3
+  AND disposition IN ('malformed', 'invalid-code', 'replayed-code', 'unknown-proposal', 'edited-first', 'no-suite', 'processed')
+ORDER BY comment_id DESC
+LIMIT 1
+`
+
+type LatestOwnerCommandParams struct {
+	RepositoryID int64
+	PullNumber   int32
+	AuthorID     int64
+}
+
+// The owner's latest command on a pull: the greatest comment id among the command dispositions.
+func (q *Queries) LatestOwnerCommand(ctx context.Context, arg LatestOwnerCommandParams) (PrCommand, error) {
+	row := q.db.QueryRow(ctx, latestOwnerCommand, arg.RepositoryID, arg.PullNumber, arg.AuthorID)
+	var i PrCommand
+	err := row.Scan(
+		&i.RepositoryID,
+		&i.CommentID,
+		&i.PullNumber,
+		&i.AuthorID,
+		&i.CreatedAt,
+		&i.BodyDigest,
+		&i.Disposition,
+		&i.OperationID,
+		&i.DecidedAt,
+	)
+	return i, err
+}
+
 const pendingCommands = `-- name: PendingCommands :many
 
 WITH enrolled AS (

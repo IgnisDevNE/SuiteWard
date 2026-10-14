@@ -25,7 +25,7 @@ CREATE TABLE pr_commands (
     CONSTRAINT pr_commands_author_check CHECK (author_id > 0),
     CONSTRAINT pr_commands_body_digest_check CHECK (body_digest ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT pr_commands_disposition_check CHECK (disposition IN ('not-command', 'before-enrollment', 'no-suite', 'edited-first', 'failed',
-        'ignored-author', 'malformed', 'invalid-code', 'replayed-code', 'processed')),
+        'ignored-author', 'malformed', 'invalid-code', 'replayed-code', 'unknown-proposal', 'processed')),
     CONSTRAINT pr_commands_operation_check CHECK ((disposition = 'processed') = (operation_id IS NOT NULL) AND (operation_id IS NULL OR btrim(operation_id) <> ''))
 );
 

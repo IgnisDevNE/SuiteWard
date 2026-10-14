@@ -58,11 +58,11 @@ type ackPayload struct {
 	Project     contract.ProjectID   `json:"project,omitempty"`     // processed: the project of the Suite
 	Suite       contract.SuiteID     `json:"suite,omitempty"`       // processed: the Suite whose receipt is read
 	Operation   contract.OperationID `json:"operation,omitempty"`   // processed: the operation of the consent receipt
-	Disposition string               `json:"disposition,omitempty"` // rejected: malformed, invalid-code, replayed-code, no-suite or edited-first
+	Disposition string               `json:"disposition,omitempty"` // rejected: malformed, invalid-code, replayed-code, no-suite, unknown-proposal or edited-first
 	Comment     int64                `json:"comment"`               // the id of the command comment
 	Owner       string               `json:"owner"`                 // the owner's GitHub login at processing time
 	Reason      string               `json:"reason,omitempty"`      // rejected malformed: the reason code
-	Reference   string               `json:"reference,omitempty"`   // rejected invalid-code, replayed-code and no-suite: P<n>-R<m> of the parsed command
+	Reference   string               `json:"reference,omitempty"`   // rejected invalid-code, replayed-code, no-suite and unknown-proposal: P<n>-R<m> of the parsed command
 }
 
 // The codes of the malformed reasons in a payload.
@@ -95,12 +95,12 @@ func codeReason(code string) (commandtext.Reason, bool) {
 // rejectedOutcomes maps the dispositions that get an acknowledgment without a receipt.
 var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.Malformed: commandtext.MalformedCommand, commands.InvalidCode: commandtext.InvalidCode, commands.ReplayedCode: commandtext.ReplayedCode,
-	commands.NoSuite: commandtext.NoSuite, commands.EditedFirst: commandtext.EditedFirst,
+	commands.NoSuite: commandtext.NoSuite, commands.EditedFirst: commandtext.EditedFirst, commands.UnknownProposal: commandtext.Rejected,
 }
 
 // needsReference is true for the rejections of a command that parsed.
 func needsReference(d commands.Disposition) bool {
-	return d == commands.InvalidCode || d == commands.ReplayedCode || d == commands.NoSuite
+	return d == commands.InvalidCode || d == commands.ReplayedCode || d == commands.NoSuite || d == commands.UnknownProposal
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -142,8 +142,8 @@ func newProcessedAck(target commentTarget, comment int64, ownerLogin string, pro
 }
 
 // newRejectedAck builds the acknowledgment of a command the job rejected before ProcessConsent: disposition is
-// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite or EditedFirst. reference (P<n>-R<m>) is the
-// parsed command's, required for InvalidCode, ReplayedCode and NoSuite and empty otherwise.
+// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal or EditedFirst. reference (P<n>-R<m>) is the
+// parsed command's, required for InvalidCode, ReplayedCode, NoSuite and UnknownProposal and empty otherwise.
 func newRejectedAck(target commentTarget, comment int64, ownerLogin string, disposition commands.Disposition, reason commandtext.Reason, reference string) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reasonCode(reason), Reference: reference})
 }
@@ -389,7 +389,11 @@ func (p *commentPublisher) receipt(ctx context.Context, key string, a ackPayload
 
 // rejectedAckOf maps a validated rejected payload to the acknowledgment it states.
 func rejectedAckOf(a ackPayload) commandtext.Ack {
-	ack := commandtext.Ack{Outcome: rejectedOutcomes[commands.Disposition(a.Disposition)], Owner: a.Owner, Source: a.Comment}
+	d := commands.Disposition(a.Disposition)
+	ack := commandtext.Ack{Outcome: rejectedOutcomes[d], Owner: a.Owner, Source: a.Comment}
+	if d == commands.UnknownProposal { // the text of UnknownRevision is true for a proposal that does not exist
+		ack.Rejection = commandtext.UnknownRevision
+	}
 	ack.Malformed, _ = codeReason(a.Reason)
 	if a.Reference != "" {
 		ack.Proposal, ack.Revision, _ = parseReference(a.Reference)

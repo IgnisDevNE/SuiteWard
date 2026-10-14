@@ -533,6 +533,7 @@ const (
 	Malformed       Disposition = "malformed"       // owner-authored, unparseable command line
 	InvalidCode     Disposition = "invalid-code"    // owner-authored, code does not verify within the tolerance
 	ReplayedCode    Disposition = "replayed-code"   // owner-authored, the step was used by another command
+	UnknownProposal Disposition = "unknown-proposal" // owner-authored, valid code, for a proposal that does not exist on an existing Suite; the step stays consumed
 	Processed       Disposition = "processed"       // passed to ProcessConsent; Receipt holds the outcome
 )
 
@@ -579,7 +580,7 @@ type Candidate struct { // the first observed version of one comment
 
   `edited-first` is recorded like a rejected disposition, with an acknowledgment, and uses up no step.
 
-  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
+  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
 - **Keys.** Observations are keyed by `owner/name` (M1.4) and projects by repository id. `Pending` joins them through the enrolled projects (`owner.State.Projects`), so a repository that is not enrolled has no candidates.
 
 ### Consumed steps bound to their command

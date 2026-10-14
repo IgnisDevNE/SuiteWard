@@ -294,6 +294,8 @@ curl -s http://127.0.0.1:8081/status
 
 If `tierNote` says to re-run setup, the enrollment and the setting disagree on the tier: run setup again.
 
+**Commands never answered.** If every repository in `/status` shows a recent `lastSuccess` and a command comment still gets no acknowledgment, the repository list probably changed after setup: an enrolled repository that is no longer configured (or was renamed) never synchronizes, and the command job waits for it. The service log then carries `github commands wait: an enrolled repository has not synchronized yet` with that repository's name. Re-run setup after changing the repository list.
+
 **Co-located target (this PC).** The same command through the Podman machine's container, `podman exec -it suiteward /suiteward setup --owner <login> --test-check <owner/name>=<check> ...`, with the same repositories you gave `deploy/local.ps1`. That tier is `co-located` (`deploy/local.ps1` declares it): the agent that works on this PC can run setup too, so SuiteWard reports reduced assurance.
 
 ## 6b. PR commands and bootstrap (M1.6a)

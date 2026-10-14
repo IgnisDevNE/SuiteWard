@@ -40,10 +40,11 @@ const (
 	Malformed        Disposition = "malformed"         // owner-authored, unparseable command line
 	InvalidCode      Disposition = "invalid-code"      // owner-authored, code does not verify within the tolerance
 	ReplayedCode     Disposition = "replayed-code"     // owner-authored, the step was used by another command
+	UnknownProposal  Disposition = "unknown-proposal"  // owner-authored, valid code, for a proposal that does not exist on an existing Suite
 	Processed        Disposition = "processed"         // passed to ProcessConsent; the receipt holds the outcome
 )
 
-var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, Processed}
+var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed}
 
 // Entry is the decision about the first observed version of one comment.
 type Entry struct {

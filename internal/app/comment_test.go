@@ -426,6 +426,7 @@ func TestCommentPublisherRendersEveryRejectedDisposition(t *testing.T) {
 		{"invalid code", commands.InvalidCode, 0, "P3-R2", commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 3, Revision: 2}},
 		{"replayed code", commands.ReplayedCode, 0, "P3-R2", commandtext.Ack{Outcome: commandtext.ReplayedCode, Proposal: 3, Revision: 2}},
 		{"no suite", commands.NoSuite, 0, "P1-R1", commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1}},
+		{"unknown proposal", commands.UnknownProposal, 0, "P9-R1", commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.UnknownRevision, Proposal: 9, Revision: 1}},
 		{"edited first", commands.EditedFirst, 0, "", commandtext.Ack{Outcome: commandtext.EditedFirst}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -470,6 +471,7 @@ func TestCommentPublisherRefusesWhatDoesNotMatchItsKey(t *testing.T) {
 		{"a malformed disposition without a reason", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "malformed" })},
 		{"a reason that is not a code", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reason"] = "malformed", cmtSecretText })},
 		{"an invalid-code disposition without a reference", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "invalid-code" })},
+		{"an unknown-proposal disposition without a reference", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "unknown-proposal" })},
 		{"a reference that is not P<n>-R<m>", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reference"] = "no-suite", cmtSecretText })},
 		{"a reference on an edited-first disposition", "ack:1001:555", with(func(m map[string]any) { m["reference"] = "P1-R1" })},
 		{"neither a disposition nor an operation", "ack:1001:555", with(func(m map[string]any) { delete(m, "disposition") })},

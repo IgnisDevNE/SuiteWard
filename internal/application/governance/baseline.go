@@ -22,6 +22,7 @@ type BaselineRequest struct {
 	Carrier   contract.ApprovalCarrierID // the PR that hosts the approval
 	Origin    contract.SourceRevision    // the pinned principal-branch commit
 	Tree      inventory.Tree             // that commit's source tree
+	Outbox    []OutboxMessage            // written with a new revision, never when the coverage is unchanged
 }
 
 type BaselineResult struct {
@@ -82,7 +83,10 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 			return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 		revised, err = reviseWithin(ctx, tx, state, revision)
-		return err
+		if err != nil || !revised.Committed {
+			return err
+		}
+		return writeOutbox(ctx, tx, request.Outbox)
 	})
 	if err != nil {
 		return BaselineResult{}, err

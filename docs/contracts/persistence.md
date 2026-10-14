@@ -55,9 +55,10 @@ type Tx interface {
 	Outbox(context.Context, OutboxMessage) error
 }
 
-// Seeder writes trusted initial state. It is the only writer of policies,
-// assessments and historical versions until the GitHub-facing phases add
-// their own write paths; proposals also have AppendProposalRevision (M1.3).
+// Seeder writes trusted initial state: policies, assessments and historical
+// versions. It is no longer their only writer: the owner enrollment writes
+// policies (Enroll), CreateSuite creates Suites and RecordAssessment records
+// assessments (M1.6a); proposals also have AppendProposalRevision (M1.3).
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }
@@ -230,7 +231,7 @@ The conformance suite gains: rollback removes the job and the outbox row togethe
 
 ## Proposal revisions (M1.3; normative)
 
-The first write path for proposals outside `Seed`. Declared in `internal/application/governance/uow.go`; the `Seeder` comment then says it is the only writer of policies, assessments and historical versions.
+The first write path for proposals outside `Seed`. Declared in `internal/application/governance/uow.go`; the `Seeder` comment then says that it writes trusted initial state, and no longer that it is the only writer of policies and assessments (enrollment, `CreateSuite` and `RecordAssessment` write them too, M1.6a).
 
 ```go
 // ProposalWrite appends one revision to a proposal of the locked Suite. When
@@ -297,7 +298,7 @@ Use case `ProposeBaseline(ctx, UnitOfWork, ContentWriter, BaselineRequest) (Base
 
 There are no new `Tx` methods and no migration. The first canonical is then created by `Bootstrap` with `Integration` of kind existing baseline and `Proposed = BaselineResult.Contract`, after approval and integrity assessment as before.
 
-Tests: the full path on the in-memory fake (tree, `ProposeBaseline`, approval through `ProcessConsent`, a seeded assessment, `Bootstrap`, a canonical whose manifest equals the inventory's); a repeated call with the same tree writes nothing; a changed protected file creates a new revision; an existing canonical is rejected; a failing or mismatching `Put` writes nothing. On PostgreSQL with the filesystem store: the inventory's revision and assessment are seeded (assessments have no write path until M1.6), `ProposeBaseline` on the same tree returns the seeded reference with `Committed` false and still stores the bytes, and `Bootstrap` succeeds, so `RecordPromotion` verifies the bytes `ProposeBaseline` wrote.
+Tests: the full path on the in-memory fake (tree, `ProposeBaseline`, approval through `ProcessConsent`, a seeded assessment, `Bootstrap`, a canonical whose manifest equals the inventory's); a repeated call with the same tree writes nothing; a changed protected file creates a new revision; an existing canonical is rejected; a failing or mismatching `Put` writes nothing. On PostgreSQL with the filesystem store: the inventory's revision and assessment are seeded (`RecordAssessment` records assessments since M1.6a, but this test seeds its own), `ProposeBaseline` on the same tree returns the seeded reference with `Committed` false and still stores the bytes, and `Bootstrap` succeeds, so `RecordPromotion` verifies the bytes `ProposeBaseline` wrote.
 
 ## GitHub observations (M1.4; normative)
 
@@ -481,6 +482,147 @@ Rules:
 
 Tables (`00012_owner.sql`): `owner_enrollment` (singleton key, generation, account_id, login, secret bytea of exactly 20 bytes, tier, policy_revision_id, enrolled_at), `owner_test_checks` (repository_id, project_id, repo, test_check, policy_revision_id; FK to `policies`), `totp_consumed_steps` ((account_id, step) primary key, consumed_at; insert-only, no delete), `github_protection_results` (repository_id primary key, result, findings text[], caveats text[], checked_at). Conformance names: enroll and read back; re-enroll replaces the secret, increments the generation and appends policy revisions; re-enroll with another owner while a project has a Suite is rejected; an invalid enrollment writes nothing; a used step is rejected by `Enroll` and by `ConsumeStep`; `ConsumeStep` without an owner; concurrent `ConsumeStep` of one step (exactly one wins, PostgreSQL); protection result replaced and listed.
 
+## PR commands and bootstrap (M1.6a; normative)
+
+Implements D-COMMANDS. Identifiers follow its table.
+
+### Governance writes (`internal/application/governance`)
+
+```go
+// UnitOfWork gains:
+// CreateSuite creates a Suite with no canonical, governed by policy (which must exist for the project) and
+// targeting target. It is idempotent: an existing Suite with the same policy and target is success and writes
+// nothing; an existing Suite with another policy or target is ErrConflict.
+CreateSuite(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, policy contract.PolicyRevisionID, target contract.IntegrationTargetID) error
+
+// Tx gains:
+// RecordAssessment stores an integrity assessment for a proposal revision of the locked Suite at a source.
+// Assessments are immutable: the same (reference, source) with the same evidence is success and writes nothing;
+// with other evidence it is ErrConflict.
+RecordAssessment(ctx context.Context, w AssessmentWrite) error
+
+type AssessmentWrite struct {
+	Reference contract.ProposalReference
+	Source    contract.SourceRevision
+	Evidence  contract.IntegrityEvidence // emitted by the service principal "suiteward" (kind Service)
+}
+```
+
+- **Outbox inside the use case.** `ConsentRequest`, `BaselineRequest` and `PromoteRequest` gain `Outbox []OutboxMessage`. `ProcessConsent`, `ProposeBaseline`, and `Promote`/`Bootstrap`/`Correct` write it inside their own transaction, after their facts. Nothing is written when there are no new facts: a duplicate consent (replay by operation id or source), a baseline with unchanged coverage, or a promotion replay. Because the message is written in the same transaction as its facts, an acknowledgment never reports what did not commit (ADR 0011). The payloads are defined in the [runtime contract](runtime.md#command-and-bootstrap-jobs-m16a) (outbox kind `github_comment`).
+- **Outcomes.** The evidence outcome is:
+  - `Passed` when the protected inventory of the exact source equals the revision's binding (manifest and scope digests);
+  - `Failed` when it differs;
+  - `Unavailable` when the source cannot be read or is invalid (a truncated tree, a rejected link, an invalid declaration).
+- **Bootstrap.** The bootstrap records the assessment for the origin, then calls `Bootstrap`.
+
+### Command ledger (`internal/application/commands`, migration `00013`)
+
+The ledger records the first observed version of every PR comment SuiteWard considered (D-COMMENT-EDIT). It is the record of that decision. It is not the authority: consent lives in the governance tables.
+
+```go
+package commands
+
+type Disposition string // the codes below
+
+const (
+	NotCommand      Disposition = "not-command"     // no /suiteward line, or SuiteWard's own comment
+	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
+	NoSuite         Disposition = "no-suite"        // owner-authored command for a project whose Suite does not exist yet
+	EditedFirst     Disposition = "edited-first"    // owner-authored, first observed version already edited (updated_at != created_at); no step used
+	Failed          Disposition = "failed"          // a candidate that kept failing (bounded retries, logged); never acknowledged
+	IgnoredAuthor   Disposition = "ignored-author"  // a /suiteward command from an account other than the owner
+	Malformed       Disposition = "malformed"       // owner-authored, unparseable command line
+	InvalidCode     Disposition = "invalid-code"    // owner-authored, code does not verify within the tolerance
+	ReplayedCode    Disposition = "replayed-code"   // owner-authored, the step was used by another command
+	UnknownProposal Disposition = "unknown-proposal" // owner-authored, valid code, for a proposal that does not exist on an existing Suite; the step stays consumed
+	Processed       Disposition = "processed"       // passed to ProcessConsent; Receipt holds the outcome
+)
+
+type Entry struct {
+	RepositoryID int64
+	CommentID    int64
+	PullNumber   int
+	AuthorID     int64
+	CreatedAt    time.Time
+	BodyDigest   artifact.Digest // of the first observed version
+	Disposition  Disposition
+	Operation    contract.OperationID // set when Processed
+	DecidedAt    time.Time
+}
+
+type Store interface {
+	// Pending returns the first observed version of every comment that has no ledger entry, across all enrolled
+	// repositories, ordered by created_at then comment id, at most limit, and only comments created before
+	// horizon. The caller computes horizon from the sync watermark (D-COMMANDS): the earliest last successful
+	// cycle among the enrolled repositories, minus JOB_TIMEOUT and 30 s.
+	Pending(ctx context.Context, horizon time.Time, limit int) ([]Candidate, error)
+	// Record stores the decision for one comment and, when ack is not nil, its acknowledgment outbox message in
+	// the same transaction (for dispositions that never reach ProcessConsent). That message is a system outbox
+	// row with no project or Suite, written the way EnqueueSystem writes the probe's. A second Record of the same
+	// (repository, comment) with the same entry is success and writes nothing; with another entry it is
+	// ErrConflict. Entries are never updated or deleted.
+	Record(ctx context.Context, e Entry, ack *governance.OutboxMessage) error
+	// Instance returns this installation's random identifier, created by migration 00013 and never changed.
+	Instance(ctx context.Context) (string, error)
+}
+
+type Candidate struct { // the first observed version of one comment
+	RepositoryID int64
+	Repo         string // owner/name, for the GitHub calls
+	PullNumber   int
+	Comment      githubsync.CommentVersion
+}
+```
+
+- **Order of writes for an owner command.**
+  1. `ConsumeStep`, which is idempotent for the same source.
+  2. `ProcessConsent` with the acknowledgment in `Outbox`. It is idempotent by operation id, and a duplicate writes no message.
+  3. `Record(processed)`.
+
+  `edited-first` is recorded like a rejected disposition, with an acknowledgment, and uses up no step.
+
+  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
+- **Keys.** Observations are keyed by `owner/name` (M1.4) and projects by repository id. `Pending` joins them through the enrolled projects (`owner.State.Projects`), so a repository that is not enrolled has no candidates.
+
+### Consumed steps bound to their command
+
+- **Schema.** Migration `00013` adds `source_command_id` (text, not null) to `totp_consumed_steps`. Existing rows take `setup:<generation>` from the enrollment that consumed them.
+- **Signature.** `owner.Store.ConsumeStep` becomes `ConsumeStep(ctx, accountID, step int64, at time.Time, source contract.SourceCommandID) error`.
+- **Same command.** If the step is already consumed by the same source, the call succeeds and writes nothing. That makes a retry after a crash safe.
+- **Another command.** If the step is consumed by any other source, the call returns `ErrStepUsed`.
+- **Setup.** `Enroll` consumes its step with the source `setup:<generation>`.
+
+### Tables (`00013`)
+- **`pr_commands`.**
+  - Primary key: (repository_id, comment_id).
+  - Columns: pull_number, author_id, created_at, body_digest, disposition (CHECK on the codes), operation_id (non-null exactly when the disposition is `processed`), decided_at.
+  - The table is insert-only.
+- **`suiteward_instance`.** A singleton table holding the random instance id (128 bits, hex). It is created once by the migration and never updated.
+- **`totp_consumed_steps.source_command_id`.**
+
+### Conformance
+- `Pending`:
+  - ordering;
+  - only first versions;
+  - not-enrolled repositories excluded;
+  - already-recorded comments excluded.
+- `Record`:
+  - idempotent;
+  - a conflicting entry is rejected.
+- `ConsumeStep`:
+  - same source is idempotent;
+  - another source gives `ErrStepUsed`;
+  - concurrent consumption by two sources: exactly one wins.
+- `CreateSuite`:
+  - idempotent;
+  - a conflicting Suite is rejected.
+- `RecordAssessment`:
+  - idempotent;
+  - conflicting evidence is rejected;
+  - readable by `Tx.Assessment`;
+  - `Bootstrap` succeeds after it.
+- `Instance`: stable across calls and restarts.
+
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
 ```go
@@ -498,7 +640,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -516,7 +658,9 @@ Property every reconstitution test must check: state produced by domain operatio
 | `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since |
 | `owner_enrollment` (M1.5) | singleton | replaced by `setup` | generation, account_id, login, secret bytea (20 bytes), tier, policy_revision_id, enrolled_at |
 | `owner_test_checks` (M1.5) | (repository_id, policy_revision_id) | insert-only | project_id, repo, test_check; FK to `policies` |
-| `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at |
+| `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at, source_command_id (M1.6a: the command that used the step; `setup:<generation>` for setup) |
+| `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at |
+| `suiteward_instance` (M1.6a) | singleton | immutable | instance_id (32 lowercase hex, random) |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 

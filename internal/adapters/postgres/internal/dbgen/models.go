@@ -181,6 +181,18 @@ type Policy struct {
 	OwnerKind  string
 }
 
+type PrCommand struct {
+	RepositoryID int64
+	CommentID    int64
+	PullNumber   int32
+	AuthorID     int64
+	CreatedAt    pgtype.Timestamptz
+	BodyDigest   string
+	Disposition  string
+	OperationID  pgtype.Text
+	DecidedAt    pgtype.Timestamptz
+}
+
 type Promotion struct {
 	OperationID       string
 	ProjectID         string
@@ -283,8 +295,14 @@ type SuiteVersion struct {
 	Manifest       []byte
 }
 
+type SuitewardInstance struct {
+	Singleton  bool
+	InstanceID string
+}
+
 type TotpConsumedStep struct {
-	AccountID  int64
-	Step       int64
-	ConsumedAt pgtype.Timestamptz
+	AccountID       int64
+	Step            int64
+	ConsumedAt      pgtype.Timestamptz
+	SourceCommandID string
 }

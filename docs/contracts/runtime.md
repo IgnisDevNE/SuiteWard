@@ -64,7 +64,70 @@ Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none r
 | --- | --- |
 | `GET /healthz` | Liveness: 200 `{"status":"ok"}` while the process serves. |
 | `GET /readyz` | Readiness: 200 when the database answers, the schema version equals `SupportedVersion` and the service is not shutting down; 503 otherwise. It does not query River: River starts before the listener opens, the process never cancels the context it started with, and only the shutdown stops it, so River runs while this answers 200. During shutdown the 503 is best effort: the listener closes at once and `net/http` drops a request it reads after the drain began, so only a request in flight at that instant sees it. Body `{"status":"ready","schemaVersion":N}` or `{"status":"unavailable","reason":"..."}`. |
-| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`. |
+| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap` and `github_commands`. |
+
+### Command and bootstrap jobs (M1.6a)
+
+Both jobs are registered only when the GitHub settings are set, and they act only for repositories with an enrolled owner (D-COMMANDS).
+
+**`github_bootstrap`**
+- Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
+- For each enrolled project:
+  1. If `Do` reports that the Suite does not exist (`ErrNotFound`), create it with `UnitOfWork.CreateSuite`: `default`, the owner's governing policy and `branch:<default branch>`. Never call `CreateSuite` for an existing Suite. After a same-owner re-enrollment it would conflict on the policy.
+  2. Propose a baseline when the Suite has no canonical and either of these holds:
+     - it has no proposal yet;
+     - its latest proposal `P<n>` is unapproved and its carrier PR is no longer open. The bootstrap then moves to `P<n+1>-R1`. Synchronization lists comments only for open PRs, so approval cannot happen on a closed carrier.
+
+     In both cases the repository must have an open PR and the inventory at the pinned head is non-empty (ADR 0010: the project keeps awaiting its initial contract; never an empty baseline). The steps:
+     - pin the default branch head (`Reader.BranchHead`);
+     - call `ProposeBaseline` with `P<n>-R1`, carried by the lowest-numbered open PR;
+     - in `BaselineRequest.Outbox`, include a `github_comment` message with key `bootstrap-summary:<repository id>:P<n>-R1`. The publisher renders its body: the inventory summary, the origin and the copyable `/suiteward approve P<n>-R1 <code>`.
+  3. If the latest baseline proposal has the owner's current approval and the Suite still has no canonical:
+     - re-read the origin tree and record the assessment;
+     - call `Bootstrap` with operation `bootstrap:P<n>-R1` and version `V1`;
+     - in `PromoteRequest.Outbox`, include a `github_comment` message with key `bootstrap-promoted:<repository id>:P<n>-R1`.
+  4. **Re-enrolling the same owner.** The Suite keeps the policy revision it was created with. That is harmless, because the owner is the same.
+- A read failure skips the project until the next run. GitHub text is never stored or logged.
+
+**`github_commands`**
+- Periodic every 15 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished. It is a single job, so commands are serialized across all repositories (D-COMMANDS).
+- It computes the sync watermark (D-COMMANDS) and takes `commands.Store.Pending` up to that horizon, in order. While an enrolled repository has never synchronized successfully there is no horizon: the run does nothing and logs a Warn naming that repository, because every command waits. For each candidate:
+  - **Before enrollment.** Record `before-enrollment` when the comment's `created_at` is before the current enrollment's `enrolled_at`. This covers S1's old commands and comments the owner wrote under a replaced secret.
+  - **Not a command.** Record `not-command` when the author is the bot or the body has no command line.
+  - **Not the owner.** Record `ignored-author` when the author is not the enrolled owner. It is otherwise ignored.
+  - **Owner-authored.**
+    1. Check the first observed version: an `updated_at` different from its `created_at` gives `edited-first`.
+    2. Parse the command. Unparseable gives `malformed`.
+    3. Verify the code at the comment's `created_at` with tolerance 1. A failure gives `invalid-code`.
+    4. Call `ConsumeStep` with the source `github-comment:<id>`. `ErrStepUsed` gives `replayed-code`.
+    5. Call `ProcessConsent` with the D-COMMANDS identifiers, `Order` set to the comment id, and the actor `github:<owner id>`. Its `Outbox` holds the acknowledgment, with key `ack:<repository id>:<comment id>`. When it reports `ErrNotFound`, look at the Suite and the proposal in one unit of work: a project with no Suite yet records `no-suite`, with an acknowledgment saying that the bootstrap is pending, and a proposal that does not exist on an existing Suite records `unknown-proposal` (the step stays consumed, because the code was valid). Any other probe failure is a store error.
+    6. Record `processed` with the operation.
+  - **Rejected owner commands.** `malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal` and `edited-first` get an acknowledgment, written with the ledger entry in one transaction. A known proposal with an unknown revision is processed: `ProcessConsent` rejects it with `UnknownRevision`, and the acknowledgment explains it. `unknown-proposal` is acknowledged with the same text (`Rejected`, reason `UnknownRevision`), which is true for a proposal that does not exist.
+- **Errors.**
+  - A store or network error stops the run. A later candidate must never go ahead of an earlier one, because that would reopen the race the watermark closes.
+  - After 5 consecutive failed attempts in this process, the candidate is recorded as `failed` and logged (repository, comment id, error kind; never GitHub text). The next candidate is then processed.
+  - The job fails only when the ledger itself cannot be read or written.
+
+**Outbox kind `github_comment`**
+- **Payload.** The publisher receives only the key and the payload (`river.Publisher`). The payload is a JSON object with explicit tags. It never holds comment text, a code value or a secret. Every payload carries `repositoryId`, `repo` (`owner/name`) and `pull`, the PR to post on. The rest depends on the key:
+  - `ack:<repository id>:<comment id>` for a **processed** command: `project`, `suite`, `operation`, `comment` and `owner` (the owner's login at processing time). The publisher reads the receipt with `Tx.Receipt` inside `UnitOfWork.Do(project, suite)`. It renders from the receipt, which holds the outcome as evaluated at processing time (ADR 0011):
+    - `Result` gives approved, revoked, no active approval, or rejected with its reason;
+    - `CurrentApprovalEligible` gives the eligibility line;
+    - a non-empty `PromotedVersionID` selects `ApprovedAfterPromotion` for an approval, and `RevokedAfterPromotion` for a revocation, with or without an active approval.
+  - `ack:<repository id>:<comment id>` for a **rejected disposition** (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal`, `edited-first`): `disposition`, `comment` and `owner`, plus `reason` (the malformed reason code) for `malformed`, and `reference` (`P<n>-R<m>`) when the command line parsed. These are system rows written by `commands.Store.Record`, so there is nothing to read back; the payload holds the decision.
+    - The `reason` codes are `unknown-verb`, `missing-reference`, `bad-reference`, `missing-code`, `bad-code` and `extra-text`. `reference` is required for `invalid-code`, `replayed-code`, `no-suite` and `unknown-proposal`, and absent for `malformed` and `edited-first`.
+  - `bootstrap-summary:<repository id>:P<n>-R1`: `summary`, the inputs of the bootstrap summary. These are the proposal and revision numbers, `origin`, `branch`, `protected` (the count), `paths`, `include` and `exclude` (at most 20 each), `includeTotal` and `excludeTotal` (how many rules the declaration has, so the publisher can say how many are not listed), and `tier`, the effective tier (D-IDENTITY: `co-located` when either the setting or the enrollment says so).
+    - The payload must stay within the outbox limit of 64 KiB after JSON encoding, whatever the repository holds. A payload over the limit would fail `ProposeBaseline` on every run.
+    - So the bootstrap cuts each path, rule and the branch to at most 150 bytes on a UTF-8 boundary before encoding, and ends a shortened entry with `…` (counted in the 150 bytes) so a cut entry never looks complete. `json.Marshal` turns a control byte into a 6-byte escape and invalid UTF-8 into U+FFFD, and that is acceptable for display.
+    - A test pins the worst case: 20 paths and 20 rules of each kind, made of control bytes and invalid UTF-8.
+  - `bootstrap-promoted:<repository id>:P<n>-R1`: `reference` and `version` (`V1`).
+- **Rendering.** The publisher renders the body with the command-text package from these inputs.
+  - An acknowledgment links its source comment (`#issuecomment-<id>`, an issue comment id).
+  - A payload that does not parse, or does not match its key, is an error. The relay retries it and then marks it failed, and the error names the key, never the payload.
+- It posts with `Writer.PostComment` and the comment token. The body ends with the hidden marker `<!-- suiteward:<instance id>:<outbox key> -->`.
+- Before posting, it lists the PR's comments by the bot and skips the post when one already carries the same marker. Delivery is at least once (persistence contract), so posting is idempotent by marker.
+- The instance id keeps two installations that post as the same App from mistaking each other's comments for their own.
+- The job counts in `/status` exclude `github_bootstrap` and `github_commands`.
 
 ### Protection verification job (M1.5)
 

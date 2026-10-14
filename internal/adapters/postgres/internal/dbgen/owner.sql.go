@@ -26,8 +26,8 @@ const consumeOwnerStep = `-- name: ConsumeOwnerStep :one
 WITH enrolled AS (
     SELECT account_id FROM owner_enrollment WHERE singleton AND account_id = $1::bigint
 ), consumed AS (
-    INSERT INTO totp_consumed_steps (account_id, step, consumed_at)
-    SELECT account_id, $2::bigint, $3::timestamptz FROM enrolled
+    INSERT INTO totp_consumed_steps (account_id, step, consumed_at, source_command_id)
+    SELECT account_id, $2::bigint, $3::timestamptz, $4::text FROM enrolled
     ON CONFLICT (account_id, step) DO NOTHING
     RETURNING 1
 )
@@ -35,9 +35,10 @@ SELECT (SELECT count(*) FROM enrolled)::bigint AS enrolled, (SELECT count(*) FRO
 `
 
 type ConsumeOwnerStepParams struct {
-	AccountID  int64
-	Step       int64
-	ConsumedAt pgtype.Timestamptz
+	AccountID       int64
+	Step            int64
+	ConsumedAt      pgtype.Timestamptz
+	SourceCommandID string
 }
 
 type ConsumeOwnerStepRow struct {
@@ -45,13 +46,36 @@ type ConsumeOwnerStepRow struct {
 	Consumed int64
 }
 
-// One statement, one snapshot: whether the account is the enrolled owner, and whether the step was new.
+// One statement, one snapshot: whether the account is the enrolled owner, and whether the step was new. A step that
+// was not new is read again by GetConsumedStepSource, which sees the row a concurrent insert committed.
 // A concurrent insert of the same step waits for the first and then does nothing.
 func (q *Queries) ConsumeOwnerStep(ctx context.Context, arg ConsumeOwnerStepParams) (ConsumeOwnerStepRow, error) {
-	row := q.db.QueryRow(ctx, consumeOwnerStep, arg.AccountID, arg.Step, arg.ConsumedAt)
+	row := q.db.QueryRow(ctx, consumeOwnerStep,
+		arg.AccountID,
+		arg.Step,
+		arg.ConsumedAt,
+		arg.SourceCommandID,
+	)
 	var i ConsumeOwnerStepRow
 	err := row.Scan(&i.Enrolled, &i.Consumed)
 	return i, err
+}
+
+const getConsumedStepSource = `-- name: GetConsumedStepSource :one
+SELECT source_command_id FROM totp_consumed_steps WHERE account_id = $1 AND step = $2
+`
+
+type GetConsumedStepSourceParams struct {
+	AccountID int64
+	Step      int64
+}
+
+// The command that consumed a step: a step already used by the same command is not a replay.
+func (q *Queries) GetConsumedStepSource(ctx context.Context, arg GetConsumedStepSourceParams) (string, error) {
+	row := q.db.QueryRow(ctx, getConsumedStepSource, arg.AccountID, arg.Step)
+	var source_command_id string
+	err := row.Scan(&source_command_id)
+	return source_command_id, err
 }
 
 const getOwnerEnrollment = `-- name: GetOwnerEnrollment :one
@@ -85,20 +109,26 @@ func (q *Queries) GetOwnerEnrollment(ctx context.Context) (GetOwnerEnrollmentRow
 }
 
 const insertConsumedStep = `-- name: InsertConsumedStep :execrows
-INSERT INTO totp_consumed_steps (account_id, step, consumed_at)
-VALUES ($1, $2, $3)
+INSERT INTO totp_consumed_steps (account_id, step, consumed_at, source_command_id)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (account_id, step) DO NOTHING
 `
 
 type InsertConsumedStepParams struct {
-	AccountID  int64
-	Step       int64
-	ConsumedAt pgtype.Timestamptz
+	AccountID       int64
+	Step            int64
+	ConsumedAt      pgtype.Timestamptz
+	SourceCommandID string
 }
 
 // Rows affected: 0 means the step was already used.
 func (q *Queries) InsertConsumedStep(ctx context.Context, arg InsertConsumedStepParams) (int64, error) {
-	result, err := q.db.Exec(ctx, insertConsumedStep, arg.AccountID, arg.Step, arg.ConsumedAt)
+	result, err := q.db.Exec(ctx, insertConsumedStep,
+		arg.AccountID,
+		arg.Step,
+		arg.ConsumedAt,
+		arg.SourceCommandID,
+	)
 	if err != nil {
 		return 0, err
 	}

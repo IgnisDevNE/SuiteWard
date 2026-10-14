@@ -137,7 +137,7 @@ func TestOwnerConstraints(t *testing.T) {
 		{"result findings without findings", "github_protection_results", "23514", "github_protection_results_findings_check", protection(map[string]any{"result": "findings"})},
 		{"unknown finding code", "github_protection_results", "23514", "github_protection_results_finding_codes_check", protection(map[string]any{"result": "findings", "findings": []string{"other"}})},
 		{"unknown caveat code", "github_protection_results", "23514", "github_protection_results_caveat_codes_check", protection(map[string]any{"caveats": []string{"other"}})},
-		{"consumed step of account zero", "totp_consumed_steps", "23514", "totp_consumed_steps_account_check", map[string]any{"account_id": 0, "step": 1, "consumed_at": "2026-10-13T12:00:00Z"}},
+		{"consumed step of account zero", "totp_consumed_steps", "23514", "totp_consumed_steps_account_check", map[string]any{"account_id": 0, "step": 1, "consumed_at": "2026-10-13T12:00:00Z", "source_command_id": "setup:1"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			schemaRequireError(t, insertRow(t.Context(), database.conn, test.table, test.row), test.code, test.constraint)
@@ -146,7 +146,7 @@ func TestOwnerConstraints(t *testing.T) {
 	t.Run("one enrollment row, one consumed step once", func(t *testing.T) {
 		mustInsert(t, database.conn, "owner_enrollment", enrollment(nil))
 		schemaRequireError(t, insertRow(t.Context(), database.conn, "owner_enrollment", enrollment(map[string]any{"generation": 2, "policy_revision_id": "setup-2"})), "23505", "owner_enrollment_pkey")
-		step := map[string]any{"account_id": 7, "step": 1, "consumed_at": "2026-10-13T12:00:00Z"}
+		step := map[string]any{"account_id": 7, "step": 1, "consumed_at": "2026-10-13T12:00:00Z", "source_command_id": "setup:1"}
 		mustInsert(t, database.conn, "totp_consumed_steps", step)
 		schemaRequireError(t, insertRow(t.Context(), database.conn, "totp_consumed_steps", step), "23505", "totp_consumed_steps_pkey")
 	})

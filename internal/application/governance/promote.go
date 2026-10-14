@@ -80,9 +80,13 @@ func runPromotion(ctx context.Context, uow UnitOfWork, identity PromotionIdentit
 			return fmt.Errorf("%w: promotion proposed without an effect", ErrInvalidState)
 		}
 		identity.Binding = proposal.Current().Binding()
+		identity.Request.Outbox = nil // the receipt records the request, not what the caller publishes about it
 		write := PromotionWrite{Receipt: PromotionReceipt{Identity: identity, Record: effect.Promotion()}, Version: effect.Version()}
 		if err := tx.RecordPromotion(ctx, write); err != nil {
 			return fmt.Errorf("record promotion: %w", err)
+		}
+		if err := writeOutbox(ctx, tx, request.Outbox); err != nil {
+			return err
 		}
 		result.Record, result.Committed = effect.Promotion(), true
 		return nil

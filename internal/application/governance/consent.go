@@ -74,6 +74,9 @@ func ProcessConsent(ctx context.Context, uow UnitOfWork, request ConsentRequest)
 		if err := tx.AppendConsent(ctx, ConsentWrite{OperationID: command.OperationID(), Result: result, Receipt: receipt}); err != nil {
 			return fmt.Errorf("record consent: %w", err)
 		}
+		if err := writeOutbox(ctx, tx, request.Outbox); err != nil {
+			return err
+		}
 		response = ConsentResponse{Receipt: receipt, Committed: true}
 		return nil
 	})

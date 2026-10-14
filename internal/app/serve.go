@@ -35,24 +35,31 @@ func newLogger(w io.Writer, level slog.Level) *slog.Logger {
 // connect composes the PostgreSQL unit of work over a new pool, which the
 // caller closes. It does not migrate: NewStore rejects a schema that is not ready.
 func connect(ctx context.Context, cfg config.Config) (*pgxpool.Pool, *postgres.Store, error) {
+	pool, store, _, err := connectWithArtifacts(ctx, cfg)
+	return pool, store, err
+}
+
+// connectWithArtifacts is connect that also returns the artifact store, which a process opens once: the content
+// writer of the bootstrap.
+func connectWithArtifacts(ctx context.Context, cfg config.Config) (*pgxpool.Pool, *postgres.Store, *filesystem.Store, error) {
 	artifacts, err := filesystem.NewStore(cfg.ArtifactDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open the artifact store: %w", err)
+		return nil, nil, nil, fmt.Errorf("open the artifact store: %w", err)
 	}
 	inserter, err := river.NewInserter(cfg.JobMaxAttempts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL.Reveal())
 	if err != nil {
-		return nil, nil, fmt.Errorf("open the connection pool: %w", err)
+		return nil, nil, nil, fmt.Errorf("open the connection pool: %w", err)
 	}
 	store, err := postgres.NewStore(pool, artifacts, inserter)
 	if err != nil {
 		pool.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return pool, store, nil
+	return pool, store, artifacts, nil
 }
 
 // serve runs the service until ctx is canceled and returns the exit code:
@@ -70,7 +77,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	if err := migrations.Up(ctx, cfg.DatabaseURL.Reveal()); err != nil {
 		return fmt.Errorf("migrate the database: %w", err)
 	}
-	pool, store, err := connect(ctx, cfg)
+	pool, store, artifacts, err := connectWithArtifacts(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -92,6 +99,12 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		ids := &repositoryIDs{}
 		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now, within: tickDeadline(cfg.JobTimeout)}
 		riverConfig.ProtectionCheck = check.run
+		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
+		riverConfig.Bootstrap = bootstrap.run
+		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, bot: gh.bot, jobTimeout: cfg.JobTimeout, logger: logger, now: time.Now}
+		riverConfig.Commands = commandJob.run
+		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store}
+		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish}
 		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids}
 		backend.repos = gh.repos
 		backend.ids = ids

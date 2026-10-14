@@ -46,7 +46,13 @@ type Config struct {
 	// ProtectionCheck is the protection verification job (ProtectionCheckKind every ProtectionInterval); nil registers none.
 	ProtectionCheck    func(ctx context.Context) error
 	ProtectionInterval time.Duration // zero means 15 minutes
-	JobMaxAttempts     int           // JOB_MAX_ATTEMPTS, for the jobs this runtime defines; zero means River's default
+	// Bootstrap is the github_bootstrap job (BootstrapKind every minute); nil registers none.
+	Bootstrap         func(ctx context.Context) error
+	BootstrapInterval time.Duration // zero means one minute
+	// Commands is the github_commands job (CommandsKind every CommandsInterval); nil registers none.
+	Commands         func(ctx context.Context) error
+	CommandsInterval time.Duration // zero means 15 seconds
+	JobMaxAttempts   int           // JOB_MAX_ATTEMPTS, for the jobs this runtime defines; zero means River's default
 }
 
 // rescueStuckJobsAfter is when River rescues a job that stayed running.
@@ -136,6 +142,14 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	if err != nil {
 		return nil, err
 	}
+	bootstrapJobs, err := addBootstrap(workers, config)
+	if err != nil {
+		return nil, err
+	}
+	commandsJobs, err := addCommands(workers, config)
+	if err != nil {
+		return nil, err
+	}
 	syncJobs, err := addSync(workers, config)
 	if err != nil {
 		return nil, err
@@ -143,7 +157,7 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
 		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
 		Queues:       map[string]riverqueue.QueueConfig{riverqueue.QueueDefault: {MaxWorkers: config.Workers}, outboxQueue: {MaxWorkers: 1}},
-		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs),
+		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs, bootstrapJobs, commandsJobs),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create the River client: %w", err)

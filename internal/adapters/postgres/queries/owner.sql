@@ -35,18 +35,19 @@ ORDER BY repository_id;
 
 -- Rows affected: 0 means the step was already used.
 -- name: InsertConsumedStep :execrows
-INSERT INTO totp_consumed_steps (account_id, step, consumed_at)
-VALUES (sqlc.arg(account_id), sqlc.arg(step), sqlc.arg(consumed_at))
+INSERT INTO totp_consumed_steps (account_id, step, consumed_at, source_command_id)
+VALUES (sqlc.arg(account_id), sqlc.arg(step), sqlc.arg(consumed_at), sqlc.arg(source_command_id))
 ON CONFLICT (account_id, step) DO NOTHING;
 
--- One statement, one snapshot: whether the account is the enrolled owner, and whether the step was new.
+-- One statement, one snapshot: whether the account is the enrolled owner, and whether the step was new. A step that
+-- was not new is read again by GetConsumedStepSource, which sees the row a concurrent insert committed.
 -- A concurrent insert of the same step waits for the first and then does nothing.
 -- name: ConsumeOwnerStep :one
 WITH enrolled AS (
     SELECT account_id FROM owner_enrollment WHERE singleton AND account_id = sqlc.arg(account_id)::bigint
 ), consumed AS (
-    INSERT INTO totp_consumed_steps (account_id, step, consumed_at)
-    SELECT account_id, sqlc.arg(step)::bigint, sqlc.arg(consumed_at)::timestamptz FROM enrolled
+    INSERT INTO totp_consumed_steps (account_id, step, consumed_at, source_command_id)
+    SELECT account_id, sqlc.arg(step)::bigint, sqlc.arg(consumed_at)::timestamptz, sqlc.arg(source_command_id)::text FROM enrolled
     ON CONFLICT (account_id, step) DO NOTHING
     RETURNING 1
 )
@@ -63,3 +64,7 @@ SET result = excluded.result,
 
 -- name: ListProtectionResults :many
 SELECT repository_id, result, findings, caveats, checked_at FROM github_protection_results ORDER BY repository_id;
+
+-- The command that consumed a step: a step already used by the same command is not a replay.
+-- name: GetConsumedStepSource :one
+SELECT source_command_id FROM totp_consumed_steps WHERE account_id = sqlc.arg(account_id) AND step = sqlc.arg(step);

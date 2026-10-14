@@ -14,9 +14,9 @@ SuiteWard reaches GitHub outbound only, as the operator's GitHub App installed o
 
 ## Permissions (D-GITHUB-ACCESS)
 
-The App holds Metadata read, Pull requests read, Contents read, Administration read (M1.5, protection verification) and Checks write; no Administration write, Issues or webhooks. Measured on a private repository (s1-github, permission matrix): `GET /pulls?state=open` and `GET /issues/{pr}/comments` need Pull requests read, `GET /git/trees/{sha}?recursive=1` needs Contents read, `POST /check-runs` needs Checks write. Measured 2026-10-11 by the opt-in live test (`internal/adapters/github/live_test.go`, `-tags=live`) on a private repository with a token narrowed to Metadata, Pull requests and Contents read: `GET /pulls/{n}` and `GET /commits/{sha}` answer 200, and both answer 403 to a Metadata-only token; the granted permission map equals the requested one. `PATCH /check-runs` is not measured yet; it must be asserted before the check-run write relies on it.
+The App holds Metadata read, Pull requests read and write (M1.6a, acknowledgment comments), Contents read, Administration read (M1.5, protection verification) and Checks write; no Administration write, Issues or webhooks. Measured on a private repository (s1-github, permission matrix): `GET /pulls?state=open` and `GET /issues/{pr}/comments` need Pull requests read, `GET /git/trees/{sha}?recursive=1` needs Contents read, `POST /check-runs` needs Checks write. Measured 2026-10-11 by the opt-in live test (`internal/adapters/github/live_test.go`, `-tags=live`) on a private repository with a token narrowed to Metadata, Pull requests and Contents read: `GET /pulls/{n}` and `GET /commits/{sha}` answer 200, and both answer 403 to a Metadata-only token; the granted permission map equals the requested one. `PATCH /check-runs` is not measured yet; it must be asserted before the check-run write relies on it.
 
-Every token request carries an explicit, non-empty `permissions` map and the `repositories` list (an empty map grants everything the App has). Each use requests the narrowest map: synchronization is read-only and requests `metadata`, `pull_requests` and `contents` read; protection verification requests `metadata` and `administration` read (M1.5); `checks: write` is requested only by check publication (M1.6). All tokens of one installation share the one process-wide `rest.Budget`, because the rate limit belongs to the installation.
+Every token request carries an explicit, non-empty `permissions` map and the `repositories` list (an empty map grants everything the App has). Each use requests the narrowest map: synchronization is read-only and requests `metadata`, `pull_requests` and `contents` read; protection verification requests `metadata` and `administration` read (M1.5); `pull_requests: write` is requested only by the comment publisher (M1.6a); `checks: write` is requested only by check publication (M1.6b). All tokens of one installation share the one process-wide `rest.Budget`, because the rate limit belongs to the installation.
 
 ## A1: App authentication (`appauth`)
 
@@ -100,3 +100,22 @@ Measured 2026-10-13 by `TestLiveProtectionReads` (`-tags=live`) on the S1 test r
   Any other status is a `rest` error. Bodies are bounded and decoded into these types only; a decode failure names only the path. A wrapped `rest` status error can still carry part of GitHub's answer (token redacted), so callers never print or store a read error: they record `protection.Unknown()` and log only the repository and the status. The effective rules are read with `per_page=100` and followed page by page up to the listings' page bound.
 - **Evaluation** is a pure function outside the adapter (the D-PROTECTION results and findings; M1.5-C2).
 - **Paths:** the branch name is path-escaped (`url.PathEscape`), so a branch with `/` is read correctly.
+
+## M1.6a: comment writes (normative)
+
+The details are settled from the M1.6a-P0 measurement, recorded on the [M1.6a page](../plan/phases/M1.6a.md).
+
+- **Permission (measured by P0).** The App holds **Pull requests: write** for acknowledgment comments. A token requesting `pull_requests: read` from the App that holds `write` is granted exactly `read`, so synchronization is unaffected. The comment POST answers 403 to the read map. Only the comment publisher requests it, with the token map `{metadata: read, pull_requests: write}`. Synchronization and protection keep their read maps.
+- **`rest` POST.**
+  - The method is `(*Client).Post(ctx, path string, body []byte) (Response, error)`.
+  - It uses no ETag cache and counts in the shared budget.
+  - The body is JSON, at most 64 KiB.
+  - A 201 is success.
+  - A 403 or 429 carrying the secondary-limit headers, or a `Retry-After` header, is a `RateLimitedError`.
+  - No request body or answer text reaches an error or a log.
+- **`Writer.PostComment(ctx, repo string, number int, body string) (commentID int64, err error)`.**
+  - It issues `POST /repos/{r}/issues/{number}/comments`.
+  - Before posting, `Writer.CommentsByAuthor(ctx, repo, number, authorID)` lists the bot's comments, and the publisher looks for its marker in them.
+- **Default branch head.** `Reader.BranchHead(ctx, repo, branch string) (sha string, err error)` reads `GET /repos/{r}/branches/{branch}` with the sync token. The bootstrap pins this SHA.
+- **Bot identity.** At composition, SuiteWard reads `GET /app`, which needs the App JWT and gives the slug. It then reads `GET /users/<slug>[bot]` to get the numeric account id. The command job uses that id to skip SuiteWard's own comments.
+- **Check runs (measured, not used in M1.6a).** P0 measured `POST /check-runs` with `{metadata: read, checks: write}`: 201, and the run carries the App id. M1.6b uses it; `PATCH /check-runs` is still unmeasured.

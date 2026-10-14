@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -141,6 +142,10 @@ type commentJSON struct {
 // PullComments returns the comments of pull request number of repo updated at
 // or after since (every comment when since is zero), sorted by ID.
 func (r *Reader) PullComments(ctx context.Context, repo string, number int, since time.Time) ([]Comment, error) {
+	return pullComments(ctx, r.client, repo, number, since)
+}
+
+func pullComments(ctx context.Context, client *rest.Client, repo string, number int, since time.Time) ([]Comment, error) {
 	if err := checkRepo(repo); err != nil {
 		return nil, err
 	}
@@ -151,7 +156,7 @@ func (r *Reader) PullComments(ctx context.Context, repo string, number int, sinc
 	if !since.IsZero() {
 		sinceParam = "&since=" + since.UTC().Format(time.RFC3339)
 	}
-	raw, err := readPages[commentJSON](ctx, r.client, func(page int) string {
+	raw, err := readPages[commentJSON](ctx, client, func(page int) string {
 		return fmt.Sprintf("/repos/%s/issues/%d/comments?per_page=%d&page=%d%s", repo, number, pageSize, page, sinceParam)
 	})
 	if err != nil {
@@ -326,4 +331,31 @@ func (t *tree) Read(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: blob of %q is not valid base64: %v", ErrInvalidResponse, path, err)
 	}
 	return content, nil
+}
+
+// BranchHead returns the SHA of the commit branch of repo points at.
+func (r *Reader) BranchHead(ctx context.Context, repo, branch string) (string, error) {
+	if err := checkRepo(repo); err != nil {
+		return "", err
+	}
+	if branch == "" {
+		return "", fmt.Errorf("%w: empty branch name", ErrInvalidArgument)
+	}
+	path := "/repos/" + repo + "/branches/" + url.PathEscape(branch)
+	resp, err := r.client.Get(ctx, path)
+	if err != nil {
+		return "", fmt.Errorf("head of branch %q of %s: %w", branch, repo, err)
+	}
+	var raw struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err := decode(path, resp.Body, &raw); err != nil {
+		return "", err
+	}
+	if !hexSHA.MatchString(raw.Commit.SHA) {
+		return "", fmt.Errorf("%w: the answer to %s lacks a 40-hex commit SHA", ErrInvalidResponse, path)
+	}
+	return raw.Commit.SHA, nil
 }

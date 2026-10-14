@@ -226,17 +226,17 @@ type commentPublisher struct {
 	suites   governance.UnitOfWork
 }
 
-func keyError(key, what string) error { return fmt.Errorf("github_comment %s: %s", key, what) }
+func keyError(kind, key, what string) error { return fmt.Errorf("%s %s: %s", kind, key, what) }
 
 // githubFailure is a failed GitHub call as the relay stores it: the classification and the status, never the text
 // GitHub sent. The cause stays reachable to errors.As.
-func githubFailure(key, step string, err error) error {
+func githubFailure(kind, key, step string, err error) error {
 	failure := readFailure(err)
 	text := string(failure.Kind)
 	if failure.Status != 0 {
 		text += " HTTP " + strconv.Itoa(failure.Status)
 	}
-	return &opaque{what: fmt.Sprintf("github_comment %s: %s (%s)", key, step, text), cause: err}
+	return &opaque{what: fmt.Sprintf("%s %s: %s (%s)", kind, key, step, text), cause: err}
 }
 
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
@@ -254,25 +254,25 @@ func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool
 
 // decodePayload reads a payload strictly: unknown fields, trailing data and non-objects are errors whose text
 // never quotes the payload.
-func decodePayload[T any](key string, payload json.RawMessage) (T, error) {
+func decodePayload[T any](kind, key string, payload json.RawMessage) (T, error) {
 	var value T
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil {
-		return value, keyError(key, "the payload does not decode")
+		return value, keyError(kind, key, "the payload does not decode")
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return value, keyError(key, "the payload does not decode")
+		return value, keyError(kind, key, "the payload does not decode")
 	}
 	return value, nil
 }
 
 // render calls the renderer, which panics on a value that cannot be rendered. A panic message quotes the value,
 // so it never reaches the error.
-func render(key string, fn func() string) (text string, err error) {
+func render(kind, key string, fn func() string) (text string, err error) {
 	defer func() {
 		if recover() != nil {
-			text, err = "", keyError(key, "the payload cannot be rendered")
+			text, err = "", keyError(kind, key, "the payload cannot be rendered")
 		}
 	}()
 	return fn(), nil
@@ -284,7 +284,7 @@ func render(key string, fn func() string) (text string, err error) {
 func (p *commentPublisher) publish(ctx context.Context, key string, payload json.RawMessage) error {
 	kind, repositoryID, tail, ok := splitKey(key)
 	if !ok {
-		return keyError(key, "not a github_comment key")
+		return keyError(githubCommentKind, key, "not a github_comment key")
 	}
 	var (
 		target commentTarget
@@ -303,7 +303,7 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		return err
 	}
 	if target.RepositoryID != repositoryID {
-		return keyError(key, "the payload does not match its key")
+		return keyError(githubCommentKind, key, "the payload does not match its key")
 	}
 	instance, err := p.instance.get(ctx)
 	if err != nil {
@@ -311,11 +311,11 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	}
 	botID, err := p.bot.ID(ctx)
 	if err != nil {
-		return githubFailure(key, "resolve the bot account", err)
+		return githubFailure(githubCommentKind, key, "resolve the bot account", err)
 	}
 	existing, err := p.writer.CommentsByAuthor(ctx, target.Repo, target.Pull, botID)
 	if err != nil {
-		return githubFailure(key, "list the comments", err)
+		return githubFailure(githubCommentKind, key, "list the comments", err)
 	}
 	for _, c := range existing {
 		if commandtext.HasMarker(c.Body, instance, key) {
@@ -324,35 +324,35 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	}
 	body := strings.TrimRight(text, "\n") + "\n\n" + commandtext.Marker(instance, key)
 	if _, err := p.writer.PostComment(ctx, target.Repo, target.Pull, body); err != nil {
-		return githubFailure(key, "post the comment", err)
+		return githubFailure(githubCommentKind, key, "post the comment", err)
 	}
 	return nil
 }
 
 func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
-	a, err := decodePayload[ackPayload](key, payload)
+	a, err := decodePayload[ackPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
 	}
 	if a.validate() != nil || tail != strconv.FormatInt(a.Comment, 10) {
-		return commentTarget{}, "", keyError(key, "the payload does not match its key")
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
 	var ack commandtext.Ack
 	if a.Disposition == "" {
 		if a.Project != owner.ProjectID(a.RepositoryID) { // the command job writes the repository's own project
-			return commentTarget{}, "", keyError(key, "the payload does not match its key")
+			return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 		}
 		receipt, err := p.receipt(ctx, key, a)
 		if err != nil {
 			return commentTarget{}, "", err
 		}
 		if ack, err = ackOf(receipt, a.Owner, a.Comment); err != nil {
-			return commentTarget{}, "", keyError(key, err.Error())
+			return commentTarget{}, "", keyError(githubCommentKind, key, err.Error())
 		}
 	} else {
 		ack = rejectedAckOf(a)
 	}
-	text, err := render(key, func() string { return commandtext.Acknowledge(ack) })
+	text, err := render(githubCommentKind, key, func() string { return commandtext.Acknowledge(ack) })
 	return a.commentTarget, text, err
 }
 
@@ -382,7 +382,7 @@ func (p *commentPublisher) receipt(ctx context.Context, key string, a ackPayload
 	}
 	// Guards against a wrong operation written by a caller: the receipt must be that of the comment's command.
 	if consent.Result.Command().SourceCommandID() != commentSource(a.Comment) {
-		return governance.ConsentReceipt{}, keyError(key, "the receipt is not that of the comment")
+		return governance.ConsentReceipt{}, keyError(githubCommentKind, key, "the receipt is not that of the comment")
 	}
 	return consent, nil
 }
@@ -447,39 +447,39 @@ func ackOf(receipt governance.ConsentReceipt, ownerLogin string, comment int64) 
 }
 
 func (p *commentPublisher) summary(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
-	s, err := decodePayload[bootstrapSummaryPayload](key, payload)
+	s, err := decodePayload[bootstrapSummaryPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
 	}
 	proposal, revision, ok := parseReference(tail)
 	if !ok || s.validate() != nil || s.Summary.Proposal != proposal || s.Summary.Revision != revision {
-		return commentTarget{}, "", keyError(key, "the payload does not match its key")
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
 	summary, err := s.Summary.summary()
 	if err != nil {
-		return commentTarget{}, "", keyError(key, "the payload cannot be rendered")
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload cannot be rendered")
 	}
-	text, err := render(key, func() string { return commandtext.BootstrapSummary(summary) })
+	text, err := render(githubCommentKind, key, func() string { return commandtext.BootstrapSummary(summary) })
 	return s.commentTarget, text, err
 }
 
 func (p *commentPublisher) promoted(ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
-	b, err := decodePayload[bootstrapPromotedPayload](key, payload)
+	b, err := decodePayload[bootstrapPromotedPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
 	}
 	proposal, revision, ok := parseReference(tail)
 	if !ok || b.validate() != nil || b.Reference != tail || b.Version != string(firstVersion) {
-		return commentTarget{}, "", keyError(key, "the payload does not match its key")
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
 	state, enrolled, err := p.owners.Current(ctx)
 	if err != nil {
 		return commentTarget{}, "", fmt.Errorf("github_comment %s: read the owner: %w", key, err)
 	}
 	if !enrolled {
-		return commentTarget{}, "", keyError(key, "no owner is enrolled")
+		return commentTarget{}, "", keyError(githubCommentKind, key, "no owner is enrolled")
 	}
-	text, err := render(key, func() string {
+	text, err := render(githubCommentKind, key, func() string {
 		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: proposal, Revision: revision, Version: 1, Owner: state.Owner.Login})
 	})
 	return b.commentTarget, text, err

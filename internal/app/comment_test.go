@@ -742,7 +742,8 @@ func second(_ governance.OutboxMessage, err error) error { return err }
 
 // TestComposeGitHubBuildsTheCommentWriterAndALazyBot checks the composition against a GitHub that records what it
 // is asked: nothing is requested at compose time, the bot's id is read once on first use with the read token,
-// and the comment is posted with a token that requests Pull requests: write.
+// the comment is posted with a token that requests Pull requests: write, and the check runs are listed with a
+// token that requests exactly Checks: write (the comment token never asks for it).
 func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
 	var mu sync.Mutex
 	var requests []string
@@ -767,6 +768,8 @@ func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"slug":"suiteward"}`)
 		case r.URL.Path == "/users/suiteward[bot]":
 			_, _ = fmt.Fprintf(w, `{"login":"suiteward[bot]","id":%d,"type":"Bot"}`, cmtBotID)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/commits/"+chkHead+"/check-runs":
+			_, _ = fmt.Fprint(w, `{"check_runs":[]}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widgets/issues/7/comments":
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, `{"id":1}`)
@@ -795,13 +798,16 @@ func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
 	if _, err := gh.writer.PostComment(t.Context(), "acme/widgets", 7, "hello"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := gh.checkRuns.Runs(t.Context(), "acme/widgets", chkHead, checkName, chkAppID); err != nil {
+		t.Fatal(err)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	if got := strings.Count(strings.Join(requests, "\n"), "GET /users/suiteward[bot]"); got != 1 {
 		t.Fatalf("the bot account was read %d times, want 1", got)
 	}
-	var sawWrite bool
+	var sawWrite, sawChecks bool
 	for _, m := range tokenMaps {
 		if m["pull_requests"] == "write" {
 			sawWrite = true
@@ -809,6 +815,15 @@ func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
 				t.Fatalf("the comment token asked for %v, want metadata read and pull_requests write", m)
 			}
 		}
+		if _, asksChecks := m["checks"]; asksChecks {
+			sawChecks = true
+			if len(m) != 2 || m["metadata"] != "read" || m["checks"] != "write" {
+				t.Fatalf("the check token asked for %v, want exactly metadata read and checks write", m)
+			}
+		}
+	}
+	if !sawChecks {
+		t.Fatalf("no token asked for checks: %v", tokenMaps)
 	}
 	if !sawWrite {
 		t.Fatalf("no token asked for pull_requests write: %v", tokenMaps)

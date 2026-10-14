@@ -196,7 +196,7 @@ func TestSetupEnrollsOnTheSecondAttemptAndPrintsTheSecretOnce(t *testing.T) {
 		t.Fatalf("enrolled = %+v, %v; want %+v", state, found, want)
 	}
 	// The verified step is consumed by the enrollment.
-	if err := r.store.ConsumeStep(t.Context(), setupOwnerID, totp.Step(setupNow), setupNow, "github-comment:1/1"); !errors.Is(err, owner.ErrStepUsed) {
+	if err := r.store.ConsumeStep(t.Context(), setupOwnerID, totp.Step(setupNow), setupNow, "github-comment:1"); !errors.Is(err, owner.ErrStepUsed) {
 		t.Fatalf("ConsumeStep of the verified step = %v; want ErrStepUsed", err)
 	}
 	if !strings.Contains(r.stderr.String(), "Session Manager") {

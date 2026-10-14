@@ -194,6 +194,21 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		e.requirePending(100, 10, candidate(10, 5, original), candidate(10, 8, editedFirst))
 	})
 
+	run("Pending still returns a comment of a pull no longer open and a comment no longer listed", func(e *cmdEnv) {
+		// The first observed version governs (D-COMMENT-EDIT), whatever became of the pull or the comment since.
+		e.enroll(10)
+		onPull := func(pull int, id int64, created int) observed {
+			return observed{pull: pull, id: id, created: created, updated: created, body: "/suiteward approve P1-R1 123456"}
+		}
+		closedPull, unlisted, later := onPull(1, 1, 1), onPull(2, 2, 2), onPull(2, 3, 3)
+		e.observe(10, 5, closedPull, unlisted)
+		e.observe(10, 6, unlisted) // pull 1 is no longer open
+		e.observe(10, 7, later)    // pull 2 no longer lists comment 2
+		notListed := candidate(10, 5, unlisted)
+		notListed.Comment.NotSeenSince = cmdTime(7)
+		e.requirePending(100, 10, candidate(10, 5, closedPull), notListed, candidate(10, 7, later))
+	})
+
 	run("Pending leaves out the comments that have a ledger entry", func(e *cmdEnv) {
 		e.enroll(10, 20)
 		e.observe(10, 5, first(1), first(2))

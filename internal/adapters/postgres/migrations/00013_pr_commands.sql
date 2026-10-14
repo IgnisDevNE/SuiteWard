@@ -55,6 +55,7 @@ CREATE TRIGGER suiteward_instance_no_truncate BEFORE TRUNCATE ON suiteward_insta
 -- A consumed step records the command that used it, so a retry of the same command is not a replay. Existing rows
 -- were consumed by setup: they take the setup source of the current enrollment's generation. The backfill is the
 -- one update the history trigger must allow; a step with no enrollment to explain it fails the migration on NOT NULL.
+-- Older rows never recorded their generation, so they all take the current one; harmless, because only setup uses "setup:" sources.
 ALTER TABLE totp_consumed_steps ADD COLUMN source_command_id text;
 ALTER TABLE totp_consumed_steps DISABLE TRIGGER totp_consumed_steps_immutable;
 UPDATE totp_consumed_steps SET source_command_id = 'setup:' || (SELECT generation FROM owner_enrollment WHERE singleton);

@@ -3,9 +3,17 @@
 package github_test
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"slices"
@@ -565,6 +573,295 @@ func TestLiveProtectionResults(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLiveWrites measures the M1.6a writes with the real App on a throwaway test
+// pull request (docs/contracts/github.md, "M1.6a: comment writes"): the bot
+// identity, the read map from an App that holds write, a comment write and its
+// read-back, the same write refused with the read map, and a check run write.
+// It needs the first three TestLive variables plus SUITEWARD_TEST_GITHUB_WRITE_REPO
+// (owner/name), SUITEWARD_TEST_GITHUB_WRITE_PULL (the pull number) and
+// SUITEWARD_TEST_GITHUB_WRITE_MARKER (a random token per run). It leaves one
+// comment and one check run on the pull request. It logs statuses and the ids
+// named in each step, never a token, the JWT, a key or a response body.
+func TestLiveWrites(t *testing.T) {
+	appID := liveInt(t, "SUITEWARD_TEST_GITHUB_APP_ID")
+	installationID := liveInt(t, "SUITEWARD_TEST_GITHUB_INSTALLATION_ID")
+	keyFile := liveEnv(t, "SUITEWARD_TEST_GITHUB_APP_KEY_FILE")
+	repo := liveEnv(t, "SUITEWARD_TEST_GITHUB_WRITE_REPO")
+	number := liveInt(t, "SUITEWARD_TEST_GITHUB_WRITE_PULL")
+	marker := liveEnv(t, "SUITEWARD_TEST_GITHUB_WRITE_MARKER")
+	apiURL := os.Getenv("SUITEWARD_TEST_GITHUB_API_URL")
+	if apiURL == "" {
+		apiURL = "https://api.github.com"
+	}
+	_, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		t.Fatal("SUITEWARD_TEST_GITHUB_WRITE_REPO must be owner/name")
+	}
+	key, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("read SUITEWARD_TEST_GITHUB_APP_KEY_FILE: %v", err)
+	}
+	app, err := appauth.NewApp(appID, key, time.Now)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	httpClient := &http.Client{Timeout: 20 * time.Second}
+	budget, err := rest.NewBudget(0.5, time.Now)
+	if err != nil {
+		t.Fatalf("NewBudget: %v", err)
+	}
+	// token mints an installation token narrowed to the test repository; Token
+	// fails unless GitHub grants exactly the requested map.
+	token := func(t *testing.T, permissions map[string]string) string {
+		t.Helper()
+		inst, err := app.Installation(installationID, []string{name}, permissions, httpClient, apiURL)
+		if err != nil {
+			t.Fatalf("Installation: %v", err)
+		}
+		tok, err := inst.Token(stepCtx(t))
+		if err != nil {
+			t.Fatalf("Token (also fails when granted permissions differ from %v): %s", permissions, failure(err))
+		}
+		return tok.Reveal()
+	}
+	readClient := func(t *testing.T) *rest.Client {
+		t.Helper()
+		inst, err := app.Installation(installationID, []string{name}, readPermissions, httpClient, apiURL)
+		if err != nil {
+			t.Fatalf("Installation: %v", err)
+		}
+		client, err := rest.NewClient(func(ctx context.Context) (string, string, error) {
+			tok, err := inst.Token(ctx)
+			if err != nil {
+				return "", "", err
+			}
+			return tok.Reveal(), tok.Identity(), nil
+		}, httpClient, apiURL, budget)
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		return client
+	}
+	// call sends one request with a bearer credential and returns the status and
+	// the body, which callers decode but never log.
+	call := func(t *testing.T, method, path, bearer string, body any) (int, []byte) {
+		t.Helper()
+		var in io.Reader
+		if body != nil {
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("encode %s %s: %v", method, path, err)
+			}
+			in = bytes.NewReader(raw)
+		}
+		req, err := http.NewRequestWithContext(stepCtx(t), method, apiURL+path, in)
+		if err != nil {
+			t.Fatalf("build %s %s: %v", method, path, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: transport error", method, path)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		out, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			t.Fatalf("%s %s: read the answer: %v", method, path, err)
+		}
+		return resp.StatusCode, out
+	}
+	decode := func(t *testing.T, path string, raw []byte, out any) {
+		t.Helper()
+		if err := json.Unmarshal(raw, out); err != nil {
+			t.Fatalf("%s: the answer is not the expected JSON", path)
+		}
+	}
+
+	pull := strconv.FormatInt(number, 10)
+	commentsPath := "/repos/" + repo + "/issues/" + pull + "/comments"
+	writeComment := map[string]string{"metadata": "read", "pull_requests": "write"}
+	commentBody := map[string]string{"body": "SuiteWard M1.6a-P0 measurement. <!-- suiteward:p0:" + marker + " -->"}
+	var botID int64
+
+	t.Run("bot identity", func(t *testing.T) {
+		status, raw := call(t, http.MethodGet, "/app", appJWT(t, appID, key), nil)
+		if status != http.StatusOK {
+			t.Fatalf("GET /app answered %d, want 200", status)
+		}
+		var self struct {
+			ID   int64  `json:"id"`
+			Slug string `json:"slug"`
+		}
+		decode(t, "/app", raw, &self)
+		if self.Slug == "" {
+			t.Fatal("GET /app answered no slug")
+		}
+		t.Logf("GET /app answered %d: slug %q, id %d", status, self.Slug, self.ID)
+		path := "/users/" + self.Slug + "%5Bbot%5D"
+		resp, err := readClient(t).Get(stepCtx(t), path)
+		if err != nil {
+			t.Fatalf("GET %s: %s", path, failure(err))
+		}
+		var user struct {
+			ID    int64  `json:"id"`
+			Login string `json:"login"`
+			Type  string `json:"type"`
+		}
+		decode(t, path, resp.Body, &user)
+		if user.ID == 0 {
+			t.Fatalf("GET %s answered no id", path)
+		}
+		botID = user.ID
+		t.Logf("GET %s answered %d: id %d, login %q, type %q", path, resp.Status, user.ID, user.Login, user.Type)
+	})
+
+	t.Run("read map from an App that holds write", func(t *testing.T) {
+		// A grant of exactly readPermissions proves that requesting read from an
+		// App holding write is not widened.
+		token(t, readPermissions)
+		t.Logf("a token requested with %v was granted exactly that map", readPermissions)
+	})
+
+	t.Run("comment write", func(t *testing.T) {
+		if botID == 0 {
+			t.Fatal("no bot account id: the bot identity step failed")
+		}
+		status, raw := call(t, http.MethodPost, commentsPath, token(t, writeComment), commentBody)
+		if status != http.StatusCreated {
+			t.Fatalf("POST %s answered %d, want 201", commentsPath, status)
+		}
+		var created struct {
+			ID   int64 `json:"id"`
+			User struct {
+				ID int64 `json:"id"`
+			} `json:"user"`
+		}
+		decode(t, commentsPath, raw, &created)
+		t.Logf("POST %s answered %d: comment id %d, author id %d", commentsPath, status, created.ID, created.User.ID)
+
+		reader := readClient(t)
+		count, found := 0, false
+		for page := 1; page <= 20 && !found; page++ {
+			path := commentsPath + "?per_page=100&page=" + strconv.Itoa(page)
+			resp, err := reader.Get(stepCtx(t), path)
+			if err != nil {
+				t.Fatalf("GET %s: %s", path, failure(err))
+			}
+			var list []struct {
+				Body string `json:"body"`
+				User struct {
+					ID int64 `json:"id"`
+				} `json:"user"`
+			}
+			decode(t, path, resp.Body, &list)
+			count += len(list)
+			for _, c := range list {
+				if c.User.ID == botID && strings.Contains(c.Body, marker) {
+					found = true
+				}
+			}
+			if len(list) < 100 {
+				break
+			}
+		}
+		t.Logf("listed %d comments up to the marker comment or the end", count)
+		if !found {
+			t.Errorf("no comment by the bot account id %d carries the marker", botID)
+		}
+	})
+
+	t.Run("comment write with the read token", func(t *testing.T) {
+		status, _ := call(t, http.MethodPost, commentsPath, token(t, readPermissions), commentBody)
+		t.Logf("POST %s with the read map answered %d", commentsPath, status)
+		if status != http.StatusForbidden {
+			t.Errorf("POST %s with the read map answered %d, want 403", commentsPath, status)
+		}
+	})
+
+	t.Run("check-run write", func(t *testing.T) {
+		pullPath := "/repos/" + repo + "/pulls/" + pull
+		head := getJSON[struct {
+			Head struct {
+				SHA string `json:"sha"`
+			} `json:"head"`
+		}](t, stepCtx(t), readClient(t), pullPath)
+		if head.Head.SHA == "" {
+			t.Fatalf("GET %s answered no head sha", pullPath)
+		}
+		path := "/repos/" + repo + "/check-runs"
+		status, raw := call(t, http.MethodPost, path, token(t, map[string]string{"metadata": "read", "checks": "write"}), map[string]any{
+			"name":       "SuiteWard / P0 measurement",
+			"head_sha":   head.Head.SHA,
+			"status":     "completed",
+			"conclusion": "neutral",
+			"output":     map[string]string{"title": "SuiteWard P0 measurement", "summary": "M1.6a-P0 live measurement of check-run writes."},
+		})
+		if status != http.StatusCreated {
+			t.Fatalf("POST %s answered %d, want 201", path, status)
+		}
+		var run struct {
+			ID  int64 `json:"id"`
+			App struct {
+				ID int64 `json:"id"`
+			} `json:"app"`
+		}
+		decode(t, path, raw, &run)
+		t.Logf("POST %s answered %d: check run id %d, app id %d", path, status, run.ID, run.App.ID)
+		if run.App.ID != appID {
+			t.Errorf("the check run carries app id %d, want %d", run.App.ID, appID)
+		}
+	})
+}
+
+// appJWT signs an RS256 App JWT (iat now-60 s, exp now+9 min) for GET /app, which
+// appauth does not expose; it never logs the key or the token.
+func appJWT(t *testing.T, appID int64, keyPEM []byte) string {
+	t.Helper()
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		t.Fatal("the private key holds no PEM block")
+	}
+	var key *rsa.PrivateKey
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		k, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			t.Fatal("the private key is not a valid PKCS#1 RSA key")
+		}
+		key = k
+	case "PRIVATE KEY":
+		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			t.Fatal("the private key is not a valid PKCS#8 key")
+		}
+		k, ok := parsed.(*rsa.PrivateKey)
+		if !ok {
+			t.Fatal("the PKCS#8 private key is not an RSA key")
+		}
+		key = k
+	default:
+		t.Fatal("the private key PEM block is not RSA PRIVATE KEY or PRIVATE KEY")
+	}
+	now := time.Now()
+	claims, err := json.Marshal(map[string]any{"iat": now.Add(-60 * time.Second).Unix(), "exp": now.Add(9 * time.Minute).Unix(), "iss": strconv.FormatInt(appID, 10)})
+	if err != nil {
+		t.Fatalf("encode jwt claims: %v", err)
+	}
+	enc := base64.RawURLEncoding
+	signing := enc.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`)) + "." + enc.EncodeToString(claims)
+	sum := sha256.Sum256([]byte(signing))
+	sig, err := rsa.SignPKCS1v15(nil, key, crypto.SHA256, sum[:])
+	if err != nil {
+		t.Fatalf("sign jwt: %v", err)
+	}
+	return signing + "." + enc.EncodeToString(sig)
 }
 
 // probe GETs path and decodes a 200 into out. It returns true only for a decoded 200.

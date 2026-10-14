@@ -78,10 +78,10 @@ func (l *fakeLedger) Current(_ context.Context, repositoryID int64, pull int) (c
 }
 
 type chkWorld struct {
-	runner    *fakeChecks
-	ledger    *fakeLedger
-	pub       *checkPublisher
-	logs      *bytes.Buffer
+	runner *fakeChecks
+	ledger *fakeLedger
+	pub    *checkPublisher
+	logs   *bytes.Buffer
 }
 
 func newChkWorld() *chkWorld {
@@ -266,7 +266,7 @@ func TestCheckPublisherPostsWhenTheReadbackHoldsAnotherRun(t *testing.T) {
 	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
 	w := newChkWorld()
 	w.runner.runs = []github.CheckRunSummary{
-		{ID: 1, Status: "completed", Conclusion: "success", ExternalID: "suiteward:" + cmtOtherInst + ":" + m.Key}, // another instance, same key
+		{ID: 1, Status: "completed", Conclusion: "success", ExternalID: "suiteward:" + cmtOtherInst + ":" + m.Key},      // another instance, same key
 		{ID: 2, Status: "completed", Conclusion: "success", ExternalID: "suiteward:" + cmtInstance + ":check:1001:7:2"}, // this instance, an earlier generation
 		{ID: 3, Status: "in_progress", ExternalID: ""},
 	}

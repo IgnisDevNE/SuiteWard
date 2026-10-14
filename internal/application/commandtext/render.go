@@ -258,15 +258,7 @@ func BootstrapSummary(s Summary) string {
 	if len(s.Paths) > maxListed || s.Protected < len(s.Paths) {
 		panic(fmt.Sprintf("commandtext: %d paths for %d protected files", len(s.Paths), s.Protected))
 	}
-	var tier string
-	switch s.Tier {
-	case Isolated:
-		tier = "isolated"
-	case CoLocated:
-		tier = "co-located"
-	default:
-		panic(fmt.Sprintf("commandtext: unknown tier %d", s.Tier))
-	}
+	tier := tierName(s.Tier)
 	count := fmt.Sprintf("- Protected files: %d", s.Protected)
 	if unlisted := s.Protected - len(s.Paths); unlisted > 0 {
 		count += fmt.Sprintf(" (%d listed below; %d more are not listed)", len(s.Paths), unlisted)
@@ -280,8 +272,7 @@ func BootstrapSummary(s Summary) string {
 	}
 	parts = append(parts, listing("Inventory", s.Paths, len(s.Paths)), listing("Scope include rules", s.Include, s.IncludeTotal), listing("Scope exclude rules", s.Exclude, s.ExcludeTotal))
 	if s.Tier == CoLocated {
-		parts = append(parts, "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: "+
-			"the agent can reach SuiteWard's credentials, database and confirmation secret.")
+		parts = append(parts, coLocatedNotice)
 	}
 	parts = append(parts,
 		"Review the inventory and the scope. To approve this exact baseline, comment:",
@@ -289,6 +280,21 @@ func BootstrapSummary(s Summary) string {
 		"Approving "+ref+" does not approve the other changes in this PR.",
 	)
 	return paragraphs(parts...)
+}
+
+// coLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
+const coLocatedNotice = "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: " +
+	"the agent can reach SuiteWard's credentials, database and confirmation secret."
+
+// tierName is the name of a tier; a value that is not one is an impossible state.
+func tierName(t Tier) string {
+	switch t {
+	case Isolated:
+		return "isolated"
+	case CoLocated:
+		return "co-located"
+	}
+	panic(fmt.Sprintf("commandtext: unknown tier %d", t))
 }
 
 // listing shows at most maxListed items and says how many of the total it left

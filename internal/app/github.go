@@ -90,6 +90,7 @@ type githubSync struct {
 	reconciler *githubsync.Reconciler
 	readers    setupReaders   // shared with the protection check: one budget for every token
 	writer     *github.Writer // posts the comments, with the comment token
+	checkRuns  *github.Checks // posts the check runs, with the checks token
 	bot        *botAccount    // SuiteWard's own account id, shared by the comment publisher and the command job
 	appID      int64
 	repos      []string
@@ -105,6 +106,8 @@ var (
 	protectionPermissions = map[string]string{"metadata": "read", "administration": "read"}
 	// commentPermissions is the map of the comment publisher, the only write (the App's Pull requests: write).
 	commentPermissions = map[string]string{"metadata": "read", "pull_requests": "write"}
+	// checkPermissions is the map of the check run publisher, used for check runs only.
+	checkPermissions = map[string]string{"metadata": "read", "checks": "write"}
 )
 
 // githubAccess is what every token of the GitHub settings shares: the App, the
@@ -178,6 +181,19 @@ func (a githubAccess) writer(permissions map[string]string) (*github.Writer, err
 	return writer, nil
 }
 
+// checkRuns builds the check run writer of a token narrowed to permissions.
+func (a githubAccess) checkRuns(permissions map[string]string) (*github.Checks, error) {
+	client, err := a.client(permissions)
+	if err != nil {
+		return nil, err
+	}
+	runs, err := github.NewChecks(client)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub check runs: %w", err)
+	}
+	return runs, nil
+}
+
 // composeGitHub builds the App installation, the REST clients with the
 // process-wide budget and the readers of the GitHub settings, and the
 // reconciler over store. Synchronization is read-only: the token requests the
@@ -201,6 +217,10 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, err
 	}
+	checkRuns, err := access.checkRuns(checkPermissions)
+	if err != nil {
+		return nil, err
+	}
 	// The bot's account id is read on first use, so startup does not depend on GitHub being reachable.
 	bot := newBotAccount(func(ctx context.Context) (int64, error) {
 		identity, err := read.BotIdentity(ctx, access.app, access.httpClient, access.settings.APIURL)
@@ -210,7 +230,7 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, bot: bot, appID: g.AppID}, nil
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID}, nil
 }
 
 // tick is the github_sync_tick job: one cycle of every configured repository.

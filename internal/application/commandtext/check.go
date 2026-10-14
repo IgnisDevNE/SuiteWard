@@ -1,5 +1,10 @@
 package commandtext
 
+import (
+	"fmt"
+	"strings"
+)
+
 // CheckState is the conclusion of the SuiteWard / Contract check (D-CHECKS).
 type CheckState uint8
 
@@ -21,7 +26,77 @@ type Check struct {
 	Tier               Tier
 }
 
-// CheckSummary renders the output title and summary of a check run.
+// checkReason is the output of one reason code. The text never quotes the repository, the pull request or a
+// comment, so a summary is fixed text and numbers and stays far below GitHub's limit of 65,535 characters.
+type checkReason struct {
+	state CheckState
+	title string
+	text  string
+}
+
+var checkReasons = map[string]checkReason{
+	"bootstrap-pending": {CheckInProgress, "Waiting for the first baseline",
+		"This repository has no approved baseline yet, so the contract of this head has nothing to be compared with. " +
+			"The check completes once the owner approves the baseline proposal."},
+	"unchanged": {CheckSuccess, "Protected files unchanged",
+		"The protected files of this head match the canonical contract. No approval is needed."},
+	"ready": {CheckSuccess, "Contract change approved and ready",
+		"The owner approved the exact revision of this contract change against the current canonical contract, and the integrity " +
+			"assessment of this head passed. It is ready for integration."},
+	"approval-missing": {CheckInProgress, "Awaiting owner approval",
+		"This head changes the protected contract and has no current approval from the owner for its exact revision."},
+	"not-current": {CheckInProgress, "Contract change is not current",
+		"The contract change for this head is not current against the canonical contract. SuiteWard evaluates it again on its next run."},
+	"assessment-pending": {CheckInProgress, "Assessment pending",
+		"SuiteWard has not finished assessing this head, for example because GitHub could not be read yet. It tries again on its next run."},
+	"source-unavailable": {CheckInProgress, "Source unavailable",
+		"GitHub truncated the file tree of this head, so SuiteWard cannot read the protected files in full. " +
+			"It cannot check this head until GitHub returns the full tree."},
+	"invalid-source": {CheckFailure, "Invalid contract source",
+		"The contract declaration or the protected source of this head is invalid, for example an invalid `.suiteward.yml` " +
+			"or a symlink or submodule inside the protected scope. The canonical contract stays in force."},
+	"integrity-failed": {CheckFailure, "Integrity check failed",
+		"The integrity assessment of this head failed. The canonical contract stays in force, and this head cannot be integrated as it is."},
+	"owner-command-rejected": {CheckFailure, "Owner command rejected",
+		"The owner's latest command on this pull request was rejected; SuiteWard's reply to it says why. " +
+			"The check stays failed until a later command is processed or the head changes."},
+}
+
+// CheckSummary renders the output title and summary of a check run: the state and what it means, the revision
+// and the canonical version when there are any, the installation tier and the next action. It never says that
+// tests ran. The reason, the state and the tier come from storage, so a value that does not fit is an impossible
+// state and panics.
 func CheckSummary(c Check) (title, summary string) {
-	panic("not implemented")
+	reason, known := checkReasons[c.Reason]
+	if !known || reason.state != c.State {
+		panic(fmt.Sprintf("commandtext: check reason %q does not fit state %d", c.Reason, c.State))
+	}
+	tier := tierName(c.Tier)
+	if (c.Proposal == 0) != (c.Revision == 0) || c.Version < 0 {
+		panic(fmt.Sprintf("commandtext: check reference P%d-R%d and version %d do not fit", c.Proposal, c.Revision, c.Version))
+	}
+	facts := []string{}
+	var ref string
+	if c.Proposal != 0 {
+		ref = Reference(c.Proposal, c.Revision)
+		facts = append(facts, "- Proposal revision: "+ref)
+	}
+	if c.Version != 0 {
+		checkID("version", c.Version)
+		facts = append(facts, fmt.Sprintf("- Canonical version: V%d", c.Version))
+	}
+	facts = append(facts, "- Installation tier: `"+tier+"`")
+	parts := []string{reason.text}
+	if c.Reason == "approval-missing" {
+		if ref == "" {
+			panic("commandtext: approval is missing for no revision")
+		}
+		parts = append(parts, "To approve this exact revision, comment:", copyable("/suiteward approve "+ref+" <code>"))
+	}
+	parts = append(parts, strings.Join(facts, "\n"))
+	if c.Tier == CoLocated {
+		parts = append(parts, coLocatedNotice)
+	}
+	parts = append(parts, "This check reports on the protected contract only. It does not run tests.")
+	return reason.title, paragraphs(parts...)
 }

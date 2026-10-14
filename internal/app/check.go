@@ -174,8 +174,9 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 	}
 	externalID := "suiteward:" + instance + ":" + key
 	existing, err := p.runs.Runs(ctx, c.Repo, c.HeadSHA, checkName, p.appID)
+	gone := p.vanished(err, key, c)
 	switch {
-	case p.vanished(err, key, c):
+	case gone:
 		return nil
 	case err != nil:
 		return githubFailure(githubCheckKind, key, "list the check runs", err)
@@ -190,8 +191,9 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 		run.Status, run.Conclusion = "in_progress", ""
 	}
 	_, err = p.runs.Post(ctx, c.Repo, run)
+	gone = p.vanished(err, key, c)
 	switch {
-	case p.vanished(err, key, c):
+	case gone:
 		return nil
 	case err != nil:
 		return githubFailure(githubCheckKind, key, "post the check run", err)

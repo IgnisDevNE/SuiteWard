@@ -147,7 +147,7 @@ func (r *hookReader) Read(ctx context.Context, digest artifact.Digest) ([]byte, 
 
 // TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall pins existing behavior against PostgreSQL: the second
 // unit of work finds another canonical than the one the head was classified against, writes nothing, and the
-// error is ErrConflict.
+// error is ErrCanonicalMoved, which is also an ErrConflict.
 func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
 	w := newPGWorld(t)
 	other := newCandidate("px", "V1", w.protected("other"))
@@ -183,8 +183,8 @@ func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
 	_, err = governance.AssessHead(t.Context(), w.store, reader, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite,
 		Carrier: "github-pr:1/2", Head: "head-a", Tree: headTree("v2", "package main\n")})
 
-	if !errors.Is(err, governance.ErrConflict) {
-		t.Fatalf("error = %v, want ErrConflict", err)
+	if !errors.Is(err, governance.ErrCanonicalMoved) || !errors.Is(err, governance.ErrConflict) {
+		t.Fatalf("error = %v, want ErrCanonicalMoved, which is an ErrConflict", err)
 	}
 	w.read(func(ctx context.Context, tx governance.Tx) error {
 		if _, _, err := tx.Proposal(ctx, "P2"); !errors.Is(err, governance.ErrNotFound) {

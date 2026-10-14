@@ -366,8 +366,8 @@ func TestAssessHeadReportsAMovedCanonicalAsAConflict(t *testing.T) {
 
 	err := e.assessErr(prA, "head-a", headTree("v2", "package main\n"))
 
-	if !errors.Is(err, governance.ErrConflict) {
-		t.Fatalf("error = %v, want ErrConflict", err)
+	if !errors.Is(err, governance.ErrCanonicalMoved) || !errors.Is(err, governance.ErrConflict) {
+		t.Fatalf("error = %v, want ErrCanonicalMoved, which is an ErrConflict", err)
 	}
 	if e.hasProposal("P2") {
 		t.Fatal("a proposal was bound to a canonical the head was not classified against")

@@ -16,6 +16,9 @@ import (
 // ErrNoCanonical reports that the Suite has no canonical yet: no change proposal exists before one does (D-CHECKS).
 var ErrNoCanonical = errors.New("the suite has no canonical yet")
 
+// ErrCanonicalMoved is declared for the pending behavior: it will report a canonical that moved during a call.
+var ErrCanonicalMoved = errors.New("the canonical moved while the head was assessed")
+
 // ContentReader reads artifact bytes by digest. filesystem.Store implements it.
 type ContentReader interface {
 	Read(ctx context.Context, digest artifact.Digest) ([]byte, error)

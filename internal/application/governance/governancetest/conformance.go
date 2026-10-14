@@ -104,6 +104,12 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"PromotionWritesItsOutbox", cfPromoteOutbox},
 		{"PromotionOutboxFailureRollsBackTheFact", cfPromotionOutboxFailureRollsBackTheFact},
 		{"CorrectionWritesItsOutboxOnlyWithTheFact", cfCorrectOutbox},
+		{"ChangeProposalForFindsTheOpenChangeOfACarrier", cfChangeProposalForFindsTheOpenChangeOfACarrier},
+		{"ChangeProposalForSkipsABaselineProposal", cfChangeProposalForSkipsABaselineProposal},
+		{"ChangeProposalForIgnoresAnotherSuite", cfChangeProposalForIgnoresAnotherSuite},
+		{"ChangeProposalForRejectsTwoChangeProposalsOfOneCarrier", cfChangeProposalForRejectsTwoChangeProposalsOfOneCarrier},
+		{"NextProposalIDIsOnePastTheHighestNumber", cfNextProposalIDIsOnePastTheHighestNumber},
+		{"NextProposalIDSeesItsOwnTransactionAndOnlyItsSuite", cfNextProposalIDSeesItsOwnTransactionAndOnlyItsSuite},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

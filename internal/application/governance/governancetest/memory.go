@@ -299,6 +299,14 @@ func (t *tx) ReceiptBySource(ctx context.Context, id contract.SourceCommandID) (
 	return r, ok, nil
 }
 
+func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+	return "", false, errors.New("not implemented")
+}
+
+func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
+	return "", errors.New("not implemented")
+}
+
 func (t *tx) AppendConsent(ctx context.Context, w governance.ConsentWrite) error {
 	if err := t.live(ctx); err != nil {
 		return err

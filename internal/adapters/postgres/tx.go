@@ -334,6 +334,14 @@ func (t *tx) ReceiptBySource(ctx context.Context, id contract.SourceCommandID) (
 	return receipt, err == nil, err
 }
 
+func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+	return "", false, errors.New("not implemented")
+}
+
+func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
+	return "", errors.New("not implemented")
+}
+
 // Writes store explicit facts. Each one advances the Suite revision by exactly
 // one; the use case has already made every decision.
 

@@ -20,6 +20,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,12 +33,19 @@ const (
 	maxAnswer = 1 << 20
 )
 
-// StatusError is a non-201 answer to the installation token request.
-type StatusError struct{ Status int }
+// StatusError is an unexpected answer to a JWT-authenticated request; Endpoint
+// names it ("access_tokens" for the installation token, "app" for GET /app).
+type StatusError struct {
+	Endpoint string
+	Status   int
+}
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("appauth: access_tokens answered %d", e.Status)
+	return fmt.Sprintf("appauth: %s answered %d", e.Endpoint, e.Status)
 }
+
+// slugPattern is what a GitHub App slug can be; it keeps a slug usable as a URL path segment.
+var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // ErrPermissionsMismatch reports a granted permission map that differs from the requested one.
 var ErrPermissionsMismatch = errors.New("appauth: granted permissions differ from the requested ones")
@@ -122,6 +130,74 @@ func (a App) jwt(now time.Time) (string, error) {
 	return signing + "." + enc.EncodeToString(sig), nil
 }
 
+// signedRequest builds a request authenticated with the App JWT for now.
+func (a App) signedRequest(ctx context.Context, method, endpoint string, body []byte, now time.Time) (*http.Request, error) {
+	jwt, err := a.jwt(now)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("appauth: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
+// cleanBase validates an API base URL and drops a trailing slash: a query,
+// fragment or user info would corrupt or leak the endpoints built from it.
+func cleanBase(baseURL string) (string, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+		return "", errors.New("appauth: base URL must be an absolute http(s) URL")
+	}
+	if strings.ContainsAny(baseURL, "?#") || base.User != nil {
+		return "", errors.New("appauth: base URL must not carry a query, a fragment or user info")
+	}
+	return strings.TrimSuffix(base.String(), "/"), nil
+}
+
+// Slug returns the App's URL slug from GET /app, which needs the App JWT; the
+// call is rate-limited by GitHub apart from installation requests, so it does
+// not count in the request budget. An error never carries the JWT or answer text.
+func (a App) Slug(ctx context.Context, httpClient *http.Client, baseURL string) (string, error) {
+	if httpClient == nil {
+		return "", errors.New("appauth: http client is required")
+	}
+	base, err := cleanBase(baseURL)
+	if err != nil {
+		return "", err
+	}
+	req, err := a.signedRequest(ctx, http.MethodGet, base+"/app", nil, a.clock())
+	if err != nil {
+		return "", err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		// The transport error names the URL, never a header.
+		return "", fmt.Errorf("appauth: request app: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
+	if resp.StatusCode != http.StatusOK {
+		return "", &StatusError{Endpoint: "app", Status: resp.StatusCode}
+	}
+	var out struct {
+		Slug string `json:"slug"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAnswer)).Decode(&out); err != nil {
+		return "", errors.New("appauth: app answer is not an app object")
+	}
+	if !slugPattern.MatchString(out.Slug) {
+		return "", errors.New("appauth: app answer has no valid slug")
+	}
+	return out.Slug, nil
+}
+
 // Installation mints tokens for one installation, narrowed to repositories and permissions.
 type Installation struct {
 	app         App
@@ -175,13 +251,9 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 	if httpClient == nil {
 		return nil, errors.New("appauth: http client is required")
 	}
-	base, err := url.Parse(baseURL)
-	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
-		return nil, errors.New("appauth: base URL must be an absolute http(s) URL")
-	}
-	// The endpoint is the base path plus a fixed suffix: a query, fragment or user info would corrupt or leak it.
-	if strings.ContainsAny(baseURL, "?#") || base.User != nil {
-		return nil, errors.New("appauth: base URL must not carry a query, a fragment or user info")
+	base, err := cleanBase(baseURL)
+	if err != nil {
+		return nil, err
 	}
 	perms := maps.Clone(permissions)
 	body, err := json.Marshal(struct {
@@ -194,7 +266,7 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 	return &Installation{
 		app:         a,
 		id:          id,
-		endpoint:    strings.TrimSuffix(base.String(), "/") + "/app/installations/" + strconv.FormatInt(id, 10) + "/access_tokens",
+		endpoint:    base + "/app/installations/" + strconv.FormatInt(id, 10) + "/access_tokens",
 		body:        body,
 		permissions: perms,
 		http:        httpClient,
@@ -232,18 +304,10 @@ func (i *Installation) Token(ctx context.Context) (Token, error) {
 // mint requests a new token; only a complete, exactly-narrowed answer is returned.
 func (i *Installation) mint(ctx context.Context) (Token, error) {
 	now := i.app.clock()
-	jwt, err := i.app.jwt(now)
+	req, err := i.app.signedRequest(ctx, http.MethodPost, i.endpoint, i.body, now)
 	if err != nil {
 		return Token{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, i.endpoint, bytes.NewReader(i.body))
-	if err != nil {
-		return Token{}, fmt.Errorf("appauth: build token request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := i.http.Do(req)
 	if err != nil {
 		// The transport error names the URL, never a header.
@@ -251,7 +315,7 @@ func (i *Installation) mint(ctx context.Context) (Token, error) {
 	}
 	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
 	if resp.StatusCode != http.StatusCreated {
-		return Token{}, &StatusError{Status: resp.StatusCode}
+		return Token{}, &StatusError{Endpoint: "access_tokens", Status: resp.StatusCode}
 	}
 	var out struct {
 		Token       string            `json:"token"`

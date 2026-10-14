@@ -249,6 +249,42 @@ func (c *Client) GetImmutable(ctx context.Context, path string) (Response, error
 	return c.get(ctx, path, false)
 }
 
+// maxPostBody bounds a POST body; comments are far smaller.
+const maxPostBody = 64 << 10
+
+// Post sends a JSON body and expects 201. It shares the budget and the rate-limit
+// errors of Get but never uses the ETag cache. Neither the request body nor any
+// answer text reaches an error: a comment can quote repository text, and a
+// POST error only needs the status.
+func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, error) {
+	if !strings.HasPrefix(path, "/") {
+		return Response{}, fmt.Errorf("github POST %q: path must start with /", path)
+	}
+	if len(body) > maxPostBody {
+		return Response{}, fmt.Errorf("github POST %s: body of %d bytes exceeds the limit of %d", path, len(body), maxPostBody)
+	}
+	if err := c.budget.acquire(); err != nil {
+		return Response{}, fmt.Errorf("github POST %s: %w", path, err)
+	}
+	resp, _, err := c.send(ctx, http.MethodPost, path, body, false)
+	if err != nil {
+		c.budget.release()
+		return Response{}, fmt.Errorf("github POST %s: %w", path, err)
+	}
+	c.budget.record(resp.status, resp.header)
+	if resp.status < 200 || resp.status > 299 {
+		resp.body = nil // interpret keeps the answer text of an error; a POST error keeps none
+	}
+	out, err := c.interpret(resp, "")
+	if err != nil {
+		return Response{}, fmt.Errorf("github POST %s: %w", path, err)
+	}
+	if out.Status != http.StatusCreated {
+		return Response{}, fmt.Errorf("github POST %s: answered %d, want 201", path, out.Status)
+	}
+	return out, nil
+}
+
 func (c *Client) get(ctx context.Context, path string, useCache bool) (Response, error) {
 	if !strings.HasPrefix(path, "/") {
 		return Response{}, fmt.Errorf("github GET %q: path must start with /", path)
@@ -256,7 +292,7 @@ func (c *Client) get(ctx context.Context, path string, useCache bool) (Response,
 	if err := c.budget.acquire(); err != nil {
 		return Response{}, fmt.Errorf("github GET %s: %w", path, err)
 	}
-	resp, value, err := c.send(ctx, path, useCache)
+	resp, value, err := c.send(ctx, http.MethodGet, path, nil, useCache)
 	if err != nil {
 		c.budget.release()
 		return Response{}, fmt.Errorf("github GET %s: %w", path, err)
@@ -281,8 +317,9 @@ type answer struct {
 }
 
 // send performs one request with the current token and, when useCache is set
-// and the cache of that token's identity holds the path, its ETag.
-func (c *Client) send(ctx context.Context, path string, useCache bool) (answer, string, error) {
+// and the cache of that token's identity holds the path, its ETag. A request
+// with a body is sent as JSON.
+func (c *Client) send(ctx context.Context, method, path string, payload []byte, useCache bool) (answer, string, error) {
 	value, identity, err := c.token(ctx)
 	if err != nil {
 		return answer{}, "", fmt.Errorf("token: %w", err)
@@ -298,9 +335,12 @@ func (c *Client) send(ctx context.Context, path string, useCache bool) (answer, 
 		c.mu.Unlock()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(payload))
 	if err != nil {
 		return answer{}, "", err
+	}
+	if len(payload) > 0 {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Authorization", "Bearer "+value)
 	req.Header.Set("Accept", "application/vnd.github+json")

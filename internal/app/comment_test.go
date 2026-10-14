@@ -117,6 +117,7 @@ type cmtWorld struct {
 	project   contract.ProjectID
 	principal contract.Principal
 	order     contract.CommandOrder
+	comments  map[contract.OperationID]int64 // the comment that carried each processed command
 	botCalls  atomic.Int32
 	instCalls atomic.Int32
 }
@@ -182,7 +183,7 @@ func (w *cmtWorld) consent(action contract.ConsentAction, revision contract.Prop
 	w.t.Helper()
 	w.order++
 	operation := contract.OperationID(fmt.Sprintf("op-%d", w.order))
-	command := cmtMust(contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", 500+w.order)),
+	command := cmtMust(contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", w.comment(operation, cmtComment+int64(w.order)-1))),
 		Actor: w.principal, Reference: w.reference(revision), Carrier: "github-pr:1001/7", Action: action, Order: w.order}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil {
@@ -191,10 +192,24 @@ func (w *cmtWorld) consent(action contract.ConsentAction, revision contract.Prop
 	return operation, response.Receipt
 }
 
-// processedAck builds the outbox message of the owner's command comment for operation.
+// comment records and returns the id of the comment that carries the command of operation.
+func (w *cmtWorld) comment(operation contract.OperationID, id int64) int64 {
+	if w.comments == nil {
+		w.comments = map[contract.OperationID]int64{}
+	}
+	w.comments[operation] = id
+	return id
+}
+
+// processedAck builds the outbox message of the owner's command comment for operation; the first command of a world
+// is the comment cmtComment.
 func (w *cmtWorld) processedAck(operation contract.OperationID) governance.OutboxMessage {
 	w.t.Helper()
-	return cmtMust(newProcessedAck(cmtTarget(), cmtComment, cmtOwner, w.project, "default", operation))
+	comment, known := w.comments[operation]
+	if !known {
+		comment = cmtComment // an operation that was never processed
+	}
+	return cmtMust(newProcessedAck(cmtTarget(), comment, cmtOwner, w.project, "default", operation))
 }
 
 func (w *cmtWorld) deliver(m governance.OutboxMessage) error {
@@ -795,5 +810,69 @@ func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
 	}
 	if !sawWrite {
 		t.Fatalf("no token asked for pull_requests write: %v", tokenMaps)
+	}
+}
+
+func TestCommentPublisherBindsTheReceiptToItsCommentAndProject(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func(w *cmtWorld, op contract.OperationID) governance.OutboxMessage
+	}{
+		{"another comment than the one that carried the command", func(w *cmtWorld, op contract.OperationID) governance.OutboxMessage {
+			return cmtMust(newProcessedAck(cmtTarget(), cmtComment+1, cmtOwner, w.project, "default", op))
+		}},
+		{"a project that is not the repository's", func(w *cmtWorld, op contract.OperationID) governance.OutboxMessage {
+			return cmtMust(newProcessedAck(cmtTarget(), cmtComment, cmtOwner, "github-repo:2002", "default", op))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			op, _ := w.consent(contract.ApproveConsent, "R2") // carried by the comment cmtComment, in this repository's project
+			message := tc.build(w, op)
+
+			err := w.deliver(message)
+
+			if err == nil || !strings.Contains(err.Error(), message.Key) {
+				t.Fatalf("publish = %v, want an error naming the key", err)
+			}
+			if err != nil && strings.Contains(err.Error(), "read the receipt") {
+				t.Fatalf("the error %q says the receipt could not be read; it should say the receipt is not the comment's", err)
+			}
+			for _, leak := range []string{cmtOwner, cmtRepo, string(op)} {
+				if strings.Contains(err.Error(), leak) {
+					t.Fatalf("the error %q holds payload text %q", err, leak)
+				}
+			}
+			if len(w.writer.posts()) != 0 {
+				t.Fatal("a comment was posted for a receipt that is not the comment's")
+			}
+		})
+	}
+}
+
+// ownerWith is an ownerSource that answers one enrolled state.
+type ownerWith owner.State
+
+func (o ownerWith) Current(context.Context) (owner.State, bool, error) {
+	return owner.State(o), true, nil
+}
+
+// The renderer panics on a login that is not a GitHub login. The guard turns that into an error that does not
+// quote it. The behavior already held when this test was written, so it has no RED.
+func TestCommentPublisherDoesNotQuoteAnOwnerLoginTheRendererRefuses(t *testing.T) {
+	w := newCmtWorld(t)
+	w.pub.owners = ownerWith(owner.State{Owner: owner.Owner{AccountID: cmtOwnerID, Login: "bad login " + cmtSecretText}})
+	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
+
+	err := w.deliver(message)
+
+	if err == nil || !strings.Contains(err.Error(), message.Key) {
+		t.Fatalf("publish = %v, want an error naming the key", err)
+	}
+	if strings.Contains(err.Error(), "bad login") || strings.Contains(err.Error(), cmtSecretText) {
+		t.Fatalf("the error %q holds the login", err)
+	}
+	if len(w.writer.posts()) != 0 {
+		t.Fatal("a comment was posted for an owner that cannot be named")
 	}
 }

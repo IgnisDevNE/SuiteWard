@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
@@ -127,4 +128,68 @@ func TestHeadAssessmentFollowsConsentAcrossPushes(t *testing.T) {
 	if len(distinct) != len(seen) || distinct["P1"] || distinct["P2"] || distinct["P3"] || distinct[""] {
 		t.Fatalf("proposals of the concurrent pulls = %v, want four new distinct ones", seen)
 	}
+}
+
+// hookReader runs onRead once before its first read, as a canonical that moves while a head is read from the
+// content store would.
+type hookReader struct {
+	inner  governance.ContentReader
+	onRead func()
+}
+
+func (r *hookReader) Read(ctx context.Context, digest artifact.Digest) ([]byte, error) {
+	if hook := r.onRead; hook != nil {
+		r.onRead = nil
+		hook()
+	}
+	return r.inner.Read(ctx, digest)
+}
+
+// TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall pins existing behavior against PostgreSQL: the second
+// unit of work finds another canonical than the one the head was classified against, writes nothing, and the
+// error is ErrConflict.
+func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
+	w := newPGWorld(t)
+	other := newCandidate("px", "V1", w.protected("other"))
+	w.seedSuite(fxProject, fxSuite, other)
+	const bootstrapCarrier = contract.ApprovalCarrierID("github-pr:1/1")
+	baseline, err := governance.ProposeBaseline(t.Context(), w.store, w.content, governance.BaselineRequest{
+		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", Tree: headTree("v1", "package main\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := must(contract.NewCommand(contract.CommandInput{OperationID: "op-baseline", SourceCommandID: "source-baseline", Actor: w.owner,
+		Reference: baseline.Revise.Current, Carrier: bootstrapCarrier, Action: contract.ApproveConsent, Order: 1}))
+	w.consent(approval)
+	var binding contract.ApprovalBinding
+	w.read(func(ctx context.Context, tx governance.Tx) error {
+		proposal, _, err := tx.Proposal(ctx, "P1")
+		binding = proposal.Current().Binding()
+		return err
+	})
+	w.recordAssessment(baseline.Revise.Current, "pinned", binding, contract.IntegrityPassed)
+	integration := must(contract.NewIntegration(fxProject, fxTarget, "pinned", "", contract.IntegrationExistingBaseline))
+	if promoted, err := governance.Bootstrap(t.Context(), w.store, governance.PromoteRequest{OperationID: "bootstrap-P1-R1", Reference: baseline.Revise.Current, Carrier: bootstrapCarrier,
+		Proposed: baseline.Contract, AssessmentSource: "pinned", Integration: integration, NewVersionID: "V1", RecordedAt: fxRecordedAt}); err != nil || !promoted.Committed {
+		t.Fatalf("bootstrap = %+v, %v", promoted, err)
+	}
+	reader := &hookReader{inner: w.content, onRead: func() {
+		w.approve(other)
+		if promoted, err := governance.Promote(t.Context(), w.store, other.mergedRequest("promote-px", "V2")); err != nil || !promoted.Committed {
+			t.Errorf("promote the other change = %+v, %v", promoted, err)
+		}
+	}}
+
+	_, err = governance.AssessHead(t.Context(), w.store, reader, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite,
+		Carrier: "github-pr:1/2", Head: "head-a", Tree: headTree("v2", "package main\n")})
+
+	if !errors.Is(err, governance.ErrConflict) {
+		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+	w.read(func(ctx context.Context, tx governance.Tx) error {
+		if _, _, err := tx.Proposal(ctx, "P2"); !errors.Is(err, governance.ErrNotFound) {
+			t.Errorf("proposal P2 = %v, want none: the head was not bound to the new canonical", err)
+		}
+		return nil
+	})
 }

@@ -62,10 +62,12 @@ type headEnv struct {
 	order  contract.CommandOrder
 }
 
-func newHeadEnv(t *testing.T) *headEnv {
+// newHeadEnv seeds extra proposals next to the one that can move the canonical.
+func newHeadEnv(t *testing.T, extra ...candidate) *headEnv {
 	t.Helper()
-	other := newCandidate(t, "px", "version-1", protectedOf(t, "other"))
-	e := &headEnv{world: newWorld(t, other), writer: newFakeWriter(), other: other}
+	// A real inventory, so that once promoted its declaration is readable and hashes to its scope.
+	other := newCandidate(t, "px", "version-1", must(must(inventory.Build(context.Background(), headTree("other", "package main\n"))).Contract()))
+	e := &headEnv{world: newWorld(t, append([]candidate{other}, extra...)...), writer: newFakeWriter(), other: other}
 	e.reader = &fakeReader{writer: e.writer}
 	result := e.propose(e.writer, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P1", RevisionID: "R1"},
@@ -354,7 +356,7 @@ func TestConcurrentAssessmentsOfTwoPullsAllocateDistinctProposals(t *testing.T) 
 	}
 }
 
-func TestAssessHeadReportsAChangedCanonicalAsAConflict(t *testing.T) {
+func TestAssessHeadReportsAMovedCanonicalAsAConflict(t *testing.T) {
 	e := newHeadEnv(t)
 	e.reader.onRead = func() {
 		e.approve(e.other)
@@ -445,5 +447,61 @@ func TestAssessHeadRejectsMissingCollaborators(t *testing.T) {
 				t.Fatalf("error = %v, want an invalid request", err)
 			}
 		})
+	}
+}
+
+// The tests below pin behavior that already held when they were written.
+
+// movedCanonical promotes the other candidate, so version-2 becomes the canonical.
+func (e *headEnv) movedCanonical() {
+	e.t.Helper()
+	e.approve(e.other)
+	e.promote(e.other.mergedRequest(e.t, "promote-px", "version-2"))
+}
+
+func TestApprovedPullNeedsAFreshApprovalOnceTheCanonicalMoves(t *testing.T) {
+	e := newHeadEnv(t)
+	tree := headTree("v2", "package main\n")
+	first := e.assess(prA, "head-a", tree)
+	e.approveRef(*first.Reference, prA)
+	e.requireChange(e.assess(prA, "head-a", tree), inventory.ProtectedChange, "P2-R1", true, contract.PromotionReasonNone)
+
+	e.movedCanonical()
+	moved := e.assess(prA, "head-a", tree)
+
+	e.requireChange(moved, inventory.ProtectedChange, "P2-R2", false, contract.PromotionReasonApprovalMissing)
+	if moved.Canonical != "version-2" || e.proposal("P2").Current().Binding().ExpectedCanonical() != "version-2" {
+		t.Fatalf("canonical = %q, revision expects %q, want both version-2", moved.Canonical, e.proposal("P2").Current().Binding().ExpectedCanonical())
+	}
+}
+
+func TestPullBoundToAnOlderPolicyGetsARevisionUnderTheGoverningOne(t *testing.T) {
+	protected := must(must(inventory.Build(context.Background(), headTree("v2", "package main\n"))).Contract())
+	older := sealRevision(contract.BindingInput{Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P2", RevisionID: "R1"},
+		ExpectedCanonical: "version-1", Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "policy-0", CoveredInputs: protected.CoveredInputs()}, "head-a", prA)
+	e := newHeadEnv(t, candidate{project: projectID, suite: suiteID, id: "P2", protected: protected, proposal: must(contract.NewProposal(older)), carrier: prA})
+
+	result := e.assess(prA, "head-a", headTree("v2", "package main\n"))
+
+	e.requireChange(result, inventory.ProtectedChange, "P2-R2", false, contract.PromotionReasonApprovalMissing)
+	if got := e.proposal("P2").Current().Binding().PolicyRevisionID(); got != policyID {
+		t.Fatalf("revision policy = %q, want the governing %q", got, policyID)
+	}
+}
+
+func TestScopeReductionGetsAProposalLikeAProtectedChange(t *testing.T) {
+	e := newHeadEnv(t)
+	dropped := newFakeTree( // the declaration no longer includes /tests/**, so a protected path leaves the scope
+		regularFile(scope.DeclarationPath, "version: 1\n"),
+		regularFile(".github/workflows/ci.yml", "on: push\n"),
+		regularFile("tests/a_test.go", "v1"),
+		regularFile("src/main.go", "package main\n"),
+	)
+
+	result := e.assess(prA, "head-a", dropped)
+
+	e.requireChange(result, inventory.ScopeReduction, "P2-R1", false, contract.PromotionReasonApprovalMissing)
+	if assessment, found := e.assessment(*result.Reference, "head-a"); !found || !assessment.Passed() {
+		t.Fatalf("assessment at the head = %+v (found %v), want a passed one", assessment, found)
 	}
 }

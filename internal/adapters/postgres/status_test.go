@@ -22,10 +22,10 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 		t.Fatalf("an empty database counts %v and %v; want nothing", counts.Jobs, counts.Outbox)
 	}
 
-	// Two probes stay available, one is completed, one discarded; the relay, the synchronization tick, the protection check and the bootstrap are not counted.
+	// Two probes stay available, one is completed, one discarded; the relay, the synchronization tick, the protection check, the bootstrap and the commands are not counted.
 	jobIDs := map[string]int64{}
-	for _, name := range []string{"available-1", "available-2", "completed", "discarded", "relay", "tick", "protection", "bootstrap"} {
-		kind := map[string]string{"relay": "outbox_relay", "tick": "github_sync_tick", "protection": "github_protection_check", "bootstrap": "github_bootstrap"}[name]
+	for _, name := range []string{"available-1", "available-2", "completed", "discarded", "relay", "tick", "protection", "bootstrap", "commands"} {
+		kind := map[string]string{"relay": "outbox_relay", "tick": "github_sync_tick", "protection": "github_protection_check", "bootstrap": "github_bootstrap", "commands": "github_commands"}[name]
 		if kind == "" {
 			kind = "probe"
 		}
@@ -37,7 +37,7 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 		}
 		jobIDs[name] = id
 	}
-	for name, state := range map[string]string{"completed": "completed", "discarded": "discarded", "relay": "completed", "tick": "completed", "protection": "completed", "bootstrap": "completed"} {
+	for name, state := range map[string]string{"completed": "completed", "discarded": "discarded", "relay": "completed", "tick": "completed", "protection": "completed", "bootstrap": "completed", "commands": "completed"} {
 		if _, err := w.pool.Exec(t.Context(), "UPDATE river_job SET state = $1::river_job_state, finalized_at = now() WHERE id = $2", state, jobIDs[name]); err != nil {
 			t.Fatal(err)
 		}
@@ -53,9 +53,9 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := map[string]int64{"available": 2, "completed": 1, "discarded": 1}; !maps.Equal(counts.Jobs, want) {
-		t.Fatalf("job counts = %v; want %v (the outbox_relay, github_sync_tick, github_protection_check and github_bootstrap jobs are excluded)", counts.Jobs, want)
+		t.Fatalf("job counts = %v; want %v (the outbox_relay, github_sync_tick, github_protection_check, github_bootstrap and github_commands jobs are excluded)", counts.Jobs, want)
 	}
-	if want := map[string]int64{postgres.OutboxPending: 6, postgres.OutboxDelivered: 1, postgres.OutboxFailed: 1}; !maps.Equal(counts.Outbox, want) {
+	if want := map[string]int64{postgres.OutboxPending: 7, postgres.OutboxDelivered: 1, postgres.OutboxFailed: 1}; !maps.Equal(counts.Outbox, want) {
 		t.Fatalf("outbox counts = %v; want %v", counts.Outbox, want)
 	}
 }

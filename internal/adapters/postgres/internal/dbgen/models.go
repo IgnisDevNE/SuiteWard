@@ -181,6 +181,22 @@ type Policy struct {
 	OwnerKind  string
 }
 
+type PrCheck struct {
+	RepositoryID int64
+	PullNumber   int32
+	HeadSha      string
+	HeadSince    pgtype.Timestamptz
+	State        string
+	Reason       string
+	Reference    string
+	Change       string
+	Revision     int64
+	CommandID    int64
+	Generation   int64
+	MessageKey   string
+	DecidedAt    pgtype.Timestamptz
+}
+
 type PrCommand struct {
 	RepositoryID int64
 	CommentID    int64

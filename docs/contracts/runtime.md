@@ -127,7 +127,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
 - It posts with `Writer.PostComment` and the comment token. The body ends with the hidden marker `<!-- suiteward:<instance id>:<outbox key> -->`.
 - Before posting, it lists the PR's comments by the bot and skips the post when one already carries the same marker. Delivery is at least once (persistence contract), so posting is idempotent by marker.
 - The instance id keeps two installations that post as the same App from mistaking each other's comments for their own.
-- The job counts in `/status` exclude `github_bootstrap` and `github_commands`.
+- The job counts in `/status` exclude `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`.
 
 ### Check job and publisher (M1.6b)
 
@@ -141,9 +141,9 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
     - anything else: read the head tree (`Reader.Tree`) and call `governance.AssessHead`, which is idempotent.
   - **State.**
     - `success`: the head is unchanged against the canonical (reason `unchanged`), or ready (reason `ready`).
-    - `in_progress`: reasons `approval-missing` (including a revision rebound after the canonical or the policy changed), `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated); `ErrConflict` from `AssessHead` keeps the current record and retries on the next run.
+    - `in_progress`: reasons `approval-missing` (including a revision rebound after the canonical or the policy changed), `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated); `ErrCanonicalMoved` from `AssessHead` (the canonical moved while the head was assessed) keeps the current record and retries on the next run; any other `ErrConflict`, such as a conflicting assessment, is deterministic and is an opaque failure (`/status` problem `failed`) that fails that pull request's step while the run continues.
     - `failure`: reasons `invalid-source`, `integrity-failed`, `owner-command-rejected`.
-  - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`. A rejected owner command posted between a push and the job first recording that head does not set `failure` (the record's `HeadSince` is SuiteWard's own clock): the window is about the synchronization interval plus the job interval, a known limitation to be fixed with a per-head observation time.
+  - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`. A rejected owner command posted between a push and the job first recording that head does not set `failure` (the record's `HeadSince` is SuiteWard's own clock): the window is about the synchronization interval plus the job interval, a known limitation to be fixed with a per-head observation time. Before a canonical exists, a rejected owner command does not set `failure` either: the state is `bootstrap-pending`.
   - **Transient read failure** (GitHub, tree): when the stored head equals the open head, keep the record. When the open head is new (no record, or the record holds another head), publish `in_progress`, reason `assessment-pending`, for the new head, so the new SHA never stays without a check.
   - **Lost publication.** When the current generation's message ended `failed` in the outbox, `Publish` re-sends the same state under the next generation.
   - Publish through `checks.Store.Publish` with a `github_check` message.

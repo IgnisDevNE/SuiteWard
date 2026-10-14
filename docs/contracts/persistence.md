@@ -659,7 +659,6 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 
 - **Idempotent.** Repeating `AssessHead` for the same head writes nothing new: unchanged coverage creates no revision and an identical assessment is not stored twice. The check job therefore calls it whenever a governing fact may have changed; a separate verdict-only call is not needed (a revision stores only its manifest digest, so readiness needs the head's inventory anyway).
 - **Stale canonical or policy.** `AssessHead` always binds the revision to the current canonical and policy, so a changed canonical or policy shows as a new revision awaiting approval (`approval-missing`).
-- **Canonical moved during the call.** `ErrConflict`; the caller retries on its next run.
 - **No canonical.** It returns `ErrNoCanonical` (new sentinel). No proposal is created before a canonical exists (D-CHECKS).
 - **Governing scope.** Rebuilt from the canonical: the `.suiteward.yml` bytes named by the canonical manifest are read through `ContentReader` (no entry means `scope.NoDeclaration()`), parsed, and their scope digest must equal the canonical binding's; a mismatch is `ErrInvalidState`.
 - **Classification.** `inventory.Classify(governing, Tree)`. An invalid tree, an unsafe entry or an invalid declaration is returned wrapped (`inventory.ErrInvalidTree`, `ErrUnsafeEntry`, `scope.ErrInvalidDeclaration`) and maps to `failure`, except a tree GitHub truncated: the reader then also wraps `github.ErrTreeTruncated`, a GitHub limit rather than the owner's source, which maps to `in_progress`. `Unchanged` returns at once, with no write.
@@ -755,6 +754,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at, source_command_id (M1.6a: the command that used the step; `setup:<generation>` for setup) |
 | `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at |
 | `suiteward_instance` (M1.6a) | singleton | immutable | instance_id (32 lowercase hex, random) |
+| `pr_checks` (M1.6b) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`), reason, reference, change, revision, command_id, generation, message_key, decided_at |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 

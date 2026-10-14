@@ -34,6 +34,7 @@ type commandsJob struct {
 	owners     owner.Store
 	suites     governance.UnitOfWork
 	syncs      repositoryReader // the observation store: each repository's last successful cycle
+	repos      []string         // the configured repositories (GITHUB_REPOSITORIES)
 	bot        *botAccount
 	jobTimeout time.Duration
 	logger     *slog.Logger

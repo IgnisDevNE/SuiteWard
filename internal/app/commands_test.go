@@ -150,7 +150,7 @@ func newCjWorld(t *testing.T) *cjWorld {
 	w := &cjWorld{t: t, owners: &cjOwners{Store: enrolled}, obs: githubsynctest.NewMemory(), mem: governancetest.NewMemory(), logs: &bytes.Buffer{}, listed: map[int64][]cjComment{}}
 	w.ledger = &cjLedger{Memory: commandstest.NewMemory(enrolled, w.obs)}
 	w.suites = &probeSuites{UnitOfWork: w.mem}
-	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
+	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
 		bot: newBotAccount(func(context.Context) (int64, error) {
 			w.botCall++
 			return cjBotID, w.botErr
@@ -517,6 +517,28 @@ func TestCommandsJobDoesNothingWhileARepositoryHasNeverSynchronized(t *testing.T
 	}
 	if !strings.Contains(w.logs.String(), `"level":"WARN"`) || !strings.Contains(w.logs.String(), cjRepo2) {
 		t.Fatalf("no Warn line says which repository blocks the commands; logs: %s", w.logs)
+	}
+}
+
+func TestCommandsJobStillWaitsForAnEnrolledRepositoryThatIsNotConfiguredAndWarnsOnce(t *testing.T) {
+	w := newCjWorld(t)
+	w.job.repos = []string{cjRepo1} // repository 2 was removed from GITHUB_REPOSITORIES without re-running setup
+	w.observe(cjID1, cjSync, ownerCommand(500, cjAt(40), "approve", "P1-R2", 0))
+	w.observe(cjID2, cjSync.Add(-30*time.Minute))
+	w.mustRun()
+	w.mustRun()
+	w.requireNoEntry(cjID1, 500) // fail closed: the stale cycle of the removed repository still holds the watermark back
+	warnings := 0
+	for _, line := range strings.Split(w.logs.String(), "\n") {
+		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "not configured") && strings.Contains(line, cjRepo2) {
+			warnings++
+		}
+		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "not configured") && strings.Contains(line, cjRepo1) {
+			t.Fatalf("the configured repository %s is reported as not configured: %s", cjRepo1, line)
+		}
+	}
+	if warnings != 1 {
+		t.Fatalf("%d warnings name the unconfigured repository %s over two runs; want 1; logs: %s", warnings, cjRepo2, w.logs)
 	}
 }
 

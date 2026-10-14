@@ -640,7 +640,7 @@ type HeadRequest struct {
 	Suite   contract.SuiteID
 	Carrier contract.ApprovalCarrierID // github-pr:<repository id>/<pull>
 	Head    contract.SourceRevision    // the PR head SHA
-	Tree    inventory.Tree             // that commit's source tree (AssessHead only)
+	Tree    inventory.Tree             // that commit's source tree
 }
 
 type HeadResult struct {
@@ -655,13 +655,12 @@ type HeadResult struct {
 // AssessHead classifies Head against the canonical and, for a protected change, keeps the PR's proposal
 // current, records the head's integrity assessment and evaluates readiness for Head.
 func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, writer ContentWriter, request HeadRequest) (HeadResult, error)
-
-// HeadVerdict re-evaluates readiness for an already assessed head without reading its tree: used when only
-// consent, policy or another PR changed (the Suite revision moved) but the head and the canonical did not.
-func HeadVerdict(ctx context.Context, uow UnitOfWork, request HeadRequest) (HeadResult, error)
 ```
 
-- **No canonical.** Both return `ErrNoCanonical` (new sentinel). No proposal is created before a canonical exists (D-CHECKS).
+- **Idempotent.** Repeating `AssessHead` for the same head writes nothing new: unchanged coverage creates no revision and an identical assessment is not stored twice. The check job therefore calls it whenever a governing fact may have changed; a separate verdict-only call is not needed (a revision stores only its manifest digest, so readiness needs the head's inventory anyway).
+- **Stale canonical or policy.** `AssessHead` always binds the revision to the current canonical and policy, so a changed canonical or policy shows as a new revision awaiting approval (`approval-missing`).
+- **Canonical moved during the call.** `ErrConflict`; the caller retries on its next run.
+- **No canonical.** It returns `ErrNoCanonical` (new sentinel). No proposal is created before a canonical exists (D-CHECKS).
 - **Governing scope.** Rebuilt from the canonical: the `.suiteward.yml` bytes named by the canonical manifest are read through `ContentReader` (no entry means `scope.NoDeclaration()`), parsed, and their scope digest must equal the canonical binding's; a mismatch is `ErrInvalidState`.
 - **Classification.** `inventory.Classify(governing, Tree)`. An invalid tree, an unsafe entry or an invalid declaration is returned wrapped (`inventory.ErrInvalidTree`, `ErrUnsafeEntry`, `scope.ErrInvalidDeclaration`) and maps to `failure`, except a tree GitHub truncated: the reader then also wraps `github.ErrTreeTruncated`, a GitHub limit rather than the owner's source, which maps to `in_progress`. `Unchanged` returns at once, with no write.
 - **The PR's proposal.** Inside one `Do`:

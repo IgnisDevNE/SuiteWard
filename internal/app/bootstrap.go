@@ -54,7 +54,8 @@ type bootstrapSummaryPayload struct {
 }
 
 // bootstrapSummaryInputs mirror commandtext.Summary. Repository text (Branch, Paths, Include, Exclude) is cut to
-// maxSummaryText bytes and each list holds at most maxSummaryRun entries, so the payload stays within the outbox limit.
+// maxSummaryText bytes, a cut entry ending in "…", and each list holds at most maxSummaryRun entries, so the payload
+// stays within the outbox limit. The totals are the true counts.
 type bootstrapSummaryInputs struct {
 	Proposal     int      `json:"proposal"`
 	Revision     int      `json:"revision"`
@@ -62,11 +63,11 @@ type bootstrapSummaryInputs struct {
 	Branch       string   `json:"branch"`
 	Protected    int      `json:"protected"` // all protected files, of which Paths lists the first ones
 	Paths        []string `json:"paths"`
-	Include      []string `json:"include"` // the declared include rules
-	Exclude      []string `json:"exclude"` // the declared exclude rules
-	IncludeTotal int      `json:"includeTotal"`
-	ExcludeTotal int      `json:"excludeTotal"`
-	Tier         string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
+	Include      []string `json:"include"`      // the declared include rules
+	Exclude      []string `json:"exclude"`      // the declared exclude rules
+	IncludeTotal int      `json:"includeTotal"` // how many include rules the declaration has, of which Include lists the first ones
+	ExcludeTotal int      `json:"excludeTotal"` // likewise for exclude
+	Tier         string   `json:"tier"`         // the effective tier: owner.TierIsolated or owner.TierCoLocated
 }
 
 // summary maps the inputs to the values the renderer takes.
@@ -81,7 +82,8 @@ func (s bootstrapSummaryInputs) summary() (commandtext.Summary, error) {
 		return commandtext.Summary{}, fmt.Errorf("unknown tier %q", s.Tier)
 	}
 	return commandtext.Summary{Proposal: s.Proposal, Revision: s.Revision, Origin: s.Origin, Branch: s.Branch, Protected: s.Protected,
-		Paths: s.Paths, Include: s.Include, Exclude: s.Exclude, Tier: tier}, nil
+		Paths: s.Paths, Include: s.Include, Exclude: s.Exclude,
+		IncludeTotal: s.IncludeTotal, ExcludeTotal: s.ExcludeTotal, Tier: tier}, nil
 }
 
 // bootstrapPromotedPayload is the payload of bootstrap-promoted:<repository id>:P<n>-R1.
@@ -91,17 +93,20 @@ type bootstrapPromotedPayload struct {
 	Version   string `json:"version"`   // V1
 }
 
-// cutBytes shortens s to at most limit bytes on a UTF-8 boundary. Bytes that are not UTF-8 have no boundary: the cut
-// backs up over at most one rune's worth, so a string of stray bytes is never cut to nothing.
+// cutMarker ends an entry that cutBytes shortened, so a cut path or rule never looks complete.
+const cutMarker = "…"
+
+// cutBytes shortens s to at most limit bytes, marker included, on a UTF-8 boundary. Bytes that are not UTF-8 have no
+// boundary: the cut backs up over at most one rune's worth, so a string of stray bytes is never cut to nothing.
 func cutBytes(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	cut := limit
+	cut := limit - len(cutMarker)
 	for back := 0; back < utf8.UTFMax-1 && !utf8.RuneStart(s[cut]); back++ {
 		cut--
 	}
-	return s[:cut]
+	return s[:cut] + cutMarker
 }
 
 // boundedText returns at most maxSummaryRun entries of list, each cut to maxSummaryText bytes; never nil, so the
@@ -116,6 +121,7 @@ func boundedText(list []string) []string {
 
 // newSummaryMessage builds the bootstrap-summary message of the proposal in inputs, bounding its repository text.
 func newSummaryMessage(target commentTarget, inputs bootstrapSummaryInputs) (governance.OutboxMessage, error) {
+	inputs.IncludeTotal, inputs.ExcludeTotal = len(inputs.Include), len(inputs.Exclude) // what the owner is told is left out
 	inputs.Branch = cutBytes(inputs.Branch, maxSummaryText)
 	inputs.Paths, inputs.Include, inputs.Exclude = boundedText(inputs.Paths), boundedText(inputs.Include), boundedText(inputs.Exclude)
 	payload, err := json.Marshal(bootstrapSummaryPayload{commentTarget: target, Summary: inputs})
@@ -154,6 +160,16 @@ var (
 	// errRepositoryChanged marks a repository name that no longer identifies the enrolled repository.
 	errRepositoryChanged = errors.New("repository is not the enrolled one")
 )
+
+// opaque is an error whose text is fixed. A run error ends in river_job.errors, and what a lower layer says may hold
+// a path or a branch name the repository chose; Unwrap keeps errors.Is and errors.As working on the cause.
+type opaque struct {
+	what  string
+	cause error
+}
+
+func (e *opaque) Error() string { return e.what + " failed" }
+func (e *opaque) Unwrap() error { return e.cause }
 
 // githubRead marks err as a failed GitHub read, unless it already says that the source itself is invalid.
 func githubRead(err error) error {
@@ -266,7 +282,7 @@ func (b *bootstrapJob) advance(ctx context.Context, enrollment owner.State, p ow
 			return err
 		}
 		if err := b.suites.CreateSuite(ctx, project, defaultSuite, enrollment.PolicyRevision, contract.IntegrationTargetID(targetPrefix+repo.DefaultBranch)); err != nil {
-			return fmt.Errorf("create the suite: %w", err)
+			return &opaque{what: "create the suite", cause: err}
 		}
 		state, err = b.baseline(ctx, project)
 		if err != nil {
@@ -395,7 +411,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	branch, ok := strings.CutPrefix(string(s.target), targetPrefix)
 	if !ok {
-		return fmt.Errorf("the suite targets %q, which is not a branch", s.target)
+		return errors.New("the suite does not target a branch")
 	}
 	if _, err := b.repository(ctx, p); err != nil {
 		return err
@@ -411,7 +427,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	tree := &githubTree{tree: read, files: map[string][]byte{}}
 	inv, err := inventory.Build(ctx, tree)
 	if err != nil {
-		return fmt.Errorf("inventory of the default branch: %w", err)
+		return &opaque{what: "inventory of the default branch", cause: err}
 	}
 	tier, _ := effectiveTier(b.tier, enrollment, true)
 	number, pull := s.latest+1, open[0]
@@ -435,7 +451,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	result, err := governance.ProposeBaseline(ctx, b.suites, b.content, request)
 	if err != nil {
-		return fmt.Errorf("propose the baseline: %w", err)
+		return &opaque{what: "propose the baseline", cause: err}
 	}
 	b.logger.InfoContext(ctx, "github baseline proposed", "repo", p.Repo, "proposal", number, "pull", pull, "committed", result.Revise.Committed)
 	return nil
@@ -466,7 +482,7 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 		}
 	case invalidSource(err): // the commit cannot be read as a valid tree: Unavailable
 	default: // a failed read says nothing about the commit, and a recorded outcome is immutable: wait for the next run
-		return err
+		return &opaque{what: "read the origin", cause: err}
 	}
 	evidence, err := contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), s.origin, s.binding, outcome)
 	if err != nil {

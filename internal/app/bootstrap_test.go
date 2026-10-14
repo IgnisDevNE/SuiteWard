@@ -1098,7 +1098,7 @@ func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testin
 				t.Fatalf("totals are %d and %d, want the 40 rules each list had", decoded.Summary.IncludeTotal, decoded.Summary.ExcludeTotal)
 			}
 			for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
-				if !strings.HasSuffix(entry, "2026") {
+				if !strings.HasSuffix(entry, "…") {
 					t.Fatalf("a cut entry has no marker: %q", entry)
 				}
 			}

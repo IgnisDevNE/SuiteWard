@@ -73,8 +73,10 @@ const (
 
 // Summary is what a bootstrap summary states (ADR 0010). Paths holds at most
 // 20 of the Protected files; Origin is the 40-hex origin commit SHA. Include
-// and Exclude may be longer: the body lists the first 20 of each and counts the
-// rest.
+// and Exclude list at most 20 rules each and may be longer; IncludeTotal and
+// ExcludeTotal are how many rules there are (like Protected for Paths), and the
+// body counts the unlisted ones from them. A total below the list, or zero, is
+// taken as the length of the list.
 type Summary struct {
 	Proposal                   int
 	Revision                   int
@@ -276,7 +278,7 @@ func BootstrapSummary(s Summary) string {
 			count + "\n" +
 			"- Installation tier: `" + tier + "`",
 	}
-	parts = append(parts, listing("Inventory", s.Paths), listing("Scope include rules", s.Include), listing("Scope exclude rules", s.Exclude))
+	parts = append(parts, listing("Inventory", s.Paths, len(s.Paths)), listing("Scope include rules", s.Include, s.IncludeTotal), listing("Scope exclude rules", s.Exclude, s.ExcludeTotal))
 	if s.Tier == CoLocated {
 		parts = append(parts, "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: "+
 			"the agent can reach SuiteWard's credentials, database and confirmation secret.")
@@ -289,14 +291,18 @@ func BootstrapSummary(s Summary) string {
 	return paragraphs(parts...)
 }
 
-// listing shows at most maxListed items and says how many it left out.
-func listing(title string, items []string) string {
-	if len(items) == 0 {
+// listing shows at most maxListed items and says how many of the total it left
+// out; a total below the items is the number of items.
+func listing(title string, items []string, total int) string {
+	total = max(total, len(items))
+	if total == 0 {
 		return title + ": none."
 	}
-	if unlisted := len(items) - maxListed; unlisted > 0 {
+	if len(items) > maxListed {
 		items = items[:maxListed]
-		title += fmt.Sprintf(" (%d listed; %d more are not listed)", maxListed, unlisted)
+	}
+	if unlisted := total - len(items); unlisted > 0 {
+		title += fmt.Sprintf(" (%d listed; %d more are not listed)", len(items), unlisted)
 	}
 	shown := make([]string, len(items))
 	for i, item := range items {

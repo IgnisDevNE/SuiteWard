@@ -64,7 +64,7 @@ Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none r
 | --- | --- |
 | `GET /healthz` | Liveness: 200 `{"status":"ok"}` while the process serves. |
 | `GET /readyz` | Readiness: 200 when the database answers, the schema version equals `SupportedVersion` and the service is not shutting down; 503 otherwise. It does not query River: River starts before the listener opens, the process never cancels the context it started with, and only the shutdown stops it, so River runs while this answers 200. During shutdown the 503 is best effort: the listener closes at once and `net/http` drops a request it reads after the drain began, so only a request in flight at that instant sees it. Body `{"status":"ready","schemaVersion":N}` or `{"status":"unavailable","reason":"..."}`. |
-| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap` and `github_commands`. |
+| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. |
 
 ### Command and bootstrap jobs (M1.6a)
 
@@ -128,6 +128,35 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
 - Before posting, it lists the PR's comments by the bot and skips the post when one already carries the same marker. Delivery is at least once (persistence contract), so posting is idempotent by marker.
 - The instance id keeps two installations that post as the same App from mistaking each other's comments for their own.
 - The job counts in `/status` exclude `github_bootstrap` and `github_commands`.
+
+### Check job and publisher (M1.6b)
+
+**`github_checks`**
+- Periodic every 30 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished; registered only with the GitHub settings; excluded from the `/status` job counts. It is the only writer of check states (D-CHECKS).
+- For each enrolled and configured repository, for each open PR in the synchronization store (`NotOpenSince` zero):
+  - **No Suite or no canonical:** `in_progress`, reason `bootstrap-pending`.
+  - **Otherwise** compare with `checks.Store.Current`:
+    - same head, same canonical, same Suite revision and same latest owner command: nothing to do;
+    - new head or new canonical: read the head tree (`Reader.Tree`) and call `governance.AssessHead`;
+    - same head and canonical, but another Suite revision or owner command: `governance.HeadVerdict` (no tree read), or keep a stored `unchanged` result.
+  - **State.**
+    - `success`: the head is unchanged against the canonical (reason `unchanged`), or ready (reason `ready`).
+    - `in_progress`: reasons `approval-missing`, `canonical-changed`, `policy-changed`, `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated).
+    - `failure`: reasons `invalid-source`, `integrity-failed`, `owner-command-rejected`.
+  - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`.
+  - **Transient read failure** (GitHub, tree): when the stored head equals the open head, keep the record. When the open head is new (no record, or the record holds another head), publish `in_progress`, reason `assessment-pending`, for the new head, so the new SHA never stays without a check.
+  - **Lost publication.** When the current generation's message ended `failed` in the outbox, `Publish` re-sends the same state under the next generation.
+  - Publish through `checks.Store.Publish` with a `github_check` message.
+- A store error fails the run after every repository was tried. The last error per repository is kept in memory and shown in `/status` (`github[].checks`).
+
+**Outbox kind `github_check`**
+- Key `check:<repository id>:<pull>:<generation>`. A system row (no project or Suite).
+- Payload (explicit tags, strict decoding): `repositoryId`, `repo`, `pull`, `headSha`, `generation`, `state`, `reason`, `reference` (optional), `tier` (effective), `version` (the canonical version, optional).
+- The publisher:
+  - reads `checks.Store.Current`; a record whose generation differs from the payload's means the message is stale, and it is dropped (success, nothing posted);
+  - reads back the head's check runs named `SuiteWard / Contract` from this App; one whose `external_id` is `suiteward:<instance id>:<key>` means it was already posted;
+  - otherwise posts the run: `success` and `failure` as `completed` with that conclusion, `in_progress` as `in_progress`; the output title and summary come from the command-text package (bounded; the tier; the copyable `/suiteward approve <ref> <code>` when approval is missing; never a claim that tests ran);
+  - logs a 422 for a head that no longer exists and treats it as delivered.
 
 ### Protection verification job (M1.5)
 

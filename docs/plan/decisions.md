@@ -139,6 +139,7 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 2. When that repository has an open PR, SuiteWard:
    - pins the default branch head as the origin;
    - proposes its protected inventory as `P1-R1`, carried by the lowest-numbered open PR;
+   - proposes nothing while that inventory is empty: the project keeps awaiting its initial contract and never gets an empty baseline (ADR 0010). ADR 0010's other path, bootstrapping from the first PR that carries tests with a readiness check, is not in M1.6a; it is listed for M1.6b;
    - posts the bootstrap summary in that PR, with the copyable `/suiteward approve P1-R1 <code>`.
 3. After the owner's valid approval, SuiteWard re-reads the origin tree, records the integrity assessment for the origin, and bootstraps the first canonical `V1` without waiting for the PR to merge.
 4. If the default branch has moved meanwhile, the origin stays pinned. It is not silently moved (ADR 0010).

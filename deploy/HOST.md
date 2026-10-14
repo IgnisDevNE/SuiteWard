@@ -326,6 +326,15 @@ Without GitHub:
 1. Add `phase/M1.6a` to the deployment branches of the `remote-poc` environment (GitHub, repository Settings, Environments). Without it the `promote` job of the `Deploy` run is refused.
 2. Close PR #8 (left open by the P0 measurement) before opening the verification PR. The bootstrap proposes the baseline in the lowest-numbered open PR, so #8 would otherwise carry the summary.
 3. Keep your authenticator app at hand. It holds one entry per target (host and, later, co-located); use the entry that belongs to the target under test.
+4. The `main` branch of the test repository needs a `.suiteward.yml` that covers its test files, because the bootstrap never proposes an empty baseline (ADR 0010). For `SuiteWardQ` the verified content is exactly:
+
+   ```
+   version: 1
+   include:
+     - tests/**
+   ```
+
+   The ruleset blocks pushing it, so add it with the ruleset temporarily disabled and re-enable it afterwards. Before the scenario, `/status` must show `protection.result` `enforced` again; the check runs every 15 minutes.
 
 ### 6b.3 Deploy on the host
 
@@ -384,9 +393,10 @@ A target that has bootstrapped keeps its Suite: it posts no new summary, so repe
 ### 6b.6 Troubleshooting
 
 - **No summary:** there is no open PR, or the Suite already has a canonical version (it is bootstrapped). A summary also needs a completed enrollment (`/status` shows `owner`).
+- **No bootstrap summary while a PR is open:** the default branch has no protected files (the service log says `awaiting an initial contract`). Add `.suiteward.yml` with include rules, see 6b.2.
 - **The carrier PR was closed before you approved:** the bootstrap moves to a new proposal on the lowest-numbered open PR, `P2-R1`. Approve the reference in the new summary.
 - **A command is never answered:** a repository has never synchronized, so the watermark has no horizon. Read `github` in `/status` (`lastError`, `waitUntil`); the command waits behind it and is processed once it clears. Commands are processed one at a time across all repositories, in comment order.
-  If every repository in `/status` shows a recent `lastSuccess` and a command still gets no acknowledgment, the repository list changed after setup: an enrolled repository that is no longer configured (or was renamed) never synchronizes, and `/status` does not list it. The service log shows `github commands wait: an enrolled repository has not synchronized yet` with its name. Re-run setup after changing the repository list.
+  If every repository in `/status` shows a recent `lastSuccess` and a command still gets no acknowledgment, the repository list changed after setup: an enrolled repository that is no longer configured (or was renamed) never synchronizes again, and `/status` does not list it. Its old `lastSuccess` stays behind as the horizon, so commands wait behind it and the service log shows no warning (the `has not synchronized yet` warning appears only for a repository that never synchronized). Re-run setup after changing the repository list.
 - **An entry in `outbox.failed`:** a comment could not be posted. Read the service journal (`journalctl --user -u suiteward.service -n 100 --no-pager`; lines carry no GitHub text or secret) and report the key it names.
 - **An acknowledgment says the code was not accepted:** the clock. The code is checked at the comment's time with a tolerance of one 30-second step either side; check the authenticator's time sync. Also check that you used the entry of this target, not the other one.
 - **Two acknowledgments for one command, or an unexpected invalid-code:** two instances watch the repository. Stop one (6b.1).

@@ -888,3 +888,28 @@ func TestBootstrapSummaryShortensLongEntries(t *testing.T) {
 		t.Error("shortening split a UTF-8 sequence")
 	}
 }
+
+func TestBootstrapSummaryCountsTheRulesTheCallerDidNotCarry(t *testing.T) {
+	rules := func(prefix string, n int) []string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = prefix + strconv.Itoa(i) + "/**"
+		}
+		return items
+	}
+	s := summary(3, pathList(3), commandtext.Isolated)
+	s.Include, s.IncludeTotal = rules("inc", 20), 25
+	s.Exclude, s.ExcludeTotal = rules("exc", 20), 21
+	body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	for _, w := range []string{"Scope include rules (20 listed; 5 more are not listed)", "Scope exclude rules (20 listed; 1 more are not listed)"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	// A total equal to what is carried, or none, adds nothing.
+	s.IncludeTotal, s.ExcludeTotal = 20, 0
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if strings.Contains(body, "not listed") {
+		t.Errorf("every rule is listed, yet the body says some are not:\n%s", body)
+	}
+}

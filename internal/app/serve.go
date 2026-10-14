@@ -101,6 +101,8 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		riverConfig.ProtectionCheck = check.run
 		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
 		riverConfig.Bootstrap = bootstrap.run
+		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store}
+		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish}
 		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids}
 		backend.repos = gh.repos
 		backend.ids = ids

@@ -88,7 +88,9 @@ func lastErrorText(state githubsync.RepositoryState) string {
 // githubSync is the GitHub side of the service, composed only when the GitHub settings are set.
 type githubSync struct {
 	reconciler *githubsync.Reconciler
-	readers    setupReaders // shared with the protection check: one budget for every token
+	readers    setupReaders   // shared with the protection check: one budget for every token
+	writer     *github.Writer // posts the comments, with the comment token
+	bot        *botAccount    // SuiteWard's own account id, shared by the comment publisher and the command job
 	appID      int64
 	repos      []string
 	jobTimeout time.Duration
@@ -101,6 +103,8 @@ var (
 	syncPermissions = map[string]string{"metadata": "read", "pull_requests": "read", "contents": "read"}
 	// protectionPermissions is the map of protection verification.
 	protectionPermissions = map[string]string{"metadata": "read", "administration": "read"}
+	// commentPermissions is the map of the comment publisher, the only write (the App's Pull requests: write).
+	commentPermissions = map[string]string{"metadata": "read", "pull_requests": "write"}
 )
 
 // githubAccess is what every token of the GitHub settings shares: the App, the
@@ -129,8 +133,8 @@ func newGitHubAccess(g config.GitHub) (githubAccess, error) {
 	return githubAccess{settings: g, app: app, names: names, httpClient: &http.Client{Timeout: githubTimeout}, budget: budget}, nil
 }
 
-// reader builds the reader of a token narrowed to permissions.
-func (a githubAccess) reader(permissions map[string]string) (*github.Reader, error) {
+// client builds the REST client of a token narrowed to permissions.
+func (a githubAccess) client(permissions map[string]string) (*rest.Client, error) {
 	installation, err := a.app.Installation(a.settings.InstallationID, a.names, permissions, a.httpClient, a.settings.APIURL)
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub installation: %w", err)
@@ -145,11 +149,33 @@ func (a githubAccess) reader(permissions map[string]string) (*github.Reader, err
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub client: %w", err)
 	}
+	return client, nil
+}
+
+// reader builds the reader of a token narrowed to permissions.
+func (a githubAccess) reader(permissions map[string]string) (*github.Reader, error) {
+	client, err := a.client(permissions)
+	if err != nil {
+		return nil, err
+	}
 	reader, err := github.NewReader(client)
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
 	return reader, nil
+}
+
+// writer builds the comment writer of a token narrowed to permissions.
+func (a githubAccess) writer(permissions map[string]string) (*github.Writer, error) {
+	client, err := a.client(permissions)
+	if err != nil {
+		return nil, err
+	}
+	writer, err := github.NewWriter(client)
+	if err != nil {
+		return nil, fmt.Errorf("compose the GitHub writer: %w", err)
+	}
+	return writer, nil
 }
 
 // composeGitHub builds the App installation, the REST clients with the
@@ -158,15 +184,33 @@ func (a githubAccess) reader(permissions map[string]string) (*github.Reader, err
 // metadata, pull requests and contents permissions at read level; the
 // protection check uses the other reader (Metadata and Administration read).
 func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
-	readers, err := composeSetupReaders(g) // one access, so one budget, for the synchronization and the protection check
+	access, err := newGitHubAccess(g) // one access, so one budget, for every token
 	if err != nil {
 		return nil, err
 	}
+	read, err := access.reader(syncPermissions)
+	if err != nil {
+		return nil, err
+	}
+	protect, err := access.reader(protectionPermissions)
+	if err != nil {
+		return nil, err
+	}
+	readers := setupReaders{read: read, protect: protect}
+	writer, err := access.writer(commentPermissions)
+	if err != nil {
+		return nil, err
+	}
+	// The bot's account id is read on first use, so startup does not depend on GitHub being reachable.
+	bot := newBotAccount(func(ctx context.Context) (int64, error) {
+		identity, err := read.BotIdentity(ctx, access.app, access.httpClient, access.settings.APIURL)
+		return identity.ID, err
+	})
 	reconciler, err := githubsync.NewReconciler(githubReader{readers.read}, store, time.Now, g.InstallationID)
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, appID: g.AppID}, nil
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, bot: bot, appID: g.AppID}, nil
 }
 
 // tick is the github_sync_tick job: one cycle of every configured repository.

@@ -5,19 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance/governancetest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -717,3 +722,78 @@ func TestAcknowledgmentConstructors(t *testing.T) {
 
 // second keeps the error of a constructor call, so a table can list the calls that must fail.
 func second(_ governance.OutboxMessage, err error) error { return err }
+
+// TestComposeGitHubBuildsTheCommentWriterAndALazyBot checks the composition against a GitHub that records what it
+// is asked: nothing is requested at compose time, the bot's id is read once on first use with the read token,
+// and the comment is posted with a token that requests Pull requests: write.
+func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
+	var mu sync.Mutex
+	var requests []string
+	var tokenMaps []map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == fmt.Sprintf("/app/installations/%d/access_tokens", setupInstallID):
+			var body struct {
+				Permissions map[string]string `json:"permissions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad body", http.StatusBadRequest)
+				return
+			}
+			tokenMaps = append(tokenMaps, body.Permissions)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "t", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": body.Permissions})
+		case r.URL.Path == "/app":
+			_, _ = fmt.Fprint(w, `{"slug":"suiteward"}`)
+		case r.URL.Path == "/users/suiteward[bot]":
+			_, _ = fmt.Fprintf(w, `{"login":"suiteward[bot]","id":%d,"type":"Bot"}`, cmtBotID)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widgets/issues/7/comments":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"id":1}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	settings := config.GitHub{AppID: setupAppID, AppKey: config.Secret(setupKey()), InstallationID: setupInstallID, Repositories: []string{"acme/widgets"}, APIURL: server.URL}
+
+	gh, err := composeGitHub(settings, time.Minute, githubsynctest.NewMemory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	composed := len(requests)
+	mu.Unlock()
+	if composed != 0 {
+		t.Fatalf("composing the GitHub side made %d requests, want none", composed)
+	}
+	for range 2 {
+		if id, err := gh.bot.ID(t.Context()); err != nil || id != cmtBotID {
+			t.Fatalf("bot id = %d, %v; want %d", id, err, cmtBotID)
+		}
+	}
+	if _, err := gh.writer.PostComment(t.Context(), "acme/widgets", 7, "hello"); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if got := strings.Count(strings.Join(requests, "\n"), "GET /users/suiteward[bot]"); got != 1 {
+		t.Fatalf("the bot account was read %d times, want 1", got)
+	}
+	var sawWrite bool
+	for _, m := range tokenMaps {
+		if m["pull_requests"] == "write" {
+			sawWrite = true
+			if len(m) != 2 || m["metadata"] != "read" {
+				t.Fatalf("the comment token asked for %v, want metadata read and pull_requests write", m)
+			}
+		}
+	}
+	if !sawWrite {
+		t.Fatalf("no token asked for pull_requests write: %v", tokenMaps)
+	}
+}

@@ -329,8 +329,9 @@ Without GitHub:
 
 ### 6b.3 Deploy on the host
 
-1. Push to `phase/M1.6a`. The `Deploy` run builds the image; approve its `promote` job in the `remote-poc` environment (section 0). That moves `deploy` to the digest that run built.
-2. On the host, as `suiteward` (section 1), pull the image and restart. The new image applies migration 00013 at start:
+1. **Before the deploy (done 2026-10-14):** on the running M1.5 image, `/status` showed no `lastError` in `github` and `outbox.failed` 0; the owner also saw both repositories synchronizing, with discarded 0. Repeat the check (`curl -s http://127.0.0.1:8081/status`) if the host was restarted since.
+2. Push to `phase/M1.6a`. Approve the `promote` job of the `Deploy` run of the phase head commit (section 0), because older queued runs may exist. That moves `deploy` to the digest that run built.
+3. On the host, as `suiteward` (section 1), pull the image and restart. The new image applies migration 00013 at start:
 
    ```
    podman pull ghcr.io/ignisdevne/suiteward:deploy
@@ -339,24 +340,24 @@ Without GitHub:
    ```
 
    `<commit>` is the commit the `Deploy` run built. The smoke test must pass.
-3. Before verifying, check `/status` (section 7, or on the host):
+4. After the deploy, before verifying, check `/status` (section 7, or on the host):
 
    ```
    curl -s http://127.0.0.1:8081/status
    ```
 
-   Confirm `schemaVersion` is 13, no entry of `github` shows `lastError`, and `outbox.failed` is 0. P0 proved that the App's write permission still mints the read tokens, but the host's own synchronization was not re-checked with it. If any of these fails, stop and report; do not start the scenario.
+   Confirm `schemaVersion` is 13, no entry of `github` shows `lastError`, and `outbox.failed` is 0. If any of these fails, stop and report; do not start the scenario.
 
 ### 6b.4 The owner scenario, per target
 
 Run it on `SuiteWardQ`, on a fresh PR, with the target under test as the only watcher. The host first, then the co-located stack (6b.5).
 
 1. **Open a fresh PR** on `SuiteWardQ` (any change; it need not touch a protected file). It must be the lowest-numbered open PR, so close any other open PR first (6b.2 step 2).
-2. **The bootstrap summary.** Within about a minute (the bootstrap job runs every 60 s; allow a few minutes after a restart) SuiteWard comments on that PR: "SuiteWard bootstrap proposal P1-R1". It shows the pinned origin commit and branch, the number of protected files, the inventory and scope rules (at most 20 of each are listed), the installation tier (`isolated` on the host, `co-located` locally, with a warning about reduced assurance), and a copyable `/suiteward approve P1-R1 <code>`. Review it. Nothing is canonical yet.
+2. **The bootstrap summary.** It appears up to about 2 to 3 minutes after the PR is opened: the bootstrap reads the PRs of the last 60 s synchronization, then runs every 60 s, and the outbox relay posts the comment. SuiteWard comments on that PR: "SuiteWard bootstrap proposal P1-R1". It shows the pinned origin commit and branch, the number of protected files, the inventory and scope rules (at most 20 of each are listed), the installation tier (`isolated` on the host, `co-located` locally, with a warning about reduced assurance), and a copyable `/suiteward approve P1-R1 <code>`. Review it. Nothing is canonical yet.
 3. **Approve.** Comment `/suiteward approve P1-R1 <6-digit code>` with the current code of this target's authenticator entry. The command waits for the synchronization watermark (every repository must complete a synchronization cycle after your comment), about 2 to 3 minutes. Expect, in this order:
-   - an approval acknowledgment ("Approval recorded for P1-R1");
-   - then a "Bootstrap complete" comment: `P1-R1` is canonical version `V1`.
-4. **Replay.** Comment the same command with the same code again, within about a minute of the first (a code is accepted only within one 30-second step either side of the comment's time). Expect an acknowledgment that the code was already used, and no change. A later retry fails as invalid-code instead, which is also correct.
+   - an approval acknowledgment ("Approval recorded for P1-R1"), in about 2 to 3 minutes;
+   - then a "Bootstrap complete" comment, up to a minute later: `P1-R1` is canonical version `V1`.
+4. **Replay.** Comment the same command with the same code again, within 30 seconds of the first; a minute at best (a code is accepted only within one 30-second step either side of the comment's time). Expect an acknowledgment that the code was already used, and no change. A later retry fails as invalid-code instead, which is also correct.
 5. **Revoke after promotion.** Wait for the next code, then comment `/suiteward revoke P1-R1 <new code>`. Expect an acknowledgment that `P1-R1` is already promoted and the canonical version is unchanged; a revocation never undoes a promotion.
 6. **Another account (optional).** Comment `/suiteward approve P1-R1 123456` from an account that is not the owner. Expect no reply: it is only recorded in the ledger.
 7. **An edited command.** Comment `/suiteward revoke P1-R1 123456` (a made-up code) and edit the comment within seconds, before the next synchronization reads it. Expect an acknowledgment that it was edited before it was read and not processed. If you instead see an invalid-code acknowledgment, synchronization read it first; try again with a faster edit. The made-up code uses no step.
@@ -375,6 +376,8 @@ The stack was purged after M1.5, so it starts from nothing.
 4. **Close the PR**, then put the stack back without GitHub (`./deploy/local.ps1`).
 5. **Restore the host** ("Without GitHub" in 6b.1), only after steps 3 and 4: the host reads comments of open PRs created after its own enrollment, and would answer the co-located commands with invalid-code acknowledgments.
 6. **Check the host again:** `/status` shows no `lastError` and `outbox.failed` 0 after a few minutes.
+
+Do not reboot the host during this section: a stop is not persistent across a reboot, so the host would come back watching with GitHub.
 
 A target that has bootstrapped keeps its Suite: it posts no new summary, so repeating the scenario needs a fresh database.
 

@@ -429,6 +429,10 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	if err != nil {
 		return &opaque{what: "inventory of the default branch", cause: err}
 	}
+	if len(inv.Manifest().Entries()) == 0 { // ADR 0010: never manufacture an empty canonical suite; Info because it repeats every run
+		b.logger.InfoContext(ctx, "github bootstrap awaiting an initial contract: the default branch has no protected files", "repo", p.Repo)
+		return nil
+	}
 	tier, _ := effectiveTier(b.tier, enrollment, true)
 	number, pull := s.latest+1, open[0]
 	inputs := bootstrapSummaryInputs{Proposal: number, Revision: 1, Origin: head, Branch: branch, Protected: len(inv.Manifest().Entries()), Tier: tier}

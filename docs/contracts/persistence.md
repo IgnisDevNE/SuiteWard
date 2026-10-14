@@ -55,9 +55,10 @@ type Tx interface {
 	Outbox(context.Context, OutboxMessage) error
 }
 
-// Seeder writes trusted initial state. It is the only writer of policies,
-// assessments and historical versions until the GitHub-facing phases add
-// their own write paths; proposals also have AppendProposalRevision (M1.3).
+// Seeder writes trusted initial state: policies, assessments and historical
+// versions. It is no longer their only writer: the owner enrollment writes
+// policies (Enroll), CreateSuite creates Suites and RecordAssessment records
+// assessments (M1.6a); proposals also have AppendProposalRevision (M1.3).
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }
@@ -230,7 +231,7 @@ The conformance suite gains: rollback removes the job and the outbox row togethe
 
 ## Proposal revisions (M1.3; normative)
 
-The first write path for proposals outside `Seed`. Declared in `internal/application/governance/uow.go`; the `Seeder` comment then says it is the only writer of policies, assessments and historical versions.
+The first write path for proposals outside `Seed`. Declared in `internal/application/governance/uow.go`; the `Seeder` comment then says that it writes trusted initial state, and no longer that it is the only writer of policies and assessments (enrollment, `CreateSuite` and `RecordAssessment` write them too, M1.6a).
 
 ```go
 // ProposalWrite appends one revision to a proposal of the locked Suite. When
@@ -297,7 +298,7 @@ Use case `ProposeBaseline(ctx, UnitOfWork, ContentWriter, BaselineRequest) (Base
 
 There are no new `Tx` methods and no migration. The first canonical is then created by `Bootstrap` with `Integration` of kind existing baseline and `Proposed = BaselineResult.Contract`, after approval and integrity assessment as before.
 
-Tests: the full path on the in-memory fake (tree, `ProposeBaseline`, approval through `ProcessConsent`, a seeded assessment, `Bootstrap`, a canonical whose manifest equals the inventory's); a repeated call with the same tree writes nothing; a changed protected file creates a new revision; an existing canonical is rejected; a failing or mismatching `Put` writes nothing. On PostgreSQL with the filesystem store: the inventory's revision and assessment are seeded (assessments have no write path until M1.6), `ProposeBaseline` on the same tree returns the seeded reference with `Committed` false and still stores the bytes, and `Bootstrap` succeeds, so `RecordPromotion` verifies the bytes `ProposeBaseline` wrote.
+Tests: the full path on the in-memory fake (tree, `ProposeBaseline`, approval through `ProcessConsent`, a seeded assessment, `Bootstrap`, a canonical whose manifest equals the inventory's); a repeated call with the same tree writes nothing; a changed protected file creates a new revision; an existing canonical is rejected; a failing or mismatching `Put` writes nothing. On PostgreSQL with the filesystem store: the inventory's revision and assessment are seeded (`RecordAssessment` records assessments since M1.6a, but this test seeds its own), `ProposeBaseline` on the same tree returns the seeded reference with `Committed` false and still stores the bytes, and `Bootstrap` succeeds, so `RecordPromotion` verifies the bytes `ProposeBaseline` wrote.
 
 ## GitHub observations (M1.4; normative)
 

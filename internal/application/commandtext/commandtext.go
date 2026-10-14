@@ -10,9 +10,10 @@
 //
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
-// InvalidCode, ReplayedCode, NoSuite, EditedFirst or BootstrapPromoted) and
-// BootstrapSummary renders a Summary. Neither takes any comment text, so a
-// body can never echo a comment or a code. Neither adds the marker: the
+// InvalidCode, ReplayedCode, NoSuite, EditedFirst, BootstrapPromoted or
+// RevokedAfterPromotion) and BootstrapSummary renders a Summary (at most 20
+// entries per listing, each shortened to 300 bytes). Neither takes any comment
+// text, so a body can never echo a comment or a code. Neither adds the marker: the
 // publisher appends Marker(instance, key), and HasMarker recognizes it.
 //
 // Values that callers take from storage (references, versions, logins, the

@@ -44,6 +44,9 @@ const (
 //   - Rejection is set only for Rejected, Malformed only for MalformedCommand,
 //     Version (V<n>) only for BootstrapPromoted.
 //   - Owner is the owner's GitHub login.
+//   - Source is the id of the comment that carried the command; the body links
+//     to it. It is required, except for BootstrapPromoted, which a later job
+//     posts and which must leave it zero.
 //   - Eligible is the revision's promotion eligibility after this outcome. It
 //     is rendered for Approved, Revoked, NoActiveApproval and Rejected, and must
 //     be false for the other outcomes, which never evaluate it.
@@ -68,7 +71,9 @@ const (
 )
 
 // Summary is what a bootstrap summary states (ADR 0010). Paths holds at most
-// 20 of the Protected files; Origin is the 40-hex origin commit SHA.
+// 20 of the Protected files; Origin is the 40-hex origin commit SHA. Include
+// and Exclude may be longer: the body lists the first 20 of each and counts the
+// rest.
 type Summary struct {
 	Proposal  int
 	Revision  int
@@ -85,6 +90,15 @@ type Summary struct {
 // states the outcome, the reference and the next action (ADR 0011).
 func Acknowledge(a Ack) string {
 	checkAck(a)
+	body := acknowledgment(a)
+	if a.Source == 0 {
+		return body
+	}
+	// A same-page anchor needs no host name: the publisher posts on the same PR.
+	return body + "\nIn reply to [your command](#issuecomment-" + strconv.FormatInt(a.Source, 10) + ").\n"
+}
+
+func acknowledgment(a Ack) string {
 	ref, who := "", "@"+a.Owner
 	if a.Outcome != MalformedCommand && a.Outcome != EditedFirst {
 		ref = Reference(a.Proposal, a.Revision)
@@ -114,6 +128,13 @@ func Acknowledge(a Ack) string {
 			"To approve it again, comment:",
 			copyable("/suiteward approve "+ref+" <code>"),
 		)
+	case RevokedAfterPromotion:
+		return paragraphs(
+			"Revocation recorded for "+ref+" by "+who+".\n"+
+				ref+" is already promoted, so the canonical version remains unchanged; your revocation does not undo the promotion.",
+			"Reversing it needs a separately approved rollback (corrective) proposal: a new PR with its own exact approval, "+
+				"integration and promotion of a new version, with the history kept.",
+		)
 	case NoActiveApproval:
 		return paragraphs("No active approval by " + who + " for " + ref + " to withdraw; nothing changed.\n" + eligibility + "\nNo action is needed.")
 	case Rejected:
@@ -142,12 +163,16 @@ func Acknowledge(a Ack) string {
 	panic(fmt.Sprintf("commandtext: unknown outcome %d", a.Outcome))
 }
 
-var loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+// The underscore admits Enterprise Managed User logins such as octocat_acme.
+var loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$`)
 
 // checkAck panics when the fields do not fit the outcome.
 func checkAck(a Ack) {
 	if !loginPattern.MatchString(a.Owner) {
 		panic(fmt.Sprintf("commandtext: owner login %q is not a GitHub login", a.Owner))
+	}
+	if (a.Outcome == BootstrapPromoted) != (a.Source == 0) || a.Source < 0 {
+		panic(fmt.Sprintf("commandtext: source comment %d does not fit outcome %d", a.Source, a.Outcome))
 	}
 	noReference := a.Outcome == MalformedCommand || a.Outcome == EditedFirst
 	consent := a.Outcome == Approved || a.Outcome == Revoked || a.Outcome == NoActiveApproval || a.Outcome == Rejected
@@ -220,7 +245,7 @@ func BootstrapSummary(s Summary) string {
 	if s.Branch == "" {
 		panic("commandtext: empty default branch")
 	}
-	if len(s.Paths) > 20 || s.Protected < len(s.Paths) {
+	if len(s.Paths) > maxListed || s.Protected < len(s.Paths) {
 		panic(fmt.Sprintf("commandtext: %d paths for %d protected files", len(s.Paths), s.Protected))
 	}
 	var tier string
@@ -256,9 +281,14 @@ func BootstrapSummary(s Summary) string {
 	return paragraphs(parts...)
 }
 
+// listing shows at most maxListed items and says how many it left out.
 func listing(title string, items []string) string {
 	if len(items) == 0 {
 		return title + ": none."
+	}
+	if unlisted := len(items) - maxListed; unlisted > 0 {
+		items = items[:maxListed]
+		title += fmt.Sprintf(" (%d listed; %d more are not listed)", maxListed, unlisted)
 	}
 	shown := make([]string, len(items))
 	for i, item := range items {
@@ -269,13 +299,30 @@ func listing(title string, items []string) string {
 	return title + ":\n\n" + fence + "\n" + content + "\n" + fence
 }
 
-// display returns s as one printable line: as is when every rune is graphic,
-// otherwise Go-quoted so newlines, bidi controls and invalid UTF-8 are visible.
+// maxListed bounds the entries of each listing; maxShown bounds the bytes of
+// one entry. With the fixed text they keep a summary far below GitHub's
+// 65536-character comment limit.
+const (
+	maxListed = 20
+	maxShown  = 300
+)
+
+// display returns s as one printable line of at most maxShown bytes, plus a
+// marker when it was cut: as is when every rune is graphic, otherwise
+// Go-quoted so newlines, bidi controls and invalid UTF-8 are visible. The cut
+// applies to the shown text, which is valid UTF-8, so it never splits a rune.
 func display(s string) string {
-	if utf8.ValidString(s) && strings.IndexFunc(s, func(r rune) bool { return !strconv.IsGraphic(r) }) < 0 {
+	if !utf8.ValidString(s) || strings.IndexFunc(s, func(r rune) bool { return !strconv.IsGraphic(r) }) >= 0 {
+		s = strconv.QuoteToGraphic(s)
+	}
+	if len(s) <= maxShown {
 		return s
 	}
-	return strconv.QuoteToGraphic(s)
+	cut := maxShown
+	for !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "… [shortened]"
 }
 
 func codeSpan(s string) string {
@@ -311,12 +358,13 @@ func paragraphs(parts ...string) string {
 
 var (
 	instancePattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
-	keyPattern      = regexp.MustCompile(`^[a-z][a-z0-9:_-]{0,199}$`)
+	keyPattern      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9:_-]{0,199}$`)
 )
 
 // Marker returns the hidden marker <!-- suiteward:<instance>:<key> -->. The
 // instance is 32 lowercase hex characters and the key matches
-// ^[a-z][a-z0-9:_-]{0,199}$; callers pass stored values, so anything else
+// ^[A-Za-z][A-Za-z0-9:_-]{0,199}$ (the character set cannot close the comment
+// early); callers pass stored values, so anything else
 // panics.
 func Marker(instance, key string) string {
 	if !instancePattern.MatchString(instance) {

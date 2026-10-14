@@ -17,10 +17,10 @@ const (
 func mustPanic(t *testing.T, f func()) {
 	t.Helper()
 	defer func() {
-		r := recover()
-		if r == nil {
+		switch recover() {
+		case nil:
 			t.Error("did not panic")
-		} else if r == "not implemented" {
+		case "not implemented":
 			t.Error("panicked as an unimplemented stub")
 		}
 	}()

@@ -174,7 +174,10 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 	}
 	externalID := "suiteward:" + instance + ":" + key
 	existing, err := p.runs.Runs(ctx, c.Repo, c.HeadSHA, checkName, p.appID)
-	if err != nil {
+	switch {
+	case p.vanished(err, key, c):
+		return nil
+	case err != nil:
 		return githubFailure(githubCheckKind, key, "list the check runs", err)
 	}
 	for _, run := range existing {
@@ -188,11 +191,21 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 	}
 	_, err = p.runs.Post(ctx, c.Repo, run)
 	switch {
-	case errors.Is(err, rest.ErrUnprocessable): // the head no longer exists on GitHub (a force-push): nothing can be posted for it
-		p.logger.Warn("github_check: the head no longer exists on GitHub; the message counts as delivered", "key", key, "repo", c.Repo, "head", c.HeadSHA)
+	case p.vanished(err, key, c):
 		return nil
 	case err != nil:
 		return githubFailure(githubCheckKind, key, "post the check run", err)
 	}
 	return nil
+}
+
+// vanished reports whether err says the head no longer exists on GitHub (a 422 to the readback or to the post,
+// after a force-push): nothing can be posted for it, so the message counts as delivered. It logs the key and the
+// head, never GitHub's text.
+func (p *checkPublisher) vanished(err error, key string, c checkPayload) bool {
+	if !errors.Is(err, rest.ErrUnprocessable) {
+		return false
+	}
+	p.logger.Warn("github_check: the head no longer exists on GitHub; the message counts as delivered", "key", key, "repo", c.Repo, "head", c.HeadSHA)
+	return true
 }

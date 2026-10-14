@@ -294,8 +294,6 @@ curl -s http://127.0.0.1:8081/status
 
 If `tierNote` says to re-run setup, the enrollment and the setting disagree on the tier: run setup again.
 
-**Commands never answered.** If every repository in `/status` shows a recent `lastSuccess` and a command comment still gets no acknowledgment, the repository list probably changed after setup: an enrolled repository that is no longer configured (or was renamed) never synchronizes, and the command job waits for it. The service log then carries `github commands wait: an enrolled repository has not synchronized yet` with that repository's name. Re-run setup after changing the repository list.
-
 **Co-located target (this PC).** The same command through the Podman machine's container, `podman exec -it suiteward /suiteward setup --owner <login> --test-check <owner/name>=<check> ...`, with the same repositories you gave `deploy/local.ps1`. That tier is `co-located` (`deploy/local.ps1` declares it): the agent that works on this PC can run setup too, so SuiteWard reports reduced assurance.
 
 ## 6b. PR commands and bootstrap (M1.6a)
@@ -388,6 +386,7 @@ A target that has bootstrapped keeps its Suite: it posts no new summary, so repe
 - **No summary:** there is no open PR, or the Suite already has a canonical version (it is bootstrapped). A summary also needs a completed enrollment (`/status` shows `owner`).
 - **The carrier PR was closed before you approved:** the bootstrap moves to a new proposal on the lowest-numbered open PR, `P2-R1`. Approve the reference in the new summary.
 - **A command is never answered:** a repository has never synchronized, so the watermark has no horizon. Read `github` in `/status` (`lastError`, `waitUntil`); the command waits behind it and is processed once it clears. Commands are processed one at a time across all repositories, in comment order.
+  If every repository in `/status` shows a recent `lastSuccess` and a command still gets no acknowledgment, the repository list changed after setup: an enrolled repository that is no longer configured (or was renamed) never synchronizes, and `/status` does not list it. The service log shows `github commands wait: an enrolled repository has not synchronized yet` with its name. Re-run setup after changing the repository list.
 - **An entry in `outbox.failed`:** a comment could not be posted. Read the service journal (`journalctl --user -u suiteward.service -n 100 --no-pager`; lines carry no GitHub text or secret) and report the key it names.
 - **An acknowledgment says the code was not accepted:** the clock. The code is checked at the comment's time with a tolerance of one 30-second step either side; check the authenticator's time sync. Also check that you used the entry of this target, not the other one.
 - **Two acknowledgments for one command, or an unexpected invalid-code:** two instances watch the repository. Stop one (6b.1).

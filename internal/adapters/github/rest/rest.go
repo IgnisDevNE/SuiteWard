@@ -249,6 +249,11 @@ func (c *Client) GetImmutable(ctx context.Context, path string) (Response, error
 	return c.get(ctx, path, false)
 }
 
+// Post sends a JSON body and expects 201. Not implemented yet.
+func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, error) {
+	return Response{}, errors.New("github POST: not implemented")
+}
+
 func (c *Client) get(ctx context.Context, path string, useCache bool) (Response, error) {
 	if !strings.HasPrefix(path, "/") {
 		return Response{}, fmt.Errorf("github GET %q: path must start with /", path)

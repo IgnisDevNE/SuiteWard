@@ -122,6 +122,11 @@ func (a App) jwt(now time.Time) (string, error) {
 	return signing + "." + enc.EncodeToString(sig), nil
 }
 
+// Slug returns the App's URL slug from GET /app. Not implemented yet.
+func (a App) Slug(ctx context.Context, httpClient *http.Client, baseURL string) (string, error) {
+	return "", errors.New("appauth: not implemented")
+}
+
 // Installation mints tokens for one installation, narrowed to repositories and permissions.
 type Installation struct {
 	app         App

@@ -41,10 +41,10 @@ var checkReasons = map[string]checkReason{
 		"This repository has no approved baseline yet, so the contract of this head has nothing to be compared with.",
 		"Next: the owner approves the baseline proposal in SuiteWard's bootstrap comment on the lowest-numbered open pull request; " +
 			"SuiteWard proposes none while the default branch has no protected files."},
-	"unchanged": {CheckSuccess, "Protected files unchanged",
+	"unchanged": {CheckSuccess, "No protected change",
 		"The protected files of this head match the canonical contract.",
 		"Next: nothing is required."},
-	"ready": {CheckSuccess, "Contract change approved and ready",
+	"ready": {CheckSuccess, "Ready for integration",
 		"The owner approved the exact revision of this contract change against the current canonical contract, and the integrity " +
 			"assessment of this head passed. It is ready for integration.",
 		"Next: integrate this pull request when you are ready."},

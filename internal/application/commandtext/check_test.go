@@ -44,6 +44,23 @@ func checkText(t *testing.T, c commandtext.Check) (title, summary string) {
 	return commandtext.CheckSummary(c)
 }
 
+// TestCheckTitlesAreTheOnesOfADR0015AndTheRunbook pins the titles deploy/HOST.md and the M1.6b phase document quote.
+func TestCheckTitlesAreTheOnesOfADR0015AndTheRunbook(t *testing.T) {
+	want := map[string]string{
+		"unchanged":              "No protected change",
+		"ready":                  "Ready for integration",
+		"approval-missing":       "Awaiting owner approval",
+		"owner-command-rejected": "Owner command rejected",
+	}
+	for _, tc := range checkReasons {
+		if title, ok := want[tc.reason]; ok {
+			if got, _ := checkText(t, check(tc.state, tc.reason)); got != title {
+				t.Errorf("%s: title %q, want %q", tc.reason, got, title)
+			}
+		}
+	}
+}
+
 func TestCheckSummaryStatesEveryReason(t *testing.T) {
 	titles := map[string]string{}
 	for _, tc := range checkReasons {

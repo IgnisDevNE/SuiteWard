@@ -447,7 +447,7 @@ Run it on `SuiteWardQ` with the target under test as the only watcher. A check a
 5. **Protected push.** Push a change in `tests/`: `in_progress` with `P<n>-R2`.
 6. **Approve R2.** Comment `/suiteward approve P<n>-R2 <new code>`: the check turns `success`.
 7. **Revoke R2.** Comment `/suiteward revoke P<n>-R2 <new code>`: the check goes from `success` back to `in_progress`. This is the revoke that blocks again.
-8. **Rejected command.** Comment `/suiteward approve P<n>-R2 123456` (an invalid code): the check turns `failure`, "owner command rejected". The next valid command or push clears it.
+8. **Rejected command.** Comment `/suiteward approve P<n>-R2 123456` (an invalid code): the check turns `failure`, "Owner command rejected". The next valid command or push clears it.
 9. **Merge is blocked.** Show that the merge button is blocked while the check is not `success`. **Do not merge the protected-change PR.** Without merge detection (M1.7) the canonical would never catch up, and every later PR would stay a protected change. Close it unmerged.
 
 Each code is used once and posted within about 30 s of changing: wait for the next code before every command.
@@ -461,9 +461,9 @@ The same scenario, one target at a time, as in 6b.5: stop the host's watching, s
 ### 6c.5 Troubleshooting
 
 - **No check on a head:** read `github[].checks` in `/status`, the outbox (`outbox.failed`) and the synchronization's `lastSuccess`; the check waits behind them.
-- **A check stays `in_progress` after you approved:** the code was rejected (read the acknowledgment), or the approval was for another revision than the one in the check.
-- **`failure`, "invalid source":** `.suiteward.yml` is invalid, or a symlink or submodule is in scope.
-- **`in_progress`, "source unavailable":** GitHub truncated the tree.
+- **A check stays `in_progress` after you approved:** the command may not be processed yet (allow 1 to 2 minutes), or the approval was for another revision than the one in the check. A rejected code shows `failure`, "Owner command rejected" (read the acknowledgment).
+- **`failure`, "Invalid contract source":** `.suiteward.yml` is invalid, or a symlink or submodule is in scope.
+- **`in_progress`, "Source unavailable":** GitHub truncated the tree.
 - **Conflicting checks, or two acknowledgments for one command:** two instances watch the repository. Stop one (6b.1).
 
 ### 6c.6 Never

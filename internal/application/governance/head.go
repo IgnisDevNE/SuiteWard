@@ -16,8 +16,9 @@ import (
 // ErrNoCanonical reports that the Suite has no canonical yet: no change proposal exists before one does (D-CHECKS).
 var ErrNoCanonical = errors.New("the suite has no canonical yet")
 
-// ErrCanonicalMoved is declared for the pending behavior: it will report a canonical that moved during a call.
-var ErrCanonicalMoved = errors.New("the canonical moved while the head was assessed")
+// ErrCanonicalMoved reports that the canonical changed between the classification of a head and the write of its
+// proposal. It is an ErrConflict a caller can retry on its next run, unlike a conflicting assessment.
+var ErrCanonicalMoved = fmt.Errorf("the canonical moved while the head was assessed: %w", ErrConflict)
 
 // ContentReader reads artifact bytes by digest. filesystem.Store implements it.
 type ContentReader interface {
@@ -100,7 +101,7 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 			return fmt.Errorf("load suite: %w", err)
 		}
 		if current, _ := state.Canonical.Suite().CurrentVersionID(); current != version {
-			return fmt.Errorf("%w: the canonical moved from %q to %q while the head was assessed", ErrConflict, version, current)
+			return fmt.Errorf("%w: from %q to %q", ErrCanonicalMoved, version, current)
 		}
 		reference, err := keepProposalCurrent(ctx, tx, state, request, proposed)
 		if err != nil {
@@ -117,9 +118,12 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 		if err := tx.RecordAssessment(ctx, AssessmentWrite{Reference: reference, Source: request.Head, Evidence: evidence}); err != nil {
 			return fmt.Errorf("record the assessment of the head: %w", err)
 		}
-		assessment, _, err := tx.Assessment(ctx, reference, request.Head) // recorded just above
+		assessment, found, err := tx.Assessment(ctx, reference, request.Head)
 		if err != nil {
 			return fmt.Errorf("load assessment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("%w: the assessment of %v at %q is missing right after it was recorded", ErrInvalidState, reference, request.Head)
 		}
 		decision, err := contract.CheckPromotionReadiness(contract.PromotionContext{
 			Canonical: state.Canonical, Proposed: proposed, Proposal: proposal, Reference: reference, Carrier: request.Carrier,

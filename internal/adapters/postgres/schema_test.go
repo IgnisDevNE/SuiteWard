@@ -104,7 +104,7 @@ func TestGovernanceSchemaFreshMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := append([]string{"goose_db_version", "outbox", "river_job", "river_leader", "river_migration", "river_notification", "river_queue", "github_repositories", "github_pulls", "github_comment_versions", "owner_enrollment", "owner_test_checks", "totp_consumed_steps", "github_protection_results"}, governanceTables...)
+	want := append([]string{"goose_db_version", "outbox", "river_job", "river_leader", "river_migration", "river_notification", "river_queue", "github_repositories", "github_pulls", "github_comment_versions", "owner_enrollment", "owner_test_checks", "totp_consumed_steps", "github_protection_results", "pr_commands", "suiteward_instance"}, governanceTables...)
 	slices.Sort(want)
 	if !slices.Equal(present, want) {
 		t.Fatalf("fresh migration tables = %v; want exactly %v", present, want)

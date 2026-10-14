@@ -248,7 +248,7 @@ func TestChecksSayBootstrapPendingOnEveryOpenPullWithoutACanonical(t *testing.T)
 	t.Run("a suite without a canonical", func(t *testing.T) {
 		w := newCJWorld(t, false)
 		w.openPulls(bootRepo, 4)
-		w.bootWorld.mustRun() // proposes the baseline, which nobody approved
+		w.mustRun() // proposes the baseline, which nobody approved
 		w.sync(map[int]string{4: bootHead, 5: cjHead2})
 
 		w.mustCheck()
@@ -294,6 +294,7 @@ func TestChecksKeepAnUnchangedResultWithoutReadingTheTreeWhenOnlyTheSuiteMoved(t
 	reads := w.reader.reads[bootHead]
 
 	w.protectedPull() // pull 5 writes a proposal and an assessment: the Suite revision moves
+	w.mustCheck()
 
 	if w.reader.reads[bootHead] != reads {
 		t.Fatalf("the tree of the unchanged head was read again after an unrelated Suite write: %d reads after %d", w.reader.reads[bootHead], reads)

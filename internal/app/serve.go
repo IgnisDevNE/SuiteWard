@@ -105,9 +105,13 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, jobTimeout: cfg.JobTimeout, logger: logger, now: time.Now}
 		riverConfig.Commands = commandJob.run
 		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store}
-		checks := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger}
-		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish, githubCheckKind: checks.publish}
-		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids, problems: problems}
+		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger}
+		checkProblems := &bootstrapProblems{}
+		checkJob := &checksJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), commands: store,
+			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now}
+		riverConfig.Checks = checkJob.run
+		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish, githubCheckKind: checkPoster.publish}
+		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids, problems: problems, checks: checkProblems}
 		backend.repos = gh.repos
 		backend.ids = ids
 	}

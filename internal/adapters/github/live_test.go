@@ -814,6 +814,9 @@ func TestLiveWrites(t *testing.T) {
 		}
 		decode(t, path, raw, &run)
 		t.Logf("POST %s answered %d: check run id %d, app id %d", path, status, run.ID, run.App.ID)
+		if run.App.ID != appID {
+			t.Errorf("the check run carries app id %d, want %d", run.App.ID, appID)
+		}
 	})
 }
 

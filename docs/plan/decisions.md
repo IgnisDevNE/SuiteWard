@@ -1,6 +1,6 @@
 # Decision register
 
-- **Updated:** 2026-10-14 (phase M1.6a: D-COMMANDS accepted; D-IDENTITY and D-CHECKS amended)
+- **Updated:** 2026-10-13 (phase M1.6a: D-COMMANDS accepted; D-IDENTITY and D-CHECKS amended)
 
 These gates record product and implementation choices that accepted ADRs deliberately left open. They do not reopen accepted ADRs. The integrator can resolve implementation choices within accepted policy; changes to product authority, scope, or release commitments need the project owner. Do not choose an unresolved product policy to unblock a task; record the decision needed and take independent ready work.
 
@@ -69,7 +69,7 @@ Accepted 2026-10-05: [ADR 0027](../decisions/0027-agent-human-trust-separation.m
 
 ### D-IDENTITY: Owner setup and identity
 
-Accepted 2026-10-13 (owner). The owner is bound by a local setup command run on the instance itself (`suiteward setup`, through `podman exec` on the co-located target or the owner's own Session Manager session on the isolated one); no HTTP or MCP surface can set up or change the owner. Setup takes the owner's GitHub login, resolves its numeric account id through the App's installation token, and records the owner as the principal `github:<numeric id>` of kind `Human` in a new policy revision; the login is display only. Proof of identity is access to the instance, which on the isolated tier only the owner has; on the co-located tier the agent can run setup too, which is part of the reduced assurance SuiteWard reports. The trusted installation is the operator-configured `GITHUB_INSTALLATION_ID`; setup confirms it covers every configured repository. Setup also enrolls the TOTP secret (ADR 0027), records the name of the project's required test check, and records the tier the instance had at enrollment: a secret enrolled on a `co-located` instance stays within the agent's reach even if the instance is later declared `isolated`, so the effective tier is `co-located` when either the setting or the enrollment says so, and `/status` says to re-run setup when they differ. Re-running setup replaces the TOTP secret and creates a new policy revision. One owner governs the whole instance (owner answer 2026-10-13): each configured repository is one SuiteWard project, identified by the repository's numeric GitHub id (`github-repo:<id>`, stable across renames), with its own policy owned by that owner and its own required test check (`--test-check owner/name=<check>`). An approval binding includes the policy revision (`contract.NewApprovalBinding`). In M1.5 no Suite exists yet, and setup refuses to change the owner of a project that already has a Suite; Changing the owner of a project that already has a Suite stays refused in the MVP (D-COMMANDS, 2026-10-14), so a changed owner never inherits earlier authority or approvals; re-enrolling the same owner is allowed.
+Accepted 2026-10-13 (owner). The owner is bound by a local setup command run on the instance itself (`suiteward setup`, through `podman exec` on the co-located target or the owner's own Session Manager session on the isolated one); no HTTP or MCP surface can set up or change the owner. Setup takes the owner's GitHub login, resolves its numeric account id through the App's installation token, and records the owner as the principal `github:<numeric id>` of kind `Human` in a new policy revision; the login is display only. Proof of identity is access to the instance, which on the isolated tier only the owner has; on the co-located tier the agent can run setup too, which is part of the reduced assurance SuiteWard reports. The trusted installation is the operator-configured `GITHUB_INSTALLATION_ID`; setup confirms it covers every configured repository. Setup also enrolls the TOTP secret (ADR 0027), records the name of the project's required test check, and records the tier the instance had at enrollment: a secret enrolled on a `co-located` instance stays within the agent's reach even if the instance is later declared `isolated`, so the effective tier is `co-located` when either the setting or the enrollment says so, and `/status` says to re-run setup when they differ. Re-running setup replaces the TOTP secret and creates a new policy revision. One owner governs the whole instance (owner answer 2026-10-13): each configured repository is one SuiteWard project, identified by the repository's numeric GitHub id (`github-repo:<id>`, stable across renames), with its own policy owned by that owner and its own required test check (`--test-check owner/name=<check>`). An approval binding includes the policy revision (`contract.NewApprovalBinding`). In M1.5 no Suite exists yet, and setup refuses to change the owner of a project that already has a Suite; Changing the owner of a project that already has a Suite stays refused in the MVP (D-COMMANDS, 2026-10-13), so a changed owner never inherits earlier authority or approvals; re-enrolling the same owner is allowed.
 
 ### D-TIER: Installation tier
 
@@ -88,11 +88,11 @@ Accepted 2026-10-13 (owner), from the M1.5-P0 measurement on the S1 test reposit
 
 ### D-COMMANDS: PR commands, identifiers and bootstrap
 
-Accepted 2026-10-14 (owner answers, M1.6a planning), within ADRs 0002, 0010, 0011, 0015 and 0027.
+Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 0011, 0015 and 0027.
 
 **Who is heard**
 - Only the enrolled owner's comments are commands.
-- A `/suiteward` comment from any other account is recorded in the command ledger and otherwise ignored: no acknowledgment, no state change, no check effect. This is the ADR 0011 amendment of 2026-10-14.
+- A `/suiteward` comment from any other account is recorded in the command ledger and otherwise ignored: no acknowledgment, no state change, no check effect. This is the ADR 0011 amendment of 2026-10-13.
 - SuiteWard's own comments are recognized by the App bot's numeric account id and never parsed.
 
 **Command syntax**
@@ -101,7 +101,7 @@ Accepted 2026-10-14 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 - `<ref>` is `P<n>-R<m>` (ADR 0002 and ADR 0010 examples), resolved inside the PR's project and its single Suite. `<code>` is the 6-digit TOTP code.
 
 **TOTP**
-- The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-14).
+- The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-13).
 - A step is consumed once per owner across all commands (ADR 0027). The consumed step records the command that used it, so a retry of the same command after a crash is not a replay.
 
 **Order and binding of a code to its command (ADR 0027)**
@@ -147,7 +147,7 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 - Two SuiteWard instances must never watch the same repository.
 - Both post as the same App, and each has its own TOTP secret. So one would reject the owner's codes and, from M1.6b, publish `failure`.
 - HOST.md says so. A target that is not under verification runs without GitHub settings, or with other repositories.
-- The remote host (isolated) watches the test repositories by default (owner answer, 2026-10-14). The co-located stack runs with GitHub only during its own verification.
+- The remote host (isolated) watches the test repositories by default (owner answer, 2026-10-13). The co-located stack runs with GitHub only during its own verification.
 
 **Owner change**
 - Changing the owner of a project that already has a Suite stays refused in the MVP, as `setup` does since M1.5.

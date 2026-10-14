@@ -215,6 +215,7 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 		case proposalMissing:
 			return reject(commands.UnknownProposal, 0, reference)
 		}
+		// Both exist now: the bootstrap wrote them after ProcessConsent read. Fail this attempt; the next run processes it.
 	}
 	if err != nil {
 		return &opaque{what: "process the consent", cause: err}

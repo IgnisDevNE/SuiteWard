@@ -87,7 +87,7 @@ func (m *Memory) Current(ctx context.Context) (owner.State, bool, error) {
 }
 
 // ConsumeStep implements owner.Store.
-func (m *Memory) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time) error {
+func (m *Memory) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time, _ contract.SourceCommandID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

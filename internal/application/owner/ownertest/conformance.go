@@ -24,6 +24,9 @@ type SeedSuite func(project contract.ProjectID, revision contract.PolicyRevision
 const (
 	ownerA = int64(884695)
 	ownerB = int64(5150)
+
+	srcA = contract.SourceCommandID("github-comment:10/1001")
+	srcB = contract.SourceCommandID("github-comment:20/2002")
 )
 
 // otTime is a time at microsecond precision, which is all PostgreSQL stores,
@@ -187,15 +190,15 @@ func RunConformance(t *testing.T, newStore func(*testing.T) (owner.Store, SeedSu
 		e.must(e.store.Enroll(e.ctx, first))
 		reject()
 		e.requireState(ptr(otState(first, 1)))
-		e.must(e.store.ConsumeStep(e.ctx, ownerA, 777, otTime(2))) // no rejected enrollment consumed its step
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 777, otTime(2), srcA)) // no rejected enrollment consumed its step
 	})
 
 	run("a used step is rejected by Enroll and by ConsumeStep", func(e *otEnv) {
 		first := otEnrollment(ownerA, 1, 100, otProject(10, "build"))
 		e.must(e.store.Enroll(e.ctx, first))
-		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 100, otTime(2)), owner.ErrStepUsed) // Enroll consumed its step
-		e.must(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(2)))
-		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(3)), owner.ErrStepUsed)
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 100, otTime(2), srcA), owner.ErrStepUsed) // Enroll consumed its step
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(2), srcA))
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(3), srcB), owner.ErrStepUsed)
 
 		// A used step enrolls nothing: not the generation, the secret nor the projects.
 		e.requireErr(e.store.Enroll(e.ctx, otEnrollment(ownerA, 2, 200, otProject(10, "test"), otProject(20, "ci"))), owner.ErrStepUsed)
@@ -209,50 +212,82 @@ func RunConformance(t *testing.T, newStore func(*testing.T) (owner.Store, SeedSu
 		other := otEnrollment(ownerB, 4, 100, otProject(10, "test"))
 		e.must(e.store.Enroll(e.ctx, other))
 		e.requireState(ptr(otState(other, 3)))
-		e.requireErr(e.store.ConsumeStep(e.ctx, ownerB, 100, otTime(4)), owner.ErrStepUsed)
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerB, 100, otTime(4), srcB), owner.ErrStepUsed)
 	})
 
 	run("ConsumeStep without an owner", func(e *otEnv) {
-		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 1, otTime(1)), owner.ErrNotEnrolled)
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 1, otTime(1), srcA), owner.ErrNotEnrolled)
 		e.must(e.store.Enroll(e.ctx, otEnrollment(ownerA, 1, 100, otProject(10, "build"))))
-		e.requireErr(e.store.ConsumeStep(e.ctx, ownerB, 1, otTime(1)), owner.ErrNotEnrolled)
-		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 1, time.Time{}), owner.ErrInvalidState)
-		e.must(e.store.ConsumeStep(e.ctx, ownerA, 1, otTime(1))) // neither failed attempt consumed it
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerB, 1, otTime(1), srcA), owner.ErrNotEnrolled)
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 1, time.Time{}, srcA), owner.ErrInvalidState)
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 1, otTime(1), ""), owner.ErrInvalidState)
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 1, otTime(1), srcA)) // no failed attempt consumed it
 	})
 
-	run("concurrent ConsumeStep of one step: exactly one wins", func(e *otEnv) {
+	run("a step consumed by the same source again is success", func(e *otEnv) {
+		e.must(e.store.Enroll(e.ctx, otEnrollment(ownerA, 1, 100, otProject(10, "build"))))
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(2), srcA))
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(3), srcA)) // a retry after a crash
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(3), srcB), owner.ErrStepUsed)
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(4), srcA)) // the failed attempt of another source changed nothing
+	})
+
+	run("Enroll consumes its step with the source of its generation", func(e *otEnv) {
+		e.must(e.store.Enroll(e.ctx, otEnrollment(ownerA, 1, 100, otProject(10, "build"))))
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 100, otTime(2), owner.SetupSource(1)))
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 100, otTime(2), owner.SetupSource(2)), owner.ErrStepUsed)
+		e.must(e.store.Enroll(e.ctx, otEnrollment(ownerA, 2, 101, otProject(10, "build"))))
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 101, otTime(2), owner.SetupSource(2)))
+		e.requireErr(e.store.ConsumeStep(e.ctx, ownerA, 101, otTime(2), owner.SetupSource(1)), owner.ErrStepUsed)
+	})
+
+	run("concurrent ConsumeStep of one step by two sources: exactly one source wins", func(e *otEnv) {
 		e.must(e.store.Enroll(e.ctx, otEnrollment(ownerA, 1, 100, otProject(10, "build"))))
 		const callers = 8
-		results := make(chan error, callers)
+		type outcome struct {
+			source contract.SourceCommandID
+			err    error
+		}
+		results := make(chan outcome, callers)
 		var ready, done sync.WaitGroup
 		ready.Add(callers)
 		start := make(chan struct{})
-		for range callers {
+		for i := range callers {
+			source := srcA
+			if i%2 == 1 {
+				source = srcB
+			}
 			done.Add(1)
 			go func() {
 				defer done.Done()
 				ready.Done()
 				<-start
-				results <- e.store.ConsumeStep(e.ctx, ownerA, 500, otTime(5))
+				results <- outcome{source, e.store.ConsumeStep(e.ctx, ownerA, 500, otTime(5), source)}
 			}()
 		}
 		ready.Wait()
 		close(start)
 		done.Wait()
 		close(results)
+		var winner contract.SourceCommandID
 		wins, used := 0, 0
-		for err := range results {
+		for r := range results {
 			switch {
-			case err == nil:
+			case r.err == nil:
+				if winner != "" && winner != r.source {
+					e.t.Fatalf("both %q and %q consumed the step", winner, r.source)
+				}
+				winner = r.source
 				wins++
-			case errors.Is(err, owner.ErrStepUsed):
+			case errors.Is(r.err, owner.ErrStepUsed):
 				used++
 			default:
-				e.t.Fatalf("ConsumeStep = %v; want success or ErrStepUsed", err)
+				e.t.Fatalf("ConsumeStep = %v; want success or ErrStepUsed", r.err)
 			}
 		}
-		if wins != 1 || used != callers-1 {
-			e.t.Fatalf("%d callers won and %d got ErrStepUsed; want exactly one winner", wins, used)
+		// The winning source's callers all succeed (idempotent); the other source's all get ErrStepUsed.
+		if wins != callers/2 || used != callers/2 {
+			e.t.Fatalf("%d callers succeeded and %d got ErrStepUsed; want %d of each", wins, used, callers/2)
 		}
 	})
 
@@ -318,8 +353,8 @@ func RunConformance(t *testing.T, newStore func(*testing.T) (owner.Store, SeedSu
 		e.requireState(nil)
 		e.requireProtection()
 		e.must(e.store.Enroll(e.ctx, otEnrollment(ownerA, 1, 100, otProject(10, "build"))))
-		e.requireErr(e.store.ConsumeStep(ctx, ownerA, 200, otTime(1)), context.Canceled)
-		e.must(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(1)))
+		e.requireErr(e.store.ConsumeStep(ctx, ownerA, 200, otTime(1), srcA), context.Canceled)
+		e.must(e.store.ConsumeStep(e.ctx, ownerA, 200, otTime(1), srcA))
 	})
 }
 

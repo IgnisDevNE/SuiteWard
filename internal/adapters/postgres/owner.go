@@ -132,7 +132,7 @@ func (s *Store) Current(ctx context.Context) (owner.State, bool, error) {
 
 // ConsumeStep implements owner.Store with one statement that tells an account
 // that is not the owner from a step already used.
-func (s *Store) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time) error {
+func (s *Store) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time, _ contract.SourceCommandID) error {
 	if at.IsZero() {
 		return fmt.Errorf("%w: the consumption time is required", owner.ErrInvalidState)
 	}

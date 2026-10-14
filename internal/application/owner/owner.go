@@ -115,6 +115,11 @@ func PrincipalID(accountID int64) contract.PrincipalID {
 	return contract.PrincipalID("github:" + strconv.FormatInt(accountID, 10))
 }
 
+// SetupSource is the source command that consumes the TOTP step verified by the setup of a generation.
+func SetupSource(generation int64) contract.SourceCommandID {
+	return contract.SourceCommandID("setup:" + strconv.FormatInt(generation, 10))
+}
+
 // RevisionID is the policy revision written by the enrollment of a generation.
 func RevisionID(generation int64) contract.PolicyRevisionID {
 	return contract.PolicyRevisionID("setup-" + strconv.FormatInt(generation, 10))
@@ -189,16 +194,18 @@ type Store interface {
 	// Enroll replaces the owner and the secret and appends, per project, a policy revision owned by
 	// PrincipalID(AccountID) of kind Human with revision id RevisionID(n) (n is the enrollment generation: 1,
 	// then previous+1), records each project's test check and the tier, points the enrollment at the new
-	// revision, and consumes Step for the new owner, in one transaction. An invalid enrollment, or a project
+	// revision, and consumes Step for the new owner with the source SetupSource(n), in one transaction. An invalid enrollment, or a project
 	// that already has a Suite while the owner changes, is ErrInvalidState and writes nothing; a used Step is
 	// ErrStepUsed and writes nothing.
 	Enroll(ctx context.Context, e Enrollment) error
 	// Current returns the enrolled state, or found false before setup.
 	Current(ctx context.Context) (State, bool, error)
-	// ConsumeStep records that the owner used the TOTP step: ErrStepUsed if it was used before (global single use
-	// per owner and step, across all commands, ADR 0027), ErrNotEnrolled without an owner or when accountID is not
-	// the enrolled owner.
-	ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time) error
+	// ConsumeStep records that the owner used the TOTP step for the command source: a step is single use per owner
+	// across all commands (ADR 0027), and the row records its source. A step already consumed by the same source
+	// is success and writes nothing, so a retry after a crash is not a replay; one consumed by another source is
+	// ErrStepUsed. ErrNotEnrolled without an owner or when accountID is not the enrolled owner; ErrInvalidState
+	// without a time or a source.
+	ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time, source contract.SourceCommandID) error
 	// RecordProtection stores the latest result of one repository, replacing the previous one.
 	RecordProtection(ctx context.Context, r ProtectionResult) error
 	// Protection returns the latest result per repository, ordered by repository id.

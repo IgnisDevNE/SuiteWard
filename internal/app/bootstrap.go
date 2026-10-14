@@ -513,7 +513,7 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 		return bootstrapStop("origin-not-passed")
 	}
 	var inv inventory.Inventory
-	outcome := contract.IntegrityUnavailable
+	var evidence contract.IntegrityEvidence
 	read, err := b.reader.Tree(ctx, p.Repo, string(s.origin))
 	if err != nil {
 		err = githubRead(err)
@@ -522,15 +522,12 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 	}
 	switch {
 	case err == nil:
-		outcome = contract.IntegrityFailed
-		if inv.Manifest().Digest() == s.binding.ManifestDigest() && inv.Scope().Digest() == s.binding.ScopeDigest() {
-			outcome = contract.IntegrityPassed
-		}
+		evidence, err = governance.HeadEvidence(inv, s.binding, s.origin)
 	case invalidSource(err): // the commit cannot be read as a valid tree: Unavailable
+		evidence, err = contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), s.origin, s.binding, contract.IntegrityUnavailable)
 	default: // a failed read says nothing about the commit, and a recorded outcome is immutable: wait for the next run
 		return &opaque{what: "read the origin", cause: err}
 	}
-	evidence, err := contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), s.origin, s.binding, outcome)
 	if err != nil {
 		return fmt.Errorf("build the integrity evidence: %w", err)
 	}
@@ -543,7 +540,7 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 		return bootstrapStop("assessment-conflict")
 	case err != nil:
 		return fmt.Errorf("record the assessment: %w", err)
-	case outcome != contract.IntegrityPassed:
+	case evidence.Outcome() != contract.IntegrityPassed:
 		b.logger.WarnContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.latest)
 		return bootstrapStop("origin-not-passed")
 	}

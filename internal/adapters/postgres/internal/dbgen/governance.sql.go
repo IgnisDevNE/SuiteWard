@@ -656,6 +656,42 @@ func (q *Queries) InsertSuiteVersion(ctx context.Context, arg InsertSuiteVersion
 	return err
 }
 
+const listChangeProposalsOfCarrier = `-- name: ListChangeProposalsOfCarrier :many
+SELECT p.proposal_id FROM proposals p
+WHERE p.project_id = $1 AND p.suite_id = $2 AND p.carrier_id = $3
+  AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
+                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id AND r.expected_version_id IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM promotions m
+                  WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
+ORDER BY p.proposal_id
+`
+
+type ListChangeProposalsOfCarrierParams struct {
+	ProjectID string
+	SuiteID   string
+	CarrierID string
+}
+
+func (q *Queries) ListChangeProposalsOfCarrier(ctx context.Context, arg ListChangeProposalsOfCarrierParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listChangeProposalsOfCarrier, arg.ProjectID, arg.SuiteID, arg.CarrierID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var proposal_id string
+		if err := rows.Scan(&proposal_id); err != nil {
+			return nil, err
+		}
+		items = append(items, proposal_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listConsentAliases = `-- name: ListConsentAliases :many
 SELECT operation.operation_id, operation.source_command_id::text AS source_command_id
 FROM operations AS operation
@@ -739,6 +775,36 @@ func (q *Queries) ListConsentResults(ctx context.Context, arg ListConsentResults
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProposalIDs = `-- name: ListProposalIDs :many
+SELECT proposal_id FROM proposals
+WHERE project_id = $1 AND suite_id = $2
+`
+
+type ListProposalIDsParams struct {
+	ProjectID string
+	SuiteID   string
+}
+
+func (q *Queries) ListProposalIDs(ctx context.Context, arg ListProposalIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listProposalIDs, arg.ProjectID, arg.SuiteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var proposal_id string
+		if err := rows.Scan(&proposal_id); err != nil {
+			return nil, err
+		}
+		items = append(items, proposal_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

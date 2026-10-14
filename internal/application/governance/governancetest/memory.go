@@ -299,6 +299,39 @@ func (t *tx) ReceiptBySource(ctx context.Context, id contract.SourceCommandID) (
 	return r, ok, nil
 }
 
+func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return "", false, err
+	}
+	var found []contract.ProposalID
+	for id, p := range t.s.proposals {
+		if p.proposal.Current().Carrier() != carrier {
+			continue
+		}
+		isChange := !slices.ContainsFunc(p.proposal.Revisions(), func(r contract.ProposalRevision) bool {
+			_, promoted := t.promotionFor(r.Binding().Reference())
+			return promoted || r.Binding().ExpectedCanonical() == ""
+		})
+		if isChange {
+			found = append(found, id)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return found[0], true, nil
+	}
+	return "", false, fmt.Errorf("%w: proposals of %q: %d change proposals share one carrier", governance.ErrInvalidState, carrier, len(found))
+}
+
+func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
+	if err := t.live(ctx); err != nil {
+		return "", err
+	}
+	return governance.NextNumberedProposalID(slices.Collect(maps.Keys(t.s.proposals))), nil
+}
+
 func (t *tx) AppendConsent(ctx context.Context, w governance.ConsentWrite) error {
 	if err := t.live(ctx); err != nil {
 		return err

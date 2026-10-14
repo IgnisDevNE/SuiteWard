@@ -52,17 +52,8 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 	if err != nil {
 		return BaselineResult{}, fmt.Errorf("baseline contract: %w", err)
 	}
-	for _, entry := range proposed.Manifest().Entries() {
-		data, err := request.Tree.Read(ctx, entry.Path)
-		if err != nil {
-			return BaselineResult{}, fmt.Errorf("read %q: %w", entry.Path, err)
-		}
-		if artifact.Hash(data) != entry.Content {
-			return BaselineResult{}, fmt.Errorf("%w: %q changed while the baseline was read", inventory.ErrInvalidTree, entry.Path)
-		}
-		if err := content.Put(ctx, entry.Content, bytes.NewReader(data)); err != nil {
-			return BaselineResult{}, fmt.Errorf("store %q: %w", entry.Path, err)
-		}
+	if err := storeContent(ctx, request.Tree, proposed.Manifest(), content); err != nil {
+		return BaselineResult{}, err
 	}
 	var revised ReviseResult
 	err = uow.Do(ctx, request.Reference.ProjectID, request.Reference.SuiteID, func(ctx context.Context, tx Tx) error {
@@ -92,4 +83,22 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 		return BaselineResult{}, err
 	}
 	return BaselineResult{Revise: revised, Contract: proposed}, nil
+}
+
+// storeContent reads every entry of manifest from tree, checks the bytes against the manifest and stores them.
+// A tree that changed since its inventory was taken is invalid, and the mismatching entry is not stored.
+func storeContent(ctx context.Context, tree inventory.Tree, manifest artifact.Manifest, content ContentWriter) error {
+	for _, entry := range manifest.Entries() {
+		data, err := tree.Read(ctx, entry.Path)
+		if err != nil {
+			return fmt.Errorf("read %q: %w", entry.Path, err)
+		}
+		if artifact.Hash(data) != entry.Content {
+			return fmt.Errorf("%w: %q changed while the tree was read", inventory.ErrInvalidTree, entry.Path)
+		}
+		if err := content.Put(ctx, entry.Content, bytes.NewReader(data)); err != nil {
+			return fmt.Errorf("store %q: %w", entry.Path, err)
+		}
+	}
+	return nil
 }

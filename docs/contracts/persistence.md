@@ -670,6 +670,7 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
   - The content bytes are stored before `Do`, as in `ProposeBaseline`.
 - **Assessment.** `RecordAssessment` of the current revision at `Head`, emitted by `ServiceEmitter`: `Passed` when the head's protected inventory under the revision's scope equals the binding, `Failed` otherwise. The rule is the shared `HeadEvidence` function, also used by the bootstrap.
 - **Verdict.** `contract.CheckPromotionReadiness` with `requiredSource = Head`.
+- **Canonical moved during the call.** `AssessHead` reads the tree outside the Suite lock, so the canonical can move before its write; it then returns `ErrCanonicalMoved` (an `ErrConflict`, so `errors.Is(err, ErrConflict)` still matches) and writes nothing. The job retries it on its next run and tells it apart from an assessment conflict.
 
 ### Check ledger (`internal/application/checks`, migration `00014`)
 

@@ -334,6 +334,37 @@ func (t *tx) ReceiptBySource(ctx context.Context, id contract.SourceCommandID) (
 	return receipt, err == nil, err
 }
 
+func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+	if _, err := t.lock(ctx); err != nil {
+		return "", false, err
+	}
+	ids, err := t.q.ListChangeProposalsOfCarrier(ctx, dbgen.ListChangeProposalsOfCarrierParams{ProjectID: string(t.project), SuiteID: string(t.suite), CarrierID: string(carrier)})
+	switch {
+	case err != nil:
+		return "", false, fmt.Errorf("list change proposals of %q: %w", carrier, err)
+	case len(ids) > 1:
+		return "", false, invalidState("proposals of "+string(carrier), fmt.Errorf("%d change proposals share one carrier", len(ids)))
+	case len(ids) == 0:
+		return "", false, nil
+	}
+	return contract.ProposalID(ids[0]), true, nil
+}
+
+func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
+	if _, err := t.lock(ctx); err != nil {
+		return "", err
+	}
+	rows, err := t.q.ListProposalIDs(ctx, dbgen.ListProposalIDsParams{ProjectID: string(t.project), SuiteID: string(t.suite)})
+	if err != nil {
+		return "", fmt.Errorf("list proposal ids: %w", err)
+	}
+	ids := make([]contract.ProposalID, len(rows))
+	for i, row := range rows {
+		ids[i] = contract.ProposalID(row)
+	}
+	return governance.NextNumberedProposalID(ids), nil
+}
+
 // Writes store explicit facts. Each one advances the Suite revision by exactly
 // one; the use case has already made every decision.
 

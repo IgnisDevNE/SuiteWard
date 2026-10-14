@@ -507,7 +507,7 @@ type AssessmentWrite struct {
 }
 ```
 
-- **Outbox inside the use case.** `ConsentRequest` and `BaselineRequest` gain `Outbox []OutboxMessage`, written by `ProcessConsent` and `ProposeBaseline` inside their own transaction, after their facts. A duplicate consent (replay by operation id or source) and a baseline with unchanged coverage write no message. The acknowledgment payload carries only the operation id; the publisher renders the comment from the stored receipt, so an acknowledgment never reports what did not commit (ADR 0011).
+- **Outbox inside the use case.** `ConsentRequest`, `BaselineRequest` and `PromoteRequest` gain `Outbox []OutboxMessage`. `ProcessConsent`, `ProposeBaseline`, and `Promote`/`Bootstrap`/`Correct` write it inside their own transaction, after their facts. Nothing is written when there are no new facts: a duplicate consent (replay by operation id or source), a baseline with unchanged coverage, or a promotion replay. The acknowledgment payload carries only the operation id; the publisher renders the comment from the stored receipt, so an acknowledgment never reports what did not commit (ADR 0011).
 - **Outcomes.** The evidence outcome is:
   - `Passed` when the protected inventory of the exact source equals the revision's binding (manifest and scope digests);
   - `Failed` when it differs;
@@ -527,6 +527,7 @@ const (
 	NotCommand      Disposition = "not-command"     // no /suiteward line, or SuiteWard's own comment
 	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
 	NoSuite         Disposition = "no-suite"        // owner-authored command for a project whose Suite does not exist yet
+	EditedFirst     Disposition = "edited-first"    // owner-authored, first observed version already edited (updated_at != created_at); no step used
 	Failed          Disposition = "failed"          // a candidate that kept failing (bounded retries, logged); never acknowledged
 	IgnoredAuthor   Disposition = "ignored-author"  // a /suiteward command from an account other than the owner
 	Malformed       Disposition = "malformed"       // owner-authored, unparseable command line
@@ -548,11 +549,14 @@ type Entry struct {
 }
 
 type Store interface {
-	// Pending returns the first observed version of every comment of an open or closed PR that has no ledger
-	// entry, across all repositories, ordered by created_at then comment id, at most limit.
-	Pending(ctx context.Context, limit int) ([]Candidate, error)
+	// Pending returns the first observed version of every comment that has no ledger entry, across all enrolled
+	// repositories, ordered by created_at then comment id, at most limit, and only comments created before
+	// horizon. The caller computes horizon from the sync watermark (D-COMMANDS): the earliest last successful
+	// cycle among the enrolled repositories, minus JOB_TIMEOUT and 30 s.
+	Pending(ctx context.Context, horizon time.Time, limit int) ([]Candidate, error)
 	// Record stores the decision for one comment and, when ack is not nil, its acknowledgment outbox message in
-	// the same transaction (for dispositions that never reach ProcessConsent). A second Record of the same
+	// the same transaction (for dispositions that never reach ProcessConsent). That message is a system outbox
+	// row with no project or Suite, written the way EnqueueSystem writes the probe's. A second Record of the same
 	// (repository, comment) with the same entry is success and writes nothing; with another entry it is
 	// ErrConflict. Entries are never updated or deleted.
 	Record(ctx context.Context, e Entry, ack *governance.OutboxMessage) error
@@ -573,7 +577,9 @@ type Candidate struct { // the first observed version of one comment
   2. `ProcessConsent` with the acknowledgment in `Outbox`. It is idempotent by operation id, and a duplicate writes no message.
   3. `Record(processed)`.
 
-  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
+  `edited-first` is recorded like a rejected disposition, with an acknowledgment, and uses up no step.
+
+  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
 - **Keys.** Observations are keyed by `owner/name` (M1.4) and projects by repository id. `Pending` joins them through the enrolled projects (`owner.State.Projects`), so a repository that is not enrolled has no candidates.
 
 ### Consumed steps bound to their command

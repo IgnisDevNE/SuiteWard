@@ -73,35 +73,39 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
 **`github_bootstrap`**
 - Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
 - For each enrolled project:
-  1. If there is no Suite, create one with `UnitOfWork.CreateSuite`, using `default`, the owner's governing policy and `branch:<default branch>`.
-  2. If the Suite has no canonical and no proposal `P1`, and the repository has an open PR:
+  1. If `Do` reports that the Suite does not exist (`ErrNotFound`), create it with `UnitOfWork.CreateSuite`: `default`, the owner's governing policy and `branch:<default branch>`. Never call `CreateSuite` for an existing Suite. After a same-owner re-enrollment it would conflict on the policy.
+  2. Propose a baseline when the Suite has no canonical and either of these holds:
+     - it has no proposal yet;
+     - its latest proposal `P<n>` is unapproved and its carrier PR is no longer open. The bootstrap then moves to `P<n+1>-R1`. Synchronization lists comments only for open PRs, so approval cannot happen on a closed carrier.
+
+     In both cases the repository must have an open PR. The steps:
      - pin the default branch head (`Reader.BranchHead`);
-     - call `ProposeBaseline` with `P1-R1`, carried by the lowest-numbered open PR;
-     - in `BaselineRequest.Outbox`, include a `github_comment` message with key `bootstrap-summary:<repository id>:P1-R1`. The publisher renders its body: the inventory summary, the origin and the copyable `/suiteward approve P1-R1 <code>`.
-  3. If `P1` has the owner's current approval and the Suite still has no canonical:
+     - call `ProposeBaseline` with `P<n>-R1`, carried by the lowest-numbered open PR;
+     - in `BaselineRequest.Outbox`, include a `github_comment` message with key `bootstrap-summary:<repository id>:P<n>-R1`. The publisher renders its body: the inventory summary, the origin and the copyable `/suiteward approve P<n>-R1 <code>`.
+  3. If the latest baseline proposal has the owner's current approval and the Suite still has no canonical:
      - re-read the origin tree and record the assessment;
-     - call `Bootstrap` with operation `bootstrap:P1-R1` and version `V1`;
-     - in the same transaction, write a `github_comment` message with key `bootstrap-promoted:<repository id>:P1-R1` to acknowledge it.
-  4. **Limit (MVP).** If the carrier PR closes before `P1` is approved, nothing new is proposed. The owner approves `P1-R1` on that PR anyway (comments on closed PRs are still synchronized), or re-runs setup on a fresh instance. A new carrier would need a new proposal id; that is post-MVP.
-  5. **Re-enrolling the same owner.** The Suite keeps the policy revision it was created with. That is harmless, because the owner is the same.
+     - call `Bootstrap` with operation `bootstrap:P<n>-R1` and version `V1`;
+     - in `PromoteRequest.Outbox`, include a `github_comment` message with key `bootstrap-promoted:<repository id>:P<n>-R1`.
+  4. **Re-enrolling the same owner.** The Suite keeps the policy revision it was created with. That is harmless, because the owner is the same.
 - A read failure skips the project until the next run. GitHub text is never stored or logged.
 
 **`github_commands`**
 - Periodic every 15 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished. It is a single job, so commands are serialized across all repositories (D-COMMANDS).
-- It takes `commands.Store.Pending` in order. For each candidate:
+- It computes the sync watermark (D-COMMANDS) and takes `commands.Store.Pending` up to that horizon, in order. For each candidate:
   - **Before enrollment.** Record `before-enrollment` when the comment's `created_at` is before the current enrollment's `enrolled_at`. This covers S1's old commands and comments the owner wrote under a replaced secret.
   - **Not a command.** Record `not-command` when the author is the bot or the body has no command line.
   - **Not the owner.** Record `ignored-author` when the author is not the enrolled owner. It is otherwise ignored.
   - **Owner-authored.**
-    1. Parse the command. Unparseable gives `malformed`.
-    2. Verify the code at the comment's `created_at` with tolerance 1. A failure gives `invalid-code`.
-    3. Call `ConsumeStep` with the source `github-comment:<id>`. `ErrStepUsed` gives `replayed-code`.
-    4. Call `ProcessConsent` with the D-COMMANDS identifiers, `Order` set to the comment id, and the actor `github:<owner id>`. Its `Outbox` holds the acknowledgment, with key `ack:<repository id>:<comment id>`. A command for a project with no Suite yet records `no-suite`, with an acknowledgment saying that the bootstrap is pending.
-    5. Record `processed` with the operation.
-  - **Rejected owner commands.** `malformed`, `invalid-code`, `replayed-code` and `no-suite` get an acknowledgment, written with the ledger entry in one transaction. An unknown reference is processed: `ProcessConsent` rejects it with `UnknownRevision`, and the acknowledgment explains it.
+    1. Check the first observed version: an `updated_at` different from its `created_at` gives `edited-first`.
+    2. Parse the command. Unparseable gives `malformed`.
+    3. Verify the code at the comment's `created_at` with tolerance 1. A failure gives `invalid-code`.
+    4. Call `ConsumeStep` with the source `github-comment:<id>`. `ErrStepUsed` gives `replayed-code`.
+    5. Call `ProcessConsent` with the D-COMMANDS identifiers, `Order` set to the comment id, and the actor `github:<owner id>`. Its `Outbox` holds the acknowledgment, with key `ack:<repository id>:<comment id>`. A command for a project with no Suite yet records `no-suite`, with an acknowledgment saying that the bootstrap is pending.
+    6. Record `processed` with the operation.
+  - **Rejected owner commands.** `malformed`, `invalid-code`, `replayed-code`, `no-suite` and `edited-first` get an acknowledgment, written with the ledger entry in one transaction. An unknown reference is processed: `ProcessConsent` rejects it with `UnknownRevision`, and the acknowledgment explains it.
 - **Errors.**
-  - A failing candidate never blocks the others for long. A store or network error leaves it pending, and the job continues with the next candidate on the next run.
-  - After 5 consecutive failed attempts in this process, the candidate is recorded as `failed` and logged (repository, comment id, error kind; never GitHub text).
+  - A store or network error stops the run. A later candidate must never go ahead of an earlier one, because that would reopen the race the watermark closes.
+  - After 5 consecutive failed attempts in this process, the candidate is recorded as `failed` and logged (repository, comment id, error kind; never GitHub text). The next candidate is then processed.
   - The job fails only when the ledger itself cannot be read or written.
 
 **Outbox kind `github_comment`**

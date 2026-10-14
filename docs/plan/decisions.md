@@ -104,9 +104,15 @@ Accepted 2026-10-14 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 - The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-14).
 - A step is consumed once per owner across all commands (ADR 0027). The consumed step records the command that used it, so a retry of the same command after a crash is not a replay.
 
-**Order**
+**Order and binding of a code to its command (ADR 0027)**
 - Commands are processed one at a time across all repositories, ordered by the comment's `created_at` and then its comment id.
 - The command order given to the domain is the GitHub comment id.
+- **Sync watermark.** A comment is processed only once every enrolled repository has completed a successful synchronization cycle that began after the comment was created. "Began after" is approximated as finished at least `JOB_TIMEOUT` plus 30 s of clock skew after `created_at`.
+  - Without the watermark, an agent using the owner's GitHub identity could copy the owner's code into a command on another repository, sync that repository first, and use the code before the owner's own command.
+  - Cost: a repository that cannot synchronize delays every command. `/status` shows the reason.
+- **Edited before observed.** A comment whose first observed version was already edited (`updated_at` differs from `created_at`) is not a command. It uses up no step and is acknowledged with the reason.
+  - Without this rule, an innocuous comment edited after the owner's code appeared would carry an earlier `created_at` than the owner's command.
+- **Result.** With these two rules, the first command that can use a code is the one the owner wrote. That is what ADR 0027 means by a code "bound to the command it authorizes".
 
 **One comment is one action**
 - D-COMMENT-EDIT applies: only the first observed version of a comment id is processed, once.
@@ -136,6 +142,11 @@ The assessment emitter is the service principal `suiteward` (kind Service).
    - posts the bootstrap summary in that PR, with the copyable `/suiteward approve P1-R1 <code>`.
 3. After the owner's valid approval, SuiteWard re-reads the origin tree, records the integrity assessment for the origin, and bootstraps the first canonical `V1` without waiting for the PR to merge.
 4. If the default branch has moved meanwhile, the origin stays pinned. It is not silently moved (ADR 0010).
+
+**One instance per repository**
+- Two SuiteWard instances must never watch the same repository.
+- Both post as the same App, and each has its own TOTP secret. So one would reject the owner's codes and, from M1.6b, publish `failure`.
+- HOST.md says so. A target that is not under verification runs without GitHub settings, or with other repositories.
 
 **Owner change**
 - Changing the owner of a project that already has a Suite stays refused in the MVP, as `setup` does since M1.5.

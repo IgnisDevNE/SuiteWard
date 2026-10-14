@@ -20,8 +20,10 @@ func commandsConfig(job func(context.Context) error) river.Config {
 func TestCommandsRunsAtStartOnceAndWithOneAttempt(t *testing.T) {
 	w := newWorld(t, 5)
 	var runs atomic.Int32
-	// The period is a minute: a run seen within seconds ran because the periodic job has RunOnStart.
-	startRuntime(t, w, commandsConfig(func(context.Context) error { runs.Add(1); return nil }))
+	// The period is an hour: a run seen within seconds ran because the periodic job has RunOnStart.
+	config := commandsConfig(func(context.Context) error { runs.Add(1); return nil })
+	config.CommandsInterval = time.Hour
+	startRuntime(t, w, config)
 
 	waitUntil(t, "the commands to run at start", func() bool { return runs.Load() >= 1 })
 
@@ -65,6 +67,6 @@ func TestWithoutCommandsNoCommandsJobIsRegistered(t *testing.T) {
 	waitUntil(t, "the tick to run at start", func() bool { return checks.Load() >= 1 })
 
 	if got := w.scalar("SELECT count(*)::text FROM river_job WHERE kind='" + river.CommandsKind + "'"); got != "0" {
-		t.Fatalf("%s commands jobs without a commands; want none", got)
+		t.Fatalf("%s commands jobs without a commands job; want none", got)
 	}
 }

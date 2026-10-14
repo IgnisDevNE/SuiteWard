@@ -678,3 +678,13 @@ func TestCommandsJobRepeatsARejectedRecordAfterACrash(t *testing.T) {
 		t.Fatalf("outbox keys %v, %v; want one acknowledgment", keys, err)
 	}
 }
+
+func TestCommandsJobTreatsAFailedSuiteProbeAsAStoreError(t *testing.T) {
+	// An unknown proposal makes ProcessConsent report ErrNotFound; the probe that tells it from a missing Suite then fails
+	// (call 1 is ProcessConsent, call 2 the probe). That is a store error to retry, never a no-suite acknowledgment.
+	w := newCjWorld(t)
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P9-R1", 0)})
+	w.suites.failAt = 2
+	w.mustRun()
+	w.requireNoEntry(cjID1, 500)
+}

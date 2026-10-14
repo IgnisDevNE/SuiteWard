@@ -121,9 +121,14 @@ func runProbe(ctx context.Context, cfg config.Config, o probeOptions, stdout, st
 	return code
 }
 
+// probeStore is the part of *postgres.Store that waitForProbe polls.
+type probeStore interface {
+	SystemStatus(ctx context.Context, jobID int64, outboxKey string) (postgres.SystemStatus, error)
+}
+
 // waitForProbe polls until the job is completed and the message delivered,
 // prints the final line with the states it saw, and returns the exit code.
-func waitForProbe(ctx context.Context, store *postgres.Store, o probeOptions, started time.Time, out *lines, stderr io.Writer) int {
+func waitForProbe(ctx context.Context, store probeStore, o probeOptions, started time.Time, out *lines, stderr io.Writer) int {
 	waitCtx, cancel := context.WithTimeout(ctx, o.timeout)
 	defer cancel()
 	ticker := time.NewTicker(probePoll)

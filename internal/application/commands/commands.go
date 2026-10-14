@@ -44,7 +44,7 @@ const (
 	Processed        Disposition = "processed"         // passed to ProcessConsent; the receipt holds the outcome
 )
 
-var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, Processed}
+var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed}
 
 // Entry is the decision about the first observed version of one comment.
 type Entry struct {

@@ -108,7 +108,7 @@ func (j *commandsJob) run(ctx context.Context) error {
 }
 
 // horizon is the sync watermark (D-COMMANDS): the earliest last successful cycle among the enrolled repositories,
-// minus the job timeout and the clock skew. ready is false, with a Debug line, while an enrolled repository has no
+// minus the job timeout and the clock skew. ready is false, with a Warn line (every command waits), while an enrolled repository has no
 // successful cycle: nothing can be decided before it has been seen.
 func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (horizon time.Time, ready bool, err error) {
 	var earliest time.Time
@@ -118,7 +118,7 @@ func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (hori
 			return time.Time{}, false, fmt.Errorf("read the synchronization state of %s: %w", project.Repo, err)
 		}
 		if state.LastSuccess.IsZero() {
-			j.logger.DebugContext(ctx, "github commands wait: an enrolled repository has not synchronized yet", "repo", project.Repo)
+			j.logger.WarnContext(ctx, "github commands wait: an enrolled repository has not synchronized yet", "repo", project.Repo)
 			return time.Time{}, false, nil
 		}
 		if earliest.IsZero() || state.LastSuccess.Before(earliest) {
@@ -196,12 +196,24 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	request.Outbox = []governance.OutboxMessage{ack}
 	_, err = governance.ProcessConsent(ctx, j.suites, request)
 	if errors.Is(err, governance.ErrNotFound) {
-		// Governance reports a missing Suite and an unknown proposal alike: only a missing Suite is no-suite.
-		switch probe := j.suites.Do(ctx, project, defaultSuite, func(context.Context, governance.Tx) error { return nil }); {
+		// Governance reports a missing Suite and an unknown proposal alike: look at each. Do answers ErrNotFound for a
+		// missing Suite, and the unit of work reports a missing proposal through proposalMissing, so the two never mix.
+		var proposalMissing bool
+		probe := j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+			_, _, err := tx.Proposal(ctx, proposalID(command.Proposal))
+			proposalMissing = errors.Is(err, governance.ErrNotFound)
+			if proposalMissing {
+				return nil
+			}
+			return err
+		})
+		switch {
 		case errors.Is(probe, governance.ErrNotFound):
 			return reject(commands.NoSuite, 0, reference)
 		case probe != nil:
 			return &opaque{what: "look for the suite", cause: probe}
+		case proposalMissing:
+			return reject(commands.UnknownProposal, 0, reference)
 		}
 	}
 	if err != nil {

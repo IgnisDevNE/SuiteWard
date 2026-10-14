@@ -339,6 +339,9 @@ func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string,
 	}
 	var ack commandtext.Ack
 	if a.Disposition == "" {
+		if a.Project != owner.ProjectID(a.RepositoryID) { // the command job writes the repository's own project
+			return commentTarget{}, "", keyError(key, "the payload does not match its key")
+		}
 		receipt, err := p.receipt(ctx, key, a)
 		if err != nil {
 			return commentTarget{}, "", err
@@ -351,6 +354,11 @@ func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string,
 	}
 	text, err := render(key, func() string { return commandtext.Acknowledge(ack) })
 	return a.commentTarget, text, err
+}
+
+// commentSource is the source command of the command in the comment with that id (D-COMMANDS).
+func commentSource(comment int64) contract.SourceCommandID {
+	return contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10))
 }
 
 // receipt reads the consent receipt of a processed acknowledgment.
@@ -371,6 +379,10 @@ func (p *commentPublisher) receipt(ctx context.Context, key string, a ackPayload
 	})
 	if err != nil {
 		return governance.ConsentReceipt{}, fmt.Errorf("github_comment %s: read the receipt: %w", key, err)
+	}
+	// Guards against a wrong operation written by a caller: the receipt must be that of the comment's command.
+	if consent.Result.Command().SourceCommandID() != commentSource(a.Comment) {
+		return governance.ConsentReceipt{}, keyError(key, "the receipt is not that of the comment")
 	}
 	return consent, nil
 }

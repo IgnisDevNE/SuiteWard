@@ -130,11 +130,17 @@ func acknowledgment(a Ack) string {
 			copyable("/suiteward approve "+ref+" <code>"),
 		)
 	case RevokedAfterPromotion:
+		// Says nothing about an approval being withdrawn: the owner may have had none active.
 		return paragraphs(
-			"Revocation recorded for "+ref+" by "+who+".\n"+
+			"Revoke command for "+ref+" by "+who+" was recorded.\n"+
 				ref+" is already promoted, so the canonical version remains unchanged; your revocation does not undo the promotion.",
-			"Reversing it needs a separately approved rollback (corrective) proposal: a new PR with its own exact approval, "+
-				"integration and promotion of a new version, with the history kept.",
+			"Reversing it needs "+rollback,
+		)
+	case ApprovedAfterPromotion:
+		return paragraphs(
+			"Approval recorded for "+ref+" by "+who+".\n"+
+				ref+" is already promoted, so the canonical version remains unchanged. No further action is needed.",
+			"Reversing the promotion needs "+rollback,
 		)
 	case NoActiveApproval:
 		return paragraphs("No active approval by " + who + " for " + ref + " to withdraw; nothing changed.\n" + eligibility + "\nNo action is needed.")
@@ -383,3 +389,7 @@ func Marker(instance, key string) string {
 func HasMarker(body, instance, key string) bool {
 	return strings.HasSuffix(strings.TrimRight(body, " \t\r\n"), Marker(instance, key))
 }
+
+// rollback is how a promotion is reversed (ADR 0018): never by a revocation.
+const rollback = "a separately approved rollback (corrective) proposal: a new PR with its own exact approval, " +
+	"integration and promotion of a new version, with the history kept."

@@ -335,6 +335,7 @@ Without GitHub:
    ```
 
    The ruleset blocks pushing it, so add it with the ruleset temporarily disabled and re-enable it afterwards. Before the scenario, `/status` must show `protection.result` `enforced` again; the check runs every 15 minutes.
+5. **Only on the remote host, once (2026-10-14):** the `c95c1ff` image proposed an empty `P1-R1` on `SuiteWardQ` PR #13 and it was approved; that proposal can never be promoted (the service logs `github bootstrap blocked` every minute) and the declaration does not unstick it, because an approved proposal never moves on. After the declaration is on `main` and the new image runs: reopen PR #13, comment `/suiteward revoke P1-R1 <code>`, wait for the revocation acknowledgment, close PR #13. The next PR you open then gets the bootstrap summary for `P2-R1`.
 
 ### 6b.3 Deploy on the host
 

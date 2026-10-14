@@ -102,6 +102,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"BootstrapWritesItsOutboxOnlyWithTheFact", cfPromotionOutbox},
 		{"PromotionWritesItsOutbox", cfPromoteOutbox},
 		{"PromotionOutboxFailureRollsBackTheFact", cfPromotionOutboxFailureRollsBackTheFact},
+		{"CorrectionWritesItsOutboxOnlyWithTheFact", cfCorrectOutbox},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

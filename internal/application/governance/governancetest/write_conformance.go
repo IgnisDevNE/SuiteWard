@@ -494,3 +494,26 @@ func cfPromotionOutboxFailureRollsBackTheFact(e *cfEnv) {
 		e.t.Fatalf("retry = %+v, %v, want a committed promotion", result, err)
 	}
 }
+
+func cfCorrectOutbox(e *cfEnv) {
+	r := e.seedRich()
+	e.approve(r.open)
+	request := governance.CorrectionRequest{Promotion: r.open.mergedRequest("correct-1", "version-3"), TargetVersionID: "version-1"}
+	request.Promotion.Outbox = cfMessages("ack-correct")
+	before := e.revision()
+
+	result, err := governance.Correct(context.Background(), e.store, request)
+
+	if err != nil || !result.Committed || result.Duplicate {
+		e.t.Fatalf("correct = %+v, %v, want a committed correction", result, err)
+	}
+	e.requireQueued(nil, []string{"ack-correct"})
+	e.requireWrites(before, 1)
+
+	request.Promotion.Outbox = cfMessages("ack-replay")
+	again, err := governance.Correct(context.Background(), e.store, request)
+	if err != nil || !again.Duplicate {
+		e.t.Fatalf("replay = %+v, %v, want a duplicate", again, err)
+	}
+	e.requireQueued(nil, []string{"ack-correct"})
+}

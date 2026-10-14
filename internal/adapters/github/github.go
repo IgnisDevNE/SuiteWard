@@ -27,6 +27,9 @@ var (
 	// ErrInvalidResponse reports an answer that does not decode or lacks a
 	// required field.
 	ErrInvalidResponse = errors.New("github: invalid response")
+	// ErrTreeTruncated reports a recursive tree GitHub cut at its size limit;
+	// the error also matches inventory.ErrInvalidTree.
+	ErrTreeTruncated = errors.New("github: tree truncated")
 )
 
 const (

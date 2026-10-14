@@ -66,6 +66,39 @@ Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none r
 | `GET /readyz` | Readiness: 200 when the database answers, the schema version equals `SupportedVersion` and the service is not shutting down; 503 otherwise. It does not query River: River starts before the listener opens, the process never cancels the context it started with, and only the shutdown stops it, so River runs while this answers 200. During shutdown the 503 is best effort: the listener closes at once and `net/http` drops a request it reads after the drain began, so only a request in flight at that instant sees it. Body `{"status":"ready","schemaVersion":N}` or `{"status":"unavailable","reason":"..."}`. |
 | `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`. |
 
+### Command and bootstrap jobs (M1.6a)
+
+Both jobs are registered only when the GitHub settings are set, and they act only for repositories with an enrolled owner (D-COMMANDS).
+
+**`github_bootstrap`**
+- Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
+- For each enrolled project:
+  1. If there is no Suite, create one with `UnitOfWork.CreateSuite`, using `default`, the owner's governing policy and `branch:<default branch>`.
+  2. If the Suite has no canonical and no proposal `P1`, and the repository has an open PR, pin the default branch head and call `ProposeBaseline` with `P1-R1`, carried by the lowest-numbered open PR.
+  3. In the same transaction, write an outbox message of kind `github_comment` with key `bootstrap-summary:<repository id>:P1-R1`. Its body comes from the command-text package and contains the inventory summary, the origin and the copyable `/suiteward approve P1-R1 <code>`.
+- A read failure skips the project until the next run. GitHub text is never stored or logged.
+
+**`github_commands`**
+- Periodic every 15 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished. It is a single job, so commands are serialized across all repositories (D-COMMANDS).
+- It takes `commands.Store.Pending` in order. For each candidate:
+  - **Not a command.** Record `not-command` when the author is the bot or the body has no command line.
+  - **Not the owner.** Record `ignored-author` when the author is not the enrolled owner. It is otherwise ignored.
+  - **Owner-authored.**
+    1. Parse the command. Unparseable gives `malformed`.
+    2. Verify the code at the comment's `created_at` with tolerance 1. A failure gives `invalid-code`.
+    3. Call `ConsumeStep` with the source `github-comment:<id>`. `ErrStepUsed` gives `replayed-code`.
+    4. Call `ProcessConsent` with the D-COMMANDS identifiers, `Order` set to the comment id, and the actor `github:<owner id>`.
+    5. Record `processed` with the operation.
+    6. In the consent transaction, write an outbox `github_comment` acknowledgment with key `ack:<repository id>:<comment id>`.
+  - **Rejected owner commands.** The `malformed`, `invalid-code` and `replayed-code` dispositions get an acknowledgment too. It is written in the same transaction as the ledger entry, so either both are stored or neither is.
+- **Bootstrap.** When an approval of a bootstrap proposal commits, the job enqueues `github_bootstrap_promote` (args: project, reference). That job re-reads the origin tree, records the assessment, calls `Bootstrap` with operation `bootstrap:P<n>-R<m>` and version `V1`, and acknowledges the promotion.
+- The job never fails for a GitHub answer. A store error fails it; the next run retries the same candidate.
+
+**Outbox kind `github_comment`**
+- The publisher posts the body to the PR with `Writer.PostComment` and the comment token. The body ends with the hidden marker `<!-- suiteward:<outbox key> -->`.
+- Before posting, it lists the PR's comments by the bot and skips the post when one already carries the marker. Delivery is at least once (persistence contract), so posting is idempotent by marker.
+- The job counts in `/status` exclude `github_bootstrap` and `github_commands`.
+
 ### Protection verification job (M1.5)
 
 - `github_protection_check`: one periodic River job every 15 minutes with `RunOnStart`, `MaxAttempts` 1 and unique while unfinished, registered only when the GitHub settings are set. It verifies every configured repository (D-PROTECTION) with the protection token (Metadata and Administration read) through the same budget as synchronization, records each result (persistence contract, M1.5), and never fails the job for a GitHub answer: a read failure is the result `unknown`. A budget or rate-limit wait skips the repository until the next run. The check starts no repository after the tick deadline (`JOB_TIMEOUT` minus 5 s) and records only the repositories it finished. Results are keyed by the repository's numeric id: an enrolled repository is recorded even when its read fails (`unknown`), while a repository that was never read and is not enrolled has no result yet, so `/status` omits its `protection` until a read succeeds.

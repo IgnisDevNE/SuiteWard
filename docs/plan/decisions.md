@@ -1,6 +1,6 @@
 # Decision register
 
-- **Updated:** 2026-10-13 (phase M1.5: D-IDENTITY, D-TIER, D-CHECKS and D-PROTECTION accepted; D-GITHUB-ACCESS amended)
+- **Updated:** 2026-10-14 (phase M1.6a: D-COMMANDS accepted; D-IDENTITY and D-CHECKS amended)
 
 These gates record product and implementation choices that accepted ADRs deliberately left open. They do not reopen accepted ADRs. The integrator can resolve implementation choices within accepted policy; changes to product authority, scope, or release commitments need the project owner. Do not choose an unresolved product policy to unblock a task; record the decision needed and take independent ready work.
 
@@ -69,7 +69,7 @@ Accepted 2026-10-05: [ADR 0027](../decisions/0027-agent-human-trust-separation.m
 
 ### D-IDENTITY: Owner setup and identity
 
-Accepted 2026-10-13 (owner). The owner is bound by a local setup command run on the instance itself (`suiteward setup`, through `podman exec` on the co-located target or the owner's own Session Manager session on the isolated one); no HTTP or MCP surface can set up or change the owner. Setup takes the owner's GitHub login, resolves its numeric account id through the App's installation token, and records the owner as the principal `github:<numeric id>` of kind `Human` in a new policy revision; the login is display only. Proof of identity is access to the instance, which on the isolated tier only the owner has; on the co-located tier the agent can run setup too, which is part of the reduced assurance SuiteWard reports. The trusted installation is the operator-configured `GITHUB_INSTALLATION_ID`; setup confirms it covers every configured repository. Setup also enrolls the TOTP secret (ADR 0027), records the name of the project's required test check, and records the tier the instance had at enrollment: a secret enrolled on a `co-located` instance stays within the agent's reach even if the instance is later declared `isolated`, so the effective tier is `co-located` when either the setting or the enrollment says so, and `/status` says to re-run setup when they differ. Re-running setup replaces the TOTP secret and creates a new policy revision. One owner governs the whole instance (owner answer 2026-10-13): each configured repository is one SuiteWard project, identified by the repository's numeric GitHub id (`github-repo:<id>`, stable across renames), with its own policy owned by that owner and its own required test check (`--test-check owner/name=<check>`). An approval binding includes the policy revision (`contract.NewApprovalBinding`). In M1.5 no Suite exists yet, and setup refuses to change the owner of a project that already has a Suite; M1.6 must make re-enrollment advance the Suite's policy through governance, so a changed owner never inherits earlier authority or approvals.
+Accepted 2026-10-13 (owner). The owner is bound by a local setup command run on the instance itself (`suiteward setup`, through `podman exec` on the co-located target or the owner's own Session Manager session on the isolated one); no HTTP or MCP surface can set up or change the owner. Setup takes the owner's GitHub login, resolves its numeric account id through the App's installation token, and records the owner as the principal `github:<numeric id>` of kind `Human` in a new policy revision; the login is display only. Proof of identity is access to the instance, which on the isolated tier only the owner has; on the co-located tier the agent can run setup too, which is part of the reduced assurance SuiteWard reports. The trusted installation is the operator-configured `GITHUB_INSTALLATION_ID`; setup confirms it covers every configured repository. Setup also enrolls the TOTP secret (ADR 0027), records the name of the project's required test check, and records the tier the instance had at enrollment: a secret enrolled on a `co-located` instance stays within the agent's reach even if the instance is later declared `isolated`, so the effective tier is `co-located` when either the setting or the enrollment says so, and `/status` says to re-run setup when they differ. Re-running setup replaces the TOTP secret and creates a new policy revision. One owner governs the whole instance (owner answer 2026-10-13): each configured repository is one SuiteWard project, identified by the repository's numeric GitHub id (`github-repo:<id>`, stable across renames), with its own policy owned by that owner and its own required test check (`--test-check owner/name=<check>`). An approval binding includes the policy revision (`contract.NewApprovalBinding`). In M1.5 no Suite exists yet, and setup refuses to change the owner of a project that already has a Suite; Changing the owner of a project that already has a Suite stays refused in the MVP (D-COMMANDS, 2026-10-14), so a changed owner never inherits earlier authority or approvals; re-enrolling the same owner is allowed.
 
 ### D-TIER: Installation tier
 
@@ -86,9 +86,65 @@ Accepted 2026-10-13 (owner), from the M1.5-P0 measurement on the S1 test reposit
 
 `enforced` means no finding. Two results are exclusive instead: `enforcement-unavailable` (a private repository whose effective rules answer 403: GitHub Free does not enforce there, or the read permission is missing; the instruction names both and SuiteWard never claims protection) and `unknown` (any other read failure, including a token whose granted permissions differ, with the instruction to grant Administration read). A ruleset's bypass list is not visible to the App, with or without Administration read (measured: an existing "Repository admin" bypass answered 0 bypass actors; GitHub returns `bypass_actors` only to a caller with write access to the ruleset, which the App does not request), so every result that relies on a ruleset carries the caveat `ruleset-bypass-unverified` with the manual check that the bypass list is empty. Verification runs at setup and every 15 minutes inside the D-SYNC budget, and `/status` shows the latest result per repository.
 
+### D-COMMANDS: PR commands, identifiers and bootstrap
+
+Accepted 2026-10-14 (owner answers, M1.6a planning), within ADRs 0002, 0010, 0011, 0015 and 0027.
+
+**Who is heard**
+- Only the enrolled owner's comments are commands.
+- A `/suiteward` comment from any other account is recorded in the command ledger and otherwise ignored: no acknowledgment, no state change, no check effect. This is the ADR 0011 amendment of 2026-10-14.
+- SuiteWard's own comments are recognized by the App bot's numeric account id and never parsed.
+
+**Command syntax**
+- `/suiteward approve <ref> <code>` and `/suiteward revoke <ref> <code>` (ADR 0027).
+- The first line of the comment body that starts with `/suiteward`, outside fenced code blocks, is the command; the rest of the body is ignored.
+- `<ref>` is `P<n>-R<m>` (ADR 0002 and ADR 0010 examples), resolved inside the PR's project and its single Suite. `<code>` is the 6-digit TOTP code.
+
+**TOTP**
+- The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-14).
+- A step is consumed once per owner across all commands (ADR 0027). The consumed step records the command that used it, so a retry of the same command after a crash is not a replay.
+
+**Order**
+- Commands are processed one at a time across all repositories, ordered by the comment's `created_at` and then its comment id.
+- The command order given to the domain is the GitHub comment id.
+
+**One comment is one action**
+- D-COMMENT-EDIT applies: only the first observed version of a comment id is processed, once.
+
+**Identifiers**
+
+| Value | Form |
+| --- | --- |
+| Project | `github-repo:<repository id>` (D-IDENTITY) |
+| Suite | `default`; one per project in the MVP |
+| Integration target | `branch:<default branch>` |
+| Carrier | `github-pr:<repository id>/<number>` |
+| Proposal | `P<n>`, numbered per project from 1 |
+| Revision | `R<m>`, numbered per proposal from 1 |
+| Version | `V<n>`, numbered per Suite from 1 |
+| Source command | `github-comment:<comment id>` |
+| Consent operation | `consent:github-comment:<comment id>` |
+| Bootstrap operation | `bootstrap:P<n>-R<m>` |
+
+The assessment emitter is the service principal `suiteward` (kind Service).
+
+**Bootstrap of an existing repository (ADR 0010)**
+1. When a configured repository has an enrolled owner and no Suite, SuiteWard creates its Suite with no canonical, governed by the owner's current policy revision.
+2. When that repository has an open PR, SuiteWard:
+   - pins the default branch head as the origin;
+   - proposes its protected inventory as `P1-R1`, carried by the lowest-numbered open PR;
+   - posts the bootstrap summary in that PR, with the copyable `/suiteward approve P1-R1 <code>`.
+3. After the owner's valid approval, SuiteWard re-reads the origin tree, records the integrity assessment for the origin, and bootstraps the first canonical `V1` without waiting for the PR to merge.
+4. If the default branch has moved meanwhile, the origin stays pinned. It is not silently moved (ADR 0010).
+
+**Owner change**
+- Changing the owner of a project that already has a Suite stays refused in the MVP, as `setup` does since M1.5.
+- Re-enrolling the same owner (TOTP rotation) is allowed.
+- This amends D-IDENTITY's M1.6 note.
+
 ### D-CHECKS: The `SuiteWard / Contract` check
 
-Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-github.md)): one check run named `SuiteWard / Contract` per PR head SHA, published by the App and required with the App's `integration_id` as its source; never `neutral` (it passes a required check); `in_progress` while a contract change awaits approval; one publication per (head SHA, state); only an invalid command authored by the owner sets `failure`, any other comment is ignored; the required-check rule must require branches to be up to date. M1.5 verifies the protection side; M1.6 publishes.
+Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-github.md)): one check run named `SuiteWard / Contract` per PR head SHA, published by the App and required with the App's `integration_id` as its source; never `neutral` (it passes a required check); `in_progress` while a contract change awaits approval; one publication per (head SHA, state); only an invalid command authored by the owner sets `failure`; a command from any other account is ignored (D-COMMANDS); the required-check rule must require branches to be up to date. M1.5 verifies the protection side; M1.6 publishes.
 
 ### D-MIGRATIONS: Migration tooling
 

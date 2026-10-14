@@ -105,3 +105,7 @@ Explicit withdrawal, its effective point, and the PR acknowledgment requirement 
 ## Amendment (2026-10-05, phase R1): owner confirmation code
 
 Per [ADR 0027](0027-agent-human-trust-separation.md), `/suiteward revoke <ref> <code>` also requires a current single-use TOTP code from the verified owner. A revoke command without a valid code has no effect and receives a rejection acknowledgment.
+
+## Amendment (2026-10-14, phase M1.6a): commands from other accounts
+
+Only the enrolled owner's comments are commands (ADR 0012, ADR 0027). A `/suiteward` comment from any other account is recorded and otherwise ignored: it changes no authority and gets no acknowledgment, so a third party cannot make SuiteWard comment on a PR or spend its API budget. An owner-authored command that is malformed, carries an invalid or replayed code, or names an unknown revision is still rejected and explained in an acknowledgment, as this ADR and ADR 0027 require. See D-COMMANDS.

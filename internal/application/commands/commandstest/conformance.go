@@ -430,6 +430,26 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 	run("LatestOwnerCommand counts only the command dispositions", func(e *cmdEnv) {
 		counted := []commands.Disposition{commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.Processed}
 		ignored := []commands.Disposition{commands.NotCommand, commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor}
+		// A new disposition must be placed in exactly one set, so it cannot drift between IsCommand and the store's own list.
+		placed := map[commands.Disposition]int{}
+		for _, d := range counted {
+			placed[d]++
+		}
+		for _, d := range ignored {
+			placed[d]++
+		}
+		all := commands.Dispositions()
+		if len(all) != len(placed) {
+			e.t.Fatalf("Dispositions() has %d codes and the counted and ignored sets %d; want the same codes", len(all), len(placed))
+		}
+		for _, d := range all {
+			if placed[d] != 1 {
+				e.t.Fatalf("disposition %q is in %d of the counted and ignored sets; want exactly one", d, placed[d])
+			}
+			if d.IsCommand() != slices.Contains(counted, d) {
+				e.t.Fatalf("IsCommand(%q) = %v, but the store counts it: %v", d, d.IsCommand(), slices.Contains(counted, d))
+			}
+		}
 		comment := int64(0)
 		record := func(d commands.Disposition) int64 {
 			comment++

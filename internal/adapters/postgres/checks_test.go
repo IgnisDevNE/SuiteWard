@@ -65,6 +65,8 @@ func TestCheckConstraints(t *testing.T) {
 		{"pull zero", "pr_checks_pull_check", map[string]any{"pull_number": 0}},
 		{"short head", "pr_checks_head_check", map[string]any{"head_sha": "abc"}},
 		{"uppercase head", "pr_checks_head_check", map[string]any{"head_sha": "0123456789ABCDEF0123456789abcdef01234567"}},
+		{"empty reason", "pr_checks_reason_check", map[string]any{"reason": ""}},
+		{"blank reason", "pr_checks_reason_check", map[string]any{"reason": " "}},
 		{"unknown state", "pr_checks_state_check", map[string]any{"state": "neutral"}},
 		{"reference", "pr_checks_reference_check", map[string]any{"reference": "P1"}},
 		{"revision", "pr_checks_revision_check", map[string]any{"revision": -1}},

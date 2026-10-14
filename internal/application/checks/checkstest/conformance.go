@@ -344,6 +344,8 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 			"uppercase head": func(r *checks.Result) { r.HeadSHA = strings.ToUpper(headA) },
 			"non-hex head":   func(r *checks.Result) { r.HeadSHA = strings.Repeat("g", 40) },
 			"empty head":     func(r *checks.Result) { r.HeadSHA = "" },
+			"empty reason":   func(r *checks.Result) { r.Reason = "" },
+			"blank reason":   func(r *checks.Result) { r.Reason = " 	" },
 			"neutral":        func(r *checks.Result) { r.State = "neutral" },
 			"empty state":    func(r *checks.Result) { r.State = "" },
 			"reference":      func(r *checks.Result) { r.Reference = "P1" },

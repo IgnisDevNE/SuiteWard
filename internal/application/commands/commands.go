@@ -46,6 +46,9 @@ const (
 
 var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed}
 
+// Dispositions returns every disposition.
+func Dispositions() []Disposition { return nil }
+
 // Entry is the decision about the first observed version of one comment.
 type Entry struct {
 	RepositoryID int64

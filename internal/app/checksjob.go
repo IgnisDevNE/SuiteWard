@@ -258,7 +258,7 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github checks read failed", p.Repo, err)
 		return checks.Result{}, problemReadFailed, true, nil
-	case errors.Is(err, governance.ErrConflict):
+	case errors.Is(err, governance.ErrCanonicalMoved): // another ErrConflict is deterministic: a retry would repeat it
 		j.logger.WarnContext(ctx, "github checks retry: the canonical moved while the head was assessed", "repo", p.Repo, "pull", pull.Number)
 		return checks.Result{}, problemConflict, true, nil
 	}

@@ -17,7 +17,7 @@ var checkReasons = []struct {
 	next   string // a phrase of the next action
 	name   string // the state as the summary names it
 }{
-	{commandtext.CheckInProgress, "bootstrap-pending", "no approved baseline yet", "approves the baseline proposal", "in_progress"},
+	{commandtext.CheckInProgress, "bootstrap-pending", "no approved baseline yet", "lowest-numbered open pull request; SuiteWard proposes none while the default branch has no protected files", "in_progress"},
 	{commandtext.CheckSuccess, "unchanged", "match the canonical contract", "nothing is required", "success"},
 	{commandtext.CheckSuccess, "ready", "ready for integration", "integrate this pull request", "success"},
 	{commandtext.CheckInProgress, "approval-missing", "no current approval", "To approve this exact revision, comment:", "in_progress"},

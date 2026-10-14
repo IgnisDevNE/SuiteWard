@@ -117,7 +117,7 @@ func acknowledgment(a Ack) string {
 	case Approved:
 		status := "The approval requirement for " + ref + " is not met yet."
 		if a.Eligible {
-			status = "The approval requirement for " + ref + " is met; SuiteWard confirms a promotion in a separate comment."
+			status = "The approval requirement for " + ref + " is met."
 		}
 		return paragraphs(
 			"Approval recorded for "+ref+" by "+who+".\n"+status,
@@ -125,7 +125,7 @@ func acknowledgment(a Ack) string {
 			copyable("/suiteward revoke "+ref+" <code>"),
 		)
 	case Revoked:
-		status := "The approval requirement for " + ref + " is not met; promotion waits for a valid approval."
+		status := "The approval requirement for " + ref + " is not met."
 		if a.Eligible {
 			status = "The approval requirement for " + ref + " is still met through other valid approval."
 		}

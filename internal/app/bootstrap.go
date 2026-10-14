@@ -445,7 +445,10 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 		return fmt.Errorf("read the observed pull requests: %w", err)
 	}
 	open := openPulls(pulls)
-	if len(open) == 0 || (s.latest > 0 && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier })) {
+	if len(open) == 0 {
+		return bootstrapStop("no-open-pull-request")
+	}
+	if s.latest > 0 && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
 		return nil
 	}
 	branch, ok := strings.CutPrefix(string(s.target), targetPrefix)
@@ -470,7 +473,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	if len(inv.Manifest().Entries()) == 0 { // ADR 0010: never manufacture an empty canonical suite; Info because it repeats every run
 		b.logger.InfoContext(ctx, "github bootstrap awaiting an initial contract: the default branch has no protected files", "repo", p.Repo)
-		return nil
+		return bootstrapStop("awaiting-initial-contract")
 	}
 	tier, _ := effectiveTier(b.tier, enrollment, true)
 	number, pull := s.latest+1, open[0]
@@ -606,7 +609,7 @@ func blockedCode(reason contract.PromotionReason) string {
 	return "blocked"
 }
 
-// bootstrapStop is why a project's bootstrap stopped without failing the run: a fixed classification code for
+// bootstrapStop is why a project's bootstrap stopped or is waiting, without failing the run: a fixed classification code for
 // /status, never text from GitHub. The step that stops logs its own reason.
 type bootstrapStop string
 

@@ -507,7 +507,7 @@ type AssessmentWrite struct {
 }
 ```
 
-- **Outbox inside the use case.** `ConsentRequest`, `BaselineRequest` and `PromoteRequest` gain `Outbox []OutboxMessage`. `ProcessConsent`, `ProposeBaseline`, and `Promote`/`Bootstrap`/`Correct` write it inside their own transaction, after their facts. Nothing is written when there are no new facts: a duplicate consent (replay by operation id or source), a baseline with unchanged coverage, or a promotion replay. The acknowledgment payload carries only the operation id; the publisher renders the comment from the stored receipt, so an acknowledgment never reports what did not commit (ADR 0011).
+- **Outbox inside the use case.** `ConsentRequest`, `BaselineRequest` and `PromoteRequest` gain `Outbox []OutboxMessage`. `ProcessConsent`, `ProposeBaseline`, and `Promote`/`Bootstrap`/`Correct` write it inside their own transaction, after their facts. Nothing is written when there are no new facts: a duplicate consent (replay by operation id or source), a baseline with unchanged coverage, or a promotion replay. Because the message is written in the same transaction as its facts, an acknowledgment never reports what did not commit (ADR 0011). The payloads are defined in the [runtime contract](runtime.md#command-and-bootstrap-jobs-m16a) (outbox kind `github_comment`).
 - **Outcomes.** The evidence outcome is:
   - `Passed` when the protected inventory of the exact source equals the revision's binding (manifest and scope digests);
   - `Failed` when it differs;
@@ -656,7 +656,9 @@ Property every reconstitution test must check: state produced by domain operatio
 | `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since |
 | `owner_enrollment` (M1.5) | singleton | replaced by `setup` | generation, account_id, login, secret bytea (20 bytes), tier, policy_revision_id, enrolled_at |
 | `owner_test_checks` (M1.5) | (repository_id, policy_revision_id) | insert-only | project_id, repo, test_check; FK to `policies` |
-| `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at |
+| `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at, source_command_id (M1.6a: the command that used the step; `setup:<generation>` for setup) |
+| `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at |
+| `suiteward_instance` (M1.6a) | singleton | immutable | instance_id (32 lowercase hex, random) |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 

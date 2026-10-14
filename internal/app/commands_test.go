@@ -359,19 +359,19 @@ func TestCommandsJobRecordsEveryDisposition(t *testing.T) {
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.NotCommand) }, 0},
 		{"an edited comment with no command line is not a command, and is not acknowledged", cjComment{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: edited, body: "LGTM " + cjMarker},
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.NotCommand) }, 0},
-		{"the bot's own comment", cjComment{pull: cjPull, id: 500, author: cjBotID, created: created, updated: created, body: cjCommand("approve", "P1-R1", created, 0)},
+		{"the bot's own comment", cjComment{pull: cjPull, id: 500, author: cjBotID, created: created, updated: created, body: cjCommand("approve", "P1-R2", created, 0)},
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.NotCommand) }, 0},
-		{"a command created before the enrollment", ownerCommand(500, cjOrigin.Add(-time.Minute), "approve", "P1-R1", 0),
+		{"a command created before the enrollment", ownerCommand(500, cjOrigin.Add(-time.Minute), "approve", "P1-R2", 0),
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.BeforeEnrollment) }, 0},
-		{"a command of another account", cjComment{pull: cjPull, id: 500, author: cjOtherID, created: created, updated: created, body: cjCommand("approve", "P1-R1", created, 0)},
+		{"a command of another account", cjComment{pull: cjPull, id: 500, author: cjOtherID, created: created, updated: created, body: cjCommand("approve", "P1-R2", created, 0)},
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.IgnoredAuthor) }, 0},
 		{"a malformed command of another account", cjComment{pull: cjPull, id: 500, author: cjOtherID, created: created, updated: created, body: "/suiteward approve"},
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.IgnoredAuthor) }, 0},
-		{"an owner command edited before it was first observed", cjComment{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: edited, body: cjCommand("approve", "P1-R1", created, 0)},
+		{"an owner command edited before it was first observed", cjComment{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: edited, body: cjCommand("approve", "P1-R2", created, 0)},
 			func(w *cjWorld, id int64) { w.requireRejected(cjID1, id, commands.EditedFirst, 0, "") }, 0},
 		{"an edited malformed command is edited-first, not malformed", cjComment{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: edited, body: "/suiteward approve"},
 			func(w *cjWorld, id int64) { w.requireRejected(cjID1, id, commands.EditedFirst, 0, "") }, 0},
-		{"a malformed command", cjComment{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: created, body: cjMarker + "\n/suiteward approve P1-R1"},
+		{"a malformed command", cjComment{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: created, body: cjMarker + "\n/suiteward approve P1-R2"},
 			func(w *cjWorld, id int64) {
 				w.requireRejected(cjID1, id, commands.Malformed, commandtext.MissingCode, "")
 			}, 0},
@@ -379,15 +379,15 @@ func TestCommandsJobRecordsEveryDisposition(t *testing.T) {
 			func(w *cjWorld, id int64) {
 				w.requireRejected(cjID1, id, commands.Malformed, commandtext.UnknownVerb, "")
 			}, 0},
-		{"a code that does not verify", ownerCommand(500, created, "approve", "P1-R1", 5),
-			func(w *cjWorld, id int64) { w.requireRejected(cjID1, id, commands.InvalidCode, 0, "P1-R1") }, 0},
-		{"an approval", ownerCommand(500, created, "approve", "P1-R1", 0),
+		{"a code that does not verify", ownerCommand(500, created, "approve", "P1-R2", 5),
+			func(w *cjWorld, id int64) { w.requireRejected(cjID1, id, commands.InvalidCode, 0, "P1-R2") }, 0},
+		{"an approval", ownerCommand(500, created, "approve", "P1-R2", 0),
 			func(w *cjWorld, id int64) {
 				if receipt := w.requireProcessed(cjID1, id); receipt.Result.Outcome() != contract.ConsentApproved {
 					t.Fatalf("outcome = %v; want approved", receipt.Result.Outcome())
 				}
 			}, 1},
-		{"a revocation with no approval", ownerCommand(500, created, "revoke", "P1-R1", 0),
+		{"a revocation with no approval", ownerCommand(500, created, "revoke", "P1-R2", 0),
 			func(w *cjWorld, id int64) {
 				if receipt := w.requireProcessed(cjID1, id); receipt.Result.Outcome() != contract.ConsentNoActiveApproval {
 					t.Fatalf("outcome = %v; want no active approval", receipt.Result.Outcome())
@@ -440,7 +440,7 @@ func TestCommandsJobAcceptsTheCodesOfTheToleranceAndNoOther(t *testing.T) {
 	w := newCjWorld(t)
 	var comments []cjComment
 	for i, offset := range []int64{-2, -1, 0, 1, 2} {
-		comments = append(comments, ownerCommand(int64(500+i), cjAt(10+5*i), "approve", "P1-R1", offset))
+		comments = append(comments, ownerCommand(int64(500+i), cjAt(10+5*i), "approve", "P1-R2", offset))
 	}
 	w.syncAll(comments)
 	w.mustRun()
@@ -451,18 +451,18 @@ func TestCommandsJobAcceptsTheCodesOfTheToleranceAndNoOther(t *testing.T) {
 
 func TestCommandsJobBindsACodeToTheFirstCommandThatUsesIt(t *testing.T) {
 	w := newCjWorld(t)
-	first, second := ownerCommand(500, cjAt(10), "approve", "P1-R1", 0), ownerCommand(501, cjAt(10).Add(5*time.Second), "approve", "P1-R1", 0)
+	first, second := ownerCommand(500, cjAt(10), "approve", "P1-R2", 0), ownerCommand(501, cjAt(10).Add(5*time.Second), "approve", "P1-R2", 0)
 	w.syncAll([]cjComment{second, first})
 	w.mustRun()
 	w.requireProcessed(cjID1, 500)
-	w.requireRejected(cjID1, 501, commands.ReplayedCode, 0, "P1-R1")
+	w.requireRejected(cjID1, 501, commands.ReplayedCode, 0, "P1-R2")
 }
 
 func TestCommandsJobUsesNoStepForAnEditedCommand(t *testing.T) {
 	w := newCjWorld(t)
-	edited := ownerCommand(500, cjAt(10), "approve", "P1-R1", 0)
+	edited := ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)
 	edited.updated = edited.created.Add(time.Minute)
-	next := ownerCommand(501, cjAt(10).Add(5*time.Second), "approve", "P1-R1", 0) // the same step: the edited comment did not use it
+	next := ownerCommand(501, cjAt(10).Add(5*time.Second), "approve", "P1-R2", 0) // the same step: the edited comment did not use it
 	w.syncAll([]cjComment{edited, next})
 	w.mustRun()
 	w.requireRejected(cjID1, 500, commands.EditedFirst, 0, "")
@@ -473,8 +473,8 @@ func TestCommandsJobProcessesInTheOrderOfCreationThenCommentIDAcrossRepositories
 	w := newCjWorld(t)
 	w.seed(cjID2)
 	w.syncAll(
-		[]cjComment{ownerCommand(100, cjAt(11), "approve", "P1-R1", 0), ownerCommand(300, cjAt(12), "approve", "P1-R1", 0)},
-		ownerCommand(900, cjAt(10), "approve", "P1-R1", 0), ownerCommand(200, cjAt(12), "approve", "P1-R1", 1))
+		[]cjComment{ownerCommand(100, cjAt(11), "approve", "P1-R2", 0), ownerCommand(300, cjAt(12), "approve", "P1-R2", 0)},
+		ownerCommand(900, cjAt(10), "approve", "P1-R2", 0), ownerCommand(200, cjAt(12), "approve", "P1-R2", 1))
 	w.mustRun()
 	var order []int64
 	for _, r := range w.ledger.records {
@@ -490,8 +490,8 @@ func TestCommandsJobProcessesInTheOrderOfCreationThenCommentIDAcrossRepositories
 func TestCommandsJobWaitsForTheSyncWatermark(t *testing.T) {
 	horizon := cjSync.Add(-(cjJobTimeout + 30*time.Second))
 	w := newCjWorld(t)
-	ready := ownerCommand(500, horizon.Add(-time.Second), "approve", "P1-R1", 0)
-	atHorizon := ownerCommand(501, horizon, "approve", "P1-R1", 3)
+	ready := ownerCommand(500, horizon.Add(-time.Second), "approve", "P1-R2", 0)
+	atHorizon := ownerCommand(501, horizon, "approve", "P1-R2", 3)
 	w.syncAll([]cjComment{atHorizon, ready})
 	w.mustRun()
 	w.requireProcessed(cjID1, 500)
@@ -501,7 +501,7 @@ func TestCommandsJobWaitsForTheSyncWatermark(t *testing.T) {
 func TestCommandsJobUsesTheEarliestSuccessfulCycle(t *testing.T) {
 	w := newCjWorld(t)
 	late := cjSync.Add(-(cjJobTimeout + 30*time.Second)).Add(-time.Minute) // before repository 1's horizon, after repository 2's
-	w.observe(cjID1, cjSync, ownerCommand(500, late, "approve", "P1-R1", 0))
+	w.observe(cjID1, cjSync, ownerCommand(500, late, "approve", "P1-R2", 0))
 	w.observe(cjID2, cjSync.Add(-30*time.Minute))
 	w.mustRun()
 	w.requireNoEntry(cjID1, 500)
@@ -509,7 +509,7 @@ func TestCommandsJobUsesTheEarliestSuccessfulCycle(t *testing.T) {
 
 func TestCommandsJobDoesNothingWhileARepositoryHasNeverSynchronized(t *testing.T) {
 	w := newCjWorld(t)
-	w.observe(cjID1, cjSync, ownerCommand(500, cjAt(10), "approve", "P1-R1", 0)) // repository 2 has no successful cycle
+	w.observe(cjID1, cjSync, ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)) // repository 2 has no successful cycle
 	w.mustRun()
 	w.requireNoEntry(cjID1, 500)
 	if w.ledger.pendingCalls != 0 || w.botCall != 0 {
@@ -540,7 +540,7 @@ func TestCommandsJobResolvesTheBotOnlyForCandidates(t *testing.T) {
 
 func TestCommandsJobStopsWhenTheBotAccountIsUnknown(t *testing.T) {
 	w := newCjWorld(t)
-	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R1", 0)})
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)})
 	w.botErr = errCjStore
 	if err := w.run(); err != nil {
 		t.Fatalf("run: %v; an unknown bot account is retried on the next tick, it does not fail the job", err)
@@ -555,7 +555,7 @@ func TestCommandsJobStopsWhenTheBotAccountIsUnknown(t *testing.T) {
 
 func TestCommandsJobStopsAtAFailingCandidateAndRecordsItAsFailedAfterFiveAttempts(t *testing.T) {
 	w := newCjWorld(t)
-	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R1", 0), ownerCommand(501, cjAt(11), "approve", "P1-R1", 0)})
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R2", 0), ownerCommand(501, cjAt(11), "approve", "P1-R2", 0)})
 	w.owners.consumeErr = func(source contract.SourceCommandID) error {
 		if source == commentSource(500) {
 			return errCjStore
@@ -586,7 +586,7 @@ func TestCommandsJobStopsAtAFailingCandidateAndRecordsItAsFailedAfterFiveAttempt
 
 func TestCommandsJobCountsOnlyConsecutiveFailuresOfOneCandidate(t *testing.T) {
 	w := newCjWorld(t)
-	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R1", 0)})
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)})
 	failing := true
 	w.owners.consumeErr = func(contract.SourceCommandID) error {
 		if failing {
@@ -635,7 +635,7 @@ func TestCommandsJobFailsOnlyWhenTheLedgerCannotBeUsed(t *testing.T) {
 }
 
 func TestCommandsJobRepeatsEarlierStepsHarmlesslyAfterACrash(t *testing.T) {
-	command := ownerCommand(500, cjAt(10), "approve", "P1-R1", 0)
+	command := ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)
 	for _, tc := range []struct {
 		name  string
 		crash func(w *cjWorld)
@@ -669,11 +669,11 @@ func TestCommandsJobRepeatsEarlierStepsHarmlesslyAfterACrash(t *testing.T) {
 
 func TestCommandsJobRepeatsARejectedRecordAfterACrash(t *testing.T) {
 	w := newCjWorld(t)
-	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R1", 5)})
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R2", 5)})
 	w.ledger.crashRecord = commands.InvalidCode
 	_ = w.run()
 	w.mustRun()
-	w.requireRejected(cjID1, 500, commands.InvalidCode, 0, "P1-R1")
+	w.requireRejected(cjID1, 500, commands.InvalidCode, 0, "P1-R2")
 	if keys, err := w.ledger.OutboxKeys(t.Context()); err != nil || len(keys) != 1 {
 		t.Fatalf("outbox keys %v, %v; want one acknowledgment", keys, err)
 	}

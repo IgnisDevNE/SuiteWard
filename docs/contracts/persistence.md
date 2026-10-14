@@ -507,6 +507,7 @@ type AssessmentWrite struct {
 }
 ```
 
+- **Outbox inside the use case.** `ConsentRequest` and `BaselineRequest` gain `Outbox []OutboxMessage`, written by `ProcessConsent` and `ProposeBaseline` inside their own transaction, after their facts. A duplicate consent (replay by operation id or source) and a baseline with unchanged coverage write no message. The acknowledgment payload carries only the operation id; the publisher renders the comment from the stored receipt, so an acknowledgment never reports what did not commit (ADR 0011).
 - **Outcomes.** The evidence outcome is:
   - `Passed` when the protected inventory of the exact source equals the revision's binding (manifest and scope digests);
   - `Failed` when it differs;
@@ -524,6 +525,9 @@ type Disposition string // the codes below
 
 const (
 	NotCommand      Disposition = "not-command"     // no /suiteward line, or SuiteWard's own comment
+	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
+	NoSuite         Disposition = "no-suite"        // owner-authored command for a project whose Suite does not exist yet
+	Failed          Disposition = "failed"          // a candidate that kept failing (bounded retries, logged); never acknowledged
 	IgnoredAuthor   Disposition = "ignored-author"  // a /suiteward command from an account other than the owner
 	Malformed       Disposition = "malformed"       // owner-authored, unparseable command line
 	InvalidCode     Disposition = "invalid-code"    // owner-authored, code does not verify within the tolerance
@@ -547,9 +551,13 @@ type Store interface {
 	// Pending returns the first observed version of every comment of an open or closed PR that has no ledger
 	// entry, across all repositories, ordered by created_at then comment id, at most limit.
 	Pending(ctx context.Context, limit int) ([]Candidate, error)
-	// Record stores the decision for one comment. A second Record of the same (repository, comment) with the
-	// same entry is success; with another entry it is ErrConflict. Entries are never updated or deleted.
-	Record(ctx context.Context, e Entry) error
+	// Record stores the decision for one comment and, when ack is not nil, its acknowledgment outbox message in
+	// the same transaction (for dispositions that never reach ProcessConsent). A second Record of the same
+	// (repository, comment) with the same entry is success and writes nothing; with another entry it is
+	// ErrConflict. Entries are never updated or deleted.
+	Record(ctx context.Context, e Entry, ack *governance.OutboxMessage) error
+	// Instance returns this installation's random identifier, created by migration 00013 and never changed.
+	Instance(ctx context.Context) (string, error)
 }
 
 type Candidate struct { // the first observed version of one comment
@@ -560,6 +568,12 @@ type Candidate struct { // the first observed version of one comment
 }
 ```
 
+- **Order of writes for an owner command.**
+  1. `ConsumeStep`, which is idempotent for the same source.
+  2. `ProcessConsent` with the acknowledgment in `Outbox`. It is idempotent by operation id, and a duplicate writes no message.
+  3. `Record(processed)`.
+
+  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
 - **Keys.** Observations are keyed by `owner/name` (M1.4) and projects by repository id. `Pending` joins them through the enrolled projects (`owner.State.Projects`), so a repository that is not enrolled has no candidates.
 
 ### Consumed steps bound to their command
@@ -575,6 +589,7 @@ type Candidate struct { // the first observed version of one comment
   - Primary key: (repository_id, comment_id).
   - Columns: pull_number, author_id, created_at, body_digest, disposition (CHECK on the codes), operation_id (non-null exactly when the disposition is `processed`), decided_at.
   - The table is insert-only.
+- **`suiteward_instance`.** A singleton table holding the random instance id (128 bits, hex). It is created once by the migration and never updated.
 - **`totp_consumed_steps.source_command_id`.**
 
 ### Conformance
@@ -598,6 +613,7 @@ type Candidate struct { // the first observed version of one comment
   - conflicting evidence is rejected;
   - readable by `Tx.Assessment`;
   - `Bootstrap` succeeds after it.
+- `Instance`: stable across calls and restarts.
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 

@@ -74,29 +74,41 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
 - Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
 - For each enrolled project:
   1. If there is no Suite, create one with `UnitOfWork.CreateSuite`, using `default`, the owner's governing policy and `branch:<default branch>`.
-  2. If the Suite has no canonical and no proposal `P1`, and the repository has an open PR, pin the default branch head and call `ProposeBaseline` with `P1-R1`, carried by the lowest-numbered open PR.
-  3. In the same transaction, write an outbox message of kind `github_comment` with key `bootstrap-summary:<repository id>:P1-R1`. Its body comes from the command-text package and contains the inventory summary, the origin and the copyable `/suiteward approve P1-R1 <code>`.
+  2. If the Suite has no canonical and no proposal `P1`, and the repository has an open PR:
+     - pin the default branch head (`Reader.BranchHead`);
+     - call `ProposeBaseline` with `P1-R1`, carried by the lowest-numbered open PR;
+     - in `BaselineRequest.Outbox`, include a `github_comment` message with key `bootstrap-summary:<repository id>:P1-R1`. The publisher renders its body: the inventory summary, the origin and the copyable `/suiteward approve P1-R1 <code>`.
+  3. If `P1` has the owner's current approval and the Suite still has no canonical:
+     - re-read the origin tree and record the assessment;
+     - call `Bootstrap` with operation `bootstrap:P1-R1` and version `V1`;
+     - in the same transaction, write a `github_comment` message with key `bootstrap-promoted:<repository id>:P1-R1` to acknowledge it.
+  4. **Limit (MVP).** If the carrier PR closes before `P1` is approved, nothing new is proposed. The owner approves `P1-R1` on that PR anyway (comments on closed PRs are still synchronized), or re-runs setup on a fresh instance. A new carrier would need a new proposal id; that is post-MVP.
+  5. **Re-enrolling the same owner.** The Suite keeps the policy revision it was created with. That is harmless, because the owner is the same.
 - A read failure skips the project until the next run. GitHub text is never stored or logged.
 
 **`github_commands`**
 - Periodic every 15 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished. It is a single job, so commands are serialized across all repositories (D-COMMANDS).
 - It takes `commands.Store.Pending` in order. For each candidate:
+  - **Before enrollment.** Record `before-enrollment` when the comment's `created_at` is before the current enrollment's `enrolled_at`. This covers S1's old commands and comments the owner wrote under a replaced secret.
   - **Not a command.** Record `not-command` when the author is the bot or the body has no command line.
   - **Not the owner.** Record `ignored-author` when the author is not the enrolled owner. It is otherwise ignored.
   - **Owner-authored.**
     1. Parse the command. Unparseable gives `malformed`.
     2. Verify the code at the comment's `created_at` with tolerance 1. A failure gives `invalid-code`.
     3. Call `ConsumeStep` with the source `github-comment:<id>`. `ErrStepUsed` gives `replayed-code`.
-    4. Call `ProcessConsent` with the D-COMMANDS identifiers, `Order` set to the comment id, and the actor `github:<owner id>`.
+    4. Call `ProcessConsent` with the D-COMMANDS identifiers, `Order` set to the comment id, and the actor `github:<owner id>`. Its `Outbox` holds the acknowledgment, with key `ack:<repository id>:<comment id>`. A command for a project with no Suite yet records `no-suite`, with an acknowledgment saying that the bootstrap is pending.
     5. Record `processed` with the operation.
-    6. In the consent transaction, write an outbox `github_comment` acknowledgment with key `ack:<repository id>:<comment id>`.
-  - **Rejected owner commands.** The `malformed`, `invalid-code` and `replayed-code` dispositions get an acknowledgment too. It is written in the same transaction as the ledger entry, so either both are stored or neither is.
-- **Bootstrap.** When an approval of a bootstrap proposal commits, the job enqueues `github_bootstrap_promote` (args: project, reference). That job re-reads the origin tree, records the assessment, calls `Bootstrap` with operation `bootstrap:P<n>-R<m>` and version `V1`, and acknowledges the promotion.
-- The job never fails for a GitHub answer. A store error fails it; the next run retries the same candidate.
+  - **Rejected owner commands.** `malformed`, `invalid-code`, `replayed-code` and `no-suite` get an acknowledgment, written with the ledger entry in one transaction. An unknown reference is processed: `ProcessConsent` rejects it with `UnknownRevision`, and the acknowledgment explains it.
+- **Errors.**
+  - A failing candidate never blocks the others for long. A store or network error leaves it pending, and the job continues with the next candidate on the next run.
+  - After 5 consecutive failed attempts in this process, the candidate is recorded as `failed` and logged (repository, comment id, error kind; never GitHub text).
+  - The job fails only when the ledger itself cannot be read or written.
 
 **Outbox kind `github_comment`**
-- The publisher posts the body to the PR with `Writer.PostComment` and the comment token. The body ends with the hidden marker `<!-- suiteward:<outbox key> -->`.
-- Before posting, it lists the PR's comments by the bot and skips the post when one already carries the marker. Delivery is at least once (persistence contract), so posting is idempotent by marker.
+- The payload holds the outbox key's subject: an operation id, a proposal reference or a ledger entry. The publisher renders the body at delivery from the stored facts.
+- It posts with `Writer.PostComment` and the comment token. The body ends with the hidden marker `<!-- suiteward:<instance id>:<outbox key> -->`.
+- Before posting, it lists the PR's comments by the bot and skips the post when one already carries the same marker. Delivery is at least once (persistence contract), so posting is idempotent by marker.
+- The instance id keeps two installations that post as the same App from mistaking each other's comments for their own.
 - The job counts in `/status` exclude `github_bootstrap` and `github_commands`.
 
 ### Protection verification job (M1.5)

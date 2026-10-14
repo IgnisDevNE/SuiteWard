@@ -32,11 +32,11 @@ func (m mapTree) Read(_ context.Context, path string) ([]byte, error) {
 	return []byte(content), nil
 }
 
-// TestBaselineProposalStoresTheBytesThatBootstrapVerifies seeds the revision
-// and assessment an inventory of the tree yields (assessments have no write
-// path until M1.6), then proposes the same tree again under a new revision id:
-// nothing is written to the database, yet the bytes land in the content store,
-// and the bootstrap that follows has RecordPromotion verify them.
+// TestBaselineProposalStoresTheBytesThatBootstrapVerifies proposes the tree an
+// inventory yields as the first proposal of a Suite: the bytes land in the
+// content store, the owner approves, the evidence of the pinned origin is
+// recorded, and the bootstrap that follows has RecordPromotion verify the
+// bytes. Proposing the same tree again under a new revision id writes nothing.
 func TestBaselineProposalStoresTheBytesThatBootstrapVerifies(t *testing.T) {
 	w := newPGWorld(t)
 	tree := mapTree{
@@ -46,8 +46,9 @@ func TestBaselineProposalStoresTheBytesThatBootstrapVerifies(t *testing.T) {
 		"src/main.go":              "package main\n",
 	}
 	inv := must(inventory.Build(t.Context(), tree))
+	// Names the baseline proposal and its carrier and origin; it is not seeded.
 	baseline := newCandidate("p1", "", must(inv.Contract()))
-	w.seedSuite(fxProject, fxSuite, baseline)
+	w.seedSuite(fxProject, fxSuite)
 	entries := inv.Manifest().Entries()
 	for _, entry := range entries {
 		if err := w.content.Verify(t.Context(), entry.Content); err == nil {
@@ -55,34 +56,46 @@ func TestBaselineProposalStoresTheBytesThatBootstrapVerifies(t *testing.T) {
 		}
 	}
 	before := w.revision()
-	request := governance.BaselineRequest{
-		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "p1", RevisionID: "revision-2"},
-		Carrier:   baseline.carrier, Origin: baseline.origin, Tree: tree,
-	}
+	request := governance.BaselineRequest{Reference: baseline.current(), Carrier: baseline.carrier, Origin: baseline.origin, Tree: tree}
 
 	result, err := governance.ProposeBaseline(t.Context(), w.store, w.content, request)
 
 	if err != nil {
 		t.Fatalf("propose baseline: %v", err)
 	}
-	if result.Revise.Committed || result.Revise.Current != baseline.current() {
-		t.Fatalf("result = %+v, want the seeded reference %v and no write", result.Revise, baseline.current())
-	}
-	if got := w.revision(); got != before {
-		t.Fatalf("suite revision = %d, want %d", got, before)
+	if !result.Revise.Committed || result.Revise.Current != baseline.current() || w.revision() != before+1 {
+		t.Fatalf("result = %+v at revision %d, want a committed %v and one write", result.Revise, w.revision(), baseline.current())
 	}
 	for _, entry := range entries {
 		if err := w.content.Verify(t.Context(), entry.Content); err != nil {
 			t.Fatalf("the bytes of %s were not stored: %v", entry.Path, err)
 		}
 	}
+	again := request
+	again.Reference.RevisionID = "revision-2"
+	if second, err := governance.ProposeBaseline(t.Context(), w.store, w.content, again); err != nil || second.Revise.Committed || w.revision() != before+1 {
+		t.Fatalf("same tree again = %+v, %v at revision %d, want no write", second.Revise, err, w.revision())
+	}
 
 	w.approve(baseline)
+	w.recordAssessment(baseline.current(), baseline.origin, baseline.proposal.Current().Binding(), contract.IntegrityPassed)
 	bootstrap := baseline.baselineRequest("bootstrap-p1", "v1")
 	bootstrap.Proposed = result.Contract
 	promoted, err := governance.Bootstrap(t.Context(), w.store, bootstrap)
 
 	if err != nil || promoted.Outcome != contract.PromotionProposed || !promoted.Committed || w.currentVersion() != "v1" {
 		t.Fatalf("bootstrap = %+v err=%v current=%q, want a committed first canonical", promoted, err, w.currentVersion())
+	}
+}
+
+// recordAssessment records evidence from the service emitter for a revision of the default Suite.
+func (w *pgWorld) recordAssessment(reference contract.ProposalReference, source contract.SourceRevision, binding contract.ApprovalBinding, outcome contract.IntegrityOutcome) {
+	w.t.Helper()
+	evidence := must(contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), source, binding, outcome))
+	err := w.store.Do(w.t.Context(), fxProject, fxSuite, func(ctx context.Context, tx governance.Tx) error {
+		return tx.RecordAssessment(ctx, governance.AssessmentWrite{Reference: reference, Source: source, Evidence: evidence})
+	})
+	if err != nil {
+		w.t.Fatalf("record assessment: %v", err)
 	}
 }

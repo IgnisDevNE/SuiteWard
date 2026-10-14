@@ -61,40 +61,58 @@ func (w *world) hasProposal(id contract.ProposalID) bool {
 	return found
 }
 
+// recordAssessment records evidence from the service emitter that the source
+// at reference passed, failed or could not be read, as the bootstrap does.
+func (w *world) recordAssessment(reference contract.ProposalReference, source contract.SourceRevision, outcome contract.IntegrityOutcome) {
+	w.t.Helper()
+	var binding contract.ApprovalBinding
+	for _, revision := range w.proposal(reference.ProposalID).Revisions() {
+		if revision.Binding().Reference() == reference {
+			binding = revision.Binding()
+		}
+	}
+	evidence := must(contract.NewIntegrityEvidence(governance.ServiceEmitter.ID(), source, binding, outcome))
+	err := w.mem.Do(context.Background(), reference.ProjectID, reference.SuiteID, func(ctx context.Context, tx governance.Tx) error {
+		return tx.RecordAssessment(ctx, governance.AssessmentWrite{Reference: reference, Source: source, Evidence: evidence})
+	})
+	if err != nil {
+		w.t.Fatalf("record assessment: %v", err)
+	}
+}
+
 func TestBaselineFromAnInventoryBootstrapsTheFirstCanonical(t *testing.T) {
 	tree := baselineTree("v1")
 	inv := must(inventory.Build(context.Background(), tree))
 	protected := must(inv.Contract())
-	// An earlier revision of the same proposal over other coverage is seeded
-	// only to hold the assessment of revision-2: assessments have no write
-	// path until M1.6, and PostgreSQL would reject an assessment of a
-	// revision that does not exist yet, which only this fake accepts.
-	earlier := newCandidate(t, string(baselineProposal), "", protectedOf(t, "earlier"))
 	origin := contract.SourceRevision("pinned-commit")
-	binding := must(contract.NewApprovalBinding(earlier.bindingInput("revision-2", "", protected)))
-	evidence := must(contract.NewIntegrityEvidence("verifier", origin, binding, contract.IntegrityPassed))
-	earlier.assessments = append(earlier.assessments, must(contract.AssessIntegrity(origin, binding, &evidence)))
-	w := newWorld(t, earlier)
+	w := newWorld(t)
 	writer := newFakeWriter()
+	// Names the baseline proposal for its commands; it is not seeded.
+	baseline := newCandidate(t, string(baselineProposal), "", protected)
 
-	result := w.propose(writer, baselineRequest("revision-2", string(origin), tree))
+	result := w.propose(writer, baselineRequest("revision-1", string(origin), tree))
 
-	if !result.Revise.Committed || result.Revise.Current != earlier.reference("revision-2") || !result.Contract.Equal(protected) {
-		t.Fatalf("result = %+v, want a committed revision-2 proposing the inventory's contract", result)
+	if !result.Revise.Committed || result.Revise.Current != baseline.reference("revision-1") || !result.Contract.Equal(protected) {
+		t.Fatalf("result = %+v, want a committed revision-1 proposing the inventory's contract", result)
 	}
 	for _, entry := range inv.Manifest().Entries() {
 		if _, stored := writer.stored[entry.Content]; !stored {
 			t.Fatalf("the bytes of %s were not stored", entry.Path)
 		}
 	}
-	approval := w.consent(w.command(earlier, "revision-2", "approve-baseline", "comment-baseline", contract.ApproveConsent, 1))
+	approval := w.consent(w.command(baseline, "revision-1", "approve-baseline", "comment-baseline", contract.ApproveConsent, 1))
 	if !approval.Receipt.CurrentApprovalEligible {
-		t.Fatalf("approval of revision-2 is not eligible: %v", approval.Receipt.Result.Reason())
+		t.Fatalf("approval of revision-1 is not eligible: %v", approval.Receipt.Result.Reason())
 	}
 	integration := must(contract.NewIntegration(projectID, target, origin, "", contract.IntegrationExistingBaseline))
+	request := governance.PromoteRequest{OperationID: "bootstrap-baseline", Reference: result.Revise.Current, Carrier: baselineCarrier,
+		Proposed: result.Contract, AssessmentSource: origin, Integration: integration, NewVersionID: "version-1", RecordedAt: recordedAt}
 
-	promoted := w.bootstrap(governance.PromoteRequest{OperationID: "bootstrap-baseline", Reference: result.Revise.Current, Carrier: baselineCarrier,
-		Proposed: result.Contract, AssessmentSource: origin, Integration: integration, NewVersionID: "version-1", RecordedAt: recordedAt})
+	if blocked := w.bootstrap(request); blocked.Committed {
+		t.Fatalf("bootstrap = %+v before the assessment of the origin, want a block", blocked)
+	}
+	w.recordAssessment(result.Revise.Current, origin, contract.IntegrityPassed)
+	promoted := w.bootstrap(request)
 
 	if promoted.Outcome != contract.PromotionProposed || !promoted.Committed {
 		t.Fatalf("bootstrap = %+v, want a committed proposed promotion", promoted)

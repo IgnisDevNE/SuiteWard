@@ -239,18 +239,13 @@ func seedVersion(ctx context.Context, q *dbgen.Queries, historical contract.Hist
 }
 
 func seedAssessment(ctx context.Context, q *dbgen.Queries, assessment contract.IntegrityAssessment) error {
-	reference := assessment.Binding().Reference()
-	row := dbgen.InsertAssessmentParams{ProjectID: string(reference.ProjectID), SuiteID: string(reference.SuiteID), ProposalID: string(reference.ProposalID),
-		RevisionID: string(reference.RevisionID), Source: string(assessment.Source())}
-	if evidence, present := assessment.Evidence(); present {
-		outcome, err := integrityOutcomeCode(evidence.Outcome())
-		if err != nil {
-			return seedInvalid("evidence of assessment %q: %v", assessment.Source(), err)
-		}
-		row.EvidenceEmitter = pgtype.Text{String: string(evidence.EmitterID()), Valid: true}
-		row.EvidenceSource = pgtype.Text{String: string(evidence.Source()), Valid: true}
-		row.EvidenceRevisionID = pgtype.Text{String: string(evidence.Binding().Reference().RevisionID), Valid: true}
-		row.Outcome = pgtype.Text{String: outcome, Valid: true}
+	var evidence *contract.IntegrityEvidence
+	if sealed, present := assessment.Evidence(); present {
+		evidence = &sealed
+	}
+	row, err := assessmentRow(assessment.Binding().Reference(), assessment.Source(), evidence)
+	if err != nil {
+		return seedInvalid("evidence of assessment %q: %v", assessment.Source(), err)
 	}
 	if err := q.InsertAssessment(ctx, row); err != nil {
 		return seedFailure("insert assessment "+string(assessment.Source()), err)

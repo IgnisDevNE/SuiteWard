@@ -525,3 +525,60 @@ func (t *tx) Enqueue(ctx context.Context, job governance.Job) error {
 func (t *tx) Outbox(ctx context.Context, message governance.OutboxMessage) error {
 	return insertOutbox(ctx, t.q, pgtype.Text{String: string(t.project), Valid: true}, pgtype.Text{String: string(t.suite), Valid: true}, message)
 }
+
+func (t *tx) RecordAssessment(ctx context.Context, write governance.AssessmentWrite) error {
+	if err := write.Validate(t.project, t.suite); err != nil {
+		return err
+	}
+	reference := write.Reference
+	if _, err := t.revisionBinding(ctx, reference.ProposalID, reference.RevisionID); errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: revision %q of proposal %q", governance.ErrNotFound, reference.RevisionID, reference.ProposalID)
+	} else if err != nil {
+		return err
+	}
+	// The evidence binding is rebuilt from the revision it cites, so it must equal that revision's binding.
+	cited := write.Evidence.Binding()
+	stored, err := t.revisionBinding(ctx, reference.ProposalID, cited.Reference().RevisionID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !stored.Equal(cited)) {
+		return fmt.Errorf("%w: evidence cites a binding that is not a stored revision of proposal %q", governance.ErrInvalidRequest, reference.ProposalID)
+	}
+	if err != nil {
+		return err
+	}
+	existing, found, err := t.Assessment(ctx, reference, write.Source)
+	if err != nil {
+		return err
+	}
+	if found {
+		if write.Matches(existing) {
+			return nil
+		}
+		return fmt.Errorf("%w: the assessment of %q at %q holds other evidence", governance.ErrConflict, reference.RevisionID, write.Source)
+	}
+	row, err := assessmentRow(reference, write.Source, &write.Evidence)
+	if err != nil {
+		return invalidRequest("assessment evidence", err)
+	}
+	if err := t.q.InsertAssessment(ctx, row); err != nil {
+		return translateWrite("insert assessment", err)
+	}
+	return t.bump(ctx, pgtype.Text{})
+}
+
+// assessmentRow is the row of an assessment at source; evidence is nil while the evidence is missing.
+func assessmentRow(reference contract.ProposalReference, source contract.SourceRevision, evidence *contract.IntegrityEvidence) (dbgen.InsertAssessmentParams, error) {
+	row := dbgen.InsertAssessmentParams{ProjectID: string(reference.ProjectID), SuiteID: string(reference.SuiteID), ProposalID: string(reference.ProposalID),
+		RevisionID: string(reference.RevisionID), Source: string(source)}
+	if evidence == nil { // missing evidence: a seeded assessment stores all four evidence columns as null
+		return row, nil
+	}
+	outcome, err := integrityOutcomeCode(evidence.Outcome())
+	if err != nil {
+		return dbgen.InsertAssessmentParams{}, err
+	}
+	row.EvidenceEmitter = pgtype.Text{String: string(evidence.EmitterID()), Valid: true}
+	row.EvidenceSource = pgtype.Text{String: string(evidence.Source()), Valid: true}
+	row.EvidenceRevisionID = pgtype.Text{String: string(evidence.Binding().Reference().RevisionID), Valid: true}
+	row.Outcome = pgtype.Text{String: outcome, Valid: true}
+	return row, nil
+}

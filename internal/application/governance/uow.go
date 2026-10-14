@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -15,6 +16,10 @@ import (
 // Do returns ErrNotFound when the Suite does not exist.
 type UnitOfWork interface {
 	Do(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, fn func(context.Context, Tx) error) error
+	// CreateSuite creates a Suite with no canonical, governed by policy (which must exist for the project) and
+	// targeting target. It is idempotent: an existing Suite with the same policy and target is success and writes
+	// nothing; an existing Suite with another policy or target is ErrConflict; an unknown policy is ErrNotFound.
+	CreateSuite(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, policy contract.PolicyRevisionID, target contract.IntegrationTargetID) error
 }
 
 // SuiteState is the Suite-level authority read under the lock.
@@ -39,6 +44,10 @@ type Tx interface {
 	AppendConsent(context.Context, ConsentWrite) error
 	RecordPromotion(context.Context, PromotionWrite) error
 	AppendProposalRevision(context.Context, ProposalWrite) error
+	// RecordAssessment stores an integrity assessment for a proposal revision of the locked Suite at a source.
+	// Assessments are immutable: the same (reference, source) with the same evidence is success and writes nothing;
+	// with other evidence it is ErrConflict. An unknown proposal or revision is ErrNotFound.
+	RecordAssessment(context.Context, AssessmentWrite) error
 
 	// Enqueue and Outbox are written in the same transaction as the facts
 	// above. Neither advances the Suite revision.
@@ -63,9 +72,10 @@ type OutboxMessage struct {
 	Payload json.RawMessage // a JSON object, at most 64 KiB
 }
 
-// Seeder writes trusted initial state. It is the only writer of policies,
-// assessments and historical versions until the GitHub-facing phases add their
-// own write paths; proposals also have AppendProposalRevision.
+// Seeder writes trusted initial state: Suites with their policies, historical
+// versions and seeded assessments. Policies also come from owner enrollment,
+// Suites from CreateSuite, assessments from RecordAssessment and proposals
+// from AppendProposalRevision.
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }
@@ -109,6 +119,7 @@ type PromoteRequest struct {
 	Integration      contract.Integration
 	NewVersionID     contract.SuiteVersionID
 	RecordedAt       time.Time
+	Outbox           []OutboxMessage // written with a recorded promotion; never part of its identity or receipt
 }
 
 type CorrectionRequest struct {
@@ -178,7 +189,10 @@ type PromoteResult struct {
 	Duplicate bool
 }
 
-type ConsentRequest struct{ Command contract.Command }
+type ConsentRequest struct {
+	Command contract.Command
+	Outbox  []OutboxMessage // written with a new result, never for a duplicate
+}
 
 type ConsentResponse struct {
 	Receipt   ConsentReceipt
@@ -193,4 +207,16 @@ var (
 	ErrVersionConflict   = errors.New("version identity conflict")
 	ErrNotFound          = errors.New("governance aggregate not found")
 	ErrProposalConflict  = errors.New("proposal revision conflict")
+	ErrConflict          = errors.New("conflicting governance state")
 )
+
+// writeOutbox writes the messages of a use case in its own transaction, after
+// the facts that require them.
+func writeOutbox(ctx context.Context, tx Tx, messages []OutboxMessage) error {
+	for _, message := range messages {
+		if err := tx.Outbox(ctx, message); err != nil {
+			return fmt.Errorf("write outbox message %q: %w", message.Key, err)
+		}
+	}
+	return nil
+}

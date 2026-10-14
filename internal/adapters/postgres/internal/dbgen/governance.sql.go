@@ -263,6 +263,31 @@ func (q *Queries) GetSchemaVersion(ctx context.Context) (int64, error) {
 	return version, err
 }
 
+const getSuite = `-- name: GetSuite :one
+SELECT project_id, suite_id, revision, current_version_id, target_id, policy_revision_id FROM suites
+WHERE project_id = $1 AND suite_id = $2
+`
+
+type GetSuiteParams struct {
+	ProjectID string
+	SuiteID   string
+}
+
+// Reads the Suite without locking it.
+func (q *Queries) GetSuite(ctx context.Context, arg GetSuiteParams) (Suite, error) {
+	row := q.db.QueryRow(ctx, getSuite, arg.ProjectID, arg.SuiteID)
+	var i Suite
+	err := row.Scan(
+		&i.ProjectID,
+		&i.SuiteID,
+		&i.Revision,
+		&i.CurrentVersionID,
+		&i.TargetID,
+		&i.PolicyRevisionID,
+	)
+	return i, err
+}
+
 const getVersion = `-- name: GetVersion :one
 SELECT suite_versions.project_id, suite_versions.suite_id, suite_versions.version_id, suite_versions.manifest_digest, suite_versions.manifest, promotions.operation_id, promotions.project_id, promotions.suite_id, promotions.version_id, promotions.proposal_id, promotions.revision_id, promotions.carrier_id, promotions.source_revision, promotions.target_id, promotions.recorded_at, promotions.corrects_version_id, proposal_revisions.project_id, proposal_revisions.suite_id, proposal_revisions.proposal_id, proposal_revisions.revision_id, proposal_revisions.seq, proposal_revisions.origin, proposal_revisions.carrier_id, proposal_revisions.manifest_digest, proposal_revisions.scope_digest, proposal_revisions.covered_inputs, proposal_revisions.expected_version_id, proposal_revisions.policy_revision_id
 FROM suite_versions
@@ -401,6 +426,33 @@ func (q *Queries) InsertConsentResult(ctx context.Context, arg InsertConsentResu
 		arg.Reason,
 	)
 	return err
+}
+
+const insertNewSuite = `-- name: InsertNewSuite :execrows
+INSERT INTO suites (project_id, suite_id, revision, current_version_id, target_id, policy_revision_id)
+VALUES ($1, $2, 0, NULL, $3, $4)
+ON CONFLICT (project_id, suite_id) DO NOTHING
+`
+
+type InsertNewSuiteParams struct {
+	ProjectID        string
+	SuiteID          string
+	TargetID         string
+	PolicyRevisionID string
+}
+
+// A new Suite: revision 0, no canonical. Nothing is written when it exists.
+func (q *Queries) InsertNewSuite(ctx context.Context, arg InsertNewSuiteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertNewSuite,
+		arg.ProjectID,
+		arg.SuiteID,
+		arg.TargetID,
+		arg.PolicyRevisionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertOperation = `-- name: InsertOperation :exec

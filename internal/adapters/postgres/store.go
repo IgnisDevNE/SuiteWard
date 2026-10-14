@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -163,4 +164,38 @@ func translateWrite(what string, err error) error {
 		}
 	}
 	return fmt.Errorf("%s: %w", what, err)
+}
+
+// CreateSuite creates an empty Suite under an existing policy revision. It
+// needs no transaction: policies are immutable, and the insert either creates
+// the row or finds the one a concurrent caller committed, which is then read
+// and compared.
+func (s *Store) CreateSuite(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, policy contract.PolicyRevisionID, target contract.IntegrationTargetID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(project)) == "" || strings.TrimSpace(string(suite)) == "" || strings.TrimSpace(string(policy)) == "" || strings.TrimSpace(string(target)) == "" {
+		return fmt.Errorf("%w: a suite needs a project, an id, a policy and a target", governance.ErrInvalidRequest)
+	}
+	q := dbgen.New(s.pool)
+	if _, err := q.GetPolicy(ctx, dbgen.GetPolicyParams{ProjectID: string(project), RevisionID: string(policy)}); errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: policy %q of project %q", governance.ErrNotFound, policy, project)
+	} else if err != nil {
+		return fmt.Errorf("load policy: %w", err)
+	}
+	created, err := q.InsertNewSuite(ctx, dbgen.InsertNewSuiteParams{ProjectID: string(project), SuiteID: string(suite), TargetID: string(target), PolicyRevisionID: string(policy)})
+	if err != nil {
+		return translateWrite("insert suite", err)
+	}
+	if created == 1 {
+		return nil
+	}
+	existing, err := q.GetSuite(ctx, dbgen.GetSuiteParams{ProjectID: string(project), SuiteID: string(suite)})
+	if err != nil {
+		return fmt.Errorf("load existing suite: %w", err)
+	}
+	if existing.PolicyRevisionID != string(policy) || existing.TargetID != string(target) {
+		return fmt.Errorf("%w: suite %q of project %q is governed by policy %q targeting %q", governance.ErrConflict, suite, project, existing.PolicyRevisionID, existing.TargetID)
+	}
+	return nil
 }

@@ -20,7 +20,7 @@ type Memory struct {
 	enrolled   bool
 	generation int64
 	state      owner.State
-	steps      map[stepKey]bool
+	steps      map[stepKey]contract.SourceCommandID
 	suites     map[contract.ProjectID]bool
 	protection map[int64]owner.ProtectionResult
 }
@@ -31,7 +31,7 @@ var _ owner.Store = (*Memory)(nil)
 
 // NewMemory returns an empty store.
 func NewMemory() *Memory {
-	return &Memory{steps: map[stepKey]bool{}, suites: map[contract.ProjectID]bool{}, protection: map[int64]owner.ProtectionResult{}}
+	return &Memory{steps: map[stepKey]contract.SourceCommandID{}, suites: map[contract.ProjectID]bool{}, protection: map[int64]owner.ProtectionResult{}}
 }
 
 // AddSuite records that project has a Suite, which Enroll consults when the owner changes.
@@ -58,7 +58,7 @@ func (m *Memory) Enroll(ctx context.Context, e owner.Enrollment) error {
 			}
 		}
 	}
-	if m.steps[stepKey{e.Owner.AccountID, e.Step}] {
+	if _, used := m.steps[stepKey{e.Owner.AccountID, e.Step}]; used {
 		return owner.ErrStepUsed
 	}
 	projects := slices.Clone(e.Projects)
@@ -67,7 +67,7 @@ func (m *Memory) Enroll(ctx context.Context, e owner.Enrollment) error {
 	m.enrolled = true
 	m.state = owner.State{Owner: e.Owner, Secret: slices.Clone(e.Secret), Projects: projects, Tier: e.Tier, PolicyRevision: owner.RevisionID(m.generation),
 		EnrolledAt: e.EnrolledAt.UTC()}
-	m.steps[stepKey{e.Owner.AccountID, e.Step}] = true
+	m.steps[stepKey{e.Owner.AccountID, e.Step}] = owner.SetupSource(m.generation)
 	return nil
 }
 
@@ -87,22 +87,25 @@ func (m *Memory) Current(ctx context.Context) (owner.State, bool, error) {
 }
 
 // ConsumeStep implements owner.Store.
-func (m *Memory) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time, _ contract.SourceCommandID) error {
+func (m *Memory) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time, source contract.SourceCommandID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if at.IsZero() {
-		return fmt.Errorf("%w: the consumption time is required", owner.ErrInvalidState)
+	if at.IsZero() || source == "" {
+		return fmt.Errorf("%w: the consumption time and the source command are required", owner.ErrInvalidState)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.enrolled || m.state.Owner.AccountID != accountID {
 		return owner.ErrNotEnrolled
 	}
-	if m.steps[stepKey{accountID, step}] {
+	if used, ok := m.steps[stepKey{accountID, step}]; ok {
+		if used == source {
+			return nil
+		}
 		return owner.ErrStepUsed
 	}
-	m.steps[stepKey{accountID, step}] = true
+	m.steps[stepKey{accountID, step}] = source
 	return nil
 }
 

@@ -85,7 +85,8 @@ func (s *Store) Enroll(ctx context.Context, e owner.Enrollment) error {
 			return fmt.Errorf("write test check of repository %d: %w", p.RepositoryID, err)
 		}
 	}
-	inserted, err := q.InsertConsumedStep(ctx, dbgen.InsertConsumedStepParams{AccountID: e.Owner.AccountID, Step: e.Step, ConsumedAt: timestamp(e.EnrolledAt)})
+	inserted, err := q.InsertConsumedStep(ctx, dbgen.InsertConsumedStepParams{AccountID: e.Owner.AccountID, Step: e.Step, ConsumedAt: timestamp(e.EnrolledAt),
+		SourceCommandID: string(owner.SetupSource(generation))})
 	if err != nil {
 		return fmt.Errorf("consume TOTP step: %w", err)
 	}
@@ -130,20 +131,29 @@ func (s *Store) Current(ctx context.Context) (owner.State, bool, error) {
 		PolicyRevision: contract.PolicyRevisionID(row.PolicyRevisionID), EnrolledAt: observedTime(row.EnrolledAt)}, true, nil
 }
 
-// ConsumeStep implements owner.Store with one statement that tells an account
-// that is not the owner from a step already used.
-func (s *Store) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time, _ contract.SourceCommandID) error {
-	if at.IsZero() {
-		return fmt.Errorf("%w: the consumption time is required", owner.ErrInvalidState)
+// ConsumeStep implements owner.Store with one statement that tells an account that is not the owner from a step
+// already used. A step that was used is success when its stored source is this one: the earlier call may have
+// crashed before its command was recorded.
+func (s *Store) ConsumeStep(ctx context.Context, accountID int64, step int64, at time.Time, source contract.SourceCommandID) error {
+	if at.IsZero() || source == "" {
+		return fmt.Errorf("%w: the consumption time and the source command are required", owner.ErrInvalidState)
 	}
-	row, err := dbgen.New(s.pool).ConsumeOwnerStep(ctx, dbgen.ConsumeOwnerStepParams{AccountID: accountID, Step: step, ConsumedAt: timestamp(at)})
+	q := dbgen.New(s.pool)
+	row, err := q.ConsumeOwnerStep(ctx, dbgen.ConsumeOwnerStepParams{AccountID: accountID, Step: step, ConsumedAt: timestamp(at), SourceCommandID: string(source)})
 	if err != nil {
 		return fmt.Errorf("consume TOTP step: %w", err)
 	}
-	switch {
-	case row.Enrolled == 0:
+	if row.Enrolled == 0 {
 		return owner.ErrNotEnrolled
-	case row.Consumed == 0:
+	}
+	if row.Consumed == 1 {
+		return nil
+	}
+	used, err := q.GetConsumedStepSource(ctx, dbgen.GetConsumedStepSourceParams{AccountID: accountID, Step: step})
+	if err != nil {
+		return fmt.Errorf("read the source of a used TOTP step: %w", err)
+	}
+	if used != string(source) {
 		return owner.ErrStepUsed
 	}
 	return nil

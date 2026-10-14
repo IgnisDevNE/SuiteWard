@@ -95,6 +95,7 @@ func TestCommandConstraints(t *testing.T) {
 		{"processed without an operation", "pr_commands", "23514", "pr_commands_operation_check", map[string]any{"disposition": "processed"}},
 		{"an operation without processed", "pr_commands", "23514", "pr_commands_operation_check", map[string]any{"operation_id": "op"}},
 		{"an empty operation", "pr_commands", "23514", "pr_commands_operation_check", map[string]any{"disposition": "processed", "operation_id": " "}},
+		{"a blank operation without processed", "pr_commands", "23514", "pr_commands_operation_check", map[string]any{"operation_id": " "}},
 		{"uppercase digest", "pr_commands", "23514", "pr_commands_body_digest_check", map[string]any{"body_digest": "sha256:ABC"}},
 		{"repository zero", "pr_commands", "23514", "pr_commands_repository_check", map[string]any{"repository_id": 0}},
 		{"comment zero", "pr_commands", "23514", "pr_commands_comment_check", map[string]any{"comment_id": 0}},

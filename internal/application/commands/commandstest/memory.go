@@ -1,8 +1,13 @@
 package commandstest
 
 import (
+	"cmp"
 	"context"
-	"errors"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
@@ -11,28 +16,142 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 )
 
-var errNotImplemented = errors.New("commandstest: not implemented")
+// Memory is an in-memory commands.Store with the semantics of the persistence
+// contract. It reads the enrolled projects from an owner.Store and the
+// comments from a githubsync.Store, like the PostgreSQL adapter reads their
+// tables. One mutex serializes every call, and Record validates and checks
+// before its first write, so a failed call changes nothing.
+type Memory struct {
+	owners       owner.Store
+	observations githubsync.Store
+	instance     string
 
-// Memory is an in-memory commands.Store.
-type Memory struct{}
+	mu     sync.Mutex
+	ledger map[entryKey]commands.Entry
+	outbox map[string]governance.OutboxMessage
+}
+
+type entryKey struct{ repository, comment int64 }
 
 var _ commands.Store = (*Memory)(nil)
 
-// NewMemory returns a store that reads the enrolled projects from owners and the comments from observations.
-func NewMemory(owners owner.Store, observations githubsync.Store) *Memory { return &Memory{} }
+// NewMemory returns an empty ledger that reads the enrolled projects from
+// owners and the comments from observations. It panics if the system has no
+// randomness, which no test can run without.
+func NewMemory(owners owner.Store, observations githubsync.Store) *Memory {
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		panic(err)
+	}
+	return &Memory{owners: owners, observations: observations, instance: hex.EncodeToString(id),
+		ledger: map[entryKey]commands.Entry{}, outbox: map[string]governance.OutboxMessage{}}
+}
 
 // Pending implements commands.Store.
-func (m *Memory) Pending(context.Context, time.Time, int) ([]commands.Candidate, error) {
-	return nil, errNotImplemented
+func (m *Memory) Pending(ctx context.Context, horizon time.Time, limit int) ([]commands.Candidate, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := commands.ValidatePending(horizon, limit); err != nil {
+		return nil, err
+	}
+	state, enrolled, err := m.owners.Current(ctx)
+	if err != nil || !enrolled {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var pending []commands.Candidate
+	for _, project := range state.Projects {
+		pulls, err := m.observations.Pulls(ctx, project.Repo)
+		if err != nil {
+			return nil, err
+		}
+		firsts := map[int64]githubsync.CommentVersion{}
+		for _, pull := range pulls {
+			versions, err := m.observations.Comments(ctx, project.Repo, pull.Number)
+			if err != nil {
+				return nil, err
+			}
+			for _, v := range versions {
+				if best, ok := firsts[v.CommentID]; !ok || firstOrder(v, best) < 0 {
+					firsts[v.CommentID] = v
+				}
+			}
+		}
+		for _, v := range firsts {
+			if _, recorded := m.ledger[entryKey{project.RepositoryID, v.CommentID}]; !recorded && v.CreatedAt.Before(horizon) {
+				pending = append(pending, commands.Candidate{RepositoryID: project.RepositoryID, Repo: project.Repo, PullNumber: v.PullNumber, Comment: v})
+			}
+		}
+	}
+	slices.SortFunc(pending, func(a, b commands.Candidate) int {
+		return cmp.Or(a.Comment.CreatedAt.Compare(b.Comment.CreatedAt), cmp.Compare(a.Comment.CommentID, b.Comment.CommentID), cmp.Compare(a.RepositoryID, b.RepositoryID))
+	})
+	return pending[:min(len(pending), limit)], nil
+}
+
+// firstOrder orders the versions of one comment by when they were first seen, then by GitHub's updated_at, then by digest.
+func firstOrder(a, b githubsync.CommentVersion) int {
+	return cmp.Or(a.FirstSeen.Compare(b.FirstSeen), a.UpdatedAt.Compare(b.UpdatedAt), cmp.Compare(a.BodyDigest.String(), b.BodyDigest.String()))
 }
 
 // Record implements commands.Store.
-func (m *Memory) Record(context.Context, commands.Entry, *governance.OutboxMessage) error {
-	return errNotImplemented
+func (m *Memory) Record(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	if ack != nil {
+		if err := ack.Validate(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := entryKey{e.RepositoryID, e.CommentID}
+	if stored, ok := m.ledger[key]; ok {
+		if !sameEntry(stored, e) {
+			return fmt.Errorf("%w: comment %d of repository %d", commands.ErrConflict, e.CommentID, e.RepositoryID)
+		}
+		return nil
+	}
+	if ack != nil {
+		if _, taken := m.outbox[ack.Key]; taken {
+			return fmt.Errorf("%w: outbox message %q", governance.ErrOperationConflict, ack.Key)
+		}
+		m.outbox[ack.Key] = *ack
+	}
+	m.ledger[key] = e
+	return nil
+}
+
+func sameEntry(a, b commands.Entry) bool {
+	return a.RepositoryID == b.RepositoryID && a.CommentID == b.CommentID && a.PullNumber == b.PullNumber && a.AuthorID == b.AuthorID &&
+		a.CreatedAt.Equal(b.CreatedAt) && a.BodyDigest == b.BodyDigest && a.Disposition == b.Disposition && a.Operation == b.Operation && a.DecidedAt.Equal(b.DecidedAt)
 }
 
 // Instance implements commands.Store.
-func (m *Memory) Instance(context.Context) (string, error) { return "", errNotImplemented }
+func (m *Memory) Instance(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return m.instance, nil
+}
 
 // OutboxKeys returns the key of every committed acknowledgment, sorted.
-func (m *Memory) OutboxKeys(context.Context) ([]string, error) { return nil, errNotImplemented }
+func (m *Memory) OutboxKeys(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	keys := make([]string, 0, len(m.outbox))
+	for key := range m.outbox {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys, nil
+}

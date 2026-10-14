@@ -195,18 +195,19 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	}
 	request.Outbox = []governance.OutboxMessage{ack}
 	_, err = governance.ProcessConsent(ctx, j.suites, request)
-	switch {
-	case errors.Is(err, governance.ErrNotFound) && !j.suiteExists(ctx, project):
-		return reject(commands.NoSuite, 0, reference)
-	case err != nil:
+	if errors.Is(err, governance.ErrNotFound) {
+		// Governance reports a missing Suite and an unknown proposal alike: only a missing Suite is no-suite.
+		switch probe := j.suites.Do(ctx, project, defaultSuite, func(context.Context, governance.Tx) error { return nil }); {
+		case errors.Is(probe, governance.ErrNotFound):
+			return reject(commands.NoSuite, 0, reference)
+		case probe != nil:
+			return &opaque{what: "look for the suite", cause: probe}
+		}
+	}
+	if err != nil {
 		return &opaque{what: "process the consent", cause: err}
 	}
 	return j.record(ctx, c, commands.Processed, operation, nil)
-}
-
-// suiteExists tells a missing Suite from an unknown proposal, which governance reports with the same error.
-func (j *commandsJob) suiteExists(ctx context.Context, project contract.ProjectID) bool {
-	return j.suites.Do(ctx, project, defaultSuite, func(context.Context, governance.Tx) error { return nil }) == nil
 }
 
 // consentRequest is the command of the owner's comment with the identifiers of D-COMMANDS.

@@ -285,21 +285,30 @@ func (b *bootstrapJob) run(ctx context.Context) error {
 // project advances one project and returns only the failures that fail the run.
 func (b *bootstrapJob) project(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy) error {
 	err := b.advance(ctx, enrollment, p)
+	var stopped bootstrapStop
 	switch {
 	case err == nil:
+		b.problems.clear(p.Repo)
 		return nil
 	case ctx.Err() != nil: // a cancelled read is not a GitHub failure
 		return ctx.Err()
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, b.logger, "github bootstrap read failed", p.Repo, err)
+		b.problems.set(p.Repo, "read-failed")
 		return nil
 	case errors.Is(err, errRepositoryChanged):
 		b.logger.WarnContext(ctx, "github bootstrap skipped: the repository name no longer identifies the enrolled repository", "repo", p.Repo)
+		b.problems.set(p.Repo, "repository-changed")
 		return nil
 	case invalidSource(err):
 		b.logger.WarnContext(ctx, "github bootstrap skipped: the default branch cannot be proposed as a baseline", "repo", p.Repo)
+		b.problems.set(p.Repo, "invalid-source")
+		return nil
+	case errors.As(err, &stopped):
+		b.problems.set(p.Repo, string(stopped))
 		return nil
 	}
+	b.problems.set(p.Repo, "failed")
 	return err
 }
 
@@ -498,7 +507,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s baselineState) error {
 	if s.assessed && !s.passed {
 		b.logger.InfoContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.latest)
-		return nil
+		return bootstrapStop("origin-not-passed")
 	}
 	var inv inventory.Inventory
 	outcome := contract.IntegrityUnavailable
@@ -528,12 +537,12 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 	switch {
 	case errors.Is(err, governance.ErrConflict): // an earlier, different outcome stands; assessments are immutable
 		b.logger.WarnContext(ctx, "github bootstrap stopped: the recorded assessment of the origin disagrees with this read", "repo", p.Repo, "proposal", s.latest)
-		return nil
+		return bootstrapStop("assessment-conflict")
 	case err != nil:
 		return fmt.Errorf("record the assessment: %w", err)
 	case outcome != contract.IntegrityPassed:
 		b.logger.WarnContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.latest)
-		return nil
+		return bootstrapStop("origin-not-passed")
 	}
 	return b.bootstrap(ctx, p, s, inv)
 }
@@ -567,11 +576,38 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 	}
 	if result.Outcome != contract.PromotionProposed {
 		b.logger.WarnContext(ctx, "github bootstrap blocked", "repo", p.Repo, "proposal", s.latest, "reason", result.Reason)
-		return nil
+		return bootstrapStop(blockedCode(result.Reason))
 	}
 	b.logger.InfoContext(ctx, "github baseline promoted", "repo", p.Repo, "reference", reference, "version", string(firstVersion), "replayed", result.Duplicate)
 	return nil
 }
 
+// blockedReasons name the reasons of a blocked promotion in the codes of /status.
+var blockedReasons = map[contract.PromotionReason]string{
+	contract.PromotionReasonContextMismatch:         "context-mismatch",
+	contract.PromotionReasonProposalNotCurrent:      "proposal-not-current",
+	contract.PromotionReasonCanonicalChanged:        "canonical-changed",
+	contract.PromotionReasonPolicyChanged:           "policy-changed",
+	contract.PromotionReasonApprovalMissing:         "approval-missing",
+	contract.PromotionReasonAssessmentMismatch:      "assessment-mismatch",
+	contract.PromotionReasonIntegrityNotPassed:      "integrity-not-passed",
+	contract.PromotionReasonIntegrationMissing:      "integration-missing",
+	contract.PromotionReasonIntegrationMismatch:     "integration-mismatch",
+	contract.PromotionReasonCanonicalPresent:        "canonical-present",
+	contract.PromotionReasonEmptyInventory:          "empty-inventory",
+	contract.PromotionReasonCorrectionContextReused: "correction-context-reused",
+}
+
 // blockedCode is the classification code of a blocked promotion, naming the reason.
-func blockedCode(contract.PromotionReason) string { return "" }
+func blockedCode(reason contract.PromotionReason) string {
+	if name, known := blockedReasons[reason]; known {
+		return "blocked-" + name
+	}
+	return "blocked"
+}
+
+// bootstrapStop is why a project's bootstrap stopped without failing the run: a fixed classification code for
+// /status, never text from GitHub. The step that stops logs its own reason.
+type bootstrapStop string
+
+func (s bootstrapStop) Error() string { return "bootstrap stopped: " + string(s) }

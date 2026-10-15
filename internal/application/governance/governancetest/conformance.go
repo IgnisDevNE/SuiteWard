@@ -151,8 +151,6 @@ var (
 
 func cfBlob(content string) []byte { return []byte("conformance:" + content) }
 
-// cfMust unwraps a fixture value; the runner turns the panic of a fixture that
-// cannot be built into a failed subtest.
 // cfOriginKind is the kind a fixture means: a baseline (no canonical expected) comes from a branch, a change from a pull.
 func cfOriginKind(binding contract.ApprovalBinding) contract.OriginKind {
 	if binding.ExpectedCanonical() == "" {
@@ -161,6 +159,8 @@ func cfOriginKind(binding contract.ApprovalBinding) contract.OriginKind {
 	return contract.OriginPull
 }
 
+// cfMust unwraps a fixture value; the runner turns the panic of a fixture that
+// cannot be built into a failed subtest.
 func cfMust[T any](value T, err error) T {
 	if err != nil {
 		panic(err)

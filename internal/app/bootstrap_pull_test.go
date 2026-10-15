@@ -30,7 +30,7 @@ func (w *bootWorld) pullProposal(pull int, head string, files map[string]string)
 func TestBootstrapNeverPromotesAnApprovedPullRevision(t *testing.T) {
 	w := newBootWorld(t)
 	w.reader.repos[bootRepo].trees[bootHead] = &bootTree{files: map[string]string{"src/main.go": "package main\n"}} // the default branch has no protected files
-	w.reader.repos[bootRepo].trees[bootMovedHead] = &bootTree{files: bootFiles("v1")} // the head of the pull request
+	w.reader.repos[bootRepo].trees[bootMovedHead] = &bootTree{files: bootFiles("v1")}                               // the head of the pull request
 	w.openPulls(bootRepo, 5)
 	w.pullProposal(5, bootMovedHead, bootFiles("v1"))
 	w.approveIn(bootRepoID, 101, 1, 5)

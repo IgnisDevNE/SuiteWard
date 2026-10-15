@@ -380,16 +380,18 @@ func (b *bootstrapJob) repository(ctx context.Context, p owner.ProjectPolicy) (g
 
 // baselineState is what the bootstrap decides on, read from the Suite in one unit of work.
 type baselineState struct {
-	canonical bool
-	target    contract.IntegrationTargetID
-	latest    int // the number of the latest proposal; 0 when there is none
-	reference contract.ProposalReference
-	carrier   contract.ApprovalCarrierID
-	origin    contract.SourceRevision
-	binding   contract.ApprovalBinding
-	approved  bool // the owner's approval of the latest revision is current
-	assessed  bool // an assessment of the origin is recorded
-	passed    bool // and it passed
+	canonical  bool
+	target     contract.IntegrationTargetID
+	latest     int  // the number of the latest proposal of any origin; 0 when there is none
+	latestPull bool // and it is a pull proposal (the checks job's), which the default branch supersedes
+	branch     bool // a branch proposal exists: the fields below are those of the latest one
+	reference  contract.ProposalReference
+	carrier    contract.ApprovalCarrierID
+	origin     contract.SourceRevision
+	binding    contract.ApprovalBinding
+	approved   bool // the owner's approval of the latest revision is current
+	assessed   bool // an assessment of the origin is recorded
+	passed     bool // and it passed
 }
 
 func proposalID(n int) contract.ProposalID { return contract.ProposalID("P" + strconv.Itoa(n)) }
@@ -408,7 +410,8 @@ func pullOfCarrier(repositoryID int64, carrier contract.ApprovalCarrierID) (int,
 	return pull, nil
 }
 
-// baseline reads the Suite; the proposals have no listing, so it follows P1, P2, ... to the last one.
+// baseline reads the Suite; the proposals have no listing, so it follows P1, P2, ... to the last one. The bootstrap
+// decides only on the latest branch proposal: a pull proposal belongs to the checks job and is never promoted here.
 func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID) (s baselineState, err error) {
 	err = b.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
 		state, err := tx.Suite(ctx)
@@ -432,9 +435,12 @@ func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID)
 			if err != nil {
 				return fmt.Errorf("load proposal P%d: %w", n, err)
 			}
-			s.latest, latest, consent = n, proposal, granted
+			s.latest, s.latestPull = n, proposal.Current().OriginKind() == contract.OriginPull
+			if !s.latestPull {
+				s.branch, latest, consent = true, proposal, granted
+			}
 		}
-		if s.latest == 0 {
+		if !s.branch {
 			return nil
 		}
 		current := latest.Current()
@@ -463,7 +469,8 @@ func openPulls(pulls []githubsync.PullState, repo string) []int {
 	return open
 }
 
-// propose proposes the baseline when the Suite has no proposal, or its latest proposal is unapproved and its carrier
+// propose proposes the baseline when the Suite has no branch proposal, or its latest proposal is a pull proposal
+// (superseded: the default branch has protected files), or the latest branch proposal is unapproved and its carrier
 // is no longer open, and the repository has an open pull request. "Open" is what the synchronization observed:
 // it is the same store the command job approves from, so no extra GitHub call is needed.
 func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, s baselineState) error {
@@ -475,7 +482,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	if len(open) == 0 {
 		return bootstrapStop("no-open-pull-request")
 	}
-	if s.latest > 0 && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
+	if s.branch && !s.latestPull && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
 		return nil
 	}
 	branch, ok := strings.CutPrefix(string(s.target), targetPrefix)

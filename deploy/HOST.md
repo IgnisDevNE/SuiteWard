@@ -547,6 +547,64 @@ Only after the host scenario, because the two canonicals diverge (6d.1 step 6).
 
 No code, token, setup output or secret in tickets, logs or messages. The warning of section 6a stays in force. Do not add a workflow to SuiteWardQ and do not bypass its ruleset to merge: the merges you verify are the ones the ruleset allows.
 
+## 6e. Bootstrap from the first test PR (M1.7b)
+
+SuiteWard now bootstraps a repository from its first test PR: while the Suite has no canonical and the default branch has no protected files, the lowest-numbered open PR whose head has protected files carries a bootstrap proposal, and V1 is promoted only from that PR's merge commit after the merge ([ADR 0010](../docs/decisions/0010-repository-bootstrap.md), [D-CHECKS](../docs/plan/decisions.md)). Every new revision of a change PR also gets one `revision` comment. You verify it on two new repositories: `IgnisDevNE/SuiteWardQ2` on the host and `IgnisDevNE/SuiteWardQ3` on the co-located stack (6e.4). M1.7b adds no quadlet change, no secret and no setting; the `/status` fields and the jobs are in the [runtime contract](../docs/contracts/runtime.md#bootstrap-from-a-pr-and-the-revision-comment-m17b).
+
+### 6e.1 Before you start (owner)
+
+1. Add `phase/M1.7b` to the deployment branches of the `remote-poc` environment (GitHub, repository Settings, Environments). Without it the `promote` job of the `Deploy` run is refused.
+2. Create `IgnisDevNE/SuiteWardQ2` and `IgnisDevNE/SuiteWardQ3`.
+   - Both public, each with only a README: no `tests/` and no `.github/workflows/`.
+   - Install the test App and the bot App on both.
+   - Add a strict ruleset on `main` requiring `SuiteWard / Contract` (pinned to the test App) and `CI / test`.
+3. **Separate repositories.** The host watches `SuiteWardQ`, `SuiteWardQ-private` and `SuiteWardQ2`; the co-located stack watches only `SuiteWardQ3`. Because no repository is watched by both, the two targets may run at the same time. The 6b.1 rule does not apply to this phase.
+
+### 6e.2 Add SuiteWardQ2 to the host (owner)
+
+1. Edit `/etc/suiteward/github.env` to add `IgnisDevNE/SuiteWardQ2` to `SUITEWARD_GITHUB_REPOSITORIES`. Use the editing method of section 4a, as root or with sudo from `ssm-user`.
+2. Deploy as in 6c.2: push to `phase/M1.7b`, approve the `promote` job of the `Deploy` run of the phase head commit (section 0), then, as `suiteward` (section 1), pull, restart and run the smoke test with the version. The schema is 16.
+3. Run `setup` again as in section 6a, with a **new** authenticator entry and the test check of every configured repository.
+   - **Warning:** this re-keys TOTP for every host repository. The old host entry stops working for `SuiteWardQ` as well. Delete it after the new one works.
+4. Check `/status` (`curl -s http://127.0.0.1:8081/status`):
+   - `schemaVersion` 16;
+   - `SuiteWardQ2` listed with `bootstrap` `awaiting-initial-contract`;
+   - no other errors.
+
+### 6e.3 The scenario (host, on SuiteWardQ2)
+
+Allow about 1 to 2 minutes per step: synchronization takes up to 60 s, and the checks and merges jobs run every 30 s. The `/suiteward approve <ref> <code>` command is in the check's details (open "Details" on the check). Each code is used once: wait for the next code before every command.
+
+1. **No protected change.** A README-only PR gets `in_progress`, `bootstrap-pending`.
+2. **Bootstrap proposal.** A PR adds `tests/` (one or two files) and `.github/workflows/ci.yml` (the CI workflow used in SuiteWardQ, with the job named `CI / test`).
+   - A bootstrap comment says it is the exact head of this PR and that V1 is promoted only from the merge commit after the merge.
+   - The check is `in_progress` with `P1-R1`.
+3. **Protected push.** Push a change in `tests/`. A new comment for `P1-R2` appears, and the check goes back to `in_progress`.
+4. **Approval.** Approve the current revision with the new host entry. The check turns `success`, "Bootstrap ready for integration", and `CI / test` is green.
+5. **Merge.** Merge the PR with any method. A comment says V1 was promoted from the merge commit as the first canonical version.
+6. **Change PR.** A later PR changes `tests/`. It gets a `revision` comment listing the files and carrying the copyable command, and `in_progress`. Approve it and merge it: V2.
+7. **Regression on SuiteWardQ.** A change PR there gets the `revision` comment too.
+8. **Final `/status`:** no errors and `outbox.failed` 0.
+
+Paste back (no secrets), for each step: the PR number, the first line of the comment, and the state of the check. Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.
+
+### 6e.4 Co-located stack (on SuiteWardQ3)
+
+- Purge and set up again as in 6d.4, with `-GitHubRepositories IgnisDevNE/SuiteWardQ3` only and a new authenticator entry ([local development](../docs/local-development.md#verifying-m17b-on-the-co-located-stack)).
+- No need to stop the host: the repositories differ.
+- Run 6e.3 steps 1, 2, 4 and 5 on SuiteWardQ3.
+- Then put the stack back without GitHub.
+
+### 6e.5 Troubleshooting
+
+- **A PR that shows `bootstrap-pending` although it has tests:** the default branch already has protected files (the branch path applies), or a lower-numbered PR carries the bootstrap.
+- **A bootstrap PR merged with a tree that differs from the approved revision:** the comment says there is still no canonical. The default branch now has the files, so the branch path proposes its contract on an open PR.
+- **`/status` keeps `awaiting-initial-contract` during a PR bootstrap.** This is a known limitation; the check carries the real state.
+
+### 6e.6 Never
+
+No code, token, setup output or secret in tickets, logs or messages. The warning of section 6a stays in force. Do not bypass the ruleset to merge: the merges you verify are the ones the ruleset allows.
+
 ## 7. Reach `/status`
 
 From your workstation, in a second terminal:

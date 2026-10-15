@@ -31,69 +31,80 @@ func runPromotion(ctx context.Context, uow UnitOfWork, identity PromotionIdentit
 			result, err = replayPromotion(stored, identity)
 			return err
 		}
-		state, err := tx.Suite(ctx)
-		if err != nil {
-			return fmt.Errorf("load suite: %w", err)
-		}
-		proposal, consent, err := tx.Proposal(ctx, request.Reference.ProposalID)
-		if err != nil {
-			return fmt.Errorf("load proposal: %w", err)
-		}
-		assessment, _, err := tx.Assessment(ctx, request.Reference, request.AssessmentSource) // missing evidence blocks the promotion
-		if err != nil {
-			return fmt.Errorf("load assessment: %w", err)
-		}
-		input := contract.PromotionInput{
-			Context: contract.PromotionContext{
-				Canonical: state.Canonical, Proposed: request.Proposed, Proposal: proposal,
-				Reference: request.Reference, Carrier: request.Carrier, Policy: state.Policy, Consent: consent,
-				Assessment: assessment,
-			},
-			Integration: request.Integration, Target: state.Target, OperationID: request.OperationID,
-			NewVersionID: request.NewVersionID, RecordedAt: request.RecordedAt, CorrectsVersionID: identity.CorrectsVersionID,
-		}
-		var decision contract.PromotionDecision
-		switch identity.Kind {
-		case OperationBootstrap:
-			decision, err = contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
-		case OperationCorrect:
-			var target contract.HistoricalCanonical
-			if target, found, err = tx.Version(ctx, identity.CorrectsVersionID); err != nil {
-				return fmt.Errorf("load corrected version: %w", err)
-			}
-			if !found {
-				return fmt.Errorf("%w: version %q", ErrNotFound, identity.CorrectsVersionID)
-			}
-			decision, err = contract.DecideCorrection(contract.CorrectionInput{Promotion: input, Target: target})
-		default:
-			decision, err = contract.DecidePromotion(input)
-		}
-		if err != nil {
-			return fmt.Errorf("decide %s: %w", identity.Kind, err)
-		}
-		result = PromoteResult{Outcome: decision.Outcome(), Reason: decision.Reason()}
-		if decision.Outcome() != contract.PromotionProposed {
-			return nil
-		}
-		effect, proposed := decision.Effect()
-		if !proposed {
-			return fmt.Errorf("%w: promotion proposed without an effect", ErrInvalidState)
-		}
-		identity.Binding = proposal.Current().Binding()
-		identity.Request.Outbox = nil // the receipt records the request, not what the caller publishes about it
-		write := PromotionWrite{Receipt: PromotionReceipt{Identity: identity, Record: effect.Promotion()}, Version: effect.Version()}
-		if err := tx.RecordPromotion(ctx, write); err != nil {
-			return fmt.Errorf("record promotion: %w", err)
-		}
-		if err := writeOutbox(ctx, tx, request.Outbox); err != nil {
-			return err
-		}
-		result.Record, result.Committed = effect.Promotion(), true
-		return nil
+		result, err = promoteWithin(ctx, tx, identity)
+		return err
 	})
 	if err != nil {
 		return PromoteResult{}, err
 	}
+	return result, nil
+}
+
+// promoteWithin decides a promotion, bootstrap or correction against the state tx holds and writes a proposed
+// promotion with its outbox. It does not look for a replay: the caller owns the operation's identity.
+func promoteWithin(ctx context.Context, tx Tx, identity PromotionIdentity) (PromoteResult, error) {
+	request := identity.Request
+	state, err := tx.Suite(ctx)
+	if err != nil {
+		return PromoteResult{}, fmt.Errorf("load suite: %w", err)
+	}
+	proposal, consent, err := tx.Proposal(ctx, request.Reference.ProposalID)
+	if err != nil {
+		return PromoteResult{}, fmt.Errorf("load proposal: %w", err)
+	}
+	assessment, _, err := tx.Assessment(ctx, request.Reference, request.AssessmentSource) // missing evidence blocks the promotion
+	if err != nil {
+		return PromoteResult{}, fmt.Errorf("load assessment: %w", err)
+	}
+	input := contract.PromotionInput{
+		Context: contract.PromotionContext{
+			Canonical: state.Canonical, Proposed: request.Proposed, Proposal: proposal,
+			Reference: request.Reference, Carrier: request.Carrier, Policy: state.Policy, Consent: consent,
+			Assessment: assessment,
+		},
+		Integration: request.Integration, Target: state.Target, OperationID: request.OperationID,
+		NewVersionID: request.NewVersionID, RecordedAt: request.RecordedAt, CorrectsVersionID: identity.CorrectsVersionID,
+	}
+	var decision contract.PromotionDecision
+	switch identity.Kind {
+	case OperationBootstrap:
+		decision, err = contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
+	case OperationCorrect:
+		target, found, err := tx.Version(ctx, identity.CorrectsVersionID)
+		if err != nil {
+			return PromoteResult{}, fmt.Errorf("load corrected version: %w", err)
+		}
+		if !found {
+			return PromoteResult{}, fmt.Errorf("%w: version %q", ErrNotFound, identity.CorrectsVersionID)
+		}
+		decision, err = contract.DecideCorrection(contract.CorrectionInput{Promotion: input, Target: target})
+		if err != nil {
+			return PromoteResult{}, fmt.Errorf("decide %s: %w", identity.Kind, err)
+		}
+	default:
+		decision, err = contract.DecidePromotion(input)
+	}
+	if err != nil {
+		return PromoteResult{}, fmt.Errorf("decide %s: %w", identity.Kind, err)
+	}
+	result := PromoteResult{Outcome: decision.Outcome(), Reason: decision.Reason()}
+	if decision.Outcome() != contract.PromotionProposed {
+		return result, nil
+	}
+	effect, proposed := decision.Effect()
+	if !proposed {
+		return PromoteResult{}, fmt.Errorf("%w: promotion proposed without an effect", ErrInvalidState)
+	}
+	identity.Binding = proposal.Current().Binding()
+	identity.Request.Outbox = nil // the receipt records the request, not what the caller publishes about it
+	write := PromotionWrite{Receipt: PromotionReceipt{Identity: identity, Record: effect.Promotion()}, Version: effect.Version()}
+	if err := tx.RecordPromotion(ctx, write); err != nil {
+		return PromoteResult{}, fmt.Errorf("record promotion: %w", err)
+	}
+	if err := writeOutbox(ctx, tx, request.Outbox); err != nil {
+		return PromoteResult{}, err
+	}
+	result.Record, result.Committed = effect.Promotion(), true
 	return result, nil
 }
 

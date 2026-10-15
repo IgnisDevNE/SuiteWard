@@ -129,3 +129,25 @@ Settled by the M1.6b-P0 measurement (2026-10-14), recorded on the [M1.6b page](.
 - **`Checks.Runs(ctx, repo, sha, name string, appID int64) ([]CheckRunSummary, error)`.** `GET /repos/{r}/commits/{sha}/check-runs?check_name=<name>&app_id=<id>`, paged; each summary holds the id, status, conclusion and `external_id`. It uses the same checks-write token: P0 measured a 200 with it, and the default listing returns only the latest run per name.
 - **Truncated trees.** `Reader.Tree` wraps both `inventory.ErrInvalidTree` and the new `github.ErrTreeTruncated` when GitHub truncates the recursive tree, so callers can tell a GitHub limit from an invalid source.
 - **PATCH is not used.** The latest run with the name wins (S1, and P0 for `in_progress` after `success`).
+
+## M1.7: merge reads (normative)
+
+All of these use the synchronization token: `{metadata, pull_requests, contents}` read. They are D-INTEGRATION's reads, and no new permission is needed (`GET /pulls/{n}` was measured on 2026-10-11).
+
+- **Head repository.** `Pull` gains `HeadRepo string`, the head repository's `full_name`, read from `head.repo.full_name`. It is `(deleted)` when GitHub answers `head.repo: null` (a deleted fork); a `full_name` always holds a `/`, so the marker cannot collide. `OpenPulls` and the two reads below fill it. A PR is a fork PR when `HeadRepo` is not empty and differs from the repository read (compared case-insensitively), including `(deleted)`.
+- **One pull.** `Reader.Pull(ctx, repo, number) (PullDetail, error)`.
+  - It issues `GET /repos/{r}/pulls/{n}` through `GetImmutable`: the answer changes, but a closed pull is read once per resolution and must not grow the ETag cache.
+  - `PullDetail` holds the fields of `Pull` plus:
+    - `State`: `open` or `closed`; any other value is an invalid response.
+    - `Merged`: GitHub's `merged`, the only merge signal. A non-null `merge_commit_sha` alone never means merged: GitHub sets one on open PRs.
+    - `MergedAt` (zero unless merged).
+    - `MergeCommitSHA`: 40 lowercase hex, or empty. It may be empty for a merged PR right after the merge.
+  - A merged PR with a zero `merged_at` is an invalid response.
+  - A 404 is `rest.ErrNotFound`.
+- **Recently closed.** `Reader.ClosedPulls(ctx, repo) ([]PullDetail, error)`.
+  - It issues `GET /repos/{r}/pulls?state=closed&sort=updated&direction=desc&per_page=30` through the conditional `Get`, so an unchanged listing costs a 304.
+  - It reads one page only. A burst of more than 30 PRs closed between two runs can still miss one; that is a known limit.
+  - Each item's `merged` is derived from a non-null `merged_at`, because the listing has no `merged` field.
+- **The integrated tree.** It is read with the existing `Reader.Tree(ctx, repo, mergeCommitSHA)`, so no commit read is needed. A truncated tree wraps `ErrTreeTruncated`, as for a head.
+- **Errors and logs.** Bodies are bounded and decoded into these types only. Errors and logs never carry GitHub text.
+- **Fixtures.** Fixtures cover an open PR, a closed unmerged PR, a merged PR with and without `merge_commit_sha`, a fork PR, and a PR whose head repository was deleted.

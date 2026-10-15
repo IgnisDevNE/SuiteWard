@@ -127,7 +127,9 @@ func (w *bootWorld) decideMerge(pull int, refusal governance.MergeReason) govern
 	w.t.Helper()
 	request := governance.MergeRequest{Project: w.project(), Suite: defaultSuite, Carrier: carrierID(bootRepoID, pull), Source: bootMergeSHA, Target: "branch:main",
 		ObservedAt: bootTime, RecordedAt: bootTime.Add(2 * time.Hour), Refusal: refusal,
-		Message: func(governance.MergeOutcome) (governance.OutboxMessage, bool, error) { return governance.OutboxMessage{}, false, nil }}
+		Message: func(governance.MergeOutcome) (governance.OutboxMessage, bool, error) {
+			return governance.OutboxMessage{}, false, nil
+		}}
 	if refusal == "" {
 		request.Tree = &bootTree{files: bootFiles("v1")}
 	}

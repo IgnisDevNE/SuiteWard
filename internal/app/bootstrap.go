@@ -175,9 +175,17 @@ type bootstrapReader interface {
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
 }
 
-// pullLister is the part of the observation store the bootstrap reads.
+// pullLister is the part of the observation store the checks job reads.
 type pullLister interface {
 	Pulls(ctx context.Context, repo string) ([]githubsync.PullState, error)
+}
+
+// pullResolver is the part of the observation store the bootstrap reads: which pull requests are open, which await
+// their resolution and which merged.
+type pullResolver interface {
+	pullLister
+	AwaitingResolution(ctx context.Context, repo string) ([]githubsync.PullState, error)
+	Merged(ctx context.Context, repo string) ([]githubsync.MergedPull, error)
 }
 
 var (
@@ -276,7 +284,7 @@ type bootstrapJob struct {
 	owners   owner.Store
 	suites   governance.UnitOfWork
 	content  governance.ContentWriter
-	pulls    pullLister         // the synchronization store: which pull requests are open
+	pulls    pullResolver       // the synchronization store: which pull requests are open
 	tier     string             // the configured INSTALLATION_TIER
 	problems *bootstrapProblems // shown in /status
 	logger   *slog.Logger
@@ -380,18 +388,20 @@ func (b *bootstrapJob) repository(ctx context.Context, p owner.ProjectPolicy) (g
 
 // baselineState is what the bootstrap decides on, read from the Suite in one unit of work.
 type baselineState struct {
-	canonical  bool
-	target     contract.IntegrationTargetID
-	latest     int  // the number of the latest proposal of any origin; 0 when there is none
-	latestPull bool // and it is a pull proposal (the checks job's), which the default branch supersedes
-	branch     bool // a branch proposal exists: the fields below are those of the latest one
-	reference  contract.ProposalReference
-	carrier    contract.ApprovalCarrierID
-	origin     contract.SourceRevision
-	binding    contract.ApprovalBinding
-	approved   bool // the owner's approval of the latest revision is current
-	assessed   bool // an assessment of the origin is recorded
-	passed     bool // and it passed
+	canonical   bool
+	target      contract.IntegrationTargetID
+	latest      int                        // the number of the latest proposal of any origin; 0 when there is none
+	latestPull  bool                       // and it is a pull proposal (the checks job's), which the default branch supersedes
+	pullCarrier contract.ApprovalCarrierID // of that pull proposal
+	pullMerged  bool                       // the merges job recorded the outcome of its carrier's merge
+	branch      bool                       // a branch proposal exists: the fields below are those of the latest one
+	reference   contract.ProposalReference
+	carrier     contract.ApprovalCarrierID
+	origin      contract.SourceRevision
+	binding     contract.ApprovalBinding
+	approved    bool // the owner's approval of the latest revision is current
+	assessed    bool // an assessment of the origin is recorded
+	passed      bool // and it passed
 }
 
 func proposalID(n int) contract.ProposalID { return contract.ProposalID("P" + strconv.Itoa(n)) }
@@ -426,6 +436,7 @@ func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID)
 		var (
 			latest  contract.Proposal
 			consent contract.Consent
+			last    contract.Proposal // of any origin
 		)
 		for n := 1; ; n++ {
 			proposal, granted, err := tx.Proposal(ctx, proposalID(n))
@@ -435,9 +446,15 @@ func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID)
 			if err != nil {
 				return fmt.Errorf("load proposal P%d: %w", n, err)
 			}
-			s.latest, s.latestPull = n, proposal.Current().OriginKind() == contract.OriginPull
+			s.latest, s.latestPull, last = n, proposal.Current().OriginKind() == contract.OriginPull, proposal
 			if !s.latestPull {
 				s.branch, latest, consent = true, proposal, granted
+			}
+		}
+		if s.latestPull {
+			s.pullCarrier = last.Current().Carrier()
+			if _, s.pullMerged, err = tx.MergeOutcome(ctx, s.pullCarrier); err != nil {
+				return fmt.Errorf("load the merge outcome of %s: %w", s.pullCarrier, err)
 			}
 		}
 		if !s.branch {
@@ -471,7 +488,8 @@ func openPulls(pulls []githubsync.PullState, repo string) []int {
 
 // propose proposes the baseline when the Suite has no branch proposal, or its latest proposal is a pull proposal
 // (superseded: the default branch has protected files), or the latest branch proposal is unapproved and its carrier
-// is no longer open, and the repository has an open pull request. "Open" is what the synchronization observed:
+// is no longer open, and the repository has an open pull request. A pull proposal whose carrier merged, or may have,
+// before the merges job decided that merge is not superseded (carrierMayHaveMerged). "Open" is what the synchronization observed:
 // it is the same store the command job approves from, so no extra GitHub call is needed.
 func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, s baselineState) error {
 	pulls, err := b.pulls.Pulls(ctx, p.Repo)
@@ -484,6 +502,16 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	if s.branch && !s.latestPull && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
 		return nil
+	}
+	if s.latestPull {
+		mayHaveMerged, err := b.carrierMayHaveMerged(ctx, p, s, open)
+		if err != nil {
+			return err
+		}
+		if mayHaveMerged {
+			b.logger.InfoContext(ctx, "github bootstrap waiting: the carrier of the pull proposal merged and the merges job has not decided that merge", "repo", p.Repo, "proposal", s.latest)
+			return bootstrapStop("awaiting-merge-decision")
+		}
 	}
 	branch, ok := strings.CutPrefix(string(s.target), targetPrefix)
 	if !ok {
@@ -526,6 +554,33 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	b.logger.InfoContext(ctx, "github baseline proposed", "repo", p.Repo, "proposal", number, "pull", pull, "committed", result.Revise.Committed)
 	return nil
+}
+
+// carrierMayHaveMerged reports whether the carrier of the latest pull proposal left the open list and the merges job has
+// not decided its merge: it merged, or the synchronization has not resolved yet what became of it. The carrier's merge
+// is what may have put the protected files on the default branch, and it decides V1 itself, so the bootstrap does not
+// supersede its proposal. A carrier still open, one resolved as closed without a merge, and one whose merge outcome is
+// recorded (not a promotion: that would have left a canonical) do not hold it back.
+func (b *bootstrapJob) carrierMayHaveMerged(ctx context.Context, p owner.ProjectPolicy, s baselineState, open []int) (bool, error) {
+	pull, err := pullOfCarrier(p.RepositoryID, s.pullCarrier)
+	if err != nil {
+		return false, err
+	}
+	if s.pullMerged || slices.Contains(open, pull) {
+		return false, nil
+	}
+	awaiting, err := b.pulls.AwaitingResolution(ctx, p.Repo)
+	if err != nil {
+		return false, fmt.Errorf("read the unresolved pull requests: %w", err)
+	}
+	if slices.ContainsFunc(awaiting, func(state githubsync.PullState) bool { return state.Number == pull }) {
+		return true, nil
+	}
+	merged, err := b.pulls.Merged(ctx, p.Repo)
+	if err != nil {
+		return false, fmt.Errorf("read the merged pull requests: %w", err)
+	}
+	return slices.ContainsFunc(merged, func(m githubsync.MergedPull) bool { return m.PullState.Number == pull }), nil
 }
 
 // promote records the integrity assessment of the origin and bootstraps the first canonical from the approved baseline.

@@ -56,6 +56,14 @@ type Tx interface {
 	// with other evidence it is ErrConflict. An unknown proposal or revision is ErrNotFound.
 	RecordAssessment(context.Context, AssessmentWrite) error
 
+	// MergeOutcome returns the outcome recorded for carrier in the locked Suite; false when there is none.
+	MergeOutcome(context.Context, contract.ApprovalCarrierID) (MergeOutcome, bool, error)
+	// RecordMergeOutcome stores the outcome of one merged PR. A second outcome for the same carrier is ErrConflict;
+	// an unknown version or corrected version is ErrNotFound and an unknown proposal revision ErrInvalidRequest, as
+	// for a promotion. It does not advance the Suite revision: a promotion already has, through RecordPromotion,
+	// which must come first because the outcome may name the version it wrote.
+	RecordMergeOutcome(context.Context, MergeWrite) error
+
 	// Enqueue and Outbox are written in the same transaction as the facts
 	// above. Neither advances the Suite revision.
 	Enqueue(context.Context, Job) error

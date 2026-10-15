@@ -943,11 +943,11 @@ func (r ProposalRevision) OriginKind() OriginKind
 - an `IntegrationExistingBaseline` integration when the current revision is `OriginBranch`, with source = origin, as before;
 - an `IntegrationMergedChange` integration when the current revision is `OriginPull`, with the carrier of the proposal and the merge commit as source. The source may equal the revision's origin (a fast-forward merge): the kind, not the commit, separates the paths.
 
-Any other combination is `PromotionReasonIntegrationMismatch`. A PR head therefore never becomes canonical without its merge.
+Any other combination is `PromotionReasonIntegrationMismatch`. `DecidePromotion` applies the same rule wherever it decides: an `IntegrationExistingBaseline` integration requires an `OriginBranch` revision, so `Promote` cannot make a `pull` head canonical either. A PR head therefore never becomes canonical without its merge.
 
 Reconstitution and equality include the kind.
 
-**Table `proposal_revisions`** gains `origin_kind` (`text NOT NULL`, `CHECK` on the two codes). Migration `00016` back-fills existing rows: `branch` where `expected_version_id` is NULL (the baselines), `pull` otherwise.
+**Table `proposal_revisions`** gains `origin_kind` (`text NOT NULL`, `CHECK` on the two codes). Migration `00016` back-fills existing rows: `branch` where `expected_version_id` is NULL (the baselines), `pull` otherwise. If a proposal would end up with revisions of both kinds (a baseline later revised against a canonical, which no released job writes), the migration fails and rolls back rather than leave an unreadable proposal.
 
 ### Governance (`internal/application/governance`)
 

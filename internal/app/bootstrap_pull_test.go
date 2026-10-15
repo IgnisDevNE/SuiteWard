@@ -223,3 +223,31 @@ func TestBootstrapSupersedesAPullProposalWhoseMergeWasNotPromoted(t *testing.T) 
 	}
 	w.requireProblem("")
 }
+
+func TestBootstrapSaysAwaitingMergeDecisionWhenTheMergedCarrierWasTheOnlyPull(t *testing.T) {
+	w := newBootWorld(t)
+	w.openPulls(bootRepo, 5)
+	w.pullProposal(5, bootMovedHead, bootFiles("v1"))
+	w.approveIn(bootRepoID, 101, 1, 5)
+	w.openPulls(bootRepo) // the carrier merged and nothing else is open
+	w.resolveCarrier(5, true)
+
+	w.mustRun()
+
+	if _, found := w.proposal(2); found {
+		t.Fatal("P2 was proposed before the merges job decided the merge of the carrier of P1")
+	}
+	w.requireProblem("awaiting-merge-decision")
+}
+
+func TestBootstrapSaysNoOpenPullRequestWhenTheOnlyCarrierClosedUnmerged(t *testing.T) {
+	w := newBootWorld(t)
+	w.openPulls(bootRepo, 5)
+	w.pullProposal(5, bootMovedHead, bootFiles("v1"))
+	w.openPulls(bootRepo)
+	w.resolveCarrier(5, false)
+
+	w.mustRun()
+
+	w.requireProblem("no-open-pull-request")
+}

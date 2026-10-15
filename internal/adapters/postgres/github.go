@@ -27,6 +27,7 @@ type pullRow struct {
 	BaseRef   string    `json:"base_ref"`
 	BaseSHA   string    `json:"base_sha"`
 	UpdatedAt time.Time `json:"updated_at"`
+	HeadRepo  string    `json:"head_repo"` // "" is NULL: not observed
 }
 
 type commentRow struct {
@@ -99,7 +100,7 @@ func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) 
 
 	pulls, open := make([]pullRow, 0, len(cycle.OpenPulls)), make([]int32, 0, len(cycle.OpenPulls))
 	for _, pull := range cycle.OpenPulls {
-		pulls = append(pulls, pullRow{Number: pull.Number, HeadSHA: pull.HeadSHA, HeadRef: pull.HeadRef, BaseRef: pull.BaseRef, BaseSHA: pull.BaseSHA, UpdatedAt: pull.UpdatedAt})
+		pulls = append(pulls, pullRow{Number: pull.Number, HeadSHA: pull.HeadSHA, HeadRef: pull.HeadRef, BaseRef: pull.BaseRef, BaseSHA: pull.BaseSHA, UpdatedAt: pull.UpdatedAt, HeadRepo: pull.HeadRepo})
 		open = append(open, int32(pull.Number)) // Validate bounds the number
 	}
 	pullsJSON, err := json.Marshal(pulls)
@@ -167,10 +168,15 @@ func (s *Store) Pulls(ctx context.Context, repo string) ([]githubsync.PullState,
 	}
 	pulls := make([]githubsync.PullState, len(rows))
 	for i, row := range rows {
-		pulls[i] = githubsync.PullState{Number: int(row.Number), HeadSHA: row.HeadSha, HeadRef: row.HeadRef, BaseRef: row.BaseRef, BaseSHA: row.BaseSha,
-			UpdatedAt: observedTime(row.UpdatedAt), FirstSeen: observedTime(row.FirstSeen), LastSeen: observedTime(row.LastSeen), NotOpenSince: observedTime(row.NotOpenSince)}
+		pulls[i] = pullState(row)
 	}
 	return pulls, nil
+}
+
+func pullState(row dbgen.ListGitHubPullsRow) githubsync.PullState {
+	return githubsync.PullState{Number: int(row.Number), HeadSHA: row.HeadSha, HeadRef: row.HeadRef, BaseRef: row.BaseRef, BaseSHA: row.BaseSha,
+		UpdatedAt: observedTime(row.UpdatedAt), FirstSeen: observedTime(row.FirstSeen), LastSeen: observedTime(row.LastSeen), NotOpenSince: observedTime(row.NotOpenSince),
+		HeadRepo: row.HeadRepo.String}
 }
 
 // Comments implements githubsync.Store.
@@ -193,4 +199,153 @@ func (s *Store) Comments(ctx context.Context, repo string, number int) ([]github
 			FirstSeen: observedTime(row.FirstSeen), NotSeenSince: observedTime(row.NotSeenSince)}
 	}
 	return versions, nil
+}
+
+// withRepository runs fn in one transaction that holds the repository's row, so the merge-facts writes serialize with
+// a cycle like RecordCycle does. fn gets the closed watermark. found is false, and fn does not run, for a repository
+// that has no row yet.
+func (s *Store) withRepository(ctx context.Context, repo string, fn func(q *dbgen.Queries, watermark pgtype.Timestamptz) error) (found bool, err error) {
+	transaction, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin GitHub transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			rollback(ctx, transaction)
+		}
+	}()
+	q := dbgen.New(transaction)
+	watermark, err := q.LockGitHubRepository(ctx, repo)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("lock GitHub repository: %w", err)
+	}
+	if err := fn(q, watermark); err != nil {
+		return true, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return true, fmt.Errorf("commit GitHub transaction: %w", err)
+	}
+	committed = true
+	return true, nil
+}
+
+// AwaitingResolution implements githubsync.Store.
+func (s *Store) AwaitingResolution(ctx context.Context, repo string) ([]githubsync.PullState, error) {
+	rows, err := dbgen.New(s.pool).ListAwaitingResolution(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("read GitHub pulls awaiting resolution: %w", err)
+	}
+	pulls := make([]githubsync.PullState, len(rows))
+	for i, row := range rows {
+		pulls[i] = pullState(dbgen.ListGitHubPullsRow(row))
+	}
+	return pulls, nil
+}
+
+// RecordResolution implements githubsync.Store.
+func (s *Store) RecordResolution(ctx context.Context, repo string, r githubsync.Resolution) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	written := int64(0)
+	found, err := s.withRepository(ctx, repo, func(q *dbgen.Queries, _ pgtype.Timestamptz) (err error) {
+		written, err = q.RecordResolution(ctx, dbgen.RecordResolutionParams{Repo: repo, Number: int32(r.Number), NotOpenSince: timestamp(r.NotOpenSince),
+			HeadSha: r.HeadSHA, HeadRef: r.HeadRef, BaseRef: r.BaseRef, BaseSha: r.BaseSHA, HeadRepo: r.HeadRepo,
+			Merged: r.Merged, MergedAt: timestamp(r.MergedAt), MergeCommitSha: r.MergeCommitSHA, ResolvedAt: timestamp(r.ResolvedAt)})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("write GitHub pull resolution: %w", err)
+	}
+	if !found || written == 0 {
+		return fmt.Errorf("%w: pull %d of %s is not absent since %v", githubsync.ErrStaleResolution, r.Number, repo, r.NotOpenSince)
+	}
+	return nil
+}
+
+// RecordClosed implements githubsync.Store.
+func (s *Store) RecordClosed(ctx context.Context, repo string, closed []githubsync.ClosedPull, at time.Time) error {
+	if err := githubsync.ValidateClosed(closed, at); err != nil {
+		return err
+	}
+	found, err := s.withRepository(ctx, repo, func(q *dbgen.Queries, watermark pgtype.Timestamptz) error {
+		var latest time.Time
+		fresh := []pullRow{}
+		for _, item := range closed {
+			if item.UpdatedAt.After(latest) {
+				latest = item.UpdatedAt
+			}
+			if watermark.Valid && !item.MergedAt.IsZero() && item.UpdatedAt.After(watermark.Time) {
+				pull := item.ObservedPull
+				fresh = append(fresh, pullRow{Number: pull.Number, HeadSHA: pull.HeadSHA, HeadRef: pull.HeadRef, BaseRef: pull.BaseRef, BaseSHA: pull.BaseSHA, UpdatedAt: pull.UpdatedAt, HeadRepo: pull.HeadRepo})
+			}
+		}
+		if !watermark.Valid { // the first call only sets the watermark; an empty listing sets the epoch, so the next call is not a first one
+			if latest.IsZero() {
+				latest = time.Unix(0, 0)
+			}
+			return q.SetClosedWatermark(ctx, dbgen.SetClosedWatermarkParams{Repo: repo, Watermark: timestamp(latest)})
+		}
+		if len(fresh) > 0 {
+			pulls, err := json.Marshal(fresh)
+			if err != nil {
+				return fmt.Errorf("encode closed GitHub pulls: %w", err)
+			}
+			if err := q.InsertClosedPulls(ctx, dbgen.InsertClosedPullsParams{Repo: repo, At: timestamp(at), Pulls: pulls}); err != nil {
+				return err
+			}
+		}
+		if latest.After(watermark.Time) {
+			return q.SetClosedWatermark(ctx, dbgen.SetClosedWatermarkParams{Repo: repo, Watermark: timestamp(latest)})
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("write closed GitHub pulls: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("%w: repository %s has no recorded cycle", githubsync.ErrInvalidObservation, repo)
+	}
+	return nil
+}
+
+// Merged implements githubsync.Store.
+func (s *Store) Merged(ctx context.Context, repo string) ([]githubsync.MergedPull, error) {
+	rows, err := dbgen.New(s.pool).ListMergedPulls(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("read merged GitHub pulls: %w", err)
+	}
+	merged := make([]githubsync.MergedPull, len(rows))
+	for i, row := range rows {
+		state := githubsync.PullState{Number: int(row.Number), HeadSHA: row.HeadSha, HeadRef: row.HeadRef, BaseRef: row.BaseRef, BaseSHA: row.BaseSha,
+			UpdatedAt: observedTime(row.UpdatedAt), FirstSeen: observedTime(row.FirstSeen), LastSeen: observedTime(row.LastSeen), NotOpenSince: observedTime(row.NotOpenSince),
+			HeadRepo: row.HeadRepo.String}
+		merged[i] = githubsync.MergedPull{PullState: state, Processed: row.MergeProcessed, Resolution: githubsync.Resolution{
+			Number: state.Number, NotOpenSince: observedTime(row.ResolvedFor), Merged: true, MergedAt: observedTime(row.MergedAt), MergeCommitSHA: row.MergeCommitSha.String,
+			HeadSHA: state.HeadSHA, HeadRef: state.HeadRef, BaseRef: state.BaseRef, BaseSHA: state.BaseSHA, HeadRepo: state.HeadRepo, ResolvedAt: observedTime(row.ResolvedAt)}}
+	}
+	return merged, nil
+}
+
+// MarkProcessed implements githubsync.Store.
+func (s *Store) MarkProcessed(ctx context.Context, repo string, number int) error {
+	if err := githubsync.ValidatePullNumber(number); err != nil {
+		return err
+	}
+	written := int64(0)
+	found, err := s.withRepository(ctx, repo, func(q *dbgen.Queries, _ pgtype.Timestamptz) (err error) {
+		written, err = q.MarkMergeProcessed(ctx, dbgen.MarkMergeProcessedParams{Repo: repo, Number: int32(number)})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("mark GitHub pull processed: %w", err)
+	}
+	if !found || written == 0 {
+		return fmt.Errorf("%w: pull %d of %s is not stored", githubsync.ErrInvalidObservation, number, repo)
+	}
+	return nil
 }

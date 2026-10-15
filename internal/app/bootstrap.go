@@ -60,7 +60,8 @@ type bootstrapSummaryPayload struct {
 type bootstrapSummaryInputs struct {
 	Proposal     int      `json:"proposal"`
 	Revision     int      `json:"revision"`
-	Origin       string   `json:"origin"` // the pinned 40-hex commit
+	Source       string   `json:"source"` // branch or pull
+	Origin       string   `json:"origin"` // the pinned 40-hex commit, or the head of the pull request
 	Branch       string   `json:"branch"`
 	Protected    int      `json:"protected"` // all protected files, of which Paths lists the first ones
 	Paths        []string `json:"paths"`

@@ -594,3 +594,8 @@ func (p *commentPublisher) merge(key, tail string, payload json.RawMessage) (com
 	text, err := m.text(key)
 	return m.commentTarget, text, err
 }
+
+// newRevisionMessage is a stub until the revision comment is implemented.
+func newRevisionMessage(commentTarget, governance.RevisionNotice, string) (governance.OutboxMessage, error) {
+	return governance.OutboxMessage{}, errors.New("not implemented")
+}

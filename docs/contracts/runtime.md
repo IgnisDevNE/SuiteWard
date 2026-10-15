@@ -241,6 +241,8 @@ The job counts also exclude `github_merges` and `canonical_integrity`.
    - **Superseded proposals.** A proposal superseded by the branch path is never chosen, because step 1 already answered `bootstrap-pending`. "Superseded" has no store marker. The proposal stays, and if its PR merges with a tree that matches the approved revision exactly, `PromoteMerge` still promotes it, which is safe because an exact match means no drift. A later branch baseline then blocks with `CanonicalPresent`.
 
    Head inventories are read only while looking for a carrier, and each verdict is cached by head SHA.
+   - **A carrier keeps its role while its PR is open,** even when a later push removes its protected files (its check is then `bootstrap-pending`). Another PR with protected files waits until the owner closes it. Changing that is a policy decision, not taken here.
+   - **A default branch whose tree GitHub truncates** is treated like one with protected files: every PR gets `bootstrap-pending`, cached by head SHA. The bootstrap job reports the same case as `invalid-source`.
 3. **The carrier's head.** First the M1.6b fast path: same head, same Suite revision and same latest owner command keep the record without a read (an approval bumps the Suite revision, so readiness still changes on the next run). Otherwise call `AssessBootstrapHead`, with a `bootstrap-summary` message for a committed revision.
    - Not ready: `in_progress`, `approval-missing`, with the reference.
    - Ready: `success`, `bootstrap-ready`.

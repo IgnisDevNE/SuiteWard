@@ -217,17 +217,18 @@ func (p *probeSuites) CreateSuite(ctx context.Context, project contract.ProjectI
 
 // bootWorld is one enrolled instance with a repository, a clock and fakes for every port of the job.
 type bootWorld struct {
-	t        *testing.T
-	mem      *governancetest.Memory
-	suites   *probeSuites
-	owners   *ownertest.Memory
-	pulls    *githubsynctest.Memory
-	reader   *fakeBootReader
-	content  *fakeBootContent
-	logs     *bytes.Buffer
-	job      *bootstrapJob
-	problems *bootstrapProblems
-	cycles   int
+	t         *testing.T
+	mem       *governancetest.Memory
+	suites    *probeSuites
+	owners    *ownertest.Memory
+	pulls     *githubsynctest.Memory
+	reader    *fakeBootReader
+	content   *fakeBootContent
+	logs      *bytes.Buffer
+	job       *bootstrapJob
+	problems  *bootstrapProblems
+	cycles    int
+	headRepos map[int]string // the head repository of a pull request openPulls records; absent means not observed
 }
 
 type bootOptions struct {
@@ -313,7 +314,7 @@ func (w *bootWorld) openPulls(repo string, numbers ...int) {
 	w.cycles++
 	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), Comments: map[int][]githubsync.ObservedComment{}}
 	for _, number := range numbers {
-		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime})
+		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepos[number]})
 		cycle.Comments[number] = nil
 	}
 	if err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
@@ -561,6 +562,34 @@ func TestBootstrapProposesNothingWithoutAnOpenPull(t *testing.T) {
 	w.openPulls(bootRepo, 4)
 	w.mustRun()
 	w.requireProblem("") // proposed: nothing is waiting any more
+}
+
+// D-INTEGRATION: a fork's pull request carries no proposal, so the baseline waits for a pull request of the repository itself.
+func TestBootstrapSkipsForkPullsWhenChoosingTheCarrier(t *testing.T) {
+	w := newBootWorld(t)
+	w.headRepos = map[int]string{1: "stranger/widgets", 3: "(deleted)", 4: "ACME/Widgets"} // 4 is the repository under another case; 2 is not observed
+	w.openPulls(bootRepo, 1, 3, 2, 4)
+
+	w.mustRun()
+
+	proposal, found := w.proposal(1)
+	if !found || proposal.Current().Carrier() != "github-pr:1001/2" {
+		t.Fatalf("P1 found %v, carried by %q, want github-pr:1001/2", found, proposal.Current().Carrier())
+	}
+}
+
+func TestBootstrapWaitsWhenEveryOpenPullIsAFork(t *testing.T) {
+	w := newBootWorld(t)
+	w.headRepos = map[int]string{1: "stranger/widgets", 2: "(deleted)"}
+	w.openPulls(bootRepo, 1, 2)
+
+	w.mustRun()
+
+	if _, found := w.proposal(1); found {
+		t.Fatal("a baseline was proposed on a fork pull request")
+	}
+	w.requireOutbox()
+	w.requireProblem("no-open-pull-request")
 }
 
 func TestBootstrapProposesTheBaselineOnTheLowestOpenPullWithItsSummary(t *testing.T) {

@@ -253,6 +253,11 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	return problem, nil
 }
 
+// noRevisionNotice writes no comment about a new revision; the message is wired where it is rendered.
+func noRevisionNotice(governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+	return governance.OutboxMessage{}, false, nil
+}
+
 // isFork reports whether a pull request's head repository is observed and is not repo, compared case-insensitively,
 // as GitHub names repositories. "(deleted)" is one too; "" is not observed (a row from before M1.7), never a fork.
 func isFork(headRepo, repo string) bool {
@@ -266,7 +271,7 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 	tree, err := j.reader.Tree(ctx, p.Repo, pull.HeadSHA)
 	if err == nil {
 		head, err = governance.AssessHead(ctx, j.suites, j.contents, j.content, governance.HeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
-			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}}})
+			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}}, Revision: noRevisionNotice})
 	} else {
 		err = githubRead(err)
 	}

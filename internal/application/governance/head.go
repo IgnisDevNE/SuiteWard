@@ -31,6 +31,18 @@ type HeadRequest struct {
 	Carrier contract.ApprovalCarrierID // github-pr:<repository id>/<pull>
 	Head    contract.SourceRevision    // the PR head SHA
 	Tree    inventory.Tree             // that commit's source tree (AssessHead only)
+	// Revision builds the comment about a revision this call commits; false writes no message. Callers that want no
+	// comment pass a function that returns false.
+	Revision func(RevisionNotice) (OutboxMessage, bool, error)
+}
+
+// RevisionNotice is what the comment about a new change-proposal revision states.
+type RevisionNotice struct {
+	Reference                contract.ProposalReference
+	Previous                 *contract.ProposalReference // the revision it supersedes, nil for R1
+	Canonical                contract.SuiteVersionID     // the base version
+	Added, Modified, Removed []string                    // inventory.Classify against the canonical, sorted
+	Reduced                  bool                        // a scope reduction
 }
 
 type HeadResult struct {

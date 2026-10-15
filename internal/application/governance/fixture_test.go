@@ -20,6 +20,11 @@ const (
 
 var recordedAt = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
+// noRevision is the revision comment of a caller that wants none.
+func noRevision(governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+	return governance.OutboxMessage{}, false, nil
+}
+
 // must unwraps a fixture value; a failed fixture panics and fails the test.
 func must[T any](value T, err error) T {
 	if err != nil {

@@ -97,7 +97,7 @@ func (e *headEnv) approveRef(reference contract.ProposalReference, carrier contr
 }
 
 func (e *headEnv) request(carrier contract.ApprovalCarrierID, head string, tree inventory.Tree) governance.HeadRequest {
-	return governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: carrier, Head: contract.SourceRevision(head), Tree: tree}
+	return governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: carrier, Head: contract.SourceRevision(head), Tree: tree, Revision: noRevision}
 }
 
 func (e *headEnv) assess(carrier contract.ApprovalCarrierID, head string, tree inventory.Tree) governance.HeadResult {
@@ -171,7 +171,7 @@ func TestAssessHeadNeedsACanonical(t *testing.T) {
 	w := newWorld(t)
 	before := w.revision()
 	reader := &fakeReader{writer: newFakeWriter()}
-	request := governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: prA, Head: "head-a", Tree: headTree("v1", "package main\n")}
+	request := governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: prA, Head: "head-a", Tree: headTree("v1", "package main\n"), Revision: noRevision}
 
 	_, err := governance.AssessHead(context.Background(), w.mem, reader, newFakeWriter(), request)
 

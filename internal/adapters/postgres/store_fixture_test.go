@@ -41,6 +41,11 @@ func fxOriginKind(binding contract.ApprovalBinding) contract.OriginKind {
 	return contract.OriginPull
 }
 
+// noRevision is the revision comment of a caller that wants none.
+func noRevision(governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+	return governance.OutboxMessage{}, false, nil
+}
+
 func must[T any](value T, err error) T {
 	if err != nil {
 		panic(err)

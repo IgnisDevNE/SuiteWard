@@ -24,7 +24,10 @@ import (
 // The github_comment publisher (docs/contracts/runtime.md, "Outbox kind github_comment"). The payloads of
 // bootstrap-summary and bootstrap-promoted are in bootstrap.go; the acknowledgments of the command job are here.
 
-const ackKey = "ack"
+const (
+	ackKey   = "ack"
+	mergeKey = "merge"
+)
 
 var (
 	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
@@ -483,4 +486,9 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: proposal, Revision: revision, Version: 1, Owner: state.Owner.Login})
 	})
 	return b.commentTarget, text, err
+}
+
+// newMergeMessage builds the outcome comment of a merged pull request. send is false for the outcomes that get no comment.
+func newMergeMessage(target commentTarget, outcome governance.MergeOutcome, tier string) (message governance.OutboxMessage, send bool, err error) {
+	return governance.OutboxMessage{}, false, errors.New("not implemented")
 }

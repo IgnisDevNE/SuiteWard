@@ -55,6 +55,9 @@ type Config struct {
 	// Checks is the github_checks job, the single writer of check states (ChecksKind every ChecksInterval); nil registers none.
 	Checks         func(ctx context.Context) error
 	ChecksInterval time.Duration // zero means 30 seconds
+	// Merges is the github_merges job, the only writer of merge facts (MergesKind every MergesInterval); nil registers none.
+	Merges         func(ctx context.Context) error
+	MergesInterval time.Duration // zero means 30 seconds
 	// Integrity is the canonical_integrity job (IntegrityKind every IntegrityInterval); nil registers none.
 	Integrity         func(ctx context.Context) error
 	IntegrityInterval time.Duration // zero means one hour

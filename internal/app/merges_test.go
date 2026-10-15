@@ -91,7 +91,12 @@ type mgWorld struct {
 
 func newMgWorld(t *testing.T, options ...func(*bootOptions)) *mgWorld {
 	t.Helper()
-	w := &mgWorld{cjJobWorld: newCJWorld(t, true, options...), mgProbs: &bootstrapProblems{},
+	return newMgWorldOf(t, newCJWorld(t, true, options...))
+}
+
+func newMgWorldOf(t *testing.T, cj *cjJobWorld) *mgWorld {
+	t.Helper()
+	w := &mgWorld{cjJobWorld: cj, mgProbs: &bootstrapProblems{},
 		gh: &mgReader{pulls: map[mgKey]github.PullDetail{}, pullErr: map[mgKey]error{}, closed: map[string][]github.PullDetail{}, trees: map[string]inventory.Tree{}, treeErr: map[string]error{}}}
 	w.merges = &mergesJob{repos: w.job.repos, reader: w.gh, owners: w.owners, suites: w.suites, content: w.content, store: w.pulls, integrity: w.verdicts,
 		tier: owner.TierIsolated, problems: w.mgProbs, logger: slog.New(slog.NewJSONHandler(w.logs, nil)), now: func() time.Time { return w.clock }}

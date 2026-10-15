@@ -252,7 +252,7 @@ func mergeCases() []struct {
 		{"MergeOfAnUnchangedContractIsNoChange", mcNoChange},
 		{"MergeIntoAnotherTargetIsNotTheTarget", mcNotTarget},
 		{"MergeObservedBeforeTheCanonicalIsBeforeTheCanonical", mcBeforeCanonical},
-		{"MergeNeedsACanonical", mcNoCanonical},
+		{"MergeOfAPRWithoutACanonicalIsBeforeTheCanonical", mcNoCanonical},
 		{"MergeRecordsACallerRefusalWithoutATree", mcRefusals},
 		{"MergeDecidesTargetAndTimeBeforeARefusal", mcRefusalPrecedence},
 		{"MergeReturnsATreeReadErrorAndWritesNothing", mcTreeReadError},
@@ -536,21 +536,19 @@ func mcBeforeCanonical(e *cfEnv) {
 	}
 }
 
+// A merge of a Suite without a canonical is recorded, not refused: it is before the canonical when its PR is not the
+// bootstrap PR (the cases of the bootstrap merge say the rest).
 func mcNoCanonical(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite)
 	before := e.revision()
 	pr := mcCandidate("pr", "", "v2")
-	messages := &mcMessages{}
+	messages := &mcMessages{mute: true}
 
-	err := e.mergeErr(mcRequest(pr, "v2", messages))
+	result := e.merge(mcRequest(pr, "v2", messages))
 
-	if !errors.Is(err, governance.ErrNoCanonical) {
-		e.t.Fatalf("error = %v, want ErrNoCanonical", err)
-	}
-	if _, found := e.outcomeOf(pr.carrier); found || messages.calls != 0 {
-		e.t.Fatalf("an outcome was recorded (%v) or a message asked for (%d calls)", found, messages.calls)
-	}
+	e.requireOutcome(pr.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBeforeCanonical, Source: mcSource(pr)})
 	e.requireWrites(before, 0)
+	e.requireNoCanonical()
 }
 
 func mcRefusals(e *cfEnv) {

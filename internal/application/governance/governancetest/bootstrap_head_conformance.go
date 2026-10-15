@@ -111,16 +111,21 @@ func bsRefPtr(proposal, revision string) *contract.ProposalReference {
 
 // bsConsent records the owner's decisions on the revisions of the bootstrap PR, in increasing order.
 type bsConsent struct {
-	e     *cfEnv
-	order contract.CommandOrder
+	e       *cfEnv
+	carrier contract.ApprovalCarrierID // the bootstrap PR when empty
+	order   contract.CommandOrder
 }
 
 func (c *bsConsent) decide(reference contract.ProposalReference, action contract.ConsentAction) governance.ConsentResponse {
 	c.e.t.Helper()
 	c.order++
+	carrier := c.carrier
+	if carrier == "" {
+		carrier = bsCarrier
+	}
 	name := fmt.Sprintf("%s-%s-%d", reference.ProposalID, reference.RevisionID, c.order)
 	return c.e.consent(cfMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID("op-" + name), SourceCommandID: contract.SourceCommandID("source-" + name),
-		Actor: c.e.owner, Reference: reference, Carrier: bsCarrier, Action: action, Order: c.order})))
+		Actor: c.e.owner, Reference: reference, Carrier: carrier, Action: action, Order: c.order})))
 }
 
 func (c *bsConsent) approve(reference contract.ProposalReference) {

@@ -88,11 +88,15 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 	if err != nil {
 		return checks.Record{}, false, fmt.Errorf("lock check record: %w", err)
 	}
-	state, err := q.GetOutboxState(ctx, row.MessageKey)
+	outcome, err := q.GetOutboxOutcome(ctx, row.MessageKey)
 	if err != nil {
 		return checks.Record{}, false, fmt.Errorf("read the outbox state of check message %q: %w", row.MessageKey, err)
 	}
-	next, advance := checks.Next(checkRecord(row), true, r, at, state == OutboxFailed)
+	var failedAt time.Time // zero: the current message did not fail
+	if outcome.State == OutboxFailed {
+		failedAt = observedTime(outcome.FinishedAt) // the outbox constraint gives every ended message a finished_at
+	}
+	next, advance := checks.Next(checkRecord(row), true, r, at, failedAt)
 	messageKey := row.MessageKey
 	if advance {
 		msg, err := build(next.Generation)
@@ -119,7 +123,7 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 // insertFirstCheck writes the first record of a pull and its message. It returns the zero record when the pull
 // has a row after all: a concurrent first publication committed it while this insert waited.
 func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (governance.OutboxMessage, error), r checks.Result, at time.Time) (checks.Record, error) {
-	next, _ := checks.Next(checks.Record{}, false, r, at, false)
+	next, _ := checks.Next(checks.Record{}, false, r, at, time.Time{})
 	msg, err := build(next.Generation)
 	if err != nil {
 		return checks.Record{}, err

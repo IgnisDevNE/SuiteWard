@@ -22,3 +22,7 @@ SET head_sha = sqlc.arg(head_sha), head_since = sqlc.arg(head_since), state = sq
     change = sqlc.arg(change), revision = sqlc.arg(revision), command_id = sqlc.arg(command_id), generation = sqlc.arg(generation),
     message_key = sqlc.arg(message_key), decided_at = sqlc.arg(decided_at)
 WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_number);
+
+-- The state of the message with the time it ended, which Publish needs to space the retries of a lost message.
+-- name: GetOutboxOutcome :one
+SELECT state, finished_at FROM outbox WHERE key = sqlc.arg(key);

@@ -71,7 +71,11 @@ func (m *Memory) Publish(ctx context.Context, r checks.Result, at time.Time, mes
 	defer m.mu.Unlock()
 	key := pull{r.RepositoryID, r.PullNumber}
 	current, found := m.records[key]
-	next, advance := checks.Next(current.record, found, r, at, found && m.outbox[current.messageKey].failed)
+	var failedAt time.Time // zero: the current message did not fail
+	if sent := m.outbox[current.messageKey]; found && sent.failed {
+		failedAt = sent.finishedAt
+	}
+	next, advance := checks.Next(current.record, found, r, at, failedAt)
 	messageKey := current.messageKey
 	if advance {
 		msg, err := message(next.Generation)

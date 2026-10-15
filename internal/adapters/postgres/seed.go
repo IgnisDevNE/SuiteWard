@@ -208,7 +208,7 @@ func seedProposal(ctx context.Context, q *dbgen.Queries, proposal contract.Propo
 			return seedInvalid("covered inputs of revision %q: %v", binding.Reference().RevisionID, err)
 		}
 		if err := q.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: string(reference.ProjectID), SuiteID: string(reference.SuiteID), ProposalID: string(reference.ProposalID),
-			RevisionID: string(binding.Reference().RevisionID), Seq: int64(i + 1), Origin: string(revision.Origin()), CarrierID: string(revision.Carrier()),
+			RevisionID: string(binding.Reference().RevisionID), Seq: int64(i + 1), Origin: string(revision.Origin()), OriginKind: string(revision.OriginKind()), CarrierID: string(revision.Carrier()),
 			ManifestDigest: binding.ManifestDigest().String(), ScopeDigest: binding.ScopeDigest().String(), CoveredInputs: covered,
 			ExpectedVersionID: optionalText(string(binding.ExpectedCanonical())), PolicyRevisionID: string(binding.PolicyRevisionID())}); err != nil {
 			return seedFailure("insert revision "+string(binding.Reference().RevisionID), err)

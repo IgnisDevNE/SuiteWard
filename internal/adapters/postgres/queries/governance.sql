@@ -94,10 +94,10 @@ INSERT INTO proposals (project_id, suite_id, proposal_id, carrier_id)
 VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.arg(carrier_id));
 
 -- name: InsertProposalRevision :exec
-INSERT INTO proposal_revisions (project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id,
+INSERT INTO proposal_revisions (project_id, suite_id, proposal_id, revision_id, seq, origin, origin_kind, carrier_id,
     manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id)
 VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.arg(revision_id), sqlc.arg(seq), sqlc.arg(origin),
-    sqlc.arg(carrier_id), sqlc.arg(manifest_digest), sqlc.arg(scope_digest), sqlc.arg(covered_inputs),
+    sqlc.arg(origin_kind), sqlc.arg(carrier_id), sqlc.arg(manifest_digest), sqlc.arg(scope_digest), sqlc.arg(covered_inputs),
     sqlc.narg(expected_version_id), sqlc.arg(policy_revision_id));
 
 -- name: InsertAssessment :exec

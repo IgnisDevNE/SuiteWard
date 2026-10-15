@@ -168,7 +168,9 @@ func TestBootstrapRequiresAbsentCanonicalEvenWithFreshApproval(t *testing.T) {
 	// The same approved contract still expects the existing baseline if its
 	// caller instead supplies an absent canonical snapshot.
 	context.Canonical = lifecycleAbsent(t)
-	decision, err = contract.DecideBootstrap(contract.BootstrapInput{Promotion: lifecycleBaselineInput(t, context, "candidate")})
+	input := lifecycleInput(context)
+	input.Integration = lifecycleIntegration(t, "candidate", "fresh-pr", contract.IntegrationMergedChange)
+	decision, err = contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
 	if err != nil || decision.Reason() != contract.PromotionReasonCanonicalChanged {
 		t.Fatalf("expected-present approval became initial authority: reason=%v error=%v", decision.Reason(), err)
 	}

@@ -36,6 +36,12 @@ func NewProposalRevision(binding ApprovalBinding, origin SourceRevision, kind Or
 	if binding.IsZero() || strings.TrimSpace(string(origin)) == "" || strings.TrimSpace(string(carrier)) == "" {
 		return ProposalRevision{}, ErrInvalidProposal
 	}
+	switch {
+	case kind == OriginPull:
+	case kind == OriginBranch && binding.ExpectedCanonical() == "": // only a baseline comes from a branch
+	default:
+		return ProposalRevision{}, ErrInvalidProposal
+	}
 	return ProposalRevision{binding: binding, origin: origin, kind: kind, carrier: carrier}, nil
 }
 
@@ -110,6 +116,9 @@ func (p Proposal) Revise(next ProposalRevision) (Proposal, error) {
 		if revision.Binding().Reference().RevisionID == next.Binding().Reference().RevisionID {
 			return Proposal{}, ErrRevisionExists
 		}
+	}
+	if next.OriginKind() != p.revisions[0].OriginKind() { // a proposal never changes kind
+		return Proposal{}, ErrInvalidProposal
 	}
 	return Proposal{revisions: append(slices.Clone(p.revisions), next)}, nil
 }

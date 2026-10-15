@@ -85,6 +85,21 @@ func (c candidate) current() contract.ProposalReference {
 	return c.proposal.Current().Binding().Reference()
 }
 
+// asPull is the candidate as a PR head that expects no canonical (the first-test bootstrap), not a baseline from a branch.
+func (c candidate) asPull() candidate {
+	var proposal contract.Proposal
+	for _, revision := range c.proposal.Revisions() {
+		pulled := must(contract.NewProposalRevision(revision.Binding(), revision.Origin(), contract.OriginPull, revision.Carrier()))
+		if proposal.IsZero() {
+			proposal = must(contract.NewProposal(pulled))
+		} else {
+			proposal = must(proposal.Revise(pulled))
+		}
+	}
+	c.proposal = proposal
+	return c
+}
+
 func (c candidate) mergedRequest(t *testing.T, operation string, version contract.SuiteVersionID) governance.PromoteRequest {
 	t.Helper()
 	integration := must(contract.NewIntegration(c.project, target, c.merged, c.carrier, contract.IntegrationMergedChange))

@@ -130,7 +130,7 @@ func (t *tx) Proposal(ctx context.Context, id contract.ProposalID) (contract.Pro
 		if err != nil {
 			return contract.Proposal{}, contract.Consent{}, invalidState("proposal revision "+revision.RevisionID, err)
 		}
-		sealed, err := contract.NewProposalRevision(binding, contract.SourceRevision(revision.Origin), contract.OriginPull, contract.ApprovalCarrierID(revision.CarrierID))
+		sealed, err := contract.NewProposalRevision(binding, contract.SourceRevision(revision.Origin), contract.OriginKind(revision.OriginKind), contract.ApprovalCarrierID(revision.CarrierID))
 		if err != nil {
 			return contract.Proposal{}, contract.Consent{}, invalidState("proposal revision "+revision.RevisionID, err)
 		}
@@ -506,11 +506,14 @@ func (t *tx) AppendProposalRevision(ctx context.Context, write governance.Propos
 			return fmt.Errorf("load proposal revisions: %w", err)
 		}
 		if len(revisions) > 0 {
+			if revisions[0].OriginKind != string(revision.OriginKind()) { // a proposal never changes kind
+				return fmt.Errorf("%w: proposal %q keeps its origin kind %q", governance.ErrInvalidRequest, reference.ProposalID, revisions[0].OriginKind)
+			}
 			seq = revisions[len(revisions)-1].Seq + 1
 		}
 	}
 	if err := t.q.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: scope.ProjectID, SuiteID: scope.SuiteID, ProposalID: scope.ProposalID,
-		RevisionID: string(reference.RevisionID), Seq: seq, Origin: string(revision.Origin()), CarrierID: string(revision.Carrier()),
+		RevisionID: string(reference.RevisionID), Seq: seq, Origin: string(revision.Origin()), OriginKind: string(revision.OriginKind()), CarrierID: string(revision.Carrier()),
 		ManifestDigest: binding.ManifestDigest().String(), ScopeDigest: binding.ScopeDigest().String(), CoveredInputs: covered,
 		ExpectedVersionID: optionalText(string(binding.ExpectedCanonical())), PolicyRevisionID: string(binding.PolicyRevisionID())}); err != nil {
 		return translateWrite("insert proposal revision", err)
@@ -623,7 +626,7 @@ func (t *tx) MergeOutcome(ctx context.Context, carrier contract.ApprovalCarrierI
 		return governance.MergeOutcome{}, false, fmt.Errorf("load merge outcome: %w", err)
 	}
 	outcome := governance.MergeOutcome{Kind: governance.MergeKind(row.Kind), Reason: governance.MergeReason(row.Reason), Source: contract.SourceRevision(row.Source),
-		Version: contract.SuiteVersionID(row.VersionID), Corrects: contract.SuiteVersionID(row.CorrectsVersionID.String)}
+		Version: contract.SuiteVersionID(row.VersionID.String), Corrects: contract.SuiteVersionID(row.CorrectsVersionID.String)}
 	if row.ProposalID.Valid { // the schema keeps the proposal and its revision together
 		outcome.Reference = &contract.ProposalReference{ProjectID: t.project, SuiteID: t.suite, ProposalID: contract.ProposalID(row.ProposalID.String), RevisionID: contract.ProposalRevisionID(row.RevisionID.String)}
 	}
@@ -640,7 +643,7 @@ func (t *tx) RecordMergeOutcome(ctx context.Context, write governance.MergeWrite
 	}
 	outcome := write.Outcome
 	row := dbgen.InsertMergeOutcomeParams{ProjectID: string(t.project), SuiteID: string(t.suite), Carrier: string(write.Carrier), Kind: string(outcome.Kind),
-		Reason: string(outcome.Reason), Source: string(outcome.Source), VersionID: string(outcome.Version), CorrectsVersionID: optionalText(string(outcome.Corrects)),
+		Reason: string(outcome.Reason), Source: string(outcome.Source), VersionID: optionalText(string(outcome.Version)), CorrectsVersionID: optionalText(string(outcome.Corrects)),
 		RecordedAt: pgtype.Timestamptz{Time: write.RecordedAt, Valid: true}}
 	if reference := outcome.Reference; reference != nil {
 		if !t.inScope(*reference) {

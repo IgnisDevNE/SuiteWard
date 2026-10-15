@@ -165,7 +165,7 @@ Both jobs are registered only with the GitHub settings. Both are excluded from t
 **`github_merges`** (D-INTEGRATION, ADR 0014)
 - Periodic every 30 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
 - It is the only writer of merge facts and the only caller of `governance.PromoteMerge`.
-- For each enrolled and configured repository whose Suite has a canonical:
+- For each enrolled and configured repository whose Suite has a canonical (since M1.7b: whose Suite exists, see "Bootstrap from a PR"):
   1. **Closed listing.** `Reader.ClosedPulls`, then `githubsync.Store.RecordClosed`.
   2. **Resolution.** For each pull from `AwaitingResolution`, call `Reader.Pull`:
      - `open`: nothing; the next cycle upserts it.
@@ -214,6 +214,82 @@ Both jobs are registered only with the GitHub settings. Both are excluded from t
 - `integrity`: the verdict of the Suite's current version (`passed`, `failed`, `unavailable`), absent before the first verification or for another version.
 
 The job counts also exclude `github_merges` and `canonical_integrity`.
+
+### Bootstrap from a PR and the revision comment (M1.7b)
+
+**Who writes what.**
+- The bootstrap job writes only `branch` baselines.
+- The checks job writes the `pull` bootstrap proposal and every change-proposal revision.
+- The merges job decides V1 from a merged bootstrap PR.
+
+**`github_bootstrap` (changes).**
+- **It reads only the latest `OriginBranch` proposal.** It never promotes an `OriginPull` revision, and the domain refuses that anyway.
+- **When the default branch has protected files, it proposes a `branch` baseline `P<n+1>`** on the lowest open non-fork PR in two cases:
+  - there is no `branch` proposal yet;
+  - the latest proposal is `OriginPull`, which it supersedes.
+
+  Otherwise its rules are unchanged. `awaiting-initial-contract` still means the default branch has no protected files.
+
+**`github_checks` without a canonical.**
+
+1. **Read the default branch.** A repository whose Suite does not exist yet (`Do` answers `ErrNotFound`, before the bootstrap job's first run) gets `bootstrap-pending` on every open PR, as before. For each repository whose Suite exists and has no canonical, read the default branch head and its tree. Cache the result by head SHA in memory, so an unchanged head costs no tree read.
+   - The head or tree read fails transiently: keep every stored record, as for a transient read.
+   - The default branch has protected files: every open PR gets `in_progress` / `bootstrap-pending`, because the branch path is pending.
+2. **Choose the bootstrap carrier,** deterministically.
+   - First, the lowest-numbered open non-fork PR for which `BaselineProposalFor(github-pr:<repository id>/<pull>)` finds a proposal.
+   - When no open PR has one, the lowest-numbered open non-fork PR whose head has protected files.
+   - **Superseded proposals.** A proposal superseded by the branch path is never chosen, because step 1 already answered `bootstrap-pending`. "Superseded" has no store marker. The proposal stays, and if its PR merges with a tree that matches the approved revision exactly, `PromoteMerge` still promotes it, which is safe because an exact match means no drift. A later branch baseline then blocks with `CanonicalPresent`.
+
+   Head inventories are read only while looking for a carrier, and each verdict is cached by head SHA.
+3. **The carrier's head.** First the M1.6b fast path: same head, same Suite revision and same latest owner command keep the record without a read (an approval bumps the Suite revision, so readiness still changes on the next run). Otherwise call `AssessBootstrapHead`, with a `bootstrap-summary` message for a committed revision.
+   - Not ready: `in_progress`, `approval-missing`, with the reference.
+   - Ready: `success`, `bootstrap-ready`.
+   - An invalid source is `failure` / `invalid-source`. A truncated tree is `source-unavailable`.
+   - The owner-command `failure` applies to the carrier as it does to change PRs.
+   - `ErrCanonicalMoved` keeps the record, and the next run retries.
+4. **Every other open PR** gets `bootstrap-pending`. A fork PR keeps `fork-unsupported`.
+
+**`bootstrap-ready` check text.**
+- Title: "Bootstrap ready for integration".
+- The summary covers:
+  - the approved revision;
+  - that this head was assessed;
+  - that SuiteWard will promote the first canonical version from the exact merge commit after the merge;
+  - that no canonical exists yet;
+  - the tier.
+- Never claim that tests ran.
+
+**`github_merges` (change).**
+- It processes every enrolled and configured repository whose Suite exists, with or without a canonical.
+- Without a canonical, its steps are unchanged and `PromoteMerge` applies the rules of the persistence contract.
+- An earlier merge with no canonical is recorded `before-canonical` and never stops the queue.
+
+**Outbox `github_comment`, key `bootstrap-summary:<repository id>:P<n>-R<m>` (change).**
+- **Every bootstrap revision gets one, R2 and later included.**
+- **The payload gains `source`** (`branch` or `pull`). For `pull` it also gains the PR head SHA as `origin`, and omits `branch`.
+- **The `pull` text** says:
+  - the revision is the exact head of this PR;
+  - approving it lets the PR merge;
+  - V1 is promoted only from the exact merge commit after the merge;
+  - a later protected push needs a new approval.
+
+**Outbox `github_comment`, key `merge:<repository id>:<pull>` (change).**
+- **`promoted` with version `V1` from a merged bootstrap PR** names the merge commit and says this is the first canonical version.
+- **A `blocked` outcome without a version** says that SuiteWard has no canonical contract yet and gives the reason. For recovery, it says that the default branch now holds the merged files, so SuiteWard proposes the default branch's contract for approval on an open PR (the branch path).
+
+**Outbox `github_comment`, key `revision:<repository id>:P<n>-R<m>` (new).**
+- **Written by `AssessHead`** through `HeadRequest.Revision`, for each new change-proposal revision.
+- **Payload:**
+  - `repositoryId`, `repo`, `pull`, `reference`;
+  - `previous` (optional);
+  - `canonical`, the base version;
+  - `added`, `modified` and `removed`: at most 20 each, every entry cut to 150 bytes with `…`, like the bootstrap summary;
+  - `addedTotal`, `modifiedTotal`, `removedTotal`;
+  - `reduced`;
+  - `tier`.
+- **The text** lists the changes inside code fences with control characters escaped, then the copyable `/suiteward approve P<n>-R<m> <code>`, and, when `previous` is set, "This supersedes `P<n>-R<m-1>`".
+- It never claims that tests ran, and stays under the comment limit with a worst-case test.
+- `splitKey` accepts the kinds `revision` and `bootstrap-summary` with their three parts.
 
 ### Protection verification job (M1.5)
 

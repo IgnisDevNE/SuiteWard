@@ -25,6 +25,14 @@ Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 
 Final numbers come from the S1 walking skeleton.
 
+**Amendment (2026-10-15, after M1.7; owner).** *Latency.*
+- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
+- **Approved for phase M1.7c (before M1.8):**
+  - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction;
+  - shorten the synchronization poll to about 20–30 s.
+- **Needed first.** A D-COMMANDS decision on the watermark, for example a horizon measured from the cycle's start, because chaining alone cannot beat the watermark.
+- **Webhooks** come after the MVP, because they need an inbound route and changes to ADR 0001 and D-SYNC.
+
 ### D-SCOPE: Declaration and source-inventory semantics
 
 Accepted 2026-10-05.
@@ -183,6 +191,26 @@ Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-git
 - The summary names the state, the proposal revision when there is one, the installation tier and the next action (the copyable approval command when approval is missing); it never claims that tests ran, and it stays below GitHub's output limit.
 
 *No change proposal before a canonical exists.* A PR proposal is created only for a repository that has a canonical, so a PR head can never become canonical through the existing-baseline bootstrap.
+
+**Amendment (2026-10-15, phase M1.7b; owner answers).**
+
+*The bootstrap proposal from a PR.* While the Suite has no canonical and the default branch has no protected files, one PR carries a bootstrap proposal from its exact head: the lowest-numbered open non-fork PR whose head has protected files (ADR 0010, amendment of 2026-10-15).
+- It is the only proposal allowed before a canonical. It is a baseline proposal, not a change proposal: its revisions expect no canonical and carry the origin kind `pull`.
+- A PR head can become V1 only through a merge. The domain refuses an existing-baseline promotion of a `pull` revision.
+
+*`bootstrap-ready`.* That PR's head gets `success`, titled "Bootstrap ready for integration", when the owner approved its exact current revision and the integrity assessment of that head passed. It says no canonical exists yet. Until then it is `in_progress`, `approval-missing`, with the reference. Every other PR stays `bootstrap-pending`.
+
+*Precedence.* Once the default branch has protected files, the existing-baseline path wins: a pending PR-head proposal is superseded, and V1 comes from the pinned default-branch commit. This avoids drift between the canonical and what the branch holds (owner: "the option that avoids conflicts or drift that could be irrecoverable").
+
+**Amendment (2026-10-15, after M1.7; owner).** *One comment per new revision.*
+- **When.** When a PR gets a new revision that needs approval, SuiteWard posts one comment with:
+  - the protected files added, changed and removed against the canonical, bounded;
+  - the base version;
+  - the copyable `/suiteward approve P<n>-R<m> <code>`;
+  - a line saying the previous revision is superseded.
+- **Only then.** PRs with no protected change, and implementation-only pushes, get no comment.
+- **Never edited.** Each revision gets a new comment. The comment is evidence, not authority: approving still needs a TOTP code for the exact revision.
+- **Schedule.** Phase M1.7b.
 
 ### D-INTEGRATION: Merge methods and the integrated source
 

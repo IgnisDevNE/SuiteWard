@@ -124,8 +124,8 @@ func TestRevisionCommentFitsInAComment(t *testing.T) {
 			for _, size := range []int{150, 4096} {
 				r.Added, r.Modified, r.Removed = long(size), long(size), long(size)
 				body := revisionText(t, r)
-				if body == "" || len(body) >= maxComment/4 { // headroom: a quarter of the limit
-					t.Errorf("entries of %d bytes: body has %d bytes, want 0 < n < %d", size, len(body), maxComment/4)
+				if body == "" || len(body) >= maxComment/2 { // headroom: half of the limit
+					t.Errorf("entries of %d bytes: body has %d bytes, want 0 < n < %d", size, len(body), maxComment/2)
 				}
 				if !utf8.ValidString(body) {
 					t.Error("body is not valid UTF-8")

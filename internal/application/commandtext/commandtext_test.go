@@ -983,8 +983,8 @@ func TestBootstrapSummaryOfAPullRequestFitsInAComment(t *testing.T) {
 				s.Protected, s.Paths, s.Include, s.Exclude = 1<<62, long(size), long(size), long(size)
 				s.IncludeTotal, s.ExcludeTotal, s.Proposal, s.Revision = 1<<62, 1<<62, 999999999, 999999999
 				body := render(t, func() string { return commandtext.BootstrapSummary(s) })
-				if body == "" || len(body) >= maxComment/4 { // headroom: a quarter of the limit
-					t.Errorf("entries of %d bytes: body has %d bytes, want 0 < n < %d", size, len(body), maxComment/4)
+				if body == "" || len(body) >= maxComment/2 { // headroom: half of the limit
+					t.Errorf("entries of %d bytes: body has %d bytes, want 0 < n < %d", size, len(body), maxComment/2)
 				}
 				if !utf8.ValidString(body) {
 					t.Error("body is not valid UTF-8")

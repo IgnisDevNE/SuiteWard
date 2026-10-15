@@ -48,6 +48,10 @@ var checkReasons = map[string]checkReason{
 		"The owner approved the exact revision of this contract change against the current canonical contract, and the integrity " +
 			"assessment of this head passed. It is ready for integration.",
 		"Next: integrate this pull request when you are ready."},
+	"bootstrap-ready": {CheckSuccess, "Bootstrap ready for integration",
+		"The owner approved the exact revision of the first baseline proposed from this pull request, and SuiteWard assessed the integrity of this head. " +
+			"No canonical contract exists yet. SuiteWard will promote the first canonical version from the exact merge commit after the merge.",
+		"Next: integrate this pull request when you are ready. A later push that changes the protected files needs a new approval."},
 	"approval-missing": {CheckInProgress, "Awaiting owner approval",
 		"This head changes the protected contract and has no current approval from the owner for its exact revision.",
 		"To approve this exact revision, comment:"},
@@ -87,6 +91,9 @@ func CheckSummary(c Check) (title, summary string) {
 	tier := tierName(c.Tier)
 	if (c.Proposal == 0) != (c.Revision == 0) || c.Version < 0 {
 		panic(fmt.Sprintf("commandtext: check reference P%d-R%d and version %d do not fit", c.Proposal, c.Revision, c.Version))
+	}
+	if c.Reason == "bootstrap-ready" && (c.Proposal == 0 || c.Version != 0) {
+		panic(fmt.Sprintf("commandtext: a ready bootstrap has a reference and no canonical version, got P%d-R%d and V%d", c.Proposal, c.Revision, c.Version))
 	}
 	facts := []string{"- State: `" + checkStateName[c.State] + "`"}
 	var ref string

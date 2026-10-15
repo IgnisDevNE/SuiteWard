@@ -224,7 +224,12 @@ Semantics:
 - Retry limits, timeouts and backoff are runtime settings per kind (see [runtime](runtime.md)), not part of the port.
 - A job's terminal state is River's `discarded` (retries exhausted) or `completed`; both stay in `river_job` and are counted by the runtime status endpoint until River's cleaner removes them. The runtime sets no retention, so River v0.49.0's defaults apply: completed and cancelled jobs are removed after 24 hours and discarded jobs after 7 days. The job counts of `/status` therefore describe the retained jobs, not the history.
 - `outbox.project_id` and `outbox.suite_id` are both set (a message written through `Tx.Outbox`) or both null (a system message, for example the diagnostic `probe` written through the non-port `Store.EnqueueSystem`, which reuses the same insert statements without taking a Suite lock); a `CHECK` enforces it.
-- The outbox row is the single owner of delivery state (it is not mirrored by a River job per message). A relay, itself a periodic River job that runs at startup and then on `OUTBOX_POLL_INTERVAL`, claims due rows with `FOR UPDATE SKIP LOCKED`, increments `attempts`, sets `next_attempt_at` to now plus `OUTBOX_LEASE` and commits; it then calls the publisher registered for the row's kind outside any transaction. An outcome update is conditional on the claim (`WHERE key = $1 AND state = 'pending' AND attempts = <attempts at claim>`): when a publish outlasts the lease and another relay has reclaimed the row, the late outcome updates nothing and is logged, never an error and never overwriting the newer claim. Success sets `state = delivered`. An error sets `last_error`; at `OUTBOX_MAX_ATTEMPTS` the state becomes `failed` (terminal, visible), otherwise `next_attempt_at` is now plus a capped exponential backoff. A crash between claim and outcome leaves the row pending until the lease expires, so it is redelivered. An unknown kind fails the row at once. Retried delivery never reverses a committed fact.
+- The outbox row is the single owner of delivery state (it is not mirrored by a River job per message). A relay, itself a periodic River job that runs at startup and then on `OUTBOX_POLL_INTERVAL`, claims due rows with `FOR UPDATE SKIP LOCKED`, increments `attempts`, sets `next_attempt_at` to now plus `OUTBOX_LEASE` and commits; it then calls the publisher registered for the row's kind outside any transaction. An outcome update is conditional on the claim (`WHERE key = $1 AND state = 'pending' AND attempts = <attempts at claim>`): when a publish outlasts the lease and another relay has reclaimed the row, the late outcome updates nothing and is logged, never an error and never overwriting the newer claim. Success sets `state = delivered`. An error sets `last_error`; at `OUTBOX_MAX_ATTEMPTS` the state becomes `failed` (terminal, visible), otherwise `next_attempt_at` is now plus a capped exponential backoff. A crash between claim and outcome leaves the row pending until the lease expires, so it is redelivered. A row whose kind has no registered publisher stays pending. Until M1.7 it failed at once; M1.7 changes that:
+- the relay releases the claim, restoring the attempt, and defers the row by the backoff cap;
+- it logs a Warn naming the kind, once per kind per process;
+- so a target switched off GitHub, or a publisher registered later, never loses a message.
+
+Retried delivery never reverses a committed fact.
 - River schema: River's own migrations are vendored into goose migrations (one migrator and one readiness check, ADR 0026), so `migrations.SupportedVersion` is the highest goose version and covers the River tables and the outbox. A test checks that a database migrated by goose passes River's own migrator validation. Upgrading River means adding a goose migration.
 
 The conformance suite gains: rollback removes the job and the outbox row together with the facts; a duplicate key conflicts; a job and a message written in a unit of work that writes nothing else are committed; neither changes the revision.
@@ -390,7 +395,7 @@ type CommentVersion struct {
 
 - **Complete listings only.** A cycle is recorded only when every page of every listing in it succeeded; otherwise the reconciliation records a `Failure` and no observation changes. The store computes the absence marks from the complete sets of the `Cycle`.
 - **Serialized per repository.** `RecordCycle` and `RecordFailure` lock the repository's `github_repositories` row (inserting it on first use) for the whole transaction and compute the marks inside it, so two cycles of the same repository (a tick and an MCP-requested sync) never mark or clear from a stale view; the later commit wins consistently.
-- **Pulls:** upserted by `(repo, number)`; the head, refs, `updated_at` and `last_seen` change, `first_seen` never does. A pull absent from the cycle's open listing gets `not_open_since` (merged or closed is not asserted here: merge detection belongs to M1.7); a pull that reappears clears it.
+- **Pulls:** upserted by `(repo, number)`; the head, refs, `updated_at` and `last_seen` change, `first_seen` never does. A pull absent from the cycle's open listing gets `not_open_since` (the cycle does not tell merged from closed: since M1.7 the merges job resolves the absence, see "Merges"); a pull that reappears clears it.
 - **Comments are append-only versions** keyed by `(repo, comment_id, updated_at, body_digest)`: an edit adds a version, the earlier body stays (two edits within one second of GitHub's `updated_at` are still two versions; the latest version is the one with the largest `updated_at`, ties broken by `first_seen`), so an approval comment edited after it was processed remains visible as such. `created_at` must be equal across versions of one id (a different one is an error and the cycle is not recorded). Absence is judged only within a pull listed in the cycle: a comment missing from its open pull's listing gets `not_seen_since` on its latest version, and reappearing clears it. The comments of a pull that is not open in the cycle are left untouched. A deletion is never a row removal. The body is stored as raw bytes (`bytea`), whatever they contain (a NUL or invalid UTF-8 never fails a cycle), with `body_digest` = `artifact.Hash` of those bytes.
 - **Errors:** an invalid `Cycle` or `Failure` (failing `Validate`, or a pull number outside 1..2^31−1 in a read) wraps `githubsync.ErrInvalidObservation`; a `created_at` that differs across versions of one id wraps `githubsync.ErrCreationTimeChanged`; both stores return the same sentinels. `FailureKind` values are the stored codes, enumerated by a `CHECK` constraint.
 - **Failure classification:** `last_error` is the `FailureKind` (from the `rest` and `github` errors: `ErrRateLimited`, `ErrBudgetExhausted`, `ErrUnauthorized`, `ErrForbidden`, `ErrNotFound`, `ErrUnprocessable`, another status, a transport error, a decode error) with the status where there is one; never error text, so nothing GitHub sent and no secret is stored.
@@ -703,7 +708,7 @@ type Store interface {
 	// (or there is none) it advances the generation and writes message(generation) to the outbox in the same
 	// transaction, as a system row. Otherwise it updates Change, Revision, CommandID and DecidedAt only and
 	// writes no message. It also advances the generation and writes a message when the current generation's
-	// message ended `failed` in the outbox, so a lost publication is retried. It returns the stored record and
+	// message ended `failed` in the outbox, at least 15 minutes after that message finished (M1.7), so a lost publication is retried without unbounded republication. It returns the stored record and
 	// whether a message was written.
 	Publish(ctx context.Context, r Result, at time.Time, message func(generation int64) (governance.OutboxMessage, error)) (Record, bool, error)
 }
@@ -715,6 +720,200 @@ type Store interface {
   - Publish: the first record writes generation 1 and one message; an identical result writes none; a new head, state, reason or reference advances the generation by exactly one; concurrent publishes for one pull never write two messages for one generation; a failing message rolls the record back.
   - Publish with an identical result after the current message failed: generation advances by one with a new message.
   - `LatestOwnerCommand`: ordering, the author filter, and a rejected command followed by an owner `not-command` comment is still the latest command.
+
+## Merges (M1.7; normative)
+
+Implements D-INTEGRATION (2026-10-15) and ADR 0014. Migration `00015` adds every table and column below. The three parts are written by different tasks.
+
+### Merge facts (`internal/application/githubsync`)
+
+The resolution of a pull's absence is observation state: evidence, not authority. The merges job is its only writer.
+
+```go
+type ObservedPull struct { /* M1.4 fields */ HeadRepo string } // full_name, or "(deleted)" when GitHub reports none
+
+type Resolution struct {
+	Number         int
+	NotOpenSince   time.Time // the absence it resolves; must equal the stored not_open_since
+	Merged         bool
+	MergedAt       time.Time // GitHub's; set exactly when Merged
+	MergeCommitSHA string    // 40 lowercase hex, or "" (only when Merged and the bound ran out)
+	HeadSHA, HeadRef, BaseRef, BaseSHA, HeadRepo string // as read at resolution
+	ResolvedAt     time.Time // injected clock
+}
+
+type MergedPull struct {
+	PullState  // with HeadRepo and the refreshed head and base
+	Resolution
+	Processed bool // MarkProcessed was called
+}
+
+// Store gains:
+//   AwaitingResolution(ctx, repo) ([]PullState, error)  // not open, and the current absence is unresolved
+//   RecordResolution(ctx, repo string, r Resolution) error
+//   RecordClosed(ctx, repo string, closed []ClosedPull, at time.Time) error
+//   Merged(ctx, repo) ([]MergedPull, error)           // every pull resolved as merged, by MergedAt then Number
+//   MarkProcessed(ctx, repo string, number int) error
+type ClosedPull struct {
+	ObservedPull
+	MergedAt time.Time // zero for a closed, unmerged pull
+}
+```
+
+- **Head repository.** `RecordCycle` stores `ObservedPull.HeadRepo` in `head_repo`, as it does the head. Rows from before M1.7 hold NULL, read back as `""`: not observed yet, which is not a fork. The first cycle fills it.
+- **Resolution.**
+  - `RecordResolution` writes only while the pull's `not_open_since` equals `r.NotOpenSince` and the pull is not open. Otherwise it returns `ErrStaleResolution` (new sentinel) and writes nothing, because the pull reopened or is gone again.
+  - It sets `resolved_for = not_open_since`, the merge facts and `resolved_at`. It refreshes the head and base columns and `head_repo` from the read, because a push between the last cycle and the merge is not otherwise seen.
+  - A pull that reopens is upserted by the cycle, which clears `not_open_since`. A later absence is then unresolved again (`resolved_for <> not_open_since`). A merged pull cannot reopen.
+- **Closed listing.**
+  - `RecordClosed` keeps a per-repository watermark (`github_repositories.closed_watermark`), which is GitHub's greatest `updated_at` seen in the listing.
+  - The first call for a repository only sets the watermark.
+  - A later call inserts each merged item with `updated_at` above the watermark and no `github_pulls` row: a new row with `first_seen = last_seen = not_open_since = at` and no resolution, which the merges job then resolves with `Reader.Pull`. Then it raises the watermark.
+  - Existing rows and unmerged items are left alone.
+  - Times from GitHub are compared only with times from GitHub.
+- **Processed.** `MarkProcessed` sets `merge_processed`.
+  - It is a read optimization. The merge outcome in the governance store (below) is the authority, and a repeated outcome is a replay.
+  - A failure to mark only costs a replay on the next run.
+- **Serialization.** These writes lock the repository row like `RecordCycle`.
+- **Conformance.**
+  - Absence, then resolution, then reopen, then a new absence that is unresolved.
+  - A stale resolution writes nothing.
+  - The closed listing: first call sets the watermark; an unseen merged item is inserted unresolved; a seen pull and an older item are ignored.
+  - `Merged` ordering and the `Processed` flag.
+  - The head repository round-trips.
+
+### Merge outcome (`internal/application/governance`)
+
+```go
+type MergeKind string // "promoted", "corrected", "no-change", "not-target", "before-canonical", "blocked"
+
+type MergeReason string // blocked only. Use case: "unapproved-change", "invalid-source", "assessment-conflict", and the mapped
+                        // promotion reasons below. Caller: "fork-unsupported", "shared-merge-commit",
+                        // "integration-unreadable", "integrity-failed".
+
+type MergeOutcome struct {
+	Kind      MergeKind
+	Reason    MergeReason
+	Source    contract.SourceRevision     // the merge commit, "" when unreadable
+	Version   contract.SuiteVersionID     // promoted or corrected: the new version; otherwise the canonical kept
+	Corrects  contract.SuiteVersionID     // corrected only
+	Reference *contract.ProposalReference // the PR's change proposal revision, when there is one
+}
+
+type MergeRequest struct {
+	Project    contract.ProjectID
+	Suite      contract.SuiteID
+	Carrier    contract.ApprovalCarrierID   // github-pr:<repository id>/<pull>
+	Source     contract.SourceRevision      // the merge commit; "" only with Refusal integration-unreadable
+	Target     contract.IntegrationTargetID // branch:<base ref at the merge>
+	ObservedAt time.Time                    // the pull's not_open_since (SuiteWard's clock)
+	Tree       inventory.Tree               // the merge commit's tree; nil with a Refusal
+	Refusal    MergeReason                  // a caller-decided blocked reason, or ""
+	RecordedAt time.Time                    // microsecond precision
+	// Message builds the outcome comment for the outcome. false writes no message.
+	Message func(MergeOutcome) (OutboxMessage, bool, error)
+}
+
+type MergeResult struct {
+	MergeOutcome
+	Duplicate bool // the outcome was already recorded
+}
+
+func PromoteMerge(ctx context.Context, uow UnitOfWork, writer ContentWriter, request MergeRequest) (MergeResult, error)
+func MergeOutcomeOf(ctx context.Context, uow UnitOfWork, project contract.ProjectID, suite contract.SuiteID, carrier contract.ApprovalCarrierID) (MergeOutcome, bool, error)
+```
+
+`PromoteMerge` records exactly one outcome per merged PR (carrier). The outcome row and its message are written in the same transaction as any promotion.
+
+1. **Before the transaction**, unless there is a `Refusal`:
+   - run `inventory.Build(ctx, Tree)`;
+   - an invalid tree, an unsafe entry or an invalid declaration becomes the refusal `invalid-source`;
+   - a read error is returned wrapped, and nothing is written. A truncated tree must not reach `PromoteMerge`: the GitHub reader wraps `ErrInvalidTree` with `ErrTreeTruncated`, and governance cannot tell them apart, so the caller handles truncation first (the merges job reads the tree's entries before calling);
+   - store the inventory's bytes through `writer`, as `ProposeBaseline` does. The unexported `storeContent` is reused.
+2. **Inside one `Do(project, suite)`, in order:**
+   1. **Replay.** If `Tx.MergeOutcome(carrier)` finds an outcome, return it with `Duplicate`. The request is not compared, because a PR merges once.
+   2. **No canonical.** Return `ErrNoCanonical` and write nothing.
+   3. **Not the target.** `Target` differs from the Suite's target: `not-target`.
+   4. **Before the canonical.** `ObservedAt` is before the `RecordedAt` of V1's promotion: `before-canonical`. That merge is part of, or precedes, the bootstrap baseline.
+   5. **Refusal.** `blocked` with the refusal reason.
+   6. **No change.** The integrated contract equals the canonical (`ClassifyContractChange` unchanged): `no-change`.
+   7. **No proposal.** `Tx.ChangeProposalFor(carrier)` finds none: `blocked`, `unapproved-change`.
+   8. **Otherwise:**
+      - record the assessment of the proposal's current revision at `Source` with `HeadEvidence`. An `ErrConflict` (another assessment is stored at that source) is deterministic, so it does not fail the call, which would stall the repository's later merges: the outcome is `blocked`, `assessment-conflict`, and the canonical is kept;
+      - allocate the next version: the current id is `V<n>` and the next is `V<n+1>`; another form of id is `ErrInvalidState`;
+      - when an earlier version (`V1`..`V<n-1>`, read with `Tx.Version`) has the integrated manifest digest, decide a correction with target the current version (the version being corrected); otherwise decide a promotion;
+      - use operation id `merge:<carrier>` and an `IntegrationMergedChange` integration with source `Source`, carrier `Carrier` and the Suite's target;
+      - decide inside this same `Do`, sharing `runPromotion`'s decision and write logic, which is factored into a function over `Tx`. The behavior of `Promote` and `Correct` is unchanged.
+
+      `PromotionProposed` gives `promoted` or `corrected`. `PromotionBlocked` maps:
+      - `ApprovalMissing` to `approval-missing`;
+      - `ContextMismatch` to `differs-from-approved`;
+      - `ProposalNotCurrent` to `not-current`;
+      - `CanonicalChanged` to `canonical-changed`;
+      - `PolicyChanged` to `policy-changed`;
+      - `AssessmentMismatch` and `IntegrityNotPassed` to `integrity-not-passed`;
+      - `IntegrationMismatch` to `integration-mismatch`;
+      - `CorrectionContextReused` to `correction-context-reused`.
+
+      Any other reason or outcome is `ErrInvalidState`.
+3. **Write.** `Tx.RecordMergeOutcome` and, when `Message` returns true, `Tx.Outbox`, in the same transaction. The outcome write itself never advances the Suite revision; the assessment recorded in step 8 does, as does a promotion, through `RecordPromotion`.
+
+`MergeOutcomeOf` is a read in one `Do`. The job uses it to skip work that is already done, before reading any tree.
+
+**`Tx` gains:**
+- `MergeOutcome(ctx, carrier) (MergeOutcome, bool, error)`;
+- `RecordMergeOutcome(ctx, MergeWrite) error`, where `MergeWrite` is `{Carrier, Outcome, RecordedAt}`. A second outcome for the same carrier is `ErrConflict`.
+
+**Table `pr_merges`.**
+- Primary key `(project_id, suite_id, carrier)`, immutable by trigger.
+- Columns: `kind` and `reason` (CHECK on the codes, reason exactly when blocked); `source`; `version_id` and `corrects_version_id` (FKs to `suite_versions`); `proposal_id` and `revision_id` (nullable); `recorded_at`.
+
+**Conformance (fake and PostgreSQL).**
+- One case per kind and reason path.
+- A replay.
+- A second outcome conflicts.
+- Two PRs approved against V1: the first merge promotes V2. The second merge blocks as `canonical-changed`, or as `approval-missing` once its revision was rebound.
+- A correction restoring V1's content after V2 records `CorrectsVersionID` V2.
+- Concurrent `PromoteMerge` calls for one carrier write one outcome.
+- A failing message rolls everything back.
+
+### Canonical integrity (`internal/application/integrity`)
+
+```go
+type Verdict string // "passed", "failed", "unavailable"
+
+type Record struct {
+	Project   contract.ProjectID
+	Suite     contract.SuiteID
+	Version   contract.SuiteVersionID // the canonical version verified
+	Verdict   Verdict
+	CheckedAt time.Time
+}
+
+type Store interface {
+	// Record replaces the Suite's verdict, except that "unavailable" never replaces "failed" for the same version
+	// (only CheckedAt moves), so an unreadable store never clears a confirmed failure.
+	Record(ctx context.Context, r Record) error
+	Latest(ctx context.Context, project contract.ProjectID, suite contract.SuiteID) (Record, bool, error)
+}
+```
+
+- **Verdicts.** `failed` means a content digest of the current canonical's manifest is missing or does not match its bytes: `filesystem.Store.Verify` returns `ErrCorruptArtifact` or the bytes are absent. `unavailable` means another read error. `passed` means every digest verified.
+- **Applies to its version only.** A verdict applies only while its `Version` is the current canonical, so a new version starts without one. A failed verdict for the current version persists across restarts, and only a later `passed` clears it.
+- **Table `canonical_integrity`.** Primary key `(project_id, suite_id)`, the latest verdict replaced in place. Columns `version_id`, `verdict` (CHECK) and `checked_at`.
+- **Conformance.**
+  - Replace.
+  - `unavailable` after `failed` keeps `failed`.
+  - `passed` after `failed` clears it.
+  - A new version's verdict replaces the older one.
+
+### Change to the check ledger (M1.6b)
+
+**Lost publication with a cooldown.** `checks.Store.Publish` re-sends a state whose current message ended `failed` only once at least 15 minutes have passed since that message's `finished_at`. Before then, an identical result writes nothing. This bounds republication under a permanent refusal to one message per 15 minutes per pull.
+
+**Conformance.**
+- A failed message re-sent after the cooldown.
+- No message inside it.
 
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
@@ -733,7 +932,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -747,14 +946,16 @@ Property every reconstitution test must check: state produced by domain operatio
 | `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent kinds, FK to `consent_results`), receipt jsonb (immutable receipt payload with explicit json tags) |
 | `promotions` | operation_id (unique; no FK, because seeded history has no receipt) | immutable | version_id (FK to `suite_versions`), proposal_id + revision_id (FK to `proposal_revisions`, which holds the binding), carrier, source, target, recorded_at, corrects_version_id; unique version and unique reference |
 | `outbox` (M1.2) | key (global) | immutable except delivery state: `state` (`pending`, `delivered`, `failed`), `attempts`, `next_attempt_at`, `last_error`, `finished_at`; terminal states never change; no delete | project_id, suite_id, kind, payload jsonb, created_at |
-| `github_repositories` (M1.4) | repo (`owner/name`) | observation state; the row is the per-repository lock of a cycle | installation_id, last_success, last_error (enumerated `FailureKind`), last_status, wait_until |
-| `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since |
+| `github_repositories` (M1.4) | repo (`owner/name`) | observation state; the row is the per-repository lock of a cycle | installation_id, last_success, last_error (enumerated `FailureKind`), last_status, wait_until, closed_watermark (M1.7, GitHub's time) |
+| `github_pulls` (M1.4) | (repo, number) | observation state; no delete | head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since; M1.7: head_repo, resolved_for, merged, merged_at, merge_commit_sha, resolved_at, merge_processed |
 | `owner_enrollment` (M1.5) | singleton | replaced by `setup` | generation, account_id, login, secret bytea (20 bytes), tier, policy_revision_id, enrolled_at |
 | `owner_test_checks` (M1.5) | (repository_id, policy_revision_id) | insert-only | project_id, repo, test_check; FK to `policies` |
 | `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at, source_command_id (M1.6a: the command that used the step; `setup:<generation>` for setup) |
 | `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at |
 | `suiteward_instance` (M1.6a) | singleton | immutable | instance_id (32 lowercase hex, random) |
 | `pr_checks` (M1.6b) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`), reason, reference, change, revision, command_id, generation, message_key, decided_at |
+| `pr_merges` (M1.7) | (project_id, suite_id, carrier) | immutable | kind, reason, source, version_id, corrects_version_id, proposal_id, revision_id, recorded_at |
+| `canonical_integrity` (M1.7) | (project_id, suite_id) | latest verdict, replaced (`unavailable` never replaces `failed` for one version) | version_id, verdict (`passed`, `failed`, `unavailable`), checked_at |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 

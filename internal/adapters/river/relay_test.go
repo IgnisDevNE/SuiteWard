@@ -131,17 +131,39 @@ func TestRelayStopsAtTheAttemptLimitWithAVisibleState(t *testing.T) {
 	}
 }
 
-func TestRelayFailsAnUnknownKindAtOnce(t *testing.T) {
+func TestRelayKeepsAMessageWhoseKindHasNoPublisher(t *testing.T) {
 	w := newWorld(t, 5)
 	w.enqueue("k1", "probe", "mystery", time.Time{})
-	c, p := &clock{now: w.dbNow()}, &publisher{}
-	relay := newRelay(t, w, c, p, &logCapture{}, 8)
+	w.enqueue("k2", "probe", "demo", time.Time{})
+	c, p, logs := &clock{now: w.dbNow()}, &publisher{}, &logCapture{}
+	relay := newRelay(t, w, c, p, logs, 8)
+	due := c.Now().Add(5 * time.Minute)
 
-	if err := relay.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
+	run := func() {
+		t.Helper()
+		if err := relay.RunOnce(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got := w.row("k1"); got != `failed 1 no publisher for kind "mystery"` {
-		t.Fatalf("row = %q, want an immediate failure naming the kind", got)
+	run()
+	if got := w.row("k1"); got != "pending 0 -" {
+		t.Fatalf("row = %q, want a pending message whose claimed attempt was restored", got)
+	}
+	if got := w.scalar("SELECT (next_attempt_at = $1)::text FROM outbox WHERE key = 'k1'", due); got != "true" {
+		t.Errorf("the message is not deferred by the backoff cap (next_attempt_at != %s)", due)
+	}
+	if got := w.row("k2"); got != "delivered 1 -" {
+		t.Errorf("message of a known kind: row = %q, want it delivered", got)
+	}
+
+	// Due again: released again, but the kind is not logged a second time.
+	c.Advance(5 * time.Minute)
+	run()
+	if got := w.row("k1"); got != "pending 0 -" {
+		t.Fatalf("row after the second claim = %q", got)
+	}
+	if n := strings.Count(logs.String(), `"kind":"mystery"`); n != 1 {
+		t.Errorf("%d log lines name the kind, want one Warn per kind: %s", n, logs.String())
 	}
 }
 

@@ -64,7 +64,7 @@ Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none r
 | --- | --- |
 | `GET /healthz` | Liveness: 200 `{"status":"ok"}` while the process serves. |
 | `GET /readyz` | Readiness: 200 when the database answers, the schema version equals `SupportedVersion` and the service is not shutting down; 503 otherwise. It does not query River: River starts before the listener opens, the process never cancels the context it started with, and only the shutdown stops it, so River runs while this answers 200. During shutdown the 503 is best effort: the listener closes at once and `net/http` drops a request it reads after the drain began, so only a request in flight at that instant sees it. Body `{"status":"ready","schemaVersion":N}` or `{"status":"unavailable","reason":"..."}`. |
-| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>` or `failed`), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. |
+| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>` or `failed`), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. Since M1.7 each entry also has `merges` and `integrity`, and the job counts also exclude `github_merges` and `canonical_integrity` (see "Merges and integrity jobs"). |
 
 ### Command and bootstrap jobs (M1.6a)
 
@@ -84,7 +84,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
      - in `BaselineRequest.Outbox`, include a `github_comment` message with key `bootstrap-summary:<repository id>:P<n>-R1`. The publisher renders its body: the inventory summary, the origin and the copyable `/suiteward approve P<n>-R1 <code>`.
   3. If the latest baseline proposal has the owner's current approval and the Suite still has no canonical:
      - re-read the origin tree and record the assessment;
-     - call `Bootstrap` with operation `bootstrap:P<n>-R1` and version `V1`;
+     - call `Bootstrap` with operation `bootstrap:<repository id>:P<n>-R1` and version `V1`. Operation ids are global (`operations` is keyed by the id alone), so the repository id keeps two repositories' first baselines apart. Before M1.7 the id was `bootstrap:P<n>-R1`; a receipt already stored under that form is never replayed again, because the bootstrap runs only while a Suite has no canonical;
      - in `PromoteRequest.Outbox`, include a `github_comment` message with key `bootstrap-promoted:<repository id>:P<n>-R1`.
   4. **Re-enrolling the same owner.** The Suite keeps the policy revision it was created with. That is harmless, because the owner is the same.
 - A read failure skips the project until the next run. GitHub text is never stored or logged.
@@ -142,7 +142,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
   - **State.**
     - `success`: the head is unchanged against the canonical (reason `unchanged`), or ready (reason `ready`).
     - `in_progress`: reasons `approval-missing` (including a revision rebound after the canonical or the policy changed), `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated); `ErrCanonicalMoved` from `AssessHead` (the canonical moved while the head was assessed) keeps the current record and retries on the next run; any other `ErrConflict`, such as a conflicting assessment, is deterministic and is an opaque failure (`/status` problem `failed`) that fails that pull request's step while the run continues.
-    - `failure`: reasons `invalid-source`, `integrity-failed`, `owner-command-rejected`.
+    - `failure`: reasons `invalid-source`, `integrity-failed`, `owner-command-rejected`. Since M1.7 `integrity-failed` comes only from the canonical integrity verdict. A head assessment never fails, because its binding is built from that head's own inventory, so `AssessHead` answering `IntegrityNotPassed` or `AssessmentMismatch` is an impossible state: an opaque failure of that pull request's step (`/status` problem `failed`), never a published state.
   - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`. A rejected owner command posted between a push and the job first recording that head does not set `failure` (the record's `HeadSince` is SuiteWard's own clock): the window is about the synchronization interval plus the job interval, a known limitation to be fixed with a per-head observation time. Before a canonical exists, a rejected owner command does not set `failure` either: the state is `bootstrap-pending`.
   - **Transient read failure** (GitHub, tree): when the stored head equals the open head, keep the record. When the open head is new (no record, or the record holds another head), publish `in_progress`, reason `assessment-pending`, for the new head, so the new SHA never stays without a check.
   - **Lost publication.** When the current generation's message ended `failed` in the outbox, `Publish` re-sends the same state under the next generation.
@@ -157,6 +157,63 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
   - reads back the head's check runs named `SuiteWard / Contract` from this App; one whose `external_id` is `suiteward:<instance id>:<key>` means it was already posted;
   - otherwise posts the run: `success` and `failure` as `completed` with that conclusion, `in_progress` as `in_progress`; the output title and summary come from the command-text package (bounded; the tier; the copyable `/suiteward approve <ref> <code>` when approval is missing; never a claim that tests ran);
   - logs a 422 for a head that no longer exists and treats it as delivered.
+
+### Merges and integrity jobs (M1.7)
+
+Both jobs are registered only with the GitHub settings. Both are excluded from the `/status` job counts.
+
+**`github_merges`** (D-INTEGRATION, ADR 0014)
+- Periodic every 30 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
+- It is the only writer of merge facts and the only caller of `governance.PromoteMerge`.
+- For each enrolled and configured repository whose Suite has a canonical:
+  1. **Closed listing.** `Reader.ClosedPulls`, then `githubsync.Store.RecordClosed`.
+  2. **Resolution.** For each pull from `AwaitingResolution`, call `Reader.Pull`:
+     - `open`: nothing; the next cycle upserts it.
+     - Closed and not merged: `RecordResolution`.
+     - Merged with a `merge_commit_sha`: `RecordResolution`.
+     - Merged without one: retry on later runs. After 30 minutes since `not_open_since`, record it without the SHA.
+     - `ErrStaleResolution` is skipped.
+     - A failed read leaves the pull unresolved.
+  3. **Outcomes.** Only when step 2 left no pull unresolved, other than pulls GitHub still answers `open` (an earlier merge waiting for its SHA or for a read must be decided first). For each pull from `Merged` that is not `Processed`, in order: if `MergeOutcomeOf` already has an outcome, `MarkProcessed` and continue. Otherwise build a `MergeRequest`:
+     - carrier `github-pr:<repository id>/<pull>`, source the merge commit, target `branch:<base ref>`, `ObservedAt` the `not_open_since`;
+     - set `Refusal` without reading anything for:
+       - `fork-unsupported`: `HeadRepo` is not this repository (including `(deleted)`); the value comes from `Reader.Pull`, so it is never unobserved here;
+       - `shared-merge-commit`: another pull from `Merged`, processed or not, has the same non-empty `merge_commit_sha`;
+       - `integration-unreadable`: no SHA;
+       - `integrity-failed`: the Suite's integrity verdict is `failed` for the current version;
+     - otherwise read the tree with `Reader.Tree(repo, sha)`. A 404, a 422 or a truncated tree is retried until 30 minutes after `not_open_since`, then becomes `integration-unreadable`. The same bound applies to a blob of the tree that answers 404 or an invalid response while `PromoteMerge` reads it: a permanently unreadable file must not stall the repository. Other failures (rate limit, budget, 5xx, transport) stay transient and unbounded;
+     - call `PromoteMerge`, then `MarkProcessed`.
+- **Order and stopping.** A pull that cannot be decided yet stops that repository's outcomes for this run. That covers a transient read, a store error and the bound not yet reached. A later merge's tree contains the earlier one, so outcomes are never decided out of order. Other repositories continue.
+- **Errors.** A store error fails the run after every repository was tried. The last problem per repository is kept in memory and shown in `/status` as `github[].merges`, a fixed code: `read-failed`, `waiting` (bound not reached), `assessment-conflict` or `failed`. It is cleared by a run that finds nothing wrong. GitHub text is never stored or logged.
+- **Comments after closing.** Comments on a PR that is no longer open are not observed (M1.4). A `/suiteward` command posted after the merge is therefore never processed, and promotion uses only consent recorded before it.
+
+**Outbox kind `github_comment`, key `merge:<repository id>:<pull>`** (one outcome comment per merged PR)
+- Written by `PromoteMerge` only for `promoted`, `corrected` and `blocked`.
+- Payload: `repositoryId`, `repo`, `pull`, `kind`, `reason` (blocked only), `source`, `version`, `corrects` (corrected only), `reference` (optional), and `tier` (effective).
+- The publisher renders it with the command-text package, like the other `github_comment` keys (marker, idempotent post).
+  - **promoted or corrected:** the new version and the merge commit; for a correction, the version corrected. It says that SuiteWard checked the approval and the integrity of the protected files at that commit and did not run the tests.
+  - **blocked:** that the canonical stays at `version`, the reason in plain words, and the recovery. The recovery is a new PR that restores the protected files of `version`, or one that carries the integrated files for a new exact approval. There is no reset command.
+- `splitKey` accepts the `merge` kind. The comment is bounded like the bootstrap summary.
+
+**`canonical_integrity`** (M1.7-C)
+- Periodic every hour with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
+- For each enrolled project whose Suite has a canonical:
+  - read the current version's manifest in one `Do`;
+  - call `filesystem.Store.Verify` for every entry;
+  - record the verdict with `integrity.Store.Record`.
+- A failed verdict is logged at Error, with the project and version only.
+- **Effect on checks.** While the Suite's verdict is `failed` for its current version, `github_checks` publishes `failure` with reason `integrity-failed` on every open PR of that repository, before any assessment. It also refuses merges (`integrity-failed`). `unavailable` changes no check.
+
+**Changes to `github_checks` (M1.6b)**
+- **Fork PRs.** A PR whose `HeadRepo` is observed and not the repository (including `(deleted)`) gets `in_progress`, reason `fork-unsupported`. `AssessHead` is not called, so a fork PR never gets a proposal. An unobserved `HeadRepo` (a row from before M1.7, until its first cycle) is treated as before M1.7.
+- **Reason list.** The reasons gain `fork-unsupported` (`in_progress`). `integrity-failed` (`failure`) becomes reachable through the integrity verdict.
+- **Lost publication.** A lost publication is re-sent no sooner than 15 minutes after the failed message finished (persistence contract).
+
+**`/status`** (since M1.7): each `github` entry also has:
+- `merges` (above);
+- `integrity`: the verdict of the Suite's current version (`passed`, `failed`, `unavailable`), absent before the first verification or for another version.
+
+The job counts also exclude `github_merges` and `canonical_integrity`.
 
 ### Protection verification job (M1.5)
 

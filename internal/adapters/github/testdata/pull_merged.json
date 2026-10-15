@@ -1,0 +1,30 @@
+{
+  "url": "https://api.github.com/repos/octo-org/octo-repo/pulls/51",
+  "id": 2104395251,
+  "number": 51,
+  "state": "closed",
+  "locked": false,
+  "title": "Pull request 51",
+  "user": { "login": "octocat", "id": 583231, "type": "User" },
+  "body": "Fixture pull request 51.",
+  "created_at": "2026-10-01T08:00:00Z",
+  "updated_at": "2026-10-05T10:30:00Z",
+  "closed_at": "2026-10-05T10:30:00Z",
+  "merged_at": "2026-10-05T10:30:00Z",
+  "merge_commit_sha": "9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b",
+  "merged": true,
+  "draft": false,
+  "head": {
+    "label": "octocat:feature-51",
+    "ref": "feature-51",
+    "sha": "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+    "repo": { "id": 812345678, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": true }
+  },
+  "base": {
+    "label": "octo-org:main",
+    "ref": "main",
+    "sha": "a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4",
+    "repo": { "id": 812345678, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": true }
+  },
+  "author_association": "MEMBER"
+}

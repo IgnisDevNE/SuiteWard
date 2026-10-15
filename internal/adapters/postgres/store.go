@@ -133,12 +133,16 @@ var (
 		"consent_results_scope_key":     governance.ErrOperationConflict,
 		"outbox_pkey":                   governance.ErrOperationConflict,
 		"proposal_revisions_pkey":       governance.ErrProposalConflict,
+		"pr_merges_pkey":                governance.ErrConflict,
 	}
 	foreignKeyViolations = map[string]error{
 		"consent_results_proposal_fkey": governance.ErrNotFound,
 		"operations_source_fkey":        governance.ErrInvalidState,
 		"promotions_corrects_fkey":      governance.ErrNotFound,
 		"promotions_revision_fkey":      governance.ErrInvalidRequest,
+		"pr_merges_version_fkey":        governance.ErrNotFound,
+		"pr_merges_corrects_fkey":       governance.ErrNotFound,
+		"pr_merges_revision_fkey":       governance.ErrInvalidRequest,
 	}
 )
 

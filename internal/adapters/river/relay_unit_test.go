@@ -30,6 +30,7 @@ type scriptedStore struct {
 	finishErr   error
 	finishCalls int
 	released    []string
+	releasedAt  []time.Time
 	releaseErr  error
 	releaseLive bool // the context of the release was still usable
 }
@@ -40,8 +41,9 @@ func (s *scriptedStore) ClaimOutbox(context.Context, postgres.ClaimOutboxParams)
 	return postgres.ClaimOutboxResult{Claims: claims}, s.claimErr
 }
 
-func (s *scriptedStore) ReleaseOutbox(ctx context.Context, claim postgres.OutboxClaim, _ time.Time) (bool, error) {
+func (s *scriptedStore) ReleaseOutbox(ctx context.Context, claim postgres.OutboxClaim, nextAttemptAt time.Time) (bool, error) {
 	s.released = append(s.released, claim.Key)
+	s.releasedAt = append(s.releasedAt, nextAttemptAt)
 	s.releaseLive = ctx.Err() == nil
 	return true, s.releaseErr
 }
@@ -154,5 +156,46 @@ func TestTruncateNeverSplitsACharacter(t *testing.T) {
 	}
 	if short := "short"; truncate(short) != short {
 		t.Error("a short text was changed")
+	}
+}
+
+func TestRelayReleasesAClaimWhoseKindHasNoPublisherAndWarnsOncePerKind(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	store := &scriptedStore{claims: []postgres.OutboxClaim{{Key: "a", Kind: "mystery", Attempts: 1}, {Key: "b", Kind: "demo", Attempts: 1}, {Key: "c", Kind: "mystery", Attempts: 2}}}
+	var out bytes.Buffer
+	relay, err := NewRelay(RelayConfig{Store: store, Publishers: map[string]Publisher{"demo": func(context.Context, string, json.RawMessage) error { return nil }},
+		MaxAttempts: 3, Lease: time.Minute, Now: func() time.Time { return now }, Logger: slog.New(slog.NewJSONHandler(&out, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := relay.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(store.released, []string{"a", "c"}) {
+		t.Fatalf("released %v, want the claims of the unknown kind a and c", store.released)
+	}
+	for _, at := range store.releasedAt {
+		if want := now.Add(retryCap); !at.Equal(want) {
+			t.Errorf("released to %v, want the backoff cap %v", at, want)
+		}
+	}
+	if store.finishCalls != 1 {
+		t.Errorf("%d outcomes written, want one (the delivery of b)", store.finishCalls)
+	}
+	if n := strings.Count(out.String(), `"kind":"mystery"`); n != 1 {
+		t.Errorf("%d log lines name the kind, want one Warn: %s", n, out.String())
+	}
+}
+
+func TestRelayReturnsTheReleaseErrorOfAKindWithNoPublisher(t *testing.T) {
+	boom := errors.New("release failed")
+	store := &scriptedStore{claims: []postgres.OutboxClaim{{Key: "k", Kind: "unregistered", Attempts: 1}}, releaseErr: boom}
+
+	if err := relayFor(t, store).RunOnce(t.Context()); !errors.Is(err, boom) {
+		t.Fatalf("RunOnce = %v, want the release error", err)
+	}
+	if store.finishCalls != 0 {
+		t.Fatalf("%d outcome writes for a message nobody can publish", store.finishCalls)
 	}
 }

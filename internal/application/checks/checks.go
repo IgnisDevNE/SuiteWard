@@ -64,10 +64,15 @@ type Store interface {
 	// (or there is none) it advances the generation and writes message(generation) to the outbox in the same
 	// transaction, as a system row. Otherwise it updates Change, Revision, CommandID and DecidedAt only and
 	// writes no message. It also advances the generation and writes a message when the current generation's
-	// message ended `failed` in the outbox, so a lost publication is retried. It returns the stored record and
-	// whether a message was written.
+	// message ended `failed` in the outbox at least RepublishCooldown before the decision time, so a lost
+	// publication is retried, but at most once per cooldown. It returns the stored record and whether a message
+	// was written.
 	Publish(ctx context.Context, r Result, at time.Time, message func(generation int64) (governance.OutboxMessage, error)) (Record, bool, error)
 }
+
+// RepublishCooldown is how long after its message ended failed a state is sent again, bounding the messages
+// written under a permanent refusal (docs/contracts/persistence.md, "Change to the check ledger (M1.6b)").
+const RepublishCooldown = 15 * time.Minute
 
 func invalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, args...))
@@ -111,9 +116,10 @@ func ValidatePublish(r Result, at time.Time) error {
 
 // Next is the record stored when r is published at time at over current (found false: there is none) and
 // whether it carries a new generation, hence a new message: when the head, state, reason or reference changed,
-// or when lost says the current generation's message ended failed. Otherwise only Change, Revision, CommandID
+// or when the current generation's message ended failed (failedAt, its finished_at; zero when it did not) at
+// least RepublishCooldown before at. Otherwise only Change, Revision, CommandID
 // and the decision time move. Times are kept at microseconds, all PostgreSQL stores.
-func Next(current Record, found bool, r Result, at time.Time, lost bool) (next Record, advance bool) {
+func Next(current Record, found bool, r Result, at time.Time, failedAt time.Time) (next Record, advance bool) {
 	at = at.UTC().Truncate(time.Microsecond)
 	if !found {
 		return Record{Result: r, HeadSince: at, Generation: 1, DecidedAt: at}, true
@@ -122,6 +128,7 @@ func Next(current Record, found bool, r Result, at time.Time, lost bool) (next R
 	if r.HeadSHA != current.HeadSHA {
 		next.HeadSince = at
 	}
+	lost := !failedAt.IsZero() && !at.Before(failedAt.Add(RepublishCooldown))
 	if lost || r.HeadSHA != current.HeadSHA || r.State != current.State || r.Reason != current.Reason || r.Reference != current.Reference {
 		next.Generation++
 		advance = true

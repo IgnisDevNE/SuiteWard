@@ -11,6 +11,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getOutboxOutcome = `-- name: GetOutboxOutcome :one
+SELECT state, finished_at FROM outbox WHERE key = $1
+`
+
+type GetOutboxOutcomeRow struct {
+	State      string
+	FinishedAt pgtype.Timestamptz
+}
+
+// The state of the message with the time it ended, which Publish needs to space the retries of a lost message.
+func (q *Queries) GetOutboxOutcome(ctx context.Context, key string) (GetOutboxOutcomeRow, error) {
+	row := q.db.QueryRow(ctx, getOutboxOutcome, key)
+	var i GetOutboxOutcomeRow
+	err := row.Scan(&i.State, &i.FinishedAt)
+	return i, err
+}
+
 const getPRCheck = `-- name: GetPRCheck :one
 
 SELECT repository_id, pull_number, head_sha, head_since, state, reason, reference, change, revision, command_id, generation, message_key, decided_at

@@ -33,9 +33,13 @@ type FailNexter interface {
 // suite writes, so a store that verifies artifacts when a version is written
 // can be given them before RunConformance runs.
 func ConformanceBlobs() [][]byte {
-	blobs := make([][]byte, 0, len(cfContents))
+	blobs := make([][]byte, 0, len(cfContents)+len(mcContents)+1)
 	for _, content := range cfContents {
 		blobs = append(blobs, cfBlob(content))
+	}
+	blobs = append(blobs, []byte(mcDeclaration))
+	for _, content := range mcContents {
+		blobs = append(blobs, mcBlob(content))
 	}
 	return blobs
 }
@@ -111,7 +115,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"NextProposalIDIsOnePastTheHighestNumber", cfNextProposalIDIsOnePastTheHighestNumber},
 		{"NextProposalIDSeesItsOwnTransactionAndOnlyItsSuite", cfNextProposalIDSeesItsOwnTransactionAndOnlyItsSuite},
 	}
-	for _, tc := range cases {
+	for _, tc := range append(cases, mergeCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			defer cfGuard(t)
 			owner := cfMust(contract.NewPrincipal("owner", contract.Human))
@@ -174,10 +178,13 @@ type cfCandidate struct {
 }
 
 func cfNewCandidate(project contract.ProjectID, suite contract.SuiteID, id string, baseline contract.SuiteVersionID, content string, revisions ...contract.ProposalRevisionID) cfCandidate {
+	return cfNewCandidateOf(project, suite, id, baseline, cfProtectedOf(content), revisions...)
+}
+
+func cfNewCandidateOf(project contract.ProjectID, suite contract.SuiteID, id string, baseline contract.SuiteVersionID, protected contract.ProtectedContract, revisions ...contract.ProposalRevisionID) cfCandidate {
 	if len(revisions) == 0 {
 		revisions = []contract.ProposalRevisionID{"revision-1"}
 	}
-	protected := cfProtectedOf(content)
 	c := cfCandidate{project: project, suite: suite, id: id, protected: protected, bindings: map[contract.ProposalRevisionID]contract.ApprovalBinding{},
 		carrier: contract.ApprovalCarrierID("carrier-" + id), origin: contract.SourceRevision("candidate-" + id), merged: contract.SourceRevision("merged-" + id)}
 	for _, revisionID := range revisions {

@@ -613,3 +613,43 @@ func assessmentRow(reference contract.ProposalReference, source contract.SourceR
 	row.Outcome = pgtype.Text{String: outcome, Valid: true}
 	return row, nil
 }
+
+func (t *tx) MergeOutcome(ctx context.Context, carrier contract.ApprovalCarrierID) (governance.MergeOutcome, bool, error) {
+	row, err := t.q.GetMergeOutcome(ctx, dbgen.GetMergeOutcomeParams{ProjectID: string(t.project), SuiteID: string(t.suite), Carrier: string(carrier)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return governance.MergeOutcome{}, false, nil
+	}
+	if err != nil {
+		return governance.MergeOutcome{}, false, fmt.Errorf("load merge outcome: %w", err)
+	}
+	outcome := governance.MergeOutcome{Kind: governance.MergeKind(row.Kind), Reason: governance.MergeReason(row.Reason), Source: contract.SourceRevision(row.Source),
+		Version: contract.SuiteVersionID(row.VersionID), Corrects: contract.SuiteVersionID(row.CorrectsVersionID.String)}
+	if row.ProposalID.Valid { // the schema keeps the proposal and its revision together
+		outcome.Reference = &contract.ProposalReference{ProjectID: t.project, SuiteID: t.suite, ProposalID: contract.ProposalID(row.ProposalID.String), RevisionID: contract.ProposalRevisionID(row.RevisionID.String)}
+	}
+	if err := (governance.MergeWrite{Carrier: carrier, Outcome: outcome, RecordedAt: row.RecordedAt.Time}).Validate(); err != nil {
+		return governance.MergeOutcome{}, false, invalidState("merge outcome of "+string(carrier), err)
+	}
+	return outcome, true, nil
+}
+
+// RecordMergeOutcome does not advance the Suite revision: the promotion it may follow already has.
+func (t *tx) RecordMergeOutcome(ctx context.Context, write governance.MergeWrite) error {
+	if err := write.Validate(); err != nil {
+		return err
+	}
+	outcome := write.Outcome
+	row := dbgen.InsertMergeOutcomeParams{ProjectID: string(t.project), SuiteID: string(t.suite), Carrier: string(write.Carrier), Kind: string(outcome.Kind),
+		Reason: string(outcome.Reason), Source: string(outcome.Source), VersionID: string(outcome.Version), CorrectsVersionID: optionalText(string(outcome.Corrects)),
+		RecordedAt: pgtype.Timestamptz{Time: write.RecordedAt, Valid: true}}
+	if reference := outcome.Reference; reference != nil {
+		if !t.inScope(*reference) {
+			return fmt.Errorf("%w: the proposal of %v is not in the locked suite", governance.ErrInvalidRequest, *reference)
+		}
+		row.ProposalID, row.RevisionID = pgtype.Text{String: string(reference.ProposalID), Valid: true}, pgtype.Text{String: string(reference.RevisionID), Valid: true}
+	}
+	if err := t.q.InsertMergeOutcome(ctx, row); err != nil {
+		return translateWrite("insert merge outcome", err)
+	}
+	return nil
+}

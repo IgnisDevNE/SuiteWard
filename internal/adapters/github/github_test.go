@@ -177,12 +177,12 @@ func object(item map[string]any, key string) map[string]any {
 
 var fixturePulls = []github.Pull{
 	{
-		Number: 7, HeadSHA: "0123456789abcdef0123456789abcdef01234567", HeadRef: "runner",
+		Number: 7, HeadSHA: "0123456789abcdef0123456789abcdef01234567", HeadRef: "runner", HeadRepo: repo,
 		BaseRef: "release/1.x", BaseSHA: "fedcba9876543210fedcba9876543210fedcba98",
 		UpdatedAt: time.Date(2026, 9, 30, 9, 45, 12, 0, time.UTC),
 	},
 	{
-		Number: 42, HeadSHA: "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c", HeadRef: "parser-tests",
+		Number: 42, HeadSHA: "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c", HeadRef: "parser-tests", HeadRepo: repo,
 		BaseRef: "main", BaseSHA: "a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4",
 		UpdatedAt: time.Date(2026, 10, 2, 14, 3, 41, 0, time.UTC),
 	},
@@ -200,7 +200,7 @@ var fixtureComments = []github.Comment{
 }
 
 func samePull(a, b github.Pull) bool {
-	return a.Number == b.Number && a.HeadSHA == b.HeadSHA && a.HeadRef == b.HeadRef &&
+	return a.Number == b.Number && a.HeadSHA == b.HeadSHA && a.HeadRef == b.HeadRef && a.HeadRepo == b.HeadRepo &&
 		a.BaseRef == b.BaseRef && a.BaseSHA == b.BaseSHA && a.UpdatedAt.Equal(b.UpdatedAt)
 }
 

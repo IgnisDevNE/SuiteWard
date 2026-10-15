@@ -27,6 +27,11 @@ type memoryRepository struct {
 	state    githubsync.RepositoryState
 	pulls    map[int]githubsync.PullState
 	versions []githubsync.CommentVersion
+
+	resolutions  map[int]githubsync.Resolution // the latest resolution of each pull
+	processed    map[int]bool
+	watermark    time.Time // GitHub's greatest updated_at of the closed listings
+	hasWatermark bool      // false until the first RecordClosed
 }
 
 // NewMemory returns an empty store.
@@ -36,7 +41,7 @@ func NewMemory() *Memory { return &Memory{repos: map[string]*memoryRepository{}}
 func (m *Memory) repository(repo string) *memoryRepository {
 	r, ok := m.repos[repo]
 	if !ok {
-		r = &memoryRepository{pulls: map[int]githubsync.PullState{}}
+		r = &memoryRepository{pulls: map[int]githubsync.PullState{}, resolutions: map[int]githubsync.Resolution{}, processed: map[int]bool{}}
 		m.repos[repo] = r
 	}
 	return r
@@ -88,7 +93,7 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 		if !known {
 			pull = githubsync.PullState{Number: observed.Number, FirstSeen: cycle.At}
 		}
-		pull.HeadSHA, pull.HeadRef, pull.BaseRef, pull.BaseSHA, pull.UpdatedAt = observed.HeadSHA, observed.HeadRef, observed.BaseRef, observed.BaseSHA, observed.UpdatedAt
+		pull.HeadSHA, pull.HeadRef, pull.BaseRef, pull.BaseSHA, pull.UpdatedAt, pull.HeadRepo = observed.HeadSHA, observed.HeadRef, observed.BaseRef, observed.BaseSHA, observed.UpdatedAt, observed.HeadRepo
 		pull.LastSeen, pull.NotOpenSince = cycle.At, time.Time{}
 		r.pulls[observed.Number] = pull
 	}
@@ -198,4 +203,129 @@ func (m *Memory) Comments(ctx context.Context, repo string, number int) ([]githu
 		return cmp.Or(cmp.Compare(a.CommentID, b.CommentID), versionOrder(a, b))
 	})
 	return versions, nil
+}
+
+// AwaitingResolution implements githubsync.Store.
+func (m *Memory) AwaitingResolution(ctx context.Context, repo string) ([]githubsync.PullState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pulls := []githubsync.PullState{}
+	if r, ok := m.repos[repo]; ok {
+		for number, pull := range r.pulls {
+			if resolution, resolved := r.resolutions[number]; !pull.NotOpenSince.IsZero() && (!resolved || !resolution.NotOpenSince.Equal(pull.NotOpenSince)) {
+				pulls = append(pulls, pull)
+			}
+		}
+	}
+	slices.SortFunc(pulls, func(a, b githubsync.PullState) int { return cmp.Compare(a.Number, b.Number) })
+	return pulls, nil
+}
+
+// RecordResolution implements githubsync.Store.
+func (m *Memory) RecordResolution(ctx context.Context, repo string, resolution githubsync.Resolution) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := resolution.Validate(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var r *memoryRepository
+	var pull githubsync.PullState
+	ok := false
+	if r, ok = m.repos[repo]; ok {
+		pull, ok = r.pulls[resolution.Number]
+	}
+	if !ok || pull.NotOpenSince.IsZero() || !pull.NotOpenSince.Equal(resolution.NotOpenSince) {
+		return fmt.Errorf("%w: pull %d of %s is not absent since %v", githubsync.ErrStaleResolution, resolution.Number, repo, resolution.NotOpenSince)
+	}
+	pull.HeadSHA, pull.HeadRef, pull.BaseRef, pull.BaseSHA, pull.HeadRepo = resolution.HeadSHA, resolution.HeadRef, resolution.BaseRef, resolution.BaseSHA, resolution.HeadRepo
+	r.pulls[resolution.Number] = pull
+	r.resolutions[resolution.Number] = resolution
+	return nil
+}
+
+// RecordClosed implements githubsync.Store.
+func (m *Memory) RecordClosed(ctx context.Context, repo string, closed []githubsync.ClosedPull, at time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := githubsync.ValidateClosed(closed, at); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.repos[repo]
+	if !ok {
+		return fmt.Errorf("%w: repository %s has no recorded cycle", githubsync.ErrInvalidObservation, repo)
+	}
+	var latest time.Time
+	for _, item := range closed {
+		if item.UpdatedAt.After(latest) {
+			latest = item.UpdatedAt
+		}
+		if _, stored := r.pulls[item.Number]; r.hasWatermark && !stored && !item.MergedAt.IsZero() && item.UpdatedAt.After(r.watermark) {
+			r.pulls[item.Number] = githubsync.PullState{Number: item.Number, HeadSHA: item.HeadSHA, HeadRef: item.HeadRef, BaseRef: item.BaseRef, BaseSHA: item.BaseSHA,
+				UpdatedAt: item.UpdatedAt, FirstSeen: at, LastSeen: at, NotOpenSince: at, HeadRepo: item.HeadRepo}
+		}
+	}
+	if !r.hasWatermark { // the first call only sets the watermark; an empty listing sets the epoch, so the next call is not a first one
+		if latest.IsZero() {
+			latest = time.Unix(0, 0)
+		}
+		r.watermark, r.hasWatermark = latest, true
+	} else if latest.After(r.watermark) {
+		r.watermark = latest
+	}
+	return nil
+}
+
+// Merged implements githubsync.Store.
+func (m *Memory) Merged(ctx context.Context, repo string) ([]githubsync.MergedPull, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	merged := []githubsync.MergedPull{}
+	if r, ok := m.repos[repo]; ok {
+		for number, resolution := range r.resolutions {
+			if !resolution.Merged {
+				continue
+			}
+			pull := r.pulls[number]
+			// Like the head and base columns, which a resolution refreshes and nothing else touches afterwards.
+			resolution.HeadSHA, resolution.HeadRef, resolution.BaseRef, resolution.BaseSHA, resolution.HeadRepo = pull.HeadSHA, pull.HeadRef, pull.BaseRef, pull.BaseSHA, pull.HeadRepo
+			merged = append(merged, githubsync.MergedPull{PullState: pull, Resolution: resolution, Processed: r.processed[number]})
+		}
+	}
+	slices.SortFunc(merged, func(a, b githubsync.MergedPull) int {
+		return cmp.Or(a.MergedAt.Compare(b.MergedAt), cmp.Compare(a.PullState.Number, b.PullState.Number))
+	})
+	return merged, nil
+}
+
+// MarkProcessed implements githubsync.Store.
+func (m *Memory) MarkProcessed(ctx context.Context, repo string, number int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := githubsync.ValidatePullNumber(number); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.repos[repo]
+	if !ok {
+		return fmt.Errorf("%w: pull %d of %s is not stored", githubsync.ErrInvalidObservation, number, repo)
+	}
+	if _, stored := r.pulls[number]; !stored {
+		return fmt.Errorf("%w: pull %d of %s is not stored", githubsync.ErrInvalidObservation, number, repo)
+	}
+	r.processed[number] = true
+	return nil
 }

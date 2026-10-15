@@ -162,7 +162,8 @@ func validMergeRequest(uow UnitOfWork, writer ContentWriter, r MergeRequest) err
 }
 
 // PromoteMerge decides and records the one outcome of a merged pull request. The tree is read and its content stored
-// before the unit of work, so the Suite is not locked while a tree is read.
+// before the unit of work, so the Suite is not locked while a tree is read. Without a canonical, the merge of the
+// bootstrap PR decides V1 and any other merge is before the canonical (decideFirstMerge).
 func PromoteMerge(ctx context.Context, uow UnitOfWork, writer ContentWriter, request MergeRequest) (MergeResult, error) {
 	if err := validMergeRequest(uow, writer, request); err != nil {
 		return MergeResult{}, err
@@ -230,7 +231,7 @@ func decideMerge(ctx context.Context, tx Tx, request MergeRequest, refusal Merge
 	}
 	current, present := state.Canonical.Suite().CurrentVersionID()
 	if !present {
-		return MergeOutcome{}, ErrNoCanonical
+		return decideFirstMerge(ctx, tx, request, refusal, inv, integrated, state)
 	}
 	kept := MergeOutcome{Source: request.Source, Version: current}
 	if request.Target != state.Target {
@@ -244,7 +245,11 @@ func decideMerge(ctx context.Context, tx Tx, request MergeRequest, refusal Merge
 	if !found {
 		return MergeOutcome{}, fmt.Errorf("%w: the suite has a canonical %q and no version V1", ErrInvalidState, current)
 	}
-	if request.ObservedAt.Before(first.Record().RecordedAt()) { // part of, or before, the bootstrap baseline
+	fromBranch, err := originatesFromBranch(ctx, tx, first)
+	if err != nil {
+		return MergeOutcome{}, err
+	}
+	if fromBranch && request.ObservedAt.Before(first.Record().RecordedAt()) { // part of, or before, the bootstrap baseline
 		kept.Kind = MergeBeforeCanonical
 		return kept, nil
 	}
@@ -314,6 +319,85 @@ func decideMerge(ctx context.Context, tx Tx, request MergeRequest, refusal Merge
 		}
 	}
 	return MergeOutcome{}, fmt.Errorf("%w: a merge decision with outcome %d and reason %d", ErrInvalidState, promoted.Outcome, promoted.Reason)
+}
+
+// originatesFromBranch reports whether the proposal revision that made version V1 canonical was sourced from a pinned
+// default-branch commit. Only then does the time rule hold: the merges before such a baseline are part of it. A V1
+// decided by a merge saw every earlier merge in order, so a PR merged after it is judged on its content.
+func originatesFromBranch(ctx context.Context, tx Tx, first contract.HistoricalCanonical) (bool, error) {
+	reference := first.Record().Binding().Reference()
+	proposal, _, err := tx.Proposal(ctx, reference.ProposalID)
+	if err != nil {
+		return false, fmt.Errorf("load the proposal of the first version: %w", err)
+	}
+	for _, revision := range proposal.Revisions() {
+		if revision.Binding().Reference() == reference {
+			return revision.OriginKind() == contract.OriginBranch, nil
+		}
+	}
+	return false, fmt.Errorf("%w: the first version names revision %v, which its proposal does not have", ErrInvalidState, reference)
+}
+
+// decideFirstMerge decides a merge of a Suite without a canonical. The merge of the bootstrap PR decides V1 (the carrier's
+// bootstrap proposal, assessed at the merge commit and promoted with an IntegrationMergedChange); every other merge is
+// before the canonical. None of them names a version, because there is none. The target is checked first, as with a
+// canonical, so a merge into another branch is never the bootstrap.
+func decideFirstMerge(ctx context.Context, tx Tx, request MergeRequest, refusal MergeReason, inv inventory.Inventory, integrated contract.ProtectedContract, state SuiteState) (MergeOutcome, error) {
+	if refusal == MergeReasonIntegrityFailed { // it names a stored canonical, and there is none
+		return MergeOutcome{}, fmt.Errorf("%w: %q is a refusal only while a canonical exists", ErrInvalidRequest, refusal)
+	}
+	kept := MergeOutcome{Source: request.Source, Kind: MergeBeforeCanonical}
+	if request.Target != state.Target {
+		return kept, nil
+	}
+	id, found, err := tx.BaselineProposalFor(ctx, request.Carrier)
+	if err != nil {
+		return MergeOutcome{}, fmt.Errorf("find the bootstrap proposal of %q: %w", request.Carrier, err)
+	}
+	if !found {
+		return kept, nil
+	}
+	proposal, _, err := tx.Proposal(ctx, id)
+	if err != nil {
+		return MergeOutcome{}, fmt.Errorf("load proposal: %w", err)
+	}
+	binding := proposal.Current().Binding()
+	reference := binding.Reference()
+	kept.Reference = &reference
+	if refusal != "" {
+		return blockedMerge(kept, refusal), nil
+	}
+	evidence, err := HeadEvidence(inv, binding, request.Source)
+	if err != nil {
+		return MergeOutcome{}, err
+	}
+	switch err := tx.RecordAssessment(ctx, AssessmentWrite{Reference: reference, Source: request.Source, Evidence: evidence}); {
+	case errors.Is(err, ErrConflict):
+		return blockedMerge(kept, MergeReasonAssessmentConflict), nil
+	case err != nil:
+		return MergeOutcome{}, fmt.Errorf("record the assessment of the merge commit: %w", err)
+	}
+	integration, err := contract.NewIntegration(request.Project, request.Target, request.Source, request.Carrier, contract.IntegrationMergedChange)
+	if err != nil {
+		return MergeOutcome{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	promoted, err := promoteWithin(ctx, tx, PromotionIdentity{Kind: OperationBootstrap, Request: PromoteRequest{
+		OperationID: contract.OperationID("merge:" + string(request.Carrier)), Reference: reference, Carrier: request.Carrier, Proposed: integrated,
+		AssessmentSource: request.Source, Integration: integration, NewVersionID: "V1", RecordedAt: request.RecordedAt}})
+	if err != nil {
+		return MergeOutcome{}, err
+	}
+	switch promoted.Outcome {
+	case contract.PromotionProposed:
+		kept.Kind, kept.Version = MergePromoted, "V1"
+		return kept, nil
+	case contract.PromotionBlocked:
+		if reason, known := promotionReasons[promoted.Reason]; known {
+			return blockedMerge(kept, reason), nil
+		}
+	}
+	// CanonicalPresent and EmptyInventory cannot hold under the Suite lock with a bootstrap proposal of the merged tree.
+	return MergeOutcome{}, fmt.Errorf("%w: a bootstrap merge decision with outcome %d and reason %d", ErrInvalidState, promoted.Outcome, promoted.Reason)
 }
 
 func blockedMerge(kept MergeOutcome, reason MergeReason) MergeOutcome {

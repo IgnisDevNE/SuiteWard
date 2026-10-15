@@ -494,7 +494,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	request := governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(p.RepositoryID), SuiteID: defaultSuite, ProposalID: proposalID(number), RevisionID: firstRevision},
-		Carrier:   carrierID(p.RepositoryID, pull), Origin: contract.SourceRevision(head), Tree: tree, Outbox: []governance.OutboxMessage{message},
+		Carrier:   carrierID(p.RepositoryID, pull), Origin: contract.SourceRevision(head), OriginKind: contract.OriginBranch, Tree: tree, Outbox: []governance.OutboxMessage{message},
 	}
 	result, err := governance.ProposeBaseline(ctx, b.suites, b.content, request)
 	if err != nil {

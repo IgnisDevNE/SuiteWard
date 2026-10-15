@@ -41,7 +41,7 @@ func TestHeadAssessmentFollowsConsentAcrossPushes(t *testing.T) {
 	}
 	assess := func(carrier contract.ApprovalCarrierID, head string, tree mapTree) governance.HeadResult {
 		t.Helper()
-		result, err := governance.AssessHead(t.Context(), w.store, w.content, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite, Carrier: carrier, Head: contract.SourceRevision(head), Tree: tree})
+		result, err := governance.AssessHead(t.Context(), w.store, w.content, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite, Carrier: carrier, Head: contract.SourceRevision(head), Tree: tree, Revision: noRevision})
 		if err != nil {
 			t.Fatalf("assess head %s: %v", head, err)
 		}
@@ -59,12 +59,12 @@ func TestHeadAssessmentFollowsConsentAcrossPushes(t *testing.T) {
 	}
 
 	// No canonical yet: nothing is proposed.
-	if _, err := governance.AssessHead(t.Context(), w.store, w.content, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite, Carrier: pull, Head: "head-0", Tree: headTree("v1", "package main\n")}); err == nil || !errors.Is(err, governance.ErrNoCanonical) {
+	if _, err := governance.AssessHead(t.Context(), w.store, w.content, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite, Carrier: pull, Head: "head-0", Tree: headTree("v1", "package main\n"), Revision: noRevision}); err == nil || !errors.Is(err, governance.ErrNoCanonical) {
 		t.Fatalf("assess without a canonical = %v, want ErrNoCanonical", err)
 	}
 	// The baseline PR bootstraps version-1.
 	baseline, err := governance.ProposeBaseline(t.Context(), w.store, w.content, governance.BaselineRequest{
-		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", Tree: headTree("v1", "package main\n")})
+		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestHeadAssessmentFollowsConsentAcrossPushes(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			result, err := governance.AssessHead(t.Context(), w.store, w.content, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite,
-				Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:1/%d", 10+i)), Head: contract.SourceRevision(fmt.Sprintf("head-%d", i)), Tree: headTree("v5", "package main\n")})
+				Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:1/%d", 10+i)), Head: contract.SourceRevision(fmt.Sprintf("head-%d", i)), Tree: headTree("v5", "package main\n"), Revision: noRevision})
 			if err != nil {
 				t.Errorf("assess pull %d: %v", 10+i, err)
 				return
@@ -154,7 +154,7 @@ func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
 	w.seedSuite(fxProject, fxSuite, other)
 	const bootstrapCarrier = contract.ApprovalCarrierID("github-pr:1/1")
 	baseline, err := governance.ProposeBaseline(t.Context(), w.store, w.content, governance.BaselineRequest{
-		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", Tree: headTree("v1", "package main\n")})
+		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
 	}}
 
 	_, err = governance.AssessHead(t.Context(), w.store, reader, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite,
-		Carrier: "github-pr:1/2", Head: "head-a", Tree: headTree("v2", "package main\n")})
+		Carrier: "github-pr:1/2", Head: "head-a", Tree: headTree("v2", "package main\n"), Revision: noRevision})
 
 	if !errors.Is(err, governance.ErrCanonicalMoved) || !errors.Is(err, governance.ErrConflict) {
 		t.Fatalf("error = %v, want ErrCanonicalMoved, which is an ErrConflict", err)

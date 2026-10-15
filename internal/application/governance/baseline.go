@@ -18,11 +18,12 @@ type ContentWriter interface {
 }
 
 type BaselineRequest struct {
-	Reference contract.ProposalReference // the proposal and its new revision id
-	Carrier   contract.ApprovalCarrierID // the PR that hosts the approval
-	Origin    contract.SourceRevision    // the pinned principal-branch commit
-	Tree      inventory.Tree             // that commit's source tree
-	Outbox    []OutboxMessage            // written with a new revision, never when the coverage is unchanged
+	Reference  contract.ProposalReference // the proposal and its new revision id
+	Carrier    contract.ApprovalCarrierID // the PR that hosts the approval
+	Origin     contract.SourceRevision    // the pinned principal-branch commit, or the PR head of a pull-sourced bootstrap
+	OriginKind contract.OriginKind        // OriginBranch for the bootstrap job, OriginPull for AssessBootstrapHead
+	Tree       inventory.Tree             // that commit's source tree
+	Outbox     []OutboxMessage            // written with a new revision, never when the coverage is unchanged
 }
 
 type BaselineResult struct {
@@ -64,16 +65,7 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 		if _, present := state.Canonical.Suite().CurrentVersionID(); present {
 			return fmt.Errorf("%w: a baseline is only proposed before the first canonical", ErrInvalidRequest)
 		}
-		binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: request.Reference, Manifest: proposed.Manifest().Digest(),
-			Scope: proposed.ScopeDigest(), PolicyRevision: state.Policy.RevisionID(), CoveredInputs: proposed.CoveredInputs()})
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
-		}
-		revision, err := contract.NewProposalRevision(binding, request.Origin, contract.OriginBranch, request.Carrier)
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
-		}
-		revised, err = reviseWithin(ctx, tx, state, revision)
+		revised, err = reviseBaselineWithin(ctx, tx, state, request.Reference, request.Carrier, request.Origin, request.OriginKind, proposed)
 		if err != nil || !revised.Committed {
 			return err
 		}
@@ -83,6 +75,23 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 		return BaselineResult{}, err
 	}
 	return BaselineResult{Revise: revised, Contract: proposed}, nil
+}
+
+// reviseBaselineWithin makes the proposal at reference (a baseline expects no canonical) cover proposed, as the revision
+// reference names, from origin of the given kind. The caller has checked, under the Suite lock, that there is no canonical.
+// Coverage the proposal already has writes nothing.
+func reviseBaselineWithin(ctx context.Context, tx Tx, state SuiteState, reference contract.ProposalReference, carrier contract.ApprovalCarrierID,
+	origin contract.SourceRevision, kind contract.OriginKind, proposed contract.ProtectedContract) (ReviseResult, error) {
+	binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: reference, Manifest: proposed.Manifest().Digest(),
+		Scope: proposed.ScopeDigest(), PolicyRevision: state.Policy.RevisionID(), CoveredInputs: proposed.CoveredInputs()})
+	if err != nil {
+		return ReviseResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	revision, err := contract.NewProposalRevision(binding, origin, kind, carrier)
+	if err != nil {
+		return ReviseResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	return reviseWithin(ctx, tx, state, revision)
 }
 
 // storeContent reads every entry of manifest from tree, checks the bytes against the manifest and stores them.

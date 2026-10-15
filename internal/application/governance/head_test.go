@@ -71,7 +71,7 @@ func newHeadEnv(t *testing.T, extra ...candidate) *headEnv {
 	e.reader = &fakeReader{writer: e.writer}
 	result := e.propose(e.writer, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P1", RevisionID: "R1"},
-		Carrier:   bootstrapCarrier, Origin: "pinned", Tree: headTree("v1", "package main\n"),
+		Carrier:   bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n"),
 	})
 	e.approveRef(result.Revise.Current, bootstrapCarrier)
 	e.recordAssessment(result.Revise.Current, "pinned", contract.IntegrityPassed)
@@ -97,7 +97,7 @@ func (e *headEnv) approveRef(reference contract.ProposalReference, carrier contr
 }
 
 func (e *headEnv) request(carrier contract.ApprovalCarrierID, head string, tree inventory.Tree) governance.HeadRequest {
-	return governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: carrier, Head: contract.SourceRevision(head), Tree: tree}
+	return governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: carrier, Head: contract.SourceRevision(head), Tree: tree, Revision: noRevision}
 }
 
 func (e *headEnv) assess(carrier contract.ApprovalCarrierID, head string, tree inventory.Tree) governance.HeadResult {
@@ -171,7 +171,7 @@ func TestAssessHeadNeedsACanonical(t *testing.T) {
 	w := newWorld(t)
 	before := w.revision()
 	reader := &fakeReader{writer: newFakeWriter()}
-	request := governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: prA, Head: "head-a", Tree: headTree("v1", "package main\n")}
+	request := governance.HeadRequest{Project: projectID, Suite: suiteID, Carrier: prA, Head: "head-a", Tree: headTree("v1", "package main\n"), Revision: noRevision}
 
 	_, err := governance.AssessHead(context.Background(), w.mem, reader, newFakeWriter(), request)
 

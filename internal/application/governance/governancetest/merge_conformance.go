@@ -75,12 +75,21 @@ func mcSource(c cfCandidate) contract.SourceRevision {
 // and so on), the last of them current, next to the open candidates.
 func (e *cfEnv) mcSeedAs(ids []contract.SuiteVersionID, open ...cfCandidate) {
 	e.t.Helper()
+	e.mcSeedWith(ids, false, open...)
+}
+
+// mcSeedWith is mcSeedAs where the proposal of the first version is a PR head (a bootstrap by merge) when firstPull.
+func (e *cfEnv) mcSeedWith(ids []contract.SuiteVersionID, firstPull bool, open ...cfCandidate) {
+	e.t.Helper()
 	seed := governance.Seed{}
 	var history []contract.HistoricalCanonical
 	var last cfCandidate
 	baseline := contract.SuiteVersionID("")
 	for i, id := range ids {
 		c := mcCandidate(fmt.Sprintf("p%d", i), baseline, fmt.Sprintf("v%d", i+1))
+		if i == 0 && firstPull {
+			c = c.asPull()
+		}
 		version := cfMust(contract.NewSuiteVersion(cfProject, cfSuite, id, c.protected.Manifest()))
 		record := cfMust(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: contract.OperationID("seed-op-" + c.id), VersionID: id,
 			Binding: c.proposal.Current().Binding(), Carrier: c.carrier, Source: c.merged, Target: cfTarget, RecordedAt: cfRecordedAt}))
@@ -243,7 +252,7 @@ func mergeCases() []struct {
 		{"MergeOfAnUnchangedContractIsNoChange", mcNoChange},
 		{"MergeIntoAnotherTargetIsNotTheTarget", mcNotTarget},
 		{"MergeObservedBeforeTheCanonicalIsBeforeTheCanonical", mcBeforeCanonical},
-		{"MergeNeedsACanonical", mcNoCanonical},
+		{"MergeOfAPRWithoutACanonicalIsBeforeTheCanonical", mcNoCanonical},
 		{"MergeRecordsACallerRefusalWithoutATree", mcRefusals},
 		{"MergeDecidesTargetAndTimeBeforeARefusal", mcRefusalPrecedence},
 		{"MergeReturnsATreeReadErrorAndWritesNothing", mcTreeReadError},
@@ -527,21 +536,19 @@ func mcBeforeCanonical(e *cfEnv) {
 	}
 }
 
+// A merge of a Suite without a canonical is recorded, not refused: it is before the canonical when its PR is not the
+// bootstrap PR (the cases of the bootstrap merge say the rest).
 func mcNoCanonical(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite)
 	before := e.revision()
 	pr := mcCandidate("pr", "", "v2")
-	messages := &mcMessages{}
+	messages := &mcMessages{mute: true}
 
-	err := e.mergeErr(mcRequest(pr, "v2", messages))
+	result := e.merge(mcRequest(pr, "v2", messages))
 
-	if !errors.Is(err, governance.ErrNoCanonical) {
-		e.t.Fatalf("error = %v, want ErrNoCanonical", err)
-	}
-	if _, found := e.outcomeOf(pr.carrier); found || messages.calls != 0 {
-		e.t.Fatalf("an outcome was recorded (%v) or a message asked for (%d calls)", found, messages.calls)
-	}
+	e.requireOutcome(pr.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBeforeCanonical, Source: mcSource(pr)})
 	e.requireWrites(before, 0)
+	e.requireNoCanonical()
 }
 
 func mcRefusals(e *cfEnv) {

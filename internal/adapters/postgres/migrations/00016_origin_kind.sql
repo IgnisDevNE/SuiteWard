@@ -14,6 +14,17 @@
 ALTER TABLE proposal_revisions DISABLE TRIGGER proposal_revisions_immutable;
 ALTER TABLE proposal_revisions ADD COLUMN origin_kind text;
 UPDATE proposal_revisions SET origin_kind = CASE WHEN expected_version_id IS NULL THEN 'branch' ELSE 'pull' END;
+-- A proposal never changes kind. Production never revised a baseline, so no deployed database holds a proposal of both
+-- kinds; if one does, refuse loudly (this rolls the migration back) rather than leave a proposal that cannot be read.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM proposal_revisions GROUP BY project_id, suite_id, proposal_id HAVING count(DISTINCT origin_kind) > 1) THEN
+        RAISE EXCEPTION 'a proposal has revisions of both kinds (a baseline rebound onto a canonical); resolve it before migrating to 00016';
+    END IF;
+END
+$$;
+-- +goose StatementEnd
 ALTER TABLE proposal_revisions
     ALTER COLUMN origin_kind SET NOT NULL,
     ADD CONSTRAINT proposal_revisions_origin_kind_check CHECK (origin_kind IN ('branch', 'pull'));

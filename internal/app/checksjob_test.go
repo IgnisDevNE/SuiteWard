@@ -649,7 +649,7 @@ func TestChecksFailTheRunOnAStoreErrorAfterEveryRepositoryAndShowItInStatus(t *t
 	if got := w.problems.lookup(bootRepo); got != "failed" {
 		t.Fatalf("problem %q, want failed", got)
 	}
-	status := &githubStatus{repos: []string{bootRepo, bootOtherRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: w.problems}
+	status := &githubStatus{repos: []string{bootRepo, bootOtherRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: w.problems, merges: &bootstrapProblems{}}
 	entries, err := status.report(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)

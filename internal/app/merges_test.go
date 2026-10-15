@@ -93,7 +93,7 @@ func newMgWorld(t *testing.T, options ...func(*bootOptions)) *mgWorld {
 	t.Helper()
 	w := &mgWorld{cjJobWorld: newCJWorld(t, true, options...), mgProbs: &bootstrapProblems{},
 		gh: &mgReader{pulls: map[mgKey]github.PullDetail{}, pullErr: map[mgKey]error{}, closed: map[string][]github.PullDetail{}, trees: map[string]inventory.Tree{}, treeErr: map[string]error{}}}
-	w.merges = &mergesJob{repos: w.bootWorld.job.repos, reader: w.gh, owners: w.owners, suites: w.suites, content: w.content, store: w.pulls, integrity: w.verdicts,
+	w.merges = &mergesJob{repos: w.job.repos, reader: w.gh, owners: w.owners, suites: w.suites, content: w.content, store: w.pulls, integrity: w.verdicts,
 		tier: owner.TierIsolated, problems: w.mgProbs, logger: slog.New(slog.NewJSONHandler(w.logs, nil)), now: func() time.Time { return w.clock }}
 	return w
 }
@@ -1034,6 +1034,7 @@ func (w *mgWorld) seedOther() {
 // otherMerged leaves pull request 4 of the other repository, merged with no protected change.
 func (w *mgWorld) otherMerged() {
 	w.t.Helper()
+	w.cycleAt(w.clock.Add(-time.Minute), bootOtherRepo, map[int]string{4: bootHead})
 	w.cycleAt(w.clock, bootOtherRepo, map[int]string{})
 	d := mgDetail(4, bootHead)
 	d.HeadRepo, d.Merged, d.MergedAt, d.MergeCommitSHA = bootOtherRepo, true, bootTime.Add(2*time.Hour+time.Second), mgSHAOther

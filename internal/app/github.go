@@ -127,6 +127,7 @@ func (g *githubStatus) report(ctx context.Context, protections map[string]owner.
 		entry.LastError = lastErrorText(state)
 		entry.Bootstrap = g.problems.lookup(repo)
 		entry.Checks = g.checks.lookup(repo)
+		entry.Merges = g.merges.lookup(repo)
 		entry.Integrity = verdicts[repo]
 		if result, verified := protections[repo]; verified {
 			entry.Protection = &protectionStatus{

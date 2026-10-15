@@ -155,6 +155,10 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	if err != nil {
 		return nil, err
 	}
+	mergesJobs, err := addMerges(workers, config)
+	if err != nil {
+		return nil, err
+	}
 	checksJobs, err := addChecks(workers, config)
 	if err != nil {
 		return nil, err
@@ -174,7 +178,7 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
 		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
 		Queues:       map[string]riverqueue.QueueConfig{riverqueue.QueueDefault: {MaxWorkers: config.Workers}, outboxQueue: {MaxWorkers: 1}},
-		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs, bootstrapJobs, commandsJobs, checksJobs, integrityJobs),
+		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs, bootstrapJobs, commandsJobs, checksJobs, mergesJobs, integrityJobs),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create the River client: %w", err)

@@ -110,10 +110,14 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		checkJob := &checksJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
 			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now}
 		riverConfig.Checks = checkJob.run
+		mergeProblems := &bootstrapProblems{}
+		mergeJob := &mergesJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(), tier: tier,
+			problems: mergeProblems, logger: logger, now: time.Now}
+		riverConfig.Merges = mergeJob.run
 		integrityJob := &integrityJob{owners: store, suites: store, content: artifacts, store: store.Integrity(), logger: logger, now: time.Now}
 		riverConfig.Integrity = integrityJob.run
 		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish, githubCheckKind: checkPoster.publish}
-		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids, problems: problems, checks: checkProblems, integrity: &integrityStatus{owners: store, suites: store, store: store.Integrity()}}
+		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids, problems: problems, checks: checkProblems, merges: mergeProblems, integrity: &integrityStatus{owners: store, suites: store, store: store.Integrity()}}
 		backend.repos = gh.repos
 		backend.ids = ids
 	}

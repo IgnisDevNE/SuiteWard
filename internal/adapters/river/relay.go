@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -67,6 +68,7 @@ type Relay struct {
 	lease       time.Duration
 	now         func() time.Time
 	logger      *slog.Logger
+	warnedKinds sync.Map // kinds without a publisher that were already logged
 }
 
 // NewRelay returns a Relay after checking its dependencies.
@@ -155,10 +157,12 @@ func truncate(text string) string {
 // deliver publishes one claimed message outside any transaction and records
 // the outcome, which applies only while the claim is still the latest.
 func (r *Relay) deliver(ctx context.Context, claim postgres.OutboxClaim) error {
+	publisher, known := r.publishers[claim.Kind]
+	if !known {
+		return r.keepUnpublishable(ctx, claim)
+	}
 	var update postgres.OutboxUpdate
-	if publisher, known := r.publishers[claim.Kind]; !known {
-		update = postgres.OutboxUpdate{State: postgres.OutboxFailed, LastError: fmt.Sprintf("no publisher for kind %q", claim.Kind), FinishedAt: r.now()}
-	} else if err := publish(ctx, publisher, claim); err == nil {
+	if err := publish(ctx, publisher, claim); err == nil {
 		update = postgres.OutboxUpdate{State: postgres.OutboxDelivered, FinishedAt: r.now()}
 	} else if claim.Attempts >= r.maxAttempts {
 		update = postgres.OutboxUpdate{State: postgres.OutboxFailed, LastError: truncate(err.Error()), FinishedAt: r.now()}
@@ -174,6 +178,24 @@ func (r *Relay) deliver(ctx context.Context, claim postgres.OutboxClaim) error {
 	}
 	if !applied {
 		r.logger.WarnContext(ctx, "outbox outcome ignored: stale claim", "key", claim.Key, "attempt", claim.Attempts)
+	}
+	return nil
+}
+
+// keepUnpublishable leaves a message whose kind has no publisher pending: a
+// target switched off GitHub, or a publisher registered later, must not lose
+// it. It restores the claimed attempt and defers the message by the backoff
+// cap; the kind is logged once per process.
+func (r *Relay) keepUnpublishable(ctx context.Context, claim postgres.OutboxClaim) error {
+	if _, warned := r.warnedKinds.LoadOrStore(claim.Kind, struct{}{}); !warned {
+		r.logger.WarnContext(ctx, "outbox messages of a kind with no publisher stay pending", "kind", claim.Kind, "key", claim.Key)
+	}
+	released, err := r.store.ReleaseOutbox(ctx, claim, r.now().Add(retryCap))
+	if err != nil {
+		return err
+	}
+	if !released {
+		r.logger.WarnContext(ctx, "outbox release ignored: stale claim", "key", claim.Key, "attempt", claim.Attempts)
 	}
 	return nil
 }

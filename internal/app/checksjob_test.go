@@ -757,7 +757,8 @@ func TestChecksDoNotFailOnACommandThatIsNoRejection(t *testing.T) {
 func TestChecksFailTheStepOfAHeadWhoseAssessmentConflictedAndContinue(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.tree(cjHead2, bootFiles("v2"))
-	w.sync(map[int]string{3: cjHead2, 4: bootHead}) // the conflicting pull request comes before the healthy one
+	// the conflicting pull request comes before the healthy one
+	w.sync(map[int]string{3: cjHead2, 4: bootHead})
 	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrConflict} // deterministic, not ErrCanonicalMoved
 
 	err := w.runChecks()

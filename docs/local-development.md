@@ -168,6 +168,15 @@ The scenario is in [HOST.md, section 6c](../deploy/HOST.md#6c-the-suiteward--con
 - `/status` must show `schemaVersion` 14 and no `checks` or `bootstrap` error;
 - stop the host's watching first and restore it only after the stack is back without GitHub (HOST.md 6b.1 and 6c.4).
 
+### Verifying M1.7 on the co-located stack
+
+The scenario is in [HOST.md, section 6d](../deploy/HOST.md#6d-promotion-on-merge-m17); the stack side is the one of M1.6a above, with these differences:
+- **The stack is purged and set up again.** The host runs HOST.md 6d.3 first and its merges move SuiteWardQ `main` ahead of the stack's V1 (each target keeps its own canonical), so the old V1 would show every later PR as a protected change. Stop the host's watching first (HOST.md 6b.1), then run `./deploy/local.ps1 -Down -Purge` and start again as in steps 2 and 3 of M1.6a, with the PEM and a new authenticator entry: `podman pull ghcr.io/ignisdevne/suiteward:deploy`, `./deploy/local.ps1 -GitHubAppKeyFile <path to the PEM> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ`, then `podman exec -it suiteward /suiteward setup --owner <login> --test-check IgnisDevNE/SuiteWardQ=<check>`. The bootstrap then proposes V1 from the `main` the host left; approve it;
+- run the smoke test with `SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit>`;
+- `/status` must show `schemaVersion` 15, `integrity` `passed` and no `checks`, `bootstrap` or `merges` error;
+- run HOST.md 6d.3 steps 2 and 5, and the integrity tamper of 6d.4 step 5 only with the owner's go-ahead at the time;
+- one target at a time: put the stack back without GitHub (`./deploy/local.ps1`) before restoring the host, and read `/status` through the machine (`podman machine ssh "curl -s http://127.0.0.1:8081/status"`).
+
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.

@@ -103,10 +103,11 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 		if current, _ := state.Canonical.Suite().CurrentVersionID(); current != version {
 			return fmt.Errorf("%w: from %q to %q", ErrCanonicalMoved, version, current)
 		}
-		reference, err := keepProposalCurrent(ctx, tx, state, request, proposed)
+		revised, _, err := keepProposalCurrent(ctx, tx, state, request, proposed)
 		if err != nil {
 			return err
 		}
+		reference := revised.Current
 		proposal, consent, err := tx.Proposal(ctx, reference.ProposalID)
 		if err != nil {
 			return fmt.Errorf("load proposal: %w", err)
@@ -150,21 +151,23 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 // keepProposalCurrent makes the carrier's change proposal cover proposed under the locked Suite's canonical and
 // policy: it creates the proposal with R1 when the carrier has none, adds R<m+1> when the coverage changed,
 // and otherwise leaves the current revision, so consent survives an implementation-only push. It returns the
-// proposal's current reference.
-func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request HeadRequest, proposed contract.ProtectedContract) (contract.ProposalReference, error) {
+// proposal's current reference, whether it was appended, and the revision it superseded (nil when there was none).
+func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request HeadRequest, proposed contract.ProtectedContract) (revised ReviseResult, previous *contract.ProposalReference, err error) {
 	id, found, err := tx.ChangeProposalFor(ctx, request.Carrier)
 	if err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("find the change proposal of %q: %w", request.Carrier, err)
+		return ReviseResult{}, nil, fmt.Errorf("find the change proposal of %q: %w", request.Carrier, err)
 	}
 	next := 1
 	if found {
 		proposal, _, err := tx.Proposal(ctx, id)
 		if err != nil {
-			return contract.ProposalReference{}, fmt.Errorf("load proposal: %w", err)
+			return ReviseResult{}, nil, fmt.Errorf("load proposal: %w", err)
 		}
+		last := proposal.Current().Binding().Reference()
+		previous = &last
 		next = len(proposal.Revisions()) + 1
 	} else if id, err = tx.NextProposalID(ctx); err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("allocate a proposal id: %w", err)
+		return ReviseResult{}, nil, fmt.Errorf("allocate a proposal id: %w", err)
 	}
 	suite := state.Canonical.Suite()
 	expected, _ := suite.CurrentVersionID()
@@ -173,17 +176,17 @@ func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request H
 		ExpectedCanonical: expected, Manifest: proposed.Manifest().Digest(), Scope: proposed.ScopeDigest(), PolicyRevision: state.Policy.RevisionID(), CoveredInputs: proposed.CoveredInputs(),
 	})
 	if err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		return ReviseResult{}, nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	revision, err := contract.NewProposalRevision(binding, request.Head, contract.OriginPull, request.Carrier)
 	if err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		return ReviseResult{}, nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	revised, err := reviseWithin(ctx, tx, state, revision)
+	revised, err = reviseWithin(ctx, tx, state, revision)
 	if err != nil {
-		return contract.ProposalReference{}, err
+		return ReviseResult{}, nil, err
 	}
-	return revised.Current, nil
+	return revised, previous, nil
 }
 
 // governingOf rebuilds the governing scope and exact inventory of the canonical. The scope comes from the

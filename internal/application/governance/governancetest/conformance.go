@@ -118,7 +118,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"NextProposalIDIsOnePastTheHighestNumber", cfNextProposalIDIsOnePastTheHighestNumber},
 		{"NextProposalIDSeesItsOwnTransactionAndOnlyItsSuite", cfNextProposalIDSeesItsOwnTransactionAndOnlyItsSuite},
 	}
-	for _, tc := range slices.Concat(cases, mergeCases(), bootstrapCases()) {
+	for _, tc := range slices.Concat(cases, mergeCases(), bootstrapCases(), bootstrapHeadCases()) {
 		t.Run(tc.name, func(t *testing.T) {
 			defer cfGuard(t)
 			owner := cfMust(contract.NewPrincipal("owner", contract.Human))

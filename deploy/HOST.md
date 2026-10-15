@@ -501,7 +501,7 @@ SuiteWard now notices merged pull requests and promotes the approved protected f
    - `outbox.failed` is 0;
    - no `checks`, `bootstrap` or `merges` error in any entry of `github`;
    - `integrity` is `passed` for SuiteWardQ. The integrity job runs at start and then every hour, so it shows within the first run;
-   - `protection.result` is `enforced`.
+   - `protection.result` for SuiteWardQ is `findings` with only `missing-test-check`: the owner removed `CI / test` from the ruleset in 6d.1 step 2, and the enrollment still names it as the test check. That finding is expected during M1.7; any other finding stops the scenario.
 
 ### 6d.3 The owner scenario (host)
 
@@ -513,7 +513,7 @@ Run it on `SuiteWardQ` with the target under test as the only watcher. **Allow a
 4. **Two approved PRs.** From the current `main`, open two PRs that each change `tests/` and approve both. Merge the first: it is promoted. The second PR's check goes back to `in_progress` with a new revision bound to the new canonical. Approve that revision, update the branch if GitHub asks, and merge it: it is promoted.
 5. **Closed without merging.** Close a protected PR without merging it. No comment and no version appear.
 6. **Correction.** Open a PR that reverts the most recent protected merge, so that the protected files equal the previous version exactly (any other difference makes it an ordinary promotion), approve it and merge it. The comment says that it is a correction of the current version, and the new version holds the previous version's files.
-7. **Final `/status`.** `merges` is absent, `integrity` is `passed`, `outbox.failed` is 0 and `protection` is `enforced`.
+7. **Final `/status`.** `merges` is absent, `integrity` is `passed`, `outbox.failed` is 0 and `protection` is `findings` with only `missing-test-check` (6d.2).
 
 Paste back (no secrets), for each step: the PR number, the merge method, the first line of the comment, and the state of the check before the merge. Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.
 

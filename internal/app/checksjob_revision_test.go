@@ -69,7 +69,7 @@ func TestChecksWriteOneRevisionCommentForEveryNewRevisionAndNoneForAnUnchangedHe
 	if payload["previous"] != "P2-R1" {
 		t.Fatalf("payload %v, want the superseded revision P2-R1", payload)
 	}
-	w.want(5, checks.InProgress, "approval-missing", 4)
+	w.want(5, checks.InProgress, "approval-missing", 3) // the pushes of heads 3 and 4 each changed the head
 }
 
 func anyStrings(value any) []string {

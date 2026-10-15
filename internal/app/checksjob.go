@@ -201,6 +201,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		return "", fmt.Errorf("read the latest owner command: %w", err)
 	}
 	sameHead := found && record.HeadSHA == pull.HeadSHA
+	tier, _ := effectiveTier(j.tier, enrollment, true)
 	base := checks.Result{RepositoryID: p.RepositoryID, PullNumber: pull.Number, HeadSHA: pull.HeadSHA, CommandID: latest.CommentID}
 	var result checks.Result
 	final := false // a result the owner's commands cannot change
@@ -221,7 +222,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		result.State, result.Reason, result.Change, result.Revision = checks.Success, reasonUnchanged, record.Change, suite.revision
 	default:
 		var wait bool
-		if result, problem, wait, err = j.assess(ctx, p, suite, pull, base); err != nil {
+		if result, problem, wait, err = j.assess(ctx, p, suite, pull, base, tier); err != nil {
 			return "", err
 		}
 		if wait { // keep the stored check of this head, or say that a new head is pending, so it never stays without a check
@@ -242,7 +243,6 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			result.State, result.Reason = checks.Failure, reasonOwnerCommand
 		}
 	}
-	tier, _ := effectiveTier(j.tier, enrollment, true)
 	// Publishing every run, also an unchanged result, lets the ledger resend a message that ended failed.
 	_, _, err = j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		return newCheckMessage(p.Repo, result, tier, string(suite.canonical), generation)
@@ -253,11 +253,6 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	return problem, nil
 }
 
-// noRevisionNotice writes no comment about a new revision; the message is wired where it is rendered.
-func noRevisionNotice(governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
-	return governance.OutboxMessage{}, false, nil
-}
-
 // isFork reports whether a pull request's head repository is observed and is not repo, compared case-insensitively,
 // as GitHub names repositories. "(deleted)" is one too; "" is not observed (a row from before M1.7), never a fork.
 func isFork(headRepo, repo string) bool {
@@ -266,12 +261,16 @@ func isFork(headRepo, repo string) bool {
 
 // assess reads the head's tree and assesses it against the canonical. wait is true when that cannot be done now (a failed
 // GitHub read, a canonical that moved) and problem says why; any other failure is the error.
-func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result) (result checks.Result, problem string, wait bool, err error) {
+func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, tier string) (result checks.Result, problem string, wait bool, err error) {
 	var head governance.HeadResult
 	tree, err := j.reader.Tree(ctx, p.Repo, pull.HeadSHA)
 	if err == nil {
 		head, err = governance.AssessHead(ctx, j.suites, j.contents, j.content, governance.HeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
-			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}}, Revision: noRevisionNotice})
+			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},
+			Revision: func(n governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+				message, err := newRevisionMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}, n, tier)
+				return message, err == nil, err
+			}})
 	} else {
 		err = githubRead(err)
 	}

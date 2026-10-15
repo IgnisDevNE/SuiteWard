@@ -26,6 +26,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity/integritytest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -784,5 +785,23 @@ func TestChecksRetryAHeadWhoseCanonicalMovedOnANewHead(t *testing.T) {
 	w.want(5, checks.InProgress, "assessment-pending", 1)
 	if got := w.problems.lookup(bootRepo); got != "conflict" {
 		t.Fatalf("problem %q, want conflict", got)
+	}
+}
+
+// The binding of a head assessment is built from the head's own inventory, so AssessHead can neither say that the
+// head failed its integrity check nor that its assessment does not match: such an answer is an impossible state.
+func TestChecksTreatAnImpossibleHeadAssessmentAsAFailedStepNeverAPublishedState(t *testing.T) {
+	reference := contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "default", ProposalID: "P2", RevisionID: "R1"}
+	for _, reason := range []contract.PromotionReason{contract.PromotionReasonIntegrityNotPassed, contract.PromotionReasonAssessmentMismatch} {
+		t.Run(fmt.Sprint(reason), func(t *testing.T) {
+			j := &checksJob{}
+			head := governance.HeadResult{Change: inventory.ProtectedChange, Reference: &reference, Reason: reason, Canonical: "V1", Revision: 3}
+
+			result, err := j.assessed(head, checks.Result{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2})
+
+			if err == nil {
+				t.Fatalf("the head assessment answering %v published %s/%s, want an error", reason, result.State, result.Reason)
+			}
+		})
 	}
 }

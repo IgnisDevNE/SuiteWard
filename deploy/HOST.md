@@ -417,7 +417,7 @@ SuiteWard now publishes the `SuiteWard / Contract` check on the head of every op
 2. Confirm that `SuiteWardQ` `main` still equals V1's origin, `5998e90`, with 13 protected files (`tests/**` plus `.suiteward.yml`).
 3. Close any open test PR (for example #17 from P0), so that each step starts from a fresh PR.
 4. Only one target watches a repository at a time (6b.1 still applies).
-5. **The required check is now real.** The ruleset requires `SuiteWard / Contract` and `CI / test`, so a PR merges only when both pass.
+5. **The required check is now real.** The ruleset requires `SuiteWard / Contract` and `CI / test`. SuiteWardQ has no workflow, so nothing ever reports `CI / test`: every PR stays blocked by it, whatever `SuiteWard / Contract` shows. M1.6b therefore merges nothing; read the merge box instead. Do not add a workflow to make `CI / test` report: `.github/workflows/**` is protected by default, so it would be a protected change against V1.
 
 ### 6c.2 Deploy on the host
 
@@ -440,7 +440,7 @@ SuiteWard now publishes the `SuiteWard / Contract` check on the head of every op
 
 Run it on `SuiteWardQ` with the target under test as the only watcher. A check appears or updates within about 1 to 2 minutes of a push or a command: synchronization takes up to 60 s and the `github_checks` job runs every 30 s. The `/suiteward approve <ref> <code>` command is in the check's details (open "Details" on the check).
 
-1. **No protected change.** Open a PR that changes only a file outside `tests/`. `SuiteWard / Contract` shows `success`, "No protected change". It may be merged once `CI / test` passes. This is the only kind of PR you merge in M1.6b.
+1. **No protected change.** Open a PR that changes only a file outside `tests/`. `SuiteWard / Contract` shows `success`, "No protected change". Read the merge box: it lists `SuiteWard / Contract` as passed and `CI / test` as expected and not reported. Do not merge it; close it when done.
 2. **Protected change.** Open a PR that changes `tests/*.txt`. The check is `in_progress`, with the proposal revision `P<n>-R1` and the copyable `/suiteward approve P<n>-R1 <code>` in the summary.
 3. **Approve R1.** Comment the command with the current code of this target's authenticator entry. The acknowledgment arrives, then the check turns `success`, "Ready for integration".
 4. **Implementation push.** Push a change outside `tests/` to that PR: the new head is still `success`. Consent is kept.
@@ -448,7 +448,7 @@ Run it on `SuiteWardQ` with the target under test as the only watcher. A check a
 6. **Approve R2.** Comment `/suiteward approve P<n>-R2 <new code>`: the check turns `success`.
 7. **Revoke R2.** Comment `/suiteward revoke P<n>-R2 <new code>`: the check goes from `success` back to `in_progress`. This is the revoke that blocks again.
 8. **Rejected command.** Comment `/suiteward approve P<n>-R2 123456` (an invalid code): the check turns `failure`, "Owner command rejected". The next valid command or push clears it.
-9. **Merge is blocked.** Show that the merge button is blocked while the check is not `success`. **Do not merge the protected-change PR.** Without merge detection (M1.7) the canonical would never catch up, and every later PR would stay a protected change. Close it unmerged.
+9. **The merge box.** At each step, the merge box lists `SuiteWard / Contract` with the state above, next to `CI / test` expected and not reported. **Do not merge the protected-change PR.** Without merge detection (M1.7) the canonical would never catch up, and every later PR would stay a protected change. Close it unmerged.
 
 Each code is used once and posted within about 30 s of changing: wait for the next code before every command.
 

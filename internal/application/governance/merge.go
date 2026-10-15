@@ -343,6 +343,9 @@ func originatesFromBranch(ctx context.Context, tx Tx, first contract.HistoricalC
 // before the canonical. None of them names a version, because there is none. The target is checked first, as with a
 // canonical, so a merge into another branch is never the bootstrap.
 func decideFirstMerge(ctx context.Context, tx Tx, request MergeRequest, refusal MergeReason, inv inventory.Inventory, integrated contract.ProtectedContract, state SuiteState) (MergeOutcome, error) {
+	if refusal == MergeReasonIntegrityFailed { // it names a stored canonical, and there is none
+		return MergeOutcome{}, fmt.Errorf("%w: %q is a refusal only while a canonical exists", ErrInvalidRequest, refusal)
+	}
 	kept := MergeOutcome{Source: request.Source, Kind: MergeBeforeCanonical}
 	if request.Target != state.Target {
 		return kept, nil

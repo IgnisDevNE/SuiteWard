@@ -78,6 +78,7 @@ type suiteData struct {
 	target    contract.IntegrationTargetID
 	history   map[contract.SuiteVersionID]contract.HistoricalCanonical
 	proposals map[contract.ProposalID]*proposalData
+	merges    map[contract.ApprovalCarrierID]governance.MergeOutcome // one outcome per carrier, never replaced
 }
 
 type proposalData struct {
@@ -92,6 +93,7 @@ func (d data) clone() data {
 	for key, s := range d.suites {
 		next := *s
 		next.history = maps.Clone(s.history)
+		next.merges = maps.Clone(s.merges)
 		next.proposals = map[contract.ProposalID]*proposalData{}
 		for id, p := range s.proposals {
 			copied := *p
@@ -521,10 +523,50 @@ func (t *tx) injected() error {
 	return nil
 }
 
-func (t *tx) MergeOutcome(context.Context, contract.ApprovalCarrierID) (governance.MergeOutcome, bool, error) {
-	return governance.MergeOutcome{}, false, errors.New("governancetest: merge outcome is not implemented")
+func (t *tx) MergeOutcome(ctx context.Context, carrier contract.ApprovalCarrierID) (governance.MergeOutcome, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return governance.MergeOutcome{}, false, err
+	}
+	outcome, found := t.s.merges[carrier]
+	if found && outcome.Reference != nil {
+		reference := *outcome.Reference // the caller must not reach the stored value
+		outcome.Reference = &reference
+	}
+	return outcome, found, nil
 }
 
-func (t *tx) RecordMergeOutcome(context.Context, governance.MergeWrite) error {
-	return errors.New("governancetest: merge outcome is not implemented")
+// RecordMergeOutcome checks what the foreign keys of the schema check and, like it, leaves the Suite revision alone.
+func (t *tx) RecordMergeOutcome(ctx context.Context, w governance.MergeWrite) error {
+	if err := t.live(ctx); err != nil {
+		return err
+	}
+	if err := w.Validate(); err != nil {
+		return err
+	}
+	outcome := w.Outcome
+	if _, known := t.s.history[outcome.Version]; !known {
+		return fmt.Errorf("%w: version %q", governance.ErrNotFound, outcome.Version)
+	}
+	if _, known := t.s.history[outcome.Corrects]; outcome.Corrects != "" && !known {
+		return fmt.Errorf("%w: corrected version %q", governance.ErrNotFound, outcome.Corrects)
+	}
+	if reference := outcome.Reference; reference != nil {
+		stored := t.s.proposals[reference.ProposalID]
+		if reference.ProjectID != t.key.project || reference.SuiteID != t.key.suite || stored == nil {
+			return fmt.Errorf("%w: the proposal of %v is not in the locked suite", governance.ErrInvalidRequest, *reference)
+		}
+		if _, known := revisionBinding(stored.proposal, reference.RevisionID); !known {
+			return fmt.Errorf("%w: the revision of %v is unknown", governance.ErrInvalidRequest, *reference)
+		}
+		copied := *reference
+		outcome.Reference = &copied
+	}
+	if _, taken := t.s.merges[w.Carrier]; taken {
+		return fmt.Errorf("%w: the merge of %q already has an outcome", governance.ErrConflict, w.Carrier)
+	}
+	if t.s.merges == nil {
+		t.s.merges = map[contract.ApprovalCarrierID]governance.MergeOutcome{}
+	}
+	t.s.merges[w.Carrier] = outcome
+	return t.injected()
 }

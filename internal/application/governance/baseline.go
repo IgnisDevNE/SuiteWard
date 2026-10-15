@@ -65,7 +65,7 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 		if _, present := state.Canonical.Suite().CurrentVersionID(); present {
 			return fmt.Errorf("%w: a baseline is only proposed before the first canonical", ErrInvalidRequest)
 		}
-		revised, err = reviseBaselineWithin(ctx, tx, state, request.Reference, request.Carrier, request.Origin, contract.OriginBranch, proposed)
+		revised, err = reviseBaselineWithin(ctx, tx, state, request.Reference, request.Carrier, request.Origin, request.OriginKind, proposed)
 		if err != nil || !revised.Committed {
 			return err
 		}

@@ -354,7 +354,16 @@ func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalC
 	if _, err := t.lock(ctx); err != nil {
 		return "", false, err
 	}
-	return "", false, nil
+	ids, err := t.q.ListBaselineProposalsOfCarrier(ctx, dbgen.ListBaselineProposalsOfCarrierParams{ProjectID: string(t.project), SuiteID: string(t.suite), CarrierID: string(carrier)})
+	switch {
+	case err != nil:
+		return "", false, fmt.Errorf("list bootstrap proposals of %q: %w", carrier, err)
+	case len(ids) > 1:
+		return "", false, invalidState("proposals of "+string(carrier), fmt.Errorf("%d bootstrap proposals share one carrier", len(ids)))
+	case len(ids) == 0:
+		return "", false, nil
+	}
+	return contract.ProposalID(ids[0]), true, nil
 }
 
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {

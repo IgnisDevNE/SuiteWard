@@ -331,7 +331,26 @@ func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalC
 	if err := t.live(ctx); err != nil {
 		return "", false, err
 	}
-	return "", false, nil
+	var found []contract.ProposalID
+	for id, p := range t.s.proposals {
+		if p.proposal.Current().Carrier() != carrier {
+			continue
+		}
+		isBaseline := !slices.ContainsFunc(p.proposal.Revisions(), func(r contract.ProposalRevision) bool {
+			_, promoted := t.promotionFor(r.Binding().Reference())
+			return promoted || r.OriginKind() != contract.OriginPull || r.Binding().ExpectedCanonical() != ""
+		})
+		if isBaseline {
+			found = append(found, id)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return found[0], true, nil
+	}
+	return "", false, fmt.Errorf("%w: proposals of %q: %d bootstrap proposals share one carrier", governance.ErrInvalidState, carrier, len(found))
 }
 
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {

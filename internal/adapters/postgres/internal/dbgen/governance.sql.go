@@ -661,6 +661,43 @@ func (q *Queries) InsertSuiteVersion(ctx context.Context, arg InsertSuiteVersion
 	return err
 }
 
+const listBaselineProposalsOfCarrier = `-- name: ListBaselineProposalsOfCarrier :many
+SELECT p.proposal_id FROM proposals p
+WHERE p.project_id = $1 AND p.suite_id = $2 AND p.carrier_id = $3
+  AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
+                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id
+                    AND (r.origin_kind <> 'pull' OR r.expected_version_id IS NOT NULL))
+  AND NOT EXISTS (SELECT 1 FROM promotions m
+                  WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
+ORDER BY p.proposal_id
+`
+
+type ListBaselineProposalsOfCarrierParams struct {
+	ProjectID string
+	SuiteID   string
+	CarrierID string
+}
+
+func (q *Queries) ListBaselineProposalsOfCarrier(ctx context.Context, arg ListBaselineProposalsOfCarrierParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBaselineProposalsOfCarrier, arg.ProjectID, arg.SuiteID, arg.CarrierID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var proposal_id string
+		if err := rows.Scan(&proposal_id); err != nil {
+			return nil, err
+		}
+		items = append(items, proposal_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChangeProposalsOfCarrier = `-- name: ListChangeProposalsOfCarrier :many
 SELECT p.proposal_id FROM proposals p
 WHERE p.project_id = $1 AND p.suite_id = $2 AND p.carrier_id = $3

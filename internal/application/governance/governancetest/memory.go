@@ -520,3 +520,11 @@ func (t *tx) injected() error {
 	}
 	return nil
 }
+
+func (t *tx) MergeOutcome(context.Context, contract.ApprovalCarrierID) (governance.MergeOutcome, bool, error) {
+	return governance.MergeOutcome{}, false, errors.New("governancetest: merge outcome is not implemented")
+}
+
+func (t *tx) RecordMergeOutcome(context.Context, governance.MergeWrite) error {
+	return errors.New("governancetest: merge outcome is not implemented")
+}

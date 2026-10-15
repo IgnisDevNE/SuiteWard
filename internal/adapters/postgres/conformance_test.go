@@ -119,3 +119,7 @@ func (t *failingTx) RecordPromotion(ctx context.Context, write governance.Promot
 func (t *failingTx) RecordAssessment(ctx context.Context, write governance.AssessmentWrite) error {
 	return t.afterWrite(t.Tx.RecordAssessment(ctx, write))
 }
+
+func (t *failingTx) RecordMergeOutcome(ctx context.Context, write governance.MergeWrite) error {
+	return t.afterWrite(t.Tx.RecordMergeOutcome(ctx, write))
+}

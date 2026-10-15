@@ -613,3 +613,11 @@ func assessmentRow(reference contract.ProposalReference, source contract.SourceR
 	row.Outcome = pgtype.Text{String: outcome, Valid: true}
 	return row, nil
 }
+
+func (t *tx) MergeOutcome(context.Context, contract.ApprovalCarrierID) (governance.MergeOutcome, bool, error) {
+	return governance.MergeOutcome{}, false, errors.New("postgres: merge outcome is not implemented")
+}
+
+func (t *tx) RecordMergeOutcome(context.Context, governance.MergeWrite) error {
+	return errors.New("postgres: merge outcome is not implemented")
+}

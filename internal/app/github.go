@@ -13,8 +13,11 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
 const (
@@ -35,6 +38,7 @@ type repositoryStatus struct {
 	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
 	Bootstrap   string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
 	Checks      string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
+	Integrity   string            `json:"integrity,omitempty"`  // verdict of the current canonical (passed, failed, unavailable); absent before the first verification
 }
 
 // repositoryReader is the part of the observation store /status reads.
@@ -44,16 +48,70 @@ type repositoryReader interface {
 
 // githubStatus reports what synchronization last saw of the configured repositories.
 type githubStatus struct {
-	repos    []string
-	store    repositoryReader
-	ids      *repositoryIDs // learned by the protection check
-	problems *bootstrapProblems
-	checks   *bootstrapProblems // the check job's problems, the same in-memory map type
+	repos     []string
+	store     repositoryReader
+	ids       *repositoryIDs // learned by the protection check
+	problems  *bootstrapProblems
+	checks    *bootstrapProblems // the check job's problems, the same in-memory map type
+	integrity *integrityStatus   // nil when the verdicts are not read (a status without an integrity store)
+}
+
+// integrityStatus reads the integrity verdict of each enrolled repository's current canonical.
+type integrityStatus struct {
+	owners ownerReader
+	suites governance.UnitOfWork
+	store  integrity.Store
+}
+
+// verdicts returns the verdict of the current canonical of each enrolled repository, by repository name. A repository
+// with no Suite, no canonical, no verification yet or a verdict of another version has none.
+func (s *integrityStatus) verdicts(ctx context.Context) (map[string]string, error) {
+	verdicts := map[string]string{}
+	enrollment, enrolled, err := s.owners.Current(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read the enrollment: %w", err)
+	}
+	if !enrolled {
+		return verdicts, nil
+	}
+	for _, project := range enrollment.Projects {
+		id := owner.ProjectID(project.RepositoryID)
+		var canonical contract.SuiteVersionID
+		err := s.suites.Do(ctx, id, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+			state, err := tx.Suite(ctx)
+			if err != nil {
+				return fmt.Errorf("load suite: %w", err)
+			}
+			canonical, _ = state.Canonical.Suite().CurrentVersionID()
+			return nil
+		})
+		if errors.Is(err, governance.ErrNotFound) { // no Suite yet
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read the suite of %s: %w", project.Repo, err)
+		}
+		record, found, err := s.store.Latest(ctx, id, defaultSuite)
+		if err != nil {
+			return nil, fmt.Errorf("read the integrity verdict of %s: %w", project.Repo, err)
+		}
+		if canonical != "" && found && record.Version == canonical {
+			verdicts[project.Repo] = string(record.Verdict)
+		}
+	}
+	return verdicts, nil
 }
 
 // report returns one entry per configured repository, in configuration order;
 // a repository that has no cycle yet has only its name.
 func (g *githubStatus) report(ctx context.Context, protections map[string]owner.ProtectionResult) ([]repositoryStatus, error) {
+	var verdicts map[string]string
+	if g.integrity != nil { // absent where no integrity store is composed
+		var err error
+		if verdicts, err = g.integrity.verdicts(ctx); err != nil {
+			return nil, err
+		}
+	}
 	entries := make([]repositoryStatus, 0, len(g.repos))
 	for _, repo := range g.repos {
 		state, _, err := g.store.Repository(ctx, repo)
@@ -67,6 +125,7 @@ func (g *githubStatus) report(ctx context.Context, protections map[string]owner.
 		entry.LastError = lastErrorText(state)
 		entry.Bootstrap = g.problems.lookup(repo)
 		entry.Checks = g.checks.lookup(repo)
+		entry.Integrity = verdicts[repo]
 		if result, verified := protections[repo]; verified {
 			entry.Protection = &protectionStatus{
 				Result: result.Result, Findings: result.Findings, Caveats: result.Caveats, CheckedAt: result.CheckedAt.UTC().Format(time.RFC3339),
@@ -270,7 +329,7 @@ func (r githubReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.
 	}
 	observed := make([]githubsync.ObservedPull, len(pulls))
 	for i, p := range pulls {
-		observed[i] = githubsync.ObservedPull{Number: p.Number, HeadSHA: p.HeadSHA, HeadRef: p.HeadRef, BaseRef: p.BaseRef, BaseSHA: p.BaseSHA, UpdatedAt: p.UpdatedAt}
+		observed[i] = githubsync.ObservedPull{Number: p.Number, HeadSHA: p.HeadSHA, HeadRef: p.HeadRef, BaseRef: p.BaseRef, BaseSHA: p.BaseSHA, UpdatedAt: p.UpdatedAt, HeadRepo: p.HeadRepo}
 	}
 	return observed, nil
 }

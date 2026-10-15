@@ -24,6 +24,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands/commandstest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity/integritytest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -84,6 +85,8 @@ type cjJobWorld struct {
 	reader   *cjCountingReader
 	ledger   *cjRecordingLedger
 	memory   *checkstest.Memory
+	verdicts *integritytest.Memory
+	headRepo map[int]string // the observed head repository of a pull request; absent means not observed
 	cmds     *commandstest.Memory
 	check    *checksJob
 	problems *bootstrapProblems
@@ -104,11 +107,11 @@ func newCJWorld(t *testing.T, canonical bool, options ...func(*bootOptions)) *cj
 	default:
 		b = newBootWorld(t, options...)
 	}
-	w := &cjJobWorld{bootWorld: b, memory: checkstest.NewMemory(), cmds: commandstest.NewMemory(b.owners, b.pulls), problems: &bootstrapProblems{},
+	w := &cjJobWorld{bootWorld: b, memory: checkstest.NewMemory(), verdicts: integritytest.NewMemory(), cmds: commandstest.NewMemory(b.owners, b.pulls), problems: &bootstrapProblems{},
 		clock: bootTime.Add(2 * time.Hour), heads: map[int]string{4: bootHead}}
 	w.reader = &cjCountingReader{fakeBootReader: b.reader, reads: map[string]int{}}
 	w.ledger = &cjRecordingLedger{Store: w.memory}
-	w.check = &checksJob{repos: b.job.repos, reader: w.reader, owners: b.owners, suites: b.suites, contents: nopContents{}, content: b.content, ledger: w.ledger, commands: w.cmds,
+	w.check = &checksJob{repos: b.job.repos, reader: w.reader, owners: b.owners, suites: b.suites, contents: nopContents{}, content: b.content, ledger: w.ledger, integrity: w.verdicts, commands: w.cmds,
 		pulls: b.pulls, tier: b.job.tier, problems: w.problems, logger: slog.New(slog.NewJSONHandler(b.logs, nil)), now: func() time.Time { return w.clock }}
 	return w
 }
@@ -132,7 +135,7 @@ func (w *cjJobWorld) sync(heads map[int]string) {
 	w.cycles++
 	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), Comments: map[int][]githubsync.ObservedComment{}}
 	for number, head := range heads {
-		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime})
+		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
 		cycle.Comments[number] = nil
 	}
 	if err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {

@@ -60,6 +60,9 @@ var checkReasons = map[string]checkReason{
 	"source-unavailable": {CheckInProgress, "Source unavailable",
 		"GitHub truncated the file tree of this head, so SuiteWard cannot read the protected files in full.",
 		"Next: SuiteWard cannot check this head until GitHub returns the full tree; reducing the number of files in the repository may help."},
+	"fork-unsupported": {CheckInProgress, "Pull requests from forks are not supported",
+		"Pull requests from forks are not supported yet, so SuiteWard does not assess this head and never proposes a contract change for it.",
+		"Next: open the pull request from a branch of this repository."},
 	"invalid-source": {CheckFailure, "Invalid contract source",
 		"The contract declaration or the protected source of this head is invalid, for example an invalid `.suiteward.yml` " +
 			"or a symlink or submodule inside the protected scope. The canonical contract stays in force.",

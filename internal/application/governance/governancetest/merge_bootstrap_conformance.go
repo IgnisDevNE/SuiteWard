@@ -266,7 +266,7 @@ func mbChangeAfterAMergedV1(e *cfEnv) {
 
 	result := e.merge(request)
 
-	e.requireOutcome(change, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergePromoted, Source: "merge-sha-change", Version: "V2", Reference: result.Reference})
+	e.requireOutcome(change, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergePromoted, Source: "merge-sha-change", Version: "V2", Reference: bsRefPtr("P2", "R1")})
 	if got := e.currentVersion(); got != "V2" {
 		e.t.Fatalf("current version = %q, want V2", got)
 	}

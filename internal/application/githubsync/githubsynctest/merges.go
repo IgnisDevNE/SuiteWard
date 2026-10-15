@@ -88,6 +88,8 @@ var gsMergeCases = []struct {
 	{"MarkProcessedRejectsAnUnknownPull", gsMarkProcessedUnknown},
 	{"HeadRepositoryRoundTripsThroughACycle", gsHeadRepository},
 	{"InvalidMergeInputIsRejectedWithoutEffects", gsInvalidMergeInput},
+	{"EmptyFirstClosedListingStillSetsTheWatermark", gsClosedEmptyFirst},
+	{"BlankHeadRepositoryIsRejectedWithoutEffects", gsBlankHeadRepository},
 }
 
 func gsResolutionLifecycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
@@ -303,4 +305,44 @@ func gsInvalidMergeInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	r := gsResolution(1, 2, 40, 3)
 	r.MergeCommitSHA = ""
 	e.resolve(r)
+}
+
+// An empty first listing is still the first call: the next one inserts a merged item whatever its updated_at.
+func gsClosedEmptyFirst(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
+	before := e.view()
+	e.closed(2)
+	e.requireView(e.view(), before)
+
+	e.closed(3, gsClosed(5, 1, 1))
+	e.requireNumbers(e.awaiting(), 5)
+	if got := e.pull(5); got.NotOpenSince != gsTime(3) || got.FirstSeen != gsTime(3) {
+		e.t.Fatalf("pull 5 %+v, want it inserted absent since %v", got, gsTime(3))
+	}
+}
+
+// A head repository is empty (not observed) or a name; a blank one is no observation the stores could tell apart.
+func gsBlankHeadRepository(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
+	e.record(gsCycle(2, nil, nil))
+	before := e.view()
+	ctx := context.Background()
+	for _, blank := range []string{" ", "\t", " \n "} {
+		blankPull := gsPull(2, "b")
+		blankPull.HeadRepo = blank
+		if err := e.store.RecordCycle(ctx, gsCycle(3, gsPulls(blankPull), nil)); !errors.Is(err, githubsync.ErrInvalidObservation) {
+			e.t.Fatalf("cycle with head repository %q = %v, want ErrInvalidObservation", blank, err)
+		}
+		r := gsResolution(1, 2, 40, 3)
+		r.HeadRepo = blank
+		if err := e.store.RecordResolution(ctx, gsRepo, r); !errors.Is(err, githubsync.ErrInvalidObservation) {
+			e.t.Fatalf("resolution with head repository %q = %v, want ErrInvalidObservation", blank, err)
+		}
+		closed := gsClosed(5, 5, 4)
+		closed.HeadRepo = blank
+		if err := e.store.RecordClosed(ctx, gsRepo, []githubsync.ClosedPull{closed}, gsTime(3)); !errors.Is(err, githubsync.ErrInvalidObservation) {
+			e.t.Fatalf("closed listing with head repository %q = %v, want ErrInvalidObservation", blank, err)
+		}
+		e.requireView(e.view(), before)
+	}
 }

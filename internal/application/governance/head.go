@@ -69,6 +69,8 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 		return HeadResult{}, fmt.Errorf("%w: no content writer", ErrInvalidRequest)
 	case request.Tree == nil:
 		return HeadResult{}, fmt.Errorf("%w: no tree", ErrInvalidRequest)
+	case request.Revision == nil:
+		return HeadResult{}, fmt.Errorf("%w: no revision comment function", ErrInvalidRequest)
 	case strings.TrimSpace(string(request.Head)) == "" || strings.TrimSpace(string(request.Carrier)) == "":
 		return HeadResult{}, fmt.Errorf("%w: a head assessment names a head and a carrier", ErrInvalidRequest)
 	}
@@ -115,11 +117,24 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 		if current, _ := state.Canonical.Suite().CurrentVersionID(); current != version {
 			return fmt.Errorf("%w: from %q to %q", ErrCanonicalMoved, version, current)
 		}
-		revised, _, err := keepProposalCurrent(ctx, tx, state, request, proposed)
+		revised, previous, err := keepProposalCurrent(ctx, tx, state, request, proposed)
 		if err != nil {
 			return err
 		}
 		reference := revised.Current
+		if revised.Committed {
+			notice := RevisionNotice{Reference: reference, Previous: previous, Canonical: version, Added: classification.Added, Modified: classification.Modified,
+				Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction}
+			message, send, err := request.Revision(notice)
+			if err != nil {
+				return fmt.Errorf("build the revision comment: %w", err)
+			}
+			if send {
+				if err := writeOutbox(ctx, tx, []OutboxMessage{message}); err != nil {
+					return err
+				}
+			}
+		}
 		proposal, consent, err := tx.Proposal(ctx, reference.ProposalID)
 		if err != nil {
 			return fmt.Errorf("load proposal: %w", err)

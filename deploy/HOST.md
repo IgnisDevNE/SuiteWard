@@ -1,4 +1,4 @@
-# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5, M1.6a and M1.6b
+# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5, M1.6a, M1.6b and M1.7
 
 Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, Podman 4.9.3, rootless for the unprivileged `suiteward` user. No inbound ports and no SSH daemon: you administer it through SSM Session Manager from your own workstation. This runs the product image and its PostgreSQL as two rootless containers from the Quadlet units in `deploy/quadlet/`. It needs three secrets, all Podman secrets mounted as files: a generated database password (section 3, you never type it), the GitHub App's private key and a generated MCP token (section 4a, M1.4). The three non-secret GitHub settings live in a host file you write (section 4a).
 
@@ -469,6 +469,80 @@ The same scenario, one target at a time, as in 6b.5: stop the host's watching, s
 ### 6c.6 Never
 
 No code, token, setup output or secret in tickets, logs or messages. The warning of section 6a stays in force.
+
+## 6d. Promotion on merge (M1.7)
+
+SuiteWard now notices merged pull requests and promotes the approved protected files to the next canonical version ([D-INTEGRATION](../docs/plan/decisions.md)); it also verifies the canonical artifacts every hour. You verify it on `IgnisDevNE/SuiteWardQ` with the owner scenario below, host first, then the co-located stack (6d.4). M1.7 adds no quadlet change, no secret and no setting. The `/status` fields and the jobs are in the [runtime contract](../docs/contracts/runtime.md#merges-and-integrity-jobs-m17).
+
+### 6d.1 Before you start (owner)
+
+1. Add `phase/M1.7` to the deployment branches of the `remote-poc` environment (GitHub, repository Settings, Environments). Without it the `promote` job of the `Deploy` run is refused.
+2. Remove `CI / test` from SuiteWardQ ruleset 24829664, so that only `SuiteWard / Contract` is required. Keep the strict "up to date" rule. SuiteWardQ has no workflow, so `CI / test` never reports and would block every merge.
+3. Confirm that merge commits, squash and rebase are all enabled in SuiteWardQ's settings.
+4. Close every open test PR.
+5. Only one target watches a repository at a time (6b.1).
+6. **The two canonicals diverge.** Each target keeps its own canonical. The host runs first, and its merges move SuiteWardQ `main` ahead of the co-located stack's V1. The co-located stack is therefore purged and set up again after the host scenario (6d.4).
+
+### 6d.2 Deploy on the host
+
+1. As in 6c.2: push to `phase/M1.7`, approve the `promote` job of the `Deploy` run of the phase head commit (section 0), then, as `suiteward` (section 1), pull, restart and run the smoke test with the version:
+
+   ```
+   podman pull ghcr.io/ignisdevne/suiteward:deploy
+   systemctl --user restart suiteward.service
+   SMOKE_TIER=isolated SMOKE_VERSION=sha-<commit> sh ~/smoke.sh
+   ```
+
+2. Check `/status` (`curl -s http://127.0.0.1:8081/status`). All of these must hold, or stop and report without starting the scenario:
+   - `schemaVersion` is 15;
+   - no `lastError` in `github`;
+   - `outbox.failed` is 0;
+   - no `checks`, `bootstrap` or `merges` error in any entry of `github`;
+   - `integrity` is `passed` for SuiteWardQ. The integrity job runs at start and then every hour, so it shows within the first run;
+   - `protection.result` is `enforced`.
+
+### 6d.3 The owner scenario (host)
+
+Run it on `SuiteWardQ` with the target under test as the only watcher. **Allow about 1 to 2 minutes per step**: synchronization takes up to 60 s, the merges job runs every 30 s and the checks job every 30 s. The `/suiteward approve <ref> <code>` command is in the check's details (open "Details" on the check). Each code is used once: wait for the next code before every command.
+
+1. **Implementation-only merge.** Open a PR that changes only a file outside `tests/`. `SuiteWard / Contract` shows `success`. Merge it, with any method. No comment and no new version appear, and `/status` stays clean.
+2. **Merge commit.** Open a PR that changes `tests/`. Approve its revision (`/suiteward approve P<n>-R1 <code>`), wait for `success`, then merge with "Create a merge commit". A comment names the new version (`V2` on the host) and the merge commit, and says that SuiteWard checked the approval and the integrity of the protected files and did not run the tests.
+3. **Squash, then rebase.** The same as step 2 with "Squash and merge", then with "Rebase and merge" (V3, then V4). Before each merge, update the branch if GitHub asks: the strict rule requires it. An update changes the head, so wait for `success` again; consent is kept when the update changes only files outside `tests/`.
+4. **Two approved PRs.** From the current `main`, open two PRs that each change `tests/` and approve both. Merge the first: it is promoted. The second PR's check goes back to `in_progress` with a new revision bound to the new canonical. Approve that revision, update the branch if GitHub asks, and merge it: it is promoted.
+5. **Closed without merging.** Close a protected PR without merging it. No comment and no version appear.
+6. **Correction.** Open a PR that restores the protected files of an earlier version (for example a revert of step 2's change), approve it and merge it. The comment says that it is a correction of the current version.
+7. **Final `/status`.** `merges` is absent, `integrity` is `passed`, `outbox.failed` is 0 and `protection` is `enforced`.
+
+Paste back (no secrets), for each step: the PR number, the merge method, the first line of the comment, and the state of the check before the merge. Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.
+
+### 6d.4 Co-located stack
+
+Only after the host scenario, because the two canonicals diverge (6d.1 step 6).
+
+1. Stop the host's watching ("Without GitHub" in 6b.1) and check that `systemctl --user is-active suiteward.service` prints `inactive`.
+2. Run `./deploy/local.ps1 -Down -Purge`, then run `setup` again with a new authenticator entry, as in [local development](../docs/local-development.md#verifying-m17-on-the-co-located-stack). Never reuse the host's secret.
+3. Start the stack with GitHub. The bootstrap proposes V1 from the `main` the host left, on the lowest-numbered open PR (6b.4 steps 1 to 3). Approve it.
+4. Run 6d.3 steps 2 and 5 with the co-located entry's codes. The new version is `V2`.
+5. **Integrity tamper, only with the owner's go-ahead at the time.** Change one byte of a canonical artifact file inside the stack's artifact volume and restart the service, so that the integrity job runs at start. Every open PR's check turns `failure` with the integrity title, and `/status` `integrity` is `failed`. Then purge again, or restore the byte and restart: `integrity` returns to `passed`.
+6. Put the stack back without GitHub (`./deploy/local.ps1`) and restore the host ("Without GitHub" in 6b.1), only after steps 4 and 5. Check the host again: `/status` shows no `lastError` and `outbox.failed` 0 after a few minutes.
+
+### 6d.5 Troubleshooting
+
+- **`merges` in `/status`.** A fixed code for the last problem of the merges job for that repository, cleared by the next run that finds nothing wrong:
+  - `read-failed`: GitHub could not be read. The job retries every 30 s; check `lastSuccess` and `waitUntil` of the entry.
+  - `waiting`: a merged PR has no merge commit yet, or its tree is not readable yet. It is retried until the 30-minute bound below, and no later merge is decided before it.
+  - `assessment-conflict`: the canonical changed while the merge was being decided. The next run decides it again.
+  - `failed`: a store error. Read the service journal (`journalctl --user -u suiteward.service -n 100 --no-pager`; lines carry no GitHub text or secret) and report it.
+- **A blocked merge comment.** SuiteWard did not promote: the merged files do not match the approved revision (for example a rebase onto a moved base that brought in another change), or the merge could not be verified. The comment says that the canonical stays at the named version and gives the reason in plain words. Recover with a new PR that restores the protected files of that version, or one that carries the integrated files for a new exact approval. There is no reset command, and a command posted after the merge is never read.
+- **`fork-unsupported`.** A PR from a fork, or from a deleted fork, gets no proposal: its check stays `in_progress` with this reason, and if it is merged it is not promoted. Fork PRs are not supported in the MVP; open the PR from a branch of the repository itself.
+- **`integrity` `failed`.** A canonical artifact no longer matches its recorded digest. Every open PR's check shows `failure` with the integrity title and merges are refused (`integrity-failed`) until the verdict returns to `passed`. Restore the file from a trusted copy, or purge and set up again; do not edit the database. The job runs hourly and at start, so a restart re-verifies at once. `unavailable` changes no check.
+- **The 30-minute bound.** A merged PR whose merge commit is absent or unreadable is retried until 30 minutes after it was closed. After that SuiteWard records it as unreadable: the PR gets a blocked comment and no version, and later merges are decided after it. While waiting, `merges` shows `waiting`.
+- **No comment after a protected merge:** wait the 1 to 2 minutes of 6d.3, then read `github[].merges` in `/status`, the outbox (`outbox.failed`) and the synchronization's `lastSuccess`.
+- **Conflicting checks, or two acknowledgments for one command:** two instances watch the repository. Stop one (6b.1).
+
+### 6d.6 Never
+
+No code, token, setup output or secret in tickets, logs or messages. The warning of section 6a stays in force. Do not add a workflow to SuiteWardQ and do not bypass its ruleset to merge: the merges you verify are the ones the ruleset allows.
 
 ## 7. Reach `/status`
 

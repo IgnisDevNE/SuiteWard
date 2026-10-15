@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,12 +46,30 @@ var (
 	hexSHA   = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
-// Pull is one open pull request.
+// deletedHeadRepo is HeadRepo when GitHub answers head.repo: null (a deleted
+// fork); a full_name always holds a "/", so it cannot collide.
+const deletedHeadRepo = "(deleted)"
+
+// Pull is one pull request. HeadRepo is the full_name of the head repository,
+// or "(deleted)": a PR is a fork PR when it differs from the repository read
+// (case-insensitively).
 type Pull struct {
 	Number           int
 	HeadSHA, HeadRef string
+	HeadRepo         string
 	BaseRef, BaseSHA string
 	UpdatedAt        time.Time
+}
+
+// PullDetail is a Pull with the facts that tell a merged PR from a closed one.
+// MergedAt and MergeCommitSHA are empty unless Merged; a merged PR's
+// MergeCommitSHA may still be empty right after the merge.
+type PullDetail struct {
+	Pull
+	State          string // "open" or "closed"
+	Merged         bool
+	MergedAt       time.Time
+	MergeCommitSHA string
 }
 
 // Comment is one conversation comment of a pull request.
@@ -88,8 +107,11 @@ func checkRepo(repo string) error {
 }
 
 type gitRef struct {
-	Ref string `json:"ref"`
-	SHA string `json:"sha"`
+	Ref  string `json:"ref"`
+	SHA  string `json:"sha"`
+	Repo *struct {
+		FullName string `json:"full_name"`
+	} `json:"repo"` // null when the repository was deleted
 }
 
 type pullJSON struct {
@@ -97,6 +119,132 @@ type pullJSON struct {
 	Head      gitRef    `json:"head"`
 	Base      gitRef    `json:"base"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// pull validates p as a pull request of repo.
+func (p pullJSON) pull(repo string) (Pull, error) {
+	switch {
+	case p.Number <= 0:
+		return Pull{}, fmt.Errorf("%w: pull request of %s without a number", ErrInvalidResponse, repo)
+	case !hexSHA.MatchString(p.Head.SHA) || !hexSHA.MatchString(p.Base.SHA):
+		return Pull{}, fmt.Errorf("%w: pull request %d of %s lacks a head or base commit SHA", ErrInvalidResponse, p.Number, repo)
+	case p.Head.Ref == "" || p.Base.Ref == "":
+		return Pull{}, fmt.Errorf("%w: pull request %d of %s lacks a head or base ref", ErrInvalidResponse, p.Number, repo)
+	case p.UpdatedAt.IsZero():
+		return Pull{}, fmt.Errorf("%w: pull request %d of %s lacks updated_at", ErrInvalidResponse, p.Number, repo)
+	}
+	headRepo := deletedHeadRepo
+	if p.Head.Repo != nil {
+		headRepo = p.Head.Repo.FullName
+		if !strings.Contains(headRepo, "/") {
+			return Pull{}, fmt.Errorf("%w: pull request %d of %s has a head repository that is not owner/name", ErrInvalidResponse, p.Number, repo)
+		}
+	}
+	return Pull{
+		Number: p.Number, HeadSHA: p.Head.SHA, HeadRef: p.Head.Ref, HeadRepo: headRepo,
+		BaseRef: p.Base.Ref, BaseSHA: p.Base.SHA, UpdatedAt: p.UpdatedAt,
+	}, nil
+}
+
+type pullDetailJSON struct {
+	pullJSON
+	State          string     `json:"state"`
+	Merged         *bool      `json:"merged"` // absent from listings
+	MergedAt       *time.Time `json:"merged_at"`
+	MergeCommitSHA *string    `json:"merge_commit_sha"`
+}
+
+// detail validates p as a pull request of repo. merged is GitHub's merge
+// signal, which must agree with merged_at; merge_commit_sha alone never means
+// merged, since GitHub sets it on open pull requests too.
+func (p pullDetailJSON) detail(repo string, merged bool) (PullDetail, error) {
+	pull, err := p.pull(repo)
+	if err != nil {
+		return PullDetail{}, err
+	}
+	switch {
+	case p.State != "open" && p.State != "closed":
+		return PullDetail{}, fmt.Errorf("%w: pull request %d of %s has an unknown state", ErrInvalidResponse, p.Number, repo)
+	case p.MergedAt != nil && p.MergedAt.IsZero():
+		return PullDetail{}, fmt.Errorf("%w: pull request %d of %s has a zero merged_at", ErrInvalidResponse, p.Number, repo)
+	case merged != (p.MergedAt != nil):
+		return PullDetail{}, fmt.Errorf("%w: pull request %d of %s disagrees between merged and merged_at", ErrInvalidResponse, p.Number, repo)
+	case merged && p.State != "closed":
+		return PullDetail{}, fmt.Errorf("%w: merged pull request %d of %s is not closed", ErrInvalidResponse, p.Number, repo)
+	}
+	detail := PullDetail{Pull: pull, State: p.State, Merged: merged}
+	if !merged {
+		return detail, nil
+	}
+	detail.MergedAt = *p.MergedAt
+	if p.MergeCommitSHA != nil && *p.MergeCommitSHA != "" {
+		if !hexSHA.MatchString(*p.MergeCommitSHA) {
+			return PullDetail{}, fmt.Errorf("%w: merged pull request %d of %s has an invalid merge commit SHA", ErrInvalidResponse, p.Number, repo)
+		}
+		detail.MergeCommitSHA = *p.MergeCommitSHA
+	}
+	return detail, nil
+}
+
+// Pull returns pull request number of repo. It is read without the ETag
+// cache: the answer changes, and a closed pull is read once per resolution.
+func (r *Reader) Pull(ctx context.Context, repo string, number int) (PullDetail, error) {
+	if err := checkRepo(repo); err != nil {
+		return PullDetail{}, err
+	}
+	if number <= 0 {
+		return PullDetail{}, fmt.Errorf("%w: pull request number %d", ErrInvalidArgument, number)
+	}
+	path := "/repos/" + repo + "/pulls/" + strconv.Itoa(number)
+	resp, err := r.client.GetImmutable(ctx, path)
+	if err != nil {
+		return PullDetail{}, fmt.Errorf("pull request %d of %s: %w", number, repo, err)
+	}
+	var raw pullDetailJSON
+	if err := decode(path, resp.Body, &raw); err != nil {
+		return PullDetail{}, err
+	}
+	if raw.Number != number {
+		return PullDetail{}, fmt.Errorf("%w: the answer to %s is another pull request", ErrInvalidResponse, path)
+	}
+	if raw.Merged == nil { // a trust boundary: GitHub always sends merged on one pull
+		return PullDetail{}, fmt.Errorf("%w: the answer to %s lacks merged", ErrInvalidResponse, path)
+	}
+	return raw.detail(repo, *raw.Merged)
+}
+
+// ClosedPulls returns one page, the 30 most recently updated, of the closed
+// pull requests of repo, in GitHub's order. A burst of more than 30 closed
+// between two reads can still miss one. merged is derived from merged_at, as
+// the listing has no merged field.
+func (r *Reader) ClosedPulls(ctx context.Context, repo string) ([]PullDetail, error) {
+	if err := checkRepo(repo); err != nil {
+		return nil, err
+	}
+	path := "/repos/" + repo + "/pulls?state=closed&sort=updated&direction=desc&per_page=30"
+	resp, err := r.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("closed pull requests of %s: %w", repo, err)
+	}
+	var raw []pullDetailJSON
+	if err := decode(path, resp.Body, &raw); err != nil {
+		return nil, err
+	}
+	if raw == nil { // null decodes to nil; an empty page is []
+		return nil, fmt.Errorf("%w: the answer to %s is not a list", ErrInvalidResponse, path)
+	}
+	pulls := make([]PullDetail, 0, len(raw))
+	for _, p := range raw {
+		if p.State != "closed" {
+			return nil, fmt.Errorf("%w: pull request %d in the closed listing of %s is not closed", ErrInvalidResponse, p.Number, repo)
+		}
+		detail, err := p.detail(repo, p.MergedAt != nil)
+		if err != nil {
+			return nil, err
+		}
+		pulls = append(pulls, detail)
+	}
+	return pulls, nil
 }
 
 // OpenPulls returns the open pull requests of repo, sorted by number.
@@ -112,20 +260,11 @@ func (r *Reader) OpenPulls(ctx context.Context, repo string) ([]Pull, error) {
 	}
 	pulls := make([]Pull, 0, len(raw))
 	for _, p := range latest(raw, func(p pullJSON) int { return p.Number }) {
-		switch {
-		case p.Number <= 0:
-			return nil, fmt.Errorf("%w: pull request of %s without a number", ErrInvalidResponse, repo)
-		case !hexSHA.MatchString(p.Head.SHA) || !hexSHA.MatchString(p.Base.SHA):
-			return nil, fmt.Errorf("%w: pull request %d of %s lacks a head or base commit SHA", ErrInvalidResponse, p.Number, repo)
-		case p.Head.Ref == "" || p.Base.Ref == "":
-			return nil, fmt.Errorf("%w: pull request %d of %s lacks a head or base ref", ErrInvalidResponse, p.Number, repo)
-		case p.UpdatedAt.IsZero():
-			return nil, fmt.Errorf("%w: pull request %d of %s lacks updated_at", ErrInvalidResponse, p.Number, repo)
+		pull, err := p.pull(repo)
+		if err != nil {
+			return nil, err
 		}
-		pulls = append(pulls, Pull{
-			Number: p.Number, HeadSHA: p.Head.SHA, HeadRef: p.Head.Ref,
-			BaseRef: p.Base.Ref, BaseSHA: p.Base.SHA, UpdatedAt: p.UpdatedAt,
-		})
+		pulls = append(pulls, pull)
 	}
 	slices.SortFunc(pulls, func(a, b Pull) int { return cmp.Compare(a.Number, b.Number) })
 	return pulls, nil

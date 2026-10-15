@@ -200,3 +200,55 @@ func TestCheckSummaryPanicsOnAnImpossibleCheck(t *testing.T) {
 		mustPanic(t, func() { commandtext.CheckSummary(c) })
 	})
 }
+
+func bootstrapReady() commandtext.Check {
+	return commandtext.Check{State: commandtext.CheckSuccess, Reason: "bootstrap-ready", Proposal: 3, Revision: 2, Tier: commandtext.Isolated}
+}
+
+func TestCheckSummaryOfABootstrapThatIsReadyStatesWhatWillHappen(t *testing.T) {
+	title, summary := checkText(t, bootstrapReady())
+	if title != "Bootstrap ready for integration" {
+		t.Errorf("title %q", title)
+	}
+	for _, w := range []string{
+		"- State: `success`", "- Proposal revision: P3-R2", "approved the exact revision", "assessed the integrity of this head",
+		"No canonical contract exists yet", "first canonical version", "from the exact merge commit after", "- Installation tier: `isolated`",
+		"does not run tests",
+	} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("summary lacks %q:\n%s", w, summary)
+		}
+	}
+	if strings.Contains(summary, "Canonical version:") || strings.Contains(summary, "/suiteward") || strings.Contains(summary, "reduced") {
+		t.Errorf("summary names a canonical version that does not exist, offers a command or states a reduced assurance:\n%s", summary)
+	}
+}
+
+func TestCheckSummaryOfABootstrapThatIsReadyStatesTheTierAndNeverClaimsThatTestsRan(t *testing.T) {
+	claim := regexp.MustCompile(`(?i)tests? (ran|run successfully|passed|pass\b)|all tests|build passed|ci passed`)
+	c := bootstrapReady()
+	c.Tier = commandtext.CoLocated
+	title, summary := checkText(t, c)
+	if !strings.Contains(summary, "`co-located`") || !strings.Contains(summary, "assurance is reduced") || claim.MatchString(title+summary) {
+		t.Errorf("the summary lacks the tier or claims that tests ran:\n%s", summary)
+	}
+	c.Proposal, c.Revision = 999999999, 999999999
+	if _, summary := checkText(t, c); len(summary) > 4096 {
+		t.Errorf("the summary has %d bytes", len(summary))
+	}
+}
+
+func TestCheckSummaryAcceptsBootstrapReadyOnlyUnderSuccess(t *testing.T) {
+	for name, mutate := range map[string]func(*commandtext.Check){
+		"in progress":        func(c *commandtext.Check) { c.State = commandtext.CheckInProgress },
+		"failure":            func(c *commandtext.Check) { c.State = commandtext.CheckFailure },
+		"no reference":       func(c *commandtext.Check) { c.Proposal, c.Revision = 0, 0 },
+		"a canonical exists": func(c *commandtext.Check) { c.Version = 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := bootstrapReady()
+			mutate(&c)
+			mustPanic(t, func() { commandtext.CheckSummary(c) })
+		})
+	}
+}

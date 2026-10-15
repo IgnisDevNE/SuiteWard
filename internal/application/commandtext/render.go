@@ -72,6 +72,15 @@ const (
 	CoLocated
 )
 
+// Source is where a bootstrap proposal comes from (D-CHECKS, amendment of 2026-10-15). The zero value is the
+// default branch.
+type Source uint8
+
+const (
+	SourceBranch Source = iota
+	SourcePull
+)
+
 // Summary is what a bootstrap summary states (ADR 0010). Paths holds at most
 // 20 of the Protected files; Origin is the 40-hex origin commit SHA. Include
 // and Exclude list at most 20 rules each and may be longer; IncludeTotal and
@@ -81,6 +90,7 @@ const (
 type Summary struct {
 	Proposal                   int
 	Revision                   int
+	Source                     Source
 	Origin                     string
 	Branch                     string
 	Protected                  int
@@ -408,3 +418,19 @@ func HasMarker(body, instance, key string) bool {
 // rollback is how a promotion is reversed (ADR 0018): never by a revocation.
 const rollback = "a separately approved rollback (corrective) proposal: a new PR with its own exact approval, " +
 	"integration and promotion of a new version, with the history kept."
+
+// Revision is what the comment of a new change-proposal revision states.
+type Revision struct {
+	Proposal, Revision                      int
+	Previous                                string
+	Canonical                               int
+	Added, Modified, Removed                []string
+	AddedTotal, ModifiedTotal, RemovedTotal int
+	Reduced                                 bool
+	Tier                                    Tier
+}
+
+// RevisionComment renders the comment of a new change-proposal revision.
+func RevisionComment(r Revision) string {
+	panic("not implemented")
+}

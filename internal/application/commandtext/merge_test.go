@@ -162,3 +162,79 @@ func TestMergeCommentPanicsOnAStateThatCannotBeStored(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeCommentForTheFirstCanonicalVersionNamesTheCommitAndSaysTestsWereNotRun(t *testing.T) {
+	text := mergeText(t, commandtext.Merge{Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 1, Proposal: 1, Revision: 2, Tier: commandtext.Isolated})
+	for _, phrase := range []string{"promoted the canonical contract to V1", "first canonical version", mergeSHA, "P1-R2", "did not run the tests"} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("the comment lacks %q:\n%s", phrase, text)
+		}
+	}
+	if strings.Contains(text, "tests passed") || strings.Contains(text, "correction") {
+		t.Errorf("the comment claims tests or a correction:\n%s", text)
+	}
+	// A later promotion is not the first canonical version.
+	later := mergeText(t, commandtext.Merge{Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 2, Proposal: 1, Revision: 2, Tier: commandtext.Isolated})
+	if strings.Contains(later, "first canonical version") {
+		t.Errorf("a later promotion says it is the first:\n%s", later)
+	}
+}
+
+func TestMergeCommentWithoutACanonicalSaysSoGivesTheReasonAndTheRecovery(t *testing.T) {
+	for _, tc := range blockedReasons {
+		if tc.reason == "integrity-failed" { // a canonical that fails its verification exists
+			continue
+		}
+		m := blocked(tc.reason)
+		m.Version = 0
+		text := mergeText(t, m)
+		for _, phrase := range []string{
+			tc.phrase, "SuiteWard has no canonical contract yet", "default branch now holds the merged files",
+			"proposes the default branch's contract for approval on an open pull request",
+		} {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s: the comment lacks %q:\n%s", tc.reason, phrase, text)
+			}
+		}
+		for _, phrase := range []string{"stays at", "restores the protected files of", "V0", "no reset command"} {
+			if strings.Contains(text, phrase) {
+				t.Errorf("%s: the comment contains %q:\n%s", tc.reason, phrase, text)
+			}
+		}
+		if tc.reason != "integration-unreadable" && !strings.Contains(text, mergeSHA) {
+			t.Errorf("%s: the comment does not name the merge commit:\n%s", tc.reason, text)
+		}
+	}
+	m := blocked("canonical-changed")
+	m.Version, m.Proposal, m.Revision, m.Tier = 0, 0, 0, commandtext.CoLocated
+	if text := mergeText(t, m); !strings.Contains(text, "assurance is reduced") || strings.Contains(text, "Proposal revision") {
+		t.Errorf("the co-located comment lacks the reduced assurance or names a revision that does not exist:\n%s", text)
+	}
+}
+
+func TestMergeCommentWithoutACanonicalStaysFarBelowGitHubsLimit(t *testing.T) {
+	for _, tc := range blockedReasons {
+		if tc.reason == "integrity-failed" {
+			continue
+		}
+		m := blocked(tc.reason)
+		m.Version, m.Proposal, m.Revision, m.Tier = 0, 999999999, 999999999, commandtext.CoLocated
+		if text := mergeText(t, m); len(text) == 0 || len(text) > 4000 {
+			t.Errorf("%s: %d bytes", tc.reason, len(text))
+		}
+	}
+}
+
+func TestMergeCommentPanicsOnAVersionThatCannotBeMissing(t *testing.T) {
+	failedIntegrity := blocked("integrity-failed")
+	failedIntegrity.Version = 0
+	for name, m := range map[string]commandtext.Merge{
+		"a promotion without a version":          {Kind: commandtext.MergePromoted, Source: mergeSHA, Tier: commandtext.Isolated},
+		"a correction without a version":         {Kind: commandtext.MergeCorrected, Source: mergeSHA, Corrects: 1, Tier: commandtext.Isolated},
+		"a failed integrity without a canonical": failedIntegrity,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mustPanic(t, func() { commandtext.MergeComment(m) })
+		})
+	}
+}

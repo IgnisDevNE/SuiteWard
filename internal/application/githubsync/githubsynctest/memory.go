@@ -205,12 +205,6 @@ func (m *Memory) Comments(ctx context.Context, repo string, number int) ([]githu
 	return versions, nil
 }
 
-// known returns the repository, or false for one that has no state yet: the merge-facts writes never create one.
-func (m *Memory) known(repo string) (*memoryRepository, bool) {
-	r, ok := m.repos[repo]
-	return r, ok
-}
-
 // AwaitingResolution implements githubsync.Store.
 func (m *Memory) AwaitingResolution(ctx context.Context, repo string) ([]githubsync.PullState, error) {
 	if err := ctx.Err(); err != nil {
@@ -219,7 +213,7 @@ func (m *Memory) AwaitingResolution(ctx context.Context, repo string) ([]githubs
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	pulls := []githubsync.PullState{}
-	if r, ok := m.known(repo); ok {
+	if r, ok := m.repos[repo]; ok {
 		for number, pull := range r.pulls {
 			if resolution, resolved := r.resolutions[number]; !pull.NotOpenSince.IsZero() && (!resolved || !resolution.NotOpenSince.Equal(pull.NotOpenSince)) {
 				pulls = append(pulls, pull)
@@ -243,7 +237,7 @@ func (m *Memory) RecordResolution(ctx context.Context, repo string, resolution g
 	var r *memoryRepository
 	var pull githubsync.PullState
 	ok := false
-	if r, ok = m.known(repo); ok {
+	if r, ok = m.repos[repo]; ok {
 		pull, ok = r.pulls[resolution.Number]
 	}
 	if !ok || pull.NotOpenSince.IsZero() || !pull.NotOpenSince.Equal(resolution.NotOpenSince) {
@@ -265,7 +259,7 @@ func (m *Memory) RecordClosed(ctx context.Context, repo string, closed []githubs
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, ok := m.known(repo)
+	r, ok := m.repos[repo]
 	if !ok {
 		return fmt.Errorf("%w: repository %s has no recorded cycle", githubsync.ErrInvalidObservation, repo)
 	}
@@ -298,7 +292,7 @@ func (m *Memory) Merged(ctx context.Context, repo string) ([]githubsync.MergedPu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	merged := []githubsync.MergedPull{}
-	if r, ok := m.known(repo); ok {
+	if r, ok := m.repos[repo]; ok {
 		for number, resolution := range r.resolutions {
 			if !resolution.Merged {
 				continue
@@ -325,7 +319,7 @@ func (m *Memory) MarkProcessed(ctx context.Context, repo string, number int) err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, ok := m.known(repo)
+	r, ok := m.repos[repo]
 	if !ok {
 		return fmt.Errorf("%w: pull %d of %s is not stored", githubsync.ErrInvalidObservation, number, repo)
 	}

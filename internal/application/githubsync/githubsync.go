@@ -212,6 +212,9 @@ func (c Cycle) Validate() error {
 		if open[pull.Number] {
 			return fmt.Errorf("%w: cycle lists pull %d twice", ErrInvalidObservation, pull.Number)
 		}
+		if err := validateHeadRepo(pull.Number, pull.HeadRepo); err != nil {
+			return err
+		}
 		open[pull.Number] = true
 	}
 	for number := range c.Comments {
@@ -246,6 +249,9 @@ func (r Resolution) Validate() error {
 	if r.Merged == r.MergedAt.IsZero() {
 		return fmt.Errorf("%w: resolution of pull %d has merged %t and merged_at %v", ErrInvalidObservation, r.Number, r.Merged, r.MergedAt)
 	}
+	if err := validateHeadRepo(r.Number, r.HeadRepo); err != nil {
+		return err
+	}
 	if r.MergeCommitSHA != "" && (!r.Merged || !validSHA(r.MergeCommitSHA)) {
 		return fmt.Errorf("%w: resolution of pull %d has a merge commit that is not 40 lowercase hex or is not merged", ErrInvalidObservation, r.Number)
 	}
@@ -265,6 +271,18 @@ func ValidateClosed(closed []ClosedPull, at time.Time) error {
 		if item.UpdatedAt.IsZero() {
 			return fmt.Errorf("%w: closed pull %d has no updated_at", ErrInvalidObservation, item.Number)
 		}
+		if err := validateHeadRepo(item.Number, item.HeadRepo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateHeadRepo accepts "" (not observed, stored as NULL) and a name, and rejects a blank one: the stores keep a
+// blank as NULL or as text depending on how they trim, so neither may see one.
+func validateHeadRepo(number int, headRepo string) error {
+	if headRepo != "" && strings.TrimSpace(headRepo) == "" {
+		return fmt.Errorf("%w: pull %d has a blank head repository", ErrInvalidObservation, number)
 	}
 	return nil
 }

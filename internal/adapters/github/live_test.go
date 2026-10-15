@@ -820,6 +820,274 @@ func TestLiveWrites(t *testing.T) {
 	})
 }
 
+// TestLiveChecks measures check-run behavior with the real App on the head of a
+// throwaway test pull request (M1.6b-P0): the create answer, the read-back with
+// filter=latest and which token reads it, whether an in_progress run after a
+// success becomes the latest run, the combined status and check-suite views, and
+// the refusal of an unknown head sha. It is a measurement: only a failed create
+// of a run it needs or a broken round trip fails a step. It needs the first three
+// TestLive variables plus SUITEWARD_TEST_GITHUB_WRITE_REPO, _WRITE_PULL and
+// _WRITE_MARKER as TestLiveWrites does. It writes check runs named
+// "SuiteWard / P0 checks" on the pull request head, ending on a completed success
+// run, and never deletes anything. It logs statuses, ids, counts and the named
+// fields, never a token, the JWT, a key or a response body.
+func TestLiveChecks(t *testing.T) {
+	appID := liveInt(t, "SUITEWARD_TEST_GITHUB_APP_ID")
+	installationID := liveInt(t, "SUITEWARD_TEST_GITHUB_INSTALLATION_ID")
+	keyFile := liveEnv(t, "SUITEWARD_TEST_GITHUB_APP_KEY_FILE")
+	repo := liveEnv(t, "SUITEWARD_TEST_GITHUB_WRITE_REPO")
+	pull := strconv.FormatInt(liveInt(t, "SUITEWARD_TEST_GITHUB_WRITE_PULL"), 10)
+	marker := liveEnv(t, "SUITEWARD_TEST_GITHUB_WRITE_MARKER")
+	apiURL := os.Getenv("SUITEWARD_TEST_GITHUB_API_URL")
+	if apiURL == "" {
+		apiURL = "https://api.github.com"
+	}
+	_, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		t.Fatal("SUITEWARD_TEST_GITHUB_WRITE_REPO must be owner/name")
+	}
+	key, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("read SUITEWARD_TEST_GITHUB_APP_KEY_FILE: %v", err)
+	}
+	app, err := appauth.NewApp(appID, key, time.Now)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	httpClient := &http.Client{Timeout: 20 * time.Second}
+	token := func(t *testing.T, permissions map[string]string) string {
+		t.Helper()
+		inst, err := app.Installation(installationID, []string{name}, permissions, httpClient, apiURL)
+		if err != nil {
+			t.Fatalf("Installation: %v", err)
+		}
+		tok, err := inst.Token(stepCtx(t))
+		if err != nil {
+			t.Fatalf("Token (also fails when granted permissions differ from %v): %s", permissions, failure(err))
+		}
+		return tok.Reveal()
+	}
+	// call sends one request and returns the status and the body, which callers
+	// decode but never log.
+	call := func(t *testing.T, method, path, bearer string, body any) (int, []byte) {
+		t.Helper()
+		var in io.Reader
+		if body != nil {
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("encode %s %s: %v", method, path, err)
+			}
+			in = bytes.NewReader(raw)
+		}
+		req, err := http.NewRequestWithContext(stepCtx(t), method, apiURL+path, in)
+		if err != nil {
+			t.Fatalf("build %s %s: %v", method, path, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: transport error", method, path)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		out, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			t.Fatalf("%s %s: read the answer: %v", method, path, err)
+		}
+		return resp.StatusCode, out
+	}
+	decode := func(t *testing.T, path string, raw []byte, out any) {
+		t.Helper()
+		if err := json.Unmarshal(raw, out); err != nil {
+			t.Fatalf("%s: the answer is not the expected JSON", path)
+		}
+	}
+
+	checksWrite := map[string]string{"metadata": "read", "checks": "write"}
+	checksRead := map[string]string{"metadata": "read", "checks": "read"}
+	const checkName = "SuiteWard / P0 checks"
+	checkRunsPath := "/repos/" + repo + "/check-runs"
+	appQuery := strconv.FormatInt(appID, 10)
+	output := map[string]string{"title": "SuiteWard P0 checks", "summary": "M1.6b-P0 live measurement of check-run readback and state transitions."}
+	type run struct {
+		ID         int64  `json:"id"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		ExternalID string `json:"external_id"`
+	}
+	externalID := func(n int) string { return "suiteward:p0:" + marker + ":" + strconv.Itoa(n) }
+	// post creates one check run on sha and returns the status and the run.
+	post := func(t *testing.T, sha, status, conclusion string, n int) (int, run) {
+		t.Helper()
+		body := map[string]any{"name": checkName, "head_sha": sha, "status": status, "output": output, "external_id": externalID(n)}
+		if conclusion != "" {
+			body["conclusion"] = conclusion
+		}
+		code, raw := call(t, http.MethodPost, checkRunsPath, token(t, checksWrite), body)
+		var created run
+		if code == http.StatusCreated {
+			decode(t, checkRunsPath, raw, &created)
+		}
+		return code, created
+	}
+	// get reads path with each permission map in turn until one is not refused with
+	// a 403, and logs which one read. It returns the status and the body.
+	get := func(t *testing.T, path string, labels []string, maps ...map[string]string) (int, []byte) {
+		t.Helper()
+		var code int
+		var raw []byte
+		for i, m := range maps {
+			code, raw = call(t, http.MethodGet, path, token(t, m), nil)
+			t.Logf("GET %s with the %s token answered %d", path, labels[i], code)
+			if code != http.StatusForbidden {
+				break
+			}
+		}
+		return code, raw
+	}
+	checkLabels := []string{"checks write", "checks read"}
+	checkMaps := []map[string]string{checksWrite, checksRead}
+	runsOf := func(t *testing.T, sha, query string) (int, []run) {
+		t.Helper()
+		path := "/repos/" + repo + "/commits/" + sha + "/check-runs?check_name=SuiteWard%20%2F%20P0%20checks&app_id=" + appQuery + query
+		code, raw := get(t, path, checkLabels, checkMaps...)
+		if code != http.StatusOK {
+			return code, nil
+		}
+		var list struct {
+			TotalCount int   `json:"total_count"`
+			CheckRuns  []run `json:"check_runs"`
+		}
+		decode(t, path, raw, &list)
+		t.Logf("total_count %d, %d runs listed", list.TotalCount, len(list.CheckRuns))
+		for _, r := range list.CheckRuns {
+			t.Logf("  run id %d, status %q, conclusion %q, external_id %q", r.ID, r.Status, r.Conclusion, r.ExternalID)
+		}
+		return code, list.CheckRuns
+	}
+
+	pullPath := "/repos/" + repo + "/pulls/" + pull
+	status, raw := call(t, http.MethodGet, pullPath, token(t, readPermissions), nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET %s answered %d, want 200", pullPath, status)
+	}
+	var pr struct {
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	}
+	decode(t, pullPath, raw, &pr)
+	sha := pr.Head.SHA
+	if sha == "" {
+		t.Fatalf("GET %s answered no head sha", pullPath)
+	}
+	var first, second run
+
+	t.Run("POST success", func(t *testing.T) {
+		code, created := post(t, sha, "completed", "success", 1)
+		t.Logf("POST %s answered %d: check run id %d", checkRunsPath, code, created.ID)
+		if code != http.StatusCreated {
+			t.Fatalf("POST %s answered %d, want 201", checkRunsPath, code)
+		}
+		first = created
+	})
+
+	t.Run("readback", func(t *testing.T) {
+		if first.ID == 0 {
+			t.Fatal("no check run id: the POST success step failed")
+		}
+		code, runs := runsOf(t, sha, "&filter=latest")
+		if code != http.StatusOK {
+			t.Fatalf("the readback answered %d with every token, want 200", code)
+		}
+		for _, r := range runs {
+			if r.ID == first.ID {
+				if r.ExternalID != externalID(1) {
+					t.Errorf("run %d round-trips external_id %q, want %q", r.ID, r.ExternalID, externalID(1))
+				}
+				return
+			}
+		}
+		t.Errorf("run %d is not among the %d runs read back", first.ID, len(runs))
+	})
+
+	t.Run("back to pending", func(t *testing.T) {
+		code, created := post(t, sha, "in_progress", "", 2)
+		t.Logf("POST %s answered %d: check run id %d", checkRunsPath, code, created.ID)
+		if code != http.StatusCreated {
+			t.Fatalf("POST %s answered %d, want 201", checkRunsPath, code)
+		}
+		second = created
+		_, runs := runsOf(t, sha, "&filter=latest")
+		for _, r := range runs {
+			which := "neither run"
+			switch r.ID {
+			case first.ID:
+				which = "the success run"
+			case second.ID:
+				which = "the in_progress run"
+			}
+			t.Logf("latest run %d is %s: status %q, conclusion %q", r.ID, which, r.Status, r.Conclusion)
+		}
+		_, all := runsOf(t, sha, "")
+		t.Logf("without filter=latest, %d runs are listed", len(all))
+	})
+
+	t.Run("required-status view", func(t *testing.T) {
+		statusPath := "/repos/" + repo + "/commits/" + sha + "/status"
+		code, raw := get(t, statusPath, []string{"checks write", "read"}, checksWrite, readPermissions)
+		if code == http.StatusOK {
+			var combined struct {
+				State      string            `json:"state"`
+				TotalCount int               `json:"total_count"`
+				Statuses   []json.RawMessage `json:"statuses"`
+			}
+			decode(t, statusPath, raw, &combined)
+			t.Logf("combined status state %q, total_count %d, %d statuses", combined.State, combined.TotalCount, len(combined.Statuses))
+		}
+		suitesPath := "/repos/" + repo + "/commits/" + sha + "/check-suites?app_id=" + appQuery
+		code, raw = get(t, suitesPath, checkLabels, checkMaps...)
+		if code == http.StatusOK {
+			var suites struct {
+				TotalCount  int `json:"total_count"`
+				CheckSuites []struct {
+					ID         int64  `json:"id"`
+					Status     string `json:"status"`
+					Conclusion string `json:"conclusion"`
+					App        struct {
+						ID int64 `json:"id"`
+					} `json:"app"`
+				} `json:"check_suites"`
+			}
+			decode(t, suitesPath, raw, &suites)
+			t.Logf("total_count %d check suites", suites.TotalCount)
+			for _, s := range suites.CheckSuites {
+				t.Logf("  suite id %d, app id %d, status %q, conclusion %q", s.ID, s.App.ID, s.Status, s.Conclusion)
+			}
+		}
+	})
+
+	t.Run("unknown sha", func(t *testing.T) {
+		code, _ := post(t, strings.Repeat("0", 40), "completed", "success", 0)
+		t.Logf("POST %s with a head_sha of 40 zeros answered %d", checkRunsPath, code)
+		if code == http.StatusCreated {
+			t.Errorf("POST %s with an unknown head_sha answered 201", checkRunsPath)
+		}
+	})
+
+	t.Run("cleanup state", func(t *testing.T) {
+		code, created := post(t, sha, "completed", "success", 3)
+		t.Logf("POST %s answered %d: check run id %d", checkRunsPath, code, created.ID)
+		if code != http.StatusCreated {
+			t.Fatalf("POST %s answered %d, want 201", checkRunsPath, code)
+		}
+	})
+}
+
 // appJWT signs an RS256 App JWT (iat now-60 s, exp now+9 min) for GET /app, which
 // appauth does not expose; it never logs the key or the token.
 func appJWT(t *testing.T, appID int64, keyPEM []byte) string {

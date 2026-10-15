@@ -119,3 +119,13 @@ The details are settled from the M1.6a-P0 measurement, recorded on the [M1.6a pa
 - **Default branch head.** `Reader.BranchHead(ctx, repo, branch string) (sha string, err error)` reads `GET /repos/{r}/branches/{branch}` with the sync token. The bootstrap pins this SHA.
 - **Bot identity.** At composition, SuiteWard reads `GET /app`, which needs the App JWT and gives the slug. It then reads `GET /users/<slug>[bot]` to get the numeric account id. The command job uses that id to skip SuiteWard's own comments.
 - **Check runs (measured, not used in M1.6a).** P0 measured `POST /check-runs` with `{metadata: read, checks: write}`: 201, and the run carries the App id. M1.6b uses it; `PATCH /check-runs` is still unmeasured.
+
+## M1.6b: check runs (normative)
+
+Settled by the M1.6b-P0 measurement (2026-10-14), recorded on the [M1.6b page](../plan/phases/M1.6b.md).
+
+- **Permission.** The check writer requests `{metadata: read, checks: write}` and is used for check runs only. Synchronization, protection and comments keep their maps.
+- **`Checks.Post(ctx, repo string, run CheckRun) (id int64, err error)`.** `POST /repos/{r}/check-runs` with `name`, `head_sha`, `status`, `conclusion` (only with `completed`), `external_id`, `output.title` and `output.summary`. 201 is success; a 422 is `rest.ErrUnprocessable`.
+- **`Checks.Runs(ctx, repo, sha, name string, appID int64) ([]CheckRunSummary, error)`.** `GET /repos/{r}/commits/{sha}/check-runs?check_name=<name>&app_id=<id>`, paged; each summary holds the id, status, conclusion and `external_id`. It uses the same checks-write token: P0 measured a 200 with it, and the default listing returns only the latest run per name.
+- **Truncated trees.** `Reader.Tree` wraps both `inventory.ErrInvalidTree` and the new `github.ErrTreeTruncated` when GitHub truncates the recursive tree, so callers can tell a GitHub limit from an invalid source.
+- **PATCH is not used.** The latest run with the name wins (S1, and P0 for `in_progress` after `success`).

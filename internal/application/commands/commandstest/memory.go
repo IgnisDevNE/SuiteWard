@@ -137,6 +137,26 @@ func sameEntry(a, b commands.Entry) bool {
 		a.CreatedAt.Equal(b.CreatedAt) && a.BodyDigest == b.BodyDigest && a.Disposition == b.Disposition && a.Operation == b.Operation && a.DecidedAt.Equal(b.DecidedAt)
 }
 
+// LatestOwnerCommand implements commands.Store.
+func (m *Memory) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (commands.Entry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.Entry{}, false, err
+	}
+	if err := commands.ValidateLatest(repositoryID, pull, ownerID); err != nil {
+		return commands.Entry{}, false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest commands.Entry
+	found := false
+	for _, e := range m.ledger {
+		if e.RepositoryID == repositoryID && e.PullNumber == pull && e.AuthorID == ownerID && e.Disposition.IsCommand() && (!found || e.CommentID > latest.CommentID) {
+			latest, found = e, true
+		}
+	}
+	return latest, found, nil
+}
+
 // Instance implements commands.Store.
 func (m *Memory) Instance(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {

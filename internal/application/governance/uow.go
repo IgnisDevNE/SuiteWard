@@ -40,6 +40,13 @@ type Tx interface {
 	// Receipt lookups are global, not limited to the locked Suite.
 	Receipt(context.Context, contract.OperationID) (OperationReceipt, bool, error)
 	ReceiptBySource(context.Context, contract.SourceCommandID) (OperationReceipt, bool, error)
+	// ChangeProposalFor returns the change proposal of carrier in the locked Suite: the proposal carried by it
+	// whose revisions all expect a canonical (a baseline proposal expects none) and none of whose revisions was
+	// promoted. False when there is none; ErrInvalidState when more than one qualifies.
+	ChangeProposalFor(context.Context, contract.ApprovalCarrierID) (contract.ProposalID, bool, error)
+	// NextProposalID returns P<n+1>, n being the highest number among the locked Suite's proposals named P<number>.
+	// It is only free while the Suite lock is held.
+	NextProposalID(context.Context) (contract.ProposalID, error)
 
 	AppendConsent(context.Context, ConsentWrite) error
 	RecordPromotion(context.Context, PromotionWrite) error
@@ -140,9 +147,11 @@ type PromotionReceipt struct {
 }
 
 type ConsentReceipt struct {
-	Result                  contract.CommandResult
-	EvaluatedReference      contract.ProposalReference
-	PolicyRevisionID        contract.PolicyRevisionID
+	Result             contract.CommandResult
+	EvaluatedReference contract.ProposalReference
+	PolicyRevisionID   contract.PolicyRevisionID
+	// CurrentApprovalEligible only means that a valid approval exists for the
+	// revision; it does not mean the revision can be promoted.
 	CurrentApprovalEligible bool
 	PromotedVersionID       contract.SuiteVersionID
 }

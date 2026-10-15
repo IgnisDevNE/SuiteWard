@@ -1,4 +1,4 @@
-# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5 and M1.6a
+# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5, M1.6a and M1.6b
 
 Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, Podman 4.9.3, rootless for the unprivileged `suiteward` user. No inbound ports and no SSH daemon: you administer it through SSM Session Manager from your own workstation. This runs the product image and its PostgreSQL as two rootless containers from the Quadlet units in `deploy/quadlet/`. It needs three secrets, all Podman secrets mounted as files: a generated database password (section 3, you never type it), the GitHub App's private key and a generated MCP token (section 4a, M1.4). The three non-secret GitHub settings live in a host file you write (section 4a).
 
@@ -7,7 +7,8 @@ Never paste into chat, a file, a PR, or a log: any password or database URL, a G
 ## 0. Before the host steps (GitHub, once)
 
 1. The first run of the `Deploy` workflow creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the first run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5`, `phase/M1.6a` (each phase builds from its branch) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
+2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5`, `phase/M1.6a`, `phase/M1.6b` (each phase builds from its branch) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
+3. M1.6b (section 6c) needs `phase/M1.6b` in that list before its first `promote`; the other branches stay.
 
 ## 1. Open a session
 
@@ -405,6 +406,69 @@ A target that has bootstrapped keeps its Suite: it posts no new summary, so repe
 ### 6b.7 Never
 
 No token, code, secret or setup output in tickets, logs or messages. The warning of section 6a stays in force: Session Manager session logging records the `otpauth://` URI and the base32 secret that `setup` prints, so turn it off before running `setup` here as well.
+
+## 6c. The `SuiteWard / Contract` check (M1.6b)
+
+SuiteWard now publishes the `SuiteWard / Contract` check on the head of every open pull request ([D-CHECKS](../docs/plan/decisions.md)). You verify it on `IgnisDevNE/SuiteWardQ` with the owner scenario below, one target at a time. M1.6b adds no quadlet change, no secret and no setting: the App already holds Checks: write. The `/status` fields are in the [runtime contract](../docs/contracts/runtime.md#check-job-and-publisher-m16b).
+
+### 6c.1 Before you start (owner)
+
+1. Add `phase/M1.6b` to the deployment branches of the `remote-poc` environment (GitHub, repository Settings, Environments). Without it the `promote` job of the `Deploy` run is refused.
+2. Confirm that `SuiteWardQ` `main` still equals V1's origin, `5998e90`, with 13 protected files (`tests/**` plus `.suiteward.yml`).
+3. Close any open test PR (for example #17 from P0), so that each step starts from a fresh PR.
+4. Only one target watches a repository at a time (6b.1 still applies).
+5. **The required check is now real.** The ruleset requires `SuiteWard / Contract` and `CI / test`. SuiteWardQ has no workflow, so nothing ever reports `CI / test`: every PR stays blocked by it, whatever `SuiteWard / Contract` shows. M1.6b therefore merges nothing; read the merge box instead. Do not add a workflow to make `CI / test` report: `.github/workflows/**` is protected by default, so it would be a protected change against V1.
+
+### 6c.2 Deploy on the host
+
+1. Push to `phase/M1.6b`. Approve the `promote` job of the `Deploy` run of the phase head commit (section 0), then, as `suiteward` (section 1), pull, restart and run the smoke test with the version, as in 6b.3 step 3:
+
+   ```
+   podman pull ghcr.io/ignisdevne/suiteward:deploy
+   systemctl --user restart suiteward.service
+   SMOKE_TIER=isolated SMOKE_VERSION=sha-<commit> sh ~/smoke.sh
+   ```
+
+2. Check `/status` (`curl -s http://127.0.0.1:8081/status`). All of these must hold, or stop and report without starting the scenario:
+   - `schemaVersion` is 14;
+   - no `lastError` in `github`;
+   - `outbox.failed` is 0;
+   - no `checks` or `bootstrap` error in any entry of `github`;
+   - `protection.result` is `enforced`.
+
+### 6c.3 The owner scenario, per target
+
+Run it on `SuiteWardQ` with the target under test as the only watcher. A check appears or updates within about 1 to 2 minutes of a push or a command: synchronization takes up to 60 s and the `github_checks` job runs every 30 s. The `/suiteward approve <ref> <code>` command is in the check's details (open "Details" on the check).
+
+1. **No protected change.** Open a PR that changes only a file outside `tests/`. `SuiteWard / Contract` shows `success`, "No protected change". Read the merge box: it lists `SuiteWard / Contract` as passed and `CI / test` as expected and not reported. Do not merge it; close it when done.
+2. **Protected change.** Open a PR that changes `tests/*.txt`. The check is `in_progress`, with the proposal revision `P<n>-R1` and the copyable `/suiteward approve P<n>-R1 <code>` in the summary.
+3. **Approve R1.** Comment the command with the current code of this target's authenticator entry. The acknowledgment arrives, then the check turns `success`, "Ready for integration".
+4. **Implementation push.** Push a change outside `tests/` to that PR: the new head is still `success`. Consent is kept.
+5. **Protected push.** Push a change in `tests/`: `in_progress` with `P<n>-R2`.
+6. **Approve R2.** Comment `/suiteward approve P<n>-R2 <new code>`: the check turns `success`.
+7. **Revoke R2.** Comment `/suiteward revoke P<n>-R2 <new code>`: the check goes from `success` back to `in_progress`. This is the revoke that blocks again.
+8. **Rejected command.** Comment `/suiteward approve P<n>-R2 123456` (an invalid code): the check turns `failure`, "Owner command rejected". The next valid command or push clears it.
+9. **The merge box.** At each step, the merge box lists `SuiteWard / Contract` with the state above, next to `CI / test` expected and not reported. **Do not merge the protected-change PR.** Without merge detection (M1.7) the canonical would never catch up, and every later PR would stay a protected change. Close it unmerged.
+
+Each code is used once and posted within about 30 s of changing: wait for the next code before every command.
+
+Paste back (no secrets): the PR numbers, the state and summary line of the check at each step, and `/status` at the end (no `checks` or `bootstrap` error, `outbox.failed` 0, protection `enforced`). Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.
+
+### 6c.4 Co-located stack
+
+The same scenario, one target at a time, as in 6b.5: stop the host's watching, start the stack with GitHub ([local development](../docs/local-development.md#verifying-m16b-on-the-co-located-stack)), run 6c.3 with the co-located entry's codes, close the PR, put the stack back without GitHub, restore the host and check it again. The stack keeps its M1.6a enrollment and V1, so no setup is needed unless it was purged.
+
+### 6c.5 Troubleshooting
+
+- **No check on a head:** read `github[].checks` in `/status`, the outbox (`outbox.failed`) and the synchronization's `lastSuccess`; the check waits behind them.
+- **A check stays `in_progress` after you approved:** the command may not be processed yet (allow 1 to 2 minutes), or the approval was for another revision than the one in the check. A rejected code shows `failure`, "Owner command rejected" (read the acknowledgment).
+- **`failure`, "Invalid contract source":** `.suiteward.yml` is invalid, or a symlink or submodule is in scope.
+- **`in_progress`, "Source unavailable":** GitHub truncated the tree.
+- **Conflicting checks, or two acknowledgments for one command:** two instances watch the repository. Stop one (6b.1).
+
+### 6c.6 Never
+
+No code, token, setup output or secret in tickets, logs or messages. The warning of section 6a stays in force.
 
 ## 7. Reach `/status`
 

@@ -76,7 +76,7 @@ func (r *protectionRun) statusBody(t *testing.T) string {
 	t.Helper()
 	a := &api{
 		owners: r.store, logger: quietLogger(), tier: "co-located", store: fakeStore{version: 1},
-		github: &githubStatus{repos: []string{setupWidgetsRepo}, store: githubsynctest.NewMemory(), ids: r.ids},
+		github: &githubStatus{repos: []string{setupWidgetsRepo}, store: githubsynctest.NewMemory(), ids: r.ids, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}},
 	}
 	code, body := call(t, a, http.MethodGet, "/status")
 	if code != http.StatusOK {
@@ -355,7 +355,7 @@ func TestStatusIsUnavailableWhenTheProtectionCannotBeRead(t *testing.T) {
 	r.ids.set(setupWidgetsRepo, setupRepoID)
 	a := &api{
 		owners: brokenOwners{Store: r.store, protection: errors.New("dial tcp db.internal:5432: password=hunter2")}, logger: quietLogger(), store: fakeStore{version: 1},
-		github: &githubStatus{repos: []string{setupWidgetsRepo}, store: githubsynctest.NewMemory(), ids: r.ids},
+		github: &githubStatus{repos: []string{setupWidgetsRepo}, store: githubsynctest.NewMemory(), ids: r.ids, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}},
 	}
 
 	code, body := call(t, a, http.MethodGet, "/status")

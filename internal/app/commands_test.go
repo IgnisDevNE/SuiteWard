@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -150,7 +151,7 @@ func newCjWorld(t *testing.T) *cjWorld {
 	w := &cjWorld{t: t, owners: &cjOwners{Store: enrolled}, obs: githubsynctest.NewMemory(), mem: governancetest.NewMemory(), logs: &bytes.Buffer{}, listed: map[int64][]cjComment{}}
 	w.ledger = &cjLedger{Memory: commandstest.NewMemory(enrolled, w.obs)}
 	w.suites = &probeSuites{UnitOfWork: w.mem}
-	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
+	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
 		bot: newBotAccount(func(context.Context) (int64, error) {
 			w.botCall++
 			return cjBotID, w.botErr
@@ -326,9 +327,29 @@ func (w *cjWorld) requireSilent(repositoryID, comment int64, d commands.Disposit
 	}
 }
 
+// logEntries decodes the log lines without their wall-clock time, which could contain a six-digit code by chance.
+func (w *cjWorld) logEntries() []map[string]any {
+	w.t.Helper()
+	var entries []map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(w.logs.Bytes()))
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			w.t.Fatalf("log is not JSON: %v", err)
+		}
+		delete(entry, "time")
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
 func (w *cjWorld) requireNothingLeaked(codes ...string) {
 	w.t.Helper()
-	texts := []string{w.logs.String()}
+	var texts []string
+	for _, entry := range w.logEntries() {
+		line, _ := json.Marshal(entry)
+		texts = append(texts, string(line))
+	}
 	for _, r := range w.ledger.records {
 		if r.ack != nil {
 			texts = append(texts, string(r.ack.Payload))
@@ -449,6 +470,48 @@ func TestCommandsJobAcceptsTheCodesOfTheToleranceAndNoOther(t *testing.T) {
 	}
 }
 
+// The offsets of the owner's codes are logged to measure the window before M1.8: a verified code with its distance in
+// steps from the comment's step, a rejected one with whether a window of 2 steps would have accepted it. Never the code.
+func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
+	w := newCjWorld(t)
+	offsets := []int64{-3, -2, -1, 0, 1, 2, 3}
+	var comments []cjComment
+	var codes []string
+	for i, offset := range offsets {
+		created := cjAt(10 + 5*i)
+		comments = append(comments, ownerCommand(int64(500+i), created, "approve", "P1-R2", offset))
+		codes = append(codes, cjCode(created, offset))
+	}
+	w.syncAll(comments)
+	w.mustRun()
+	logged := map[int64]map[string]any{}
+	for _, entry := range w.logEntries() {
+		if message, _ := entry["msg"].(string); strings.HasPrefix(message, "github command code") {
+			logged[int64(entry["comment"].(float64))] = entry
+		}
+	}
+	for i, offset := range offsets {
+		entry := logged[int64(500+i)]
+		switch {
+		case entry == nil:
+			t.Errorf("offset %d: no log line for the code; logs: %s", offset, w.logs)
+		case offset >= -1 && offset <= 1: // accepted
+			if entry["msg"] != "github command code verified" || entry["offset"] != float64(offset) {
+				t.Errorf("offset %d: log %v, want a verified code at that offset", offset, entry)
+			}
+		case offset >= -2 && offset <= 2: // rejected, but inside the window of 2
+			if entry["msg"] != "github command code rejected" || entry["would_match"] != true || entry["offset"] != float64(offset) {
+				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would accept at that offset", offset, entry)
+			}
+		default:
+			if entry["msg"] != "github command code rejected" || entry["would_match"] != false || entry["offset"] != nil {
+				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would not accept", offset, entry)
+			}
+		}
+	}
+	w.requireNothingLeaked(append(codes, string(cjSecret))...)
+}
+
 func TestCommandsJobBindsACodeToTheFirstCommandThatUsesIt(t *testing.T) {
 	w := newCjWorld(t)
 	first, second := ownerCommand(500, cjAt(10), "approve", "P1-R2", 0), ownerCommand(501, cjAt(10).Add(5*time.Second), "approve", "P1-R2", 0)
@@ -517,6 +580,28 @@ func TestCommandsJobDoesNothingWhileARepositoryHasNeverSynchronized(t *testing.T
 	}
 	if !strings.Contains(w.logs.String(), `"level":"WARN"`) || !strings.Contains(w.logs.String(), cjRepo2) {
 		t.Fatalf("no Warn line says which repository blocks the commands; logs: %s", w.logs)
+	}
+}
+
+func TestCommandsJobStillWaitsForAnEnrolledRepositoryThatIsNotConfiguredAndWarnsOnce(t *testing.T) {
+	w := newCjWorld(t)
+	w.job.repos = []string{cjRepo1} // repository 2 was removed from GITHUB_REPOSITORIES without re-running setup
+	w.observe(cjID1, cjSync, ownerCommand(500, cjAt(40), "approve", "P1-R2", 0))
+	w.observe(cjID2, cjSync.Add(-30*time.Minute))
+	w.mustRun()
+	w.mustRun()
+	w.requireNoEntry(cjID1, 500) // fail closed: the stale cycle of the removed repository still holds the watermark back
+	warnings := 0
+	for _, line := range strings.Split(w.logs.String(), "\n") {
+		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "not configured") && strings.Contains(line, cjRepo2) {
+			warnings++
+		}
+		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "not configured") && strings.Contains(line, cjRepo1) {
+			t.Fatalf("the configured repository %s is reported as not configured: %s", cjRepo1, line)
+		}
+	}
+	if warnings != 1 {
+		t.Fatalf("%d warnings name the unconfigured repository %s over two runs; want 1; logs: %s", warnings, cjRepo2, w.logs)
 	}
 }
 

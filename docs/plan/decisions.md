@@ -1,6 +1,6 @@
 # Decision register
 
-- **Updated:** 2026-10-13 (phase M1.6a: D-COMMANDS accepted; D-IDENTITY and D-CHECKS amended)
+- **Updated:** 2026-10-14 (phase M1.6b: D-CHECKS amended with the state table, publication generation and failure rules)
 
 These gates record product and implementation choices that accepted ADRs deliberately left open. They do not reopen accepted ADRs. The integrator can resolve implementation choices within accepted policy; changes to product authority, scope, or release commitments need the project owner. Do not choose an unresolved product policy to unblock a task; record the decision needed and take independent ready work.
 
@@ -139,7 +139,7 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 2. When that repository has an open PR, SuiteWard:
    - pins the default branch head as the origin;
    - proposes its protected inventory as `P1-R1`, carried by the lowest-numbered open PR;
-   - proposes nothing while that inventory is empty: the project keeps awaiting its initial contract and never gets an empty baseline (ADR 0010). ADR 0010's other path, bootstrapping from the first PR that carries tests with a readiness check, is not in M1.6a; it is listed for M1.6b;
+   - proposes nothing while that inventory is empty: the project keeps awaiting its initial contract and never gets an empty baseline (ADR 0010). ADR 0010's other path, bootstrapping from the first PR that carries tests with a readiness check, is not in M1.6a; the owner moved it into the MVP as phase M1.7b, after M1.7 and before M1.8 (2026-10-14);
    - posts the bootstrap summary in that PR, with the copyable `/suiteward approve P1-R1 <code>`.
 3. After the owner's valid approval, SuiteWard re-reads the origin tree, records the integrity assessment for the origin, and bootstraps the first canonical `V1` without waiting for the PR to merge.
 4. If the default branch has moved meanwhile, the origin stays pinned. It is not silently moved (ADR 0010).
@@ -158,6 +158,31 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 ### D-CHECKS: The `SuiteWard / Contract` check
 
 Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-github.md)): one check run named `SuiteWard / Contract` per PR head SHA, published by the App and required with the App's `integration_id` as its source; never `neutral` (it passes a required check); `in_progress` while a contract change awaits approval; one publication per (head SHA, state); only an invalid command authored by the owner sets `failure`; a command from any other account is ignored (D-COMMANDS); the required-check rule must require branches to be up to date. M1.5 verifies the protection side; M1.6 publishes.
+
+**Amendment (2026-10-14, phase M1.6b; owner answers).**
+
+*States.* For each open PR head of a repository with an enrolled owner:
+
+| State | When |
+| --- | --- |
+| `success` | the head's protected inventory under the canonical scope equals the canonical (an implementation-only change), or the PR's current proposal revision is ready for integration (`CheckPromotionReadiness` answers ready: exact revision approved under the governing policy, against the current canonical, with a passed integrity assessment of this head) |
+| `in_progress` | approval missing (including a revision rebound after the canonical or the policy changed); the head cannot be read yet (a transient GitHub or tree failure); the repository has no canonical yet (bootstrap pending, including a default branch without protected files) |
+| `failure` | an invalid command authored by the owner on this PR; an invalid declaration or source (an invalid `.suiteward.yml`, a symlink or submodule in scope); a confirmed integrity failure |
+
+`neutral` and `skipped` are never published. Comments by other accounts never affect the check.
+
+*Owner-command failure.* It applies to the PR's current head when the owner's latest command on that PR was rejected (malformed, invalid code, replayed code, unknown proposal, edited before read, or a rejected consent result). It lasts until the next state change for that PR: a later processed command or a new head.
+
+*No enrolled owner.* Nothing is published; the missing required check already blocks merges, and `/status` says why.
+
+*Publication.*
+- One check run per (PR, generation). The generation is a per-PR counter that advances when the head or the computed state changes. This replaces "one publication per (head SHA, state)".
+- POST only: the latest run with the name wins on GitHub. PATCH is not used.
+- A single writer, the `github_checks` job, decides states and enqueues publications. Approve, revoke and promotion are picked up on its next run (every 30 s).
+- The publisher posts a message only while its generation is the PR's current one, so a delayed message never overrides a newer state.
+- The summary names the state, the proposal revision when there is one, the installation tier and the next action (the copyable approval command when approval is missing); it never claims that tests ran, and it stays below GitHub's output limit.
+
+*No change proposal before a canonical exists.* A PR proposal is created only for a repository that has a canonical, so a PR head can never become canonical through the existing-baseline bootstrap.
 
 ### D-MIGRATIONS: Migration tooling
 

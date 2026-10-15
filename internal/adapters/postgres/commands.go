@@ -2,10 +2,12 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/internal/dbgen"
@@ -96,6 +98,26 @@ func sameEntry(ctx context.Context, q *dbgen.Queries, e commands.Entry) error {
 		return fmt.Errorf("%w: comment %d of repository %d", commands.ErrConflict, e.CommentID, e.RepositoryID)
 	}
 	return nil
+}
+
+// LatestOwnerCommand implements commands.Store.
+func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (commands.Entry, bool, error) {
+	if err := commands.ValidateLatest(repositoryID, pull, ownerID); err != nil {
+		return commands.Entry{}, false, err
+	}
+	row, err := dbgen.New(s.pool).LatestOwnerCommand(ctx, dbgen.LatestOwnerCommandParams{RepositoryID: repositoryID, PullNumber: int32(pull), AuthorID: ownerID}) // ValidateLatest bounds it
+	if errors.Is(err, pgx.ErrNoRows) {
+		return commands.Entry{}, false, nil
+	}
+	if err != nil {
+		return commands.Entry{}, false, fmt.Errorf("read the latest owner command: %w", err)
+	}
+	digest, err := artifact.ParseDigest(row.BodyDigest)
+	if err != nil {
+		return commands.Entry{}, false, fmt.Errorf("read ledger entry %d: stored digest: %w", row.CommentID, err)
+	}
+	return commands.Entry{RepositoryID: row.RepositoryID, CommentID: row.CommentID, PullNumber: int(row.PullNumber), AuthorID: row.AuthorID, CreatedAt: observedTime(row.CreatedAt),
+		BodyDigest: digest, Disposition: commands.Disposition(row.Disposition), Operation: contract.OperationID(row.OperationID.String), DecidedAt: observedTime(row.DecidedAt)}, true, nil
 }
 
 // Instance implements commands.Store.

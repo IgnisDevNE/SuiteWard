@@ -576,8 +576,17 @@ func TestTreeRejectsATruncatedTree(t *testing.T) {
 	reader, _ := newReader(t, map[string]reply{treeURI: ok(fixture(t, "tree_truncated.json"))})
 
 	tree, err := reader.Tree(t.Context(), repo, commitSHA)
-	if !errors.Is(err, inventory.ErrInvalidTree) {
-		t.Fatalf("Tree = %v, %v; want ErrInvalidTree", tree, err)
+	if !errors.Is(err, inventory.ErrInvalidTree) || !errors.Is(err, github.ErrTreeTruncated) {
+		t.Fatalf("Tree = %v, %v; want ErrInvalidTree and ErrTreeTruncated", tree, err)
+	}
+}
+
+func TestInvalidTreesAreNotTruncatedTrees(t *testing.T) {
+	reader, _ := newReader(t, map[string]reply{treeURI: ok(treeWith("tests/odd_entry", "100664", "blob", readmeBlob))})
+
+	_, err := reader.Tree(t.Context(), repo, commitSHA)
+	if !errors.Is(err, inventory.ErrInvalidTree) || errors.Is(err, github.ErrTreeTruncated) {
+		t.Fatalf("Tree err = %v; want ErrInvalidTree only", err)
 	}
 }
 

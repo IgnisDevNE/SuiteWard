@@ -63,7 +63,7 @@ func newCandidateIn(t *testing.T, project contract.ProjectID, suite contract.Sui
 	for _, revisionID := range revisions {
 		binding := must(contract.NewApprovalBinding(contract.BindingInput{Reference: c.reference(revisionID), ExpectedCanonical: baseline,
 			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: policyID, CoveredInputs: protected.CoveredInputs()}))
-		revision := must(contract.NewProposalRevision(binding, c.origin, c.carrier))
+		revision := must(contract.NewProposalRevision(binding, c.origin, originKindOf(binding), c.carrier))
 		if c.proposal.IsZero() {
 			c.proposal = must(contract.NewProposal(revision))
 		} else {

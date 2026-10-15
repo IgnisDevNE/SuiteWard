@@ -159,7 +159,7 @@ func (w *cmtWorld) seedSuite() {
 	for _, revisionID := range []contract.ProposalRevisionID{"R1", "R2"} {
 		binding := cmtMust(contract.NewApprovalBinding(contract.BindingInput{Reference: w.reference(revisionID), ExpectedCanonical: "",
 			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "setup-1", CoveredInputs: protected.CoveredInputs()}))
-		revision := cmtMust(contract.NewProposalRevision(binding, "origin", carrier))
+		revision := cmtMust(contract.NewProposalRevision(binding, "origin", contract.OriginBranch, carrier))
 		if proposal.IsZero() {
 			proposal = cmtMust(contract.NewProposal(revision))
 		} else {

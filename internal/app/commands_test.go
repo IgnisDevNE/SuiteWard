@@ -173,7 +173,7 @@ func (w *cjWorld) seed(repositoryID int64) {
 		reference := contract.ProposalReference{ProjectID: project, SuiteID: "default", ProposalID: "P1", RevisionID: revisionID}
 		binding := cjMust(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: "",
 			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "setup-1", CoveredInputs: protected.CoveredInputs()}))
-		revision := cjMust(contract.NewProposalRevision(binding, "origin", carrierID(repositoryID, cjPull)))
+		revision := cjMust(contract.NewProposalRevision(binding, "origin", contract.OriginBranch, carrierID(repositoryID, cjPull)))
 		if proposal.IsZero() {
 			proposal = cjMust(contract.NewProposal(revision))
 		} else {

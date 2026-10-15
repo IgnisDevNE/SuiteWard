@@ -1019,7 +1019,7 @@ func (w *mgWorld) seedOther() {
 	reference := contract.ProposalReference{ProjectID: project, SuiteID: "default", ProposalID: "P1", RevisionID: "R1"}
 	binding := bootMust(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(),
 		PolicyRevision: owner.RevisionID(1), CoveredInputs: protected.CoveredInputs()}))
-	proposal := bootMust(contract.NewProposal(bootMust(contract.NewProposalRevision(binding, "origin", carrier))))
+	proposal := bootMust(contract.NewProposal(bootMust(contract.NewProposalRevision(binding, "origin", contract.OriginBranch, carrier))))
 	version := bootMust(contract.NewSuiteVersion(project, "default", "V1", protected.Manifest()))
 	record := bootMust(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: "seed-other", VersionID: "V1", Binding: binding, Carrier: carrier,
 		Source: "origin", Target: "branch:main", RecordedAt: bootTime.Add(time.Hour)}))

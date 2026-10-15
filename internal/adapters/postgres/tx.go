@@ -130,7 +130,7 @@ func (t *tx) Proposal(ctx context.Context, id contract.ProposalID) (contract.Pro
 		if err != nil {
 			return contract.Proposal{}, contract.Consent{}, invalidState("proposal revision "+revision.RevisionID, err)
 		}
-		sealed, err := contract.NewProposalRevision(binding, contract.SourceRevision(revision.Origin), contract.ApprovalCarrierID(revision.CarrierID))
+		sealed, err := contract.NewProposalRevision(binding, contract.SourceRevision(revision.Origin), contract.OriginPull, contract.ApprovalCarrierID(revision.CarrierID))
 		if err != nil {
 			return contract.Proposal{}, contract.Consent{}, invalidState("proposal revision "+revision.RevisionID, err)
 		}

@@ -356,7 +356,7 @@ func mcSecondPR(e *cfEnv, rebind bool) (a, b cfCandidate, result governance.Merg
 	if rebind { // the push after the first merge rebased b onto V2: a new revision nobody approved
 		binding := cfMust(contract.NewApprovalBinding(contract.BindingInput{Reference: b.reference("revision-2"), ExpectedCanonical: "V2",
 			Manifest: b.protected.Manifest().Digest(), Scope: b.protected.ScopeDigest(), PolicyRevision: cfPolicy, CoveredInputs: b.protected.CoveredInputs()}))
-		revision := cfMust(contract.NewProposalRevision(binding, b.origin, b.carrier))
+		revision := cfMust(contract.NewProposalRevision(binding, b.origin, cfOriginKind(binding), b.carrier))
 		if err := e.do(func(ctx context.Context, tx governance.Tx) error {
 			return tx.AppendProposalRevision(ctx, governance.ProposalWrite{Revision: revision})
 		}); err != nil {

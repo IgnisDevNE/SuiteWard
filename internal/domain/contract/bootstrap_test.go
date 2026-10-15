@@ -31,7 +31,17 @@ func lifecycleAbsent(t *testing.T) contract.CanonicalSnapshot {
 	return canonical
 }
 
+// lifecycleContext builds the proposal from the kind a fixture means: a baseline (no canonical) comes from a branch, a change from a pull.
 func lifecycleContext(t *testing.T, canonical contract.CanonicalSnapshot, manifest artifact.Manifest, proposalID contract.ProposalID, carrier contract.ApprovalCarrierID, origin, assessedSource contract.SourceRevision, revisionIDs ...contract.ProposalRevisionID) contract.PromotionContext {
+	t.Helper()
+	kind := contract.OriginPull
+	if _, present := canonical.Suite().CurrentVersionID(); !present {
+		kind = contract.OriginBranch
+	}
+	return lifecycleContextOfKind(t, canonical, manifest, proposalID, carrier, kind, origin, assessedSource, revisionIDs...)
+}
+
+func lifecycleContextOfKind(t *testing.T, canonical contract.CanonicalSnapshot, manifest artifact.Manifest, proposalID contract.ProposalID, carrier contract.ApprovalCarrierID, kind contract.OriginKind, origin, assessedSource contract.SourceRevision, revisionIDs ...contract.ProposalRevisionID) contract.PromotionContext {
 	t.Helper()
 	protected := lifecycleProtected(t, manifest)
 	baseline, _ := canonical.Suite().CurrentVersionID()
@@ -46,7 +56,7 @@ func lifecycleContext(t *testing.T, canonical contract.CanonicalSnapshot, manife
 	if err != nil {
 		t.Fatal(err)
 	}
-	revision, err := contract.NewProposalRevision(binding, origin, carrier)
+	revision, err := contract.NewProposalRevision(binding, origin, kind, carrier)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +232,62 @@ func TestBootstrapRejectsSubstitutedFacts(t *testing.T) {
 				t.Fatal("rejected bootstrap created an effect")
 			}
 		})
+	}
+}
+
+// A PR head can become the first canonical only from its merge commit (ADR 0010, 2026-10-15): the kind of the
+// revision, not the commit, selects the integration that may establish the contract.
+func TestBootstrapIntegrationFollowsTheOriginKind(t *testing.T) {
+	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
+	const carrier = contract.ApprovalCarrierID("bootstrap-pr")
+	cases := []struct {
+		name        string
+		kind        contract.OriginKind
+		origin      contract.SourceRevision
+		source      contract.SourceRevision
+		integration contract.IntegrationKind
+		with        contract.ApprovalCarrierID // the carrier the integration names
+		reason      contract.PromotionReason   // PromotionReasonNone: proposed
+	}{
+		{"existing baseline of a branch revision", contract.OriginBranch, "pinned", "pinned", contract.IntegrationExistingBaseline, "", contract.PromotionReasonNone},
+		{"existing baseline cannot establish a PR head", contract.OriginPull, "pr-head", "pr-head", contract.IntegrationExistingBaseline, "", contract.PromotionReasonIntegrationMismatch},
+		{"merged change of a PR head", contract.OriginPull, "pr-head", "merge-commit", contract.IntegrationMergedChange, carrier, contract.PromotionReasonNone},
+		{"merged change of a PR head fast-forwarded", contract.OriginPull, "pr-head", "pr-head", contract.IntegrationMergedChange, carrier, contract.PromotionReasonNone},
+		{"merged change cannot establish a pinned branch commit", contract.OriginBranch, "pinned", "merge-commit", contract.IntegrationMergedChange, carrier, contract.PromotionReasonIntegrationMismatch},
+		{"merged change of another carrier", contract.OriginPull, "pr-head", "merge-commit", contract.IntegrationMergedChange, "other-pr", contract.PromotionReasonIntegrationMismatch},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			context := lifecycleContextOfKind(t, lifecycleAbsent(t), manifest, "bootstrap-proposal", carrier, test.kind, test.origin, test.source)
+			input := lifecycleInput(context)
+			input.Integration = lifecycleIntegration(t, test.source, test.with, test.integration)
+			decision, err := contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, effect := decision.Effect()
+			if test.reason == contract.PromotionReasonNone {
+				if decision.Outcome() != contract.PromotionProposed || !effect {
+					t.Fatalf("outcome=%v reason=%v effect=%v; want the first canonical proposed", decision.Outcome(), decision.Reason(), effect)
+				}
+				return
+			}
+			if decision.Outcome() != contract.PromotionBlocked || decision.Reason() != test.reason || effect {
+				t.Fatalf("outcome=%v reason=%v effect=%v; want blocked %v without an effect", decision.Outcome(), decision.Reason(), effect, test.reason)
+			}
+		})
+	}
+}
+
+func TestBootstrapMergedChangeIsStillBlockedByAnEstablishedCanonical(t *testing.T) {
+	version := lifecycleVersion(t, "project", "suite", "existing-version", lifecycleManifest(t, artifact.Entry{Path: "tests/existing.go", Content: artifact.Hash([]byte("existing test"))}))
+	canonical := lifecycleEstablished(t, version, lifecycleRecord(t, lifecycleRecordInput(t, version, "old-proposal", "old-pr")))
+	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/new.go", Content: artifact.Hash([]byte("new test"))})
+	context := lifecycleContextOfKind(t, canonical, manifest, "fresh-proposal", "fresh-pr", contract.OriginPull, "pr-head", "merge-commit")
+	input := lifecycleInput(context)
+	input.Integration = lifecycleIntegration(t, "merge-commit", "fresh-pr", contract.IntegrationMergedChange)
+	decision, err := contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
+	if err != nil || decision.Outcome() != contract.PromotionBlocked || decision.Reason() != contract.PromotionReasonCanonicalPresent {
+		t.Fatalf("outcome=%v reason=%v error=%v; want blocked canonical-present", decision.Outcome(), decision.Reason(), err)
 	}
 }

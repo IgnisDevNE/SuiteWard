@@ -71,7 +71,7 @@ func newHeadEnv(t *testing.T, extra ...candidate) *headEnv {
 	e.reader = &fakeReader{writer: e.writer}
 	result := e.propose(e.writer, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P1", RevisionID: "R1"},
-		Carrier:   bootstrapCarrier, Origin: "pinned", Tree: headTree("v1", "package main\n"),
+		Carrier:   bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n"),
 	})
 	e.approveRef(result.Revise.Current, bootstrapCarrier)
 	e.recordAssessment(result.Revise.Current, "pinned", contract.IntegrityPassed)

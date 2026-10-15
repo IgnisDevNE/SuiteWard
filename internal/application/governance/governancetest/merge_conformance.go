@@ -75,12 +75,21 @@ func mcSource(c cfCandidate) contract.SourceRevision {
 // and so on), the last of them current, next to the open candidates.
 func (e *cfEnv) mcSeedAs(ids []contract.SuiteVersionID, open ...cfCandidate) {
 	e.t.Helper()
+	e.mcSeedWith(ids, false, open...)
+}
+
+// mcSeedWith is mcSeedAs where the proposal of the first version is a PR head (a bootstrap by merge) when firstPull.
+func (e *cfEnv) mcSeedWith(ids []contract.SuiteVersionID, firstPull bool, open ...cfCandidate) {
+	e.t.Helper()
 	seed := governance.Seed{}
 	var history []contract.HistoricalCanonical
 	var last cfCandidate
 	baseline := contract.SuiteVersionID("")
 	for i, id := range ids {
 		c := mcCandidate(fmt.Sprintf("p%d", i), baseline, fmt.Sprintf("v%d", i+1))
+		if i == 0 && firstPull {
+			c = c.asPull()
+		}
 		version := cfMust(contract.NewSuiteVersion(cfProject, cfSuite, id, c.protected.Manifest()))
 		record := cfMust(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: contract.OperationID("seed-op-" + c.id), VersionID: id,
 			Binding: c.proposal.Current().Binding(), Carrier: c.carrier, Source: c.merged, Target: cfTarget, RecordedAt: cfRecordedAt}))

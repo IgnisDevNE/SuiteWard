@@ -350,6 +350,13 @@ func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCar
 	return contract.ProposalID(ids[0]), true, nil
 }
 
+func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+	if _, err := t.lock(ctx); err != nil {
+		return "", false, err
+	}
+	return "", false, nil
+}
+
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
 	if _, err := t.lock(ctx); err != nil {
 		return "", err

@@ -34,7 +34,7 @@ func baselineTree(testContent string) *fakeTree {
 func baselineRequest(revision contract.ProposalRevisionID, origin string, tree inventory.Tree) governance.BaselineRequest {
 	return governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: baselineProposal, RevisionID: revision},
-		Carrier:   baselineCarrier, Origin: contract.SourceRevision(origin), Tree: tree,
+		Carrier:   baselineCarrier, Origin: contract.SourceRevision(origin), OriginKind: contract.OriginBranch, Tree: tree,
 	}
 }
 

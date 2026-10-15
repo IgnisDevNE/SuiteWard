@@ -64,7 +64,7 @@ func TestHeadAssessmentFollowsConsentAcrossPushes(t *testing.T) {
 	}
 	// The baseline PR bootstraps version-1.
 	baseline, err := governance.ProposeBaseline(t.Context(), w.store, w.content, governance.BaselineRequest{
-		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", Tree: headTree("v1", "package main\n")})
+		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
 	w.seedSuite(fxProject, fxSuite, other)
 	const bootstrapCarrier = contract.ApprovalCarrierID("github-pr:1/1")
 	baseline, err := governance.ProposeBaseline(t.Context(), w.store, w.content, governance.BaselineRequest{
-		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", Tree: headTree("v1", "package main\n")})
+		Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "P1", RevisionID: "R1"}, Carrier: bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n")})
 	if err != nil {
 		t.Fatal(err)
 	}

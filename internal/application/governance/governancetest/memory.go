@@ -327,6 +327,13 @@ func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCar
 	return "", false, fmt.Errorf("%w: proposals of %q: %d change proposals share one carrier", governance.ErrInvalidState, carrier, len(found))
 }
 
+func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return "", false, err
+	}
+	return "", false, nil
+}
+
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
 	if err := t.live(ctx); err != nil {
 		return "", err

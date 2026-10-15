@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"testing"
 	"time"
 
@@ -117,7 +118,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"NextProposalIDIsOnePastTheHighestNumber", cfNextProposalIDIsOnePastTheHighestNumber},
 		{"NextProposalIDSeesItsOwnTransactionAndOnlyItsSuite", cfNextProposalIDSeesItsOwnTransactionAndOnlyItsSuite},
 	}
-	for _, tc := range append(cases, mergeCases()...) {
+	for _, tc := range slices.Concat(cases, mergeCases(), bootstrapCases()) {
 		t.Run(tc.name, func(t *testing.T) {
 			defer cfGuard(t)
 			owner := cfMust(contract.NewPrincipal("owner", contract.Human))
@@ -212,6 +213,21 @@ func cfNewCandidateOf(project contract.ProjectID, suite contract.SuiteID, id str
 			c.assessments = append(c.assessments, cfMust(contract.AssessIntegrity(source, binding, &evidence)))
 		}
 	}
+	return c
+}
+
+// asPull is the candidate as a PR head that expects no canonical (the first-test bootstrap), not a baseline from a branch.
+func (c cfCandidate) asPull() cfCandidate {
+	var proposal contract.Proposal
+	for _, revision := range c.proposal.Revisions() {
+		pulled := cfMust(contract.NewProposalRevision(revision.Binding(), revision.Origin(), contract.OriginPull, revision.Carrier()))
+		if proposal.IsZero() {
+			proposal = cfMust(contract.NewProposal(pulled))
+		} else {
+			proposal = cfMust(proposal.Revise(pulled))
+		}
+	}
+	c.proposal = proposal
 	return c
 }
 

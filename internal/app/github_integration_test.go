@@ -157,7 +157,7 @@ func TestServeSynchronizesGitHubAtStart(t *testing.T) {
 	if entry["repo"] != "acme/widgets" || entry["lastError"] != nil || entry["waitUntil"] != nil {
 		t.Fatalf("/status github entry = %v; want a success without error or wait", entry)
 	}
-	for _, kind := range []string{"github_bootstrap", "github_commands", "github_checks"} {
+	for _, kind := range []string{"github_bootstrap", "github_commands", "github_checks", "canonical_integrity"} {
 		waitFor(t, kind+" job", 60*time.Second, func() bool {
 			return scalar(t, databaseURL, "SELECT count(*)::text FROM river_job WHERE kind = $1", kind) != "0"
 		})

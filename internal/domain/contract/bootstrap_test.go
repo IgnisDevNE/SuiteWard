@@ -293,3 +293,27 @@ func TestBootstrapMergedChangeIsStillBlockedByAnEstablishedCanonical(t *testing.
 		t.Fatalf("outcome=%v reason=%v error=%v; want blocked canonical-present", decision.Outcome(), decision.Reason(), err)
 	}
 }
+
+// DecidePromotion is reachable without DecideBootstrap (governance.Promote): it must not let a PR head become the first
+// canonical through the existing-baseline integration either.
+func TestPromotionOfAPullRevisionRejectsTheExistingBaselineIntegration(t *testing.T) {
+	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})
+	for _, test := range []struct {
+		kind   contract.OriginKind
+		reason contract.PromotionReason
+	}{
+		{contract.OriginPull, contract.PromotionReasonIntegrationMismatch},
+		{contract.OriginBranch, contract.PromotionReasonNone},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			context := lifecycleContextOfKind(t, lifecycleAbsent(t), manifest, "first-proposal", "first-pr", test.kind, "head", "head")
+			input := lifecycleInput(context)
+			input.Integration = lifecycleIntegration(t, "head", "", contract.IntegrationExistingBaseline)
+			decision, err := contract.DecidePromotion(input)
+			_, effect := decision.Effect()
+			if err != nil || decision.Reason() != test.reason || effect != (test.reason == contract.PromotionReasonNone) {
+				t.Fatalf("outcome=%v reason=%v effect=%v error=%v; want reason %v", decision.Outcome(), decision.Reason(), effect, err, test.reason)
+			}
+		})
+	}
+}

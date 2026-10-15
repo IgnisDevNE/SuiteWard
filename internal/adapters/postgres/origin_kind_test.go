@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -26,6 +27,26 @@ func TestOriginKindExistsAtTheSupportedVersion(t *testing.T) {
 	}
 }
 
+// seedVersion15 writes a Suite and the proposal revisions of a database at version 15, which has no origin_kind.
+func seedVersion15(t *testing.T, connection *pgx.Conn, revisions ...map[string]any) {
+	t.Helper()
+	seedRows(t, connection, func(executor sqlExecutor) {
+		proposals := map[any]bool{}
+		for _, revision := range revisions {
+			id, carrier := revision["proposal_id"], revision["carrier_id"]
+			if !proposals[id] {
+				proposals[id] = true
+				mustInsert(t, executor, "proposals", map[string]any{"proposal_id": id, "carrier_id": carrier})
+			}
+			row := map[string]any{"origin_kind": omitColumn{}}
+			for column, value := range revision {
+				row[column] = value
+			}
+			mustInsert(t, executor, "proposal_revisions", row)
+		}
+	})
+}
+
 // A database at version 15 keeps its revisions: a baseline (no expected canonical) becomes a branch revision, a change a pull one,
 // and the immutability trigger that the back-fill had to step around is on again afterwards.
 func TestOriginKindMigrationBackfillsRevisions(t *testing.T) {
@@ -33,20 +54,12 @@ func TestOriginKindMigrationBackfillsRevisions(t *testing.T) {
 	if err := migrations.UpTo(t.Context(), database.url, 15); err != nil {
 		t.Fatal(err)
 	}
-	old := func(extra map[string]any) map[string]any {
-		row := map[string]any{"origin_kind": omitColumn{}}
-		for column, value := range extra {
-			row[column] = value
-		}
-		return row
-	}
-	seedRows(t, database.conn, func(executor sqlExecutor) {
-		mustInsert(t, executor, "proposals", nil)
-		mustInsert(t, executor, "proposal_revisions", old(nil))
-		mustInsert(t, executor, "proposal_revisions", old(map[string]any{"revision_id": "r2", "seq": 2, "expected_version_id": "v1"}))
-		mustInsert(t, executor, "proposals", map[string]any{"proposal_id": "p2", "carrier_id": "pr-2"})
-		mustInsert(t, executor, "proposal_revisions", old(map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "expected_version_id": "v1"}))
-	})
+	seedVersion15(t, database.conn,
+		map[string]any{"proposal_id": "p1", "carrier_id": "pr-1", "revision_id": "r1", "seq": 1},
+		map[string]any{"proposal_id": "p1", "carrier_id": "pr-1", "revision_id": "r2", "seq": 2},
+		map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "revision_id": "r1", "seq": 1, "expected_version_id": "v1"},
+		map[string]any{"proposal_id": "p2", "carrier_id": "pr-2", "revision_id": "r2", "seq": 2, "expected_version_id": "v1"},
+	)
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +79,7 @@ func TestOriginKindMigrationBackfillsRevisions(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"p1/r1": "branch", "p1/r2": "pull", "p2/r1": "pull"}
+	want := map[string]string{"p1/r1": "branch", "p1/r2": "branch", "p2/r1": "pull", "p2/r2": "pull"}
 	if len(kinds) != len(want) {
 		t.Fatalf("kinds = %v, want %v", kinds, want)
 	}
@@ -77,6 +90,30 @@ func TestOriginKindMigrationBackfillsRevisions(t *testing.T) {
 	}
 	rows.Close()
 	_, err = database.conn.Exec(t.Context(), "UPDATE proposal_revisions SET origin_kind = 'branch'")
+	schemaRequireError(t, err, "23514", "immutable_history")
+}
+
+// A proposal never changes kind, so a proposal that was rebound from no canonical onto a version cannot be represented:
+// the migration refuses it, and rolls back with the immutability trigger still on.
+func TestOriginKindMigrationRefusesAProposalOfBothKinds(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.UpTo(t.Context(), database.url, 15); err != nil {
+		t.Fatal(err)
+	}
+	seedVersion15(t, database.conn,
+		map[string]any{"proposal_id": "p1", "carrier_id": "pr-1", "revision_id": "r1", "seq": 1},
+		map[string]any{"proposal_id": "p1", "carrier_id": "pr-1", "revision_id": "r2", "seq": 2, "expected_version_id": "v1"},
+	)
+	if err := migrations.Up(t.Context(), database.url); err == nil || !strings.Contains(err.Error(), "both kinds") {
+		t.Fatalf("migration of a proposal with a baseline and a change revision = %v; want a refusal naming both kinds", err)
+	}
+	var column bool
+	var version int64
+	if err := database.conn.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'proposal_revisions' AND column_name = 'origin_kind'),
+		(SELECT max(version_id) FROM goose_db_version WHERE is_applied)`, database.schema).Scan(&column, &version); err != nil || column || version != 15 {
+		t.Fatalf("after the refusal origin_kind exists = %v, schema version %d, error %v; want it rolled back at 15", column, version, err)
+	}
+	_, err := database.conn.Exec(t.Context(), "UPDATE proposal_revisions SET origin = 'other'")
 	schemaRequireError(t, err, "23514", "immutable_history")
 }
 

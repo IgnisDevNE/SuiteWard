@@ -563,10 +563,22 @@ SuiteWard now bootstraps a repository from its first test PR: while the Suite ha
 ### 6e.2 Add SuiteWardQ2 to the host (owner)
 
 1. Edit `/etc/suiteward/github.env` to add `IgnisDevNE/SuiteWardQ2` to `SUITEWARD_GITHUB_REPOSITORIES`. Use the editing method of section 4a, as root or with sudo from `ssm-user`.
-2. Deploy as in 6c.2: push to `phase/M1.7b`, approve the `promote` job of the `Deploy` run of the phase head commit (section 0), then, as `suiteward` (section 1), pull, restart and run the smoke test with the version. The schema is 16.
-3. Run `setup` again as in section 6a, with a **new** authenticator entry and the test check of every configured repository.
+2. **Before you deploy, check the data for migration `00016`.** It refuses a proposal whose revisions are of both kinds, and a refused migration stops the service from starting. As `suiteward`, run this read-only query. It must print `0`:
+
+   ```
+   podman exec suiteward-db psql -U suiteward -d suiteward -Atc "SELECT count(*) FROM (SELECT 1 FROM proposal_revisions GROUP BY project_id, suite_id, proposal_id HAVING count(DISTINCT expected_version_id IS NULL) > 1) x"
+   ```
+
+   If it prints anything else, stop and report. Recovery if the service will not start after the pull, because the log says "both kinds": the migration rolled back and the schema is still 15. Start the previous image (`sha-7d875c0890498b57e3f6b419b133ab986c7cbf01`) and report.
+3. Deploy as in 6c.2: push to `phase/M1.7b`, approve the `promote` job of the `Deploy` run of the phase head commit (section 0), then, as `suiteward` (section 1), pull, restart and run the smoke test with the version. The schema is 16.
+4. Run `setup` again as in section 6a, with a **new** authenticator entry and one `--test-check` per configured repository, as one command:
+
+   ```
+   podman exec -it suiteward /suiteward setup --owner magalz      --test-check 'IgnisDevNE/SuiteWardQ=CI / test'      --test-check 'IgnisDevNE/SuiteWardQ-private=CI / test'      --test-check 'IgnisDevNE/SuiteWardQ2=CI / test'
+   ```
+
    - **Warning:** this re-keys TOTP for every host repository. The old host entry stops working for `SuiteWardQ` as well. Delete it after the new one works.
-4. Check `/status` (`curl -s http://127.0.0.1:8081/status`):
+5. Check `/status` (`curl -s http://127.0.0.1:8081/status`):
    - `schemaVersion` 16;
    - `SuiteWardQ2` listed with `bootstrap` `no-open-pull-request` (it becomes `awaiting-initial-contract` once a PR is open);
    - no other errors.
@@ -583,7 +595,7 @@ Allow about 1 to 2 minutes per step: synchronization takes up to 60 s, and the c
 4. **Approval.** Approve the current revision with the new host entry. The check turns `success`, "Bootstrap ready for integration", and `CI / test` is green.
 5. **Merge.** Merge the PR with any method. A comment says V1 was promoted from the merge commit as the first canonical version.
 6. **Change PR.** A later PR changes `tests/`. It gets a `revision` comment listing the files and carrying the copyable command, and `in_progress`. Approve it and merge it: V2.
-7. **Regression on SuiteWardQ.** A change PR there gets the `revision` comment too.
+7. **Regression on SuiteWardQ, after the new setup.** A change PR there (in `tests/`) gets the `revision` comment. **Approve it with the new host entry and merge it: V11.** This is the first re-enrollment of the same owner while a Suite already has a canonical. A `policy-changed` block, an `approval-missing` after a valid code, or an invalid-code answer to a fresh code is a bug: stop and report.
 8. **Final `/status`:** no errors and `outbox.failed` 0.
 
 Paste back (no secrets), for each step: the PR number, the first line of the comment, and the state of the check. Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.
@@ -591,7 +603,7 @@ Paste back (no secrets), for each step: the PR number, the first line of the com
 ### 6e.4 Co-located stack (on SuiteWardQ3)
 
 - Purge and set up again as in 6d.4, with `-GitHubRepositories IgnisDevNE/SuiteWardQ3` only and a new authenticator entry ([local development](../docs/local-development.md#verifying-m17b-on-the-co-located-stack)).
-- No need to stop the host: the repositories differ.
+- No need to stop the host: the repositories differ. Both instances then poll at once against the same installation's rate limit, each capped at 50% of it. This is fine for four repositories.
 - Run 6e.3 steps 1, 2, 4 and 5 on SuiteWardQ3.
 - Then put the stack back without GitHub.
 

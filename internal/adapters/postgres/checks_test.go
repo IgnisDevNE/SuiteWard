@@ -4,6 +4,8 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -110,5 +112,26 @@ func TestPublishFailsWhenTheCurrentMessageIsMissing(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Publish accepted a record whose message is not in the outbox")
+	}
+}
+
+func TestPublishDoesNotRetryADeliveredMessage(t *testing.T) {
+	w := newPGWorld(t)
+	r := checks.Result{RepositoryID: 10, PullNumber: 1, HeadSHA: checkHead, State: checks.InProgress, Reason: "approval-missing"}
+	build := func(generation int64) (governance.OutboxMessage, error) {
+		return governance.OutboxMessage{Key: fmt.Sprintf("check:10:1:%d", generation), Kind: "github_check", Payload: json.RawMessage(`{}`)}, nil
+	}
+	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	if _, _, err := w.store.Checks().Publish(t.Context(), r, at, build); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.pool.Exec(t.Context(), "UPDATE outbox SET state = 'delivered', finished_at = $1 WHERE key = 'check:10:1:1'", at); err != nil {
+		t.Fatal(err)
+	}
+
+	record, written, err := w.store.Checks().Publish(t.Context(), r, at.Add(time.Hour), build) // long past the cooldown
+
+	if err != nil || written || record.Generation != 1 {
+		t.Fatalf("Publish = generation %d, written %v, error %v; want generation 1, no message", record.Generation, written, err)
 	}
 }

@@ -94,7 +94,10 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 	}
 	var failedAt time.Time // zero: the current message did not fail
 	if outcome.State == OutboxFailed {
-		failedAt = observedTime(outcome.FinishedAt) // the outbox constraint gives every ended message a finished_at
+		if !outcome.FinishedAt.Valid { // the outbox constraint forbids it; a zero time would read as "not failed" and never retry
+			return checks.Record{}, false, fmt.Errorf("check message %q ended failed without a finish time", row.MessageKey)
+		}
+		failedAt = outcome.FinishedAt.Time.UTC()
 	}
 	next, advance := checks.Next(checkRecord(row), true, r, at, failedAt)
 	messageKey := row.MessageKey

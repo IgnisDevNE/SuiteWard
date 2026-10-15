@@ -413,13 +413,16 @@ func (w *bootWorld) payload(key string) map[string]any {
 	return object
 }
 
-// approve records the owner's approval of P<n>-R1 as the command of a comment would.
-func (w *bootWorld) approve(n int, carrierPull int) {
+// approve records the owner's approval of P<n>-R1 of the main project as the command of a comment would.
+func (w *bootWorld) approve(n int, carrierPull int) { w.approveIn(bootRepoID, n, carrierPull) }
+
+// approveIn records the owner's approval of P<n>-R1 of the project of repository id.
+func (w *bootWorld) approveIn(repositoryID int64, n int, carrierPull int) {
 	w.t.Helper()
-	reference := contract.ProposalReference{ProjectID: w.project(), SuiteID: "default", ProposalID: contract.ProposalID(fmt.Sprintf("P%d", n)), RevisionID: "R1"}
-	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d", 100+n)),
-		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", 100+n)), Actor: bootOwnerPrincipal(), Reference: reference,
-		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", bootRepoID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(100 + n)}))
+	reference := contract.ProposalReference{ProjectID: owner.ProjectID(repositoryID), SuiteID: "default", ProposalID: contract.ProposalID(fmt.Sprintf("P%d", n)), RevisionID: "R1"}
+	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d:%d", repositoryID, 100+n)),
+		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d:%d", repositoryID, 100+n)), Actor: bootOwnerPrincipal(), Reference: reference,
+		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(100 + n)}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil || !response.Receipt.CurrentApprovalEligible {
 		w.t.Fatalf("approve P%d-R1: eligible %v, error %v", n, response.Receipt.CurrentApprovalEligible, err)
@@ -699,6 +702,30 @@ func TestBootstrapPromotesAnApprovedBaselineOnce(t *testing.T) {
 	w.requireOutbox(promotedKey, summaryKey)
 	if w.reader.calls["tree"] != tree {
 		t.Fatalf("the bootstrap read GitHub after the canonical existed")
+	}
+}
+
+// Operation ids are global: two repositories that each bootstrap their first baseline must not collide on P1-R1.
+func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
+	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
+	w.openPulls(bootRepo, 4)
+	w.openPulls(bootOtherRepo, 5)
+	w.mustRun()
+	w.approveIn(bootRepoID, 1, 4)
+	w.approveIn(bootOtherRepoID, 1, 5)
+
+	w.mustRun()
+
+	for _, id := range []int64{bootRepoID, bootOtherRepoID} {
+		var version contract.SuiteVersionID
+		err := w.mem.Do(t.Context(), owner.ProjectID(id), "default", func(ctx context.Context, tx governance.Tx) error {
+			state, err := tx.Suite(ctx)
+			version, _ = state.Canonical.Suite().CurrentVersionID()
+			return err
+		})
+		if err != nil || version != "V1" {
+			t.Fatalf("repository %d: canonical = %q, %v; want V1\nlogs: %s", id, version, err, w.logs)
+		}
 	}
 }
 

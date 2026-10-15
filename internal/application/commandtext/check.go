@@ -39,8 +39,7 @@ type checkReason struct {
 var checkReasons = map[string]checkReason{
 	"bootstrap-pending": {CheckInProgress, "Waiting for the first baseline",
 		"This repository has no approved baseline yet, so the contract of this head has nothing to be compared with.",
-		"Next: the owner approves the baseline proposal in SuiteWard's bootstrap comment on the lowest-numbered open pull request; " +
-			"SuiteWard proposes none while the default branch has no protected files."},
+		"Next: nothing is required on this pull request. The owner approves the bootstrap proposal on the pull request that carries it, in SuiteWard's comment there."},
 	"unchanged": {CheckSuccess, "No protected change",
 		"The protected files of this head match the canonical contract.",
 		"Next: nothing is required."},

@@ -325,11 +325,9 @@ func (j *checksJob) assessed(head governance.HeadResult, base checks.Result) (ch
 	case contract.PromotionReasonApprovalMissing:
 		result.State, result.Reason = checks.InProgress, reasonApprovalMissing
 	case contract.PromotionReasonProposalNotCurrent, contract.PromotionReasonContextMismatch, contract.PromotionReasonCanonicalChanged,
-		contract.PromotionReasonPolicyChanged, contract.PromotionReasonAssessmentMismatch:
+		contract.PromotionReasonPolicyChanged:
 		result.State, result.Reason = checks.InProgress, reasonNotCurrent
-	case contract.PromotionReasonIntegrityNotPassed:
-		result.State, result.Reason = checks.Failure, reasonIntegrityFailed
-	default:
+	default: // including IntegrityNotPassed and AssessmentMismatch: the binding is built from the head's own inventory, so neither can happen
 		return checks.Result{}, fmt.Errorf("the head is not ready for the unexpected reason %d", head.Reason)
 	}
 	return result, nil

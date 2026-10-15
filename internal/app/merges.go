@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
@@ -302,10 +303,16 @@ func (j *mergesJob) decideMerge(ctx context.Context, run mergeRun, m githubsync.
 		}
 	}
 	result, err := governance.PromoteMerge(ctx, j.suites, j.content, request)
+	if blobUnreadableYet(err) && !run.at.Before(resolution.NotOpenSince.Add(mergeBound)) { // the bound of the tree applies to its blobs
+		request.Refusal, request.Tree = governance.MergeReasonIntegrationUnreadable, nil
+		result, err = governance.PromoteMerge(ctx, j.suites, j.content, request)
+	}
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:
 		return "", false, ctx.Err()
+	case blobUnreadableYet(err): // the bound is not reached
+		return problemWaiting, true, nil
 	case errors.Is(err, errGitHubRead): // a blob of the tree: the commit is not known to be invalid, so nothing is decided
 		problem, cancelled := j.readFailed(ctx, "github merges blob read failed", run.p.Repo, err)
 		return problem, true, cancelled
@@ -339,6 +346,12 @@ func (j *mergesJob) integratedTree(ctx context.Context, repo, sha string) (inven
 		return nil, err
 	}
 	return cached, nil
+}
+
+// blobUnreadableYet reports whether a blob of a merge commit's tree may still become readable: GitHub answered 404 or
+// an answer that is not a blob. Other failures (rate limit, budget, 5xx, transport) are transient and unbounded.
+func blobUnreadableYet(err error) bool {
+	return errors.Is(err, errGitHubRead) && (errors.Is(err, rest.ErrNotFound) || errors.Is(err, github.ErrInvalidResponse))
 }
 
 // unreadableYet reports whether the tree of a merge commit may still appear: GitHub truncated it, or answered 404 or 422

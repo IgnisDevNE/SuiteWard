@@ -67,9 +67,9 @@ var checkReasons = map[string]checkReason{
 		"The contract declaration or the protected source of this head is invalid, for example an invalid `.suiteward.yml` " +
 			"or a symlink or submodule inside the protected scope. The canonical contract stays in force.",
 		"Next: fix `.suiteward.yml`, or remove the symlink or submodule from the protected scope, and push."},
-	"integrity-failed": {CheckFailure, "Integrity check failed",
-		"The integrity assessment of this head failed. The canonical contract stays in force, and this head cannot be integrated as it is.",
-		"Next: push a corrected head."},
+	"integrity-failed": {CheckFailure, "Canonical contract failed its integrity check",
+		"SuiteWard's stored canonical contract failed its integrity verification, so SuiteWard cannot trust it and blocks every pull request of this repository until it is restored.",
+		"Next: the operator must restore the artifact store from a backup or re-bootstrap the repository. Pushing to this pull request does not help."},
 	"owner-command-rejected": {CheckFailure, "Owner command rejected",
 		"The owner's latest command on this pull request was rejected; SuiteWard's reply to it says why.",
 		"Next: comment a corrected command with a new code, or push a new head."},

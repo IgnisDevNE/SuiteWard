@@ -36,7 +36,7 @@ func TestStatusShowsTheIntegrityVerdictOfTheCurrentCanonicalOnly(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			status := &githubStatus{repos: []string{bootRepo, bootOtherRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{},
+			status := &githubStatus{repos: []string{bootRepo, bootOtherRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{},
 				integrity: &integrityStatus{owners: w.owners, suites: w.suites, store: w.verdicts}}
 
 			entries, err := status.report(t.Context(), nil)

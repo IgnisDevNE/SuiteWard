@@ -24,7 +24,10 @@ import (
 // The github_comment publisher (docs/contracts/runtime.md, "Outbox kind github_comment"). The payloads of
 // bootstrap-summary and bootstrap-promoted are in bootstrap.go; the acknowledgments of the command job are here.
 
-const ackKey = "ack"
+const (
+	ackKey   = "ack"
+	mergeKey = "merge"
+)
 
 var (
 	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
@@ -242,7 +245,7 @@ func githubFailure(kind, key, step string, err error) error {
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
 	parts := strings.Split(key, ":")
-	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey) {
+	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey && parts[0] != mergeKey) {
 		return "", 0, "", false
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
@@ -298,6 +301,8 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		target, text, err = p.summary(key, tail, payload)
 	case bootstrapPromotedKey:
 		target, text, err = p.promoted(ctx, key, tail, payload)
+	case mergeKey:
+		target, text, err = p.merge(key, tail, payload)
 	}
 	if err != nil {
 		return err
@@ -483,4 +488,109 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: proposal, Revision: revision, Version: 1, Owner: state.Owner.Login})
 	})
 	return b.commentTarget, text, err
+}
+
+func parseVersion(s string) (int, bool) {
+	m := versionPattern.FindStringSubmatch(s)
+	if m == nil {
+		return 0, false
+	}
+	n, _ := strconv.Atoi(m[1]) // the pattern admits one to nine digits
+	return n, true
+}
+
+// mergePayload is the payload of merge:<repository id>:<pull>, the outcome comment of one merged pull request. It
+// holds identifiers and codes, never repository text: the publisher renders the body from it.
+type mergePayload struct {
+	commentTarget
+	Kind      string `json:"kind"`                // promoted, corrected or blocked
+	Reason    string `json:"reason,omitempty"`    // blocked only
+	Source    string `json:"source"`              // the merge commit; empty only for the reason integration-unreadable
+	Version   string `json:"version"`             // V<n>: the new version, or the canonical version a blocked merge leaves in force
+	Corrects  string `json:"corrects,omitempty"`  // corrected only: V<n> corrected
+	Reference string `json:"reference,omitempty"` // P<n>-R<m>: the contract change revision, when the merge had one
+	Tier      string `json:"tier"`                // the effective tier: owner.TierIsolated or owner.TierCoLocated
+}
+
+var mergeKinds = map[string]commandtext.MergeKind{
+	string(governance.MergePromoted): commandtext.MergePromoted, string(governance.MergeCorrected): commandtext.MergeCorrected, string(governance.MergeBlocked): commandtext.MergeBlocked,
+}
+
+// merge maps the payload to the values the renderer takes. The renderer checks the rest and panics on what cannot be stored.
+func (p mergePayload) merge() (commandtext.Merge, error) {
+	kind, known := mergeKinds[p.Kind]
+	version, validVersion := parseVersion(p.Version)
+	m := commandtext.Merge{Kind: kind, Reason: p.Reason, Source: p.Source, Version: version}
+	switch {
+	case p.validate() != nil || !known || !validVersion:
+		return commandtext.Merge{}, errors.New("the kind, the version or the target is invalid")
+	case p.Corrects != "":
+		var valid bool
+		if m.Corrects, valid = parseVersion(p.Corrects); !valid {
+			return commandtext.Merge{}, errors.New("the corrected version is invalid")
+		}
+	}
+	if p.Reference != "" {
+		var valid bool
+		if m.Proposal, m.Revision, valid = parseReference(p.Reference); !valid {
+			return commandtext.Merge{}, errors.New("the reference is not P<n>-R<m>")
+		}
+	}
+	switch p.Tier {
+	case owner.TierIsolated:
+		m.Tier = commandtext.Isolated
+	case owner.TierCoLocated:
+		m.Tier = commandtext.CoLocated
+	default:
+		return commandtext.Merge{}, errors.New("unknown tier")
+	}
+	return m, nil
+}
+
+// text renders the comment of the payload stored under key, without quoting the payload in an error.
+func (p mergePayload) text(key string) (string, error) {
+	m, err := p.merge()
+	if err != nil {
+		return "", keyError(githubCommentKind, key, "the payload cannot be rendered")
+	}
+	return render(githubCommentKind, key, func() string { return commandtext.MergeComment(m) })
+}
+
+// newMergeMessage builds the outcome comment of a merged pull request for governance.MergeRequest.Message. send is
+// false for the outcomes that get no comment; a payload the publisher could not render is an error, so the merge
+// is not recorded with a message nobody can post.
+func newMergeMessage(target commentTarget, outcome governance.MergeOutcome, tier string) (message governance.OutboxMessage, send bool, err error) {
+	switch outcome.Kind {
+	case governance.MergeNoChange, governance.MergeNotTarget, governance.MergeBeforeCanonical:
+		return governance.OutboxMessage{}, false, nil
+	case governance.MergePromoted, governance.MergeCorrected, governance.MergeBlocked:
+	default:
+		return governance.OutboxMessage{}, false, fmt.Errorf("merge message: unknown outcome kind %q", outcome.Kind)
+	}
+	p := mergePayload{commentTarget: target, Kind: string(outcome.Kind), Reason: string(outcome.Reason), Source: string(outcome.Source), Version: string(outcome.Version),
+		Corrects: string(outcome.Corrects), Tier: tier}
+	if outcome.Reference != nil { // the contract change revision is optional: a merge without a proposal has none
+		p.Reference = string(outcome.Reference.ProposalID) + "-" + string(outcome.Reference.RevisionID)
+	}
+	key := fmt.Sprintf("%s:%d:%d", mergeKey, target.RepositoryID, target.Pull)
+	if _, err := p.text(key); err != nil {
+		return governance.OutboxMessage{}, false, err
+	}
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return governance.OutboxMessage{}, false, fmt.Errorf("encode the merge message: %w", err)
+	}
+	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, true, nil
+}
+
+func (p *commentPublisher) merge(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+	m, err := decodePayload[mergePayload](githubCommentKind, key, payload)
+	if err != nil {
+		return commentTarget{}, "", err
+	}
+	if m.validate() != nil || tail != strconv.Itoa(m.Pull) {
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
+	}
+	text, err := m.text(key)
+	return m.commentTarget, text, err
 }

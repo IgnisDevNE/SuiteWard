@@ -38,6 +38,7 @@ type repositoryStatus struct {
 	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
 	Bootstrap   string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
 	Checks      string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
+	Merges      string            `json:"merges,omitempty"`     // classification code of the last merges job problem; absent when none
 	Integrity   string            `json:"integrity,omitempty"`  // verdict of the current canonical (passed, failed, unavailable); absent before the first verification
 }
 
@@ -53,6 +54,7 @@ type githubStatus struct {
 	ids       *repositoryIDs // learned by the protection check
 	problems  *bootstrapProblems
 	checks    *bootstrapProblems // the check job's problems, the same in-memory map type
+	merges    *bootstrapProblems // the merges job's problems
 	integrity *integrityStatus   // nil when the verdicts are not read (a status without an integrity store)
 }
 
@@ -125,6 +127,7 @@ func (g *githubStatus) report(ctx context.Context, protections map[string]owner.
 		entry.LastError = lastErrorText(state)
 		entry.Bootstrap = g.problems.lookup(repo)
 		entry.Checks = g.checks.lookup(repo)
+		entry.Merges = g.merges.lookup(repo)
 		entry.Integrity = verdicts[repo]
 		if result, verified := protections[repo]; verified {
 			entry.Protection = &protectionStatus{

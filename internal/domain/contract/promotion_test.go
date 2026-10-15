@@ -334,7 +334,11 @@ func promotionBinding(t *testing.T, input contract.BindingInput) contract.Approv
 
 func promotionProposal(t *testing.T, input contract.BindingInput, origin contract.SourceRevision, carrier contract.ApprovalCarrierID) contract.Proposal {
 	t.Helper()
-	revision, err := contract.NewProposalRevision(promotionBinding(t, input), origin, carrier)
+	kind := contract.OriginPull // a baseline (no canonical expected) comes from a branch, a change from a pull
+	if input.ExpectedCanonical == "" {
+		kind = contract.OriginBranch
+	}
+	revision, err := contract.NewProposalRevision(promotionBinding(t, input), origin, kind, carrier)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +582,7 @@ func TestPromotionReadinessRequiresExactCurrentContext(t *testing.T) {
 		{"superseded revision", func(c *contract.PromotionContext) {
 			input := promotionCopyBindingInput(c.Proposal.Current().Binding())
 			input.Reference.RevisionID = "r2"
-			revision, err := contract.NewProposalRevision(promotionBinding(t, input), "new-origin", c.Carrier)
+			revision, err := contract.NewProposalRevision(promotionBinding(t, input), "new-origin", contract.OriginPull, c.Carrier)
 			if err != nil {
 				t.Fatal(err)
 			}

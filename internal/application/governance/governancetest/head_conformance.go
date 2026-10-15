@@ -57,7 +57,7 @@ func cfChangeProposalForRejectsTwoChangeProposalsOfOneCarrier(e *cfEnv) {
 	first := e.candidate("p1", "version-1", "v2")
 	second := e.candidate("p2", "version-1", "v3")
 	e.seedSimple(cfProject, cfSuite, first)
-	sameCarrier := cfMust(contract.NewProposalRevision(second.proposal.Current().Binding(), second.origin, first.carrier))
+	sameCarrier := cfMust(contract.NewProposalRevision(second.proposal.Current().Binding(), second.origin, second.proposal.Current().OriginKind(), first.carrier))
 	if err := e.appendRevision(sameCarrier); err != nil {
 		e.t.Fatal(err)
 	}

@@ -16,22 +16,38 @@ var (
 	ErrRevisionExists          = errors.New("proposal revision already exists")
 )
 
+// OriginKind says where a proposal revision's source comes from.
+type OriginKind string
+
+const (
+	OriginBranch OriginKind = "branch" // a pinned default-branch commit (existing-baseline bootstrap)
+	OriginPull   OriginKind = "pull"   // a PR head: the first-test bootstrap and every change proposal
+)
+
 // ProposalRevision seals inventory provenance and its separate consent carrier.
 type ProposalRevision struct {
 	binding ApprovalBinding
 	origin  SourceRevision
+	kind    OriginKind
 	carrier ApprovalCarrierID
 }
 
-func NewProposalRevision(binding ApprovalBinding, origin SourceRevision, carrier ApprovalCarrierID) (ProposalRevision, error) {
+func NewProposalRevision(binding ApprovalBinding, origin SourceRevision, kind OriginKind, carrier ApprovalCarrierID) (ProposalRevision, error) {
 	if binding.IsZero() || strings.TrimSpace(string(origin)) == "" || strings.TrimSpace(string(carrier)) == "" {
 		return ProposalRevision{}, ErrInvalidProposal
 	}
-	return ProposalRevision{binding: binding, origin: origin, carrier: carrier}, nil
+	switch {
+	case kind == OriginPull:
+	case kind == OriginBranch && binding.ExpectedCanonical() == "": // only a baseline comes from a branch
+	default:
+		return ProposalRevision{}, ErrInvalidProposal
+	}
+	return ProposalRevision{binding: binding, origin: origin, kind: kind, carrier: carrier}, nil
 }
 
 func (r ProposalRevision) Binding() ApprovalBinding   { return r.binding }
 func (r ProposalRevision) Origin() SourceRevision     { return r.origin }
+func (r ProposalRevision) OriginKind() OriginKind     { return r.kind }
 func (r ProposalRevision) Carrier() ApprovalCarrierID { return r.carrier }
 func (r ProposalRevision) IsZero() bool               { return r.binding.IsZero() }
 
@@ -100,6 +116,9 @@ func (p Proposal) Revise(next ProposalRevision) (Proposal, error) {
 		if revision.Binding().Reference().RevisionID == next.Binding().Reference().RevisionID {
 			return Proposal{}, ErrRevisionExists
 		}
+	}
+	if next.OriginKind() != p.revisions[0].OriginKind() { // a proposal never changes kind
+		return Proposal{}, ErrInvalidProposal
 	}
 	return Proposal{revisions: append(slices.Clone(p.revisions), next)}, nil
 }

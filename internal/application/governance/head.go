@@ -175,7 +175,7 @@ func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request H
 	if err != nil {
 		return contract.ProposalReference{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	revision, err := contract.NewProposalRevision(binding, request.Head, request.Carrier)
+	revision, err := contract.NewProposalRevision(binding, request.Head, contract.OriginPull, request.Carrier)
 	if err != nil {
 		return contract.ProposalReference{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}

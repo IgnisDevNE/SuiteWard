@@ -53,7 +53,7 @@ func newCodecWorld() codecWorld {
 	w.command = must(contract.NewCommand(contract.CommandInput{OperationID: "op-1", SourceCommandID: "src-1", Actor: w.owner, Reference: reference, Carrier: "carrier-1", Action: contract.ApproveConsent, Order: 1}))
 	w.result = must(contract.ReconstituteCommandResult(w.command, contract.ConsentApproved, contract.ConsentReasonNone))
 
-	proposal := must(contract.NewProposal(must(contract.NewProposalRevision(w.binding, "origin", "carrier-1"))))
+	proposal := must(contract.NewProposal(must(contract.NewProposalRevision(w.binding, "origin", contract.OriginPull, "carrier-1"))))
 	policy := must(contract.NewPolicy("project", "policy-1", w.owner))
 	consent, _, err := must(contract.NewConsent("project", "suite", "p1")).Apply(proposal, policy, w.command)
 	if err != nil {

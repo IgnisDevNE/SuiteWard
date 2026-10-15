@@ -174,6 +174,10 @@ func mcRecordRoundTrip(e *cfEnv) {
 		{Kind: governance.MergeNotTarget, Source: "sha-3", Version: "V1"},
 		{Kind: governance.MergeBeforeCanonical, Source: "sha-4", Version: "V1"},
 		{Kind: governance.MergeBlocked, Reason: governance.MergeReasonIntegrationUnreadable, Source: "", Version: "V2"},
+		// Without a canonical there is no version to name: only a blocked or before-canonical outcome may have none.
+		{Kind: governance.MergeBlocked, Reason: governance.MergeReasonDiffersFromApproved, Source: "sha-5", Reference: &reference},
+		{Kind: governance.MergeBlocked, Reason: governance.MergeReasonUnapprovedChange, Source: "sha-6"},
+		{Kind: governance.MergeBeforeCanonical, Source: "sha-7"},
 	}
 	for _, reason := range mcAllReasons { // every code of the schema's CHECK, spelled as the Go constant
 		outcomes = append(outcomes, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: reason, Source: "sha-r", Version: "V2", Reference: &reference})
@@ -220,16 +224,19 @@ func mcRecordRejects(e *cfEnv) {
 		outcome governance.MergeOutcome
 		want    error
 	}{
-		"blocked without a reason":      {governance.MergeOutcome{Kind: governance.MergeBlocked, Source: "s", Version: "V1"}, governance.ErrInvalidRequest},
-		"a reason on a promotion":       {governance.MergeOutcome{Kind: governance.MergePromoted, Reason: governance.MergeReasonInvalidSource, Source: "s", Version: "V2"}, governance.ErrInvalidRequest},
-		"an unknown reason":             {governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: "bogus", Source: "s", Version: "V1"}, governance.ErrInvalidRequest},
-		"an unknown kind":               {governance.MergeOutcome{Kind: "bogus", Source: "s", Version: "V1"}, governance.ErrInvalidRequest},
-		"a correction without a target": {governance.MergeOutcome{Kind: governance.MergeCorrected, Source: "s", Version: "V2"}, governance.ErrInvalidRequest},
-		"a correction on a no-change":   {governance.MergeOutcome{Kind: governance.MergeNoChange, Corrects: "V1", Source: "s", Version: "V2"}, governance.ErrInvalidRequest},
-		"no version":                    {governance.MergeOutcome{Kind: governance.MergeNoChange, Source: "s"}, governance.ErrInvalidRequest},
-		"an unknown version":            {governance.MergeOutcome{Kind: governance.MergeNoChange, Source: "s", Version: "V9"}, governance.ErrNotFound},
-		"an unknown corrected version":  {governance.MergeOutcome{Kind: governance.MergeCorrected, Corrects: "V9", Source: "s", Version: "V2"}, governance.ErrNotFound},
-		"an unknown proposal revision":  {governance.MergeOutcome{Kind: governance.MergeNoChange, Source: "s", Version: "V2", Reference: &dangling}, governance.ErrInvalidRequest},
+		"blocked without a reason":       {governance.MergeOutcome{Kind: governance.MergeBlocked, Source: "s", Version: "V1"}, governance.ErrInvalidRequest},
+		"a reason on a promotion":        {governance.MergeOutcome{Kind: governance.MergePromoted, Reason: governance.MergeReasonInvalidSource, Source: "s", Version: "V2"}, governance.ErrInvalidRequest},
+		"an unknown reason":              {governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: "bogus", Source: "s", Version: "V1"}, governance.ErrInvalidRequest},
+		"an unknown kind":                {governance.MergeOutcome{Kind: "bogus", Source: "s", Version: "V1"}, governance.ErrInvalidRequest},
+		"a correction without a target":  {governance.MergeOutcome{Kind: governance.MergeCorrected, Source: "s", Version: "V2"}, governance.ErrInvalidRequest},
+		"a correction on a no-change":    {governance.MergeOutcome{Kind: governance.MergeNoChange, Corrects: "V1", Source: "s", Version: "V2"}, governance.ErrInvalidRequest},
+		"no version":                     {governance.MergeOutcome{Kind: governance.MergeNoChange, Source: "s"}, governance.ErrInvalidRequest},
+		"a promotion without a version":  {governance.MergeOutcome{Kind: governance.MergePromoted, Source: "s"}, governance.ErrInvalidRequest},
+		"a correction without a version": {governance.MergeOutcome{Kind: governance.MergeCorrected, Corrects: "V1", Source: "s"}, governance.ErrInvalidRequest},
+		"not-target without a version":   {governance.MergeOutcome{Kind: governance.MergeNotTarget, Source: "s"}, governance.ErrInvalidRequest},
+		"an unknown version":             {governance.MergeOutcome{Kind: governance.MergeNoChange, Source: "s", Version: "V9"}, governance.ErrNotFound},
+		"an unknown corrected version":   {governance.MergeOutcome{Kind: governance.MergeCorrected, Corrects: "V9", Source: "s", Version: "V2"}, governance.ErrNotFound},
+		"an unknown proposal revision":   {governance.MergeOutcome{Kind: governance.MergeNoChange, Source: "s", Version: "V2", Reference: &dangling}, governance.ErrInvalidRequest},
 	} {
 		carrier := contract.ApprovalCarrierID("carrier-" + name)
 		if err := e.recordMerge(carrier, test.outcome); !errors.Is(err, test.want) {
@@ -260,7 +267,7 @@ func mcPolicyChanged(e *cfEnv) {
 	pr := mcCandidate("pr", "V1", "v2")
 	binding := cfMust(contract.NewApprovalBinding(contract.BindingInput{Reference: pr.reference("revision-1"), ExpectedCanonical: "V1", Manifest: pr.protected.Manifest().Digest(),
 		Scope: pr.protected.ScopeDigest(), PolicyRevision: "policy-0", CoveredInputs: pr.protected.CoveredInputs()}))
-	pr.proposal, pr.assessments = cfMust(contract.NewProposal(cfMust(contract.NewProposalRevision(binding, pr.origin, pr.carrier)))), nil
+	pr.proposal, pr.assessments = cfMust(contract.NewProposal(cfMust(contract.NewProposalRevision(binding, pr.origin, cfOriginKind(binding), pr.carrier)))), nil
 	e.mcSeed(false, pr)
 	before := e.revision()
 
@@ -275,7 +282,7 @@ func mcPolicyChanged(e *cfEnv) {
 func mcCorrectionContextReused(e *cfEnv) {
 	fix := mcCandidate("fix", "V2", "v1")
 	fix.carrier = "carrier-p1" // the carrier of V2's promotion
-	fix.proposal = cfMust(contract.NewProposal(cfMust(contract.NewProposalRevision(fix.proposal.Current().Binding(), fix.origin, fix.carrier))))
+	fix.proposal = cfMust(contract.NewProposal(cfMust(contract.NewProposalRevision(fix.proposal.Current().Binding(), fix.origin, fix.proposal.Current().OriginKind(), fix.carrier))))
 	e.mcSeed(true, fix)
 	e.approve(fix)
 	before := e.revision()

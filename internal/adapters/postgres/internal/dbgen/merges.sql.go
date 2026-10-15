@@ -56,7 +56,7 @@ type InsertMergeOutcomeParams struct {
 	Kind              string
 	Reason            string
 	Source            string
-	VersionID         string
+	VersionID         pgtype.Text
 	CorrectsVersionID pgtype.Text
 	ProposalID        pgtype.Text
 	RevisionID        pgtype.Text

@@ -69,7 +69,7 @@ func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter,
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
-		revision, err := contract.NewProposalRevision(binding, request.Origin, request.Carrier)
+		revision, err := contract.NewProposalRevision(binding, request.Origin, contract.OriginBranch, request.Carrier)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}

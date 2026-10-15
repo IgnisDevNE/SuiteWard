@@ -544,7 +544,7 @@ func (t *tx) RecordMergeOutcome(ctx context.Context, w governance.MergeWrite) er
 		return err
 	}
 	outcome := w.Outcome
-	if _, known := t.s.history[outcome.Version]; !known {
+	if _, known := t.s.history[outcome.Version]; outcome.Version != "" && !known {
 		return fmt.Errorf("%w: version %q", governance.ErrNotFound, outcome.Version)
 	}
 	if _, known := t.s.history[outcome.Corrects]; outcome.Corrects != "" && !known {

@@ -15,8 +15,17 @@ func (c candidate) bindingInput(revision contract.ProposalRevisionID, baseline c
 		Scope: protected.ScopeDigest(), PolicyRevision: policyID, CoveredInputs: protected.CoveredInputs()}
 }
 
+// originKindOf is the kind a fixture means: a baseline (no canonical expected) comes from a branch, a change from a pull.
+func originKindOf(binding contract.ApprovalBinding) contract.OriginKind {
+	if binding.ExpectedCanonical() == "" {
+		return contract.OriginBranch
+	}
+	return contract.OriginPull
+}
+
 func sealRevision(input contract.BindingInput, origin contract.SourceRevision, carrier contract.ApprovalCarrierID) contract.ProposalRevision {
-	return must(contract.NewProposalRevision(must(contract.NewApprovalBinding(input)), origin, carrier))
+	binding := must(contract.NewApprovalBinding(input))
+	return must(contract.NewProposalRevision(binding, origin, originKindOf(binding), carrier))
 }
 
 func (w *world) revise(revision contract.ProposalRevision) governance.ReviseResult {

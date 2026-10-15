@@ -54,7 +54,7 @@ type MergeOutcome struct {
 	Kind      MergeKind
 	Reason    MergeReason
 	Source    contract.SourceRevision     // the merge commit, "" when unreadable
-	Version   contract.SuiteVersionID     // promoted or corrected: the new version; otherwise the canonical kept
+	Version   contract.SuiteVersionID     // promoted or corrected: the new version; otherwise the canonical kept, empty for a blocked or before-canonical outcome when there is none
 	Corrects  contract.SuiteVersionID     // corrected only
 	Reference *contract.ProposalReference // the PR's change proposal revision, when there is one
 }
@@ -126,8 +126,8 @@ func (w MergeWrite) Validate() error {
 		return fmt.Errorf("%w: a reason is set exactly when the merge is blocked", ErrInvalidRequest)
 	case (o.Kind == MergeCorrected) != (o.Corrects != ""):
 		return fmt.Errorf("%w: a corrected version is set exactly when the merge is a correction", ErrInvalidRequest)
-	case blank(string(o.Version)):
-		return fmt.Errorf("%w: a merge outcome names the version it holds", ErrInvalidRequest)
+	case blank(string(o.Version)) && o.Kind != MergeBlocked && o.Kind != MergeBeforeCanonical:
+		return fmt.Errorf("%w: only a blocked or before-canonical merge outcome may name no version", ErrInvalidRequest)
 	case reference != nil && (blank(string(reference.ProposalID)) || blank(string(reference.RevisionID))):
 		return fmt.Errorf("%w: a proposal reference names a proposal and a revision", ErrInvalidRequest)
 	case w.RecordedAt.IsZero() || !w.RecordedAt.Equal(w.RecordedAt.Truncate(time.Microsecond)):

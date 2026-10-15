@@ -28,7 +28,7 @@ var governanceRows = map[string]map[string]any{
 	"suites":                  {"project_id": "project", "suite_id": "suite", "revision": 1, "current_version_id": "v1", "target_id": "main", "policy_revision_id": "policy-1"},
 	"suite_versions":          {"project_id": "project", "suite_id": "suite", "version_id": "v1", "manifest_digest": schemaDigest, "manifest": `{"entries":[]}`},
 	"proposals":               {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "carrier_id": "pr-1"},
-	"proposal_revisions":      {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "seq": 1, "origin": "origin-1", "carrier_id": "pr-1", "manifest_digest": schemaDigest, "scope_digest": schemaDigest, "covered_inputs": `{}`, "expected_version_id": nil, "policy_revision_id": "policy-1"},
+	"proposal_revisions":      {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "seq": 1, "origin": "origin-1", "carrier_id": "pr-1", "manifest_digest": schemaDigest, "scope_digest": schemaDigest, "covered_inputs": `{}`, "expected_version_id": nil, "policy_revision_id": "policy-1", "origin_kind": "branch"},
 	"assessments":             {"project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "source": "sha-1", "evidence_emitter": "ci", "evidence_source": "sha-1", "evidence_revision_id": "r1", "outcome": "passed"},
 	"consent_results":         {"source_command_id": "src-1", "operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "proposal_id": "p1", "revision_id": "r1", "actor_id": "owner", "actor_kind": "human", "carrier_id": "pr-1", "action": "approve", "command_order": 1, "outcome": "approved", "reason": "none"},
 	"operations":              {"operation_id": "consent-op", "project_id": "project", "suite_id": "suite", "kind": "consent", "source_command_id": "src-1", "receipt": `{"kind":"consent"}`},
@@ -38,6 +38,9 @@ var governanceRows = map[string]map[string]any{
 	"github_comment_versions": {"repo": "acme/widgets", "comment_id": 10, "updated_at": "2026-10-02T12:00:00Z", "pull_number": 1, "author_id": 7, "author_login": "reviewer", "created_at": "2026-10-02T11:00:00Z", "body": []byte("hello"), "body_digest": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", "first_seen": "2026-10-02T12:00:00Z"},
 	"promotions":              {"operation_id": "promo-op", "project_id": "project", "suite_id": "suite", "version_id": "v1", "proposal_id": "p1", "revision_id": "r1", "carrier_id": "pr-1", "source_revision": "sha-1", "target_id": "main", "recorded_at": "2026-10-02T12:00:00Z", "corrects_version_id": nil},
 }
+
+// omitColumn as an override leaves the column out of the insert, for a schema that does not have it yet.
+type omitColumn struct{}
 
 type sqlExecutor interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
@@ -51,6 +54,11 @@ func insertRow(ctx context.Context, executor sqlExecutor, table string, override
 	}
 	for column, value := range overrides {
 		values[column] = value
+	}
+	for column, value := range values {
+		if _, omit := value.(omitColumn); omit {
+			delete(values, column)
+		}
 	}
 	columns := make([]string, 0, len(values))
 	for column := range values {

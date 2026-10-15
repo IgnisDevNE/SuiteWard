@@ -229,7 +229,7 @@ func TestSeedRoundTripsEveryStoredFact(t *testing.T) {
 			t.Fatal(err)
 		}
 		stored := proposal.Revisions()
-		if len(stored) != 2 || !stored[0].Binding().Equal(r1) || !stored[1].Binding().Equal(r2) || stored[1].Origin() != revised.origin || stored[1].Carrier() != revised.carrier || len(consent.Results()) != 0 {
+		if len(stored) != 2 || !stored[0].Binding().Equal(r1) || !stored[1].Binding().Equal(r2) || stored[1].Origin() != revised.origin || stored[0].OriginKind() != fxOriginKind(r1) || stored[1].OriginKind() != fxOriginKind(r2) || stored[1].Carrier() != revised.carrier || len(consent.Results()) != 0 {
 			t.Fatalf("proposal revisions %d, results %d", len(stored), len(consent.Results()))
 		}
 		if _, _, err := tx.Proposal(ctx, "unknown"); !errors.Is(err, governance.ErrNotFound) {

@@ -167,23 +167,33 @@ func mcRecordRoundTrip(e *cfEnv) {
 	e.mcSeed(true)
 	before := e.revision()
 	reference := mcCandidate("p1", "V1", "v2").current() // the seeded proposal of V2
-	for i, outcome := range []governance.MergeOutcome{
+	outcomes := []governance.MergeOutcome{
 		{Kind: governance.MergePromoted, Source: "sha-0", Version: "V2", Reference: &reference},
 		{Kind: governance.MergeCorrected, Source: "sha-1", Version: "V2", Corrects: "V1", Reference: &reference},
 		{Kind: governance.MergeNoChange, Source: "sha-2", Version: "V2"},
 		{Kind: governance.MergeNotTarget, Source: "sha-3", Version: "V1"},
 		{Kind: governance.MergeBeforeCanonical, Source: "sha-4", Version: "V1"},
-		{Kind: governance.MergeBlocked, Reason: governance.MergeReasonCanonicalChanged, Source: "sha-5", Version: "V2", Reference: &reference},
 		{Kind: governance.MergeBlocked, Reason: governance.MergeReasonIntegrationUnreadable, Source: "", Version: "V2"},
-	} {
+	}
+	for _, reason := range mcAllReasons { // every code of the schema's CHECK, spelled as the Go constant
+		outcomes = append(outcomes, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: reason, Source: "sha-r", Version: "V2", Reference: &reference})
+	}
+	for i, outcome := range outcomes {
 		carrier := contract.ApprovalCarrierID(fmt.Sprintf("carrier-%d", i))
 		if err := e.recordMerge(carrier, outcome); err != nil {
-			e.t.Fatalf("record %v: %v", outcome.Kind, err)
+			e.t.Fatalf("record %v %q: %v", outcome.Kind, outcome.Reason, err)
 		}
 		stored, _ := e.outcomeOf(carrier)
 		e.requireOutcome(carrier, stored, outcome)
 	}
 	e.requireWrites(before, 0) // the outcome advances no revision
+}
+
+var mcAllReasons = []governance.MergeReason{
+	governance.MergeReasonUnapprovedChange, governance.MergeReasonInvalidSource, governance.MergeReasonAssessmentConflict, governance.MergeReasonApprovalMissing,
+	governance.MergeReasonDiffersFromApproved, governance.MergeReasonNotCurrent, governance.MergeReasonCanonicalChanged, governance.MergeReasonPolicyChanged,
+	governance.MergeReasonIntegrityNotPassed, governance.MergeReasonIntegrationMismatch, governance.MergeReasonCorrectionContextReused,
+	governance.MergeReasonForkUnsupported, governance.MergeReasonSharedMergeCommit, governance.MergeReasonIntegrationUnreadable, governance.MergeReasonIntegrityFailed,
 }
 
 func mcRecordTwiceConflicts(e *cfEnv) {
@@ -240,4 +250,39 @@ func mcRecordRejects(e *cfEnv) {
 		}
 	}
 	e.requireWrites(before, 0)
+}
+
+// mcPolicyChanged merges a PR whose revision was approved under another policy revision than the Suite's.
+func mcPolicyChanged(e *cfEnv) {
+	older := cfMust(contract.NewPolicy(cfProject, "policy-0", e.owner))
+	snapshot := cfMust(contract.NewCanonicalSnapshot(cfMust(contract.NewSuite(cfProject, "suite-b", "", cfSeededRevision)), contract.SuiteVersion{}, contract.ProtectedContract{}, contract.PromotionRecord{}))
+	e.seed(governance.Seed{Suite: governance.SuiteState{Canonical: snapshot, Policy: older, Target: cfTarget}}) // makes the policy revision exist
+	pr := mcCandidate("pr", "V1", "v2")
+	binding := cfMust(contract.NewApprovalBinding(contract.BindingInput{Reference: pr.reference("revision-1"), ExpectedCanonical: "V1", Manifest: pr.protected.Manifest().Digest(),
+		Scope: pr.protected.ScopeDigest(), PolicyRevision: "policy-0", CoveredInputs: pr.protected.CoveredInputs()}))
+	pr.proposal, pr.assessments = cfMust(contract.NewProposal(cfMust(contract.NewProposalRevision(binding, pr.origin, pr.carrier)))), nil
+	e.mcSeed(false, pr)
+	before := e.revision()
+
+	result := e.merge(mcRequest(pr, "v2", &mcMessages{}))
+
+	e.requireOutcome(pr.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: governance.MergeReasonPolicyChanged,
+		Source: mcSource(pr), Version: "V1", Reference: mcRef(pr)})
+	e.requireWrites(before, 1)
+}
+
+// mcCorrectionContextReused merges a fix that restores V1's content but is carried by the PR that promoted V2.
+func mcCorrectionContextReused(e *cfEnv) {
+	fix := mcCandidate("fix", "V2", "v1")
+	fix.carrier = "carrier-p1" // the carrier of V2's promotion
+	fix.proposal = cfMust(contract.NewProposal(cfMust(contract.NewProposalRevision(fix.proposal.Current().Binding(), fix.origin, fix.carrier))))
+	e.mcSeed(true, fix)
+	e.approve(fix)
+	before := e.revision()
+
+	result := e.merge(mcRequest(fix, "v1", &mcMessages{}))
+
+	e.requireOutcome(fix.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: governance.MergeReasonCorrectionContextReused,
+		Source: mcSource(fix), Version: "V2", Reference: mcRef(fix)})
+	e.requireWrites(before, 1)
 }

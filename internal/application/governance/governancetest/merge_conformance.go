@@ -233,6 +233,8 @@ func mergeCases() []struct {
 		{"MergeCorrectsAnEarlierVersion", mcCorrects},
 		{"MergeOfASecondPRApprovedAgainstTheSameCanonicalIsBlocked", mcSecondPRBlocked},
 		{"MergeOfARebasedPRWithoutApprovalIsBlocked", mcRebasedPRBlocked},
+		{"MergeOfAPRBoundToAnotherPolicyIsBlocked", mcPolicyChanged},
+		{"MergeRestoringTheContentOfAPriorPRWithTheSameCarrierIsBlocked", mcCorrectionContextReused},
 		{"MergeOfATreeThatDiffersFromTheApprovedRevisionIsBlockedAndAssessedAsFailed", mcDiffersFromApproved},
 		{"MergeWithoutApprovalOrWithARevokedApprovalIsBlocked", mcApprovalMissing},
 		{"MergeWithAnAssessmentConflictIsBlockedAndKeepsTheCanonical", mcAssessmentConflict},

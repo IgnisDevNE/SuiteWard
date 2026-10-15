@@ -497,13 +497,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 		return fmt.Errorf("read the observed pull requests: %w", err)
 	}
 	open := openPulls(pulls, p.Repo)
-	if len(open) == 0 {
-		return bootstrapStop("no-open-pull-request")
-	}
-	if s.branch && !s.latestPull && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
-		return nil
-	}
-	if s.latestPull {
+	if s.latestPull { // before the open check: a merged carrier that was the only pull must not show no-open-pull-request
 		mayHaveMerged, err := b.carrierMayHaveMerged(ctx, p, s, open)
 		if err != nil {
 			return err
@@ -512,6 +506,12 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 			b.logger.InfoContext(ctx, "github bootstrap waiting: the carrier of the pull proposal merged and the merges job has not decided that merge", "repo", p.Repo, "proposal", s.latest)
 			return bootstrapStop("awaiting-merge-decision")
 		}
+	}
+	if len(open) == 0 {
+		return bootstrapStop("no-open-pull-request")
+	}
+	if s.branch && !s.latestPull && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
+		return nil
 	}
 	branch, ok := strings.CutPrefix(string(s.target), targetPrefix)
 	if !ok {

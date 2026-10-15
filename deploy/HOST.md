@@ -512,7 +512,7 @@ Run it on `SuiteWardQ` with the target under test as the only watcher. **Allow a
 3. **Squash, then rebase.** The same as step 2 with "Squash and merge", then with "Rebase and merge" (V3, then V4). Before each merge, update the branch if GitHub asks: the strict rule requires it. An update changes the head, so wait for `success` again; consent is kept when the update changes only files outside `tests/`.
 4. **Two approved PRs.** From the current `main`, open two PRs that each change `tests/` and approve both. Merge the first: it is promoted. The second PR's check goes back to `in_progress` with a new revision bound to the new canonical. Approve that revision, update the branch if GitHub asks, and merge it: it is promoted.
 5. **Closed without merging.** Close a protected PR without merging it. No comment and no version appear.
-6. **Correction.** Open a PR that restores the protected files of an earlier version (for example a revert of step 2's change), approve it and merge it. The comment says that it is a correction of the current version.
+6. **Correction.** Open a PR that reverts the most recent protected merge, so that the protected files equal the previous version exactly (any other difference makes it an ordinary promotion), approve it and merge it. The comment says that it is a correction of the current version, and the new version holds the previous version's files.
 7. **Final `/status`.** `merges` is absent, `integrity` is `passed`, `outbox.failed` is 0 and `protection` is `enforced`.
 
 Paste back (no secrets), for each step: the PR number, the merge method, the first line of the comment, and the state of the check before the merge. Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.

@@ -25,6 +25,7 @@ const (
 	reasonBootstrapPending  = "bootstrap-pending"
 	reasonUnchanged         = "unchanged"
 	reasonReady             = "ready"
+	reasonBootstrapReady    = "bootstrap-ready"
 	reasonApprovalMissing   = "approval-missing"
 	reasonNotCurrent        = "not-current"
 	reasonAssessmentPending = "assessment-pending"
@@ -44,6 +45,7 @@ var changeCodes = map[inventory.Change]string{inventory.Unchanged: "unchanged", 
 
 // checkReader is the part of the GitHub reader the check job uses.
 type checkReader interface {
+	BranchHead(ctx context.Context, repo, branch string) (string, error)
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
 }
 
@@ -85,6 +87,20 @@ type checksJob struct {
 	// unchanged remembers, in memory, the heads found unchanged against a canonical: a later Suite write for another
 	// pull request does not make such a head read its tree again (consent cannot change an unchanged result).
 	unchanged map[checkPull]unchangedAt
+	// protected remembers, in memory, whether the tree of a commit has protected files, so the default branch and the
+	// heads that were looked at as bootstrap carriers are each read once (a verdict is a fact about the commit).
+	protected map[headKey]bool
+}
+
+// headKey names a commit of a repository.
+type headKey struct{ repo, sha string }
+
+// bootstrapPlan is what a repository whose Suite has no canonical follows (docs/contracts/runtime.md, "github_checks
+// without a canonical"), decided once per run for all its open pull requests.
+type bootstrapPlan struct {
+	pending bool // the default branch has protected files, or cannot be read as a contract: the branch path owns the bootstrap
+	wait    bool // a GitHub read failed: the stored checks stay and a new head says assessment-pending
+	carrier int  // the pull request that carries the bootstrap; 0 when none does
 }
 
 // run decides the checks of every enrolled, configured project. A GitHub read failure keeps the stored check; any other
@@ -136,6 +152,11 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 		return "", fmt.Errorf("read the suite: %w", err)
 	}
 	slices.SortFunc(pulls, func(a, b githubsync.PullState) int { return a.Number - b.Number })
+	if suite.exists && suite.canonical == "" && slices.ContainsFunc(pulls, func(pull githubsync.PullState) bool { return pull.NotOpenSince.IsZero() }) {
+		if suite.plan, problem, err = j.planBootstrap(ctx, p, suite.target, pulls); err != nil {
+			return "", err
+		}
+	}
 	var failures []error
 	for _, pull := range pulls {
 		if !pull.NotOpenSince.IsZero() {
@@ -158,9 +179,12 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 // suiteView is what the job needs of a project's Suite: its revision, its canonical version (empty without one) and
 // whether that version failed its integrity verification.
 type suiteView struct {
+	exists          bool // the bootstrap job created the Suite
 	revision        int64
+	target          contract.IntegrationTargetID
 	canonical       contract.SuiteVersionID
-	integrityFailed bool // the stored bytes of the canonical failed their verification
+	integrityFailed bool          // the stored bytes of the canonical failed their verification
+	plan            bootstrapPlan // without a canonical: who carries the bootstrap
 }
 
 func (j *checksJob) suite(ctx context.Context, project contract.ProjectID) (suiteView, error) {
@@ -170,6 +194,7 @@ func (j *checksJob) suite(ctx context.Context, project contract.ProjectID) (suit
 		if err != nil {
 			return fmt.Errorf("load suite: %w", err)
 		}
+		view.exists, view.target = true, state.Target
 		view.revision = int64(state.Canonical.Suite().Revision())
 		view.canonical, _ = state.Canonical.Suite().CurrentVersionID()
 		return nil
@@ -201,13 +226,21 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		return "", fmt.Errorf("read the latest owner command: %w", err)
 	}
 	sameHead := found && record.HeadSHA == pull.HeadSHA
+	tier, _ := effectiveTier(j.tier, enrollment, true)
 	base := checks.Result{RepositoryID: p.RepositoryID, PullNumber: pull.Number, HeadSHA: pull.HeadSHA, CommandID: latest.CommentID}
-	var result checks.Result
+	var (
+		result checks.Result
+		wait   bool
+	)
 	final := false // a result the owner's commands cannot change
 	switch {
-	case suite.canonical == "": // no Suite or no canonical: nothing to compare the head with
+	case !suite.exists: // the bootstrap job creates the Suite
 		result = base
 		result.State, result.Reason = checks.InProgress, reasonBootstrapPending
+	case suite.canonical == "": // nothing to compare the head with: the bootstrap carrier is assessed, every other pull request waits
+		if result, final, problem, wait, err = j.bootstrap(ctx, p, suite, pull, base, record, sameHead, tier); err != nil {
+			return "", err
+		}
 	case suite.integrityFailed: // the canonical cannot be trusted: no head is compared with it, and no tree is read
 		result, final = base, true
 		result.State, result.Reason = checks.Failure, reasonIntegrityFailed
@@ -220,20 +253,20 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		result = base
 		result.State, result.Reason, result.Change, result.Revision = checks.Success, reasonUnchanged, record.Change, suite.revision
 	default:
-		var wait bool
-		if result, problem, wait, err = j.assess(ctx, p, suite, pull, base); err != nil {
+		if result, problem, wait, err = j.assess(ctx, p, suite, pull, base, tier); err != nil {
 			return "", err
 		}
-		if wait { // keep the stored check of this head, or say that a new head is pending, so it never stays without a check
-			result = base
-			result.State, result.Reason = checks.InProgress, reasonAssessmentPending
-			// integrity-failed and fork-unsupported come from rules that may no longer apply, so they are not carried over
-			if sameHead && record.Reason != reasonIntegrityFailed && record.Reason != reasonForkUnsupported {
-				result = record.Result
-			}
+	}
+	if wait { // keep the stored check of this head, or say that a new head is pending, so it never stays without a check
+		result = base
+		result.State, result.Reason = checks.InProgress, reasonAssessmentPending
+		// integrity-failed and fork-unsupported come from rules that may no longer apply, so they are not carried over
+		if sameHead && record.Reason != reasonIntegrityFailed && record.Reason != reasonForkUnsupported {
+			result = record.Result
 		}
 	}
-	if !final && suite.canonical != "" && sameHead && hasCommand && !latest.CreatedAt.Before(record.HeadSince) {
+	// A pull request that waits for the bootstrap has no command to reject: only a carrier or a change has one.
+	if !final && result.Reason != reasonBootstrapPending && sameHead && hasCommand && !latest.CreatedAt.Before(record.HeadSince) {
 		rejected, err := j.rejected(ctx, p, latest)
 		if err != nil {
 			return "", err
@@ -242,7 +275,6 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			result.State, result.Reason = checks.Failure, reasonOwnerCommand
 		}
 	}
-	tier, _ := effectiveTier(j.tier, enrollment, true)
 	// Publishing every run, also an unchanged result, lets the ledger resend a message that ended failed.
 	_, _, err = j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		return newCheckMessage(p.Repo, result, tier, string(suite.canonical), generation)
@@ -253,9 +285,122 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	return problem, nil
 }
 
-// noRevisionNotice writes no comment about a new revision; the message is wired where it is rendered.
-func noRevisionNotice(governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
-	return governance.OutboxMessage{}, false, nil
+// bootstrap decides the check of a pull request while the Suite has no canonical (docs/contracts/runtime.md,
+// "github_checks without a canonical"): the carrier's head is assessed, every other pull request waits.
+func (j *checksJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, record checks.Record, sameHead bool,
+	tier string) (result checks.Result, final bool, problem string, wait bool, err error) {
+	result = base
+	switch {
+	case suite.plan.pending: // the branch path owns the bootstrap, forks included
+		result.State, result.Reason = checks.InProgress, reasonBootstrapPending
+	case isFork(pull.HeadRepo, p.Repo):
+		final = true
+		result.State, result.Reason = checks.InProgress, reasonForkUnsupported
+	case suite.plan.wait:
+		wait = true
+	case pull.Number != suite.plan.carrier:
+		result.State, result.Reason = checks.InProgress, reasonBootstrapPending
+	// Nothing that governs the carrier's head moved. A record of a pull request that only waited is no assessment.
+	case sameHead && record.Reason != reasonBootstrapPending && record.Reason != reasonAssessmentPending && record.Revision == suite.revision && record.CommandID == base.CommandID:
+		result = record.Result
+	default:
+		result, problem, wait, err = j.assess(ctx, p, suite, pull, base, tier)
+	}
+	return result, final, problem, wait, err
+}
+
+// planBootstrap decides, for the open pull requests of a repository whose Suite has no canonical, whether the branch
+// path is pending (the default branch has protected files) and which pull request carries the bootstrap: the lowest
+// open non-fork one that already has a bootstrap proposal, else the lowest whose head has protected files. problem is
+// a code for /status.
+func (j *checksJob) planBootstrap(ctx context.Context, p owner.ProjectPolicy, target contract.IntegrationTargetID, pulls []githubsync.PullState) (plan bootstrapPlan, problem string, err error) {
+	branch, ok := strings.CutPrefix(string(target), targetPrefix)
+	if !ok {
+		return plan, "", errors.New("the suite does not target a branch")
+	}
+	waiting := func(err error) (bootstrapPlan, string, error) {
+		if cancelled := ctx.Err(); cancelled != nil {
+			return plan, "", cancelled
+		}
+		logReadFailure(ctx, j.logger, "github checks read failed", p.Repo, err)
+		return bootstrapPlan{wait: true}, problemReadFailed, nil
+	}
+	head, err := j.reader.BranchHead(ctx, p.Repo, branch)
+	if err != nil {
+		return waiting(githubRead(err))
+	}
+	protected, err := j.hasProtected(ctx, p.Repo, head)
+	switch {
+	case err == nil:
+	case errors.Is(err, github.ErrTreeTruncated) || errors.Is(err, errGitHubRead): // not the owner's source: wait for the full tree
+		return waiting(err)
+	case invalidSource(err): // the default branch's contract cannot be read, so no pull request can carry the bootstrap
+		return bootstrapPlan{pending: true}, "", nil // the bootstrap job reports it in /status
+	default:
+		return plan, "", &opaque{what: "read the default branch", cause: err}
+	}
+	if protected {
+		return bootstrapPlan{pending: true}, "", nil
+	}
+	var open []githubsync.PullState // the pull requests that may carry it, lowest first
+	for _, pull := range pulls {
+		if pull.NotOpenSince.IsZero() && !isFork(pull.HeadRepo, p.Repo) {
+			open = append(open, pull)
+		}
+	}
+	err = j.suites.Do(ctx, owner.ProjectID(p.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		for _, pull := range open {
+			_, found, err := tx.BaselineProposalFor(ctx, carrierID(p.RepositoryID, pull.Number))
+			if err != nil {
+				return fmt.Errorf("find the bootstrap proposal of pull %d: %w", pull.Number, err)
+			}
+			if found {
+				plan.carrier = pull.Number
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return bootstrapPlan{}, "", &opaque{what: "find the bootstrap carrier", cause: err}
+	}
+	for _, pull := range open {
+		if plan.carrier != 0 {
+			break
+		}
+		protected, err := j.hasProtected(ctx, p.Repo, pull.HeadSHA)
+		switch {
+		case err == nil && !protected:
+		case err == nil, invalidSource(err): // a head that cannot be read as a source is assessed as the carrier, which says why
+			plan.carrier = pull.Number
+		case errors.Is(err, errGitHubRead): // the lowest pull request must not be skipped because GitHub failed once
+			return waiting(err)
+		default:
+			return bootstrapPlan{}, "", &opaque{what: "read a pull request head", cause: err}
+		}
+	}
+	return plan, "", nil
+}
+
+// hasProtected reports whether the tree of a commit has protected files, reading it once per commit.
+func (j *checksJob) hasProtected(ctx context.Context, repo, sha string) (bool, error) {
+	key := headKey{repo, sha}
+	if protected, known := j.protected[key]; known {
+		return protected, nil
+	}
+	tree, err := j.reader.Tree(ctx, repo, sha)
+	if err != nil {
+		return false, githubRead(err)
+	}
+	inv, err := inventory.Build(ctx, &githubTree{tree: tree, files: map[string][]byte{}})
+	if err != nil {
+		return false, err
+	}
+	if j.protected == nil {
+		j.protected = map[headKey]bool{}
+	}
+	j.protected[key] = len(inv.Manifest().Entries()) > 0
+	return j.protected[key], nil
 }
 
 // isFork reports whether a pull request's head repository is observed and is not repo, compared case-insensitively,
@@ -266,18 +411,40 @@ func isFork(headRepo, repo string) bool {
 
 // assess reads the head's tree and assesses it against the canonical. wait is true when that cannot be done now (a failed
 // GitHub read, a canonical that moved) and problem says why; any other failure is the error.
-func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result) (result checks.Result, problem string, wait bool, err error) {
-	var head governance.HeadResult
+func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, tier string) (result checks.Result, problem string, wait bool, err error) {
+	var (
+		head      governance.HeadResult
+		bootstrap governance.BootstrapHeadResult
+	)
+	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
 	tree, err := j.reader.Tree(ctx, p.Repo, pull.HeadSHA)
-	if err == nil {
-		head, err = governance.AssessHead(ctx, j.suites, j.contents, j.content, governance.HeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
-			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}}, Revision: noRevisionNotice})
-	} else {
+	switch {
+	case err != nil:
 		err = githubRead(err)
+	case suite.canonical == "": // the bootstrap carrier: its head becomes the first canonical only through its merge
+		bootstrap, err = governance.AssessBootstrapHead(ctx, j.suites, j.content, governance.BootstrapHeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
+			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},
+			Summary: func(reference contract.ProposalReference, inv inventory.Inventory) (governance.OutboxMessage, error) {
+				proposal, revision, ok := parseReference(referenceText(reference))
+				if !ok {
+					return governance.OutboxMessage{}, errors.New("the bootstrap revision is not P<n>-R<m>")
+				}
+				return newSummaryMessage(target, inventoryInputs(bootstrapSummaryInputs{Proposal: proposal, Revision: revision, Source: sourcePull, Origin: pull.HeadSHA, Tier: tier}, inv))
+			}})
+	default:
+		head, err = governance.AssessHead(ctx, j.suites, j.contents, j.content, governance.HeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
+			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},
+			Revision: func(n governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+				message, err := newRevisionMessage(target, n, tier)
+				return message, err == nil, err
+			}})
 	}
 	result = base
 	result.Revision = suite.revision // what the result held at, for a head that cannot be assessed
 	switch {
+	case err == nil && suite.canonical == "":
+		result, err = j.bootstrapped(bootstrap, base)
+		return result, "", false, err
 	case err == nil:
 		result, err = j.assessed(head, base)
 		return result, "", false, err
@@ -322,19 +489,41 @@ func (j *checksJob) assessed(head governance.HeadResult, base checks.Result) (ch
 	if head.Reference == nil {
 		return checks.Result{}, errors.New("a protected change has no proposal reference")
 	}
-	result.Reference = string(head.Reference.ProposalID) + "-" + string(head.Reference.RevisionID)
-	if head.Ready {
-		result.State, result.Reason = checks.Success, reasonReady
+	result.Reference = referenceText(*head.Reference)
+	return readiness(result, head.Ready, head.Reason, reasonReady)
+}
+
+// bootstrapped maps the assessment of a bootstrap carrier's head to its check. A head with no protected files has no
+// bootstrap to approve: the pull request waits like any other.
+func (j *checksJob) bootstrapped(head governance.BootstrapHeadResult, base checks.Result) (checks.Result, error) {
+	result := base
+	result.Revision = head.Revision
+	if head.Empty {
+		result.State, result.Reason = checks.InProgress, reasonBootstrapPending
 		return result, nil
 	}
-	switch head.Reason {
+	if head.Reference == nil {
+		return checks.Result{}, errors.New("a bootstrap head with protected files has no proposal reference")
+	}
+	result.Change = changeCodes[inventory.ProtectedChange]
+	result.Reference = referenceText(*head.Reference)
+	return readiness(result, head.Ready, head.Reason, reasonBootstrapReady)
+}
+
+// readiness maps the readiness of a revision to its check: ready with readyReason, or in progress until it is approved.
+func readiness(result checks.Result, ready bool, reason contract.PromotionReason, readyReason string) (checks.Result, error) {
+	if ready {
+		result.State, result.Reason = checks.Success, readyReason
+		return result, nil
+	}
+	switch reason {
 	case contract.PromotionReasonApprovalMissing:
 		result.State, result.Reason = checks.InProgress, reasonApprovalMissing
 	case contract.PromotionReasonProposalNotCurrent, contract.PromotionReasonContextMismatch, contract.PromotionReasonCanonicalChanged,
 		contract.PromotionReasonPolicyChanged:
 		result.State, result.Reason = checks.InProgress, reasonNotCurrent
 	default: // including IntegrityNotPassed and AssessmentMismatch: the binding is built from the head's own inventory, so neither can happen
-		return checks.Result{}, fmt.Errorf("the head is not ready for the unexpected reason %d", head.Reason)
+		return checks.Result{}, fmt.Errorf("the head is not ready for the unexpected reason %d", reason)
 	}
 	return result, nil
 }

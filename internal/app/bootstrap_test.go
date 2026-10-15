@@ -620,10 +620,10 @@ func TestBootstrapProposesTheBaselineOnTheLowestOpenPullWithItsSummary(t *testin
 		t.Fatalf("payload target = %v", payload)
 	}
 	summary, _ := payload["summary"].(map[string]any)
-	if keys := slices.Sorted(maps.Keys(summary)); !slices.Equal(keys, []string{"branch", "exclude", "excludeTotal", "include", "includeTotal", "origin", "paths", "proposal", "protected", "revision", "tier"}) {
+	if keys := slices.Sorted(maps.Keys(summary)); !slices.Equal(keys, []string{"branch", "exclude", "excludeTotal", "include", "includeTotal", "origin", "paths", "proposal", "protected", "revision", "source", "tier"}) {
 		t.Fatalf("summary keys = %v", keys)
 	}
-	want := map[string]any{"proposal": float64(1), "revision": float64(1), "origin": bootHead, "branch": "main", "protected": float64(3), "tier": "isolated",
+	want := map[string]any{"proposal": float64(1), "revision": float64(1), "source": "branch", "origin": bootHead, "branch": "main", "protected": float64(3), "tier": "isolated",
 		"paths":   []any{".github/workflows/ci.yml", ".suiteward.yml", "tests/a_test.go"},
 		"include": []any{"/tests/**"}, "exclude": []any{}, "includeTotal": float64(1), "excludeTotal": float64(0)}
 	for key, wanted := range want {

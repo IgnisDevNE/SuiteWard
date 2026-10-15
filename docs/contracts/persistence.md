@@ -1009,7 +1009,8 @@ func AssessBootstrapHead(ctx context.Context, uow UnitOfWork, writer ContentWrit
   2. decide with `DecideBootstrap`, using an `IntegrationMergedChange` integration, version `V1`, operation `merge:<carrier>` and kind `OperationBootstrap`, inside the same `Do`.
 
   The outcome is `promoted` V1, or `blocked` with a mapped reason and **no version**.
-- **A refusal with a bootstrap proposal.** The outcome is `blocked` with that reason and no version.
+- **A merge into another branch** with no canonical is `before-canonical`, even for the bootstrap carrier; the target is checked first, as with a canonical.
+- **A refusal with a bootstrap proposal.** The outcome is `blocked` with that reason and no version. A refusal `integrity-failed` names a stored canonical, so without one it is `ErrInvalidRequest`.
 - **Every other merge with no canonical.** The outcome is `before-canonical` with no version and no message.
 - **The `before-canonical` rule by time.** It applies only when V1's current revision is `OriginBranch`. When V1 came from a merge, every earlier merge was already recorded in order.
 - **Impossible reasons.** `CanonicalPresent` and `EmptyInventory` under the Suite lock are impossible states, `ErrInvalidState`.

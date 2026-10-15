@@ -255,12 +255,21 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	check := func(pull int, key string, want ...string) {
 		t.Helper()
 		posted := gh.posted(pull)
-		if len(posted) != 1 || !commandtext.HasMarker(posted[0], instance, key) {
-			t.Fatalf("pull %d: comments %v, want one that ends with the marker of %s", pull, posted, key)
+		if len(posted) != 2 { // the revision comment of its change proposal, and the outcome of its merge
+			t.Fatalf("pull %d: %d comments, want the revision comment and one outcome comment", pull, len(posted))
+		}
+		var outcome string
+		for _, body := range posted {
+			if commandtext.HasMarker(body, instance, key) {
+				outcome = body
+			}
+		}
+		if outcome == "" {
+			t.Fatalf("pull %d: no comment ends with the marker of %s: %v", pull, key, posted)
 		}
 		for _, phrase := range want {
-			if !strings.Contains(posted[0], phrase) {
-				t.Fatalf("pull %d: the comment lacks %q:\n%s", pull, phrase, posted[0])
+			if !strings.Contains(outcome, phrase) {
+				t.Fatalf("pull %d: the comment lacks %q:\n%s", pull, phrase, outcome)
 			}
 		}
 	}

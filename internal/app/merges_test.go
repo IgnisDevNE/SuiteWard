@@ -1050,3 +1050,53 @@ func (w *mgWorld) otherOutcome() (governance.MergeOutcome, bool) {
 	}
 	return outcome, found
 }
+
+// A blob of the integrated tree that answers 404 or an invalid response follows the bound of the tree itself: a file
+// that is permanently unreadable must not stall the repository.
+func TestMergesBoundABlobThatMayBeLate(t *testing.T) {
+	late := map[string]error{
+		"not found":        &rest.StatusError{Status: 404, Body: bootSecret},
+		"invalid response": fmt.Errorf("%w: %s", github.ErrInvalidResponse, bootSecret),
+	}
+	for name, failure := range late {
+		t.Run(name, func(t *testing.T) {
+			w := newMgWorld(t)
+			w.approved(5, cjHead2, "v2", 2, 201)
+			w.leave(5)
+			w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
+			w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: failure} // the listing works; a blob does not
+
+			w.advance(29 * time.Minute)
+			w.mustMerge()
+
+			w.wantNoOutcome(5)
+			w.wantProblem("waiting")
+			if w.processed(5) {
+				t.Fatal("an undecided merge is marked processed")
+			}
+
+			w.advance(time.Minute)
+			w.mustMerge()
+
+			outcome := w.wantOutcome(5, governance.MergeBlocked, governance.MergeReasonIntegrationUnreadable)
+			if outcome.Source != contract.SourceRevision(mgSHA5) {
+				t.Fatalf("source %q, want the merge commit kept", outcome.Source)
+			}
+			w.wantProblem("")
+		})
+	}
+}
+
+func TestMergesKeepAFailedBlobReadTransientPastTheBound(t *testing.T) {
+	w := newMgWorld(t)
+	w.approved(5, cjHead2, "v2", 2, 201)
+	w.leave(5)
+	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
+	w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: &rest.StatusError{Status: 503, Body: bootSecret}}
+	w.advance(2 * time.Hour)
+
+	w.mustMerge()
+
+	w.wantNoOutcome(5)
+	w.wantProblem("read-failed")
+}

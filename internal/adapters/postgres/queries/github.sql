@@ -24,9 +24,9 @@ SET installation_id = excluded.installation_id,
 
 -- name: UpsertPulls :exec
 -- Reopens a pull that reappears; first_seen never changes.
-INSERT INTO github_pulls (repo, number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen)
+INSERT INTO github_pulls (repo, number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, head_repo)
 SELECT sqlc.arg(repo)::text, (p->>'number')::int, p->>'head_sha', p->>'head_ref', p->>'base_ref', p->>'base_sha', (p->>'updated_at')::timestamptz,
-       sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
+       sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz, NULLIF(p->>'head_repo', '')
 FROM jsonb_array_elements(sqlc.arg(pulls)::jsonb) AS p
 ON CONFLICT (repo, number) DO UPDATE
 SET head_sha = excluded.head_sha,
@@ -35,6 +35,7 @@ SET head_sha = excluded.head_sha,
     base_sha = excluded.base_sha,
     updated_at = excluded.updated_at,
     last_seen = excluded.last_seen,
+    head_repo = excluded.head_repo,
     not_open_since = NULL;
 
 -- Marks the first cycle a pull was absent from the complete open listing.
@@ -88,10 +89,60 @@ SELECT repo, installation_id, last_success, last_error, last_status, wait_until
 FROM github_repositories WHERE repo = sqlc.arg(repo);
 
 -- name: ListGitHubPulls :many
-SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since
+SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo
 FROM github_pulls WHERE repo = sqlc.arg(repo) ORDER BY number;
 
 -- name: ListGitHubComments :many
 SELECT pull_number, comment_id, author_id, author_login, created_at, updated_at, body, body_digest, first_seen, not_seen_since
 FROM github_comment_versions WHERE repo = sqlc.arg(repo) AND pull_number = sqlc.arg(pull_number)
 ORDER BY comment_id, updated_at, first_seen, body_digest COLLATE "C";
+
+-- Merge facts (docs/contracts/persistence.md, "Merges (M1.7)"). The writes below lock the repository row first,
+-- like RecordCycle, so a cycle and a resolution of one repository never interleave.
+
+-- name: LockGitHubRepository :one
+SELECT closed_watermark FROM github_repositories WHERE repo = sqlc.arg(repo) FOR UPDATE;
+
+-- Not open, and the current absence has no resolution.
+-- name: ListAwaitingResolution :many
+SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo
+FROM github_pulls
+WHERE repo = sqlc.arg(repo) AND not_open_since IS NOT NULL AND resolved_for IS DISTINCT FROM not_open_since
+ORDER BY number;
+
+-- Writes only for the absence the resolution was read for; no row is a stale resolution. The head and base are
+-- refreshed because a push between the last cycle and the merge is not otherwise seen.
+-- name: RecordResolution :execrows
+UPDATE github_pulls
+SET head_sha = sqlc.arg(head_sha),
+    head_ref = sqlc.arg(head_ref),
+    base_ref = sqlc.arg(base_ref),
+    base_sha = sqlc.arg(base_sha),
+    head_repo = NULLIF(sqlc.arg(head_repo)::text, ''),
+    resolved_for = not_open_since,
+    merged = sqlc.arg(merged),
+    merged_at = sqlc.narg(merged_at),
+    merge_commit_sha = NULLIF(sqlc.arg(merge_commit_sha)::text, ''),
+    resolved_at = sqlc.arg(resolved_at)
+WHERE repo = sqlc.arg(repo) AND number = sqlc.arg(number) AND not_open_since = sqlc.arg(not_open_since);
+
+-- name: SetClosedWatermark :exec
+UPDATE github_repositories SET closed_watermark = sqlc.arg(watermark) WHERE repo = sqlc.arg(repo);
+
+-- A merged pull seen only in the closed listing: absent since the listing, unresolved. A stored pull is left alone.
+-- name: InsertClosedPulls :exec
+INSERT INTO github_pulls (repo, number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo)
+SELECT sqlc.arg(repo)::text, (p->>'number')::int, p->>'head_sha', p->>'head_ref', p->>'base_ref', p->>'base_sha', (p->>'updated_at')::timestamptz,
+       sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz, NULLIF(p->>'head_repo', '')
+FROM jsonb_array_elements(sqlc.arg(pulls)::jsonb) AS p
+ON CONFLICT (repo, number) DO NOTHING;
+
+-- name: ListMergedPulls :many
+SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo,
+       resolved_for, merged_at, merge_commit_sha, resolved_at, merge_processed
+FROM github_pulls
+WHERE repo = sqlc.arg(repo) AND merged
+ORDER BY merged_at, number;
+
+-- name: MarkMergeProcessed :execrows
+UPDATE github_pulls SET merge_processed = true WHERE repo = sqlc.arg(repo) AND number = sqlc.arg(number);

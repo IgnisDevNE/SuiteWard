@@ -71,6 +71,14 @@ type Assessment struct {
 	Outcome            pgtype.Text
 }
 
+type CanonicalIntegrity struct {
+	ProjectID string
+	SuiteID   string
+	VersionID string
+	Verdict   string
+	CheckedAt pgtype.Timestamptz
+}
+
 type ConsentResult struct {
 	SourceCommandID string
 	OperationID     string
@@ -111,25 +119,33 @@ type GithubProtectionResult struct {
 }
 
 type GithubPull struct {
-	Repo         string
-	Number       int32
-	HeadSha      string
-	HeadRef      string
-	BaseRef      string
-	BaseSha      string
-	UpdatedAt    pgtype.Timestamptz
-	FirstSeen    pgtype.Timestamptz
-	LastSeen     pgtype.Timestamptz
-	NotOpenSince pgtype.Timestamptz
+	Repo           string
+	Number         int32
+	HeadSha        string
+	HeadRef        string
+	BaseRef        string
+	BaseSha        string
+	UpdatedAt      pgtype.Timestamptz
+	FirstSeen      pgtype.Timestamptz
+	LastSeen       pgtype.Timestamptz
+	NotOpenSince   pgtype.Timestamptz
+	HeadRepo       pgtype.Text
+	ResolvedFor    pgtype.Timestamptz
+	Merged         bool
+	MergedAt       pgtype.Timestamptz
+	MergeCommitSha pgtype.Text
+	ResolvedAt     pgtype.Timestamptz
+	MergeProcessed bool
 }
 
 type GithubRepository struct {
-	Repo           string
-	InstallationID int64
-	LastSuccess    pgtype.Timestamptz
-	LastError      string
-	LastStatus     int32
-	WaitUntil      pgtype.Timestamptz
+	Repo            string
+	InstallationID  int64
+	LastSuccess     pgtype.Timestamptz
+	LastError       string
+	LastStatus      int32
+	WaitUntil       pgtype.Timestamptz
+	ClosedWatermark pgtype.Timestamptz
 }
 
 type Operation struct {
@@ -207,6 +223,20 @@ type PrCommand struct {
 	Disposition  string
 	OperationID  pgtype.Text
 	DecidedAt    pgtype.Timestamptz
+}
+
+type PrMerge struct {
+	ProjectID         string
+	SuiteID           string
+	Carrier           string
+	Kind              string
+	Reason            string
+	Source            string
+	VersionID         string
+	CorrectsVersionID pgtype.Text
+	ProposalID        pgtype.Text
+	RevisionID        pgtype.Text
+	RecordedAt        pgtype.Timestamptz
 }
 
 type Promotion struct {

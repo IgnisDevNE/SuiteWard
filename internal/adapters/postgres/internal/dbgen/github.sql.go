@@ -71,9 +71,18 @@ SELECT repo, installation_id, last_success, last_error, last_status, wait_until
 FROM github_repositories WHERE repo = $1
 `
 
-func (q *Queries) GetGitHubRepository(ctx context.Context, repo string) (GithubRepository, error) {
+type GetGitHubRepositoryRow struct {
+	Repo           string
+	InstallationID int64
+	LastSuccess    pgtype.Timestamptz
+	LastError      string
+	LastStatus     int32
+	WaitUntil      pgtype.Timestamptz
+}
+
+func (q *Queries) GetGitHubRepository(ctx context.Context, repo string) (GetGitHubRepositoryRow, error) {
 	row := q.db.QueryRow(ctx, getGitHubRepository, repo)
-	var i GithubRepository
+	var i GetGitHubRepositoryRow
 	err := row.Scan(
 		&i.Repo,
 		&i.InstallationID,
@@ -83,6 +92,26 @@ func (q *Queries) GetGitHubRepository(ctx context.Context, repo string) (GithubR
 		&i.WaitUntil,
 	)
 	return i, err
+}
+
+const insertClosedPulls = `-- name: InsertClosedPulls :exec
+INSERT INTO github_pulls (repo, number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo)
+SELECT $1::text, (p->>'number')::int, p->>'head_sha', p->>'head_ref', p->>'base_ref', p->>'base_sha', (p->>'updated_at')::timestamptz,
+       $2::timestamptz, $2::timestamptz, $2::timestamptz, NULLIF(p->>'head_repo', '')
+FROM jsonb_array_elements($3::jsonb) AS p
+ON CONFLICT (repo, number) DO NOTHING
+`
+
+type InsertClosedPullsParams struct {
+	Repo  string
+	At    pgtype.Timestamptz
+	Pulls []byte
+}
+
+// A merged pull seen only in the closed listing: absent since the listing, unresolved. A stored pull is left alone.
+func (q *Queries) InsertClosedPulls(ctx context.Context, arg InsertClosedPullsParams) error {
+	_, err := q.db.Exec(ctx, insertClosedPulls, arg.Repo, arg.At, arg.Pulls)
+	return err
 }
 
 const insertCommentVersions = `-- name: InsertCommentVersions :exec
@@ -103,6 +132,58 @@ type InsertCommentVersionsParams struct {
 func (q *Queries) InsertCommentVersions(ctx context.Context, arg InsertCommentVersionsParams) error {
 	_, err := q.db.Exec(ctx, insertCommentVersions, arg.Repo, arg.At, arg.Comments)
 	return err
+}
+
+const listAwaitingResolution = `-- name: ListAwaitingResolution :many
+SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo
+FROM github_pulls
+WHERE repo = $1 AND not_open_since IS NOT NULL AND resolved_for IS DISTINCT FROM not_open_since
+ORDER BY number
+`
+
+type ListAwaitingResolutionRow struct {
+	Number       int32
+	HeadSha      string
+	HeadRef      string
+	BaseRef      string
+	BaseSha      string
+	UpdatedAt    pgtype.Timestamptz
+	FirstSeen    pgtype.Timestamptz
+	LastSeen     pgtype.Timestamptz
+	NotOpenSince pgtype.Timestamptz
+	HeadRepo     pgtype.Text
+}
+
+// Not open, and the current absence has no resolution.
+func (q *Queries) ListAwaitingResolution(ctx context.Context, repo string) ([]ListAwaitingResolutionRow, error) {
+	rows, err := q.db.Query(ctx, listAwaitingResolution, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAwaitingResolutionRow{}
+	for rows.Next() {
+		var i ListAwaitingResolutionRow
+		if err := rows.Scan(
+			&i.Number,
+			&i.HeadSha,
+			&i.HeadRef,
+			&i.BaseRef,
+			&i.BaseSha,
+			&i.UpdatedAt,
+			&i.FirstSeen,
+			&i.LastSeen,
+			&i.NotOpenSince,
+			&i.HeadRepo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listGitHubComments = `-- name: ListGitHubComments :many
@@ -161,7 +242,7 @@ func (q *Queries) ListGitHubComments(ctx context.Context, arg ListGitHubComments
 }
 
 const listGitHubPulls = `-- name: ListGitHubPulls :many
-SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since
+SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo
 FROM github_pulls WHERE repo = $1 ORDER BY number
 `
 
@@ -175,6 +256,7 @@ type ListGitHubPullsRow struct {
 	FirstSeen    pgtype.Timestamptz
 	LastSeen     pgtype.Timestamptz
 	NotOpenSince pgtype.Timestamptz
+	HeadRepo     pgtype.Text
 }
 
 func (q *Queries) ListGitHubPulls(ctx context.Context, repo string) ([]ListGitHubPullsRow, error) {
@@ -196,6 +278,7 @@ func (q *Queries) ListGitHubPulls(ctx context.Context, repo string) ([]ListGitHu
 			&i.FirstSeen,
 			&i.LastSeen,
 			&i.NotOpenSince,
+			&i.HeadRepo,
 		); err != nil {
 			return nil, err
 		}
@@ -205,6 +288,82 @@ func (q *Queries) ListGitHubPulls(ctx context.Context, repo string) ([]ListGitHu
 		return nil, err
 	}
 	return items, nil
+}
+
+const listMergedPulls = `-- name: ListMergedPulls :many
+SELECT number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, not_open_since, head_repo,
+       resolved_for, merged_at, merge_commit_sha, resolved_at, merge_processed
+FROM github_pulls
+WHERE repo = $1 AND merged
+ORDER BY merged_at, number
+`
+
+type ListMergedPullsRow struct {
+	Number         int32
+	HeadSha        string
+	HeadRef        string
+	BaseRef        string
+	BaseSha        string
+	UpdatedAt      pgtype.Timestamptz
+	FirstSeen      pgtype.Timestamptz
+	LastSeen       pgtype.Timestamptz
+	NotOpenSince   pgtype.Timestamptz
+	HeadRepo       pgtype.Text
+	ResolvedFor    pgtype.Timestamptz
+	MergedAt       pgtype.Timestamptz
+	MergeCommitSha pgtype.Text
+	ResolvedAt     pgtype.Timestamptz
+	MergeProcessed bool
+}
+
+func (q *Queries) ListMergedPulls(ctx context.Context, repo string) ([]ListMergedPullsRow, error) {
+	rows, err := q.db.Query(ctx, listMergedPulls, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMergedPullsRow{}
+	for rows.Next() {
+		var i ListMergedPullsRow
+		if err := rows.Scan(
+			&i.Number,
+			&i.HeadSha,
+			&i.HeadRef,
+			&i.BaseRef,
+			&i.BaseSha,
+			&i.UpdatedAt,
+			&i.FirstSeen,
+			&i.LastSeen,
+			&i.NotOpenSince,
+			&i.HeadRepo,
+			&i.ResolvedFor,
+			&i.MergedAt,
+			&i.MergeCommitSha,
+			&i.ResolvedAt,
+			&i.MergeProcessed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockGitHubRepository = `-- name: LockGitHubRepository :one
+
+SELECT closed_watermark FROM github_repositories WHERE repo = $1 FOR UPDATE
+`
+
+// Merge facts (docs/contracts/persistence.md, "Merges (M1.7)"). The writes below lock the repository row first,
+// like RecordCycle, so a cycle and a resolution of one repository never interleave.
+func (q *Queries) LockGitHubRepository(ctx context.Context, repo string) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, lockGitHubRepository, repo)
+	var closed_watermark pgtype.Timestamptz
+	err := row.Scan(&closed_watermark)
+	return closed_watermark, err
 }
 
 const markCommentsNotSeen = `-- name: MarkCommentsNotSeen :exec
@@ -237,6 +396,23 @@ func (q *Queries) MarkCommentsNotSeen(ctx context.Context, arg MarkCommentsNotSe
 	return err
 }
 
+const markMergeProcessed = `-- name: MarkMergeProcessed :execrows
+UPDATE github_pulls SET merge_processed = true WHERE repo = $1 AND number = $2
+`
+
+type MarkMergeProcessedParams struct {
+	Repo   string
+	Number int32
+}
+
+func (q *Queries) MarkMergeProcessed(ctx context.Context, arg MarkMergeProcessedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markMergeProcessed, arg.Repo, arg.Number)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markPullsNotOpen = `-- name: MarkPullsNotOpen :exec
 UPDATE github_pulls
 SET not_open_since = $1::timestamptz
@@ -257,10 +433,77 @@ func (q *Queries) MarkPullsNotOpen(ctx context.Context, arg MarkPullsNotOpenPara
 	return err
 }
 
+const recordResolution = `-- name: RecordResolution :execrows
+UPDATE github_pulls
+SET head_sha = $1,
+    head_ref = $2,
+    base_ref = $3,
+    base_sha = $4,
+    head_repo = NULLIF($5::text, ''),
+    resolved_for = not_open_since,
+    merged = $6,
+    merged_at = $7,
+    merge_commit_sha = NULLIF($8::text, ''),
+    resolved_at = $9
+WHERE repo = $10 AND number = $11 AND not_open_since = $12
+`
+
+type RecordResolutionParams struct {
+	HeadSha        string
+	HeadRef        string
+	BaseRef        string
+	BaseSha        string
+	HeadRepo       string
+	Merged         bool
+	MergedAt       pgtype.Timestamptz
+	MergeCommitSha string
+	ResolvedAt     pgtype.Timestamptz
+	Repo           string
+	Number         int32
+	NotOpenSince   pgtype.Timestamptz
+}
+
+// Writes only for the absence the resolution was read for; no row is a stale resolution. The head and base are
+// refreshed because a push between the last cycle and the merge is not otherwise seen.
+func (q *Queries) RecordResolution(ctx context.Context, arg RecordResolutionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordResolution,
+		arg.HeadSha,
+		arg.HeadRef,
+		arg.BaseRef,
+		arg.BaseSha,
+		arg.HeadRepo,
+		arg.Merged,
+		arg.MergedAt,
+		arg.MergeCommitSha,
+		arg.ResolvedAt,
+		arg.Repo,
+		arg.Number,
+		arg.NotOpenSince,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setClosedWatermark = `-- name: SetClosedWatermark :exec
+UPDATE github_repositories SET closed_watermark = $1 WHERE repo = $2
+`
+
+type SetClosedWatermarkParams struct {
+	Watermark pgtype.Timestamptz
+	Repo      string
+}
+
+func (q *Queries) SetClosedWatermark(ctx context.Context, arg SetClosedWatermarkParams) error {
+	_, err := q.db.Exec(ctx, setClosedWatermark, arg.Watermark, arg.Repo)
+	return err
+}
+
 const upsertPulls = `-- name: UpsertPulls :exec
-INSERT INTO github_pulls (repo, number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen)
+INSERT INTO github_pulls (repo, number, head_sha, head_ref, base_ref, base_sha, updated_at, first_seen, last_seen, head_repo)
 SELECT $1::text, (p->>'number')::int, p->>'head_sha', p->>'head_ref', p->>'base_ref', p->>'base_sha', (p->>'updated_at')::timestamptz,
-       $2::timestamptz, $2::timestamptz
+       $2::timestamptz, $2::timestamptz, NULLIF(p->>'head_repo', '')
 FROM jsonb_array_elements($3::jsonb) AS p
 ON CONFLICT (repo, number) DO UPDATE
 SET head_sha = excluded.head_sha,
@@ -269,6 +512,7 @@ SET head_sha = excluded.head_sha,
     base_sha = excluded.base_sha,
     updated_at = excluded.updated_at,
     last_seen = excluded.last_seen,
+    head_repo = excluded.head_repo,
     not_open_since = NULL
 `
 

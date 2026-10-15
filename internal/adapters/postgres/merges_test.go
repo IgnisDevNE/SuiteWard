@@ -122,7 +122,7 @@ func TestMergeLedgerConstraints(t *testing.T) {
 		for i, kind := range []string{"promoted", "no-change", "not-target", "before-canonical"} {
 			mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/" + string(rune('a'+i)), "kind": kind})
 		}
-		mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/c", "kind": "corrected", "corrects_version_id": "v1"})
+		mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/corrected", "kind": "corrected", "corrects_version_id": "v1"})
 		for i, reason := range []string{"unapproved-change", "invalid-source", "assessment-conflict", "approval-missing", "differs-from-approved", "not-current", "canonical-changed",
 			"policy-changed", "integrity-not-passed", "integration-mismatch", "correction-context-reused", "fork-unsupported", "shared-merge-commit", "integration-unreadable", "integrity-failed"} {
 			mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/blocked-" + string(rune('a'+i)), "kind": "blocked", "reason": reason, "source": ""})

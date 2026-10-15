@@ -187,3 +187,15 @@ func TestRelayReleasesAClaimWhoseKindHasNoPublisherAndWarnsOncePerKind(t *testin
 		t.Errorf("%d log lines name the kind, want one Warn: %s", n, out.String())
 	}
 }
+
+func TestRelayReturnsTheReleaseErrorOfAKindWithNoPublisher(t *testing.T) {
+	boom := errors.New("release failed")
+	store := &scriptedStore{claims: []postgres.OutboxClaim{{Key: "k", Kind: "unregistered", Attempts: 1}}, releaseErr: boom}
+
+	if err := relayFor(t, store).RunOnce(t.Context()); !errors.Is(err, boom) {
+		t.Fatalf("RunOnce = %v, want the release error", err)
+	}
+	if store.finishCalls != 0 {
+		t.Fatalf("%d outcome writes for a message nobody can publish", store.finishCalls)
+	}
+}

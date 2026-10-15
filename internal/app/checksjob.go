@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
@@ -30,6 +31,7 @@ const (
 	reasonSourceUnavailable = "source-unavailable"
 	reasonInvalidSource     = "invalid-source"
 	reasonIntegrityFailed   = "integrity-failed"
+	reasonForkUnsupported   = "fork-unsupported"
 	reasonOwnerCommand      = "owner-command-rejected"
 
 	problemReadFailed = "read-failed" // a GitHub read failed; the next run tries again
@@ -153,10 +155,12 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 	return problem, errors.Join(failures...)
 }
 
-// suiteView is what the job needs of a project's Suite: its revision and its canonical version, empty without one.
+// suiteView is what the job needs of a project's Suite: its revision, its canonical version (empty without one) and
+// whether that version failed its integrity verification.
 type suiteView struct {
-	revision  int64
-	canonical contract.SuiteVersionID
+	revision        int64
+	canonical       contract.SuiteVersionID
+	integrityFailed bool // the stored bytes of the canonical failed their verification
 }
 
 func (j *checksJob) suite(ctx context.Context, project contract.ProjectID) (suiteView, error) {
@@ -173,7 +177,16 @@ func (j *checksJob) suite(ctx context.Context, project contract.ProjectID) (suit
 	if errors.Is(err, governance.ErrNotFound) { // no Suite yet: the bootstrap creates it
 		return suiteView{}, nil
 	}
-	return view, err
+	if err != nil || view.canonical == "" {
+		return view, err
+	}
+	// A verdict applies only while its version is the current canonical; "unavailable" and "passed" change no check.
+	verdict, found, err := j.integrity.Latest(ctx, project, defaultSuite)
+	if err != nil {
+		return suiteView{}, fmt.Errorf("read the integrity verdict: %w", err)
+	}
+	view.integrityFailed = found && verdict.Version == view.canonical && verdict.Verdict == integrity.Failed
+	return view, nil
 }
 
 // pull decides and publishes the check of one open pull request. problem is a code for /status when the decision had
@@ -190,10 +203,17 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	sameHead := found && record.HeadSHA == pull.HeadSHA
 	base := checks.Result{RepositoryID: p.RepositoryID, PullNumber: pull.Number, HeadSHA: pull.HeadSHA, CommandID: latest.CommentID}
 	var result checks.Result
+	final := false // a result the owner's commands cannot change
 	switch {
 	case suite.canonical == "": // no Suite or no canonical: nothing to compare the head with
 		result = base
 		result.State, result.Reason = checks.InProgress, reasonBootstrapPending
+	case suite.integrityFailed: // the canonical cannot be trusted: no head is compared with it, and no tree is read
+		result, final = base, true
+		result.State, result.Reason = checks.Failure, reasonIntegrityFailed
+	case isFork(pull.HeadRepo, p.Repo): // D-INTEGRATION: fork pull requests fail closed, with no assessment and no proposal
+		result, final = base, true
+		result.State, result.Reason = checks.InProgress, reasonForkUnsupported
 	case sameHead && record.Revision == suite.revision && record.CommandID == base.CommandID: // nothing that governs this head moved
 		result = record.Result
 	case sameHead && record.Change == changeCodes[inventory.Unchanged] && j.unchanged[checkPull{p.RepositoryID, pull.Number}] == unchangedAt{pull.HeadSHA, suite.canonical}:
@@ -212,7 +232,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			}
 		}
 	}
-	if suite.canonical != "" && sameHead && hasCommand && !latest.CreatedAt.Before(record.HeadSince) {
+	if !final && suite.canonical != "" && sameHead && hasCommand && !latest.CreatedAt.Before(record.HeadSince) {
 		rejected, err := j.rejected(ctx, p, latest)
 		if err != nil {
 			return "", err
@@ -230,6 +250,12 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		return "", fmt.Errorf("publish the check: %w", err)
 	}
 	return problem, nil
+}
+
+// isFork reports whether a pull request's head repository is observed and is not repo, compared case-insensitively,
+// as GitHub names repositories. "(deleted)" is one too; "" is not observed (a row from before M1.7), never a fork.
+func isFork(headRepo, repo string) bool {
+	return headRepo != "" && !strings.EqualFold(headRepo, repo)
 }
 
 // assess reads the head's tree and assesses it against the canonical. wait is true when that cannot be done now (a failed

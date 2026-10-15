@@ -708,7 +708,7 @@ type Store interface {
 	// (or there is none) it advances the generation and writes message(generation) to the outbox in the same
 	// transaction, as a system row. Otherwise it updates Change, Revision, CommandID and DecidedAt only and
 	// writes no message. It also advances the generation and writes a message when the current generation's
-	// message ended `failed` in the outbox, so a lost publication is retried. It returns the stored record and
+	// message ended `failed` in the outbox, at least 15 minutes after that message finished (M1.7), so a lost publication is retried without unbounded republication. It returns the stored record and
 	// whether a message was written.
 	Publish(ctx context.Context, r Result, at time.Time, message func(generation int64) (governance.OutboxMessage, error)) (Record, bool, error)
 }

@@ -483,6 +483,8 @@ SuiteWard now notices merged pull requests and promotes the approved protected f
 5. Only one target watches a repository at a time (6b.1).
 6. **The two canonicals diverge.** Each target keeps its own canonical. The host runs first, and its merges move SuiteWardQ `main` ahead of the co-located stack's V1. The co-located stack is therefore purged and set up again after the host scenario (6d.4).
 
+7. **Merges from before M1.7.** On its first run the merges job resolves every PR that left the open list before the deploy. One merged after the host's V1 with a protected change would get a "did not promote" comment. SuiteWardQ had no merges during M1.6b, so none is expected; if one appears, recover as in 6d.4 step 7.
+
 ### 6d.2 Deploy on the host
 
 1. As in 6c.2: push to `phase/M1.7`, approve the `promote` job of the `Deploy` run of the phase head commit (section 0), then, as `suiteward` (section 1), pull, restart and run the smoke test with the version:
@@ -525,13 +527,14 @@ Only after the host scenario, because the two canonicals diverge (6d.1 step 6).
 4. Run 6d.3 steps 2 and 5 with the co-located entry's codes. The new version is `V2`.
 5. **Integrity tamper, only with the owner's go-ahead at the time.** Change one byte of a canonical artifact file inside the stack's artifact volume and restart the service, so that the integrity job runs at start. Every open PR's check turns `failure` with the integrity title, and `/status` `integrity` is `failed`. Then purge again, or restore the byte and restart: `integrity` returns to `passed`.
 6. Put the stack back without GitHub (`./deploy/local.ps1`) and restore the host ("Without GitHub" in 6b.1), only after steps 4 and 5. Check the host again: `/status` shows no `lastError` and `outbox.failed` 0 after a few minutes.
+7. **The host catches up (expected).** The co-located merges of step 4 moved `main` past the host's canonical, which never approved them. Within a few minutes of its return the host posts a "did not promote" comment (`unapproved-change`) on each PR the co-located stack merged with a protected change, and its open PRs show that content as a protected change. This is the divergence reported honestly, not a fault. Recover it with the documented path: open a PR from the current `main` with any small change outside `tests/`, approve its revision on the host (the check shows the protected change against the host's canonical) and merge it. The host promotes the next version, and its canonical equals `main` again. Paste back the PR number and the version.
 
 ### 6d.5 Troubleshooting
 
 - **`merges` in `/status`.** A fixed code for the last problem of the merges job for that repository, cleared by the next run that finds nothing wrong:
   - `read-failed`: GitHub could not be read. The job retries every 30 s; check `lastSuccess` and `waitUntil` of the entry.
   - `waiting`: a merged PR has no merge commit yet, or its tree is not readable yet. It is retried until the 30-minute bound below, and no later merge is decided before it.
-  - `assessment-conflict`: the canonical changed while the merge was being decided. The next run decides it again.
+  - `assessment-conflict`: a different integrity assessment is already stored for that merge commit. The merge was recorded as blocked, with a comment, and is never decided again; the code shows only for the run that decided it.
   - `failed`: a store error. Read the service journal (`journalctl --user -u suiteward.service -n 100 --no-pager`; lines carry no GitHub text or secret) and report it.
 - **A blocked merge comment.** SuiteWard did not promote: the merged files do not match the approved revision (for example a rebase onto a moved base that brought in another change), or the merge could not be verified. The comment says that the canonical stays at the named version and gives the reason in plain words. Recover with a new PR that restores the protected files of that version, or one that carries the integrated files for a new exact approval. There is no reset command, and a command posted after the merge is never read.
 - **`fork-unsupported`.** A PR from a fork, or from a deleted fork, gets no proposal: its check stays `in_progress` with this reason, and if it is merged it is not promoted. Fork PRs are not supported in the MVP; open the PR from a branch of the repository itself.

@@ -859,7 +859,7 @@ func TestMergesReturnATransientBlobReadAsAnErrorNeverAsAnOutcome(t *testing.T) {
 func TestMergesStatusShowsTheLastProblemUntilACleanRun(t *testing.T) {
 	status := func(w *mgWorld) string {
 		t.Helper()
-		entries, err := (&githubStatus{repos: []string{bootRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: w.mgProbs}).report(t.Context(), nil)
+		entries, err := (&githubStatus{repos: []string{bootRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: w.mgProbs, integrity: noVerdicts()}).report(t.Context(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -13,8 +13,16 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance/governancetest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity/integritytest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
 )
+
+// noVerdicts reads the integrity verdicts of an instance that has no enrollment, so /status shows none.
+func noVerdicts() *integrityStatus {
+	return &integrityStatus{owners: ownertest.NewMemory(), suites: governancetest.NewMemory(), store: integritytest.NewMemory()}
+}
 
 func TestStatusShowsTheIntegrityVerdictOfTheCurrentCanonicalOnly(t *testing.T) {
 	for name, test := range map[string]struct {

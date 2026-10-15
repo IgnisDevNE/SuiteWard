@@ -757,7 +757,7 @@ func TestChecksDoNotFailOnACommandThatIsNoRejection(t *testing.T) {
 func TestChecksFailTheStepOfAHeadWhoseAssessmentConflictedAndContinue(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.tree(cjHead2, bootFiles("v2"))
-	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	w.sync(map[int]string{3: cjHead2, 4: bootHead}) // the conflicting pull request comes before the healthy one
 	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrConflict} // deterministic, not ErrCanonicalMoved
 
 	err := w.runChecks()
@@ -765,8 +765,8 @@ func TestChecksFailTheStepOfAHeadWhoseAssessmentConflictedAndContinue(t *testing
 	if !errors.Is(err, governance.ErrConflict) {
 		t.Fatalf("run error %v, want the conflict: it is not retried", err)
 	}
-	w.wantNone(5)
-	w.want(4, checks.Success, "unchanged", 1) // the other pull request was still decided
+	w.wantNone(3)
+	w.want(4, checks.Success, "unchanged", 1) // the later pull request was still decided
 	if got := w.problems.lookup(bootRepo); got != "failed" {
 		t.Fatalf("problem %q, want failed", got)
 	}

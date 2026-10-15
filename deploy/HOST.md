@@ -568,7 +568,7 @@ SuiteWard now bootstraps a repository from its first test PR: while the Suite ha
    - **Warning:** this re-keys TOTP for every host repository. The old host entry stops working for `SuiteWardQ` as well. Delete it after the new one works.
 4. Check `/status` (`curl -s http://127.0.0.1:8081/status`):
    - `schemaVersion` 16;
-   - `SuiteWardQ2` listed with `bootstrap` `awaiting-initial-contract`;
+   - `SuiteWardQ2` listed with `bootstrap` `no-open-pull-request` (it becomes `awaiting-initial-contract` once a PR is open);
    - no other errors.
 
 ### 6e.3 The scenario (host, on SuiteWardQ2)

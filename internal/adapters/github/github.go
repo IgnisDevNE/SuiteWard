@@ -49,8 +49,30 @@ var (
 type Pull struct {
 	Number           int
 	HeadSHA, HeadRef string
+	HeadRepo         string
 	BaseRef, BaseSHA string
 	UpdatedAt        time.Time
+}
+
+// PullDetail is a pull request with its merge facts (stub until implemented).
+type PullDetail struct {
+	Pull
+	State          string
+	Merged         bool
+	MergedAt       time.Time
+	MergeCommitSHA string
+}
+
+var errNotImplemented = errors.New("github: not implemented")
+
+// Pull is a stub.
+func (r *Reader) Pull(context.Context, string, int) (PullDetail, error) {
+	return PullDetail{}, errNotImplemented
+}
+
+// ClosedPulls is a stub.
+func (r *Reader) ClosedPulls(context.Context, string) ([]PullDetail, error) {
+	return nil, errNotImplemented
 }
 
 // Comment is one conversation comment of a pull request.

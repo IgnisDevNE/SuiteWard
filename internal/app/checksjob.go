@@ -227,7 +227,8 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		if wait { // keep the stored check of this head, or say that a new head is pending, so it never stays without a check
 			result = base
 			result.State, result.Reason = checks.InProgress, reasonAssessmentPending
-			if sameHead {
+			// integrity-failed and fork-unsupported come from rules that may no longer apply, so they are not carried over
+			if sameHead && record.Reason != reasonIntegrityFailed && record.Reason != reasonForkUnsupported {
 				result = record.Result
 			}
 		}
@@ -325,11 +326,9 @@ func (j *checksJob) assessed(head governance.HeadResult, base checks.Result) (ch
 	case contract.PromotionReasonApprovalMissing:
 		result.State, result.Reason = checks.InProgress, reasonApprovalMissing
 	case contract.PromotionReasonProposalNotCurrent, contract.PromotionReasonContextMismatch, contract.PromotionReasonCanonicalChanged,
-		contract.PromotionReasonPolicyChanged, contract.PromotionReasonAssessmentMismatch:
+		contract.PromotionReasonPolicyChanged:
 		result.State, result.Reason = checks.InProgress, reasonNotCurrent
-	case contract.PromotionReasonIntegrityNotPassed:
-		result.State, result.Reason = checks.Failure, reasonIntegrityFailed
-	default:
+	default: // including IntegrityNotPassed and AssessmentMismatch: the binding is built from the head's own inventory, so neither can happen
 		return checks.Result{}, fmt.Errorf("the head is not ready for the unexpected reason %d", head.Reason)
 	}
 	return result, nil

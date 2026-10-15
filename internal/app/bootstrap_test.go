@@ -217,17 +217,18 @@ func (p *probeSuites) CreateSuite(ctx context.Context, project contract.ProjectI
 
 // bootWorld is one enrolled instance with a repository, a clock and fakes for every port of the job.
 type bootWorld struct {
-	t        *testing.T
-	mem      *governancetest.Memory
-	suites   *probeSuites
-	owners   *ownertest.Memory
-	pulls    *githubsynctest.Memory
-	reader   *fakeBootReader
-	content  *fakeBootContent
-	logs     *bytes.Buffer
-	job      *bootstrapJob
-	problems *bootstrapProblems
-	cycles   int
+	t         *testing.T
+	mem       *governancetest.Memory
+	suites    *probeSuites
+	owners    *ownertest.Memory
+	pulls     *githubsynctest.Memory
+	reader    *fakeBootReader
+	content   *fakeBootContent
+	logs      *bytes.Buffer
+	job       *bootstrapJob
+	problems  *bootstrapProblems
+	cycles    int
+	headRepos map[int]string // the head repository of a pull request openPulls records; absent means not observed
 }
 
 type bootOptions struct {
@@ -313,7 +314,7 @@ func (w *bootWorld) openPulls(repo string, numbers ...int) {
 	w.cycles++
 	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), Comments: map[int][]githubsync.ObservedComment{}}
 	for _, number := range numbers {
-		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime})
+		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepos[number]})
 		cycle.Comments[number] = nil
 	}
 	if err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
@@ -413,13 +414,18 @@ func (w *bootWorld) payload(key string) map[string]any {
 	return object
 }
 
-// approve records the owner's approval of P<n>-R1 as the command of a comment would.
+// approve records the owner's approval of P<n>-R1 of the main project as the command of a comment would.
 func (w *bootWorld) approve(n int, carrierPull int) {
+	w.approveIn(bootRepoID, 100+int64(n), n, carrierPull)
+}
+
+// approveIn records the owner's approval of P<n>-R1 of the project of repository id, as the comment with that id would.
+func (w *bootWorld) approveIn(repositoryID, comment int64, n int, carrierPull int) {
 	w.t.Helper()
-	reference := contract.ProposalReference{ProjectID: w.project(), SuiteID: "default", ProposalID: contract.ProposalID(fmt.Sprintf("P%d", n)), RevisionID: "R1"}
-	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d", 100+n)),
-		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", 100+n)), Actor: bootOwnerPrincipal(), Reference: reference,
-		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", bootRepoID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(100 + n)}))
+	reference := contract.ProposalReference{ProjectID: owner.ProjectID(repositoryID), SuiteID: "default", ProposalID: contract.ProposalID(fmt.Sprintf("P%d", n)), RevisionID: "R1"}
+	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d", comment)),
+		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", comment)), Actor: bootOwnerPrincipal(), Reference: reference,
+		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(comment)}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil || !response.Receipt.CurrentApprovalEligible {
 		w.t.Fatalf("approve P%d-R1: eligible %v, error %v", n, response.Receipt.CurrentApprovalEligible, err)
@@ -558,6 +564,34 @@ func TestBootstrapProposesNothingWithoutAnOpenPull(t *testing.T) {
 	w.openPulls(bootRepo, 4)
 	w.mustRun()
 	w.requireProblem("") // proposed: nothing is waiting any more
+}
+
+// D-INTEGRATION: a fork's pull request carries no proposal, so the baseline waits for a pull request of the repository itself.
+func TestBootstrapSkipsForkPullsWhenChoosingTheCarrier(t *testing.T) {
+	w := newBootWorld(t)
+	w.headRepos = map[int]string{1: "stranger/widgets", 3: "(deleted)", 4: "ACME/Widgets"} // 4 is the repository under another case; 2 is not observed
+	w.openPulls(bootRepo, 1, 3, 2, 4)
+
+	w.mustRun()
+
+	proposal, found := w.proposal(1)
+	if !found || proposal.Current().Carrier() != "github-pr:1001/2" {
+		t.Fatalf("P1 found %v, carried by %q, want github-pr:1001/2", found, proposal.Current().Carrier())
+	}
+}
+
+func TestBootstrapWaitsWhenEveryOpenPullIsAFork(t *testing.T) {
+	w := newBootWorld(t)
+	w.headRepos = map[int]string{1: "stranger/widgets", 2: "(deleted)"}
+	w.openPulls(bootRepo, 1, 2)
+
+	w.mustRun()
+
+	if _, found := w.proposal(1); found {
+		t.Fatal("a baseline was proposed on a fork pull request")
+	}
+	w.requireOutbox()
+	w.requireProblem("no-open-pull-request")
 }
 
 func TestBootstrapProposesTheBaselineOnTheLowestOpenPullWithItsSummary(t *testing.T) {
@@ -699,6 +733,30 @@ func TestBootstrapPromotesAnApprovedBaselineOnce(t *testing.T) {
 	w.requireOutbox(promotedKey, summaryKey)
 	if w.reader.calls["tree"] != tree {
 		t.Fatalf("the bootstrap read GitHub after the canonical existed")
+	}
+}
+
+// Operation ids are global: two repositories that each bootstrap their first baseline must not collide on P1-R1.
+func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
+	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
+	w.openPulls(bootRepo, 4)
+	w.openPulls(bootOtherRepo, 5)
+	w.mustRun()
+	w.approveIn(bootRepoID, 101, 1, 4)
+	w.approveIn(bootOtherRepoID, 201, 1, 5)
+
+	w.mustRun()
+
+	for _, id := range []int64{bootRepoID, bootOtherRepoID} {
+		var version contract.SuiteVersionID
+		err := w.mem.Do(t.Context(), owner.ProjectID(id), "default", func(ctx context.Context, tx governance.Tx) error {
+			state, err := tx.Suite(ctx)
+			version, _ = state.Canonical.Suite().CurrentVersionID()
+			return err
+		})
+		if err != nil || version != "V1" {
+			t.Fatalf("repository %d: canonical = %q, %v; want V1\nlogs: %s", id, version, err, w.logs)
+		}
 	}
 }
 

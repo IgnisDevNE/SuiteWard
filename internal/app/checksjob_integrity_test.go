@@ -213,3 +213,38 @@ type failingIntegrity struct{ *integritytest.Memory }
 func (failingIntegrity) Latest(context.Context, contract.ProjectID, contract.SuiteID) (integrity.Record, bool, error) {
 	return integrity.Record{}, false, errBootStore
 }
+
+// A stored integrity-failed or fork-unsupported result belongs to a rule that no longer applies once the verdict
+// passed or the pull request stopped being a fork: a transient read must not keep it.
+func TestChecksNeverKeepAStaleIntegrityOrForkResultThroughATransientRead(t *testing.T) {
+	for name, stale := range map[string]func(*cjJobWorld) (checks.State, string){
+		"integrity-failed": func(w *cjJobWorld) (checks.State, string) {
+			w.verdict("V1", integrity.Failed)
+			w.mustCheck()
+			w.verdict("V1", integrity.Passed)
+			return checks.Failure, "integrity-failed"
+		},
+		"fork-unsupported": func(w *cjJobWorld) (checks.State, string) {
+			w.headRepo = map[int]string{4: "fork/widgets"}
+			w.sync(map[int]string{4: bootHead})
+			w.mustCheck()
+			w.headRepo = nil // the head repository is observed as the repository itself
+			w.sync(map[int]string{4: bootHead})
+			return checks.InProgress, "fork-unsupported"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCJWorld(t, true)
+			w.sync(map[int]string{4: bootHead})
+			state, reason := stale(w)
+			w.want(4, state, reason, 1)
+			w.reader.repos[bootRepo].treeErr[bootHead] = errors.New(bootSecret)
+
+			if err := w.runChecks(); err != nil {
+				t.Fatalf("a failed GitHub read must not fail the run: %v", err)
+			}
+
+			w.want(4, checks.InProgress, "assessment-pending", 2)
+		})
+	}
+}

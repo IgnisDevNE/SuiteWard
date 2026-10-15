@@ -26,6 +26,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity/integritytest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -649,7 +650,7 @@ func TestChecksFailTheRunOnAStoreErrorAfterEveryRepositoryAndShowItInStatus(t *t
 	if got := w.problems.lookup(bootRepo); got != "failed" {
 		t.Fatalf("problem %q, want failed", got)
 	}
-	status := &githubStatus{repos: []string{bootRepo, bootOtherRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: w.problems, merges: &bootstrapProblems{}}
+	status := &githubStatus{repos: []string{bootRepo, bootOtherRepo}, store: w.pulls, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: w.problems, merges: &bootstrapProblems{}, integrity: noVerdicts()}
 	entries, err := status.report(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -756,7 +757,8 @@ func TestChecksDoNotFailOnACommandThatIsNoRejection(t *testing.T) {
 func TestChecksFailTheStepOfAHeadWhoseAssessmentConflictedAndContinue(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.tree(cjHead2, bootFiles("v2"))
-	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	// the conflicting pull request comes before the healthy one
+	w.sync(map[int]string{3: cjHead2, 4: bootHead})
 	w.check.suites = &movedSuites{UnitOfWork: w.suites, err: governance.ErrConflict} // deterministic, not ErrCanonicalMoved
 
 	err := w.runChecks()
@@ -764,8 +766,8 @@ func TestChecksFailTheStepOfAHeadWhoseAssessmentConflictedAndContinue(t *testing
 	if !errors.Is(err, governance.ErrConflict) {
 		t.Fatalf("run error %v, want the conflict: it is not retried", err)
 	}
-	w.wantNone(5)
-	w.want(4, checks.Success, "unchanged", 1) // the other pull request was still decided
+	w.wantNone(3)
+	w.want(4, checks.Success, "unchanged", 1) // the later pull request was still decided
 	if got := w.problems.lookup(bootRepo); got != "failed" {
 		t.Fatalf("problem %q, want failed", got)
 	}
@@ -784,5 +786,23 @@ func TestChecksRetryAHeadWhoseCanonicalMovedOnANewHead(t *testing.T) {
 	w.want(5, checks.InProgress, "assessment-pending", 1)
 	if got := w.problems.lookup(bootRepo); got != "conflict" {
 		t.Fatalf("problem %q, want conflict", got)
+	}
+}
+
+// The binding of a head assessment is built from the head's own inventory, so AssessHead can neither say that the
+// head failed its integrity check nor that its assessment does not match: such an answer is an impossible state.
+func TestChecksTreatAnImpossibleHeadAssessmentAsAFailedStepNeverAPublishedState(t *testing.T) {
+	reference := contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "default", ProposalID: "P2", RevisionID: "R1"}
+	for _, reason := range []contract.PromotionReason{contract.PromotionReasonIntegrityNotPassed, contract.PromotionReasonAssessmentMismatch} {
+		t.Run(fmt.Sprint(reason), func(t *testing.T) {
+			j := &checksJob{}
+			head := governance.HeadResult{Change: inventory.ProtectedChange, Reference: &reference, Reason: reason, Canonical: "V1", Revision: 3}
+
+			result, err := j.assessed(head, checks.Result{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2})
+
+			if err == nil {
+				t.Fatalf("the head assessment answering %v published %s/%s, want an error", reason, result.State, result.Reason)
+			}
+		})
 	}
 }

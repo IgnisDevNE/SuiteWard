@@ -55,7 +55,7 @@ type githubStatus struct {
 	problems  *bootstrapProblems
 	checks    *bootstrapProblems // the check job's problems, the same in-memory map type
 	merges    *bootstrapProblems // the merges job's problems
-	integrity *integrityStatus   // nil when the verdicts are not read (a status without an integrity store)
+	integrity *integrityStatus   // the verdicts of the current canonicals
 }
 
 // integrityStatus reads the integrity verdict of each enrolled repository's current canonical.
@@ -107,12 +107,9 @@ func (s *integrityStatus) verdicts(ctx context.Context) (map[string]string, erro
 // report returns one entry per configured repository, in configuration order;
 // a repository that has no cycle yet has only its name.
 func (g *githubStatus) report(ctx context.Context, protections map[string]owner.ProtectionResult) ([]repositoryStatus, error) {
-	var verdicts map[string]string
-	if g.integrity != nil { // absent where no integrity store is composed
-		var err error
-		if verdicts, err = g.integrity.verdicts(ctx); err != nil {
-			return nil, err
-		}
+	verdicts, err := g.integrity.verdicts(ctx)
+	if err != nil {
+		return nil, err
 	}
 	entries := make([]repositoryStatus, 0, len(g.repos))
 	for _, repo := range g.repos {

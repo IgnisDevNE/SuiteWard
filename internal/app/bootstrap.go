@@ -424,11 +424,12 @@ func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID)
 	return s, err
 }
 
-// openPulls returns the numbers of the pull requests the synchronization last saw open, lowest first.
-func openPulls(pulls []githubsync.PullState) []int {
+// openPulls returns the numbers of the pull requests of repo the synchronization last saw open, lowest first. A fork's
+// pull request is left out: it never carries a proposal (D-INTEGRATION).
+func openPulls(pulls []githubsync.PullState, repo string) []int {
 	var open []int
 	for _, pull := range pulls {
-		if pull.NotOpenSince.IsZero() {
+		if pull.NotOpenSince.IsZero() && !isFork(pull.HeadRepo, repo) {
 			open = append(open, pull.Number)
 		}
 	}
@@ -444,7 +445,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	if err != nil {
 		return fmt.Errorf("read the observed pull requests: %w", err)
 	}
-	open := openPulls(pulls)
+	open := openPulls(pulls, p.Repo)
 	if len(open) == 0 {
 		return bootstrapStop("no-open-pull-request")
 	}
@@ -568,7 +569,7 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 	}
 	// PostgreSQL keeps microseconds and the store refuses a promotion time it would have to round.
 	result, err := governance.Bootstrap(ctx, b.suites, governance.PromoteRequest{
-		OperationID: contract.OperationID("bootstrap:" + reference), Reference: s.reference, Carrier: s.carrier, Proposed: proposed,
+		OperationID: contract.OperationID(fmt.Sprintf("bootstrap:%d:%s", p.RepositoryID, reference)), Reference: s.reference, Carrier: s.carrier, Proposed: proposed,
 		AssessmentSource: s.origin, Integration: integration, NewVersionID: firstVersion, RecordedAt: b.now().Truncate(time.Microsecond), Outbox: []governance.OutboxMessage{message},
 	})
 	if err != nil {

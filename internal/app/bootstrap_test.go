@@ -415,15 +415,17 @@ func (w *bootWorld) payload(key string) map[string]any {
 }
 
 // approve records the owner's approval of P<n>-R1 of the main project as the command of a comment would.
-func (w *bootWorld) approve(n int, carrierPull int) { w.approveIn(bootRepoID, n, carrierPull) }
+func (w *bootWorld) approve(n int, carrierPull int) {
+	w.approveIn(bootRepoID, 100+int64(n), n, carrierPull)
+}
 
-// approveIn records the owner's approval of P<n>-R1 of the project of repository id.
-func (w *bootWorld) approveIn(repositoryID int64, n int, carrierPull int) {
+// approveIn records the owner's approval of P<n>-R1 of the project of repository id, as the comment with that id would.
+func (w *bootWorld) approveIn(repositoryID, comment int64, n int, carrierPull int) {
 	w.t.Helper()
 	reference := contract.ProposalReference{ProjectID: owner.ProjectID(repositoryID), SuiteID: "default", ProposalID: contract.ProposalID(fmt.Sprintf("P%d", n)), RevisionID: "R1"}
-	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d:%d", repositoryID, 100+n)),
-		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d:%d", repositoryID, 100+n)), Actor: bootOwnerPrincipal(), Reference: reference,
-		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(100 + n)}))
+	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d", comment)),
+		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", comment)), Actor: bootOwnerPrincipal(), Reference: reference,
+		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(comment)}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil || !response.Receipt.CurrentApprovalEligible {
 		w.t.Fatalf("approve P%d-R1: eligible %v, error %v", n, response.Receipt.CurrentApprovalEligible, err)
@@ -740,8 +742,8 @@ func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
 	w.openPulls(bootRepo, 4)
 	w.openPulls(bootOtherRepo, 5)
 	w.mustRun()
-	w.approveIn(bootRepoID, 1, 4)
-	w.approveIn(bootOtherRepoID, 1, 5)
+	w.approveIn(bootRepoID, 101, 1, 4)
+	w.approveIn(bootOtherRepoID, 201, 1, 5)
 
 	w.mustRun()
 

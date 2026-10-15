@@ -227,7 +227,8 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		if wait { // keep the stored check of this head, or say that a new head is pending, so it never stays without a check
 			result = base
 			result.State, result.Reason = checks.InProgress, reasonAssessmentPending
-			if sameHead {
+			// integrity-failed and fork-unsupported come from rules that may no longer apply, so they are not carried over
+			if sameHead && record.Reason != reasonIntegrityFailed && record.Reason != reasonForkUnsupported {
 				result = record.Result
 			}
 		}

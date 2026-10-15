@@ -35,10 +35,9 @@ const (
 	reasonForkUnsupported   = "fork-unsupported"
 	reasonOwnerCommand      = "owner-command-rejected"
 
-	problemReadFailed = "read-failed"    // a GitHub read failed; the next run tries again
-	problemConflict   = "conflict"       // the canonical moved under the assessment; the next run tries again
-	problemFailed     = "failed"         // a store error that failed the run
-	problemInvalid    = "invalid-source" // the default branch's declaration cannot be read: the bootstrap cannot be chosen
+	problemReadFailed = "read-failed" // a GitHub read failed; the next run tries again
+	problemConflict   = "conflict"    // the canonical moved under the assessment; the next run tries again
+	problemFailed     = "failed"      // a store error that failed the run
 )
 
 // changeCodes are the classification codes a record keeps in Change.
@@ -336,7 +335,7 @@ func (j *checksJob) planBootstrap(ctx context.Context, p owner.ProjectPolicy, ta
 	case errors.Is(err, github.ErrTreeTruncated) || errors.Is(err, errGitHubRead): // not the owner's source: wait for the full tree
 		return waiting(err)
 	case invalidSource(err): // the default branch's contract cannot be read, so no pull request can carry the bootstrap
-		return bootstrapPlan{pending: true}, problemInvalid, nil
+		return bootstrapPlan{pending: true}, "", nil // the bootstrap job reports it in /status
 	default:
 		return plan, "", &opaque{what: "read the default branch", cause: err}
 	}

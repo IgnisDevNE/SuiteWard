@@ -310,6 +310,13 @@ func TestChecksMapTheTreeProblemsOfTheCarrier(t *testing.T) {
 		if got := w.problems.lookup(bootRepo); got != "read-failed" || strings.Contains(w.logs.String(), bootSecret) {
 			t.Fatalf("problem %q, logs %s, want read-failed and no GitHub text", got, w.logs)
 		}
+
+		delete(w.reader.repos[bootRepo].treeErr, cjHead2) // GitHub answers again: a record that only waited is no assessment
+		w.tree(cjHead2, bootFiles("v1"))
+		w.mustCheck()
+
+		w.want(5, checks.InProgress, "approval-missing", 2)
+		w.want(6, checks.InProgress, "bootstrap-pending", 2)
 	})
 }
 
@@ -353,8 +360,8 @@ func TestChecksSayBootstrapPendingWhenTheDefaultBranchDeclarationIsInvalid(t *te
 	w.mustCheck()
 
 	w.want(5, checks.InProgress, "bootstrap-pending", 1)
-	if got := w.problems.lookup(bootRepo); got != "invalid-source" {
-		t.Fatalf("problem %q, want invalid-source", got)
+	if got := w.problems.lookup(bootRepo); got != "" { // the bootstrap job reports this condition in /status
+		t.Fatalf("problem %q, want none from the checks job", got)
 	}
 	if _, found := w.proposal(1); found {
 		t.Fatal("a proposal was written while the default branch cannot be read as a contract")
@@ -375,5 +382,26 @@ func TestChecksNeverMakeAPullHeadCanonicalOrAnnounceItAsAChange(t *testing.T) {
 	}
 	if _, found := w.canonical(); found {
 		t.Fatal("the checks job made a pull head canonical")
+	}
+}
+
+// Nothing wrote to the Suite, so its revision is still 0 and the stored record of a pull request that only waited
+// carries the same revision as a fresh assessment would: it must not be mistaken for one when the carrier closes.
+func TestChecksAssessANewCarrierWhoseRecordOnlyWaitedWhileTheSuiteWasNeverWritten(t *testing.T) {
+	w := newCJBootWorld(t)
+	files := bootFiles("v1")
+	files[".suiteward.yml"] = "version: 1\nunknown: [\n"
+	w.tree(cjHead2, files) // invalid: it is the carrier that says so, and writes nothing
+	w.tree(cjHead4, bootFiles("v2"))
+	w.sync(map[int]string{5: cjHead2, 6: cjHead4})
+	w.mustCheck()
+	w.want(5, checks.Failure, "invalid-source", 1)
+	w.want(6, checks.InProgress, "bootstrap-pending", 1)
+
+	w.sync(map[int]string{6: cjHead4}) // pull 5 closes
+	w.mustCheck()
+
+	if record := w.want(6, checks.InProgress, "approval-missing", 2); record.Reference != "P1-R1" {
+		t.Fatalf("record %+v, want the first proposal P1-R1", record)
 	}
 }

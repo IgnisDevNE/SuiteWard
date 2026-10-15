@@ -2,6 +2,7 @@ package governancetest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,6 +31,7 @@ func mergeBootstrapCases() []struct {
 		{"MergeOfAnUnapprovedBootstrapPRIsBlockedWithNoVersion", mbUnapproved},
 		{"MergeOfTheBootstrapPRWithAnAssessmentConflictIsBlockedWithNoVersion", mbAssessmentConflict},
 		{"MergeRefusalOfTheBootstrapPRIsBlockedWithNoVersion", mbRefusal},
+		{"MergeRefusedAsIntegrityFailedWithoutACanonicalIsInvalid", mbIntegrityFailedWithoutACanonical},
 		{"MergeOfAnotherPRBeforeAnyCanonicalIsBeforeTheCanonicalWithNoVersion", mbNonCarrier},
 		{"MergeOfTheBootstrapPRIntoAnotherTargetIsBeforeTheCanonical", mbOtherTarget},
 		{"MergeAfterAMergedV1IsDecidedAgainstV1", mbChangeAfterAMergedV1},
@@ -197,6 +199,30 @@ func mbRefusal(e *cfEnv) {
 	got := e.merge(mbRequest(second, "merge-sha-second", invalid, &mcMessages{}))
 
 	e.requireOutcome(second, got.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: governance.MergeReasonInvalidSource, Source: "merge-sha-second", Reference: proposed.Reference})
+	e.requireNoCanonical()
+}
+
+// integrity-failed says the stored canonical failed its verification, so without a canonical the request is invalid
+// and nothing is recorded, for the bootstrap PR as for any other.
+func mbIntegrityFailedWithoutACanonical(e *cfEnv) {
+	consent, reference := e.bootstrapPR("v1")
+	consent.approve(reference)
+	before := e.revision()
+	for _, carrier := range []contract.ApprovalCarrierID{bsCarrier, "github-pr:1/77"} {
+		messages := &mcMessages{}
+		request := mbRequest(carrier, mbSource, nil, messages)
+		request.Refusal = governance.MergeReasonIntegrityFailed
+
+		err := e.mergeErr(request)
+
+		if !errors.Is(err, governance.ErrInvalidRequest) {
+			e.t.Fatalf("%s: error = %v, want ErrInvalidRequest", carrier, err)
+		}
+		if outcome, found := e.outcomeOf(carrier); found || messages.calls != 0 {
+			e.t.Fatalf("%s: outcome %+v recorded (%v) or a message asked for (%d calls)", carrier, outcome, found, messages.calls)
+		}
+	}
+	e.requireWrites(before, 0)
 	e.requireNoCanonical()
 }
 

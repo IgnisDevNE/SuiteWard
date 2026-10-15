@@ -88,6 +88,6 @@ The mandatory check is a required product behavior to implement and verify. This
 
 - Concrete automatic rule-setup operations, remaining permission details, and effective-enforcement verification under ADR 0016.
 - Check-run lifecycle, API conclusion mapping, retry policy, and concise status wording.
-- Integration contexts, supported merge methods, merge queues, and strictness of branch-update requirements.
+- Integration contexts, supported merge methods, merge queues, and strictness of branch-update requirements. Supported merge methods and fork PRs: D-INTEGRATION (2026-10-15, phase M1.7) in the [decision register](../plan/decisions.md); merge queues remain open.
 - Reconciliation of pending changes to policy, canonical baseline, revocations, and already published successful checks.
 - Recovery from a repository merged through a bypass or while an external result was stale.

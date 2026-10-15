@@ -87,7 +87,7 @@ Independent canonical execution remains a later M2 capability. Choosing its firs
 ## Remaining implementation details
 
 - GitHub check lifecycle and branch-protection onboarding; [ADR 0015](0015-required-contract-check.md) defines the mandatory `SuiteWard / Contract` check and its readiness semantics.
-- Exact integration-reference resolution for supported merge methods and reconciliation after multiple merges.
+- Exact integration-reference resolution for supported merge methods and reconciliation after multiple merges. Settled for the MVP by D-INTEGRATION (2026-10-15, phase M1.7) in the [decision register](../plan/decisions.md).
 - Recovery and review presentation when a merged contract requires renewed approval or conflict resolution.
 - Strict coordination between GitHub checks, merge, and canonical promotion.
 - Optional future external-CI policy gates and the later M2 execution profile.

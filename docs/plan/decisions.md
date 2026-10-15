@@ -184,6 +184,29 @@ Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-git
 
 *No change proposal before a canonical exists.* A PR proposal is created only for a repository that has a canonical, so a PR head can never become canonical through the existing-baseline bootstrap.
 
+### D-INTEGRATION: Merge methods and the integrated source
+
+Accepted 2026-10-15 (owner, phase M1.7), from the S1 proposals ([s1-github](../spikes/s1-github.md#merge-methods-and-integrated-source)):
+
+- **Supported methods.** Merge, squash and rebase are supported. They are not told apart.
+- **The integrated source.** For each method it is the merged PR's `merge_commit_sha`. The protected inventory is recomputed from that commit's tree and compared with the approved revision, never with the PR head or a moving branch tip.
+  - A mismatch keeps the canonical and is reported in the PR.
+  - A rebase onto a moved base that brings in another change is such a mismatch.
+- **Same SHA.** A merged PR whose `merge_commit_sha` equals that of another merged PR of the repository is not promoted, and the PR says so. An outcome already recorded for the other PR stands.
+- **Unsupported or unreadable integration.** A merged PR whose merge commit is still absent or unreadable after a bound gets an explicit state in the PR and no promotion.
+- **Forks.** Fork PRs are not supported in the MVP, which fails closed on them. A PR whose head repository differs from the base repository, or has been deleted:
+  - gets no proposal;
+  - keeps its check `in_progress` with an explanation;
+  - is never promoted, and its merge is reported.
+- **Missed merges.** Besides the open listing, each repository's recently closed PRs are listed, so a PR opened and merged between two polls is still seen. A merge of the target branch is reported even when SuiteWard never saw the PR open.
+- **No merge without an outcome.** Every merge into the configured target of a repository with a canonical ends in one recorded outcome:
+  - promoted;
+  - corrected;
+  - no protected change;
+  - blocked, with its reason.
+
+  A blocked merge leaves the canonical unchanged. Recovery is a later PR, which either restores the canonical content or carries the integrated content for a new exact approval (ADR 0018). There is no reset command.
+
 ### D-MIGRATIONS: Migration tooling
 
 Superseded by R1. Goose, pgx and sqlc stay ([ADR 0026](../decisions/0026-versioned-postgresql-migrations.md)); the migrations were reset to a single normalized `00001` (River and the outbox were added in M1.2) described in the [persistence contract](../contracts/persistence.md).
@@ -196,7 +219,6 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 
 - **D-DEPLOY:** remote verification host. Partly settled 2026-10-06: AWS EC2 in us-east-2 (cheapest region; close to the GitHub API), `t4g.small` Graviton (2 vCPU, 2 GiB; arm64, so images are multi-arch amd64+arm64), Ubuntu 24.04, 20 GiB encrypted gp3, 2 GiB swap, rootless Podman under an unprivileged `suiteward` user, `cloudflared` installed but not yet configured. No inbound ports and no SSH daemon; administration only through SSM Session Manager (instance role limited to `AmazonSSMManagedInstanceCore`; IMDSv2 is required; the hop limit of 1 does not stop a rootless container, see the IMDS mitigation below). Service access through Cloudflare Tunnel and Cloudflare Access on the owner's domain (service token for MCP sync/status). Deployment is pull-based: CI publishes a multi-arch image to GHCR, promotion to the deploy tag requires the owner's approval in a protected environment, and the host's Podman quadlet uses `AutoUpdate=registry`. Scale-out path: same image on ECS, PostgreSQL to RDS, artifacts to EFS or the S3 adapter. Done 2026-10-06: host `i-0f556162ae6b59b22`; cost budget `suiteward-poc-monthly` (US$25/month measured before credits, email alerts at 80% actual and 100% forecast); Cloudflare tunnel `suiteward-poc` (`09d32d23-e113-48d3-b870-ec1acda0dc69`) running as a system service on the host with hostname `suiteward-poc.magalz.space` answering 404 for everything; the agent's AWS session logged out afterwards. Remaining before S1-D: a Cloudflare Access application for the hostname (owner, Zero Trust dashboard) before any route reaches a service, the GHCR deployment workflow with its protected environment, and the owner placing the test App key on the host through Session Manager. Settled 2026-10-10 from the S1 findings ([s1-github](../spikes/s1-github.md)): CI publishes `ghcr.io/ignisdevne/suiteward` (tags `sha-<commit>` and `deploy`) with a workflow using `GITHUB_TOKEN`; the package is public so the host holds no registry credential; moving `deploy` requires the owner's approval in the `remote-poc` environment (deployment branch rule: `phase/M1.2`, `phase/M1.4` since M1.4-D and `phase/M1.5` since M1.5; `main` is added when the owner decides); the host adopts it through `AutoUpdate=registry` (the default timer is daily, so smoke runs start one update by hand); access is Session Manager only (no SSH daemon, no Tailscale), plus Cloudflare Access for any HTTP route. PostgreSQL runs as a rootless container beside the service on both targets (the image pinned by digest in CI, a named volume, the password in a Podman secret the owner creates); RDS stays the scale-out path. IMDS: a firewall rule on the host rejects `169.254.169.254` for the `suiteward` user and is re-verified with the S1 check; the SSM agent keeps its access. Cancelling a stale run waiting for approval is a human action. An agent never holds host access; the owner runs host steps in their own Session Manager session. The S1 spike service, its Podman secret and volume are removed from the host by the owner.
 - **D-JOB-RETENTION:** how long finished jobs stay visible on `/status`. Until decided, River v0.49.0's cleaner defaults apply (completed and cancelled 24 hours, discarded 7 days); the outbox keeps its terminal rows. Raised by the M1.2 phase review.
-- **D-INTEGRATION:** supported merge methods (merge, squash, rebase, fork, same-SHA) and exact integrated-source resolution.
 - **D-RELEASE:** supported production and CLI platforms, and the AGPL only-versus-or-later grant and notices.
 - **D-EXECUTION:** first executable profile and execution trust model; decided in M2 before implementation.
 - **D-MANAGED-EXECUTION:** future provider-hosted or customer-infrastructure execution; nothing scheduled.

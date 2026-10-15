@@ -828,7 +828,7 @@ func MergeOutcomeOf(ctx context.Context, uow UnitOfWork, project contract.Projec
 1. **Before the transaction**, unless there is a `Refusal`:
    - run `inventory.Build(ctx, Tree)`;
    - an invalid tree, an unsafe entry or an invalid declaration becomes the refusal `invalid-source`;
-   - a truncated tree or a read error is returned wrapped, and nothing is written;
+   - a read error is returned wrapped, and nothing is written. A truncated tree must not reach `PromoteMerge`: the GitHub reader wraps `ErrInvalidTree` with `ErrTreeTruncated`, and governance cannot tell them apart, so the caller handles truncation first (the merges job reads the tree's entries before calling);
    - store the inventory's bytes through `writer`, as `ProposeBaseline` does. The unexported `storeContent` is reused.
 2. **Inside one `Do(project, suite)`, in order:**
    1. **Replay.** If `Tx.MergeOutcome(carrier)` finds an outcome, return it with `Duplicate`. The request is not compared, because a PR merges once.
@@ -856,7 +856,7 @@ func MergeOutcomeOf(ctx context.Context, uow UnitOfWork, project contract.Projec
       - `CorrectionContextReused` to `correction-context-reused`.
 
       Any other reason or outcome is `ErrInvalidState`.
-3. **Write.** `Tx.RecordMergeOutcome` and, when `Message` returns true, `Tx.Outbox`, in the same transaction. A blocked or no-change outcome does not advance the Suite revision; a promotion does, through `RecordPromotion`.
+3. **Write.** `Tx.RecordMergeOutcome` and, when `Message` returns true, `Tx.Outbox`, in the same transaction. The outcome write itself never advances the Suite revision; the assessment recorded in step 8 does, as does a promotion, through `RecordPromotion`.
 
 `MergeOutcomeOf` is a read in one `Do`. The job uses it to skip work that is already done, before reading any tree.
 

@@ -123,11 +123,9 @@ func TestChecksProposeTheBootstrapOnTheCarrierAndMakeItReadyAfterApproval(t *tes
 		t.Fatalf("the summary is not for pull 5: %v", w.payload("bootstrap-summary:1001:P1-R1"))
 	}
 	var check map[string]any
-	if err := json.Unmarshal(w.ledger.messages[len(w.ledger.messages)-1].Payload, &check); err != nil || check["reason"] != "bootstrap-pending" {
-		t.Fatalf("check payload %v (%v), want the last message to be the pending one of pull 4", check, err)
-	}
-	if err := json.Unmarshal(w.ledger.messages[len(w.ledger.messages)-2].Payload, &check); err != nil || check["reason"] != "approval-missing" || check["reference"] != "P1-R1" || check["version"] != nil {
-		t.Fatalf("check payload %v (%v), want approval-missing under P1-R1 with no canonical version", check, err)
+	if err := json.Unmarshal(w.ledger.messages[len(w.ledger.messages)-1].Payload, &check); err != nil || check["pull"] != float64(5) || check["reason"] != "approval-missing" ||
+		check["reference"] != "P1-R1" || check["version"] != nil {
+		t.Fatalf("check payload %v (%v), want approval-missing under P1-R1 for pull 5 with no canonical version", check, err)
 	}
 
 	if outcome := w.consent(contract.ApproveConsent, 201, 1, 1, 5); outcome != contract.ConsentApproved {

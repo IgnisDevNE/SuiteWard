@@ -3,6 +3,7 @@ package githubsynctest
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -199,3 +200,28 @@ func (m *Memory) Comments(ctx context.Context, repo string, number int) ([]githu
 	})
 	return versions, nil
 }
+
+var errNotImplemented = errors.New("not implemented")
+
+// AwaitingResolution implements githubsync.Store.
+func (m *Memory) AwaitingResolution(context.Context, string) ([]githubsync.PullState, error) {
+	return nil, errNotImplemented
+}
+
+// RecordResolution implements githubsync.Store.
+func (m *Memory) RecordResolution(context.Context, string, githubsync.Resolution) error {
+	return errNotImplemented
+}
+
+// RecordClosed implements githubsync.Store.
+func (m *Memory) RecordClosed(context.Context, string, []githubsync.ClosedPull, time.Time) error {
+	return errNotImplemented
+}
+
+// Merged implements githubsync.Store.
+func (m *Memory) Merged(context.Context, string) ([]githubsync.MergedPull, error) {
+	return nil, errNotImplemented
+}
+
+// MarkProcessed implements githubsync.Store.
+func (m *Memory) MarkProcessed(context.Context, string, int) error { return errNotImplemented }

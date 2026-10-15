@@ -175,6 +175,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) githubsync.Store) 
 		{"CanceledContextRecordsNothing", gsCanceled},
 		{"ConcurrentCyclesOfOneRepositoryEndAsOneAppliedLast", gsConcurrent},
 	}
+	cases = append(cases, gsMergeCases...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {

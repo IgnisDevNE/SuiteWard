@@ -23,6 +23,9 @@ var (
 	// ErrCreationTimeChanged marks a comment whose created_at differs from the
 	// one stored for its id: GitHub never changes it, so the cycle is not recorded.
 	ErrCreationTimeChanged = errors.New("GitHub comment creation time changed")
+	// ErrStaleResolution marks a Resolution that no longer applies: the pull is unknown, is open again, or its
+	// absence is not the one the resolution was read for. Nothing is written.
+	ErrStaleResolution = errors.New("stale pull resolution")
 )
 
 // Cycle is one complete, successful cycle of one repository: every page of
@@ -41,6 +44,7 @@ type ObservedPull struct {
 	HeadSHA, HeadRef string
 	BaseRef, BaseSHA string
 	UpdatedAt        time.Time
+	HeadRepo         string // full_name of the head repository, "(deleted)" when GitHub reports none, "" when not observed
 }
 
 // ObservedComment is one comment as listed.
@@ -97,6 +101,22 @@ type Store interface {
 	// comment id, updated_at and first_seen, then by body digest. A pull number
 	// outside 1 to 2^31-1 is ErrInvalidObservation.
 	Comments(ctx context.Context, repo string, number int) ([]CommentVersion, error)
+
+	// AwaitingResolution returns the pulls that are not open and whose current absence is unresolved, by number.
+	AwaitingResolution(ctx context.Context, repo string) ([]PullState, error)
+	// RecordResolution stores the resolution of a pull's current absence and refreshes its head and base. It
+	// returns ErrStaleResolution, and writes nothing, unless the pull is not open and its not_open_since equals
+	// r.NotOpenSince.
+	RecordResolution(ctx context.Context, repo string, r Resolution) error
+	// RecordClosed applies one listing of closed pulls. The first call for a repository only sets the closed
+	// watermark. Later, each merged item above the watermark with no stored pull is inserted unresolved, absent
+	// since at; stored pulls, unmerged items and older items are ignored. Then the watermark rises to the greatest
+	// updated_at of the listing. The repository must have a recorded cycle or failure.
+	RecordClosed(ctx context.Context, repo string, closed []ClosedPull, at time.Time) error
+	// Merged returns every pull resolved as merged, by MergedAt and then number.
+	Merged(ctx context.Context, repo string) ([]MergedPull, error)
+	// MarkProcessed sets the processed flag of a pull: a read optimization, never authority.
+	MarkProcessed(ctx context.Context, repo string, number int) error
 }
 
 // RepositoryState is what the last cycles of one repository left behind.
@@ -117,6 +137,35 @@ type PullState struct {
 	UpdatedAt           time.Time // GitHub's
 	FirstSeen, LastSeen time.Time // observation times
 	NotOpenSince        time.Time // zero while open; set at the first cycle the PR was absent from the open list
+	HeadRepo            string    // "" when not observed (a row from before the column existed, or a cycle without it)
+}
+
+// Resolution is what GitHub says about one absence of a pull: merged or closed, and with which commit.
+type Resolution struct {
+	Number         int
+	NotOpenSince   time.Time // the absence it resolves; must equal the stored not_open_since
+	Merged         bool
+	MergedAt       time.Time // GitHub's; set exactly when Merged
+	MergeCommitSHA string    // 40 lowercase hex, or "" (only when Merged and the bound ran out)
+	HeadSHA        string    // the head, base and head repository as read at resolution
+	HeadRef        string
+	BaseRef        string
+	BaseSHA        string
+	HeadRepo       string
+	ResolvedAt     time.Time // injected clock
+}
+
+// MergedPull is a pull resolved as merged. PullState holds the refreshed head and base.
+type MergedPull struct {
+	PullState
+	Resolution
+	Processed bool // MarkProcessed was called
+}
+
+// ClosedPull is one item of the closed listing.
+type ClosedPull struct {
+	ObservedPull
+	MergedAt time.Time // zero for a closed, unmerged pull
 }
 
 // CommentVersion is one version of a comment: an edit is a new version and the
@@ -184,6 +233,52 @@ func (c Cycle) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Validate rejects a resolution the store cannot record consistently. The error wraps ErrInvalidObservation.
+func (r Resolution) Validate() error {
+	if err := ValidatePullNumber(r.Number); err != nil {
+		return err
+	}
+	if r.NotOpenSince.IsZero() || r.ResolvedAt.IsZero() {
+		return fmt.Errorf("%w: resolution of pull %d has no absence or resolution time", ErrInvalidObservation, r.Number)
+	}
+	if r.Merged == r.MergedAt.IsZero() {
+		return fmt.Errorf("%w: resolution of pull %d has merged %t and merged_at %v", ErrInvalidObservation, r.Number, r.Merged, r.MergedAt)
+	}
+	if r.MergeCommitSHA != "" && (!r.Merged || !validSHA(r.MergeCommitSHA)) {
+		return fmt.Errorf("%w: resolution of pull %d has a merge commit that is not 40 lowercase hex or is not merged", ErrInvalidObservation, r.Number)
+	}
+	return nil
+}
+
+// ValidateClosed rejects a closed listing the store cannot record: a missing time, a pull number out of range or an
+// item without GitHub's updated_at. The error wraps ErrInvalidObservation.
+func ValidateClosed(closed []ClosedPull, at time.Time) error {
+	if at.IsZero() {
+		return fmt.Errorf("%w: closed listing has no observation time", ErrInvalidObservation)
+	}
+	for _, item := range closed {
+		if err := ValidatePullNumber(item.Number); err != nil {
+			return err
+		}
+		if item.UpdatedAt.IsZero() {
+			return fmt.Errorf("%w: closed pull %d has no updated_at", ErrInvalidObservation, item.Number)
+		}
+	}
+	return nil
+}
+
+func validSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate rejects a failure the store cannot classify. The error wraps

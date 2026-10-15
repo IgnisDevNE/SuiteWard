@@ -130,7 +130,7 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 | Version | `V<n>`, numbered per Suite from 1 |
 | Source command | `github-comment:<comment id>` |
 | Consent operation | `consent:github-comment:<comment id>` |
-| Bootstrap operation | `bootstrap:P<n>-R<m>` |
+| Bootstrap operation | `bootstrap:<repository id>:P<n>-R<m>` (since M1.7; `bootstrap:P<n>-R<m>` before) |
 
 The assessment emitter is the service principal `suiteward` (kind Service).
 

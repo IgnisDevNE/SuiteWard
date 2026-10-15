@@ -16,17 +16,19 @@ import (
 )
 
 // Env is what the conformance suite needs: the store under test, the keys of
-// the committed outbox messages and a way to end a pending message as failed,
-// as the relay does once its attempts are used up.
+// the committed outbox messages and a way to end a pending message as failed
+// at a given time, as the relay does once its attempts are used up.
 type Env struct {
 	Store       checks.Store
 	OutboxKeys  func(ctx context.Context) ([]string, error) // sorted
-	FailMessage func(ctx context.Context, key string) error
+	FailMessage func(ctx context.Context, key string, finishedAt time.Time) error
 }
 
 const (
 	headA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	headB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	cooldownMinutes = 15 // checks.RepublishCooldown in minutes, written out so the suite pins the contract's number
 )
 
 // at is a time at microsecond precision, which is all PostgreSQL stores, n minutes after a fixed origin.
@@ -196,26 +198,54 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		}
 	})
 
-	run("a publication that ended failed is retried under the next generation", func(e *env) {
+	run("a publication that ended failed is retried under the next generation once the cooldown has passed", func(e *env) {
 		r := result(10, 1, headA, checks.InProgress, "approval-missing")
 		e.publish(r, 1)
-		e.must(e.env.FailMessage(e.ctx, key(10, 1, 1)))
-		record, written := e.publish(r, 2)
+		e.must(e.env.FailMessage(e.ctx, key(10, 1, 1), at(1)))
+		record, written := e.publish(r, 1+cooldownMinutes)
 		e.requirePublished(record, written, true, 2)
-		if record.HeadSince != at(1) || record.DecidedAt != at(2) {
-			e.t.Fatalf("head since %v, decided at %v; want %v, %v", record.HeadSince, record.DecidedAt, at(1), at(2))
+		if record.HeadSince != at(1) || record.DecidedAt != at(1+cooldownMinutes) {
+			e.t.Fatalf("head since %v, decided at %v; want %v, %v", record.HeadSince, record.DecidedAt, at(1), at(1+cooldownMinutes))
 		}
 		e.requireOutbox(key(10, 1, 1), key(10, 1, 2))
 		// The new message is pending: another identical result is quiet again.
-		record, written = e.publish(r, 3)
+		record, written = e.publish(r, 2+cooldownMinutes)
 		e.requirePublished(record, written, false, 2)
 		// Only the current generation's message matters: an earlier failure does not repeat the retry.
-		e.must(e.env.FailMessage(e.ctx, key(10, 1, 2)))
+		e.must(e.env.FailMessage(e.ctx, key(10, 1, 2), at(2+cooldownMinutes)))
 		next := result(10, 1, headB, checks.Success, "ready")
-		record, written = e.publish(next, 4)
+		record, written = e.publish(next, 3+cooldownMinutes)
 		e.requirePublished(record, written, true, 3)
-		record, written = e.publish(next, 5)
+		record, written = e.publish(next, 4+cooldownMinutes)
 		e.requirePublished(record, written, false, 3)
+	})
+
+	run("a lost publication is not retried before the cooldown has passed", func(e *env) {
+		r := result(10, 1, headA, checks.InProgress, "approval-missing")
+		e.publish(r, 1)
+		e.must(e.env.FailMessage(e.ctx, key(10, 1, 1), at(1)))
+		for _, minute := range []int{2, cooldownMinutes} { // the last one is a minute short of the cooldown
+			record, written := e.publish(r, minute)
+			e.requirePublished(record, written, false, 1)
+			if record.DecidedAt != at(minute) {
+				e.t.Fatalf("decided at %v; want %v", record.DecidedAt, at(minute))
+			}
+		}
+		e.requireOutbox(key(10, 1, 1))
+		// A changed result is not a retry: it publishes inside the cooldown.
+		record, written := e.publish(result(10, 1, headB, checks.Success, "ready"), cooldownMinutes)
+		e.requirePublished(record, written, true, 2)
+		e.requireOutbox(key(10, 1, 1), key(10, 1, 2))
+	})
+
+	run("a lost publication is retried once a whole cooldown after it failed, however late it was recorded", func(e *env) {
+		r := result(10, 1, headA, checks.InProgress, "approval-missing")
+		e.publish(r, 1)
+		e.must(e.env.FailMessage(e.ctx, key(10, 1, 1), at(5))) // the relay gave up four minutes after the publication
+		record, written := e.publish(r, 4+cooldownMinutes)
+		e.requirePublished(record, written, false, 1)
+		record, written = e.publish(r, 5+cooldownMinutes)
+		e.requirePublished(record, written, true, 2)
 	})
 
 	run("pulls and repositories are independent", func(e *env) {
@@ -319,17 +349,17 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		e.requireAbsent(20, 1)
 
 		// The retry of a lost publication that fails changes nothing either.
-		e.must(e.env.FailMessage(e.ctx, key(10, 1, 1)))
-		_, _, err = e.env.Store.Publish(e.ctx, first, at(4), failing)
+		e.must(e.env.FailMessage(e.ctx, key(10, 1, 1), at(3)))
+		_, _, err = e.env.Store.Publish(e.ctx, first, at(3+cooldownMinutes), failing)
 		e.requireErr(err, boom)
 		e.requireCurrent(10, 1, before)
 		e.requireOutbox(key(10, 1, 1))
 
 		// An update that writes no message never calls it.
-		e.publish(first, 5) // the retry succeeds: generation 2
+		e.publish(first, 4+cooldownMinutes) // the retry succeeds: generation 2
 		quiet := first
 		quiet.Revision = 3
-		record, written, err := e.env.Store.Publish(e.ctx, quiet, at(6), failing)
+		record, written, err := e.env.Store.Publish(e.ctx, quiet, at(5+cooldownMinutes), failing)
 		e.must(err)
 		e.requirePublished(record, written, false, 2)
 	})

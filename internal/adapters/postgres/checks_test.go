@@ -31,8 +31,8 @@ func TestChecksConformance(t *testing.T) {
 				return nil, err
 			}
 			return pgx.CollectRows(rows, pgx.RowTo[string])
-		}, FailMessage: func(ctx context.Context, key string) error {
-			_, err := w.pool.Exec(ctx, "UPDATE outbox SET state = 'failed', finished_at = now() WHERE key = $1", key)
+		}, FailMessage: func(ctx context.Context, key string, finishedAt time.Time) error {
+			_, err := w.pool.Exec(ctx, "UPDATE outbox SET state = 'failed', finished_at = $2 WHERE key = $1", key, finishedAt)
 			return err
 		}}
 	})

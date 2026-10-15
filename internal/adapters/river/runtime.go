@@ -55,7 +55,10 @@ type Config struct {
 	// Checks is the github_checks job, the single writer of check states (ChecksKind every ChecksInterval); nil registers none.
 	Checks         func(ctx context.Context) error
 	ChecksInterval time.Duration // zero means 30 seconds
-	JobMaxAttempts int           // JOB_MAX_ATTEMPTS, for the jobs this runtime defines; zero means River's default
+	// Integrity is the canonical_integrity job (IntegrityKind every IntegrityInterval); nil registers none.
+	Integrity         func(ctx context.Context) error
+	IntegrityInterval time.Duration // zero means one hour
+	JobMaxAttempts    int           // JOB_MAX_ATTEMPTS, for the jobs this runtime defines; zero means River's default
 }
 
 // rescueStuckJobsAfter is when River rescues a job that stayed running.
@@ -153,6 +156,10 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	if err != nil {
 		return nil, err
 	}
+	integrityJobs, err := addIntegrity(workers, config)
+	if err != nil {
+		return nil, err
+	}
 	commandsJobs, err := addCommands(workers, config)
 	if err != nil {
 		return nil, err
@@ -164,7 +171,7 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
 		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
 		Queues:       map[string]riverqueue.QueueConfig{riverqueue.QueueDefault: {MaxWorkers: config.Workers}, outboxQueue: {MaxWorkers: 1}},
-		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs, bootstrapJobs, commandsJobs, checksJobs),
+		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs, bootstrapJobs, commandsJobs, checksJobs, integrityJobs),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create the River client: %w", err)

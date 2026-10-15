@@ -13,6 +13,8 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
@@ -35,6 +37,7 @@ type repositoryStatus struct {
 	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
 	Bootstrap   string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
 	Checks      string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
+	Integrity   string            `json:"integrity,omitempty"`  // verdict of the current canonical (passed, failed, unavailable); absent before the first verification
 }
 
 // repositoryReader is the part of the observation store /status reads.
@@ -44,12 +47,23 @@ type repositoryReader interface {
 
 // githubStatus reports what synchronization last saw of the configured repositories.
 type githubStatus struct {
-	repos    []string
-	store    repositoryReader
-	ids      *repositoryIDs // learned by the protection check
-	problems *bootstrapProblems
-	checks   *bootstrapProblems // the check job's problems, the same in-memory map type
+	repos     []string
+	store     repositoryReader
+	ids       *repositoryIDs // learned by the protection check
+	problems  *bootstrapProblems
+	checks    *bootstrapProblems // the check job's problems, the same in-memory map type
+	integrity *integrityStatus   // nil when the verdicts are not read (a status without an integrity store)
 }
+
+// integrityStatus reads the integrity verdict of each enrolled repository.
+type integrityStatus struct {
+	owners ownerReader
+	suites governance.UnitOfWork
+	store  integrity.Store
+}
+
+// verdicts returns the verdict of the current canonical of each enrolled repository, by repository name.
+func (s *integrityStatus) verdicts(context.Context) (map[string]string, error) { return nil, nil }
 
 // report returns one entry per configured repository, in configuration order;
 // a repository that has no cycle yet has only its name.

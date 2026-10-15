@@ -13,6 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -64,19 +65,20 @@ type unchangedAt struct {
 // enrolled, configured repository it decides the state of the SuiteWard / Contract check and publishes it through the
 // check ledger, which writes the outbox message when the state changed. Every step is safe to repeat.
 type checksJob struct {
-	repos    []string // the configured repositories
-	reader   checkReader
-	owners   owner.Store
-	suites   governance.UnitOfWork
-	contents governance.ContentReader
-	content  governance.ContentWriter
-	ledger   checks.Store
-	commands ownerCommands
-	pulls    pullLister         // the synchronization store: which pull requests are open and at which head
-	tier     string             // the configured INSTALLATION_TIER
-	problems *bootstrapProblems // shown in /status (github[].checks)
-	logger   *slog.Logger
-	now      func() time.Time
+	repos     []string // the configured repositories
+	reader    checkReader
+	owners    owner.Store
+	suites    governance.UnitOfWork
+	contents  governance.ContentReader
+	content   governance.ContentWriter
+	ledger    checks.Store
+	integrity integrity.Store // the verdict of the canonical bytes
+	commands  ownerCommands
+	pulls     pullLister         // the synchronization store: which pull requests are open and at which head
+	tier      string             // the configured INSTALLATION_TIER
+	problems  *bootstrapProblems // shown in /status (github[].checks)
+	logger    *slog.Logger
+	now       func() time.Time
 
 	// unchanged remembers, in memory, the heads found unchanged against a canonical: a later Suite write for another
 	// pull request does not make such a head read its tree again (consent cannot change an unchanged result).

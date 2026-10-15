@@ -185,6 +185,7 @@ func TestCheckPublisherPostsEveryState(t *testing.T) {
 		{checks.InProgress, "not-current", "P1-R2", "in_progress", ""},
 		{checks.InProgress, "assessment-pending", "", "in_progress", ""},
 		{checks.InProgress, "source-unavailable", "", "in_progress", ""},
+		{checks.InProgress, "fork-unsupported", "", "in_progress", ""},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			w := newChkWorld()

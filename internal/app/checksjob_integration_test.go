@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,8 +23,10 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -151,7 +155,7 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	client := bootMust(rest.NewClient(func(ctx context.Context) (string, string, error) { return "token", "installation", nil }, server.Client(), server.URL, budget))
 	publisher := &checkPublisher{runs: bootMust(github.NewChecks(client)), ledger: store.Checks(), instance: newLazy(store.Instance), appID: chkAppID, logger: logger}
 	relay := bootMust(river.NewRelay(river.RelayConfig{Store: store, Publishers: map[string]river.Publisher{githubCheckKind: publisher.publish}, MaxAttempts: 3, Lease: time.Minute, Logger: logger}))
-	job := &checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), commands: store,
+	job := &checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
 		pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: time.Now}
 	instance := bootMust(store.Instance(t.Context()))
 	step := func() {
@@ -201,4 +205,40 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	if got := scalar(t, databaseURL, "SELECT count(*)::text FROM outbox WHERE kind = 'github_check' AND state = 'delivered'"); got != "6" {
 		t.Fatalf("%s delivered check messages, want 6 (the superseded one is delivered, not posted)", got)
 	}
+
+	// The integrity job against the real stores: bytes of the canonical that no longer match their digest fail
+	// every open pull request, and the verified bytes bring the checks back.
+	integrityJob := &integrityJob{owners: store, suites: store, content: artifacts, store: store.Integrity(), logger: logger, now: time.Now}
+	object := filepath.Join(cfg.ArtifactDir, "sha256-"+strings.TrimPrefix(artifact.Hash([]byte("v1")).String(), "sha256:"))
+	if err := os.Remove(object); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(object, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrityJob.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, found, err := store.Integrity().Latest(t.Context(), owner.ProjectID(bootRepoID), "default")
+	if err != nil || !found || record.Verdict != integrity.Failed || record.Version != "V1" {
+		t.Fatalf("verdict %+v, found %v, error %v; want failed for V1", record, found, err)
+	}
+	step()
+	pass()
+	want("1 success check:1001:4:1", "2 in_progress check:1001:5:1", "2 success check:1001:5:2", "2 in_progress check:1001:5:3", "2 in_progress check:1001:5:5",
+		"1 failure check:1001:4:2", "2 failure check:1001:5:6")
+
+	if err := os.Remove(object); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifacts.Put(t.Context(), artifact.Hash([]byte("v1")), strings.NewReader("v1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrityJob.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	step()
+	pass()
+	want("1 success check:1001:4:1", "2 in_progress check:1001:5:1", "2 success check:1001:5:2", "2 in_progress check:1001:5:3", "2 in_progress check:1001:5:5",
+		"1 failure check:1001:4:2", "2 failure check:1001:5:6", "1 success check:1001:4:3", "2 in_progress check:1001:5:7")
 }

@@ -173,19 +173,20 @@ func TestCheckPublisherPostsEveryState(t *testing.T) {
 	for _, tc := range []struct {
 		state              checks.State
 		reason, reference  string
+		title              string
 		status, conclusion string
 	}{
-		{checks.Success, "unchanged", "", "completed", "success"},
-		{checks.Success, "ready", "P1-R2", "completed", "success"},
-		{checks.Failure, "invalid-source", "", "completed", "failure"},
-		{checks.Failure, "integrity-failed", "P1-R2", "completed", "failure"},
-		{checks.Failure, "owner-command-rejected", "P1-R2", "completed", "failure"},
-		{checks.InProgress, "bootstrap-pending", "", "in_progress", ""},
-		{checks.InProgress, "approval-missing", "P1-R2", "in_progress", ""},
-		{checks.InProgress, "not-current", "P1-R2", "in_progress", ""},
-		{checks.InProgress, "assessment-pending", "", "in_progress", ""},
-		{checks.InProgress, "source-unavailable", "", "in_progress", ""},
-		{checks.InProgress, "fork-unsupported", "", "in_progress", ""},
+		{checks.Success, "unchanged", "", "No protected change", "completed", "success"},
+		{checks.Success, "ready", "P1-R2", "Ready for integration", "completed", "success"},
+		{checks.Failure, "invalid-source", "", "Invalid contract source", "completed", "failure"},
+		{checks.Failure, "integrity-failed", "P1-R2", "Canonical contract failed its integrity check", "completed", "failure"},
+		{checks.Failure, "owner-command-rejected", "P1-R2", "Owner command rejected", "completed", "failure"},
+		{checks.InProgress, "bootstrap-pending", "", "Waiting for the first baseline", "in_progress", ""},
+		{checks.InProgress, "approval-missing", "P1-R2", "Awaiting owner approval", "in_progress", ""},
+		{checks.InProgress, "not-current", "P1-R2", "Contract change is not current", "in_progress", ""},
+		{checks.InProgress, "assessment-pending", "", "Assessment pending", "in_progress", ""},
+		{checks.InProgress, "source-unavailable", "", "Source unavailable", "in_progress", ""},
+		{checks.InProgress, "fork-unsupported", "", "Pull requests from forks are not supported", "in_progress", ""},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			w := newChkWorld()
@@ -204,7 +205,7 @@ func TestCheckPublisherPostsEveryState(t *testing.T) {
 			if p.ExternalID != "suiteward:"+cmtInstance+":"+m.Key {
 				t.Fatalf("external id %q", p.ExternalID)
 			}
-			if p.Title == "" || !strings.Contains(p.Summary, "`isolated`") || !strings.Contains(p.Summary, "does not run tests") {
+			if p.Title != tc.title || !strings.Contains(p.Summary, "`isolated`") || !strings.Contains(p.Summary, "does not run tests") {
 				t.Fatalf("title %q, summary %q", p.Title, p.Summary)
 			}
 			if has := strings.Contains(p.Summary, "/suiteward approve P1-R2 <code>"); has != (tc.reason == "approval-missing") {

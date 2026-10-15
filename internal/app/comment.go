@@ -25,8 +25,9 @@ import (
 // bootstrap-summary and bootstrap-promoted are in bootstrap.go; the acknowledgments of the command job are here.
 
 const (
-	ackKey   = "ack"
-	mergeKey = "merge"
+	ackKey      = "ack"
+	mergeKey    = "merge"
+	revisionKey = "revision"
 )
 
 var (
@@ -245,7 +246,7 @@ func githubFailure(kind, key, step string, err error) error {
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
 	parts := strings.Split(key, ":")
-	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey && parts[0] != mergeKey) {
+	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey && parts[0] != mergeKey && parts[0] != revisionKey) {
 		return "", 0, "", false
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
@@ -303,6 +304,8 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		target, text, err = p.promoted(ctx, key, tail, payload)
 	case mergeKey:
 		target, text, err = p.merge(key, tail, payload)
+	case revisionKey:
+		target, text, err = p.revision(key, tail, payload)
 	}
 	if err != nil {
 		return err
@@ -506,7 +509,7 @@ type mergePayload struct {
 	Kind      string `json:"kind"`                // promoted, corrected or blocked
 	Reason    string `json:"reason,omitempty"`    // blocked only
 	Source    string `json:"source"`              // the merge commit; empty only for the reason integration-unreadable
-	Version   string `json:"version"`             // V<n>: the new version, or the canonical version a blocked merge leaves in force
+	Version   string `json:"version"`             // V<n>: the new version, or the canonical version a blocked merge leaves in force; empty for a blocked merge with no canonical
 	Corrects  string `json:"corrects,omitempty"`  // corrected only: V<n> corrected
 	Reference string `json:"reference,omitempty"` // P<n>-R<m>: the contract change revision, when the merge had one
 	Tier      string `json:"tier"`                // the effective tier: owner.TierIsolated or owner.TierCoLocated
@@ -520,6 +523,9 @@ var mergeKinds = map[string]commandtext.MergeKind{
 func (p mergePayload) merge() (commandtext.Merge, error) {
 	kind, known := mergeKinds[p.Kind]
 	version, validVersion := parseVersion(p.Version)
+	if p.Version == "" && p.Kind == string(governance.MergeBlocked) && p.Corrects == "" && p.Reason != string(governance.MergeReasonIntegrityFailed) {
+		validVersion = true // no canonical exists to name: the renderer says so
+	}
 	m := commandtext.Merge{Kind: kind, Reason: p.Reason, Source: p.Source, Version: version}
 	switch {
 	case p.validate() != nil || !known || !validVersion:
@@ -595,7 +601,83 @@ func (p *commentPublisher) merge(key, tail string, payload json.RawMessage) (com
 	return m.commentTarget, text, err
 }
 
-// newRevisionMessage is a stub until the revision comment is implemented.
-func newRevisionMessage(commentTarget, governance.RevisionNotice, string) (governance.OutboxMessage, error) {
-	return governance.OutboxMessage{}, errors.New("not implemented")
+// revisionPayload is the payload of revision:<repository id>:P<n>-R<m>, the comment about one new change-proposal
+// revision. The lists hold repository text, so they are bounded like the bootstrap summary: at most maxSummaryRun
+// entries of at most maxSummaryText bytes each, with the true totals beside them.
+type revisionPayload struct {
+	commentTarget
+	Reference     string   `json:"reference"`          // P<n>-R<m>
+	Previous      string   `json:"previous,omitempty"` // the revision it supersedes
+	Canonical     string   `json:"canonical"`          // V<n>, the base version
+	Added         []string `json:"added"`
+	Modified      []string `json:"modified"`
+	Removed       []string `json:"removed"`
+	AddedTotal    int      `json:"addedTotal"`
+	ModifiedTotal int      `json:"modifiedTotal"`
+	RemovedTotal  int      `json:"removedTotal"`
+	Reduced       bool     `json:"reduced"`
+	Tier          string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
+}
+
+// revision maps the payload to the values the renderer takes. The renderer checks the rest and panics on what cannot be stored.
+func (p revisionPayload) revision() (commandtext.Revision, error) {
+	proposal, revision, validReference := parseReference(p.Reference)
+	canonical, validCanonical := parseVersion(p.Canonical)
+	var tier commandtext.Tier
+	switch p.Tier {
+	case owner.TierIsolated:
+		tier = commandtext.Isolated
+	case owner.TierCoLocated:
+		tier = commandtext.CoLocated
+	}
+	if p.validate() != nil || !validReference || !validCanonical || tier == 0 || min(p.AddedTotal, p.ModifiedTotal, p.RemovedTotal) < 0 {
+		return commandtext.Revision{}, errors.New("the reference, the base version, a total or the tier is invalid")
+	}
+	return commandtext.Revision{Proposal: proposal, Revision: revision, Previous: p.Previous, Canonical: canonical, Added: p.Added, Modified: p.Modified, Removed: p.Removed,
+		AddedTotal: p.AddedTotal, ModifiedTotal: p.ModifiedTotal, RemovedTotal: p.RemovedTotal, Reduced: p.Reduced, Tier: tier}, nil
+}
+
+// text renders the comment of the payload stored under key, without quoting the payload in an error.
+func (p revisionPayload) text(key string) (string, error) {
+	r, err := p.revision()
+	if err != nil {
+		return "", keyError(githubCommentKind, key, "the payload cannot be rendered")
+	}
+	return render(githubCommentKind, key, func() string { return commandtext.RevisionComment(r) })
+}
+
+func referenceText(r contract.ProposalReference) string {
+	return string(r.ProposalID) + "-" + string(r.RevisionID)
+}
+
+// newRevisionMessage builds the revision comment of a revision AssessHead committed, for HeadRequest.Revision. A
+// payload the publisher could not render is an error, so the revision is not committed with a message nobody can post.
+func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, tier string) (governance.OutboxMessage, error) {
+	p := revisionPayload{commentTarget: target, Reference: referenceText(notice.Reference), Canonical: string(notice.Canonical),
+		Added: boundedText(notice.Added), Modified: boundedText(notice.Modified), Removed: boundedText(notice.Removed),
+		AddedTotal: len(notice.Added), ModifiedTotal: len(notice.Modified), RemovedTotal: len(notice.Removed), Reduced: notice.Reduced, Tier: tier}
+	if notice.Previous != nil {
+		p.Previous = referenceText(*notice.Previous)
+	}
+	if _, err := p.text(revisionKey); err != nil { // before the key, which would quote a reference that is not one
+		return governance.OutboxMessage{}, err
+	}
+	key := fmt.Sprintf("%s:%d:%s", revisionKey, target.RepositoryID, p.Reference)
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("encode the revision message: %w", err)
+	}
+	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
+}
+
+func (p *commentPublisher) revision(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+	r, err := decodePayload[revisionPayload](githubCommentKind, key, payload)
+	if err != nil {
+		return commentTarget{}, "", err
+	}
+	if r.validate() != nil || r.Reference != tail {
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
+	}
+	text, err := r.text(key)
+	return r.commentTarget, text, err
 }

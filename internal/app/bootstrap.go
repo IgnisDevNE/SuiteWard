@@ -29,6 +29,8 @@ const (
 	githubCommentKind    = "github_comment"
 	bootstrapSummaryKey  = "bootstrap-summary"
 	bootstrapPromotedKey = "bootstrap-promoted"
+	sourceBranch         = "branch" // the payload values of bootstrapSummaryInputs.Source
+	sourcePull           = "pull"
 
 	defaultSuite   contract.SuiteID            = "default"
 	firstVersion   contract.SuiteVersionID     = "V1"
@@ -60,10 +62,10 @@ type bootstrapSummaryPayload struct {
 type bootstrapSummaryInputs struct {
 	Proposal     int      `json:"proposal"`
 	Revision     int      `json:"revision"`
-	Source       string   `json:"source"` // branch or pull
-	Origin       string   `json:"origin"` // the pinned 40-hex commit, or the head of the pull request
-	Branch       string   `json:"branch"`
-	Protected    int      `json:"protected"` // all protected files, of which Paths lists the first ones
+	Source       string   `json:"source"`           // branch or pull
+	Origin       string   `json:"origin"`           // the pinned 40-hex commit, or the head of the pull request
+	Branch       string   `json:"branch,omitempty"` // absent from a pull request
+	Protected    int      `json:"protected"`        // all protected files, of which Paths lists the first ones
 	Paths        []string `json:"paths"`
 	Include      []string `json:"include"`      // the declared include rules
 	Exclude      []string `json:"exclude"`      // the declared exclude rules
@@ -83,7 +85,15 @@ func (s bootstrapSummaryInputs) summary() (commandtext.Summary, error) {
 	default:
 		return commandtext.Summary{}, fmt.Errorf("unknown tier %q", s.Tier)
 	}
-	return commandtext.Summary{Proposal: s.Proposal, Revision: s.Revision, Origin: s.Origin, Branch: s.Branch, Protected: s.Protected,
+	var source commandtext.Source
+	switch s.Source {
+	case "", sourceBranch: // a message written before M1.7b has no source
+	case sourcePull:
+		source = commandtext.SourcePull
+	default:
+		return commandtext.Summary{}, fmt.Errorf("unknown source %q", s.Source)
+	}
+	return commandtext.Summary{Proposal: s.Proposal, Revision: s.Revision, Source: source, Origin: s.Origin, Branch: s.Branch, Protected: s.Protected,
 		Paths: s.Paths, Include: s.Include, Exclude: s.Exclude,
 		IncludeTotal: s.IncludeTotal, ExcludeTotal: s.ExcludeTotal, Tier: tier}, nil
 }
@@ -141,6 +151,21 @@ func newPromotedMessage(target commentTarget, reference string) (governance.Outb
 		return governance.OutboxMessage{}, fmt.Errorf("encode the bootstrap promotion: %w", err)
 	}
 	return governance.OutboxMessage{Key: fmt.Sprintf("%s:%d:%s", bootstrapPromotedKey, target.RepositoryID, reference), Kind: githubCommentKind, Payload: payload}, nil
+}
+
+// inventoryInputs adds what the inventory says to the inputs of a summary: the protected files and the scope rules.
+func inventoryInputs(inputs bootstrapSummaryInputs, inv inventory.Inventory) bootstrapSummaryInputs {
+	inputs.Protected = len(inv.Manifest().Entries())
+	for _, entry := range inv.Manifest().Entries() {
+		inputs.Paths = append(inputs.Paths, entry.Path)
+	}
+	for _, rule := range inv.Scope().Declaration().Include() {
+		inputs.Include = append(inputs.Include, rule.String())
+	}
+	for _, rule := range inv.Scope().Declaration().Exclude() {
+		inputs.Exclude = append(inputs.Exclude, rule.String())
+	}
+	return inputs
 }
 
 // bootstrapReader is the part of the GitHub reader the bootstrap uses.
@@ -479,16 +504,7 @@ func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p ow
 	}
 	tier, _ := effectiveTier(b.tier, enrollment, true)
 	number, pull := s.latest+1, open[0]
-	inputs := bootstrapSummaryInputs{Proposal: number, Revision: 1, Origin: head, Branch: branch, Protected: len(inv.Manifest().Entries()), Tier: tier}
-	for _, entry := range inv.Manifest().Entries() {
-		inputs.Paths = append(inputs.Paths, entry.Path)
-	}
-	for _, rule := range inv.Scope().Declaration().Include() {
-		inputs.Include = append(inputs.Include, rule.String())
-	}
-	for _, rule := range inv.Scope().Declaration().Exclude() {
-		inputs.Exclude = append(inputs.Exclude, rule.String())
-	}
+	inputs := inventoryInputs(bootstrapSummaryInputs{Proposal: number, Revision: 1, Source: sourceBranch, Origin: head, Branch: branch, Tier: tier}, inv)
 	message, err := newSummaryMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, inputs)
 	if err != nil {
 		return err

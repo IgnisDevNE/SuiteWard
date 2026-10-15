@@ -639,7 +639,7 @@ func cfSeedProposals(e *cfEnv) {
 			}
 			for revisionID, binding := range c.bindings {
 				revision, err := proposal.Lookup(c.reference(revisionID), c.carrier)
-				if err != nil || !revision.Binding().Equal(binding) || revision.Origin() != c.origin {
+				if err != nil || !revision.Binding().Equal(binding) || revision.Origin() != c.origin || revision.OriginKind() != cfOriginKind(binding) {
 					e.t.Errorf("%s: revision %s = %v, %v, want the seeded revision", c.id, revisionID, revision.Binding().Reference(), err)
 				}
 				_, resolved := proposal.Resolve(c.reference(revisionID), c.carrier)

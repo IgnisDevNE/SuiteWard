@@ -332,7 +332,10 @@ func (j *checksJob) planBootstrap(ctx context.Context, p owner.ProjectPolicy, ta
 	protected, err := j.hasProtected(ctx, p.Repo, head)
 	switch {
 	case err == nil:
-	case errors.Is(err, github.ErrTreeTruncated) || errors.Is(err, errGitHubRead): // not the owner's source: wait for the full tree
+	case errors.Is(err, github.ErrTreeTruncated): // GitHub's limit: no pull request can carry the bootstrap, and the same head stays truncated
+		j.remember(headKey{p.Repo, head}, true)
+		return bootstrapPlan{pending: true}, "", nil // the bootstrap job reports invalid-source in /status
+	case errors.Is(err, errGitHubRead):
 		return waiting(err)
 	case invalidSource(err): // the default branch's contract cannot be read, so no pull request can carry the bootstrap
 		return bootstrapPlan{pending: true}, "", nil // the bootstrap job reports it in /status
@@ -396,11 +399,17 @@ func (j *checksJob) hasProtected(ctx context.Context, repo, sha string) (bool, e
 	if err != nil {
 		return false, err
 	}
+	protected := len(inv.Manifest().Entries()) > 0
+	j.remember(key, protected)
+	return protected, nil
+}
+
+// remember caches the verdict of a commit's tree.
+func (j *checksJob) remember(key headKey, protected bool) {
 	if j.protected == nil {
 		j.protected = map[headKey]bool{}
 	}
-	j.protected[key] = len(inv.Manifest().Entries()) > 0
-	return j.protected[key], nil
+	j.protected[key] = protected
 }
 
 // isFork reports whether a pull request's head repository is observed and is not repo, compared case-insensitively,

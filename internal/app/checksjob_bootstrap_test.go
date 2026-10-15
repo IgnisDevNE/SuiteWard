@@ -336,6 +336,35 @@ func TestChecksKeepTheRecordsWhenTheDefaultBranchCannotBeRead(t *testing.T) {
 	}
 }
 
+func TestChecksSayBootstrapPendingOnEveryPullWhenGitHubTruncatesTheDefaultBranchAndReadItOncePerHead(t *testing.T) {
+	w := newCJBootWorld(t)
+	w.reader.repos[bootRepo].treeErr[bootHead] = fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
+	w.tree(cjHead2, bootFiles("v1"))
+	w.sync(map[int]string{4: cjHead3, 5: cjHead2})
+
+	w.mustCheck()
+	w.mustCheck()
+
+	w.want(4, checks.InProgress, "bootstrap-pending", 1)
+	w.want(5, checks.InProgress, "bootstrap-pending", 1)
+	if w.reader.reads[bootHead] != 1 {
+		t.Fatalf("the truncated default branch was read %d times over two runs, want once: its verdict is cached by head", w.reader.reads[bootHead])
+	}
+	if w.reader.reads[cjHead2] != 0 {
+		t.Fatalf("the head of a pull request was read %d times while the branch path is pending", w.reader.reads[cjHead2])
+	}
+	if got := w.problems.lookup(bootRepo); got != "" { // the bootstrap job reports invalid-source
+		t.Fatalf("problem %q, want none from the checks job", got)
+	}
+
+	w.reader.repos[bootRepo].heads["main"] = bootMovedHead // the default branch moves: it is read again
+	w.reader.repos[bootRepo].treeErr[bootMovedHead] = fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
+	w.mustCheck()
+	if w.reader.reads[bootMovedHead] != 1 {
+		t.Fatalf("the moved default branch was read %d times, want once", w.reader.reads[bootMovedHead])
+	}
+}
+
 func TestChecksFailTheCarrierAfterARejectedOwnerCommandButNotAPendingPull(t *testing.T) {
 	w := newCJBootWorld(t)
 	w.carrierPull()

@@ -271,3 +271,27 @@ func TestBaselineRejectsMissingCollaborators(t *testing.T) {
 		})
 	}
 }
+
+func TestProposeBaselineRejectsARevisionThatCannotBeBound(t *testing.T) {
+	for name, edit := range map[string]func(*governance.BaselineRequest){
+		"without a revision id": func(r *governance.BaselineRequest) { r.Reference.RevisionID = "" },
+		"without an origin":     func(r *governance.BaselineRequest) { r.Origin = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			before := w.revision()
+			request := baselineRequest("R1", "pinned", baselineTree("v1"))
+			edit(&request)
+
+			_, err := governance.ProposeBaseline(context.Background(), w.mem, newFakeWriter(), request)
+
+			if !errors.Is(err, governance.ErrInvalidRequest) {
+				t.Fatalf("error = %v, want an invalid request", err)
+			}
+			w.requireWrites(before, 0)
+			if w.hasProposal(baselineProposal) {
+				t.Fatal("a proposal was stored for a revision that cannot be bound")
+			}
+		})
+	}
+}

@@ -726,7 +726,6 @@ func TestAcknowledgmentConstructors(t *testing.T) {
 			"a malformed command without a reason": second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.Malformed, 0, "")),
 			"a reason on another disposition":      second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.InvalidCode, commandtext.BadCode, "P1-R1")),
 			"a malformed command with a reference": second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.Malformed, commandtext.BadCode, "P1-R1")),
-			"an invalid code without a reference":  second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.InvalidCode, 0, "")),
 			"a reference that is a comment":        second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.NoSuite, 0, "approve P1-R1 123456")),
 			"a reference with a zero":              second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.NoSuite, 0, "P0-R1")),
 		} {

@@ -12,6 +12,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
@@ -37,12 +38,22 @@ type commandsJob struct {
 	syncs      repositoryReader // the observation store: each repository's last successful cycle
 	repos      []string         // the configured repositories (GITHUB_REPOSITORIES)
 	bot        *botAccount
+	reader     commandsReader           // the default branch head and the trees that /suiteward propose reads
+	content    governance.ContentWriter // where a proposed baseline's files are stored
+	pulls      pullLister               // the observed pull requests: a command's head and head repository
+	tier       string                   // the configured INSTALLATION_TIER
 	jobTimeout time.Duration
 	logger     *slog.Logger
 	now        func() time.Time
 
 	failing commandFailure  // the candidate that failed last, in this process; runs never overlap
 	warned  map[string]bool // enrolled repositories already reported as not configured
+}
+
+// commandsReader is the part of the GitHub reader that /suiteward propose uses.
+type commandsReader interface {
+	BranchHead(ctx context.Context, repo, branch string) (string, error)
+	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
 }
 
 // commandFailure counts the consecutive failed attempts of one candidate.

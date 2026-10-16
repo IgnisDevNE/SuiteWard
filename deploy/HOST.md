@@ -588,10 +588,10 @@ SuiteWard now bootstraps a repository from its first test PR: while the Suite ha
 Allow about 1 to 2 minutes per step: synchronization takes up to 60 s, and the checks and merges jobs run every 30 s. The `/suiteward approve <ref> <code>` command is in the check's details (open "Details" on the check). Each code is used once: wait for the next code before every command.
 
 1. **No protected change.** A README-only PR gets `in_progress`, `bootstrap-pending`.
-2. **Bootstrap proposal.** A PR adds `tests/` (one or two files) and `.github/workflows/ci.yml` (the CI workflow used in SuiteWardQ, with the job named `CI / test`).
+2. **Bootstrap proposal.** A PR adds `.github/workflows/ci.yml` (the CI workflow used in SuiteWardQ, with the job named `CI / test`), `.suiteward.yml` (`version: 1` and `include: [tests/**]`) and one file in `tests/`. Without `.suiteward.yml` only `.github/workflows/**` and the declaration itself are protected (D-SCOPE-DEFAULTS), so files in `tests/` would not count as protected changes.
    - A bootstrap comment says it is the exact head of this PR and that V1 is promoted only from the merge commit after the merge.
    - The check is `in_progress` with `P1-R1`.
-3. **Protected push.** Push a change in `tests/`. A new comment for `P1-R2` appears, and the check goes back to `in_progress`.
+3. **Protected push.** Push a new file in `tests/`. A new comment for `P1-R2` appears, and the check stays `in_progress` with `P1-R2`. Approve only the revision the check names: approving a revision that does not exist yet is rejected and turns the check `failure` until the next push or valid command.
 4. **Approval.** Approve the current revision with the new host entry. The check turns `success`, "Bootstrap ready for integration", and `CI / test` is green.
 5. **Merge.** Merge the PR with any method. A comment says V1 was promoted from the merge commit as the first canonical version.
 6. **Change PR.** A later PR changes `tests/`. It gets a `revision` comment listing the files and carrying the copyable command, and `in_progress`. Approve it and merge it: V2.

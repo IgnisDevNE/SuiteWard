@@ -33,6 +33,23 @@ Final numbers come from the S1 walking skeleton.
 - **Needed first.** A D-COMMANDS decision on the watermark, for example a horizon measured from the cycle's start, because chaining alone cannot beat the watermark.
 - **Webhooks** come after the MVP, because they need an inbound route and changes to ADR 0001 and D-SYNC.
 
+**Amendment (2026-10-16, phase M1.7c; owner).** *Latency.*
+- **Poll.** Synchronization runs every 20 s, paced by its cost.
+  - A tick starts no sooner than 20 s after the previous one.
+  - It also starts no sooner than the previous tick's request count allows at 450 requests a minute. That is half of GitHub's secondary limit of 900 points a minute; a REST GET costs one point (GitHub's REST rate-limit documentation, read 2026-10-16). For example, a tick of 150 requests waits 20 s and one of 420 requests waits 56 s.
+  - A cycle costs one request per repository plus one per open PR.
+  - The primary budget stays at 50%. A 304 is not counted against it, and the ETag cache of each read client resets only when its token rotates, about once an hour.
+  - The limit stays at 20 repositories. At that limit with 20 open PRs each, a tick costs 420 requests, so pacing spaces ticks about 56 s apart. The secondary limit is never crossed.
+- **Wake-ups.** A job that may unblock another inserts a one-off run of it **after its own commit**, and the periodic runs stay as the fallback. A wake-up lost to a crash only delays the work to the next periodic run. This revises "in the same transaction" in the amendment of 2026-10-15 (owner, 2026-10-16).
+  - **Sync to commands, checks and merges.** A sync tick that observed a change (any response that was not a 304) wakes `github_commands`, `github_checks` and `github_merges`.
+  - **Commands to checks and bootstrap.** A commands run that decided at least one candidate wakes `github_checks` and `github_bootstrap`.
+  - **Promotion to checks.** A promotion, by the merges job or by the bootstrap job, wakes `github_checks`.
+  - **Queues.** Each of these job kinds runs on its own queue with one worker, so runs never overlap. River requires `running` in every unique state set, so a wake-up cannot coalesce with a run in progress. It is therefore inserted without uniqueness, and one that arrives during a run queues exactly one follow-up.
+- **Targets.** Measured from GitHub's own timestamps in the live run:
+  - a command answered in under 45 s;
+  - an approval reflected in the check in under 60 s;
+  - a push reflected in the check in under 45 s.
+
 ### D-SCOPE: Declaration and source-inventory semantics
 
 Accepted 2026-10-05.
@@ -170,6 +187,15 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 - **`/suiteward skip <code>`.** No reference, and it carries a TOTP code verified and consumed like `approve`. It lets a PR pass the check before the first contract.
 
 Their dispositions are `proposed`, `propose-refused`, `skipped` and `skip-refused`. They follow the existing serialized order and retry rules. A propose whose GitHub read fails is retried, and recorded `failed` after 5 attempts, like any other candidate. A source that cannot be read as a contract (an invalid declaration, a link, a truncated tree) is deterministic: it is refused at once with reason `invalid-source`, so it never stalls the queue (clarified 2026-10-16). The rules are in D-CHECKS (amendment of 2026-10-16).
+
+**Amendment (2026-10-16, phase M1.7c; owner).** *The sync watermark in GitHub's clock.*
+- **The rule is unchanged.** A comment is processed only once every enrolled repository has completed a successful synchronization cycle that began after the comment was created.
+- **What changes is how "began after" is measured.**
+  - A cycle's start is the HTTP `Date` of that repository's first response in the cycle, the first page of its open pull requests. This is GitHub's own clock, the same one as the comment's `created_at`, so no local clock skew enters.
+  - The horizon is the earliest such start among the enrolled repositories, minus a margin of **10 s**. The margin covers GitHub's listing lag and the one-second resolution of `Date`.
+  - `JOB_TIMEOUT` and the 30 s skew no longer enter the horizon.
+- **The margin is a named constant and has not been measured.** The M1.7c live run measures the listing lag: the time from a comment's `created_at` to the first cycle that lists it. The margin is raised if any lag comes near 10 s.
+- **Fail closed.** A repository that has no recorded start holds the horizon back, as a repository with no successful cycle does today. This is the case before its first cycle under M1.7c. A `Date` that is missing or cannot be parsed fails that cycle; it never falls back to the local clock.
 
 ### D-CHECKS: The `SuiteWard / Contract` check
 

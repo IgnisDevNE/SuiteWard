@@ -381,6 +381,47 @@ Other rules:
 - `github_sync_repo` (args: `repo`): one repository now, inserted by the local MCP `sync` (M1.4-C); unique by args while unfinished (available, pending, retryable, running or scheduled; River requires `running` among the unique states), so repeated requests coalesce, including one that arrives while that repository's sync is running: the next tick covers it. It honors `wait_until` like the tick (it returns without calling GitHub and records nothing while waiting).
 - A rate limit or exhausted budget ends that repository's cycle with `wait_until`; other repositories continue. A failed cycle is not a failed job: the job completes and the failure is in `/status`. `/readyz` does not depend on GitHub.
 
+### Latency (M1.7c; normative)
+
+This section is normative from M1.7c. It amends "Synchronization jobs" and "Command and bootstrap jobs" above. The decisions are in [D-SYNC](../plan/decisions.md) and [D-COMMANDS](../plan/decisions.md), both amended 2026-10-16.
+
+**Cycle start.**
+- `rest.Response` carries the server `Date`, parsed as `time.Time` in UTC. It is zero when the header is missing or cannot be parsed.
+  - A 304 carries the `Date` of that 304, never the cached entry's.
+  - The budget keeps its own use of `Date` unchanged.
+- One repository's cycle starts at the `Date` of its first response, the first page of the open pull requests.
+  - That value is `Cycle.StartedAt`. It is never the tick's first response, and never the local clock.
+  - A zero `Date` fails that repository's cycle with the failure kind `decode`. Nothing is recorded as a success, and `/status` shows `lastError` `decode`.
+- `Cycle.Requests` is the number of requests the cycle made, and `Cycle.Changed` reports whether any of them was not a 304.
+
+**Commands horizon.** `commandsJob.horizon` returns the earliest `CycleStartedAt` among the enrolled repositories, minus `commandListingMargin` = 10 s.
+- An enrolled repository with no `CycleStartedAt` makes `ready` false, with the Warn line "an enrolled repository has not synchronized yet", which is today's line for a missing `LastSuccess`.
+- `commandSkew` and `jobTimeout` no longer enter the horizon. `jobTimeout` stays for the tick deadline.
+
+**Sync pacing.**
+- `github_sync_tick` runs every 20 s, with `RunOnStart`.
+- A tick returns at once, recording nothing and calling no GitHub, while it is not yet due:
+  - it is due 20 s after the previous tick started;
+  - and no sooner than `previous requests × 60 s / 450` after that start.
+- The previous tick's start and request count are kept in memory, and a restart starts at once. A tick that ends early (a deadline or a budget stop) counts the requests it made.
+
+**Queues and wake-ups.**
+- `github_sync_tick`, `github_commands`, `github_checks`, `github_merges` and `github_bootstrap` each run on their own River queue with `MaxWorkers` 1. Runs of one kind never overlap, so "a run does not start while an earlier one runs" no longer needs the unique periodic insert.
+- The periodic inserts keep their unique options, so periodic runs still coalesce.
+- A **wake-up** is a one-off insert of a job kind with no unique options, made after the waking run's last commit. A wake-up insert that fails is logged at Warn with the kind and nothing else. It never fails the waking run, because the periodic run is the fallback.
+- **Who wakes whom:**
+
+  | Run | Wakes | When |
+  |---|---|---|
+  | `github_sync_tick` | `github_commands`, `github_checks`, `github_merges` | at least one recorded cycle has `Changed` |
+  | `github_commands` | `github_checks`, `github_bootstrap` | the run recorded at least one ledger entry |
+  | `github_merges` | `github_checks` | the run recorded at least one `promoted` outcome |
+  | `github_bootstrap` | `github_checks` | the run promoted V1 |
+
+- `github_sync_repo` (MCP) wakes the same kinds as a tick, under the same condition.
+
+**`/status`.** Each `github` entry gains `cycleStartedAt` (RFC 3339, GitHub's clock) when one is recorded. Nothing else changes.
+
 ## Local MCP (M1.4; normative)
 
 D-SYNC limits MCP to `sync` and `status`, authenticated with a local token. It lets a coding agent ask for a synchronization and read what SuiteWard observed; it has no approval, revocation, administration or configuration capability, and nothing it returns is authority. The "no endpoint changes state" rule of the HTTP surface covers `HTTP_ADDR`; the MCP `sync` tool enqueues work on its own listener.

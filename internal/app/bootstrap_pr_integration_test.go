@@ -111,6 +111,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	gh := &prGitHub{mergeGitHub: newMergeGitHub(), head: bootHead}
 	gh.tree(bootHead, map[string]string{"src/main.go": "package main\n"})
 	gh.tree(cjHead2, bootFiles("v1"))
+	gh.tree(cjHead4, bootFiles("v1")) // the head of pull request 7, read only once V1 exists
 	server := httptest.NewServer(gh)
 	t.Cleanup(server.Close)
 	budget := bootMust(rest.NewBudget(0.5, time.Now))
@@ -218,7 +219,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	// 5 and 6. GitHub reports the merge, whose tree is the approved head; the merges job promotes V1 and says so once.
 	gh.merge(5, cjHead2, mgSHA5, bootFiles("v1"), clock.Add(time.Minute))
 	clock = clock.Add(5 * time.Minute)
-	cycle(clock, map[int]string{})
+	cycle(clock, map[int]string{7: cjHead4}) // pull request 5 merged; pull request 7 stays open
 	clock = clock.Add(time.Minute)
 	merges := &mergesJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(),
 		tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
@@ -246,7 +247,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 
 	// 7. A second pull request changes tests/: proposed against V1, with a revision comment and approval-missing.
 	gh.tree(cjHead3, bootFiles("v2"))
-	cycle(clock, map[int]string{6: cjHead3})
+	cycle(clock, map[int]string{6: cjHead3, 7: cjHead4})
 	step()
 	pass()
 	if record := current(6); record.State != checks.InProgress || record.Reason != "approval-missing" || record.Reference != "P2-R1" {
@@ -255,6 +256,9 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	wantComment(6, "revision:1001:P2-R1", "V1", "tests/a_test.go", "/suiteward approve P2-R1 <code>", "does not run tests")
 	if len(gh.posted(6)) != 1 {
 		t.Fatalf("%d comments on pull 6, want only the revision comment", len(gh.posted(6)))
+	}
+	if record := current(7); record.State != checks.Success || record.Reason != "unchanged" || len(gh.posted(7)) != 1 {
+		t.Fatalf("check of pull 7 %+v with %d comments, want success unchanged against V1 and still only the notice", record.Result, len(gh.posted(7)))
 	}
 	step()
 	pass()

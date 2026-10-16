@@ -645,6 +645,9 @@ func TestCommandsJobWakesChecksAndBootstrapAfterRecordingAnEntry(t *testing.T) {
 	if want := (river.Wake{river.ChecksKind, river.BootstrapKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that recorded an entry woke %v; want %v", wake, want)
 	}
+	if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 { // each run starts with no wake-ups
+		t.Fatalf("the run after it, with nothing new = %v, %v; want no wake-ups", wake, err)
+	}
 }
 
 func TestCommandsJobWakesNothingWhenNothingWasPending(t *testing.T) {

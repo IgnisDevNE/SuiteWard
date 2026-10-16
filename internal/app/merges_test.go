@@ -319,6 +319,34 @@ func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
 	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that promoted woke %v; want %v", wake, want)
 	}
+	if wake, err := w.merges.run(t.Context()); err != nil || len(wake) != 0 { // each run starts with no wake-ups
+		t.Fatalf("the run after the promotion = %v, %v; want no wake-ups", wake, err)
+	}
+}
+
+func TestMergesWakeChecksAfterACorrection(t *testing.T) {
+	w := newMgWorld(t)
+	w.approved(5, cjHead2, "v2", 2, 201)
+	w.leave(5)
+	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
+	w.advance(time.Minute)
+	w.mustMerge() // V2
+	w.approved(6, cjHead3, "v1", 4, 202)
+	w.leave(6)
+	w.merged(6, cjHead3, mgSHA6, "v1", 3*time.Minute) // the protected files of V1 again: a correction of V2
+	w.advance(3 * time.Minute)
+
+	wake, err := w.merges.run(t.Context())
+	if err != nil {
+		t.Fatalf("merges run: %v\nlogs: %s", err, w.logs)
+	}
+	w.wantOutcome(6, governance.MergeCorrected, "")
+	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+		t.Fatalf("a run that corrected woke %v; want %v", wake, want)
+	}
+	if wake, err := w.merges.run(t.Context()); err != nil || len(wake) != 0 {
+		t.Fatalf("the run after the correction = %v, %v; want no wake-ups", wake, err)
+	}
 }
 
 func TestMergesWakeNothingWhenNoMergeWasPromoted(t *testing.T) {

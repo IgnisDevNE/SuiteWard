@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
@@ -48,8 +49,9 @@ type commandsJob struct {
 	logger  *slog.Logger
 	now     func() time.Time
 
-	failing commandFailure  // the candidate that failed last, in this process; runs never overlap
-	warned  map[string]bool // enrolled repositories already reported as not configured
+	failing  commandFailure  // the candidate that failed last, in this process; runs never overlap
+	recorded bool            // the current run recorded a ledger entry
+	warned   map[string]bool // enrolled repositories already reported as not configured
 }
 
 // commandsReader is the part of the GitHub reader that /suiteward propose uses.
@@ -64,10 +66,22 @@ type commandFailure struct {
 	attempts            int
 }
 
-// run decides the pending comments up to the watermark. A candidate whose decision fails stops the run, so a later one
-// never goes ahead of it; the next run retries it, and its fifth consecutive failure records it as failed. Only a
-// ledger failure fails the job.
-func (j *commandsJob) run(ctx context.Context) error {
+// run decides the pending comments and wakes the jobs that read what it recorded: the checks, which show the owner's
+// consent, and the bootstrap, which promotes an approved baseline (docs/contracts/runtime.md, "Queues and wake-ups").
+// A run that failed after recording an entry still wakes them.
+func (j *commandsJob) run(ctx context.Context) (river.Wake, error) {
+	j.recorded = false
+	err := j.decidePending(ctx)
+	if j.recorded {
+		return river.Wake{river.ChecksKind, river.BootstrapKind}, err
+	}
+	return nil, err
+}
+
+// decidePending decides the pending comments up to the watermark. A candidate whose decision fails stops the run, so a
+// later one never goes ahead of it; the next run retries it, and its fifth consecutive failure records it as failed.
+// Only a ledger failure fails the job.
+func (j *commandsJob) decidePending(ctx context.Context) error {
 	enrollment, enrolled, err := j.owners.Current(ctx)
 	if err != nil {
 		return fmt.Errorf("read the enrollment: %w", err)
@@ -161,6 +175,7 @@ func (j *commandsJob) record(ctx context.Context, c commands.Candidate, d comman
 	if err := j.ledger.Record(ctx, entry, ack); err != nil {
 		return &opaque{what: "record the command", cause: errors.Join(errLedger, err)}
 	}
+	j.recorded = true
 	return nil
 }
 

@@ -51,7 +51,7 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, problems: &bootstrapProblems{},
 		logger: logger, now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
-	if err := bootstrap.run(t.Context()); err != nil { // the Suite
+	if _, err := bootstrap.run(t.Context()); err != nil { // the Suite
 		t.Fatal(err)
 	}
 	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // the proposal P1-R1 that comment 101 approves
@@ -72,7 +72,7 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	for range 2 { // the second run finds nothing to decide
-		if err := job.run(t.Context()); err != nil {
+		if _, err := job.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}

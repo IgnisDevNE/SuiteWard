@@ -72,7 +72,7 @@ func TestCommandsJobOnPostgreSQLProposesAndSkips(t *testing.T) {
 		logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	for range 2 { // the second run finds nothing to decide
-		if err := job.run(t.Context()); err != nil {
+		if _, err := job.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}

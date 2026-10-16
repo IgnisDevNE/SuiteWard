@@ -104,7 +104,7 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	runCommands := func() {
 		t.Helper()
-		if err := commandsJob.run(t.Context()); err != nil {
+		if _, err := commandsJob.run(t.Context()); err != nil {
 			t.Fatalf("commands run: %v", err)
 		}
 	}
@@ -215,7 +215,7 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 	clock = clock.Add(time.Minute)
 	merges := &mergesJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(),
 		tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
-	if err := merges.run(t.Context()); err != nil {
+	if _, err := merges.run(t.Context()); err != nil {
 		t.Fatalf("merges run: %v", err)
 	}
 	if got := scalar(t, databaseURL, "SELECT coalesce(current_version_id, 'none') FROM suites WHERE project_id = $1 AND suite_id = 'default'", string(owner.ProjectID(bootRepoID))); got != "V1" {

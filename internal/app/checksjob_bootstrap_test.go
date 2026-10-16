@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -432,5 +433,73 @@ func TestChecksAssessANewCarrierWhoseRecordOnlyWaitedWhileTheSuiteWasNeverWritte
 
 	if record := w.want(6, checks.InProgress, "approval-missing", 2); record.Reference != "P1-R1" {
 		t.Fatalf("record %+v, want the first proposal P1-R1", record)
+	}
+}
+
+func TestChecksWaitWhenTheDefaultBranchTreeCannotBeReadAndWriteNoProposal(t *testing.T) {
+	w := newCJBootWorld(t)
+	w.reader.repos[bootRepo].treeErr[bootHead] = errors.New(bootSecret)
+	w.tree(cjHead2, bootFiles("v1"))
+	w.sync(map[int]string{5: cjHead2})
+
+	if err := w.runChecks(); err != nil {
+		t.Fatalf("a failed GitHub read must not fail the run: %v", err)
+	}
+
+	w.want(5, checks.InProgress, "assessment-pending", 1)
+	if _, found := w.proposal(1); found || w.reader.reads[cjHead2] != 0 {
+		t.Fatalf("proposal %v, reads of the pull head %d, want the bootstrap path to stop at the unreadable default branch", found, w.reader.reads[cjHead2])
+	}
+	if got := w.problems.lookup(bootRepo); got != "read-failed" || strings.Contains(w.logs.String(), bootSecret) {
+		t.Fatalf("problem %q, logs %s, want read-failed and no GitHub text", got, w.logs)
+	}
+}
+
+// cancelOnBranchHead cancels the run while the job reads the default branch, as a shutdown would.
+type cancelOnBranchHead struct {
+	*cjCountingReader
+	cancel context.CancelFunc
+}
+
+func (r cancelOnBranchHead) BranchHead(context.Context, string, string) (string, error) {
+	r.cancel()
+	return "", errors.New(bootSecret)
+}
+
+func TestChecksReportACancelledRunInsteadOfAWaitingCheck(t *testing.T) {
+	w := newCJBootWorld(t)
+	w.sync(map[int]string{5: cjHead2})
+	ctx, cancel := context.WithCancel(t.Context())
+	w.check.reader = cancelOnBranchHead{cjCountingReader: w.reader, cancel: cancel}
+
+	err := w.check.run(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want the cancellation, not a read failure that waits", err)
+	}
+	if _, found := w.record(5); found {
+		t.Fatal("a cancelled run published a check")
+	}
+	if strings.Contains(w.logs.String(), bootSecret) {
+		t.Fatalf("logs %s carry GitHub text", w.logs)
+	}
+}
+
+func TestChecksFailTheRunWhenTheSuiteDoesNotTargetABranch(t *testing.T) {
+	w := newCJWorld(t, false)
+	w.seedSuite(bootRepoID, "tag:v1")
+	w.tree(cjHead2, bootFiles("v1"))
+	w.sync(map[int]string{5: cjHead2})
+
+	err := w.runChecks()
+
+	if err == nil || !strings.Contains(err.Error(), "does not target a branch") {
+		t.Fatalf("error = %v, want the run to fail on a Suite that targets no branch", err)
+	}
+	if _, found := w.record(5); found {
+		t.Fatal("a check was published for a Suite that targets no branch")
+	}
+	if got := w.problems.lookup(bootRepo); got != problemFailed {
+		t.Fatalf("problem %q, want %q", got, problemFailed)
 	}
 }

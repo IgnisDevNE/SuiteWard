@@ -660,6 +660,120 @@ Cleanup: close any PR you opened and did not merge, then put the stack back with
 
 No code, token, setup output or secret in tickets, logs or messages. The warning of section 6a stays in force. Do not bypass the ruleset to merge: the merges you verify are the ones the ruleset allows.
 
+## 6f. Lower latency (M1.7c)
+
+M1.7c shortens the time from a PR event to its answer: the cycle starts at GitHub's own clock (`Date`), the sync runs every 20 s, and a change wakes the job that acts on it. The normative targets are in the [runtime contract](../docs/contracts/runtime.md#latency-m17c-normative). The intervals are measured from GitHub's own timestamps, read by the bot, so you need no stopwatch: perform the steps and paste back the PR numbers.
+
+### 6f.1 Before you start (owner)
+
+1. Add `phase/M1.7c` to the deployment branches of the `remote-poc` environment (GitHub, repository Settings, Environments). Without it the `promote` job of the `Deploy` run is refused.
+2. Nothing else changes: no setup, no new authenticator entry, the same repositories.
+
+### 6f.2 Deploy on the host
+
+1. Push to `phase/M1.7c`. Approve the `promote` job of the `Deploy` run of the phase head commit (section 0). Then, as `suiteward` (section 1), pull, restart and run the smoke test with the full version:
+
+   ```
+   podman pull ghcr.io/ignisdevne/suiteward:deploy
+   ```
+
+   ```
+   systemctl --user restart suiteward.service
+   ```
+
+   ```
+   SMOKE_TIER=isolated SMOKE_VERSION=sha-<commit> sh ~/smoke.sh
+   ```
+
+   `<commit>` is the full 40-hex commit the `Deploy` run built. The smoke test must pass.
+2. Migration `00018` adds one column, `cycle_started_at`. As in 6e.2, there is no image rollback after it: once the migration is applied, an older image refuses to start. If the new image fails, do not start an older one. Capture `journalctl --user -u suiteward.service -n 50 --no-pager` (log lines carry no secret) and report.
+3. Check `/status` (`curl -s http://127.0.0.1:8081/status`). All of these must hold, or stop and report without starting the scenario:
+   - `schemaVersion` is 18;
+   - each `github` entry shows `cycleStartedAt`;
+   - no entry of `github` shows `lastError`;
+   - `outbox.failed` is 0.
+
+   `cycleStartedAt` appears after the first cycle under the new image. Rows from before `00018` have none, and the smoke test's `github` step passes on the older `lastSuccess` alone. If it is still missing, read `/status` again after about 20 s. If it is still missing after a minute, stop and report: commands are held back until it appears.
+
+### 6f.3 Latency on SuiteWardQ2 (host)
+
+Run it on `SuiteWardQ2`, with the host entry for every approval. The `/suiteward approve <ref> <code>` command is in the check's details (open "Details" on the check). Each code is used once: wait for the next code before every command that takes one.
+
+1. **Open a PR.** Open a PR that changes a file in `tests/`. Expect the `revision` comment and the check `in_progress`. Target: the check within 45 s of the push.
+2. **Approve.** Approve the revision the check names, with the host entry. Expect the acknowledgment and the check turning `success`. Targets: the acknowledgment within 45 s, and the check within 60 s of the comment.
+3. **Push again.** Push another change in `tests/`. Expect a new `revision` comment. Target: within 45 s of the push.
+4. **Propose, refused.** Comment `/suiteward propose` with no code. Expect a refusal `canonical-present`. Target: the answer within 45 s. This measures a command without using a code.
+5. **Merge.** Approve the current revision the check names, with a fresh code, and wait for `success`. Then merge the PR. Expect V2 or later.
+
+### 6f.4 Regression on SuiteWardQ (host)
+
+Run it on `SuiteWardQ`, with the host entry.
+
+1. Open a PR that changes a file in `tests/`. Expect the `revision` comment and the check `in_progress`.
+2. Approve the revision the check names, with the host entry. Wait for `success`.
+3. Merge the PR. Expect the comment to name the new version, V12.
+4. Check `/status` (`curl -s http://127.0.0.1:8081/status`): no `lastError` in `github`, and `outbox.failed` is 0.
+
+### 6f.5 Listing-lag detector (host)
+
+As `suiteward` (section 1), read the detector lines of the host journal. This is the form of section 6 without its `-n 50`, so that the filter sees every line:
+
+```
+journalctl --user -u suiteward.service --no-pager | grep "github comment first observed"
+```
+
+Paste back only the lines that carry `missed_by_ms`: they hold ids and times, no text. That field appears only when a cycle that started after a comment did not list it (GitHub's listing lag). The value must stay well under 10 000 ms, the 10 s margin: if any line is near it, stop and report.
+
+### 6f.6 Co-located stack (SuiteWardQ3)
+
+1. **Update the stack as in 6e.4, step 1.** From the checkout, in PowerShell 7, pull the image and run `./deploy/local.ps1` with the GitHub parameters only. The App key secret is reused, so no key file is needed:
+
+   ```
+   podman pull ghcr.io/ignisdevne/suiteward:deploy
+   ```
+
+   ```
+   ./deploy/local.ps1 -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ3
+   ```
+
+2. **Smoke with the full commit**, as in 6e.4:
+
+   ```
+   Get-Content -Raw deploy/smoke.sh | podman machine ssh "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"
+   ```
+
+   `<commit>` is the full 40-hex commit the `Deploy` run built. There is no image rollback after migration `00018`: if the new image fails, do not start an older one. Capture `podman logs --tail 50 suiteward` and report.
+3. **Check `/status`** through the machine, with the checks of 6f.2 step 3:
+
+   ```
+   podman machine ssh "curl -s http://127.0.0.1:8081/status"
+   ```
+
+4. **Run 6f.3 steps 1 to 4 on SuiteWardQ3**, with the co-located entry's codes. Close the PR without merging it.
+5. **Read the detector lines** of the co-located stack:
+
+   ```
+   podman logs suiteward | grep "github comment first observed"
+   ```
+
+   Paste back only the lines that carry `missed_by_ms`, as in 6f.5.
+6. **Put the stack back without GitHub.** The host needs no stop, because it watches other repositories:
+
+   ```
+   ./deploy/local.ps1
+   ```
+
+### 6f.7 Troubleshooting
+
+- **A command not answered within about a minute.** Read `/status`. A repository with `lastError`, or with an old or missing `cycleStartedAt`, holds every command back, as before.
+- **`lastError` `decode`.** GitHub's response had no readable `Date`, so the cycle failed closed. Nothing is recorded as a success for that repository.
+
+### 6f.8 Never
+
+No code, token, setup output or secret in tickets, logs or messages. The warning of section 6a stays in force. Do not bypass the ruleset to merge: the merges you verify are the ones the ruleset allows.
+
+**Paste back:** the PR numbers, the first line of each SuiteWard comment, and the detector lines of 6f.5 and 6f.6 that carry `missed_by_ms`. Never a code, a token or setup output.
+
 ## 7. Reach `/status`
 
 From your workstation, in a second terminal:

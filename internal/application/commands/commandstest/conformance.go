@@ -86,7 +86,7 @@ type observed struct {
 // observe records one successful cycle of the repository at the minute at, listing exactly these comments.
 func (e *cmdEnv) observe(repository int64, at int, comments ...observed) {
 	e.t.Helper()
-	cycle := githubsync.Cycle{Repo: repoName(repository), InstallationID: 1, At: cmdTime(at), Comments: map[int][]githubsync.ObservedComment{}}
+	cycle := githubsync.Cycle{Repo: repoName(repository), InstallationID: 1, At: cmdTime(at), StartedAt: cmdTime(at), Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, c := range comments {
 		if _, listed := cycle.Comments[c.pull]; !listed {
 			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: "head", HeadRef: "feature", BaseRef: "main", BaseSHA: "base", UpdatedAt: cmdTime(at)})
@@ -94,7 +94,8 @@ func (e *cmdEnv) observe(repository int64, at int, comments ...observed) {
 		cycle.Comments[c.pull] = append(cycle.Comments[c.pull], githubsync.ObservedComment{CommentID: c.id, AuthorID: 7, AuthorLogin: "reviewer",
 			CreatedAt: cmdTime(c.created), UpdatedAt: cmdTime(c.updated), Body: c.body})
 	}
-	e.must(e.env.Sync.RecordCycle(e.ctx, cycle))
+	_, err := e.env.Sync.RecordCycle(e.ctx, cycle)
+	e.must(err)
 }
 
 // candidate is the first observed version of a comment, observed at the minute firstSeen.

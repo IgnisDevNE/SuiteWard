@@ -309,12 +309,12 @@ func (w *bootWorld) mustRun() {
 func (w *bootWorld) openPulls(repo string, numbers ...int) {
 	w.t.Helper()
 	w.cycles++
-	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), Comments: map[int][]githubsync.ObservedComment{}}
+	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), StartedAt: bootTime.Add(time.Duration(w.cycles) * time.Minute), Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, number := range numbers {
 		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepos[number]})
 		cycle.Comments[number] = nil
 	}
-	if err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
+	if _, err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
 		w.t.Fatal(err)
 	}
 }

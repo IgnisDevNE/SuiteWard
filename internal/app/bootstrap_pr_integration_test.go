@@ -80,12 +80,12 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	}
 	cycle := func(at time.Time, heads map[int]string) {
 		t.Helper()
-		c := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}
+		c := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: at, StartedAt: at, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 		for number, head := range heads {
 			c.OpenPulls = append(c.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: bootRepo})
 			c.Comments[number] = nil
 		}
-		if err := store.RecordCycle(t.Context(), c); err != nil {
+		if _, err := store.RecordCycle(t.Context(), c); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -28,6 +28,7 @@ type Response struct {
 	Body        []byte
 	NotModified bool
 	ETag        string
+	Date        time.Time // this response's own HTTP Date in UTC (a 304's too, never the cache entry's); zero when missing or unparsable
 }
 
 var (

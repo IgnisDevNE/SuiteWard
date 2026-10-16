@@ -34,6 +34,9 @@ type Cycle struct {
 	Repo           string
 	InstallationID int64
 	At             time.Time                 // observation time, from the injected clock
+	StartedAt      time.Time                 // GitHub's Date of the cycle's first response (the open pulls listing)
+	Requests       int                       // requests the cycle made, at least 1; not stored
+	Changed        bool                      // some request was not a 304; not stored
 	OpenPulls      []ObservedPull            // the complete open listing
 	Comments       map[int][]ObservedComment // for each open pull number, its complete comment listing
 }
@@ -91,8 +94,9 @@ type Store interface {
 	// RecordCycle stores one finished cycle of one repository atomically: the
 	// repository state, the open pulls seen, the pulls no longer open, and the
 	// comment versions seen. A repeated call with the same observations changes
-	// nothing. Concurrent calls for one repository are serialized.
-	RecordCycle(ctx context.Context, cycle Cycle) error
+	// nothing. Concurrent calls for one repository are serialized. It returns, in ascending order, the ids of the
+	// comments this call stored for the first time: a comment it already had, edited or not, is never returned.
+	RecordCycle(ctx context.Context, cycle Cycle) ([]int64, error)
 	// RecordFailure stores a failed cycle (its classification and wait-until) without touching observations.
 	RecordFailure(ctx context.Context, failure Failure) error
 	// Pulls returns every pull ever seen in repo, ordered by number.
@@ -124,6 +128,7 @@ type RepositoryState struct {
 	Repo           string // owner/name
 	InstallationID int64
 	LastSuccess    time.Time   // zero before the first successful cycle
+	CycleStartedAt time.Time   // GitHub's start of the last successful cycle; zero until one recorded it
 	LastError      FailureKind // empty after a successful cycle
 	LastStatus     int
 	WaitUntil      time.Time // zero when not waiting (from RateLimitedError.Until or BudgetExhaustedError.Reset)

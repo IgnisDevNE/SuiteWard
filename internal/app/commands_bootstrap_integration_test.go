@@ -63,7 +63,7 @@ func TestCommandsJobOnPostgreSQLProposesAndSkips(t *testing.T) {
 		4: {command(101, bootTime.Add(10*time.Minute), func(string) string { return "/suiteward propose" })},
 		5: {command(102, bootTime.Add(20*time.Minute), func(code string) string { return "/suiteward skip " + code })},
 	}
-	if err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), OpenPulls: pulls, Comments: comments}); err != nil {
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), StartedAt: bootTime.Add(time.Hour), Requests: 1, OpenPulls: pulls, Comments: comments}); err != nil {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}

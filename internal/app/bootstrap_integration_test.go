@@ -41,9 +41,9 @@ func TestBootstrapJobOnPostgreSQLRunsTheFullSequence(t *testing.T) {
 	if err := store.Enroll(t.Context(), enrollment); err != nil {
 		t.Fatal(err)
 	}
-	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, Comments: map[int][]githubsync.ObservedComment{4: nil},
+	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, StartedAt: bootTime, Requests: 1, Comments: map[int][]githubsync.ObservedComment{4: nil},
 		OpenPulls: []githubsync.ObservedPull{{Number: 4, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}}}
-	if err := store.RecordCycle(t.Context(), cycle); err != nil {
+	if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
@@ -117,9 +117,9 @@ func TestBootstrapJobOnPostgreSQLBootstrapsEveryRepository(t *testing.T) {
 	}
 	for i, repo := range []string{bootRepo, bootOtherRepo} {
 		pull := 4 + i
-		cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime, Comments: map[int][]githubsync.ObservedComment{pull: nil},
+		cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime, StartedAt: bootTime, Requests: 1, Comments: map[int][]githubsync.ObservedComment{pull: nil},
 			OpenPulls: []githubsync.ObservedPull{{Number: pull, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}}}
-		if err := store.RecordCycle(t.Context(), cycle); err != nil {
+		if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 			t.Fatal(err)
 		}
 	}

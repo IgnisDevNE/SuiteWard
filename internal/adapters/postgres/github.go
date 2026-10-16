@@ -68,13 +68,13 @@ func (s *Store) Repository(ctx context.Context, repo string) (githubsync.Reposit
 // statement upserts, and so locks, the repository row until the commit: a
 // concurrent cycle or failure of the same repository waits for it and then
 // computes its marks from what this one committed.
-func (s *Store) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error {
+func (s *Store) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int64, error) {
 	if err := cycle.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	transaction, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin GitHub cycle transaction: %w", err)
+		return nil, fmt.Errorf("begin GitHub cycle transaction: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -83,13 +83,13 @@ func (s *Store) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error {
 		}
 	}()
 	if err := recordCycle(ctx, dbgen.New(transaction), cycle); err != nil {
-		return err
+		return nil, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit GitHub cycle transaction: %w", err)
+		return nil, fmt.Errorf("commit GitHub cycle transaction: %w", err)
 	}
 	committed = true
-	return nil
+	return nil, nil
 }
 
 func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) error {

@@ -134,12 +134,12 @@ func (w *cjJobWorld) sync(heads map[int]string) {
 	w.t.Helper()
 	w.heads = heads
 	w.cycles++
-	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), Comments: map[int][]githubsync.ObservedComment{}}
+	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), StartedAt: bootTime.Add(time.Duration(w.cycles) * time.Minute), Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for number, head := range heads {
 		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
 		cycle.Comments[number] = nil
 	}
-	if err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
+	if _, err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -631,9 +631,9 @@ func TestChecksFailTheRunOnAStoreErrorAfterEveryRepositoryAndShowItInStatus(t *t
 	w := newCJWorld(t, false, withRepos(bootRepo, bootOtherRepo))
 	w.check.suites = &erroringSuites{UnitOfWork: w.suites, project: w.project(), err: errBootStore}
 	w.sync(map[int]string{4: bootHead})
-	other := githubsync.Cycle{Repo: bootOtherRepo, InstallationID: 1, At: bootTime.Add(time.Hour), Comments: map[int][]githubsync.ObservedComment{3: nil},
+	other := githubsync.Cycle{Repo: bootOtherRepo, InstallationID: 1, At: bootTime.Add(time.Hour), StartedAt: bootTime.Add(time.Hour), Requests: 1, Comments: map[int][]githubsync.ObservedComment{3: nil},
 		OpenPulls: []githubsync.ObservedPull{{Number: 3, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}}}
-	if err := w.pulls.RecordCycle(t.Context(), other); err != nil {
+	if _, err := w.pulls.RecordCycle(t.Context(), other); err != nil {
 		t.Fatal(err)
 	}
 

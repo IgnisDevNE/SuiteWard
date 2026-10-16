@@ -71,6 +71,9 @@ func (g *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if answer.etag != "" {
 		if r.Header.Get("If-None-Match") == answer.etag {
+			if date, ok := answer.header["Date"]; ok { // a 304 carries its own Date too
+				w.Header().Set("Date", date)
+			}
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
@@ -234,7 +237,7 @@ func TestNewReaderRejectsNilClient(t *testing.T) {
 func TestOpenPullsStopsOnAShortPage(t *testing.T) {
 	reader, gh := newReader(t, map[string]reply{pullsURI + "1": ok(fixture(t, "pulls.json"))})
 
-	pulls, err := reader.OpenPulls(t.Context(), repo)
+	pulls, _, err := reader.OpenPulls(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("OpenPulls: %v", err)
 	}
@@ -252,7 +255,7 @@ func TestOpenPullsRequestsTheNextPageAfterAFullOne(t *testing.T) {
 		pullsURI + "2": ok(fixture(t, "pulls.json")),
 	})
 
-	pulls, err := reader.OpenPulls(t.Context(), repo)
+	pulls, _, err := reader.OpenPulls(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("OpenPulls: %v", err)
 	}
@@ -271,7 +274,7 @@ func TestOpenPullsRequestsTheNextPageAfterAFullOne(t *testing.T) {
 func TestOpenPullsEmptyFirstPageIsAnEmptySlice(t *testing.T) {
 	reader, _ := newReader(t, map[string]reply{pullsURI + "1": ok([]byte("[]\n"))})
 
-	pulls, err := reader.OpenPulls(t.Context(), repo)
+	pulls, _, err := reader.OpenPulls(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("OpenPulls: %v", err)
 	}
@@ -284,11 +287,11 @@ func TestOpenPullsNotModifiedReturnsTheSameValues(t *testing.T) {
 	const etag = `W/"pulls-page-1"`
 	reader, gh := newReader(t, map[string]reply{pullsURI + "1": {body: fixture(t, "pulls.json"), etag: etag}})
 
-	first, err := reader.OpenPulls(t.Context(), repo)
+	first, _, err := reader.OpenPulls(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("first OpenPulls: %v", err)
 	}
-	second, err := reader.OpenPulls(t.Context(), repo)
+	second, _, err := reader.OpenPulls(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("second OpenPulls: %v", err)
 	}
@@ -315,7 +318,7 @@ func TestOpenPullsRejectsAnIncompletePull(t *testing.T) {
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
 			reader, _ := newReader(t, map[string]reply{pullsURI + "1": ok(mutated(t, "pulls.json", change))})
-			pulls, err := reader.OpenPulls(t.Context(), repo)
+			pulls, _, err := reader.OpenPulls(t.Context(), repo)
 			if !errors.Is(err, github.ErrInvalidResponse) {
 				t.Fatalf("OpenPulls = %+v, %v; want ErrInvalidResponse", pulls, err)
 			}
@@ -327,7 +330,7 @@ func TestPullCommentsWithoutSinceSendsNoSince(t *testing.T) {
 	// The route matches the exact URI: a since parameter would be an unexpected request.
 	reader, gh := newReader(t, map[string]reply{commentsURI + "1": ok(fixture(t, "comments.json"))})
 
-	comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	comments, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
 	if err != nil {
 		t.Fatalf("PullComments: %v", err)
 	}
@@ -343,7 +346,7 @@ func TestPullCommentsSendsSinceInUTC(t *testing.T) {
 	since := time.Date(2026, 10, 1, 14, 30, 0, 0, time.FixedZone("CEST", 2*60*60))
 	reader, _ := newReader(t, map[string]reply{commentsURI + "1&since=2026-10-01T12:30:00Z": ok(fixture(t, "comments.json"))})
 
-	comments, err := reader.PullComments(t.Context(), repo, 42, since)
+	comments, _, err := reader.PullComments(t.Context(), repo, 42, since)
 	if err != nil {
 		t.Fatalf("PullComments: %v", err)
 	}
@@ -359,7 +362,7 @@ func TestPullCommentsRequestsTheNextPageAfterAFullOne(t *testing.T) {
 		commentsURI + "2" + since: ok(fixture(t, "comments.json")),
 	})
 
-	comments, err := reader.PullComments(t.Context(), repo, 42, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	comments, _, err := reader.PullComments(t.Context(), repo, 42, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("PullComments: %v", err)
 	}
@@ -378,7 +381,7 @@ func TestPullCommentsRequestsTheNextPageAfterAFullOne(t *testing.T) {
 func TestPullCommentsEmptyFirstPageIsAnEmptySlice(t *testing.T) {
 	reader, _ := newReader(t, map[string]reply{commentsURI + "1": ok([]byte("[]\n"))})
 
-	comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	comments, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
 	if err != nil {
 		t.Fatalf("PullComments: %v", err)
 	}
@@ -391,11 +394,11 @@ func TestPullCommentsNotModifiedReturnsTheSameValues(t *testing.T) {
 	const etag = `W/"comments-page-1"`
 	reader, gh := newReader(t, map[string]reply{commentsURI + "1": {body: fixture(t, "comments.json"), etag: etag}})
 
-	first, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	first, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
 	if err != nil {
 		t.Fatalf("first PullComments: %v", err)
 	}
-	second, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	second, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
 	if err != nil {
 		t.Fatalf("second PullComments: %v", err)
 	}
@@ -421,7 +424,7 @@ func TestPullCommentsRejectsAnIncompleteComment(t *testing.T) {
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
 			reader, _ := newReader(t, map[string]reply{commentsURI + "1": ok(mutated(t, "comments.json", change))})
-			comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+			comments, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
 			if !errors.Is(err, github.ErrInvalidResponse) {
 				t.Fatalf("PullComments = %+v, %v; want ErrInvalidResponse", comments, err)
 			}
@@ -599,10 +602,10 @@ func TestInvalidArgumentsAreRejectedBeforeAnyRequest(t *testing.T) {
 		"../octo-repo", "octo-org/..", "octo-org/.", "ôcto/repo",
 	}
 	for _, bad := range repos {
-		if _, err := reader.OpenPulls(ctx, bad); !errors.Is(err, github.ErrInvalidArgument) {
+		if _, _, err := reader.OpenPulls(ctx, bad); !errors.Is(err, github.ErrInvalidArgument) {
 			t.Errorf("OpenPulls(%q) = %v, want ErrInvalidArgument", bad, err)
 		}
-		if _, err := reader.PullComments(ctx, bad, 42, time.Time{}); !errors.Is(err, github.ErrInvalidArgument) {
+		if _, _, err := reader.PullComments(ctx, bad, 42, time.Time{}); !errors.Is(err, github.ErrInvalidArgument) {
 			t.Errorf("PullComments(%q) = %v, want ErrInvalidArgument", bad, err)
 		}
 		if _, err := reader.Tree(ctx, bad, commitSHA); !errors.Is(err, github.ErrInvalidArgument) {
@@ -610,7 +613,7 @@ func TestInvalidArgumentsAreRejectedBeforeAnyRequest(t *testing.T) {
 		}
 	}
 	for _, number := range []int{0, -1} {
-		if _, err := reader.PullComments(ctx, repo, number, time.Time{}); !errors.Is(err, github.ErrInvalidArgument) {
+		if _, _, err := reader.PullComments(ctx, repo, number, time.Time{}); !errors.Is(err, github.ErrInvalidArgument) {
 			t.Errorf("PullComments(number %d) = %v, want ErrInvalidArgument", number, err)
 		}
 	}
@@ -635,10 +638,10 @@ func TestNotFoundStaysMatchable(t *testing.T) {
 		commentsURI + "1": notFound,
 		treeURI:           notFound,
 	})
-	if _, err := reader.OpenPulls(t.Context(), repo); !errors.Is(err, rest.ErrNotFound) {
+	if _, _, err := reader.OpenPulls(t.Context(), repo); !errors.Is(err, rest.ErrNotFound) {
 		t.Errorf("OpenPulls error = %v, want rest.ErrNotFound", err)
 	}
-	if _, err := reader.PullComments(t.Context(), repo, 42, time.Time{}); !errors.Is(err, rest.ErrNotFound) {
+	if _, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{}); !errors.Is(err, rest.ErrNotFound) {
 		t.Errorf("PullComments error = %v, want rest.ErrNotFound", err)
 	}
 	if _, err := reader.Tree(t.Context(), repo, commitSHA); !errors.Is(err, rest.ErrNotFound) {
@@ -675,9 +678,9 @@ func TestUndecodableAnswerNamesThePathNotTheBody(t *testing.T) {
 			t.Errorf("%s error %q includes the body", what, err)
 		}
 	}
-	_, err := reader.OpenPulls(t.Context(), repo)
+	_, _, err := reader.OpenPulls(t.Context(), repo)
 	check("OpenPulls", pullsURI+"1", err)
-	_, err = reader.PullComments(t.Context(), repo, 42, time.Time{})
+	_, _, err = reader.PullComments(t.Context(), repo, 42, time.Time{})
 	check("PullComments", commentsURI+"1", err)
 	_, err = reader.Tree(t.Context(), repo, commitSHA)
 	check("Tree", treeURI, err)
@@ -754,10 +757,10 @@ func TestListingsRejectANullPage(t *testing.T) {
 		pullsURI + "1":    ok([]byte("null")),
 		commentsURI + "1": ok([]byte("null")),
 	})
-	if pulls, err := reader.OpenPulls(t.Context(), repo); !errors.Is(err, github.ErrInvalidResponse) {
+	if pulls, _, err := reader.OpenPulls(t.Context(), repo); !errors.Is(err, github.ErrInvalidResponse) {
 		t.Errorf("OpenPulls = %+v, %v; want ErrInvalidResponse", pulls, err)
 	}
-	if comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{}); !errors.Is(err, github.ErrInvalidResponse) {
+	if comments, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{}); !errors.Is(err, github.ErrInvalidResponse) {
 		t.Errorf("PullComments = %+v, %v; want ErrInvalidResponse", comments, err)
 	}
 }
@@ -781,7 +784,7 @@ func TestListingsStopAfterTheirPageLimit(t *testing.T) {
 		gh.routes[uri] = reply
 	}
 
-	pulls, err := reader.OpenPulls(t.Context(), repo)
+	pulls, _, err := reader.OpenPulls(t.Context(), repo)
 	if !errors.Is(err, github.ErrInvalidResponse) {
 		t.Errorf("OpenPulls = %d pulls, %v; want ErrInvalidResponse", len(pulls), err)
 	} else if !strings.Contains(err.Error(), "/pulls") {
@@ -791,7 +794,7 @@ func TestListingsStopAfterTheirPageLimit(t *testing.T) {
 		t.Errorf("OpenPulls sent %d requests, want 100", got)
 	}
 
-	comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	comments, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
 	if !errors.Is(err, github.ErrInvalidResponse) {
 		t.Errorf("PullComments = %d comments, %v; want ErrInvalidResponse", len(comments), err)
 	} else if !strings.Contains(err.Error(), "/comments") {
@@ -814,7 +817,7 @@ func TestOpenPullsReturnsEachNumberOnceTheLaterWinning(t *testing.T) {
 		pullsURI + "2": ok(encode(t, []map[string]any{later, next})),
 	})
 
-	pulls, err := reader.OpenPulls(t.Context(), repo)
+	pulls, _, err := reader.OpenPulls(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("OpenPulls: %v", err)
 	}
@@ -841,7 +844,7 @@ func TestPullCommentsReturnsEachIDOnceTheLaterWinning(t *testing.T) {
 		commentsURI + "2": ok(encode(t, []map[string]any{later, next})),
 	})
 
-	comments, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	comments, _, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
 	if err != nil {
 		t.Fatalf("PullComments: %v", err)
 	}
@@ -868,5 +871,72 @@ func TestTreeWithADuplicatePathIsRejectedByInventory(t *testing.T) {
 
 	if inv, err := inventory.Build(t.Context(), tree); !errors.Is(err, inventory.ErrInvalidTree) {
 		t.Errorf("Build = %+v, %v; want ErrInvalidTree", inv, err)
+	}
+}
+
+func httpDate(t time.Time) string { return t.UTC().Format(http.TimeFormat) }
+
+// A listing reports the Date of its first page, how many requests it sent and whether any page changed.
+func TestOpenPullsReportsTheFirstPagesDateTheRequestsAndWhetherItChanged(t *testing.T) {
+	first, second := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC), time.Date(2026, 10, 16, 12, 0, 3, 0, time.UTC)
+	reader, _ := newReader(t, map[string]reply{
+		pullsURI + "1": {body: generatedPage(t, "pulls.json", "number", 101, 100), header: map[string]string{"Date": httpDate(first)}},
+		pullsURI + "2": {body: fixture(t, "pulls.json"), header: map[string]string{"Date": httpDate(second)}},
+	})
+
+	_, info, err := reader.OpenPulls(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("OpenPulls: %v", err)
+	}
+	if want := (github.ReadInfo{Date: first, Requests: 2, Changed: true}); !info.Date.Equal(want.Date) || info.Requests != want.Requests || info.Changed != want.Changed {
+		t.Errorf("info = %+v, want %+v (the first page's Date)", info, want)
+	}
+}
+
+func TestOpenPullsServedEntirelyByNotModifiedDidNotChange(t *testing.T) {
+	date := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	reader, _ := newReader(t, map[string]reply{
+		pullsURI + "1": {body: generatedPage(t, "pulls.json", "number", 101, 100), etag: `W/"p1"`, header: map[string]string{"Date": httpDate(date)}},
+		pullsURI + "2": {body: fixture(t, "pulls.json"), etag: `W/"p2"`, header: map[string]string{"Date": httpDate(date)}},
+	})
+	_, cold, err := reader.OpenPulls(t.Context(), repo)
+	if err != nil || !cold.Changed || cold.Requests != 2 {
+		t.Fatalf("first listing: info %+v, error %v; want 2 requests that changed", cold, err)
+	}
+
+	pulls, warm, err := reader.OpenPulls(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("second OpenPulls: %v", err)
+	}
+	if len(pulls) != 102 || warm.Changed || warm.Requests != 2 || !warm.Date.Equal(date) {
+		t.Errorf("after 304s: %d pulls, info %+v; want 102 pulls, 2 requests, unchanged, Date %v", len(pulls), warm, date)
+	}
+}
+
+func TestPullCommentsReportsTheFirstPagesDateTheRequestsAndWhetherItChanged(t *testing.T) {
+	date := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	reader, _ := newReader(t, map[string]reply{commentsURI + "1": {body: fixture(t, "comments.json"), etag: `W/"c1"`, header: map[string]string{"Date": httpDate(date)}}})
+
+	_, cold, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	if err != nil || !cold.Date.Equal(date) || cold.Requests != 1 || !cold.Changed {
+		t.Fatalf("first listing: info %+v, error %v; want Date %v, 1 request, changed", cold, err, date)
+	}
+	_, warm, err := reader.PullComments(t.Context(), repo, 42, time.Time{})
+	if err != nil || !warm.Date.Equal(date) || warm.Requests != 1 || warm.Changed {
+		t.Fatalf("second listing: info %+v, error %v; want Date %v, 1 request, unchanged", warm, err, date)
+	}
+}
+
+// A listing that fails still reports the requests it sent, so a cut cycle can be paced by what it cost.
+func TestAFailedListingReportsTheRequestsItSent(t *testing.T) {
+	reader, _ := newReader(t, map[string]reply{
+		pullsURI + "1": ok(generatedPage(t, "pulls.json", "number", 101, 100)),
+		pullsURI + "2": {status: http.StatusBadGateway, body: []byte("down")},
+	})
+
+	_, info, err := reader.OpenPulls(t.Context(), repo)
+
+	if err == nil || info.Requests != 2 {
+		t.Errorf("OpenPulls = info %+v, error %v; want the failure with the 2 requests sent", info, err)
 	}
 }

@@ -310,7 +310,7 @@ func TestOpenPullsReadsTheHeadRepository(t *testing.T) {
 	object(list[1], "head")["repo"] = nil // #7 loses its repository, #42 keeps it
 	reader, _ := newReader(t, map[string]reply{pullsURI + "1": ok(encode(t, list))})
 
-	got, err := reader.OpenPulls(t.Context(), repo)
+	got, _, err := reader.OpenPulls(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("OpenPulls: %v", err)
 	}

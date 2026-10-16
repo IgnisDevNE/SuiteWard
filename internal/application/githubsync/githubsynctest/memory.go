@@ -62,12 +62,12 @@ func (m *Memory) Repository(ctx context.Context, repo string) (githubsync.Reposi
 }
 
 // RecordCycle implements githubsync.Store.
-func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error {
+func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int64, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := cycle.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -76,7 +76,7 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 			for _, comment := range listing {
 				for _, version := range r.versions {
 					if version.CommentID == comment.CommentID && !version.CreatedAt.Equal(comment.CreatedAt) {
-						return fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, comment.CommentID)
+						return nil, fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, comment.CommentID)
 					}
 				}
 			}
@@ -138,7 +138,7 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 			r.versions[i].NotSeenSince = cycle.At
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // versionOrder orders the versions of one comment: by GitHub's updated_at, then

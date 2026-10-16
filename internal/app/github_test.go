@@ -110,21 +110,21 @@ func TestSyncRepoRefusesARepositoryThatIsNotConfigured(t *testing.T) {
 
 type countingReader struct{ calls int }
 
-func (c *countingReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, error) {
+func (c *countingReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
 	c.calls++
-	return nil, nil
+	return nil, githubsync.ReadInfo{Date: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC), Requests: 1}, nil
 }
 
-func (c *countingReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, error) {
+func (c *countingReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
 	c.calls++
-	return nil, nil
+	return nil, githubsync.ReadInfo{Requests: 1}, nil
 }
 
 func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	store := githubsynctest.NewMemory()
 	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	wait := at.Add(30 * time.Minute)
-	if err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/ok", InstallationID: 2, At: at}); err != nil {
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/ok", InstallationID: 2, At: at, StartedAt: at, Requests: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/limited", InstallationID: 2, At: at, Kind: githubsync.FailureRateLimited, Status: 403, WaitUntil: wait}); err != nil {

@@ -17,10 +17,35 @@ const defaultWait = time.Minute
 // Reader lists what one cycle reads from GitHub, in this package's terms; the
 // composition adapts the GitHub adapter to it and classifies its errors.
 type Reader interface {
-	// OpenPulls returns the complete open listing of repo.
-	OpenPulls(ctx context.Context, repo string) ([]ObservedPull, error)
-	// PullComments returns the complete comment listing of pull number of repo.
-	PullComments(ctx context.Context, repo string, number int) ([]ObservedComment, error)
+	// OpenPulls returns the complete open listing of repo and what reading it cost.
+	OpenPulls(ctx context.Context, repo string) ([]ObservedPull, ReadInfo, error)
+	// PullComments returns the complete comment listing of pull number of repo and what reading it cost.
+	PullComments(ctx context.Context, repo string, number int) ([]ObservedComment, ReadInfo, error)
+}
+
+// ReadInfo is what one listing cost and saw: GitHub's Date of its first page (zero when missing or unparsable), the
+// requests it sent, and whether any page was not a 304. A failed read reports the requests it sent too.
+type ReadInfo struct {
+	Date     time.Time
+	Requests int
+	Changed  bool
+}
+
+// FirstObserved is a comment a cycle recorded for the first time.
+type FirstObserved struct {
+	Repo              string
+	CommentID         int64
+	CreatedAt         time.Time // GitHub's
+	StartedAt         time.Time // the recording cycle's start
+	PreviousStartedAt time.Time // the repository's stored CycleStartedAt before this cycle; zero when it had none
+}
+
+// TickResult is what SyncRepo or Tick did: the requests it made, whether a recorded cycle changed, and the comments
+// it recorded for the first time (a Tick's in the order of its repositories, then by comment id).
+type TickResult struct {
+	Requests      int
+	Changed       bool
+	FirstObserved []FirstObserved
 }
 
 // ReadError is a classified failed read. A Reader returns it for every
@@ -59,34 +84,34 @@ func NewReconciler(reader Reader, store Store, now func() time.Time, installatio
 // wait_until has not passed. A failed cycle is not an error: it is recorded.
 // An error is returned for what no cycle record describes: a canceled context,
 // an unclassified read error, a store failure.
-func (r *Reconciler) SyncRepo(ctx context.Context, repo string) error {
+func (r *Reconciler) SyncRepo(ctx context.Context, repo string) (TickResult, error) {
 	state, found, err := r.store.Repository(ctx, repo)
 	if err != nil {
-		return fmt.Errorf("read the state of %s: %w", repo, err)
+		return TickResult{}, fmt.Errorf("read the state of %s: %w", repo, err)
 	}
 	if found && state.WaitUntil.After(r.now()) {
-		return nil
+		return TickResult{}, nil
 	}
 	cycle, err := r.list(ctx, repo)
 	if err != nil {
-		return r.fail(ctx, repo, err)
+		return TickResult{}, r.fail(ctx, repo, err)
 	}
 	cycle.At = r.now()
-	if err := r.store.RecordCycle(ctx, cycle); err != nil {
-		return fmt.Errorf("record the cycle of %s: %w", repo, err)
+	if _, err := r.store.RecordCycle(ctx, cycle); err != nil {
+		return TickResult{}, fmt.Errorf("record the cycle of %s: %w", repo, err)
 	}
-	return nil
+	return TickResult{}, nil
 }
 
 // list reads every listing of one cycle.
 func (r *Reconciler) list(ctx context.Context, repo string) (Cycle, error) {
-	pulls, err := r.reader.OpenPulls(ctx, repo)
+	pulls, _, err := r.reader.OpenPulls(ctx, repo)
 	if err != nil {
 		return Cycle{}, err
 	}
 	cycle := Cycle{Repo: repo, InstallationID: r.installationID, OpenPulls: pulls, Comments: make(map[int][]ObservedComment, len(pulls))}
 	for _, pull := range pulls {
-		if cycle.Comments[pull.Number], err = r.reader.PullComments(ctx, repo, pull.Number); err != nil {
+		if cycle.Comments[pull.Number], _, err = r.reader.PullComments(ctx, repo, pull.Number); err != nil {
 			return Cycle{}, err
 		}
 	}
@@ -119,7 +144,7 @@ func (r *Reconciler) fail(ctx context.Context, repo string, readErr error) error
 // records nothing, so only finished cycles are recorded; the repositories not
 // reached wait for the next tick. A deadline or a canceled ctx is an expected
 // end, not an error; the errors of the other cycles are joined.
-func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Duration) error {
+func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Duration) (TickResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	var (
@@ -140,7 +165,7 @@ func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Dur
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			if err := r.SyncRepo(ctx, repo); err != nil && ctx.Err() == nil {
+			if _, err := r.SyncRepo(ctx, repo); err != nil && ctx.Err() == nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -148,5 +173,5 @@ func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Dur
 		}()
 	}
 	wg.Wait()
-	return errors.Join(errs...)
+	return TickResult{}, errors.Join(errs...)
 }

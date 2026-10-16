@@ -1230,3 +1230,66 @@ func TestBudgetKeepsTheOffsetWithoutAUsableDate(t *testing.T) {
 		t.Fatalf("err = %#v, want ErrBudgetExhausted until %v (the first Date's offset)", err, reset.Add(skew))
 	}
 }
+
+// Each response carries the Date it was sent with, in UTC; a 304 carries its own, never the cached entry's.
+func TestResponseCarriesTheDateOfItsOwnAnswer(t *testing.T) {
+	var served atomic.Int32
+	dates := []time.Time{t0, t0.Add(7 * time.Second)}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Date", dates[served.Add(1)-1].UTC().Format(http.TimeFormat))
+		w.Header().Set("ETag", `"e1"`)
+		if r.Header.Get("If-None-Match") == `"e1"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+
+	first, err := c.Get(context.Background(), "/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.Get(context.Background(), "/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !first.Date.Equal(dates[0]) || first.Date.Location() != time.UTC {
+		t.Errorf("200 Date = %v, want %v in UTC", first.Date, dates[0])
+	}
+	if !second.NotModified || !second.Date.Equal(dates[1]) || second.Date.Location() != time.UTC {
+		t.Errorf("304 = %+v, want its own Date %v in UTC, not the cached entry's", second, dates[1])
+	}
+}
+
+// A Date that is missing or cannot be parsed is the zero time, never a guess.
+func TestResponseDateIsZeroWhenMissingOrUnparsable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		header func(http.Header)
+		want   time.Time
+	}{
+		"valid":   {func(h http.Header) { h.Set("Date", t0.UTC().Format(http.TimeFormat)) }, t0},
+		"missing": {func(h http.Header) { h["Date"] = nil }, time.Time{}}, // the server sends none
+		"garbled": {func(h http.Header) { h.Set("Date", "not a date") }, time.Time{}},
+		"empty":   {func(h http.Header) { h.Set("Date", "") }, time.Time{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				tc.header(w.Header())
+				_, _ = w.Write([]byte("body"))
+			}))
+			defer srv.Close()
+			c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 0.5, &clock{now: t0}))
+
+			got, err := c.Get(context.Background(), "/a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Date.Equal(tc.want) {
+				t.Errorf("Date = %v, want %v", got.Date, tc.want)
+			}
+		})
+	}
+}

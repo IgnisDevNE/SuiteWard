@@ -103,7 +103,7 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 		{
 			"propose refused: not open",
 			with(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.NotOpen}),
-			[]string{"`/suiteward propose` was not processed: this pull request is no longer open", "Nothing changed.", "comment `/suiteward propose` on an open pull request into the default branch"},
+			[]string{"`/suiteward propose` was not processed: this pull request is no longer open", "Nothing changed.", "Comment `/suiteward propose` on an open pull request into the default branch"},
 			nil,
 		},
 		{

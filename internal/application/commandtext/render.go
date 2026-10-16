@@ -283,7 +283,7 @@ func referenceOf(a Ack) string {
 func refusalFits(outcome Outcome, refusal Refusal) bool {
 	switch outcome {
 	case ProposeRefused:
-		return refusal == CanonicalPresent || refusal == Fork || refusal == EmptyInventory || refusal == InvalidSource
+		return refusal == CanonicalPresent || refusal == Fork || refusal == NotOpen || refusal == BaseNotTarget || refusal == EmptyInventory || refusal == InvalidSource
 	case SkipRefused:
 		return refusal == CanonicalPresent || refusal == Fork || refusal == Carrier
 	}
@@ -608,6 +608,12 @@ func proposeRefusal(r Refusal) string {
 	case Fork:
 		return refused(propose, "this pull request comes from a fork, and pull requests from forks are not supported yet",
 			"Open the pull request from a branch of this repository, then comment `/suiteward propose` there.")
+	case NotOpen:
+		return refused(propose, "this pull request is no longer open",
+			"Comment `/suiteward propose` on an open pull request into the default branch.")
+	case BaseNotTarget:
+		return refused(propose, "this pull request does not target the default branch, so its merge could never become the first contract",
+			"Open the pull request into the default branch, then comment `/suiteward propose` there.")
 	case EmptyInventory:
 		return refused(propose, "no file matches the include rules of `.suiteward.yml`, so there is nothing to protect",
 			"Fix the `include` rules so they match the files you want protected, then comment `/suiteward propose` again.")

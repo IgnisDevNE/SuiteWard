@@ -102,6 +102,8 @@ func codeReason(code string) (commandtext.Reason, bool) {
 const (
 	reasonCanonicalPresent   = "canonical-present"
 	reasonFork               = "fork"
+	reasonNotOpen            = "not-open"
+	reasonBaseNotTarget      = "base-not-target"
 	reasonEmptyInventory     = "empty-inventory"
 	refusalInvalidSource     = "invalid-source" // named like the bootstrap job's status code
 	reasonCarrier            = "carrier"
@@ -109,7 +111,7 @@ const (
 )
 
 var (
-	proposeRefusals = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonEmptyInventory: commandtext.EmptyInventory, refusalInvalidSource: commandtext.InvalidSource}
+	proposeRefusals = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, reasonBaseNotTarget: commandtext.BaseNotTarget, reasonEmptyInventory: commandtext.EmptyInventory, refusalInvalidSource: commandtext.InvalidSource}
 	skipRefusals    = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonCarrier: commandtext.Carrier}
 )
 

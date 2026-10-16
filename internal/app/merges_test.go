@@ -91,7 +91,12 @@ type mgWorld struct {
 
 func newMgWorld(t *testing.T, options ...func(*bootOptions)) *mgWorld {
 	t.Helper()
-	w := &mgWorld{cjJobWorld: newCJWorld(t, true, options...), mgProbs: &bootstrapProblems{},
+	return newMgWorldOf(t, newCJWorld(t, true, options...))
+}
+
+func newMgWorldOf(t *testing.T, cj *cjJobWorld) *mgWorld {
+	t.Helper()
+	w := &mgWorld{cjJobWorld: cj, mgProbs: &bootstrapProblems{},
 		gh: &mgReader{pulls: map[mgKey]github.PullDetail{}, pullErr: map[mgKey]error{}, closed: map[string][]github.PullDetail{}, trees: map[string]inventory.Tree{}, treeErr: map[string]error{}}}
 	w.merges = &mergesJob{repos: w.job.repos, reader: w.gh, owners: w.owners, suites: w.suites, content: w.content, store: w.pulls, integrity: w.verdicts,
 		tier: owner.TierIsolated, problems: w.mgProbs, logger: slog.New(slog.NewJSONHandler(w.logs, nil)), now: func() time.Time { return w.clock }}
@@ -1019,7 +1024,7 @@ func (w *mgWorld) seedOther() {
 	reference := contract.ProposalReference{ProjectID: project, SuiteID: "default", ProposalID: "P1", RevisionID: "R1"}
 	binding := bootMust(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(),
 		PolicyRevision: owner.RevisionID(1), CoveredInputs: protected.CoveredInputs()}))
-	proposal := bootMust(contract.NewProposal(bootMust(contract.NewProposalRevision(binding, "origin", carrier))))
+	proposal := bootMust(contract.NewProposal(bootMust(contract.NewProposalRevision(binding, "origin", contract.OriginBranch, carrier))))
 	version := bootMust(contract.NewSuiteVersion(project, "default", "V1", protected.Manifest()))
 	record := bootMust(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: "seed-other", VersionID: "V1", Binding: binding, Carrier: carrier,
 		Source: "origin", Target: "branch:main", RecordedAt: bootTime.Add(time.Hour)}))

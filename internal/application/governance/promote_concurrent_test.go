@@ -11,7 +11,7 @@ import (
 // it has a new revision against the new canonical and a fresh exact approval.
 func TestConcurrentProposalsResolveByCanonicalCompareAndSet(t *testing.T) {
 	first := newCandidate(t, "p1", "", protectedOf(t, "first"))
-	second := newCandidate(t, "p2", "", protectedOf(t, "second"))
+	second := newCandidate(t, "p2", "", protectedOf(t, "second")).asPull() // it is rebound to version-1 below: a proposal keeps its kind
 	// The second proposal's revision-2 is bound to version-1. Its evidence is
 	// seeded with the proposal because assessments have no write path yet.
 	revised := newCandidate(t, "p2", "version-1", protectedOf(t, "second"), "revision-2")

@@ -33,6 +33,19 @@ var fxRecordedAt = time.Date(2026, 10, 2, 12, 0, 0, 123456000, time.UTC)
 func testInserter() *river.Inserter { return must(river.NewInserter(5)) }
 
 // must unwraps a fixture value; a failed fixture panics and fails the test.
+// fxOriginKind is the kind a fixture means: a baseline (no canonical expected) comes from a branch, a change from a pull.
+func fxOriginKind(binding contract.ApprovalBinding) contract.OriginKind {
+	if binding.ExpectedCanonical() == "" {
+		return contract.OriginBranch
+	}
+	return contract.OriginPull
+}
+
+// noRevision is the revision comment of a caller that wants none.
+func noRevision(governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+	return governance.OutboxMessage{}, false, nil
+}
+
 func must[T any](value T, err error) T {
 	if err != nil {
 		panic(err)
@@ -124,7 +137,7 @@ func newCandidateUnderPolicy(project contract.ProjectID, suite contract.SuiteID,
 		reference := contract.ProposalReference{ProjectID: project, SuiteID: suite, ProposalID: contract.ProposalID(id), RevisionID: revisionID}
 		binding := must(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: baseline,
 			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: policy, CoveredInputs: protected.CoveredInputs()}))
-		revision := must(contract.NewProposalRevision(binding, c.origin, c.carrier))
+		revision := must(contract.NewProposalRevision(binding, c.origin, fxOriginKind(binding), c.carrier))
 		if c.proposal.IsZero() {
 			c.proposal = must(contract.NewProposal(revision))
 		} else {

@@ -36,10 +36,10 @@ func seedWithQueries(t *testing.T, queries *dbgen.Queries) {
 			return queries.InsertProposal(ctx, dbgen.InsertProposalParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", CarrierID: "pr-1"})
 		},
 		func() error {
-			return queries.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", Seq: 2, Origin: "origin-2", CarrierID: "pr-1", ManifestDigest: schemaDigest, ScopeDigest: schemaDigest, CoveredInputs: []byte(`{"k":"v"}`), PolicyRevisionID: "policy-1"})
+			return queries.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", Seq: 2, Origin: "origin-2", OriginKind: "branch", CarrierID: "pr-1", ManifestDigest: schemaDigest, ScopeDigest: schemaDigest, CoveredInputs: []byte(`{"k":"v"}`), PolicyRevisionID: "policy-1"})
 		},
 		func() error {
-			return queries.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Seq: 1, Origin: "origin-1", CarrierID: "pr-1", ManifestDigest: schemaDigest, ScopeDigest: schemaDigest, CoveredInputs: []byte(`{}`), ExpectedVersionID: text("v0"), PolicyRevisionID: "policy-1"})
+			return queries.InsertProposalRevision(ctx, dbgen.InsertProposalRevisionParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Seq: 1, Origin: "origin-1", OriginKind: "pull", CarrierID: "pr-1", ManifestDigest: schemaDigest, ScopeDigest: schemaDigest, CoveredInputs: []byte(`{}`), ExpectedVersionID: text("v0"), PolicyRevisionID: "policy-1"})
 		},
 		func() error {
 			return queries.InsertAssessment(ctx, dbgen.InsertAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "sha-1", EvidenceEmitter: text("ci"), EvidenceSource: text("sha-1"), EvidenceRevisionID: text("r1"), Outcome: text("passed")})

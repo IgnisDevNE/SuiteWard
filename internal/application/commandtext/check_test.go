@@ -17,7 +17,6 @@ var checkReasons = []struct {
 	next   string // a phrase of the next action
 	name   string // the state as the summary names it
 }{
-	{commandtext.CheckInProgress, "bootstrap-pending", "no approved baseline yet", "lowest-numbered open pull request; SuiteWard proposes none while the default branch has no protected files", "in_progress"},
 	{commandtext.CheckSuccess, "unchanged", "match the canonical contract", "nothing is required", "success"},
 	{commandtext.CheckSuccess, "ready", "ready for integration", "integrate this pull request", "success"},
 	{commandtext.CheckInProgress, "approval-missing", "no current approval", "To approve this exact revision, comment:", "in_progress"},
@@ -199,4 +198,162 @@ func TestCheckSummaryPanicsOnAnImpossibleCheck(t *testing.T) {
 		c.Proposal, c.Revision = 0, 0
 		mustPanic(t, func() { commandtext.CheckSummary(c) })
 	})
+}
+
+// Before the first contract no canonical exists, so a head cannot change it: the text names the proposed first contract.
+func TestCheckSummaryOfAMissingApprovalBeforeTheFirstContractNamesTheProposedFirstContract(t *testing.T) {
+	c := check(commandtext.CheckInProgress, "approval-missing")
+	c.Version = 0
+	_, summary := checkText(t, c)
+	for _, w := range []string{"carries the proposed first contract P3-R2", "awaiting the owner's approval of that exact revision", "```\n/suiteward approve P3-R2 <code>\n```", "- Proposal revision: P3-R2"} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("summary lacks %q:\n%s", w, summary)
+		}
+	}
+	if strings.Contains(summary, "changes the protected contract") || strings.Contains(summary, "V0") {
+		t.Errorf("a head cannot change a contract that does not exist:\n%s", summary)
+	}
+}
+
+func TestCheckSummaryOfAMissingApprovalAgainstACanonicalIsUnchanged(t *testing.T) {
+	_, summary := checkText(t, check(commandtext.CheckInProgress, "approval-missing"))
+	if !strings.Contains(summary, "This head changes the protected contract and has no current approval from the owner for its exact revision.") || strings.Contains(summary, "first contract") {
+		t.Errorf("the text against a canonical changed:\n%s", summary)
+	}
+}
+
+func bootstrapReady() commandtext.Check {
+	return commandtext.Check{State: commandtext.CheckSuccess, Reason: "bootstrap-ready", Proposal: 3, Revision: 2, Tier: commandtext.Isolated}
+}
+
+func TestCheckSummaryOfABootstrapThatIsReadyStatesWhatWillHappen(t *testing.T) {
+	title, summary := checkText(t, bootstrapReady())
+	if title != "Bootstrap ready for integration" {
+		t.Errorf("title %q", title)
+	}
+	for _, w := range []string{
+		"- State: `success`", "- Proposal revision: P3-R2", "approved the exact revision", "assessed the integrity of this head",
+		"No canonical contract exists yet", "first canonical version", "from the exact merge commit after", "- Installation tier: `isolated`",
+		"does not run tests",
+	} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("summary lacks %q:\n%s", w, summary)
+		}
+	}
+	if strings.Contains(summary, "Canonical version:") || strings.Contains(summary, "/suiteward") || strings.Contains(summary, "reduced") {
+		t.Errorf("summary names a canonical version that does not exist, offers a command or states a reduced assurance:\n%s", summary)
+	}
+}
+
+func TestCheckSummaryOfABootstrapThatIsReadyStatesTheTierAndNeverClaimsThatTestsRan(t *testing.T) {
+	claim := regexp.MustCompile(`(?i)tests? (ran|run successfully|passed|pass\b)|all tests|build passed|ci passed`)
+	c := bootstrapReady()
+	c.Tier = commandtext.CoLocated
+	title, summary := checkText(t, c)
+	if !strings.Contains(summary, "`co-located`") || !strings.Contains(summary, "assurance is reduced") || claim.MatchString(title+summary) {
+		t.Errorf("the summary lacks the tier or claims that tests ran:\n%s", summary)
+	}
+	c.Proposal, c.Revision = 999999999, 999999999
+	if _, summary := checkText(t, c); len(summary) > 4096 {
+		t.Errorf("the summary has %d bytes", len(summary))
+	}
+}
+
+func TestCheckSummaryAcceptsBootstrapReadyOnlyUnderSuccess(t *testing.T) {
+	for name, mutate := range map[string]func(*commandtext.Check){
+		"in progress":        func(c *commandtext.Check) { c.State = commandtext.CheckInProgress },
+		"failure":            func(c *commandtext.Check) { c.State = commandtext.CheckFailure },
+		"no reference":       func(c *commandtext.Check) { c.Proposal, c.Revision = 0, 0 },
+		"a canonical exists": func(c *commandtext.Check) { c.Version = 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := bootstrapReady()
+			mutate(&c)
+			mustPanic(t, func() { commandtext.CheckSummary(c) })
+		})
+	}
+}
+
+// preCanonical are the reasons of a pull request before the first canonical version exists (the explicit
+// bootstrap, M1.7b rework): no canonical version and no reference to name.
+var preCanonical = []struct {
+	state  commandtext.CheckState
+	reason string
+}{
+	{commandtext.CheckInProgress, "bootstrap-awaiting"},
+	{commandtext.CheckSuccess, "bootstrap-skipped"},
+}
+
+func noCanonical(state commandtext.CheckState, reason string) commandtext.Check {
+	return commandtext.Check{State: state, Reason: reason, Tier: commandtext.Isolated}
+}
+
+func TestCheckSummaryOfAwaitingTheBootstrapStatesHowToStartOrSkip(t *testing.T) {
+	title, summary := checkText(t, noCanonical(commandtext.CheckInProgress, "bootstrap-awaiting"))
+	if title == "" || strings.Contains(title, "\n") || len(title) > 80 {
+		t.Errorf("title %q", title)
+	}
+	for _, w := range []string{
+		"SuiteWard has no canonical contract yet.", "- State: `in_progress`", "- Installation tier: `isolated`",
+		"`/suiteward propose`", "pull request that should carry the first contract", "`/suiteward skip <code>`", "does not run tests",
+	} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("summary lacks %q:\n%s", w, summary)
+		}
+	}
+	if strings.Contains(summary, "/suiteward approve") || strings.Contains(summary, "Canonical version:") || strings.Contains(summary, "Proposal revision:") {
+		t.Errorf("summary names an approve command, a canonical version or a revision that does not exist:\n%s", summary)
+	}
+}
+
+func TestCheckSummaryOfASkippedBootstrapSaysNothingWasAssessed(t *testing.T) {
+	title, summary := checkText(t, noCanonical(commandtext.CheckSuccess, "bootstrap-skipped"))
+	if title == "" || strings.Contains(title, "\n") || len(title) > 80 {
+		t.Errorf("title %q", title)
+	}
+	for _, w := range []string{
+		"Skipped by the owner before the first contract.", "- State: `success`", "No canonical contract exists", "nothing was assessed", "does not run tests",
+	} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("summary lacks %q:\n%s", w, summary)
+		}
+	}
+	if strings.Contains(summary, "/suiteward approve") || strings.Contains(summary, "Canonical version:") {
+		t.Errorf("summary offers an approve command or names a canonical version that does not exist:\n%s", summary)
+	}
+}
+
+func TestCheckSummaryBeforeTheFirstContractStaysInsideItsBounds(t *testing.T) {
+	claim := regexp.MustCompile(`(?i)tests? (ran|run successfully|passed|pass\b)|all tests|build passed|ci passed`)
+	for _, tc := range preCanonical {
+		for _, tier := range []commandtext.Tier{commandtext.Isolated, commandtext.CoLocated} {
+			c := noCanonical(tc.state, tc.reason)
+			c.Tier = tier
+			title, summary := checkText(t, c)
+			if claim.MatchString(title+summary) || strings.Contains(summary, "<!--") || strings.Contains(summary, "@") || strings.Contains(summary, "#issuecomment") || len(summary) > 4096 {
+				t.Errorf("%s: the summary claims a test result, holds a marker, a mention or a comment link, or is long:\n%s", tc.reason, summary)
+			}
+			if tier == commandtext.CoLocated && (!strings.Contains(summary, "`co-located`") || !strings.Contains(summary, "assurance is reduced")) {
+				t.Errorf("%s: the co-located summary lacks the tier or the reduced assurance:\n%s", tc.reason, summary)
+			}
+		}
+	}
+}
+
+func TestCheckSummaryBeforeTheFirstContractRefusesWhatCannotExist(t *testing.T) {
+	for _, tc := range preCanonical {
+		for name, mutate := range map[string]func(*commandtext.Check){
+			"a canonical version": func(c *commandtext.Check) { c.Version = 1 },
+			"a state the reason is not of": func(c *commandtext.Check) {
+				c.State = commandtext.CheckFailure
+			},
+			"an unknown tier": func(c *commandtext.Check) { c.Tier = 0 },
+		} {
+			t.Run(tc.reason+" with "+name, func(t *testing.T) {
+				c := noCanonical(tc.state, tc.reason)
+				mutate(&c)
+				mustPanic(t, func() { commandtext.CheckSummary(c) })
+			})
+		}
+	}
 }

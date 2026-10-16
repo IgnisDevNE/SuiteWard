@@ -108,6 +108,10 @@ func TestMergeLedgerConstraints(t *testing.T) {
 		{"a corrected version without corrected", "pr_merges", "23514", "pr_merges_corrects_check", map[string]any{"corrects_version_id": "v1"}},
 		{"a proposal without a revision", "pr_merges", "23514", "pr_merges_reference_check", map[string]any{"revision_id": nil}},
 		{"a revision without a proposal", "pr_merges", "23514", "pr_merges_reference_check", map[string]any{"proposal_id": nil}},
+		{"a promotion without a version", "pr_merges", "23514", "pr_merges_version_check", map[string]any{"version_id": nil}},
+		{"a correction without a version", "pr_merges", "23514", "pr_merges_version_check", map[string]any{"kind": "corrected", "corrects_version_id": "v1", "version_id": nil}},
+		{"a no-change without a version", "pr_merges", "23514", "pr_merges_version_check", map[string]any{"kind": "no-change", "version_id": nil}},
+		{"a not-target without a version", "pr_merges", "23514", "pr_merges_version_check", map[string]any{"kind": "not-target", "version_id": nil}},
 		{"an unknown version", "pr_merges", "23503", "pr_merges_version_fkey", map[string]any{"version_id": "v9"}},
 		{"an unknown corrected version", "pr_merges", "23503", "pr_merges_corrects_fkey", map[string]any{"kind": "corrected", "corrects_version_id": "v9"}},
 		{"an unknown revision", "pr_merges", "23503", "pr_merges_revision_fkey", map[string]any{"revision_id": "r9"}},
@@ -127,6 +131,10 @@ func TestMergeLedgerConstraints(t *testing.T) {
 			"policy-changed", "integrity-not-passed", "integration-mismatch", "correction-context-reused", "fork-unsupported", "shared-merge-commit", "integration-unreadable", "integrity-failed"} {
 			mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/blocked-" + string(rune('a'+i)), "kind": "blocked", "reason": reason, "source": ""})
 		}
+	})
+	t.Run("only a blocked or before-canonical outcome may have no version", func(t *testing.T) {
+		mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/no-canonical-a", "kind": "before-canonical", "version_id": nil, "source": ""})
+		mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/no-canonical-b", "kind": "blocked", "reason": "differs-from-approved", "version_id": nil})
 	})
 	t.Run("one outcome per carrier", func(t *testing.T) {
 		mustInsert(t, database.conn, "pr_merges", map[string]any{"carrier": "github-pr:10/once"})

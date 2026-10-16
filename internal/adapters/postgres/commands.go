@@ -120,6 +120,18 @@ func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull
 		BodyDigest: digest, Disposition: commands.Disposition(row.Disposition), Operation: contract.OperationID(row.OperationID.String), DecidedAt: observedTime(row.DecidedAt)}, true, nil
 }
 
+// Skipped implements commands.Store.
+func (s *Store) Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error) {
+	if err := commands.ValidateSkipped(repositoryID, pull); err != nil {
+		return false, err
+	}
+	skipped, err := dbgen.New(s.pool).PullSkipped(ctx, dbgen.PullSkippedParams{RepositoryID: repositoryID, PullNumber: int32(pull), Since: timestamp(since)}) // ValidateSkipped bounds it
+	if err != nil {
+		return false, fmt.Errorf("read whether the pull was skipped: %w", err)
+	}
+	return skipped, nil
+}
+
 // Instance implements commands.Store.
 func (s *Store) Instance(ctx context.Context) (string, error) {
 	id, err := dbgen.New(s.pool).GetInstanceID(ctx)

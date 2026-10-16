@@ -53,7 +53,7 @@ func (t invalidTree) Read(context.Context, string) ([]byte, error)       { retur
 
 // mergesJob is the github_merges job, the only writer of merge facts and the only caller of governance.PromoteMerge
 // (docs/contracts/runtime.md, "Merges and integrity jobs (M1.7)"): for each enrolled, configured repository whose
-// Suite has a canonical it resolves the pull requests that left the open list, decides every merge in merge order
+// Suite exists (with or without a canonical) it resolves the pull requests that left the open list, decides every merge in merge order
 // and stops at the first merge it cannot decide yet. Every step is safe to repeat.
 type mergesJob struct {
 	repos     []string // the configured repositories
@@ -119,11 +119,11 @@ func (j *mergesJob) project(ctx context.Context, enrollment owner.State, p owner
 
 func (j *mergesJob) advance(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy) (problem string, err error) {
 	project := owner.ProjectID(p.RepositoryID)
-	canonical, err := j.canonical(ctx, project)
+	canonical, exists, err := j.canonical(ctx, project)
 	if err != nil {
 		return "", fmt.Errorf("read the suite: %w", err)
 	}
-	if canonical == "" { // no merge is decided before the baseline is canonical
+	if !exists { // the bootstrap creates the Suite; without a canonical, PromoteMerge decides the merges
 		return "", nil
 	}
 	if _, observed, err := j.store.Repository(ctx, p.Repo); err != nil {
@@ -133,11 +133,13 @@ func (j *mergesJob) advance(ctx context.Context, enrollment owner.State, p owner
 	}
 	run := mergeRun{p: p, project: project, at: j.now().Truncate(time.Microsecond)}
 	run.tier, _ = effectiveTier(j.tier, enrollment, true)
-	verdict, found, err := j.integrity.Latest(ctx, project, defaultSuite)
-	if err != nil {
-		return "", fmt.Errorf("read the integrity verdict: %w", err)
+	if canonical != "" { // a failed verdict names a stored canonical: without one there is nothing to refuse on
+		verdict, found, err := j.integrity.Latest(ctx, project, defaultSuite)
+		if err != nil {
+			return "", fmt.Errorf("read the integrity verdict: %w", err)
+		}
+		run.integrityFailed = found && verdict.Version == canonical && verdict.Verdict == integrity.Failed
 	}
-	run.integrityFailed = found && verdict.Version == canonical && verdict.Verdict == integrity.Failed
 	if problem, err = j.closedListing(ctx, run); problem != "" || err != nil {
 		return problem, err
 	}
@@ -148,10 +150,9 @@ func (j *mergesJob) advance(ctx context.Context, enrollment owner.State, p owner
 	return j.decide(ctx, run)
 }
 
-// canonical returns the current version of the project's Suite, empty when it has no Suite or no canonical.
-func (j *mergesJob) canonical(ctx context.Context, project contract.ProjectID) (contract.SuiteVersionID, error) {
-	var version contract.SuiteVersionID
-	err := j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+// canonical returns the current version of the project's Suite, empty when it has no canonical, and whether the Suite exists.
+func (j *mergesJob) canonical(ctx context.Context, project contract.ProjectID) (version contract.SuiteVersionID, exists bool, err error) {
+	err = j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
 		state, err := tx.Suite(ctx)
 		if err != nil {
 			return fmt.Errorf("load suite: %w", err)
@@ -160,9 +161,9 @@ func (j *mergesJob) canonical(ctx context.Context, project contract.ProjectID) (
 		return nil
 	})
 	if errors.Is(err, governance.ErrNotFound) { // no Suite yet: the bootstrap creates it
-		return "", nil
+		return "", false, nil
 	}
-	return version, err
+	return version, err == nil, err
 }
 
 // readFailed logs a failed GitHub read by its classification and stops the repository for this run.

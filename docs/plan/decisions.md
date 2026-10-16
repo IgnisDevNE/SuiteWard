@@ -25,6 +25,14 @@ Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 
 Final numbers come from the S1 walking skeleton.
 
+**Amendment (2026-10-15, after M1.7; owner).** *Latency.*
+- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
+- **Approved for phase M1.7c (before M1.8):**
+  - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction;
+  - shorten the synchronization poll to about 20–30 s.
+- **Needed first.** A D-COMMANDS decision on the watermark, for example a horizon measured from the cycle's start, because chaining alone cannot beat the watermark.
+- **Webhooks** come after the MVP, because they need an inbound route and changes to ADR 0001 and D-SYNC.
+
 ### D-SCOPE: Declaration and source-inventory semantics
 
 Accepted 2026-10-05.
@@ -155,6 +163,12 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 - Re-enrolling the same owner (TOTP rotation) is allowed.
 - This amends D-IDENTITY's M1.6 note.
 
+**Amendment (2026-10-16, phase M1.7b rework; owner).** Two commands are added. Both are owner-only, and any other account is ignored as before.
+- **`/suiteward propose`.** No reference and no code: it only creates a proposal, which grants nothing.
+- **`/suiteward skip <code>`.** No reference, and it carries a TOTP code verified and consumed like `approve`. It lets a PR pass the check before the first contract.
+
+Their dispositions are `proposed`, `propose-refused`, `skipped` and `skip-refused`. They follow the existing serialized order and retry rules. A propose whose GitHub read fails is retried, and recorded `failed` after 5 attempts, like any other candidate. A source that cannot be read as a contract (an invalid declaration, a link, a truncated tree) is deterministic: it is refused at once with reason `invalid-source`, so it never stalls the queue (clarified 2026-10-16). The rules are in D-CHECKS (amendment of 2026-10-16).
+
 ### D-CHECKS: The `SuiteWard / Contract` check
 
 Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-github.md)): one check run named `SuiteWard / Contract` per PR head SHA, published by the App and required with the App's `integration_id` as its source; never `neutral` (it passes a required check); `in_progress` while a contract change awaits approval; one publication per (head SHA, state); only an invalid command authored by the owner sets `failure`; a command from any other account is ignored (D-COMMANDS); the required-check rule must require branches to be up to date. M1.5 verifies the protection side; M1.6 publishes.
@@ -183,6 +197,52 @@ Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-git
 - The summary names the state, the proposal revision when there is one, the installation tier and the next action (the copyable approval command when approval is missing); it never claims that tests ran, and it stays below GitHub's output limit.
 
 *No change proposal before a canonical exists.* A PR proposal is created only for a repository that has a canonical, so a PR head can never become canonical through the existing-baseline bootstrap.
+
+**Amendment (2026-10-15, phase M1.7b; owner answers).**
+
+*The bootstrap proposal from a PR.* While the Suite has no canonical and the default branch has no protected files, one PR carries a bootstrap proposal from its exact head: the lowest-numbered open non-fork PR whose head has protected files (ADR 0010, amendment of 2026-10-15).
+- It is the only proposal allowed before a canonical. It is a baseline proposal, not a change proposal: its revisions expect no canonical and carry the origin kind `pull`.
+- A PR head can become V1 only through a merge. The domain refuses an existing-baseline promotion of a `pull` revision.
+
+*`bootstrap-ready`.* That PR's head gets `success`, titled "Bootstrap ready for integration", when the owner approved its exact current revision and the integrity assessment of that head passed. It says no canonical exists yet. Until then it is `in_progress`, `approval-missing`, with the reference. Every other PR stays `bootstrap-pending`.
+
+*Precedence* (superseded by the amendment of 2026-10-16: the newest proposal wins, and nothing is proposed automatically). Once the default branch has protected files, the existing-baseline path wins: a pending PR-head proposal is superseded, and V1 comes from the pinned default-branch commit. This avoids drift between the canonical and what the branch holds (owner: "the option that avoids conflicts or drift that could be irrecoverable").
+
+**Amendment (2026-10-15, after M1.7; owner).** *One comment per new revision.*
+- **When.** When a PR gets a new revision that needs approval, SuiteWard posts one comment with:
+  - the protected files added, changed and removed against the canonical, bounded;
+  - the base version;
+  - the copyable `/suiteward approve P<n>-R<m> <code>`;
+  - a line saying the previous revision is superseded.
+- **Only then.** PRs with no protected change, and implementation-only pushes, get no comment.
+- **Never edited.** Each revision gets a new comment. The comment is evidence, not authority: approving still needs a TOTP code for the exact revision.
+- **Schedule.** Phase M1.7b.
+
+**Amendment (2026-10-16, phase M1.7b rework; owner answers).** The first live run showed the automatic bootstrap was unsafe. A first PR without `.suiteward.yml` was proposed with only `.github/workflows/**` protected, so a V1 would have silently left the PR's tests out. The bootstrap is now explicit.
+
+*Before V1.*
+- **Default state.** Every open non-fork PR gets `in_progress` with reason `bootstrap-awaiting`, and one comment saying how to start.
+- **No automatic proposal.** The automatic carrier choice and the automatic baseline proposal are removed.
+- **The owner's two commands decide.**
+  - **`/suiteward propose`** (owner only, no code). It creates the bootstrap proposal carried by this PR. The source depends on where `.suiteward.yml` is:
+    - on the default branch: a baseline pinned to its head;
+    - otherwise in the PR head: a baseline from that head, which becomes V1 only from its exact merge commit;
+    - otherwise: no proposal. The reply gives a suggested `.suiteward.yml` built from the source's test-like paths, and a one-click link that opens GitHub's editor on the PR branch with the file filled in.
+
+    The newest proposal of the Suite supersedes earlier unpromoted ones. A protected push after the proposal cancels it: there is no automatic new revision, and the owner proposes again.
+  - **`/suiteward skip <code>`** (owner only, with a TOTP code like approve). The PR's check becomes `success` with reason `bootstrap-skipped`, so an infrastructure PR can merge before the first contract.
+    - This is not a contract assessment. The summary says so.
+    - It applies to the whole PR until V1 exists, and is refused once V1 exists.
+- **Order of states for a PR before V1:**
+  1. fork: `fork-unsupported`;
+  2. the carrier of the Suite's latest bootstrap proposal: approval missing, `bootstrap-ready`, or `bootstrap-awaiting` after a cancel;
+  3. skipped: `bootstrap-skipped`;
+  4. otherwise: `bootstrap-awaiting`.
+
+  Skip and propose on a fork are refused. Skip on the carrier is refused. Propose on a skipped PR makes it the carrier.
+- **Guidance is not a failure.** A refused propose or skip is guidance and never sets the owner-command `failure`.
+
+*SuiteWard stays read-only on code* (D-GITHUB-ACCESS). It never commits the declaration. The link only pre-fills GitHub's editor, and the commit is the owner's.
 
 ### D-INTEGRATION: Merge methods and the integrated source
 

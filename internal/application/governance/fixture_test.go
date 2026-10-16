@@ -20,6 +20,11 @@ const (
 
 var recordedAt = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
+// noRevision is the revision comment of a caller that wants none.
+func noRevision(governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+	return governance.OutboxMessage{}, false, nil
+}
+
 // must unwraps a fixture value; a failed fixture panics and fails the test.
 func must[T any](value T, err error) T {
 	if err != nil {
@@ -63,7 +68,7 @@ func newCandidateIn(t *testing.T, project contract.ProjectID, suite contract.Sui
 	for _, revisionID := range revisions {
 		binding := must(contract.NewApprovalBinding(contract.BindingInput{Reference: c.reference(revisionID), ExpectedCanonical: baseline,
 			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: policyID, CoveredInputs: protected.CoveredInputs()}))
-		revision := must(contract.NewProposalRevision(binding, c.origin, c.carrier))
+		revision := must(contract.NewProposalRevision(binding, c.origin, originKindOf(binding), c.carrier))
 		if c.proposal.IsZero() {
 			c.proposal = must(contract.NewProposal(revision))
 		} else {
@@ -83,6 +88,21 @@ func (c candidate) reference(revision contract.ProposalRevisionID) contract.Prop
 
 func (c candidate) current() contract.ProposalReference {
 	return c.proposal.Current().Binding().Reference()
+}
+
+// asPull is the candidate as a PR head that expects no canonical (the first-test bootstrap), not a baseline from a branch.
+func (c candidate) asPull() candidate {
+	var proposal contract.Proposal
+	for _, revision := range c.proposal.Revisions() {
+		pulled := must(contract.NewProposalRevision(revision.Binding(), revision.Origin(), contract.OriginPull, revision.Carrier()))
+		if proposal.IsZero() {
+			proposal = must(contract.NewProposal(pulled))
+		} else {
+			proposal = must(proposal.Revise(pulled))
+		}
+	}
+	c.proposal = proposal
+	return c
 }
 
 func (c candidate) mergedRequest(t *testing.T, operation string, version contract.SuiteVersionID) governance.PromoteRequest {

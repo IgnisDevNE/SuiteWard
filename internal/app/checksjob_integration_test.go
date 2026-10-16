@@ -122,7 +122,7 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	repository.trees[cjHead2] = &bootTree{files: bootFiles("v2")}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: repository}, calls: map[string]int{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
+	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, problems: &bootstrapProblems{},
 		logger: logger, now: func() time.Time { return bootTime.Add(time.Hour) }}
 	consent := func(action contract.ConsentAction, comment int64, proposal, pull int) {
 		t.Helper()
@@ -133,11 +133,10 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for range 2 { // the Suite and the proposal P1-R1
-		if err := bootstrap.run(t.Context()); err != nil {
-			t.Fatal(err)
-		}
+	if err := bootstrap.run(t.Context()); err != nil { // the Suite
+		t.Fatal(err)
 	}
+	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // P1-R1, as the commands job would
 	consent(contract.ApproveConsent, 101, 1, 4)
 	for range 3 { // the integrity assessment and the first canonical
 		if err := bootstrap.run(t.Context()); err != nil {

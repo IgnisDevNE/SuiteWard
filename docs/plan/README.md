@@ -1,6 +1,6 @@
 # Delivery plan
 
-- **Updated:** 2026-10-15 (M1.6b merged; M1.7 verified on both targets, D-INTEGRATION accepted)
+- **Updated:** 2026-10-15 (M1.7 merged; M1.7b planned; M1.7c added for latency)
 
 Each phase produces one PR, integrated with a merge commit after the user's authorization. Work inside a phase is orchestrated as described in [orchestration](orchestration.md): the main session writes [briefs](task-brief.md), `sw-implementer` subagents implement them test-first in their own worktrees, and `sw-reviewer` subagents review them. Open and accepted product choices live in the [decision register](decisions.md).
 
@@ -22,6 +22,7 @@ Phase pages are written by hand and kept short. A task listed on a page becomes 
 | [M1.5](phases/M1.5.md) | Owner and trust: `suiteward setup` binds the owner and enrolls TOTP on the instance, the declared installation tier, and protection verification of rulesets and classic protection (results, findings, the bypass caveat) at setup and every 15 minutes; verified live and on both targets. Results in the [phase page](phases/M1.5.md#outcome). |
 | [M1.6a](phases/M1.6a.md) | PR commands and bootstrap: `/suiteward approve` and `revoke` with TOTP, the command ledger, acknowledgment comments, and the existing-baseline bootstrap (never an empty baseline); verified on both targets. Results in the [phase page](phases/M1.6a.md#outcome). |
 | [M1.6b](phases/M1.6b.md) | Integrity assessment of each PR head and the required `SuiteWard / Contract` check published through the outbox: exact-revision approval, consent kept across implementation-only pushes, revoke blocking again; verified on both targets. Results in the [phase page](phases/M1.6b.md#outcome). |
+| [M1.7](phases/M1.7.md) | Promotion on merge: merge, squash and rebase resolved through the merge commit's tree, explicit reported states for everything else, corrections, and hourly canonical integrity verification; verified on both targets. Results in the [phase page](phases/M1.7.md#outcome). |
 
 Evidence for the earlier phases lives in [history](../history.md).
 
@@ -31,15 +32,15 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
-| [M1.7](phases/M1.7.md) | Merge detection and promotion (merge, squash and rebase through the merge commit's tree), explicit reported states for everything else, corrections, and periodic canonical integrity verification. **Verified** on both targets 2026-10-15 ([live verification](phases/M1.7.md#live-verification-2026-10-15)); awaiting the merge. | M1.6b |
-| [M1.7b](phases/M1.7b.md) | Bootstrap from the first PR that carries tests (ADR 0010's other path): proposal and readiness on the PR, promotion of V1 after its merge. | M1.7 |
-| [M1.8](phases/M1.8.md) | MVP acceptance: install guide, backup and re-bootstrap runbook, end-to-end run, dogfooding on SuiteWard. | M1.7b |
+| [M1.7b](phases/M1.7b.md) | Bootstrap from the first PR that carries tests (ADR 0010's other path): a proposal and readiness check on the PR, and V1 promoted from its merge commit; one comment per new change-proposal revision. **In progress** (planned 2026-10-15). | M1.7 |
+| [M1.7c](phases/M1.7c.md) | Lower latency: chained jobs, a shorter poll, and the D-COMMANDS watermark decision. | M1.7b |
+| [M1.8](phases/M1.8.md) | MVP acceptance: install guide, backup and re-bootstrap runbook, end-to-end run, dogfooding on SuiteWard. | M1.7c |
 
 S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
 
 ## Verification targets
 
-Every phase that changes what runs (S1, M1.2, M1.4–M1.8, including M1.7b) is verified on both targets before its PR, and the MVP is accepted on both:
+Every phase that changes what runs (S1, M1.2, M1.4–M1.8, including M1.7b and M1.7c) is verified on both targets before its PR, and the MVP is accepted on both:
 
 | Target | ADR 0027 tier | Shape |
 | --- | --- | --- |

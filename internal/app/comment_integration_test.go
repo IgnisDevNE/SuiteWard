@@ -98,11 +98,12 @@ func TestCommentPublisherOnPostgreSQLPostsEachMessageOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
-	job := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
+	job := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, problems: &bootstrapProblems{},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
-	if err := job.run(t.Context()); err != nil { // the Suite, the proposal P1-R1 and its summary message
+	if err := job.run(t.Context()); err != nil { // the Suite
 		t.Fatal(err)
 	}
+	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // P1-R1 and its summary message, as the commands job would
 	ack := cmtMust(newProcessedAck(commentTarget{RepositoryID: bootRepoID, Repo: bootRepo, Pull: 4}, 101, "owner", owner.ProjectID(bootRepoID), "default", "consent:github-comment:101"))
 	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: "consent:github-comment:101", SourceCommandID: "github-comment:101", Actor: bootOwnerPrincipal(),
 		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "default", ProposalID: "P1", RevisionID: "R1"}, Carrier: "github-pr:1001/4",

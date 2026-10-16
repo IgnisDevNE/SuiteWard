@@ -37,10 +37,13 @@ type checkReason struct {
 }
 
 var checkReasons = map[string]checkReason{
-	"bootstrap-pending": {CheckInProgress, "Waiting for the first baseline",
-		"This repository has no approved baseline yet, so the contract of this head has nothing to be compared with.",
-		"Next: the owner approves the baseline proposal in SuiteWard's bootstrap comment on the lowest-numbered open pull request; " +
-			"SuiteWard proposes none while the default branch has no protected files."},
+	"bootstrap-awaiting": {CheckInProgress, "No canonical contract yet",
+		"SuiteWard has no canonical contract yet. This head is not assessed against a contract until the first one exists.",
+		"Next: the owner comments `/suiteward propose` on the pull request that should carry the first contract, " +
+			"or `/suiteward skip <code>` with a current code from the authenticator app to let this pull request merge before the first contract."},
+	"bootstrap-skipped": {CheckSuccess, "Skipped before the first contract",
+		"Skipped by the owner before the first contract. No canonical contract exists and nothing was assessed on this head: this is not a contract assessment.",
+		"Next: nothing is required. Once the first contract exists, later pull requests are assessed against it."},
 	"unchanged": {CheckSuccess, "No protected change",
 		"The protected files of this head match the canonical contract.",
 		"Next: nothing is required."},
@@ -48,6 +51,10 @@ var checkReasons = map[string]checkReason{
 		"The owner approved the exact revision of this contract change against the current canonical contract, and the integrity " +
 			"assessment of this head passed. It is ready for integration.",
 		"Next: integrate this pull request when you are ready."},
+	"bootstrap-ready": {CheckSuccess, "Bootstrap ready for integration",
+		"The owner approved the exact revision of the first baseline proposed from this pull request, and SuiteWard assessed the integrity of this head. " +
+			"No canonical contract exists yet. SuiteWard will promote the first canonical version from the exact merge commit after the merge.",
+		"Next: integrate this pull request when you are ready. A later push that changes the protected files needs a new approval."},
 	"approval-missing": {CheckInProgress, "Awaiting owner approval",
 		"This head changes the protected contract and has no current approval from the owner for its exact revision.",
 		"To approve this exact revision, comment:"},
@@ -88,6 +95,10 @@ func CheckSummary(c Check) (title, summary string) {
 	if (c.Proposal == 0) != (c.Revision == 0) || c.Version < 0 {
 		panic(fmt.Sprintf("commandtext: check reference P%d-R%d and version %d do not fit", c.Proposal, c.Revision, c.Version))
 	}
+	beforeCanonical := c.Reason == "bootstrap-ready" || c.Reason == "bootstrap-awaiting" || c.Reason == "bootstrap-skipped"
+	if (beforeCanonical && c.Version != 0) || (c.Reason == "bootstrap-ready" && c.Proposal == 0) {
+		panic(fmt.Sprintf("commandtext: reason %q does not fit reference P%d-R%d and version V%d: it has no canonical version, and a ready bootstrap has a reference", c.Reason, c.Proposal, c.Revision, c.Version))
+	}
 	facts := []string{"- State: `" + checkStateName[c.State] + "`"}
 	var ref string
 	if c.Proposal != 0 {
@@ -99,7 +110,11 @@ func CheckSummary(c Check) (title, summary string) {
 		facts = append(facts, fmt.Sprintf("- Canonical version: V%d", c.Version))
 	}
 	facts = append(facts, "- Installation tier: `"+tier+"`")
-	parts := []string{reason.text, strings.Join(facts, "\n")}
+	text := reason.text
+	if c.Reason == "approval-missing" && c.Version == 0 { // no canonical: the head proposes the first contract, it changes none
+		text = "This pull request carries the proposed first contract " + ref + ", awaiting the owner's approval of that exact revision."
+	}
+	parts := []string{text, strings.Join(facts, "\n")}
 	if c.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}

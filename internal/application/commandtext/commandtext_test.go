@@ -280,7 +280,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed unknown verb",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the action must be `approve` or `revoke`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`"},
+			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose` or `skip`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`"},
 			[]string{"eligible"},
 		},
 		{
@@ -310,7 +310,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed extra text",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.ExtraText, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: nothing may follow the code on the command line. Nothing changed."},
+			[]string{"Your `/suiteward` command was not understood: nothing may follow the end of the command. Nothing changed."},
 			nil,
 		},
 		{
@@ -328,7 +328,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"no suite",
 			commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1, Source: source, Owner: owner},
-			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "bootstrap summary"},
+			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "comment `/suiteward propose`"},
 			[]string{"eligible"},
 		},
 		{
@@ -759,7 +759,7 @@ func TestMarkerKeyCannotCloseTheCommentEarly(t *testing.T) {
 }
 
 func TestHasMarkerWithContractKeys(t *testing.T) {
-	for _, key := range []string{"bootstrap-summary:7:P4-R1", "bootstrap-promoted:7:P4-R1", "ack:7:2345678901"} {
+	for _, key := range []string{"bootstrap-summary:7:P4-R1", "bootstrap-promoted:7:P4-R1", "ack:7:2345678901", "bootstrap-notice:7:12", "bootstrap-cancelled:7:P4-R1"} {
 		body := "text\n\n" + "<!-- suiteward:" + instance + ":" + key + " -->\n"
 		var got bool
 		func() {
@@ -911,5 +911,99 @@ func TestBootstrapSummaryCountsTheRulesTheCallerDidNotCarry(t *testing.T) {
 	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
 	if strings.Contains(body, "not listed") {
 		t.Errorf("every rule is listed, yet the body says some are not:\n%s", body)
+	}
+}
+
+// The default-branch text is pinned: M1.7b adds a source, and the branch text stays as it was.
+func TestBootstrapSummaryOfTheBranchKeepsItsExactText(t *testing.T) {
+	want := "**SuiteWard bootstrap proposal P1-R1**\n\n" +
+		"SuiteWard proposes this repository's protected baseline as P1-R1. Nothing is canonical yet.\n\n" +
+		"- Origin commit: `" + origin + "` on branch `main` (pinned: it does not move if the branch advances)\n" +
+		"- Protected files: 1\n" +
+		"- Installation tier: `isolated`\n\n" +
+		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
+		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
+		"Scope exclude rules:\n\n```\ntests/tmp/\n```\n\n" +
+		"Review the inventory and the scope. To approve this exact baseline, comment:\n\n" +
+		"```\n/suiteward approve P1-R1 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
+		"Approving P1-R1 does not approve the other changes in this PR.\n"
+	for name, source := range map[string]commandtext.Source{"zero": 0, "branch": commandtext.SourceBranch} {
+		s := summary(1, pathList(1), commandtext.Isolated)
+		s.Source = source
+		if got := render(t, func() string { return commandtext.BootstrapSummary(s) }); got != want {
+			t.Errorf("%s: the branch text changed:\n%s", name, got)
+		}
+	}
+}
+
+func pullSummary(tier commandtext.Tier) commandtext.Summary {
+	s := summary(3, pathList(3), tier)
+	s.Source, s.Branch = commandtext.SourcePull, ""
+	return s
+}
+
+func TestBootstrapSummaryOfAPullRequestStatesWhatApprovingDoes(t *testing.T) {
+	body := render(t, func() string { return commandtext.BootstrapSummary(pullSummary(commandtext.Isolated)) })
+	for _, w := range []string{
+		"SuiteWard bootstrap proposal P1-R1", "`" + origin + "`", "exact head of this pull request", "Nothing is canonical yet",
+		"Protected files: 3\n", "tests/case_a_test.go", "tests/**", "Installation tier: `isolated`",
+		"Approving P1-R1 lets this pull request merge", "only from the exact merge commit after the merge",
+		"A later push that changes the protected files needs a new approval",
+		"```\n/suiteward approve P1-R1 <code>\n```",
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	for _, w := range []string{"on branch", "default branch", "does not move", "assurance is reduced", "other changes in this PR"} {
+		if strings.Contains(body, w) {
+			t.Errorf("body contains %q:\n%s", w, body)
+		}
+	}
+	checkBody(t, body)
+	co := render(t, func() string { return commandtext.BootstrapSummary(pullSummary(commandtext.CoLocated)) })
+	if !strings.Contains(co, "assurance is reduced") || !strings.Contains(co, "`co-located`") {
+		t.Errorf("the co-located summary lacks the reduced assurance:\n%s", co)
+	}
+}
+
+func TestBootstrapSummaryOfAPullRequestFitsInAComment(t *testing.T) {
+	for name, unit := range map[string]string{"plain": "a", "invalid UTF-8": "\xff", "backticks": "`", "bidi control": "\u202e", "newline": "\n", "3-byte printable": "\u20ac"} {
+		t.Run(name, func(t *testing.T) {
+			long := func(size int) []string {
+				items := make([]string, 20)
+				for i := range items {
+					items[i] = strings.Repeat(unit, size/len(unit))
+				}
+				return items
+			}
+			// The payload cuts entries to 150 bytes; the renderer must hold even for entries that were not cut.
+			for _, size := range []int{150, 4096} {
+				s := pullSummary(commandtext.CoLocated)
+				s.Protected, s.Paths, s.Include, s.Exclude = 1<<62, long(size), long(size), long(size)
+				s.IncludeTotal, s.ExcludeTotal, s.Proposal, s.Revision = 1<<62, 1<<62, 999999999, 999999999
+				body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+				if body == "" || len(body) >= maxComment/2 { // headroom: half of the limit
+					t.Errorf("entries of %d bytes: body has %d bytes, want 0 < n < %d", size, len(body), maxComment/2)
+				}
+				if !utf8.ValidString(body) {
+					t.Error("body is not valid UTF-8")
+				}
+			}
+		})
+	}
+}
+
+func TestBootstrapSummaryPanicsOnASourceThatDoesNotFit(t *testing.T) {
+	for name, mutate := range map[string]func(*commandtext.Summary){
+		"an unknown source":     func(s *commandtext.Summary) { s.Source = 9 },
+		"a pull with a branch":  func(s *commandtext.Summary) { s.Branch = "main" },
+		"a pull without a head": func(s *commandtext.Summary) { s.Origin = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := pullSummary(commandtext.Isolated)
+			mutate(&s)
+			mustPanic(t, func() { commandtext.BootstrapSummary(s) })
+		})
 	}
 }

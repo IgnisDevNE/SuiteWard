@@ -159,7 +159,7 @@ func (w *cmtWorld) seedSuite() {
 	for _, revisionID := range []contract.ProposalRevisionID{"R1", "R2"} {
 		binding := cmtMust(contract.NewApprovalBinding(contract.BindingInput{Reference: w.reference(revisionID), ExpectedCanonical: "",
 			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "setup-1", CoveredInputs: protected.CoveredInputs()}))
-		revision := cmtMust(contract.NewProposalRevision(binding, "origin", carrier))
+		revision := cmtMust(contract.NewProposalRevision(binding, "origin", contract.OriginBranch, carrier))
 		if proposal.IsZero() {
 			proposal = cmtMust(contract.NewProposal(revision))
 		} else {
@@ -470,7 +470,6 @@ func TestCommentPublisherRefusesWhatDoesNotMatchItsKey(t *testing.T) {
 		{"an unknown disposition", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = cmtSecretText })},
 		{"a malformed disposition without a reason", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "malformed" })},
 		{"a reason that is not a code", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reason"] = "malformed", cmtSecretText })},
-		{"an invalid-code disposition without a reference", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "invalid-code" })},
 		{"an unknown-proposal disposition without a reference", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "unknown-proposal" })},
 		{"a reference that is not P<n>-R<m>", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reference"] = "no-suite", cmtSecretText })},
 		{"a reference on an edited-first disposition", "ack:1001:555", with(func(m map[string]any) { m["reference"] = "P1-R1" })},
@@ -726,7 +725,6 @@ func TestAcknowledgmentConstructors(t *testing.T) {
 			"a malformed command without a reason": second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.Malformed, 0, "")),
 			"a reason on another disposition":      second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.InvalidCode, commandtext.BadCode, "P1-R1")),
 			"a malformed command with a reference": second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.Malformed, commandtext.BadCode, "P1-R1")),
-			"an invalid code without a reference":  second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.InvalidCode, 0, "")),
 			"a reference that is a comment":        second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.NoSuite, 0, "approve P1-R1 123456")),
 			"a reference with a zero":              second(newRejectedAck(cmtTarget(), cmtComment, cmtOwner, commands.NoSuite, 0, "P0-R1")),
 		} {

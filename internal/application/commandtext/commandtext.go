@@ -4,17 +4,19 @@
 // package.
 //
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
-// (with its Command: Verb Approve or Revoke, Proposal, Revision and Code) or
-// KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
+// (with its Command: Verb Approve, Revoke, Propose or Skip, Proposal, Revision and Code; Propose has neither
+// reference nor code, Skip only a code) or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
 // MissingCode, BadCode or ExtraText). Reference formats P<n>-R<m>.
 //
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
 // InvalidCode, ReplayedCode, NoSuite, EditedFirst, BootstrapPromoted,
-// RevokedAfterPromotion or ApprovedAfterPromotion) and BootstrapSummary renders
-// a Summary (at most 20 entries per listing, each shortened to 300 bytes).
-// Neither takes any comment
-// text, so a body can never echo a comment or a code. Neither adds the marker: the
+// RevokedAfterPromotion, ApprovedAfterPromotion, ProposeRefused or SkipRefused with a Refusal, AlreadyProposed,
+// ProposeFailed or Skipped), BootstrapSummary renders
+// a Summary (from the default branch or from a pull request; at most 20 entries per listing, each shortened to 300 bytes),
+// RevisionComment renders a Revision the same way, and BootstrapNotice and BootstrapCancelled render the comments of
+// a pull request before the first contract. None takes any comment
+// text, so a body can never echo a comment or a code. None adds the marker: the
 // publisher appends Marker(instance, key), and HasMarker recognizes it.
 //
 // Values that callers take from storage (references, versions, logins, the
@@ -43,6 +45,9 @@ type Verb uint8
 const (
 	Approve Verb = iota + 1
 	Revoke
+	// Propose takes no reference and no code; Skip takes only a code.
+	Propose
+	Skip
 )
 
 // Reason says why a command line is malformed.
@@ -128,6 +133,13 @@ func parseLine(rest string) Parsed {
 		verb = Approve
 	case tokens[0] == "revoke":
 		verb = Revoke
+	case tokens[0] == "propose":
+		if len(tokens) > 1 {
+			return bad(ExtraText)
+		}
+		return Parsed{Kind: KindCommand, Command: Command{Verb: Propose}}
+	case tokens[0] == "skip":
+		return parseSkip(tokens[1:])
 	default:
 		return bad(UnknownVerb)
 	}
@@ -148,6 +160,19 @@ func parseLine(rest string) Parsed {
 		return bad(ExtraText)
 	}
 	return Parsed{Kind: KindCommand, Command: Command{Verb: verb, Proposal: proposal, Revision: revision, Code: tokens[2]}}
+}
+
+// parseSkip reads the arguments of skip: a code and nothing else, so a reference is a bad code.
+func parseSkip(args []string) Parsed {
+	switch {
+	case len(args) == 0:
+		return Parsed{Kind: KindMalformed, Reason: MissingCode}
+	case len(args[0]) != 6 || !digits(args[0]):
+		return Parsed{Kind: KindMalformed, Reason: BadCode}
+	case len(args) > 1:
+		return Parsed{Kind: KindMalformed, Reason: ExtraText}
+	}
+	return Parsed{Kind: KindCommand, Command: Command{Verb: Skip, Code: args[0]}}
 }
 
 func parseReference(ref string) (proposal, revision int, ok bool) {

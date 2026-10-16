@@ -177,6 +177,17 @@ The scenario is in [HOST.md, section 6d](../deploy/HOST.md#6d-promotion-on-merge
 - run HOST.md 6d.3 steps 2 and 5, and the integrity tamper of 6d.4 step 5 only with the owner's go-ahead at the time;
 - one target at a time: put the stack back without GitHub (`./deploy/local.ps1`) before restoring the host, and read `/status` through the machine (`podman machine ssh "curl -s http://127.0.0.1:8081/status"`).
 
+### Verifying M1.7b on the co-located stack
+
+The scenario is in [HOST.md, section 6e](../deploy/HOST.md#6e-the-explicit-bootstrap-m17b); the stack side is the one of M1.6a above, with these differences:
+- **The stack watches its own repository, `IgnisDevNE/SuiteWardQ3`, and the host does not.** The host watches `SuiteWardQ`, `SuiteWardQ-private` and `SuiteWardQ2`, so no host stop is needed and the two targets may run at the same time;
+- **The stack is already set up for SuiteWardQ3,** and SuiteWardQ3 has had no PR since, so the explicit bootstrap needs an update, not a purge or a new `setup` (as in M1.6b): `podman pull ghcr.io/ignisdevne/suiteward:deploy`, then `./deploy/local.ps1 -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ3`. The App key secret is reused, so the PEM is not needed. Only if the stack was purged since, start it again from nothing: `./deploy/local.ps1 -GitHubAppKeyFile <path to the PEM> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ3`, then `podman exec -it suiteward /suiteward setup --owner <login> --test-check IgnisDevNE/SuiteWardQ3=<check>` with a new authenticator entry;
+- run the smoke test with the full 40-hex commit the `Deploy` run built: `Get-Content -Raw deploy/smoke.sh | podman machine ssh "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"`;
+- **there is no image rollback:** once migration `00017` is applied, an older image refuses to start (forward-only migrations). If the new image fails, do not start an older one; capture `podman logs --tail 50 suiteward` and report;
+- `/status` must show `schemaVersion` 17, `SuiteWardQ3` with no `bootstrap` error, and no `checks`, `bootstrap` or `merges` error. `no-open-pull-request` and `awaiting-initial-contract` no longer exist;
+- run HOST.md 6e.4 on SuiteWardQ3 with the co-located entry's codes: `skip` a PR that adds `.suiteward.yml`, the CI workflow and tests and merge it (no V1), then `propose` on another PR (the branch path) and approve it, so that V1 is promoted at approval. Read `/status` through the machine (`podman machine ssh "curl -s http://127.0.0.1:8081/status"`);
+- then put the stack back without GitHub (`./deploy/local.ps1`).
+
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.

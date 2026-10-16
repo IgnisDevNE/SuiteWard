@@ -91,7 +91,7 @@ func TestBaselineOutboxCommitsWithTheRevisionAndRollsBackWithIt(t *testing.T) {
 	propose := func(revision contract.ProposalRevisionID, tree mapTree, keys ...string) (governance.BaselineResult, error) {
 		request := governance.BaselineRequest{
 			Reference: contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "p1", RevisionID: revision},
-			Carrier:   "carrier-p1", Origin: "origin", Tree: tree,
+			Carrier:   "carrier-p1", Origin: "origin", OriginKind: contract.OriginBranch, Tree: tree,
 		}
 		for _, key := range keys {
 			request.Outbox = append(request.Outbox, governance.OutboxMessage{Key: key, Kind: "pr_comment", Payload: json.RawMessage(`{"operation":"` + key + `"}`)})

@@ -26,9 +26,13 @@ import (
 // The identifiers of D-COMMANDS and the outbox keys of the bootstrap comments
 // (docs/contracts/runtime.md, "Command and bootstrap jobs (M1.6a)").
 const (
-	githubCommentKind    = "github_comment"
-	bootstrapSummaryKey  = "bootstrap-summary"
-	bootstrapPromotedKey = "bootstrap-promoted"
+	githubCommentKind     = "github_comment"
+	bootstrapSummaryKey   = "bootstrap-summary"
+	bootstrapPromotedKey  = "bootstrap-promoted"
+	bootstrapNoticeKey    = "bootstrap-notice"    // bootstrap-notice:<repository id>:<pull>, written by the checks job
+	bootstrapCancelledKey = "bootstrap-cancelled" // bootstrap-cancelled:<repository id>:P<n>-R<m>, written by the checks job
+	sourceBranch          = "branch"              // the payload values of bootstrapSummaryInputs.Source
+	sourcePull            = "pull"
 
 	defaultSuite   contract.SuiteID            = "default"
 	firstVersion   contract.SuiteVersionID     = "V1"
@@ -60,9 +64,10 @@ type bootstrapSummaryPayload struct {
 type bootstrapSummaryInputs struct {
 	Proposal     int      `json:"proposal"`
 	Revision     int      `json:"revision"`
-	Origin       string   `json:"origin"` // the pinned 40-hex commit
-	Branch       string   `json:"branch"`
-	Protected    int      `json:"protected"` // all protected files, of which Paths lists the first ones
+	Source       string   `json:"source"`           // branch or pull
+	Origin       string   `json:"origin"`           // the pinned 40-hex commit, or the head of the pull request
+	Branch       string   `json:"branch,omitempty"` // absent from a pull request
+	Protected    int      `json:"protected"`        // all protected files, of which Paths lists the first ones
 	Paths        []string `json:"paths"`
 	Include      []string `json:"include"`      // the declared include rules
 	Exclude      []string `json:"exclude"`      // the declared exclude rules
@@ -82,7 +87,15 @@ func (s bootstrapSummaryInputs) summary() (commandtext.Summary, error) {
 	default:
 		return commandtext.Summary{}, fmt.Errorf("unknown tier %q", s.Tier)
 	}
-	return commandtext.Summary{Proposal: s.Proposal, Revision: s.Revision, Origin: s.Origin, Branch: s.Branch, Protected: s.Protected,
+	var source commandtext.Source
+	switch s.Source {
+	case "", sourceBranch: // a message written before M1.7b has no source
+	case sourcePull:
+		source = commandtext.SourcePull
+	default:
+		return commandtext.Summary{}, fmt.Errorf("unknown source %q", s.Source)
+	}
+	return commandtext.Summary{Proposal: s.Proposal, Revision: s.Revision, Source: source, Origin: s.Origin, Branch: s.Branch, Protected: s.Protected,
 		Paths: s.Paths, Include: s.Include, Exclude: s.Exclude,
 		IncludeTotal: s.IncludeTotal, ExcludeTotal: s.ExcludeTotal, Tier: tier}, nil
 }
@@ -92,6 +105,15 @@ type bootstrapPromotedPayload struct {
 	commentTarget
 	Reference string `json:"reference"` // P<n>-R<m>
 	Version   string `json:"version"`   // V1
+}
+
+// bootstrapNoticePayload is the payload of bootstrap-notice:<repository id>:<pull>: the pull request to say how to start or skip on.
+type bootstrapNoticePayload struct{ commentTarget }
+
+// bootstrapCancelledPayload is the payload of bootstrap-cancelled:<repository id>:P<n>-R<m>: the carrier whose proposal a push cancelled.
+type bootstrapCancelledPayload struct {
+	commentTarget
+	Reference string `json:"reference"` // P<n>-R<m>, the cancelled revision
 }
 
 // cutMarker ends an entry that cutBytes shortened, so a cut path or rule never looks complete.
@@ -142,14 +164,46 @@ func newPromotedMessage(target commentTarget, reference string) (governance.Outb
 	return governance.OutboxMessage{Key: fmt.Sprintf("%s:%d:%s", bootstrapPromotedKey, target.RepositoryID, reference), Kind: githubCommentKind, Payload: payload}, nil
 }
 
-// bootstrapReader is the part of the GitHub reader the bootstrap uses.
+// newNoticeMessage builds the bootstrap-notice message of the pull request in target.
+func newNoticeMessage(target commentTarget) (governance.OutboxMessage, error) {
+	payload, err := json.Marshal(bootstrapNoticePayload{target})
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("encode the bootstrap notice: %w", err)
+	}
+	return governance.OutboxMessage{Key: fmt.Sprintf("%s:%d:%d", bootstrapNoticeKey, target.RepositoryID, target.Pull), Kind: githubCommentKind, Payload: payload}, nil
+}
+
+// newCancelledMessage builds the bootstrap-cancelled message of the proposal revision reference (P<n>-R<m>) carried by the pull request in target.
+func newCancelledMessage(target commentTarget, reference string) (governance.OutboxMessage, error) {
+	payload, err := json.Marshal(bootstrapCancelledPayload{commentTarget: target, Reference: reference})
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("encode the bootstrap cancellation: %w", err)
+	}
+	return governance.OutboxMessage{Key: fmt.Sprintf("%s:%d:%s", bootstrapCancelledKey, target.RepositoryID, reference), Kind: githubCommentKind, Payload: payload}, nil
+}
+
+// inventoryInputs adds what the inventory says to the inputs of a summary: the protected files and the scope rules.
+func inventoryInputs(inputs bootstrapSummaryInputs, inv inventory.Inventory) bootstrapSummaryInputs {
+	inputs.Protected = len(inv.Manifest().Entries())
+	for _, entry := range inv.Manifest().Entries() {
+		inputs.Paths = append(inputs.Paths, entry.Path)
+	}
+	for _, rule := range inv.Scope().Declaration().Include() {
+		inputs.Include = append(inputs.Include, rule.String())
+	}
+	for _, rule := range inv.Scope().Declaration().Exclude() {
+		inputs.Exclude = append(inputs.Exclude, rule.String())
+	}
+	return inputs
+}
+
+// bootstrapReader is the part of the GitHub reader the bootstrap uses: it creates the Suite and re-reads the origin of an approved baseline.
 type bootstrapReader interface {
 	Repository(ctx context.Context, repo string) (github.Repository, error)
-	BranchHead(ctx context.Context, repo, branch string) (string, error)
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
 }
 
-// pullLister is the part of the observation store the bootstrap reads.
+// pullLister is the part of the observation store the checks job reads.
 type pullLister interface {
 	Pulls(ctx context.Context, repo string) ([]githubsync.PullState, error)
 }
@@ -241,17 +295,14 @@ func (p *bootstrapProblems) lookup(repo string) string {
 	return p.byRepo[repo]
 }
 
-// bootstrapJob is the github_bootstrap job: for each enrolled project it creates the Suite, proposes the
-// protected baseline of the default branch on the lowest open pull request, and bootstraps the first canonical once
-// the owner approved it (ADR 0010, D-COMMANDS). Every step is safe to repeat after a crash.
+// bootstrapJob is the github_bootstrap job: for each enrolled project it creates the Suite and bootstraps the first
+// canonical from the Suite's latest bootstrap proposal once it is a branch proposal the owner approved (ADR 0010,
+// D-COMMANDS). It proposes nothing: the commands job writes every proposal. Every step is safe to repeat after a crash.
 type bootstrapJob struct {
 	repos    []string // the configured repositories
 	reader   bootstrapReader
 	owners   owner.Store
 	suites   governance.UnitOfWork
-	content  governance.ContentWriter
-	pulls    pullLister         // the synchronization store: which pull requests are open
-	tier     string             // the configured INSTALLATION_TIER
 	problems *bootstrapProblems // shown in /status
 	logger   *slog.Logger
 	now      func() time.Time
@@ -300,10 +351,6 @@ func (b *bootstrapJob) project(ctx context.Context, enrollment owner.State, p ow
 		b.logger.WarnContext(ctx, "github bootstrap skipped: the repository name no longer identifies the enrolled repository", "repo", p.Repo)
 		b.problems.set(p.Repo, "repository-changed")
 		return nil
-	case invalidSource(err):
-		b.logger.WarnContext(ctx, "github bootstrap skipped: the default branch cannot be proposed as a baseline", "repo", p.Repo)
-		b.problems.set(p.Repo, "invalid-source")
-		return nil
 	case errors.As(err, &stopped):
 		b.problems.set(p.Repo, string(stopped))
 		return nil
@@ -330,14 +377,10 @@ func (b *bootstrapJob) advance(ctx context.Context, enrollment owner.State, p ow
 	} else if err != nil {
 		return fmt.Errorf("read the baseline state: %w", err)
 	}
-	switch {
-	case state.canonical:
+	if state.canonical || !state.branch || !state.approved {
 		return nil
-	case state.approved:
-		return b.promote(ctx, p, state)
-	default:
-		return b.propose(ctx, enrollment, p, state)
 	}
+	return b.promote(ctx, p, state)
 }
 
 // repository reads the repository and requires it to be the enrolled one.
@@ -356,12 +399,12 @@ func (b *bootstrapJob) repository(ctx context.Context, p owner.ProjectPolicy) (g
 type baselineState struct {
 	canonical bool
 	target    contract.IntegrationTargetID
-	latest    int // the number of the latest proposal; 0 when there is none
+	branch    bool // the Suite's latest bootstrap proposal is a branch proposal: the fields below are its
 	reference contract.ProposalReference
 	carrier   contract.ApprovalCarrierID
 	origin    contract.SourceRevision
 	binding   contract.ApprovalBinding
-	approved  bool // the owner's approval of the latest revision is current
+	approved  bool // the owner's approval of its current revision is current
 	assessed  bool // an assessment of the origin is recorded
 	passed    bool // and it passed
 }
@@ -372,7 +415,7 @@ func carrierID(repositoryID int64, pull int) contract.ApprovalCarrierID {
 	return contract.ApprovalCarrierID(carrierPrefix + strconv.FormatInt(repositoryID, 10) + "/" + strconv.Itoa(pull))
 }
 
-// pullOfCarrier is the pull request number of a carrier this job stored.
+// pullOfCarrier is the pull request number of a carrier the commands job stored.
 func pullOfCarrier(repositoryID int64, carrier contract.ApprovalCarrierID) (int, error) {
 	number, ok := strings.CutPrefix(string(carrier), carrierPrefix+strconv.FormatInt(repositoryID, 10)+"/")
 	pull, err := strconv.Atoi(number)
@@ -382,7 +425,9 @@ func pullOfCarrier(repositoryID int64, carrier contract.ApprovalCarrierID) (int,
 	return pull, nil
 }
 
-// baseline reads the Suite; the proposals have no listing, so it follows P1, P2, ... to the last one.
+// baseline reads the Suite. The bootstrap decides only on the Suite's latest bootstrap proposal, and only when it is a
+// branch proposal: a pull proposal becomes canonical by the merge of its carrier, and a newer proposal of either kind
+// supersedes an older one.
 func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID) (s baselineState, err error) {
 	err = b.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
 		state, err := tx.Suite(ctx)
@@ -394,26 +439,20 @@ func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID)
 		if s.canonical {
 			return nil
 		}
-		var (
-			latest  contract.Proposal
-			consent contract.Consent
-		)
-		for n := 1; ; n++ {
-			proposal, granted, err := tx.Proposal(ctx, proposalID(n))
-			if errors.Is(err, governance.ErrNotFound) {
-				break
-			}
-			if err != nil {
-				return fmt.Errorf("load proposal P%d: %w", n, err)
-			}
-			s.latest, latest, consent = n, proposal, granted
+		id, found, err := tx.LatestBootstrapProposal(ctx)
+		if err != nil || !found {
+			return err
 		}
-		if s.latest == 0 {
+		proposal, consent, err := tx.Proposal(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load the latest bootstrap proposal: %w", err)
+		}
+		current := proposal.Current()
+		if s.branch = current.OriginKind() == contract.OriginBranch; !s.branch {
 			return nil
 		}
-		current := latest.Current()
 		s.reference, s.carrier, s.origin, s.binding = current.Binding().Reference(), current.Carrier(), current.Origin(), current.Binding()
-		s.approved = consent.HasApproval(latest, state.Policy)
+		s.approved = consent.HasApproval(proposal, state.Policy)
 		assessment, found, err := tx.Assessment(ctx, s.reference, s.origin)
 		if err != nil {
 			return fmt.Errorf("load assessment: %w", err)
@@ -424,93 +463,13 @@ func (b *bootstrapJob) baseline(ctx context.Context, project contract.ProjectID)
 	return s, err
 }
 
-// openPulls returns the numbers of the pull requests of repo the synchronization last saw open, lowest first. A fork's
-// pull request is left out: it never carries a proposal (D-INTEGRATION).
-func openPulls(pulls []githubsync.PullState, repo string) []int {
-	var open []int
-	for _, pull := range pulls {
-		if pull.NotOpenSince.IsZero() && !isFork(pull.HeadRepo, repo) {
-			open = append(open, pull.Number)
-		}
-	}
-	slices.Sort(open)
-	return open
-}
-
-// propose proposes the baseline when the Suite has no proposal, or its latest proposal is unapproved and its carrier
-// is no longer open, and the repository has an open pull request. "Open" is what the synchronization observed:
-// it is the same store the command job approves from, so no extra GitHub call is needed.
-func (b *bootstrapJob) propose(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, s baselineState) error {
-	pulls, err := b.pulls.Pulls(ctx, p.Repo)
-	if err != nil {
-		return fmt.Errorf("read the observed pull requests: %w", err)
-	}
-	open := openPulls(pulls, p.Repo)
-	if len(open) == 0 {
-		return bootstrapStop("no-open-pull-request")
-	}
-	if s.latest > 0 && slices.ContainsFunc(open, func(n int) bool { return carrierID(p.RepositoryID, n) == s.carrier }) {
-		return nil
-	}
-	branch, ok := strings.CutPrefix(string(s.target), targetPrefix)
-	if !ok {
-		return errors.New("the suite does not target a branch")
-	}
-	if _, err := b.repository(ctx, p); err != nil {
-		return err
-	}
-	head, err := b.reader.BranchHead(ctx, p.Repo, branch)
-	if err != nil {
-		return githubRead(err)
-	}
-	read, err := b.reader.Tree(ctx, p.Repo, head)
-	if err != nil {
-		return githubRead(err)
-	}
-	tree := &githubTree{tree: read, files: map[string][]byte{}}
-	inv, err := inventory.Build(ctx, tree)
-	if err != nil {
-		return &opaque{what: "inventory of the default branch", cause: err}
-	}
-	if len(inv.Manifest().Entries()) == 0 { // ADR 0010: never manufacture an empty canonical suite; Info because it repeats every run
-		b.logger.InfoContext(ctx, "github bootstrap awaiting an initial contract: the default branch has no protected files", "repo", p.Repo)
-		return bootstrapStop("awaiting-initial-contract")
-	}
-	tier, _ := effectiveTier(b.tier, enrollment, true)
-	number, pull := s.latest+1, open[0]
-	inputs := bootstrapSummaryInputs{Proposal: number, Revision: 1, Origin: head, Branch: branch, Protected: len(inv.Manifest().Entries()), Tier: tier}
-	for _, entry := range inv.Manifest().Entries() {
-		inputs.Paths = append(inputs.Paths, entry.Path)
-	}
-	for _, rule := range inv.Scope().Declaration().Include() {
-		inputs.Include = append(inputs.Include, rule.String())
-	}
-	for _, rule := range inv.Scope().Declaration().Exclude() {
-		inputs.Exclude = append(inputs.Exclude, rule.String())
-	}
-	message, err := newSummaryMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, inputs)
-	if err != nil {
-		return err
-	}
-	request := governance.BaselineRequest{
-		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(p.RepositoryID), SuiteID: defaultSuite, ProposalID: proposalID(number), RevisionID: firstRevision},
-		Carrier:   carrierID(p.RepositoryID, pull), Origin: contract.SourceRevision(head), Tree: tree, Outbox: []governance.OutboxMessage{message},
-	}
-	result, err := governance.ProposeBaseline(ctx, b.suites, b.content, request)
-	if err != nil {
-		return &opaque{what: "propose the baseline", cause: err}
-	}
-	b.logger.InfoContext(ctx, "github baseline proposed", "repo", p.Repo, "proposal", number, "pull", pull, "committed", result.Revise.Committed)
-	return nil
-}
-
 // promote records the integrity assessment of the origin and bootstraps the first canonical from the approved baseline.
 // Only a Passed assessment promotes. A Failed or Unavailable one is recorded, and the next runs stop at that
 // record without reading GitHub: the origin is a pinned commit, so reading it again cannot change the outcome. Such an
 // approved proposal never moves to P<n+1>, because only an unapproved one does.
 func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s baselineState) error {
 	if s.assessed && !s.passed {
-		b.logger.InfoContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.latest)
+		b.logger.InfoContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.reference.ProposalID)
 		return bootstrapStop("origin-not-passed")
 	}
 	var inv inventory.Inventory
@@ -537,12 +496,12 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 	})
 	switch {
 	case errors.Is(err, governance.ErrConflict): // an earlier, different outcome stands; assessments are immutable
-		b.logger.WarnContext(ctx, "github bootstrap stopped: the recorded assessment of the origin disagrees with this read", "repo", p.Repo, "proposal", s.latest)
+		b.logger.WarnContext(ctx, "github bootstrap stopped: the recorded assessment of the origin disagrees with this read", "repo", p.Repo, "proposal", s.reference.ProposalID)
 		return bootstrapStop("assessment-conflict")
 	case err != nil:
 		return fmt.Errorf("record the assessment: %w", err)
 	case evidence.Outcome() != contract.IntegrityPassed:
-		b.logger.WarnContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.latest)
+		b.logger.WarnContext(ctx, "github bootstrap stopped: the origin did not pass its integrity check", "repo", p.Repo, "proposal", s.reference.ProposalID)
 		return bootstrapStop("origin-not-passed")
 	}
 	return b.bootstrap(ctx, p, s, inv)
@@ -576,7 +535,7 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 		return fmt.Errorf("bootstrap the first canonical: %w", err)
 	}
 	if result.Outcome != contract.PromotionProposed {
-		b.logger.WarnContext(ctx, "github bootstrap blocked", "repo", p.Repo, "proposal", s.latest, "reason", result.Reason)
+		b.logger.WarnContext(ctx, "github bootstrap blocked", "repo", p.Repo, "proposal", s.reference.ProposalID, "reason", result.Reason)
 		return bootstrapStop(blockedCode(result.Reason))
 	}
 	b.logger.InfoContext(ctx, "github baseline promoted", "repo", p.Repo, "reference", reference, "version", string(firstVersion), "replayed", result.Duplicate)

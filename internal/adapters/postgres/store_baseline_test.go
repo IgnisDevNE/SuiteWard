@@ -56,7 +56,7 @@ func TestBaselineProposalStoresTheBytesThatBootstrapVerifies(t *testing.T) {
 		}
 	}
 	before := w.revision()
-	request := governance.BaselineRequest{Reference: baseline.current(), Carrier: baseline.carrier, Origin: baseline.origin, Tree: tree}
+	request := governance.BaselineRequest{Reference: baseline.current(), Carrier: baseline.carrier, Origin: baseline.origin, OriginKind: contract.OriginBranch, Tree: tree}
 
 	result, err := governance.ProposeBaseline(t.Context(), w.store, w.content, request)
 

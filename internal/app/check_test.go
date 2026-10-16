@@ -94,7 +94,11 @@ func newChkWorld() *chkWorld {
 // chkMessage is the message of generation 3 for a result in the given state.
 func chkMessage(t *testing.T, state checks.State, reason, reference string) governance.OutboxMessage {
 	t.Helper()
-	m, err := newCheckMessage(cmtRepo, checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: reference}, owner.TierIsolated, "V2", 3)
+	version := "V2" // no canonical version before the first contract
+	if strings.HasPrefix(reason, "bootstrap-") {
+		version = ""
+	}
+	m, err := newCheckMessage(cmtRepo, checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: reference}, owner.TierIsolated, version, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +185,8 @@ func TestCheckPublisherPostsEveryState(t *testing.T) {
 		{checks.Failure, "invalid-source", "", "Invalid contract source", "completed", "failure"},
 		{checks.Failure, "integrity-failed", "P1-R2", "Canonical contract failed its integrity check", "completed", "failure"},
 		{checks.Failure, "owner-command-rejected", "P1-R2", "Owner command rejected", "completed", "failure"},
-		{checks.InProgress, "bootstrap-pending", "", "Waiting for the first baseline", "in_progress", ""},
+		{checks.InProgress, "bootstrap-awaiting", "", "No canonical contract yet", "in_progress", ""},
+		{checks.Success, "bootstrap-skipped", "", "Skipped before the first contract", "completed", "success"},
 		{checks.InProgress, "approval-missing", "P1-R2", "Awaiting owner approval", "in_progress", ""},
 		{checks.InProgress, "not-current", "P1-R2", "Contract change is not current", "in_progress", ""},
 		{checks.InProgress, "assessment-pending", "", "Assessment pending", "in_progress", ""},
@@ -228,6 +233,21 @@ func TestCheckPublisherDropsAStaleGeneration(t *testing.T) {
 		if len(w.runner.posts()) != 0 || len(w.runner.listed) != 0 {
 			t.Fatalf("generation %d: GitHub was called for a stale message", current)
 		}
+	}
+}
+
+// An upgrade can leave a pending message of a reason the renderer no longer knows (bootstrap-pending was removed in the M1.7b
+// rework): once a newer generation superseded it, it is dropped, not failed.
+func TestCheckPublisherDropsAStaleMessageOfAReasonThatNoLongerExists(t *testing.T) {
+	w := newChkWorld()
+	w.ledger.record.Generation = 4
+	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
+	m.Payload = bytes.Replace(m.Payload, []byte("assessment-pending"), []byte("bootstrap-pending"), 1)
+	if err := w.deliver(m); err != nil {
+		t.Fatalf("a stale message of a removed reason must be dropped: %v", err)
+	}
+	if len(w.runner.posts()) != 0 || len(w.runner.listed) != 0 {
+		t.Fatal("GitHub was called for a stale message")
 	}
 }
 
@@ -356,7 +376,6 @@ func TestCheckPublisherRefusesAPayloadThatDoesNotMatchItsKey(t *testing.T) {
 		{"a payload that is not an object", good.Key, json.RawMessage(`"` + cmtSecretText + `"`)},
 		{"trailing data", good.Key, json.RawMessage(string(same) + cmtSecretText)},
 		{"an unknown state", good.Key, with(func(m map[string]any) { m["state"] = cmtSecretText })},
-		{"a reason nobody can render", good.Key, with(func(m map[string]any) { m["reason"] = cmtSecretText })},
 		{"a tier that is not a tier", good.Key, with(func(m map[string]any) { m["tier"] = cmtSecretText })},
 		{"a head that is not a SHA", good.Key, with(func(m map[string]any) { m["headSha"] = cmtSecretText })},
 		{"another repository in the key", "check:1002:7:3", same},
@@ -387,6 +406,23 @@ func TestCheckPublisherRefusesAPayloadThatDoesNotMatchItsKey(t *testing.T) {
 				t.Fatal("GitHub or the ledger was called for a payload that was refused")
 			}
 		})
+	}
+}
+
+// A reason nobody can render is refused only for the current generation, after the ledger confirmed it.
+func TestCheckPublisherRefusesACurrentMessageWhoseReasonNobodyCanRender(t *testing.T) {
+	w := newChkWorld()
+	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
+	m.Payload = bytes.Replace(m.Payload, []byte("assessment-pending"), []byte(cmtSecretText), 1)
+	err := w.deliver(m)
+	if err == nil {
+		t.Fatal("publish succeeded")
+	}
+	if strings.Contains(err.Error(), cmtSecretText) || !strings.Contains(err.Error(), m.Key) {
+		t.Fatalf("the error %q holds payload text or does not name the key", err)
+	}
+	if len(w.runner.posts()) != 0 || len(w.runner.listed) != 0 {
+		t.Fatal("GitHub was called for a payload that was refused")
 	}
 }
 

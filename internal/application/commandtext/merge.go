@@ -64,10 +64,14 @@ var blockedReasons = map[string]blockedReason{
 // never says that tests ran. The values come from storage, so one that does not fit is an impossible state and panics.
 func MergeComment(m Merge) string {
 	tier := tierName(m.Tier)
-	if m.Version < 1 || (m.Proposal == 0) != (m.Revision == 0) || m.Proposal < 0 || m.Revision < 0 {
+	// Only a blocked merge can leave no canonical in force; integrity-failed needs one to have failed.
+	noCanonical := m.Version == 0 && m.Kind == MergeBlocked && m.Reason != "integrity-failed"
+	if (m.Version < 1 && !noCanonical) || (m.Proposal == 0) != (m.Revision == 0) || m.Proposal < 0 || m.Revision < 0 {
 		panic(fmt.Sprintf("commandtext: merge version %d and reference P%d-R%d do not fit", m.Version, m.Proposal, m.Revision))
 	}
-	checkID("version", m.Version)
+	if !noCanonical {
+		checkID("version", m.Version)
+	}
 	reason, blocked := blockedReasons[m.Reason]
 	switch {
 	case m.Kind != MergeBlocked && m.Kind != MergePromoted && m.Kind != MergeCorrected:
@@ -82,6 +86,7 @@ func MergeComment(m Merge) string {
 		panic(fmt.Sprintf("commandtext: merge commit %q is not a 40-hex commit SHA", m.Source))
 	}
 	version := "V" + strconv.Itoa(m.Version)
+	firstVersion := m.Kind == MergePromoted && m.Version == 1 // only a bootstrap promotes V1
 	var facts []string
 	if m.Source != "" {
 		facts = append(facts, "- Merge commit: `"+m.Source+"`")
@@ -95,6 +100,10 @@ func MergeComment(m Merge) string {
 	case MergePromoted:
 		lead = "**SuiteWard promoted the canonical contract to " + version + "**"
 		body = "This merge integrated the contract change the owner approved, and SuiteWard promoted " + version + " from the merge commit."
+		if firstVersion {
+			body = "This merge integrated the bootstrap baseline the owner approved, and SuiteWard promoted " + version + " from the merge commit. " +
+				"This is the first canonical version."
+		}
 	case MergeCorrected:
 		checkID("corrected version", m.Corrects)
 		lead = "**SuiteWard promoted the canonical contract to " + version + " as a correction**"
@@ -102,6 +111,9 @@ func MergeComment(m Merge) string {
 			". The history is kept."
 	default:
 		lead = "**SuiteWard did not promote this merge: the canonical contract stays at " + version + "**"
+		if noCanonical {
+			lead = "**SuiteWard did not promote this merge: SuiteWard has no canonical contract yet**"
+		}
 		body = reason.text
 	}
 	parts := []string{lead, body, strings.Join(facts, "\n")}
@@ -111,6 +123,10 @@ func MergeComment(m Merge) string {
 	if m.Kind != MergeBlocked {
 		parts = append(parts, "SuiteWard checked the approval and the integrity of the protected files at that commit. It did not run the tests.")
 		return paragraphs(parts...)
+	}
+	if noCanonical {
+		return paragraphs(append(parts, "To recover, the default branch now holds the merged files: the owner comments `/suiteward propose` on an open pull request to propose the default branch's contract. "+
+			"Approve that proposal to make it the first canonical version.")...)
 	}
 	recovery := "open a new pull request that restores the protected files of " + version + ", or one that carries the integrated files for a new exact approval. There is no reset command."
 	if reason.next != "" {

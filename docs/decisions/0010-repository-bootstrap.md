@@ -105,3 +105,28 @@ The first-test-PR bootstrap path (a repository without an initial test contract)
 ## Amendment (2026-10-14, phase M1.6b): first-test-PR path back in the MVP
 
 The owner moved the first-test-PR bootstrap path back into the MVP so that a repository without an initial contract can adopt SuiteWard from its first PR. It is phase M1.7b, after merge detection (M1.7) and before MVP acceptance (M1.8). Until then, a repository whose default branch has no protected files keeps awaiting its initial contract and its PRs show `in_progress`.
+
+## Amendment (2026-10-15, phase M1.7b): the first-test PR, made precise
+
+- **Origin kinds.** Every proposal revision records where its source comes from:
+  - `branch`, a pinned default-branch commit (existing baseline);
+  - `pull`, a PR head (the first-test PR, and every change proposal).
+- **Merge only.** A `pull` revision becomes the first canonical only from the exact merge commit of its carrier PR, after approval and validation of that commit. The domain refuses to promote it as an existing baseline.
+- **Which PR.** While the Suite has no canonical and the default branch has no protected files, the bootstrap proposal belongs to the lowest-numbered open PR whose head has protected files, one at a time.
+- **Revisions.** A protected push gives the next revision of the same proposal. A carrier closed without a merge hands the role to the next such PR, under a new proposal.
+- **Precedence** (superseded by the amendment of 2026-10-16: the newest proposal wins, and nothing is proposed automatically). Once the default branch has protected files (a merge, or a direct push), the existing-baseline path above applies, and a pending PR-head proposal is superseded. This keeps the canonical from drifting from what the branch holds (owner, 2026-10-15).
+- **Readiness.** The readiness check is `success`, "Bootstrap ready for integration", for the approved exact revision at that head. It never states that a canonical exists.
+
+## Amendment (2026-10-16, phase M1.7b rework): an explicit bootstrap
+
+This replaces "Which PR" and "Revisions" in the amendment of 2026-10-15.
+
+- **Explicit trigger.** No bootstrap proposal is created automatically. The owner comments `/suiteward propose` on the PR that should carry it.
+- **The source follows the declaration:**
+  - `.suiteward.yml` on the default branch: the existing-baseline path;
+  - otherwise in the PR head: the first-test path;
+  - otherwise: no proposal, and a suggested declaration with a one-click link to add it.
+- **Cancellation.** A protected push after the proposal cancels it, and the owner proposes again.
+- **Skipping.** Before V1, the owner can let a PR merge with `/suiteward skip <code>`. That is not a contract assessment.
+
+"Detection produces a suggestion" (above) now means this suggested declaration. Authority stays with the owner's approval of the exact revision.

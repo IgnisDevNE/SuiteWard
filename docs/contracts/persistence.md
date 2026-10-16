@@ -915,6 +915,205 @@ type Store interface {
 - A failed message re-sent after the cooldown.
 - No message inside it.
 
+## Bootstrap from a PR, and the revision comment (M1.7b; normative)
+
+The rework of 2026-10-16 replaces `Tx.BaselineProposalFor`, the `Summary` and `Committed` shape of `AssessBootstrapHead`, and the carrier-bound `PromoteMerge` below: see [Explicit bootstrap](#explicit-bootstrap-m17b-rework-2026-10-16-normative).
+
+Implements the ADR 0010 and D-CHECKS amendments of 2026-10-15. Migration `00016` adds every column below.
+
+### Origin kind (`internal/domain/contract`)
+
+```go
+type OriginKind string
+
+const (
+	OriginBranch OriginKind = "branch" // a pinned default-branch commit (existing-baseline bootstrap)
+	OriginPull   OriginKind = "pull"   // a PR head: the first-test bootstrap and every change proposal
+)
+
+func NewProposalRevision(binding ApprovalBinding, origin SourceRevision, kind OriginKind, carrier ApprovalCarrierID) (ProposalRevision, error)
+func (r ProposalRevision) OriginKind() OriginKind
+```
+
+`NewProposalRevision` returns `ErrInvalidProposal` in these cases:
+- an unknown kind;
+- `OriginBranch` with a binding that expects a canonical (only a baseline comes from a branch).
+
+`Proposal.Revise` also rejects a revision whose kind differs from the proposal's first revision, so a proposal never changes kind.
+
+**`DecideBootstrap`.** It keeps `PromotionReasonCanonicalPresent` and the empty-inventory guard, and accepts exactly two shapes:
+- an `IntegrationExistingBaseline` integration when the current revision is `OriginBranch`, with source = origin, as before;
+- an `IntegrationMergedChange` integration when the current revision is `OriginPull`, with the carrier of the proposal and the merge commit as source. The source may equal the revision's origin (a fast-forward merge): the kind, not the commit, separates the paths.
+
+Any other combination is `PromotionReasonIntegrationMismatch`. `DecidePromotion` applies the same rule wherever it decides: an `IntegrationExistingBaseline` integration requires an `OriginBranch` revision, so `Promote` cannot make a `pull` head canonical either. A PR head therefore never becomes canonical without its merge.
+
+Reconstitution and equality include the kind.
+
+**Table `proposal_revisions`** gains `origin_kind` (`text NOT NULL`, `CHECK` on the two codes). Migration `00016` back-fills existing rows: `branch` where `expected_version_id` is NULL (the baselines), `pull` otherwise. If a proposal would end up with revisions of both kinds (a baseline later revised against a canonical, which no released job writes), the migration fails and rolls back rather than leave an unreadable proposal.
+
+### Governance (`internal/application/governance`)
+
+**`BaselineRequest`.**
+- It gains `OriginKind`. The bootstrap job passes `OriginBranch`; `AssessBootstrapHead` passes `OriginPull`.
+- Its `Reference` may name any next revision, not only R1. The rest of `ProposeBaseline` is unchanged: no canonical, `ExpectedCanonical` empty, the shared revision logic.
+
+**`Tx.BaselineProposalFor`.**
+
+```go
+// BaselineProposalFor returns the bootstrap proposal of carrier in the locked Suite: the proposal carried by it
+// whose revisions are OriginPull, expect no canonical, and none of which was promoted. False when there is none;
+// ErrInvalidState when more than one qualifies.
+BaselineProposalFor(context.Context, contract.ApprovalCarrierID) (contract.ProposalID, bool, error)
+```
+
+`ChangeProposalFor` keeps excluding every baseline.
+
+**`AssessBootstrapHead`.**
+
+```go
+type BootstrapHeadRequest struct {
+	Project contract.ProjectID
+	Suite   contract.SuiteID
+	Carrier contract.ApprovalCarrierID // the bootstrap PR (the caller chooses it, runtime contract)
+	Head    contract.SourceRevision
+	Tree    inventory.Tree
+	// Summary builds the bootstrap-summary comment of a revision this call commits.
+	Summary func(contract.ProposalReference, inventory.Inventory) (OutboxMessage, error)
+}
+
+type BootstrapHeadResult struct {
+	Empty     bool                        // the head has no protected files: nothing was written
+	Reference *contract.ProposalReference // the current revision, nil when Empty
+	Committed bool                        // this call appended the revision
+	Ready     bool                        // CheckPromotionReadiness answered ready for Head
+	Reason    contract.PromotionReason
+	Revision  int64
+}
+
+func AssessBootstrapHead(ctx context.Context, uow UnitOfWork, writer ContentWriter, request BootstrapHeadRequest) (BootstrapHeadResult, error)
+```
+
+1. **Build the inventory.** `inventory.Build(Tree)`. Its errors are wrapped as for `AssessHead`, including a truncated tree.
+   - An empty manifest returns `Empty` and writes nothing.
+2. **Store the content** before `Do`.
+3. **Inside one `Do`:**
+   1. **Canonical present.** Return `ErrCanonicalMoved`. The next run uses `AssessHead`.
+   2. **Find or allocate the proposal.** Use `BaselineProposalFor(Carrier)`, or `NextProposalID` when there is none. The next revision is `R<len+1>`.
+   3. **Revise.** Use `reviseWithin` with an `OriginPull` revision, origin `Head`, `ExpectedCanonical` empty and the governing policy. Unchanged coverage writes nothing, so an implementation-only push keeps consent.
+   4. **Summary.** When this call committed the revision, write the `Summary` message.
+   5. **Assess.** `RecordAssessment` of the current revision at `Head` with `HeadEvidence`.
+   6. **Readiness.** `CheckPromotionReadiness` with `requiredSource = Head`.
+4. **Idempotent.** Repeating the call writes nothing new.
+
+**`PromoteMerge` with no canonical.** These rules replace step 2.2, "No canonical: return `ErrNoCanonical`".
+- **The carrier's bootstrap.** When there is no canonical and the request has no `Refusal`, its `Target` is the Suite's target, and `BaselineProposalFor(Carrier)` finds a proposal:
+  1. record the assessment of its current revision at `Source` with `HeadEvidence`; an `ErrConflict` gives `blocked` `assessment-conflict`;
+  2. decide with `DecideBootstrap`, using an `IntegrationMergedChange` integration, version `V1`, operation `merge:<carrier>` and kind `OperationBootstrap`, inside the same `Do`.
+
+  The outcome is `promoted` V1, or `blocked` with a mapped reason and **no version**.
+- **A merge into another branch** with no canonical is `before-canonical`, even for the bootstrap carrier; the target is checked first, as with a canonical.
+- **A refusal with a bootstrap proposal.** The outcome is `blocked` with that reason and no version. A refusal `integrity-failed` names a stored canonical, so without one it is `ErrInvalidRequest`.
+- **Every other merge with no canonical.** The outcome is `before-canonical` with no version and no message.
+- **The `before-canonical` rule by time.** It applies only when V1's current revision is `OriginBranch`. When V1 came from a merge, every earlier merge was already recorded in order.
+- **Impossible reasons.** `CanonicalPresent` and `EmptyInventory` under the Suite lock are impossible states, `ErrInvalidState`.
+- **`MergeOutcome.Version` is empty exactly for** `blocked` and `before-canonical` decided without a canonical. `MergeWrite.Validate` and `pr_merges` enforce this: `version_id` becomes nullable in `00016`, with a `CHECK`.
+
+**The revision comment.**
+- `HeadRequest` gains:
+
+  ```go
+  Revision func(RevisionNotice) (OutboxMessage, bool, error)
+  ```
+
+  In the second `Do` of `AssessHead`, when `keepProposalCurrent` committed a new revision, `AssessHead` calls it and writes the message when it returns true.
+
+  ```go
+  type RevisionNotice struct {
+  	Reference contract.ProposalReference
+  	Previous  *contract.ProposalReference // the revision it supersedes, nil for R1
+  	Canonical contract.SuiteVersionID     // the base version
+  	Added, Modified, Removed []string     // inventory.Classify against the canonical, sorted
+  	Reduced                  bool         // a scope reduction
+  }
+  ```
+
+- A nil `Revision` is `ErrInvalidRequest`. Callers that want no comment pass a function that returns false; A3 changes the existing `internal/app` call site that way until A4 wires the real message.
+
+**Conformance (fake and PostgreSQL).**
+- Origin kind:
+  - the kind round-trips;
+  - the back-fill;
+  - a mixed-kind proposal is rejected;
+  - `DecideBootstrap` with each of the four kind and integration combinations.
+- `BaselineProposalFor`.
+- `AssessBootstrapHead`:
+  - R1;
+  - an implementation-only push writes nothing;
+  - a protected push gives R2 and a summary;
+  - an empty head;
+  - a canonical present;
+  - readiness before and after approval.
+- `PromoteMerge` with no canonical:
+  - V1 from a merged bootstrap PR;
+  - a differing merge tree is `blocked` with no version;
+  - a non-carrier merge is `before-canonical`;
+  - a merge after a merged V1 is decided against V1, never `before-canonical`;
+  - the `before-canonical` time rule is skipped for a merged V1.
+- The revision comment:
+  - written exactly once per committed revision;
+  - not written for an unchanged head;
+  - rolled back with the revision.
+
+### Explicit bootstrap (M1.7b rework, 2026-10-16; normative)
+
+This replaces the parts of the M1.7b section above that this list names.
+
+**Governance.**
+- **`Tx.LatestBootstrapProposal`** replaces `Tx.BaselineProposalFor(carrier)`, which is removed with its query:
+
+  ```go
+  // LatestBootstrapProposal returns the locked Suite's newest proposal whose revisions expect no canonical, of
+  // either origin kind, and none of which was promoted. False when there is none. Older ones are superseded.
+  LatestBootstrapProposal(context.Context) (contract.ProposalID, bool, error)
+  ```
+
+  "Newest" means the highest proposal sequence, in other words the latest first revision.
+- **`AssessBootstrapHead` is assess-only.**
+  - The request drops `Summary` and adds nothing.
+  - Inside `Do` it reads `LatestBootstrapProposal`. Neither of these is an error:
+    - when the proposal is missing, or its carrier is not `Carrier`, or it is not `OriginPull`, the result is `Cancelled`;
+    - when the head's coverage differs from the current revision, the result is also `Cancelled`.
+  - In both cases nothing is written.
+  - Otherwise it records the assessment at `Head` and evaluates `CheckPromotionReadiness`.
+  - It never revises or creates a proposal. `BootstrapHeadResult` gains `Cancelled bool` and drops `Committed`.
+- **`PromoteMerge` without a canonical** uses `LatestBootstrapProposal`. The bootstrap path applies only when that proposal is `OriginPull` and its carrier equals the request's carrier. Every other case is `before-canonical`.
+- **`ProposeBaseline`** is unchanged. The commands job calls it with R1 and the origin kind of its source.
+
+**Commands store (`internal/application/commands`).**
+- New dispositions `proposed`, `propose-refused`, `skipped` and `skip-refused`. None carries an operation id.
+- `LatestOwnerCommand` ignores them, so they never affect the owner-command `failure`.
+- The new read:
+
+  ```go
+  // Skipped reports whether the pull has a `skipped` entry whose comment was created at or after since
+  // (the current enrollment's enrolled_at).
+  Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error)
+  ```
+- Migration `00017` updates the `pr_commands` disposition CHECK.
+
+**Inventory.** `inventory.SuggestScope(entries []inventory.Entry) []string` returns the de-duplicated include patterns of the runtime contract's rule, from file paths only: the top-level directory globs first, then the file globs, each group sorted, then capped at 20, so the broadest suggestions survive the cap (E2, 2026-10-16).
+
+**Conformance:**
+- `LatestBootstrapProposal`: the newest wins, a promoted one is excluded, and both kinds are returned.
+- `AssessBootstrapHead`:
+  - cancelled when the coverage differs, when the proposal belongs to another carrier, or when it is a `branch` proposal;
+  - ready after approval;
+  - writes nothing when cancelled.
+- `PromoteMerge`: a superseded carrier's merge is `before-canonical`.
+- `Skipped`: the `since` boundary, and another pull is not matched.
+- The new dispositions are ignored by `LatestOwnerCommand`.
+- `SuggestScope`: the patterns, the cap and the ordering.
+
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
 ```go
@@ -932,7 +1131,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -940,7 +1139,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `policies` | (project_id, revision_id) | immutable | owner principal id and kind |
 | `suite_versions` | (project_id, suite_id, version_id) | immutable | manifest_digest, manifest jsonb |
 | `proposals` | (project_id, suite_id, proposal_id) | immutable | carrier_id |
-| `proposal_revisions` | (project_id, suite_id, proposal_id, revision_id); unique seq | immutable | seq, origin, carrier, manifest/scope digests, covered_inputs jsonb, expected_version_id, policy_revision_id |
+| `proposal_revisions` | (project_id, suite_id, proposal_id, revision_id); unique seq | immutable | seq, origin, carrier, manifest/scope digests, covered_inputs jsonb, expected_version_id, policy_revision_id, origin_kind (M1.7b: `branch`, `pull`) |
 | `assessments` | (project_id, suite_id, proposal_id, revision_id, source) | immutable | evidence emitter, evidence source, evidence revision id (FK to `proposal_revisions` of the same proposal; the evidence binding is rebuilt from it, so evidence bound to another proposal is not representable and is rejected by the writer), outcome; all four null = missing evidence, otherwise all non-null |
 | `consent_results` | source_command_id | append-only | operation_id, proposal, revision, actor, carrier, action, command_order, outcome, reason, seq |
 | `operations` | operation_id (global) | append-only | project_id, suite_id, kind, source_command_id (consent kinds, FK to `consent_results`), receipt jsonb (immutable receipt payload with explicit json tags) |
@@ -954,7 +1153,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at |
 | `suiteward_instance` (M1.6a) | singleton | immutable | instance_id (32 lowercase hex, random) |
 | `pr_checks` (M1.6b) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`), reason, reference, change, revision, command_id, generation, message_key, decided_at |
-| `pr_merges` (M1.7) | (project_id, suite_id, carrier) | immutable | kind, reason, source, version_id, corrects_version_id, proposal_id, revision_id, recorded_at |
+| `pr_merges` (M1.7) | (project_id, suite_id, carrier) | immutable | kind, reason, source, version_id (nullable since M1.7b: empty exactly for `blocked` and `before-canonical` decided without a canonical), corrects_version_id, proposal_id, revision_id, recorded_at |
 | `canonical_integrity` (M1.7) | (project_id, suite_id) | latest verdict, replaced (`unavailable` never replaces `failed` for one version) | version_id, verdict (`passed`, `failed`, `unavailable`), checked_at |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |

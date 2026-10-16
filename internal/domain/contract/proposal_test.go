@@ -9,7 +9,7 @@ import (
 
 func mustProposalRevision(t *testing.T, input contract.BindingInput, origin contract.SourceRevision, carrier contract.ApprovalCarrierID) contract.ProposalRevision {
 	t.Helper()
-	revision, err := contract.NewProposalRevision(mustBinding(t, input), origin, carrier)
+	revision, err := contract.NewProposalRevision(mustBinding(t, input), origin, contract.OriginPull, carrier)
 	if err != nil {
 		t.Fatalf("NewProposalRevision(): %v", err)
 	}
@@ -28,11 +28,11 @@ func mustProposal(t *testing.T, initial contract.ProposalRevision) contract.Prop
 func TestProposalRevisionPreservesBindingOriginAndCarrier(t *testing.T) {
 	input := proposalBindingInput()
 	binding := mustBinding(t, input)
-	revision, err := contract.NewProposalRevision(binding, " baseline-source ", " different-pr-conversation ")
+	revision, err := contract.NewProposalRevision(binding, " baseline-source ", contract.OriginPull, " different-pr-conversation ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if revision.IsZero() || !revision.Binding().Equal(binding) || revision.Origin() != " baseline-source " || revision.Carrier() != " different-pr-conversation " {
+	if revision.IsZero() || !revision.Binding().Equal(binding) || revision.Origin() != " baseline-source " || revision.OriginKind() != contract.OriginPull || revision.Carrier() != " different-pr-conversation " {
 		t.Fatal("revision lost its exact binding, separate origin, or carrier")
 	}
 	input.CoveredInputs["runner"] = "changed"
@@ -53,17 +53,21 @@ func TestProposalRevisionRejectsIncompleteValues(t *testing.T) {
 		name    string
 		binding contract.ApprovalBinding
 		origin  contract.SourceRevision
+		kind    contract.OriginKind
 		carrier contract.ApprovalCarrierID
 	}{
-		{"absent binding", contract.ApprovalBinding{}, "source", "carrier"},
-		{"empty origin", binding, "", "carrier"},
-		{"blank origin", binding, "\u2003", "carrier"},
-		{"empty carrier", binding, "source", ""},
-		{"blank carrier", binding, "source", " \t"},
+		{"absent binding", contract.ApprovalBinding{}, "source", contract.OriginPull, "carrier"},
+		{"empty origin", binding, "", contract.OriginPull, "carrier"},
+		{"blank origin", binding, "\u2003", contract.OriginPull, "carrier"},
+		{"empty carrier", binding, "source", contract.OriginPull, ""},
+		{"blank carrier", binding, "source", contract.OriginPull, " \t"},
+		{"unknown kind", binding, "source", "tag", "carrier"},
+		{"empty kind", binding, "source", "", "carrier"},
+		{"a branch cannot carry a change that expects a canonical", binding, "source", contract.OriginBranch, "carrier"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			revision, err := contract.NewProposalRevision(tt.binding, tt.origin, tt.carrier)
+			revision, err := contract.NewProposalRevision(tt.binding, tt.origin, tt.kind, tt.carrier)
 			if !errors.Is(err, contract.ErrInvalidProposal) || !revision.IsZero() {
 				t.Fatalf("invalid revision returned IsZero=%v error=%v, want ErrInvalidProposal", revision.IsZero(), err)
 			}
@@ -292,5 +296,51 @@ func TestProposalRevisionsListsEveryRevisionInOrderAsACopy(t *testing.T) {
 	}
 	if (contract.Proposal{}).Revisions() != nil {
 		t.Fatal("an absent proposal has revisions")
+	}
+}
+
+func TestProposalRevisionKindIsKeptByTheProposal(t *testing.T) {
+	baseline := proposalBindingInput()
+	baseline.ExpectedCanonical = ""
+	for _, kind := range []contract.OriginKind{contract.OriginBranch, contract.OriginPull} {
+		t.Run(string(kind), func(t *testing.T) {
+			revision, err := contract.NewProposalRevision(mustBinding(t, baseline), "source", kind, "carrier")
+			if err != nil || revision.OriginKind() != kind {
+				t.Fatalf("revision = kind %q, error %v; want %q", revision.OriginKind(), err, kind)
+			}
+			proposal := mustProposal(t, revision)
+			if got, err := proposal.Lookup(revision.Binding().Reference(), revision.Carrier()); err != nil || got.OriginKind() != kind {
+				t.Fatalf("lookup = kind %q, error %v; want %q", got.OriginKind(), err, kind)
+			}
+			if all := proposal.Revisions(); len(all) != 1 || all[0].OriginKind() != kind || proposal.Current().OriginKind() != kind {
+				t.Fatalf("the proposal lost the kind %q", kind)
+			}
+		})
+	}
+}
+
+func TestProposalReviseRejectsAKindChange(t *testing.T) {
+	input := proposalBindingInput()
+	input.ExpectedCanonical = ""
+	first, err := contract.NewProposalRevision(mustBinding(t, input), "source-1", contract.OriginPull, "carrier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := mustProposal(t, first)
+	input.Reference.RevisionID = "revision-2"
+	input.CoveredInputs["runner"] = "runner-2"
+	changed, err := contract.NewProposalRevision(mustBinding(t, input), "source-2", contract.OriginBranch, "carrier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := initial.Revise(changed); !errors.Is(err, contract.ErrInvalidProposal) || !got.IsZero() {
+		t.Fatalf("Revise with another kind = present %v, error %v; want ErrInvalidProposal", !got.IsZero(), err)
+	}
+	same, err := contract.NewProposalRevision(mustBinding(t, input), "source-2", contract.OriginPull, "carrier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := initial.Revise(same); err != nil || got.Current().OriginKind() != contract.OriginPull {
+		t.Fatalf("Revise with the same kind = %v; want it accepted", err)
 	}
 }

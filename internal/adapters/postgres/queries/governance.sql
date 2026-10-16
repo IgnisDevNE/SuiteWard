@@ -94,10 +94,10 @@ INSERT INTO proposals (project_id, suite_id, proposal_id, carrier_id)
 VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.arg(carrier_id));
 
 -- name: InsertProposalRevision :exec
-INSERT INTO proposal_revisions (project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id,
+INSERT INTO proposal_revisions (project_id, suite_id, proposal_id, revision_id, seq, origin, origin_kind, carrier_id,
     manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id)
 VALUES (sqlc.arg(project_id), sqlc.arg(suite_id), sqlc.arg(proposal_id), sqlc.arg(revision_id), sqlc.arg(seq), sqlc.arg(origin),
-    sqlc.arg(carrier_id), sqlc.arg(manifest_digest), sqlc.arg(scope_digest), sqlc.arg(covered_inputs),
+    sqlc.arg(origin_kind), sqlc.arg(carrier_id), sqlc.arg(manifest_digest), sqlc.arg(scope_digest), sqlc.arg(covered_inputs),
     sqlc.narg(expected_version_id), sqlc.arg(policy_revision_id));
 
 -- name: InsertAssessment :exec
@@ -155,6 +155,16 @@ SELECT p.proposal_id FROM proposals p
 WHERE p.project_id = sqlc.arg(project_id) AND p.suite_id = sqlc.arg(suite_id) AND p.carrier_id = sqlc.arg(carrier_id)
   AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
                   WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id AND r.expected_version_id IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM promotions m
+                  WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
+ORDER BY p.proposal_id;
+
+-- The proposals whose revisions all expect no canonical and none of which was promoted; the caller picks the newest.
+-- name: ListBootstrapProposals :many
+SELECT p.proposal_id FROM proposals p
+WHERE p.project_id = sqlc.arg(project_id) AND p.suite_id = sqlc.arg(suite_id)
+  AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
+                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id AND r.expected_version_id IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM promotions m
                   WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
 ORDER BY p.proposal_id;

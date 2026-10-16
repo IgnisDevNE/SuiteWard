@@ -64,7 +64,7 @@ Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none r
 | --- | --- |
 | `GET /healthz` | Liveness: 200 `{"status":"ok"}` while the process serves. |
 | `GET /readyz` | Readiness: 200 when the database answers, the schema version equals `SupportedVersion` and the service is not shutting down; 503 otherwise. It does not query River: River starts before the listener opens, the process never cancels the context it started with, and only the shutdown stops it, so River runs while this answers 200. During shutdown the 503 is best effort: the listener closes at once and `net/http` drops a request it reads after the drain began, so only a request in flight at that instant sees it. Body `{"status":"ready","schemaVersion":N}` or `{"status":"unavailable","reason":"..."}`. |
-| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>` or `failed`), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. Since M1.7 each entry also has `merges` and `integrity`, and the job counts also exclude `github_merges` and `canonical_integrity` (see "Merges and integrity jobs"). |
+| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>`, `awaiting-merge-decision` (M1.7b) or `failed`; since the M1.7b rework the bootstrap codes are those of [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16)), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. Since M1.7 each entry also has `merges` and `integrity`, and the job counts also exclude `github_merges` and `canonical_integrity` (see "Merges and integrity jobs"). |
 
 ### Command and bootstrap jobs (M1.6a)
 
@@ -134,7 +134,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
 **`github_checks`**
 - Periodic every 30 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished; registered only with the GitHub settings; excluded from the `/status` job counts. It is the only writer of check states (D-CHECKS).
 - For each enrolled and configured repository, for each open PR in the synchronization store (`NotOpenSince` zero):
-  - **No Suite or no canonical:** `in_progress`, reason `bootstrap-pending`.
+  - **No Suite or no canonical:** `in_progress`, reason `bootstrap-pending`. Superseded by [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16).
   - **Otherwise** compare with `checks.Store.Current`:
     - same head, same canonical, same Suite revision and same latest owner command: nothing to do;
     - a stored `unchanged` result for the same head and canonical: keep it without reading the tree (consent cannot change it);
@@ -143,7 +143,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
     - `success`: the head is unchanged against the canonical (reason `unchanged`), or ready (reason `ready`).
     - `in_progress`: reasons `approval-missing` (including a revision rebound after the canonical or the policy changed), `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated); `ErrCanonicalMoved` from `AssessHead` (the canonical moved while the head was assessed) keeps the current record and retries on the next run; any other `ErrConflict`, such as a conflicting assessment, is deterministic and is an opaque failure (`/status` problem `failed`) that fails that pull request's step while the run continues.
     - `failure`: reasons `invalid-source`, `integrity-failed`, `owner-command-rejected`. Since M1.7 `integrity-failed` comes only from the canonical integrity verdict. A head assessment never fails, because its binding is built from that head's own inventory, so `AssessHead` answering `IntegrityNotPassed` or `AssessmentMismatch` is an impossible state: an opaque failure of that pull request's step (`/status` problem `failed`), never a published state.
-  - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`. A rejected owner command posted between a push and the job first recording that head does not set `failure` (the record's `HeadSince` is SuiteWard's own clock): the window is about the synchronization interval plus the job interval, a known limitation to be fixed with a per-head observation time. Before a canonical exists, a rejected owner command does not set `failure` either: the state is `bootstrap-pending`.
+  - **Owner-command failure.** When `LatestOwnerCommand` on the pull is a rejected disposition, or `processed` with a rejected consent result (read from its receipt), and the command was created at or after the record's `HeadSince`, the state is `failure` with reason `owner-command-rejected`. A rejected owner command posted between a push and the job first recording that head does not set `failure` (the record's `HeadSince` is SuiteWard's own clock): the window is about the synchronization interval plus the job interval, a known limitation to be fixed with a per-head observation time. Before a canonical exists, a rejected owner command does not set `failure` either: the state is `bootstrap-pending`. Superseded by [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16), where the carrier's `approve` and `revoke` can set it.
   - **Transient read failure** (GitHub, tree): when the stored head equals the open head, keep the record. When the open head is new (no record, or the record holds another head), publish `in_progress`, reason `assessment-pending`, for the new head, so the new SHA never stays without a check.
   - **Lost publication.** When the current generation's message ended `failed` in the outbox, `Publish` re-sends the same state under the next generation.
   - Publish through `checks.Store.Publish` with a `github_check` message.
@@ -165,7 +165,7 @@ Both jobs are registered only with the GitHub settings. Both are excluded from t
 **`github_merges`** (D-INTEGRATION, ADR 0014)
 - Periodic every 30 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
 - It is the only writer of merge facts and the only caller of `governance.PromoteMerge`.
-- For each enrolled and configured repository whose Suite has a canonical:
+- For each enrolled and configured repository whose Suite has a canonical (since M1.7b: whose Suite exists, see "Bootstrap from a PR"):
   1. **Closed listing.** `Reader.ClosedPulls`, then `githubsync.Store.RecordClosed`.
   2. **Resolution.** For each pull from `AwaitingResolution`, call `Reader.Pull`:
      - `open`: nothing; the next cycle upserts it.
@@ -214,6 +214,162 @@ Both jobs are registered only with the GitHub settings. Both are excluded from t
 - `integrity`: the verdict of the Suite's current version (`passed`, `failed`, `unavailable`), absent before the first verification or for another version.
 
 The job counts also exclude `github_merges` and `canonical_integrity`.
+
+### Bootstrap from a PR and the revision comment (M1.7b)
+
+**Who writes what.** Superseded by [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16).
+- The bootstrap job writes only `branch` baselines.
+- The checks job writes the `pull` bootstrap proposal and every change-proposal revision.
+- The merges job decides V1 from a merged bootstrap PR.
+
+**`github_bootstrap` (changes).** Superseded by [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16).
+- **It reads only the latest `OriginBranch` proposal.** It never promotes an `OriginPull` revision, and the domain refuses that anyway.
+- **When the default branch has protected files, it proposes a `branch` baseline `P<n+1>`** on the lowest open non-fork PR in two cases:
+  - there is no `branch` proposal yet;
+  - the latest proposal is `OriginPull`, which it supersedes.
+
+  Otherwise its rules are unchanged. `awaiting-initial-contract` still means the default branch has no protected files (the job checks for an open PR first, so a repository with none shows `no-open-pull-request`).
+- **It never supersedes a `pull` proposal whose carrier merged before the merges job decided that merge.** While the latest proposal is `OriginPull`, its carrier PR is no longer open, and the merges job has recorded no outcome for that carrier (`MergeOutcomeOf`), the bootstrap job stops with `awaiting-merge-decision`. The carrier's own merge is what put the protected files on the default branch, and it decides V1 itself.
+  - It supersedes only in two cases: the carrier is still open (the files came from elsewhere), or the carrier closed without a merge or its merge outcome is recorded and is not a promotion.
+
+**`github_checks` without a canonical.** Steps 1–4 are superseded by [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16).
+
+1. **Read the default branch.** A repository whose Suite does not exist yet (`Do` answers `ErrNotFound`, before the bootstrap job's first run) gets `bootstrap-pending` on every open PR, as before. For each repository whose Suite exists and has no canonical, read the default branch head and its tree. Cache the result by head SHA in memory, so an unchanged head costs no tree read.
+   - The head or tree read fails transiently: keep every stored record, as for a transient read.
+   - The default branch has protected files: every open PR gets `in_progress` / `bootstrap-pending`, because the branch path is pending.
+2. **Choose the bootstrap carrier,** deterministically.
+   - First, the lowest-numbered open non-fork PR for which `BaselineProposalFor(github-pr:<repository id>/<pull>)` finds a proposal.
+   - When no open PR has one, the lowest-numbered open non-fork PR whose head has protected files.
+   - **Superseded proposals.** A proposal superseded by the branch path is never chosen, because step 1 already answered `bootstrap-pending`. "Superseded" has no store marker. The proposal stays, and if its PR merges with a tree that matches the approved revision exactly, `PromoteMerge` still promotes it, which is safe because an exact match means no drift. A later branch baseline then blocks with `CanonicalPresent`.
+
+   Head inventories are read only while looking for a carrier, and each verdict is cached by head SHA.
+   - **A carrier keeps its role while its PR is open,** even when a later push removes its protected files (its check is then `bootstrap-pending`). Another PR with protected files waits until the owner closes it. Changing that is a policy decision, not taken here.
+   - **A default branch whose tree GitHub truncates** is treated like one with protected files: every PR gets `bootstrap-pending`, cached by head SHA. The bootstrap job reports the same case as `invalid-source`.
+3. **The carrier's head.** First the M1.6b fast path: same head, same Suite revision and same latest owner command keep the record without a read (an approval bumps the Suite revision, so readiness still changes on the next run). Otherwise call `AssessBootstrapHead`, with a `bootstrap-summary` message for a committed revision.
+   - Not ready: `in_progress`, `approval-missing`, with the reference.
+   - Ready: `success`, `bootstrap-ready`.
+   - An invalid source is `failure` / `invalid-source`. A truncated tree is `source-unavailable`.
+   - The owner-command `failure` applies to the carrier as it does to change PRs.
+   - `ErrCanonicalMoved` keeps the record, and the next run retries.
+4. **Every other open PR** gets `bootstrap-pending`. A fork PR keeps `fork-unsupported`.
+
+**`bootstrap-ready` check text.**
+- Title: "Bootstrap ready for integration".
+- The summary covers:
+  - the approved revision;
+  - that this head was assessed;
+  - that SuiteWard will promote the first canonical version from the exact merge commit after the merge;
+  - that no canonical exists yet;
+  - the tier.
+- Never claim that tests ran.
+
+**`github_merges` (change).**
+- It processes every enrolled and configured repository whose Suite exists, with or without a canonical.
+- Without a canonical, its steps are unchanged and `PromoteMerge` applies the rules of the persistence contract.
+- An earlier merge with no canonical is recorded `before-canonical` and never stops the queue.
+
+**Outbox `github_comment`, key `bootstrap-summary:<repository id>:P<n>-R<m>` (change).**
+- **Every bootstrap revision gets one, R2 and later included.**
+- **The payload gains `source`** (`branch` or `pull`). For `pull` it also gains the PR head SHA as `origin`, and omits `branch`.
+- **The `pull` text** says:
+  - the revision is the exact head of this PR;
+  - approving it lets the PR merge;
+  - V1 is promoted only from the exact merge commit after the merge;
+  - a later protected push needs a new approval.
+
+**Outbox `github_comment`, key `merge:<repository id>:<pull>` (change).**
+- **`promoted` with version `V1` from a merged bootstrap PR** names the merge commit and says this is the first canonical version.
+- **A `blocked` outcome without a version** says that SuiteWard has no canonical contract yet and gives the reason. For recovery, it says that the default branch now holds the merged files, so SuiteWard proposes the default branch's contract for approval on an open PR (the branch path).
+
+**Outbox `github_comment`, key `revision:<repository id>:P<n>-R<m>` (new).**
+- **Written by `AssessHead`** through `HeadRequest.Revision`, for each new change-proposal revision.
+- **Payload:**
+  - `repositoryId`, `repo`, `pull`, `reference`;
+  - `previous` (optional);
+  - `canonical`, the base version;
+  - `added`, `modified` and `removed`: at most 20 each, every entry cut to 150 bytes with `…`, like the bootstrap summary;
+  - `addedTotal`, `modifiedTotal`, `removedTotal`;
+  - `reduced`;
+  - `tier`.
+- **The text** lists the changes inside code fences with control characters escaped, then the copyable `/suiteward approve P<n>-R<m> <code>`, and, when `previous` is set, "This supersedes `P<n>-R<m-1>`".
+- It never claims that tests ran, and stays under the comment limit with a worst-case test.
+- `splitKey` accepts the kinds `revision` and `bootstrap-summary` with their three parts.
+
+### Explicit bootstrap: propose and skip (M1.7b rework, 2026-10-16)
+
+This replaces these parts of the section above: "Who writes what", the `github_bootstrap` changes, and `github_checks` without a canonical (steps 1–4). The texts, keys and merges-job rules of the section above still apply unless changed here.
+
+**Who writes what.**
+- The commands job writes every bootstrap proposal, of both kinds, on `/suiteward propose`.
+- The checks job assesses the carrier's head but writes no proposal.
+- The bootstrap job only promotes an approved `branch` baseline.
+- The merges job decides V1 from the merged `pull` carrier.
+
+**`github_commands`: `/suiteward propose`.** Owner-authored, no code. It goes through the D-COMMANDS checks first (before enrollment, not a command, author, edited first). Then, in order:
+1. **Refusals**, recorded `propose-refused` with ack `ack:<repository id>:<comment id>`:
+   - `canonical-present`: the Suite has a canonical;
+   - `fork`: the PR is a fork, by `HeadRepo` as in M1.7.
+   - `not-open`: the PR is no longer open in the synchronized state.
+   - `base-not-target`: the PR's base branch is not the Suite's target (the default branch), so its merge could never decide V1.
+2. **Pick the source.** Read the default branch head (`Reader.BranchHead`) and its tree.
+   - The tree has `.suiteward.yml`: the source is that pinned commit, with origin kind `branch`.
+   - Otherwise, read the PR head tree. If it has `.suiteward.yml`, the source is the PR head, with origin kind `pull`.
+   - Otherwise, `propose-refused` with reason `declaration-missing`. The ack payload carries:
+     - `suggestion`: up to 20 include patterns, from the test-like paths of the PR head tree (or of the default branch when the PR has none). It is built by `inventory.SuggestScope`. The patterns are `tests/**`, `test/**`, `__tests__/**` and `spec/**` for a matching top-level directory, and the file's own directory plus a glob for `*_test.*`, `*.test.*`, `*.spec.*` and `test_*.py`.
+     - `branch`: the PR's head ref, for the link.
+
+     When no test-like path is found, `suggestion` is empty. The text then gives a minimal `version: 1` with an `include:` placeholder to fill in, and the link carries that minimal file. The text shows the YAML and the link `https://github.com/<repo>/new/<path-escaped branch>?filename=.suiteward.yml&value=<URL-encoded YAML>` (verified 2026-10-16 on SuiteWardQ2: GitHub fills both the name and the content).
+3. **Invalid or empty source.**
+   - A source that cannot be read as a contract gives `propose-refused`, reason `invalid-source`: an invalid `.suiteward.yml`, a protected path that is a link, or a truncated tree. These are the cases the bootstrap job reports as `invalid-source`. They are deterministic, so they are refused rather than retried (clarified 2026-10-16).
+   - An empty inventory gives `propose-refused`, reason `empty-inventory`. A source that has `.suiteward.yml` always covers that file, so this cannot happen. The job treats it as an invalid state, an error, and the reason stays reserved.
+4. **Idempotent reuse.** If the Suite's latest bootstrap proposal is carried by this PR, and its current revision has the same origin and coverage as the source, reuse it: no new proposal. Record `proposed` with a short acknowledgment, "already proposed as `P<n>-R<m>`". This covers a retry after a failure between the proposal and the ledger write, and a repeated `propose` on an unchanged PR.
+5. **Otherwise propose.** Call `ProposeBaseline`:
+   - `P<n+1>-R1`, with `n` the Suite's highest proposal number;
+   - the carrier is this PR;
+   - the origin is the source commit, with the kind from step 2;
+   - with the `bootstrap-summary` message as the acknowledgment.
+
+   Record `proposed`.
+6. **Errors.** Only a transient GitHub read or store error is an error of this candidate. It follows the D-COMMANDS retry rule: the run stops, and after 5 attempts the candidate is recorded `failed`. A `propose` recorded `failed` gets an acknowledgment that tells the owner to comment `/suiteward propose` again.
+7. **Known limit.** The reads run inside the single serialized commands job and its `JOB_TIMEOUT`: the default-branch tree, possibly the PR tree, and one blob per protected file. At about 0.37 s per request (S1), about 150 protected files fill one run of the default 1 minute. A larger source times out, delays every command behind it for 5 runs, and then ends `failed`, with its acknowledgment. Raising `JOB_TIMEOUT` or moving the reads out of the queue comes in M1.7c or later.
+
+**`github_commands`: `/suiteward skip <code>`.** Owner-authored. The code is checked and consumed as for `approve`, with the same dispositions for a bad code.
+- **Refusals**, recorded `skip-refused` with an ack:
+  - `canonical-present`;
+  - `fork`;
+  - `carrier`: the PR carries the Suite's latest bootstrap proposal.
+- **Otherwise** record `skipped` with an ack. The ack says the PR may merge before the first contract and that nothing was assessed.
+
+**`github_checks` before V1**, for each open PR of a repository whose Suite exists and has no canonical. A repository with no Suite gives `bootstrap-awaiting` on every PR.
+1. **Fork:** `in_progress`, `fork-unsupported`.
+2. **The carrier.** The carrier is the PR carrying the Suite's latest bootstrap proposal (`Tx.LatestBootstrapProposal`).
+   - **A `pull` proposal.** After the M1.6b fast path, call `AssessBootstrapHead` on the head:
+     - cancelled (the coverage differs from the proposal's current revision): `in_progress`, `bootstrap-awaiting`, plus one comment `bootstrap-cancelled:<repository id>:P<n>-R<m>` saying the protected files changed and to comment `/suiteward propose` again. A later push that restores the exact coverage makes the revision current again, and that is safe.
+     - otherwise: `in_progress`, `approval-missing` with the reference, or `success`, `bootstrap-ready`.
+   - **A `branch` proposal.** The check is `in_progress`, `approval-missing`, with the reference, until the bootstrap job promotes V1. Right after the approval it may stay so for up to one bootstrap period (about 60 s), until the promotion. That is accepted: V1 then exists, and the PR is assessed as a change.
+3. **Skipped.** A `skipped` entry exists for this pull under the current enrollment (`commands.Store.Skipped`): `success`, `bootstrap-skipped`. This is read on every run for non-carrier PRs and is never behind the fast path: that path keys on the latest owner command, which ignores `skip`.
+4. **Otherwise:** `in_progress`, `bootstrap-awaiting`, plus one comment `bootstrap-notice:<repository id>:<pull>` saying how to start (`/suiteward propose`) or skip (`/suiteward skip <code>`).
+
+Other rules:
+- The owner-command `failure` applies only to `approve` and `revoke` dispositions. `proposed`, `propose-refused`, `skipped` and `skip-refused` never set it or clear it.
+- The automatic carrier choice, the default-branch plan and its cache are removed.
+- **One cancelled comment per revision.** The `bootstrap-cancelled` key names the revision, so if a push restores the coverage and a later push breaks it again, the check returns to `bootstrap-awaiting` with no second comment.
+- **Known limit: shared rejections on the carrier.** The ledger does not record the verb. A rejected disposition that every verb shares (`invalid-code`, `replayed-code`, `malformed`, `edited-first`) therefore turns the carrier `failure` / `owner-command-rejected` even when it came from a `skip` or a `propose`. A corrected `propose` does not clear it; a valid approve or a new head does.
+
+**`github_bootstrap` (promote only).**
+- It still creates the Suite on `ErrNotFound`, unchanged from M1.6a step 1. A `propose` that comes before that keeps today's `no-suite` disposition and its acknowledgment.
+- With no canonical, when the Suite's latest bootstrap proposal is `branch` and the owner approved its current revision, it re-reads the origin, records the assessment and calls `Bootstrap`, as before.
+- It proposes nothing.
+- Its `/status` codes are `read-failed`, `repository-changed`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>` and `failed`. These were removed: `no-open-pull-request`, `awaiting-initial-contract`, `awaiting-merge-decision`, and `invalid-source`. An unreadable origin is assessed as unavailable and stops at `origin-not-passed`.
+
+**`github_merges`.** `PromoteMerge` decides V1 only for the carrier of the Suite's latest bootstrap proposal, and only when that proposal is `pull`. Every other merge before V1 is `before-canonical`.
+
+**Check texts.**
+- `bootstrap-awaiting`: "SuiteWard has no canonical contract yet." It says how to start (`/suiteward propose` on the PR that should carry the first contract) and how to skip (`/suiteward skip <code>`). It never names an approve command.
+- `bootstrap-skipped` (`success`): "Skipped by the owner before the first contract." It says that no contract exists and nothing was assessed.
+- `bootstrap-pending` is replaced by `bootstrap-awaiting`.
+
+**Comment keys.** `bootstrap-notice:<repository id>:<pull>` and `bootstrap-cancelled:<repository id>:P<n>-R<m>` are new. `splitKey` accepts them. `ack:` payloads gain the dispositions `proposed` (not used: a proposal's ack is its `bootstrap-summary`), `propose-refused` (`reason`: `canonical-present`, `fork`, `not-open`, `base-not-target`, `declaration-missing`, `invalid-source` or `empty-inventory`; plus `suggestion` and `branch` for `declaration-missing`), `skipped` and `skip-refused` (`reason`).
 
 ### Protection verification job (M1.5)
 

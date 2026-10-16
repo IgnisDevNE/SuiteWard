@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"testing"
 	"time"
 
@@ -79,6 +80,8 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"SecondProposalRevisionBecomesCurrent", cfProposalSecondRevision},
 		{"DuplicateProposalRevisionConflicts", cfProposalDuplicateRevision},
 		{"ProposalRevisionOfAnotherCarrierConflicts", cfProposalOtherCarrier},
+		{"ProposalRevisionKeepsItsOriginKind", cfProposalOriginKindRoundTrips},
+		{"ProposalRevisionOfAnotherOriginKindIsInvalid", cfProposalOtherOriginKind},
 		{"ProposalRevisionOutsideTheLockedSuiteIsInvalid", cfProposalForeignSuite},
 		{"ProposalRevisionsAdvanceTheRevisionByOne", cfProposalRevisionAdvances},
 		{"ProposalRevisionsRollBack", cfProposalRollback},
@@ -115,7 +118,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"NextProposalIDIsOnePastTheHighestNumber", cfNextProposalIDIsOnePastTheHighestNumber},
 		{"NextProposalIDSeesItsOwnTransactionAndOnlyItsSuite", cfNextProposalIDSeesItsOwnTransactionAndOnlyItsSuite},
 	}
-	for _, tc := range append(cases, mergeCases()...) {
+	for _, tc := range slices.Concat(cases, mergeCases(), bootstrapCases(), bootstrapHeadCases(), revisionCases(), mergeBootstrapCases()) {
 		t.Run(tc.name, func(t *testing.T) {
 			defer cfGuard(t)
 			owner := cfMust(contract.NewPrincipal("owner", contract.Human))
@@ -147,6 +150,14 @@ var (
 )
 
 func cfBlob(content string) []byte { return []byte("conformance:" + content) }
+
+// cfOriginKind is the kind a fixture means: a baseline (no canonical expected) comes from a branch, a change from a pull.
+func cfOriginKind(binding contract.ApprovalBinding) contract.OriginKind {
+	if binding.ExpectedCanonical() == "" {
+		return contract.OriginBranch
+	}
+	return contract.OriginPull
+}
 
 // cfMust unwraps a fixture value; the runner turns the panic of a fixture that
 // cannot be built into a failed subtest.
@@ -191,7 +202,7 @@ func cfNewCandidateOf(project contract.ProjectID, suite contract.SuiteID, id str
 		binding := cfMust(contract.NewApprovalBinding(contract.BindingInput{Reference: c.reference(revisionID), ExpectedCanonical: baseline,
 			Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: cfPolicy, CoveredInputs: protected.CoveredInputs()}))
 		c.bindings[revisionID] = binding
-		revision := cfMust(contract.NewProposalRevision(binding, c.origin, c.carrier))
+		revision := cfMust(contract.NewProposalRevision(binding, c.origin, cfOriginKind(binding), c.carrier))
 		if c.proposal.IsZero() {
 			c.proposal = cfMust(contract.NewProposal(revision))
 		} else {
@@ -202,6 +213,21 @@ func cfNewCandidateOf(project contract.ProjectID, suite contract.SuiteID, id str
 			c.assessments = append(c.assessments, cfMust(contract.AssessIntegrity(source, binding, &evidence)))
 		}
 	}
+	return c
+}
+
+// asPull is the candidate as a PR head that expects no canonical (the first-test bootstrap), not a baseline from a branch.
+func (c cfCandidate) asPull() cfCandidate {
+	var proposal contract.Proposal
+	for _, revision := range c.proposal.Revisions() {
+		pulled := cfMust(contract.NewProposalRevision(revision.Binding(), revision.Origin(), contract.OriginPull, revision.Carrier()))
+		if proposal.IsZero() {
+			proposal = cfMust(contract.NewProposal(pulled))
+		} else {
+			proposal = cfMust(proposal.Revise(pulled))
+		}
+	}
+	c.proposal = proposal
 	return c
 }
 
@@ -536,7 +562,7 @@ func cfSameHistory(a, b contract.HistoricalCanonical) bool {
 }
 
 func cfSameRevision(a, b contract.ProposalRevision) bool {
-	return a.Binding().Equal(b.Binding()) && a.Origin() == b.Origin() && a.Carrier() == b.Carrier()
+	return a.Binding().Equal(b.Binding()) && a.Origin() == b.Origin() && a.OriginKind() == b.OriginKind() && a.Carrier() == b.Carrier()
 }
 
 func cfSameAssessment(a, b contract.IntegrityAssessment) bool {
@@ -629,7 +655,7 @@ func cfSeedProposals(e *cfEnv) {
 			}
 			for revisionID, binding := range c.bindings {
 				revision, err := proposal.Lookup(c.reference(revisionID), c.carrier)
-				if err != nil || !revision.Binding().Equal(binding) || revision.Origin() != c.origin {
+				if err != nil || !revision.Binding().Equal(binding) || revision.Origin() != c.origin || revision.OriginKind() != cfOriginKind(binding) {
 					e.t.Errorf("%s: revision %s = %v, %v, want the seeded revision", c.id, revisionID, revision.Binding().Reference(), err)
 				}
 				_, resolved := proposal.Resolve(c.reference(revisionID), c.carrier)
@@ -1532,7 +1558,7 @@ func cfProposalOtherCarrier(e *cfEnv) {
 		e.t.Fatal(err)
 	}
 	before := e.revision()
-	elsewhere := cfMust(contract.NewProposalRevision(c.bindings["revision-2"], c.origin, "another-carrier"))
+	elsewhere := cfMust(contract.NewProposalRevision(c.bindings["revision-2"], c.origin, cfOriginKind(c.bindings["revision-2"]), "another-carrier"))
 	if err := e.appendRevision(elsewhere); !errors.Is(err, governance.ErrProposalConflict) {
 		e.t.Fatalf("append under another carrier = %v, want a proposal conflict", err)
 	}
@@ -1624,4 +1650,44 @@ func cfProposalRollback(e *cfEnv) {
 		e.t.Fatalf("append after a rollback: %v", err)
 	}
 	e.requireProposal("p1", revisions[0])
+}
+
+// cfProposalOriginKindRoundTrips stores a baseline from a branch and a baseline from a pull head, each with a second revision.
+func cfProposalOriginKindRoundTrips(e *cfEnv) {
+	e.seedSimple(cfProject, cfSuite)
+	for id, kind := range map[contract.ProposalID]contract.OriginKind{"from-branch": contract.OriginBranch, "from-pull": contract.OriginPull} {
+		c := e.candidate(string(id), "", "v1", "revision-1", "revision-2")
+		var revisions []contract.ProposalRevision
+		for _, revision := range c.proposal.Revisions() {
+			revisions = append(revisions, cfMust(contract.NewProposalRevision(revision.Binding(), revision.Origin(), kind, revision.Carrier())))
+		}
+		for i, revision := range revisions {
+			if err := e.appendRevision(revision); err != nil {
+				e.t.Fatalf("append revision %d of %q: %v", i+1, id, err)
+			}
+		}
+		e.requireProposal(id, revisions...)
+		proposal, err := e.proposal(id)
+		if err != nil || proposal.Current().OriginKind() != kind {
+			e.t.Fatalf("kind of %q = %q, %v; want %q", id, proposal.Current().OriginKind(), err, kind)
+		}
+	}
+}
+
+// cfProposalOtherOriginKind appends a revision whose kind differs from the proposal's: a proposal never changes kind.
+func cfProposalOtherOriginKind(e *cfEnv) {
+	c := e.candidate("p1", "", "v1", "revision-1", "revision-2")
+	e.seedSimple(cfProject, cfSuite)
+	revisions := c.proposal.Revisions()
+	first := cfMust(contract.NewProposalRevision(revisions[0].Binding(), revisions[0].Origin(), contract.OriginPull, revisions[0].Carrier()))
+	if err := e.appendRevision(first); err != nil {
+		e.t.Fatal(err)
+	}
+	before := e.revision()
+	other := cfMust(contract.NewProposalRevision(revisions[1].Binding(), revisions[1].Origin(), contract.OriginBranch, revisions[1].Carrier()))
+	if err := e.appendRevision(other); !errors.Is(err, governance.ErrInvalidRequest) {
+		e.t.Fatalf("append with another origin kind = %v, want ErrInvalidRequest", err)
+	}
+	e.requireProposal("p1", first)
+	e.requireWrites(before, 0)
 }

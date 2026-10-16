@@ -327,6 +327,24 @@ func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCar
 	return "", false, fmt.Errorf("%w: proposals of %q: %d change proposals share one carrier", governance.ErrInvalidState, carrier, len(found))
 }
 
+func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
+	if err := t.live(ctx); err != nil {
+		return "", false, err
+	}
+	var open []contract.ProposalID
+	for id, p := range t.s.proposals {
+		isBootstrap := !slices.ContainsFunc(p.proposal.Revisions(), func(r contract.ProposalRevision) bool {
+			_, promoted := t.promotionFor(r.Binding().Reference())
+			return promoted || r.Binding().ExpectedCanonical() != ""
+		})
+		if isBootstrap {
+			open = append(open, id)
+		}
+	}
+	id, found := governance.LatestProposalID(open)
+	return id, found, nil
+}
+
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
 	if err := t.live(ctx); err != nil {
 		return "", err
@@ -544,7 +562,7 @@ func (t *tx) RecordMergeOutcome(ctx context.Context, w governance.MergeWrite) er
 		return err
 	}
 	outcome := w.Outcome
-	if _, known := t.s.history[outcome.Version]; !known {
+	if _, known := t.s.history[outcome.Version]; outcome.Version != "" && !known {
 		return fmt.Errorf("%w: version %q", governance.ErrNotFound, outcome.Version)
 	}
 	if _, known := t.s.history[outcome.Corrects]; outcome.Corrects != "" && !known {

@@ -234,7 +234,7 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 		if input.Integration.Carrier() != input.Context.Carrier {
 			return blockedPromotion(PromotionReasonIntegrationMismatch), nil
 		}
-	} else if _, present := current.CurrentVersionID(); present || input.Integration.Source() != input.Context.Proposal.Current().Origin() {
+	} else if _, present := current.CurrentVersionID(); present || input.Integration.Source() != input.Context.Proposal.Current().Origin() || input.Context.Proposal.Current().OriginKind() != OriginBranch {
 		return blockedPromotion(PromotionReasonIntegrationMismatch), nil
 	}
 	record, err := NewPromotionRecord(PromotionRecordInput{OperationID: input.OperationID, VersionID: input.NewVersionID, Binding: input.Context.Proposal.Current().Binding(), Carrier: input.Context.Carrier, Source: input.Integration.Source(), Target: input.Target, RecordedAt: input.RecordedAt, CorrectsVersionID: input.CorrectsVersionID})

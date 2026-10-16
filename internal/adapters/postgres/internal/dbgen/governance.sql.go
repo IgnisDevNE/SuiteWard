@@ -133,7 +133,7 @@ func (q *Queries) GetPolicy(ctx context.Context, arg GetPolicyParams) (Policy, e
 }
 
 const getPromotionByReference = `-- name: GetPromotionByReference :one
-SELECT promotions.operation_id, promotions.project_id, promotions.suite_id, promotions.version_id, promotions.proposal_id, promotions.revision_id, promotions.carrier_id, promotions.source_revision, promotions.target_id, promotions.recorded_at, promotions.corrects_version_id, proposal_revisions.project_id, proposal_revisions.suite_id, proposal_revisions.proposal_id, proposal_revisions.revision_id, proposal_revisions.seq, proposal_revisions.origin, proposal_revisions.carrier_id, proposal_revisions.manifest_digest, proposal_revisions.scope_digest, proposal_revisions.covered_inputs, proposal_revisions.expected_version_id, proposal_revisions.policy_revision_id
+SELECT promotions.operation_id, promotions.project_id, promotions.suite_id, promotions.version_id, promotions.proposal_id, promotions.revision_id, promotions.carrier_id, promotions.source_revision, promotions.target_id, promotions.recorded_at, promotions.corrects_version_id, proposal_revisions.project_id, proposal_revisions.suite_id, proposal_revisions.proposal_id, proposal_revisions.revision_id, proposal_revisions.seq, proposal_revisions.origin, proposal_revisions.carrier_id, proposal_revisions.manifest_digest, proposal_revisions.scope_digest, proposal_revisions.covered_inputs, proposal_revisions.expected_version_id, proposal_revisions.policy_revision_id, proposal_revisions.origin_kind
 FROM promotions
 JOIN proposal_revisions ON proposal_revisions.project_id = promotions.project_id
     AND proposal_revisions.suite_id = promotions.suite_id
@@ -187,6 +187,7 @@ func (q *Queries) GetPromotionByReference(ctx context.Context, arg GetPromotionB
 		&i.ProposalRevision.CoveredInputs,
 		&i.ProposalRevision.ExpectedVersionID,
 		&i.ProposalRevision.PolicyRevisionID,
+		&i.ProposalRevision.OriginKind,
 	)
 	return i, err
 }
@@ -215,7 +216,7 @@ func (q *Queries) GetProposal(ctx context.Context, arg GetProposalParams) (Propo
 }
 
 const getProposalRevision = `-- name: GetProposalRevision :one
-SELECT project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id, manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id FROM proposal_revisions
+SELECT project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id, manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id, origin_kind FROM proposal_revisions
 WHERE project_id = $1 AND suite_id = $2 AND proposal_id = $3
   AND revision_id = $4
 `
@@ -248,6 +249,7 @@ func (q *Queries) GetProposalRevision(ctx context.Context, arg GetProposalRevisi
 		&i.CoveredInputs,
 		&i.ExpectedVersionID,
 		&i.PolicyRevisionID,
+		&i.OriginKind,
 	)
 	return i, err
 }
@@ -289,7 +291,7 @@ func (q *Queries) GetSuite(ctx context.Context, arg GetSuiteParams) (Suite, erro
 }
 
 const getVersion = `-- name: GetVersion :one
-SELECT suite_versions.project_id, suite_versions.suite_id, suite_versions.version_id, suite_versions.manifest_digest, suite_versions.manifest, promotions.operation_id, promotions.project_id, promotions.suite_id, promotions.version_id, promotions.proposal_id, promotions.revision_id, promotions.carrier_id, promotions.source_revision, promotions.target_id, promotions.recorded_at, promotions.corrects_version_id, proposal_revisions.project_id, proposal_revisions.suite_id, proposal_revisions.proposal_id, proposal_revisions.revision_id, proposal_revisions.seq, proposal_revisions.origin, proposal_revisions.carrier_id, proposal_revisions.manifest_digest, proposal_revisions.scope_digest, proposal_revisions.covered_inputs, proposal_revisions.expected_version_id, proposal_revisions.policy_revision_id
+SELECT suite_versions.project_id, suite_versions.suite_id, suite_versions.version_id, suite_versions.manifest_digest, suite_versions.manifest, promotions.operation_id, promotions.project_id, promotions.suite_id, promotions.version_id, promotions.proposal_id, promotions.revision_id, promotions.carrier_id, promotions.source_revision, promotions.target_id, promotions.recorded_at, promotions.corrects_version_id, proposal_revisions.project_id, proposal_revisions.suite_id, proposal_revisions.proposal_id, proposal_revisions.revision_id, proposal_revisions.seq, proposal_revisions.origin, proposal_revisions.carrier_id, proposal_revisions.manifest_digest, proposal_revisions.scope_digest, proposal_revisions.covered_inputs, proposal_revisions.expected_version_id, proposal_revisions.policy_revision_id, proposal_revisions.origin_kind
 FROM suite_versions
 JOIN promotions ON promotions.project_id = suite_versions.project_id
     AND promotions.suite_id = suite_versions.suite_id
@@ -348,6 +350,7 @@ func (q *Queries) GetVersion(ctx context.Context, arg GetVersionParams) (GetVers
 		&i.ProposalRevision.CoveredInputs,
 		&i.ProposalRevision.ExpectedVersionID,
 		&i.ProposalRevision.PolicyRevisionID,
+		&i.ProposalRevision.OriginKind,
 	)
 	return i, err
 }
@@ -565,11 +568,11 @@ func (q *Queries) InsertProposal(ctx context.Context, arg InsertProposalParams) 
 }
 
 const insertProposalRevision = `-- name: InsertProposalRevision :exec
-INSERT INTO proposal_revisions (project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id,
+INSERT INTO proposal_revisions (project_id, suite_id, proposal_id, revision_id, seq, origin, origin_kind, carrier_id,
     manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id)
 VALUES ($1, $2, $3, $4, $5, $6,
-    $7, $8, $9, $10,
-    $11, $12)
+    $7, $8, $9, $10, $11,
+    $12, $13)
 `
 
 type InsertProposalRevisionParams struct {
@@ -579,6 +582,7 @@ type InsertProposalRevisionParams struct {
 	RevisionID        string
 	Seq               int64
 	Origin            string
+	OriginKind        string
 	CarrierID         string
 	ManifestDigest    string
 	ScopeDigest       string
@@ -595,6 +599,7 @@ func (q *Queries) InsertProposalRevision(ctx context.Context, arg InsertProposal
 		arg.RevisionID,
 		arg.Seq,
 		arg.Origin,
+		arg.OriginKind,
 		arg.CarrierID,
 		arg.ManifestDigest,
 		arg.ScopeDigest,
@@ -654,6 +659,42 @@ func (q *Queries) InsertSuiteVersion(ctx context.Context, arg InsertSuiteVersion
 		arg.Manifest,
 	)
 	return err
+}
+
+const listBootstrapProposals = `-- name: ListBootstrapProposals :many
+SELECT p.proposal_id FROM proposals p
+WHERE p.project_id = $1 AND p.suite_id = $2
+  AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
+                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id AND r.expected_version_id IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM promotions m
+                  WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
+ORDER BY p.proposal_id
+`
+
+type ListBootstrapProposalsParams struct {
+	ProjectID string
+	SuiteID   string
+}
+
+// The proposals whose revisions all expect no canonical and none of which was promoted; the caller picks the newest.
+func (q *Queries) ListBootstrapProposals(ctx context.Context, arg ListBootstrapProposalsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBootstrapProposals, arg.ProjectID, arg.SuiteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var proposal_id string
+		if err := rows.Scan(&proposal_id); err != nil {
+			return nil, err
+		}
+		items = append(items, proposal_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listChangeProposalsOfCarrier = `-- name: ListChangeProposalsOfCarrier :many
@@ -813,7 +854,7 @@ func (q *Queries) ListProposalIDs(ctx context.Context, arg ListProposalIDsParams
 }
 
 const listProposalRevisions = `-- name: ListProposalRevisions :many
-SELECT project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id, manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id FROM proposal_revisions
+SELECT project_id, suite_id, proposal_id, revision_id, seq, origin, carrier_id, manifest_digest, scope_digest, covered_inputs, expected_version_id, policy_revision_id, origin_kind FROM proposal_revisions
 WHERE project_id = $1 AND suite_id = $2 AND proposal_id = $3
 ORDER BY seq
 `
@@ -846,6 +887,7 @@ func (q *Queries) ListProposalRevisions(ctx context.Context, arg ListProposalRev
 			&i.CoveredInputs,
 			&i.ExpectedVersionID,
 			&i.PolicyRevisionID,
+			&i.OriginKind,
 		); err != nil {
 			return nil, err
 		}

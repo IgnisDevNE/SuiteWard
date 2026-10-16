@@ -1,9 +1,11 @@
 package governance
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,6 +33,18 @@ type HeadRequest struct {
 	Carrier contract.ApprovalCarrierID // github-pr:<repository id>/<pull>
 	Head    contract.SourceRevision    // the PR head SHA
 	Tree    inventory.Tree             // that commit's source tree (AssessHead only)
+	// Revision builds the comment about a revision this call commits; false writes no message. Callers that want no
+	// comment pass a function that returns false.
+	Revision func(RevisionNotice) (OutboxMessage, bool, error)
+}
+
+// RevisionNotice is what the comment about a new change-proposal revision states.
+type RevisionNotice struct {
+	Reference                contract.ProposalReference
+	Previous                 *contract.ProposalReference // the revision it supersedes, nil for R1
+	Canonical                contract.SuiteVersionID     // the base version
+	Added, Modified, Removed []string                    // inventory.Classify against the canonical, sorted
+	Reduced                  bool                        // a scope reduction
 }
 
 type HeadResult struct {
@@ -57,6 +71,8 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 		return HeadResult{}, fmt.Errorf("%w: no content writer", ErrInvalidRequest)
 	case request.Tree == nil:
 		return HeadResult{}, fmt.Errorf("%w: no tree", ErrInvalidRequest)
+	case request.Revision == nil:
+		return HeadResult{}, fmt.Errorf("%w: no revision comment function", ErrInvalidRequest)
 	case strings.TrimSpace(string(request.Head)) == "" || strings.TrimSpace(string(request.Carrier)) == "":
 		return HeadResult{}, fmt.Errorf("%w: a head assessment names a head and a carrier", ErrInvalidRequest)
 	}
@@ -103,9 +119,23 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 		if current, _ := state.Canonical.Suite().CurrentVersionID(); current != version {
 			return fmt.Errorf("%w: from %q to %q", ErrCanonicalMoved, version, current)
 		}
-		reference, err := keepProposalCurrent(ctx, tx, state, request, proposed)
+		revised, previous, err := keepProposalCurrent(ctx, tx, state, request, proposed)
 		if err != nil {
 			return err
+		}
+		reference := revised.Current
+		if revised.Committed {
+			notice := RevisionNotice{Reference: reference, Previous: previous, Canonical: version, Added: classification.Added, Modified: classification.Modified,
+				Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction}
+			message, send, err := request.Revision(notice)
+			if err != nil {
+				return fmt.Errorf("build the revision comment: %w", err)
+			}
+			if send {
+				if err := writeOutbox(ctx, tx, []OutboxMessage{message}); err != nil {
+					return err
+				}
+			}
 		}
 		proposal, consent, err := tx.Proposal(ctx, reference.ProposalID)
 		if err != nil {
@@ -150,21 +180,23 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 // keepProposalCurrent makes the carrier's change proposal cover proposed under the locked Suite's canonical and
 // policy: it creates the proposal with R1 when the carrier has none, adds R<m+1> when the coverage changed,
 // and otherwise leaves the current revision, so consent survives an implementation-only push. It returns the
-// proposal's current reference.
-func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request HeadRequest, proposed contract.ProtectedContract) (contract.ProposalReference, error) {
+// proposal's current reference, whether it was appended, and the revision it superseded (nil when there was none).
+func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request HeadRequest, proposed contract.ProtectedContract) (revised ReviseResult, previous *contract.ProposalReference, err error) {
 	id, found, err := tx.ChangeProposalFor(ctx, request.Carrier)
 	if err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("find the change proposal of %q: %w", request.Carrier, err)
+		return ReviseResult{}, nil, fmt.Errorf("find the change proposal of %q: %w", request.Carrier, err)
 	}
 	next := 1
 	if found {
 		proposal, _, err := tx.Proposal(ctx, id)
 		if err != nil {
-			return contract.ProposalReference{}, fmt.Errorf("load proposal: %w", err)
+			return ReviseResult{}, nil, fmt.Errorf("load proposal: %w", err)
 		}
+		last := proposal.Current().Binding().Reference()
+		previous = &last
 		next = len(proposal.Revisions()) + 1
 	} else if id, err = tx.NextProposalID(ctx); err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("allocate a proposal id: %w", err)
+		return ReviseResult{}, nil, fmt.Errorf("allocate a proposal id: %w", err)
 	}
 	suite := state.Canonical.Suite()
 	expected, _ := suite.CurrentVersionID()
@@ -173,17 +205,17 @@ func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request H
 		ExpectedCanonical: expected, Manifest: proposed.Manifest().Digest(), Scope: proposed.ScopeDigest(), PolicyRevision: state.Policy.RevisionID(), CoveredInputs: proposed.CoveredInputs(),
 	})
 	if err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		return ReviseResult{}, nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	revision, err := contract.NewProposalRevision(binding, request.Head, request.Carrier)
+	revision, err := contract.NewProposalRevision(binding, request.Head, contract.OriginPull, request.Carrier)
 	if err != nil {
-		return contract.ProposalReference{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		return ReviseResult{}, nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	revised, err := reviseWithin(ctx, tx, state, revision)
+	revised, err = reviseWithin(ctx, tx, state, revision)
 	if err != nil {
-		return contract.ProposalReference{}, err
+		return ReviseResult{}, nil, err
 	}
-	return revised.Current, nil
+	return revised, previous, nil
 }
 
 // governingOf rebuilds the governing scope and exact inventory of the canonical. The scope comes from the
@@ -227,16 +259,34 @@ func HeadEvidence(inv inventory.Inventory, binding contract.ApprovalBinding, sou
 	return evidence, nil
 }
 
+// proposalNumber is n of a proposal named P<n> in canonical decimal, and 0 for any other name.
+func proposalNumber(id contract.ProposalID) uint64 {
+	digits, ok := strings.CutPrefix(string(id), "P")
+	n, err := strconv.ParseUint(digits, 10, 64)
+	if !ok || err != nil || strconv.FormatUint(n, 10) != digits {
+		return 0
+	}
+	return n
+}
+
 // NextNumberedProposalID returns P<n+1>, n being the highest number among ids named P<number> in canonical
 // decimal. Other names are not part of the numbering. Both stores use it so they number alike.
 func NextNumberedProposalID(ids []contract.ProposalID) contract.ProposalID {
 	var highest uint64
 	for _, id := range ids {
-		digits, ok := strings.CutPrefix(string(id), "P")
-		n, err := strconv.ParseUint(digits, 10, 64)
-		if ok && err == nil && n > highest && strconv.FormatUint(n, 10) == digits {
-			highest = n
-		}
+		highest = max(highest, proposalNumber(id))
 	}
 	return contract.ProposalID("P" + strconv.FormatUint(highest+1, 10))
+}
+
+// LatestProposalID returns the newest of ids, the one with the highest number among those named P<number>. A name that is
+// not numbered ranks below every numbered one, and such names are ordered by name. False when ids is empty. Both stores use
+// it for LatestBootstrapProposal so they agree.
+func LatestProposalID(ids []contract.ProposalID) (contract.ProposalID, bool) {
+	if len(ids) == 0 {
+		return "", false
+	}
+	return slices.MaxFunc(ids, func(a, b contract.ProposalID) int {
+		return cmp.Or(cmp.Compare(proposalNumber(a), proposalNumber(b)), strings.Compare(string(a), string(b)))
+	}), true
 }

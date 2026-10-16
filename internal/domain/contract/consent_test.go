@@ -27,7 +27,7 @@ func consentRevisionForTest(t *testing.T, input contract.BindingInput) contract.
 	if err != nil {
 		t.Fatal(err)
 	}
-	revision, err := contract.NewProposalRevision(binding, "origin", "carrier")
+	revision, err := contract.NewProposalRevision(binding, "origin", contract.OriginPull, "carrier")
 	if err != nil {
 		t.Fatal(err)
 	}

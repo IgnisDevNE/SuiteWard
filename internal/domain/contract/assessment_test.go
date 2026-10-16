@@ -194,7 +194,7 @@ func TestIntegrityAssessmentRejectsInvalidExpectation(t *testing.T) {
 func TestIntegrityAssessmentRemainsSeparateFromConsent(t *testing.T) {
 	input := integrityBindingInput()
 	binding := mustIntegrityBinding(t, input)
-	revision, err := contract.NewProposalRevision(binding, "candidate-source", "approval-carrier")
+	revision, err := contract.NewProposalRevision(binding, "candidate-source", contract.OriginPull, "approval-carrier")
 	if err != nil {
 		t.Fatalf("NewProposalRevision() error = %v", err)
 	}
@@ -256,7 +256,7 @@ func TestIntegrityAssessmentRemainsSeparateFromConsent(t *testing.T) {
 	input.Reference.RevisionID = "revision-2"
 	input.CoveredInputs["dependencies"] = "lock-2"
 	changedBinding := mustIntegrityBinding(t, input)
-	changedRevision, err := contract.NewProposalRevision(changedBinding, revision.Origin(), revision.Carrier())
+	changedRevision, err := contract.NewProposalRevision(changedBinding, revision.Origin(), revision.OriginKind(), revision.Carrier())
 	if err != nil {
 		t.Fatalf("NewProposalRevision(changed context) error = %v", err)
 	}

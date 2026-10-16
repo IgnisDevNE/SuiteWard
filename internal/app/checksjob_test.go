@@ -113,7 +113,7 @@ func newCJWorld(t *testing.T, canonical bool, options ...func(*bootOptions)) *cj
 	w.reader = &cjCountingReader{fakeBootReader: b.reader, reads: map[string]int{}}
 	w.ledger = &cjRecordingLedger{Store: w.memory}
 	w.check = &checksJob{repos: b.job.repos, reader: w.reader, owners: b.owners, suites: b.suites, contents: nopContents{}, content: b.content, ledger: w.ledger, integrity: w.verdicts, commands: w.cmds,
-		pulls: b.pulls, tier: b.job.tier, problems: w.problems, logger: slog.New(slog.NewJSONHandler(b.logs, nil)), now: func() time.Time { return w.clock }}
+		pulls: b.pulls, tier: b.tier, problems: w.problems, logger: slog.New(slog.NewJSONHandler(b.logs, nil)), now: func() time.Time { return w.clock }}
 	return w
 }
 
@@ -235,31 +235,6 @@ func TestChecksIgnoreRepositoriesThatAreNotConfigured(t *testing.T) {
 	w.mustCheck()
 
 	w.wantNone(4)
-}
-
-func TestChecksSayBootstrapPendingOnEveryOpenPullWithoutACanonical(t *testing.T) {
-	t.Run("no suite", func(t *testing.T) {
-		w := newCJWorld(t, false)
-		w.sync(map[int]string{4: bootHead, 5: cjHead2})
-
-		w.mustCheck()
-
-		w.want(4, checks.InProgress, "bootstrap-pending", 1)
-		w.want(5, checks.InProgress, "bootstrap-pending", 1)
-		w.mustCheck()
-		w.want(4, checks.InProgress, "bootstrap-pending", 1) // the same state writes no new generation
-	})
-	t.Run("a suite without a canonical", func(t *testing.T) {
-		w := newCJWorld(t, false)
-		w.openPulls(bootRepo, 4)
-		w.mustRun() // proposes the baseline, which nobody approved
-		w.sync(map[int]string{4: bootHead, 5: cjHead2})
-
-		w.mustCheck()
-
-		w.want(4, checks.InProgress, "bootstrap-pending", 1)
-		w.want(5, checks.InProgress, "bootstrap-pending", 1)
-	})
 }
 
 func TestChecksPublishSuccessForAnUnchangedHeadAndDoNotReadItsTreeAgain(t *testing.T) {
@@ -548,6 +523,29 @@ func TestChecksKeepTheRecordOnATransientReadAndNeverLeaveANewHeadWithoutACheck(t
 	}
 }
 
+// An upgrade can leave a stored check of a reason the renderer no longer knows (bootstrap-pending): a failed read must not carry it
+// over to a message that cannot be rendered.
+func TestChecksNeverKeepAStoredReasonThatNoLongerExistsOnATransientRead(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.tree(cjHead2, bootFiles("v2"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	stored := checks.Result{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2, State: checks.InProgress, Reason: "bootstrap-pending"}
+	_, _, err := w.memory.Publish(t.Context(), stored, w.clock, func(generation int64) (governance.OutboxMessage, error) {
+		stored.Reason = reasonAssessmentPending // the message of the old record only needs to be a valid one
+		return newCheckMessage(bootRepo, stored, owner.TierIsolated, "", generation)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+
+	if err := w.runChecks(); err != nil {
+		t.Fatalf("a stored reason that no longer exists must not fail the run: %v", err)
+	}
+
+	w.want(5, checks.InProgress, "assessment-pending", 2)
+}
+
 func TestChecksGiveANewHeadWhoseFirstReadFailedAnAssessmentPendingCheck(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
@@ -644,7 +642,7 @@ func TestChecksFailTheRunOnAStoreErrorAfterEveryRepositoryAndShowItInStatus(t *t
 	if !errors.Is(err, errBootStore) {
 		t.Fatalf("run error %v, want the store error", err)
 	}
-	if record, found, _ := w.memory.Current(t.Context(), bootOtherRepoID, 3); !found || record.Reason != "bootstrap-pending" {
+	if record, found, _ := w.memory.Current(t.Context(), bootOtherRepoID, 3); !found || record.Reason != "bootstrap-awaiting" {
 		t.Fatalf("the other repository was not tried: %+v, found %v", record, found)
 	}
 	if got := w.problems.lookup(bootRepo); got != "failed" {

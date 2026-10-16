@@ -295,6 +295,76 @@ The job counts also exclude `github_merges` and `canonical_integrity`.
 - It never claims that tests ran, and stays under the comment limit with a worst-case test.
 - `splitKey` accepts the kinds `revision` and `bootstrap-summary` with their three parts.
 
+### Explicit bootstrap: propose and skip (M1.7b rework, 2026-10-16)
+
+This replaces these parts of the section above: "Who writes what", the `github_bootstrap` changes, and `github_checks` without a canonical (steps 1–4). The texts, keys and merges-job rules of the section above still apply unless changed here.
+
+**Who writes what.**
+- The commands job writes every bootstrap proposal, of both kinds, on `/suiteward propose`.
+- The checks job assesses the carrier's head but writes no proposal.
+- The bootstrap job only promotes an approved `branch` baseline.
+- The merges job decides V1 from the merged `pull` carrier.
+
+**`github_commands`: `/suiteward propose`.** Owner-authored, no code. It goes through the D-COMMANDS checks first (before enrollment, not a command, author, edited first). Then, in order:
+1. **Refusals**, recorded `propose-refused` with ack `ack:<repository id>:<comment id>`:
+   - `canonical-present`: the Suite has a canonical;
+   - `fork`: the PR is a fork, by `HeadRepo` as in M1.7.
+2. **Pick the source.** Read the default branch head (`Reader.BranchHead`) and its tree.
+   - The tree has `.suiteward.yml`: the source is that pinned commit, with origin kind `branch`.
+   - Otherwise, read the PR head tree. If it has `.suiteward.yml`, the source is the PR head, with origin kind `pull`.
+   - Otherwise, `propose-refused` with reason `declaration-missing`. The ack payload carries:
+     - `suggestion`: up to 20 include patterns, from the test-like paths of the PR head tree (or of the default branch when the PR has none). It is built by `inventory.SuggestScope`. The patterns are `tests/**`, `test/**`, `__tests__/**` and `spec/**` for a matching top-level directory, and the file's own directory plus a glob for `*_test.*`, `*.test.*`, `*.spec.*` and `test_*.py`.
+     - `branch`: the PR's head ref, for the link.
+
+     When no test-like path is found, `suggestion` is empty. The text then gives a minimal `version: 1` with an `include:` placeholder to fill in, and the link carries that minimal file. The text shows the YAML and the link `https://github.com/<repo>/new/<path-escaped branch>?filename=.suiteward.yml&value=<URL-encoded YAML>` (verified 2026-10-16 on SuiteWardQ2: GitHub fills both the name and the content).
+3. **Empty inventory.** An empty inventory gives `propose-refused`, reason `empty-inventory`.
+4. **Idempotent reuse.** If the Suite's latest bootstrap proposal is carried by this PR, and its current revision has the same origin and coverage as the source, reuse it: no new proposal. Record `proposed` with a short acknowledgment, "already proposed as `P<n>-R<m>`". This covers a retry after a failure between the proposal and the ledger write, and a repeated `propose` on an unchanged PR.
+5. **Otherwise propose.** Call `ProposeBaseline`:
+   - `P<n+1>-R1`, with `n` the Suite's highest proposal number;
+   - the carrier is this PR;
+   - the origin is the source commit, with the kind from step 2;
+   - with the `bootstrap-summary` message as the acknowledgment.
+
+   Record `proposed`.
+6. **Errors.** A transient GitHub or store error is an error of this candidate. It follows the D-COMMANDS retry rule: the run stops, and after 5 attempts the candidate is recorded `failed`. A `propose` recorded `failed` gets an acknowledgment that tells the owner to comment `/suiteward propose` again.
+7. **Known limit.** The reads run inside the single serialized commands job and its `JOB_TIMEOUT`: the default-branch tree, possibly the PR tree, and one blob per protected file. At about 0.37 s per request (S1), about 150 protected files fill one run of the default 1 minute. A larger source times out, delays every command behind it for 5 runs, and then ends `failed`, with its acknowledgment. Raising `JOB_TIMEOUT` or moving the reads out of the queue comes in M1.7c or later.
+
+**`github_commands`: `/suiteward skip <code>`.** Owner-authored. The code is checked and consumed as for `approve`, with the same dispositions for a bad code.
+- **Refusals**, recorded `skip-refused` with an ack:
+  - `canonical-present`;
+  - `fork`;
+  - `carrier`: the PR carries the Suite's latest bootstrap proposal.
+- **Otherwise** record `skipped` with an ack. The ack says the PR may merge before the first contract and that nothing was assessed.
+
+**`github_checks` before V1**, for each open PR of a repository whose Suite exists and has no canonical. A repository with no Suite gives `bootstrap-awaiting` on every PR.
+1. **Fork:** `in_progress`, `fork-unsupported`.
+2. **The carrier.** The carrier is the PR carrying the Suite's latest bootstrap proposal (`Tx.LatestBootstrapProposal`).
+   - **A `pull` proposal.** After the M1.6b fast path, call `AssessBootstrapHead` on the head:
+     - cancelled (the coverage differs from the proposal's current revision): `in_progress`, `bootstrap-awaiting`, plus one comment `bootstrap-cancelled:<repository id>:P<n>-R<m>` saying the protected files changed and to comment `/suiteward propose` again. A later push that restores the exact coverage makes the revision current again, and that is safe.
+     - otherwise: `in_progress`, `approval-missing` with the reference, or `success`, `bootstrap-ready`.
+   - **A `branch` proposal.** The check is `in_progress`, `approval-missing`, with the reference, until the bootstrap job promotes V1. Right after the approval it may stay so for up to one bootstrap period (about 60 s), until the promotion. That is accepted: V1 then exists, and the PR is assessed as a change.
+3. **Skipped.** A `skipped` entry exists for this pull under the current enrollment (`commands.Store.Skipped`): `success`, `bootstrap-skipped`. This is read on every run for non-carrier PRs and is never behind the fast path: that path keys on the latest owner command, which ignores `skip`.
+4. **Otherwise:** `in_progress`, `bootstrap-awaiting`, plus one comment `bootstrap-notice:<repository id>:<pull>` saying how to start (`/suiteward propose`) or skip (`/suiteward skip <code>`).
+
+Other rules:
+- The owner-command `failure` applies only to `approve` and `revoke` dispositions. `proposed`, `propose-refused`, `skipped` and `skip-refused` never set it or clear it.
+- The automatic carrier choice, the default-branch plan and its cache are removed.
+
+**`github_bootstrap` (promote only).**
+- It still creates the Suite on `ErrNotFound`, unchanged from M1.6a step 1. A `propose` that comes before that keeps today's `no-suite` disposition and its acknowledgment.
+- With no canonical, when the Suite's latest bootstrap proposal is `branch` and the owner approved its current revision, it re-reads the origin, records the assessment and calls `Bootstrap`, as before.
+- It proposes nothing.
+- Its `/status` codes are `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>` and `failed`. These were removed: `no-open-pull-request`, `awaiting-initial-contract`, `awaiting-merge-decision`.
+
+**`github_merges`.** `PromoteMerge` decides V1 only for the carrier of the Suite's latest bootstrap proposal, and only when that proposal is `pull`. Every other merge before V1 is `before-canonical`.
+
+**Check texts.**
+- `bootstrap-awaiting`: "SuiteWard has no canonical contract yet." It says how to start (`/suiteward propose` on the PR that should carry the first contract) and how to skip (`/suiteward skip <code>`). It never names an approve command.
+- `bootstrap-skipped` (`success`): "Skipped by the owner before the first contract." It says that no contract exists and nothing was assessed.
+- `bootstrap-pending` is replaced by `bootstrap-awaiting`.
+
+**Comment keys.** `bootstrap-notice:<repository id>:<pull>` and `bootstrap-cancelled:<repository id>:P<n>-R<m>` are new. `splitKey` accepts them. `ack:` payloads gain the dispositions `proposed` (not used: a proposal's ack is its `bootstrap-summary`), `propose-refused` (`reason`, plus `suggestion` and `branch` for `declaration-missing`), `skipped` and `skip-refused` (`reason`).
+
 ### Protection verification job (M1.5)
 
 - `github_protection_check`: one periodic River job every 15 minutes with `RunOnStart`, `MaxAttempts` 1 and unique while unfinished, registered only when the GitHub settings are set. It verifies every configured repository (D-PROTECTION) with the protection token (Metadata and Administration read) through the same budget as synchronization, records each result (persistence contract, M1.5), and never fails the job for a GitHub answer: a read failure is the result `unknown`. A budget or rate-limit wait skips the repository until the next run. The check starts no repository after the tick deadline (`JOB_TIMEOUT` minus 5 s) and records only the repositories it finished. Results are keyed by the repository's numeric id: an enrolled repository is recorded even when its read fails (`unknown`), while a repository that was never read and is not enrolled has no result yet, so `/status` omits its `protection` until a read succeeds.

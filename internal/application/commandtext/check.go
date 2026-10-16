@@ -110,7 +110,11 @@ func CheckSummary(c Check) (title, summary string) {
 		facts = append(facts, fmt.Sprintf("- Canonical version: V%d", c.Version))
 	}
 	facts = append(facts, "- Installation tier: `"+tier+"`")
-	parts := []string{reason.text, strings.Join(facts, "\n")}
+	text := reason.text
+	if c.Reason == "approval-missing" && c.Version == 0 { // no canonical: the head proposes the first contract, it changes none
+		text = "This pull request carries the proposed first contract " + ref + ", awaiting the owner's approval of that exact revision."
+	}
+	parts := []string{text, strings.Join(facts, "\n")}
 	if c.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}

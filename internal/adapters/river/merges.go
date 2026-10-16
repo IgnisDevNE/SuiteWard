@@ -21,20 +21,22 @@ func (mergesArgs) Kind() string { return MergesKind }
 
 type mergesWorker struct {
 	riverqueue.WorkerDefaults[mergesArgs]
-	run func(ctx context.Context) (Wake, error)
+	run   func(ctx context.Context) (Wake, error)
+	waker *waker
 }
 
 func (w *mergesWorker) Work(ctx context.Context, _ *riverqueue.Job[mergesArgs]) error {
-	_, err := w.run(ctx)
+	wake, err := w.run(ctx)
+	w.waker.wake(ctx, wake)
 	return err
 }
 
 // addMerges registers the merges job of config in workers and returns its periodic job (none when config has no merges job).
-func addMerges(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.PeriodicJob, err error) {
+func addMerges(workers *riverqueue.Workers, config Config, waker *waker) (jobs []*riverqueue.PeriodicJob, err error) {
 	if config.Merges == nil {
 		return jobs, nil
 	}
-	if err := riverqueue.AddWorkerSafely(workers, &mergesWorker{run: config.Merges}); err != nil {
+	if err := riverqueue.AddWorkerSafely(workers, &mergesWorker{run: config.Merges, waker: waker}); err != nil {
 		return nil, fmt.Errorf("register the merges job: %w", err)
 	}
 	interval := config.MergesInterval
@@ -43,8 +45,8 @@ func addMerges(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.P
 	}
 	run := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			// A run does not start while an earlier one runs; one that failed is not retried, the next run is.
-			return mergesArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
+			// Periodic runs coalesce while one is unfinished (the kind has a queue of one worker); one that failed is not retried, the next run is.
+			return mergesArgs{}, &riverqueue.InsertOpts{Queue: MergesKind, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: MergesKind, RunOnStart: true})
 	return append(jobs, run), nil

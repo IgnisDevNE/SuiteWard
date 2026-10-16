@@ -21,20 +21,22 @@ func (bootstrapArgs) Kind() string { return BootstrapKind }
 
 type bootstrapWorker struct {
 	riverqueue.WorkerDefaults[bootstrapArgs]
-	run func(ctx context.Context) (Wake, error)
+	run   func(ctx context.Context) (Wake, error)
+	waker *waker
 }
 
 func (w *bootstrapWorker) Work(ctx context.Context, _ *riverqueue.Job[bootstrapArgs]) error {
-	_, err := w.run(ctx)
+	wake, err := w.run(ctx)
+	w.waker.wake(ctx, wake)
 	return err
 }
 
 // addBootstrap registers the bootstrap job of config in workers and returns its periodic job (none when config has no bootstrap).
-func addBootstrap(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.PeriodicJob, err error) {
+func addBootstrap(workers *riverqueue.Workers, config Config, waker *waker) (jobs []*riverqueue.PeriodicJob, err error) {
 	if config.Bootstrap == nil {
 		return jobs, nil
 	}
-	if err := riverqueue.AddWorkerSafely(workers, &bootstrapWorker{run: config.Bootstrap}); err != nil {
+	if err := riverqueue.AddWorkerSafely(workers, &bootstrapWorker{run: config.Bootstrap, waker: waker}); err != nil {
 		return nil, fmt.Errorf("register the bootstrap: %w", err)
 	}
 	interval := config.BootstrapInterval
@@ -43,8 +45,8 @@ func addBootstrap(workers *riverqueue.Workers, config Config) (jobs []*riverqueu
 	}
 	run := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			// A run does not start while an earlier one runs; one that failed is not retried, the next run is.
-			return bootstrapArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
+			// Periodic runs coalesce while one is unfinished (the kind has a queue of one worker); one that failed is not retried, the next run is.
+			return bootstrapArgs{}, &riverqueue.InsertOpts{Queue: BootstrapKind, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: BootstrapKind, RunOnStart: true})
 	return append(jobs, run), nil

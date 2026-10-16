@@ -17,7 +17,7 @@ const (
 )
 
 // defaultSyncInterval is the period of the synchronization tick (D-SYNC).
-const defaultSyncInterval = time.Minute
+const defaultSyncInterval = 20 * time.Second
 
 // uniqueWhileActive makes a job unique among the jobs that have not finished
 // (River requires available, pending, running and scheduled in a custom list);
@@ -33,11 +33,13 @@ func (syncTickArgs) Kind() string { return SyncTickKind }
 
 type syncTickWorker struct {
 	riverqueue.WorkerDefaults[syncTickArgs]
-	run func(ctx context.Context) (Wake, error)
+	run   func(ctx context.Context) (Wake, error)
+	waker *waker
 }
 
 func (w *syncTickWorker) Work(ctx context.Context, _ *riverqueue.Job[syncTickArgs]) error {
-	_, err := w.run(ctx)
+	wake, err := w.run(ctx)
+	w.waker.wake(ctx, wake)
 	return err
 }
 
@@ -54,27 +56,29 @@ func (syncRepoArgs) InsertOpts() riverqueue.InsertOpts {
 
 type syncRepoWorker struct {
 	riverqueue.WorkerDefaults[syncRepoArgs]
-	run func(ctx context.Context, repo string) (Wake, error)
+	run   func(ctx context.Context, repo string) (Wake, error)
+	waker *waker
 }
 
 func (w *syncRepoWorker) Work(ctx context.Context, job *riverqueue.Job[syncRepoArgs]) error {
-	_, err := w.run(ctx, job.Args.Repo)
+	wake, err := w.run(ctx, job.Args.Repo)
+	w.waker.wake(ctx, wake)
 	return err
 }
 
 // addSync registers the synchronization jobs of config in workers and returns
 // their periodic jobs (none when config has no synchronization).
-func addSync(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.PeriodicJob, err error) {
+func addSync(workers *riverqueue.Workers, config Config, waker *waker) (jobs []*riverqueue.PeriodicJob, err error) {
 	if (config.SyncTick == nil) != (config.SyncRepo == nil) {
 		return nil, errors.New("river runtime requires both synchronization handlers or neither")
 	}
 	if config.SyncTick == nil {
 		return jobs, nil
 	}
-	if err := riverqueue.AddWorkerSafely(workers, &syncTickWorker{run: config.SyncTick}); err != nil {
+	if err := riverqueue.AddWorkerSafely(workers, &syncTickWorker{run: config.SyncTick, waker: waker}); err != nil {
 		return nil, fmt.Errorf("register the synchronization tick: %w", err)
 	}
-	if err := riverqueue.AddWorkerSafely(workers, &syncRepoWorker{run: config.SyncRepo}); err != nil {
+	if err := riverqueue.AddWorkerSafely(workers, &syncRepoWorker{run: config.SyncRepo, waker: waker}); err != nil {
 		return nil, fmt.Errorf("register the repository synchronization: %w", err)
 	}
 	interval := config.SyncInterval
@@ -83,8 +87,8 @@ func addSync(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.Per
 	}
 	tick := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			// A tick does not start while an earlier one runs; one that failed is not retried, the next tick is.
-			return syncTickArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
+			// Periodic ticks coalesce while one is unfinished (the kind has a queue of one worker); one that failed is not retried, the next tick is.
+			return syncTickArgs{}, &riverqueue.InsertOpts{Queue: SyncTickKind, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: SyncTickKind, RunOnStart: true})
 	return append(jobs, tick), nil

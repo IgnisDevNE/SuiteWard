@@ -142,7 +142,9 @@ func TestASyncRepoJobIsRetriedUpToJobMaxAttempts(t *testing.T) {
 func TestSyncJobsNeedBothHandlersAndAreAbsentWithoutThem(t *testing.T) {
 	w := newWorld(t, 5)
 	for name, mutate := range map[string]func(*river.Config){
-		"a tick without a repo handler": func(c *river.Config) { c.SyncTick, c.SyncRepo = noWake(func(context.Context) error { return nil }), nil },
+		"a tick without a repo handler": func(c *river.Config) {
+			c.SyncTick, c.SyncRepo = noWake(func(context.Context) error { return nil }), nil
+		},
 		"a repo handler without a tick": func(c *river.Config) { c.SyncTick, c.SyncRepo = nil, noWakeRepo(noRepo) },
 	} {
 		config := testConfig(&logCapture{})
@@ -161,8 +163,11 @@ func TestSyncJobsNeedBothHandlersAndAreAbsentWithoutThem(t *testing.T) {
 	}
 }
 
-// noWake adapts a run that wakes nothing.
+// noWake adapts a run that wakes nothing; a nil run stays nil, which registers no job.
 func noWake(run func(context.Context) error) func(context.Context) (river.Wake, error) {
+	if run == nil {
+		return nil
+	}
 	return func(ctx context.Context) (river.Wake, error) { return nil, run(ctx) }
 }
 

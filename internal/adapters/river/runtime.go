@@ -39,10 +39,11 @@ type Config struct {
 	Handlers             map[string]Handler           // by job kind, added to the probe handler; the probe kind is reserved
 	Publishers           map[string]Publisher         // by message kind, added to the probe publisher; the probe kind is reserved
 	// SyncTick and SyncRepo are the GitHub synchronization jobs (SyncTickKind every SyncInterval, SyncRepoKind per request);
-	// both are set or both nil, and nil registers neither.
+	// both are set or both nil, and nil registers neither. SyncTick, SyncRepo, Commands, Merges and Bootstrap return the
+	// job kinds to wake after the run ends, whatever its error; see Wake.
 	SyncTick     func(ctx context.Context) (Wake, error)
 	SyncRepo     func(ctx context.Context, repo string) (Wake, error)
-	SyncInterval time.Duration // zero means one minute
+	SyncInterval time.Duration // zero means 20 seconds
 	// ProtectionCheck is the protection verification job (ProtectionCheckKind every ProtectionInterval); nil registers none.
 	ProtectionCheck    func(ctx context.Context) error
 	ProtectionInterval time.Duration // zero means 15 minutes
@@ -131,6 +132,7 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 		return nil, err
 	}
 	workers := riverqueue.NewWorkers()
+	wake := &waker{pool: pool, logger: config.Logger}
 	for kind, handler := range handlers {
 		if handler == nil {
 			return nil, fmt.Errorf("river runtime has no handler function for kind %q", kind)
@@ -151,11 +153,11 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	if err != nil {
 		return nil, err
 	}
-	bootstrapJobs, err := addBootstrap(workers, config)
+	bootstrapJobs, err := addBootstrap(workers, config, wake)
 	if err != nil {
 		return nil, err
 	}
-	mergesJobs, err := addMerges(workers, config)
+	mergesJobs, err := addMerges(workers, config, wake)
 	if err != nil {
 		return nil, err
 	}
@@ -167,22 +169,24 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	if err != nil {
 		return nil, err
 	}
-	commandsJobs, err := addCommands(workers, config)
+	commandsJobs, err := addCommands(workers, config, wake)
 	if err != nil {
 		return nil, err
 	}
-	syncJobs, err := addSync(workers, config)
+	syncJobs, err := addSync(workers, config, wake)
 	if err != nil {
 		return nil, err
 	}
 	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
 		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
-		Queues:       map[string]riverqueue.QueueConfig{riverqueue.QueueDefault: {MaxWorkers: config.Workers}, outboxQueue: {MaxWorkers: 1}},
+		Queues: map[string]riverqueue.QueueConfig{riverqueue.QueueDefault: {MaxWorkers: config.Workers}, outboxQueue: {MaxWorkers: 1},
+			SyncTickKind: {MaxWorkers: 1}, CommandsKind: {MaxWorkers: 1}, ChecksKind: {MaxWorkers: 1}, MergesKind: {MaxWorkers: 1}, BootstrapKind: {MaxWorkers: 1}},
 		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs, bootstrapJobs, commandsJobs, checksJobs, mergesJobs, integrityJobs),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create the River client: %w", err)
 	}
+	wake.client = client
 	return &Runtime{client: client, sync: len(syncJobs) > 0}, nil
 }
 

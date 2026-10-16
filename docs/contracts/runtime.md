@@ -393,11 +393,17 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
   - That value is `Cycle.StartedAt`. It is never the tick's first response, and never the local clock.
   - A zero `Date` fails that repository's cycle with the failure kind `decode`. Nothing is recorded as a success, and `/status` shows `lastError` `decode`.
 - `Cycle.Requests` is the number of requests the cycle made, and `Cycle.Changed` reports whether any of them was not a 304.
+- `Reconciler.Tick` and `SyncRepo` return a `TickResult`, which carries:
+  - `Requests`, summed over the cycles;
+  - `Changed`, true if any recorded cycle changed;
+  - `FirstObserved`, the comments recorded for the first time, each with its repository, id, `created_at`, the cycle's `StartedAt` and the previous `CycleStartedAt`.
+
+  The app logs the detector line from it and decides the wake-ups. `RecordCycle` returns the ids of the comments it inserted for the first time.
 - **Listing-lag detector.** For each comment a cycle observes for the first time, the sync logs one Info line, "github comment first observed". It carries:
   - the repository and the comment id;
   - the comment's `created_at`;
   - this cycle's `StartedAt`;
-  - that repository's previous successful `StartedAt`, kept in memory, or none after a restart;
+  - that repository's previous successful `StartedAt`, which is its stored `CycleStartedAt` read at the start of the cycle, or none;
   - `missed_by_ms`, the previous start minus `created_at`, logged only when it is positive.
 
   It carries no comment text. A positive `missed_by_ms` means a cycle that started after the comment did not list it, which is GitHub's listing lag. The margin must stay above the largest value seen.

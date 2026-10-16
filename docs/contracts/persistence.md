@@ -1125,6 +1125,8 @@ This replaces the parts of the M1.7b section above that this list names.
 - `RecordCycle` stores `StartedAt` in the same transaction as `last_success`. A later cycle with an earlier `StartedAt` is still recorded, because the value is the cycle's own. The horizon takes the minimum over repositories, never over cycles.
 - `RecordFailure` leaves `cycle_started_at` unchanged, as it leaves `last_success`.
 - `Requests` and `Changed` are not stored.
+- `RecordCycle(ctx, cycle) ([]int64, error)` returns the ids of the comments that this call inserted for the first time, in ascending order. A comment it already had is never returned.
+- Conformance: a second identical `RecordCycle` returns no ids.
 
 **Migration `00018_cycle_start.sql`** (forward-only):
 

@@ -42,7 +42,7 @@ func addIntegrity(workers *riverqueue.Workers, config Config) (jobs []*riverqueu
 	}
 	run := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			// A run does not start while an earlier one runs; one that failed is not retried, the next run is.
+			// Periodic runs coalesce while one is unfinished (the kind has a queue of one worker); one that failed is not retried, the next run is.
 			return integrityArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: IntegrityKind, RunOnStart: true})

@@ -21,7 +21,7 @@ type BaselineRequest struct {
 	Reference  contract.ProposalReference // the proposal and its new revision id
 	Carrier    contract.ApprovalCarrierID // the PR that hosts the approval
 	Origin     contract.SourceRevision    // the pinned principal-branch commit, or the PR head of a pull-sourced bootstrap
-	OriginKind contract.OriginKind        // OriginBranch for the bootstrap job, OriginPull for AssessBootstrapHead
+	OriginKind contract.OriginKind        // OriginBranch for the bootstrap job, OriginPull for a PR head proposed by the commands job
 	Tree       inventory.Tree             // that commit's source tree
 	Outbox     []OutboxMessage            // written with a new revision, never when the coverage is unchanged
 }

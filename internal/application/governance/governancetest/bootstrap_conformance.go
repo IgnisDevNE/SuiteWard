@@ -100,10 +100,11 @@ func cfLatestBootstrapNone(e *cfEnv) {
 	e.requireLatestBootstrap("")
 }
 
-// R5a proposes P<n+1>-R1 for a new source while an older unpromoted proposal stays open, of either origin kind.
+// R5a proposes P<n+1>-R1 for a new source while an older unpromoted proposal stays open, of either origin kind: a pull one
+// beside nothing, a branch one beside a pull one, a pull one beside a branch one.
 func cfProposeBaselineBesideAnOlderOne(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite)
-	for i, kind := range []contract.OriginKind{contract.OriginPull, contract.OriginBranch} {
+	for i, kind := range []contract.OriginKind{contract.OriginPull, contract.OriginBranch, contract.OriginPull} {
 		proposal := contract.ProposalID(fmt.Sprintf("P%d", i+1))
 		reference := contract.ProposalReference{ProjectID: cfProject, SuiteID: cfSuite, ProposalID: proposal, RevisionID: "R1"}
 

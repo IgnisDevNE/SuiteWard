@@ -310,8 +310,8 @@ func (j *checksJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, suite 
 }
 
 // planBootstrap decides, for the open pull requests of a repository whose Suite has no canonical, whether the branch
-// path is pending (the default branch has protected files) and which pull request carries the bootstrap: the lowest
-// open non-fork one that already has a bootstrap proposal, else the lowest whose head has protected files. problem is
+// path is pending (the default branch has protected files) and which pull request carries the bootstrap: the open non-fork
+// one that carries the Suite's latest pull bootstrap proposal, else the lowest whose head has protected files. problem is
 // a code for /status.
 func (j *checksJob) planBootstrap(ctx context.Context, p owner.ProjectPolicy, target contract.IntegrationTargetID, pulls []githubsync.PullState) (plan bootstrapPlan, problem string, err error) {
 	branch, ok := strings.CutPrefix(string(target), targetPrefix)
@@ -502,8 +502,8 @@ func (j *checksJob) assessed(head governance.HeadResult, base checks.Result) (ch
 	return readiness(result, head.Ready, head.Reason, reasonReady)
 }
 
-// bootstrapped maps the assessment of a bootstrap carrier's head to its check. A head with no protected files has no
-// bootstrap to approve: the pull request waits like any other.
+// bootstrapped maps the assessment of a bootstrap carrier's head to its check. A cancelled head (no proposal of this pull
+// request to approve, or other coverage than the proposal's) waits like any other pull request.
 func (j *checksJob) bootstrapped(head governance.BootstrapHeadResult, base checks.Result) (checks.Result, error) {
 	result := base
 	result.Revision = head.Revision

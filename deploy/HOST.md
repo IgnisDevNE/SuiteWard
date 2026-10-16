@@ -550,7 +550,7 @@ No code, token, setup output or secret in tickets, logs or messages. The warning
 ## 6e. The explicit bootstrap (M1.7b)
 
 SuiteWard bootstraps a repository only when the owner asks ([ADR 0010](../docs/decisions/0010-repository-bootstrap.md), [D-CHECKS and D-COMMANDS](../docs/plan/decisions.md)). Until the first canonical version (V1) exists:
-- every PR gets `in_progress`, `bootstrap-awaiting`, with one notice comment that says how to start or skip;
+- every open PR gets `in_progress`, `bootstrap-awaiting`, with one notice comment that says how to start or skip, except: a fork PR (`fork-unsupported`), the PR that carries the latest proposal (`approval-missing`, then `success`, `bootstrap-ready` once approved) and a skipped PR (`success`, `bootstrap-skipped`);
 - `/suiteward propose` (owner, no code) creates the proposal. The source is the default branch when it has `.suiteward.yml`; otherwise it is the PR head, when the head has the file. Without the file in either place, the reply refuses with `declaration-missing`, suggests a declaration and gives a one-click link to commit it;
 - a protected push to a PR-head proposal cancels it (`bootstrap-awaiting`, one cancelled comment) and the owner proposes again; the newest proposal wins;
 - `/suiteward skip <code>` lets a PR merge before V1: `success`, `bootstrap-skipped`, nothing assessed;
@@ -572,7 +572,7 @@ Owner housekeeping before the deploy:
 
 ### 6e.2 Deploy the rework on the host
 
-1. As `suiteward` (section 1), write down the commit of the running image. It is the rollback target:
+1. As `suiteward` (section 1), optionally write down the commit of the running image, for reference only (there is no image rollback after step 2):
 
    ```
    podman inspect suiteward --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
@@ -593,7 +593,7 @@ Owner housekeeping before the deploy:
    - no `lastError` in `github`;
    - SuiteWardQ2 shows no `bootstrap` error. The codes the bootstrap job can still report are listed in the [contract](../docs/contracts/runtime.md#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16); `no-open-pull-request` and `awaiting-initial-contract` no longer exist;
    - `outbox.failed` is 0.
-5. Keep the previous image as the rollback. The schema stays at 17 after the migration, so report before rolling back instead of improvising.
+5. **There is no image rollback.** Once migration `00017` is applied, the database is newer than any older image: it refuses to start (forward-only migrations) and the quadlet restarts it in a loop. If the new image fails, do not start an older one. Capture `journalctl --user -u suiteward.service -n 50 --no-pager` (log lines carry no secret) and report.
 
 ### 6e.3 Host scenario on SuiteWardQ2 (the propose path from the PR head)
 
@@ -601,9 +601,9 @@ Allow about 1 to 2 minutes per step: synchronization takes up to 60 s, and the c
 
 1. **Awaiting.** Open a PR that adds `.github/workflows/ci.yml` (the `CI / test` workflow used in SuiteWardQ) and one file in `tests/`, **without** `.suiteward.yml`. Expect the check `in_progress`, `bootstrap-awaiting`, plus one notice comment that names `/suiteward propose` and `/suiteward skip <code>`.
 2. **Propose without a declaration.** Comment `/suiteward propose`. Expect a refusal with `declaration-missing`, a suggested `.suiteward.yml` and a link. Open the link and commit the file to the PR branch. This shows the suggestion and the link.
-3. **Propose.** Comment `/suiteward propose` again. Expect a bootstrap comment naming the PR head and the next free proposal number, `P<n>-R1`. The check becomes `in_progress` with that reference.
+3. **Propose.** The command reads the PR head from the last synchronization, so wait about a minute after the commit, until the check shows the new head, before commenting. Then comment `/suiteward propose` again. Expect a bootstrap comment naming the PR head and the next free proposal number, `P<n>-R1`. The check becomes `in_progress` with that reference.
 4. **Cancel.** Push another file in `tests/`. Expect the proposal cancelled: one cancelled comment, and the check back at `bootstrap-awaiting`.
-5. **Propose again.** Comment `/suiteward propose`. A new proposal number appears.
+5. **Propose again.** Wait for the cancelled comment and about a minute after your push (the check must show the new head), then comment `/suiteward propose`. A new proposal number appears.
 6. **Approve.** Approve the revision the check names, with the new host entry. Expect `success`, "Bootstrap ready for integration".
 7. **Merge,** by any method. Expect a comment saying V1 was promoted from the merge commit.
 8. **Change PR.** Open a PR that changes a file in `tests/`. Expect the `revision` comment and `in_progress`; approve it and merge it: V2.
@@ -614,17 +614,25 @@ Paste back (no secrets), for each step: the PR number, the first line of the com
 
 ### 6e.4 Co-located stack on SuiteWardQ3 (skip, then the branch path)
 
-1. **Update the stack with the new image.** SuiteWardQ3 has had no PR since its setup, so nothing is purged and no new `setup` is needed. Follow the update procedure of [local development](../docs/local-development.md#verifying-m17b-on-the-co-located-stack) (pull the image, run `./deploy/local.ps1` again with the GitHub id parameters, run the smoke test).
+1. **Update the stack with the new image.** SuiteWardQ3 has had no PR since its setup, so nothing is purged and no new `setup` is needed. Follow the update procedure of [local development](../docs/local-development.md#verifying-m17b-on-the-co-located-stack): pull the image, run `./deploy/local.ps1` again with the GitHub id parameters, then the smoke test from the PowerShell session in the checkout:
+
+   ```
+   Get-Content -Raw deploy/smoke.sh | podman machine ssh "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"
+   ```
+
+   As on the host, there is no image rollback after migration `00017`: if the new image fails, do not start an older one; capture `podman logs --tail 50 suiteward` and report.
 2. Check `/status` through the machine (`podman machine ssh "curl -s http://127.0.0.1:8081/status"`): `schemaVersion` 17 and no error, as in 6e.2 step 4.
 
 The scenario, with the co-located entry's codes:
 1. **Awaiting.** Open a PR that adds `.suiteward.yml` (`version: 1`, `include: [tests/**]`), the CI workflow and one file in `tests/`. Expect `bootstrap-awaiting`.
 2. **Skip.** Comment `/suiteward skip <code>`. Expect `success`, `bootstrap-skipped`. Merge it. There is no V1: the merge is before the canonical.
 3. **Propose on another PR.** Open another PR (any change) and comment `/suiteward propose`. The default branch now has the declaration, so the proposal is a default-branch baseline carried by this PR. Expect the bootstrap comment and `in_progress` with the reference.
-4. **Approve.** Approve it. V1 is promoted within about one bootstrap period (60 s) of the approval, not at merge.
-5. **Assessed as a change.** The PR is then assessed as a change against V1.
+4. **Approve.** Approve it (the command is in the check's details). V1 is promoted within about one bootstrap period (60 s) of the approval, not at merge. Expect a comment that starts "Bootstrap complete: P<n>-R1, approved by <owner>, is now canonical version V1." and, in `/status`, no `bootstrap` error.
+5. **Assessed as a change.** The PR is then assessed as a change against V1. If it changed only files outside `tests/`, the check is `success`, "No protected change". If it changed a protected file, you get the `revision` comment and the check is `in_progress` until you approve that revision.
 
-Then put the stack back without GitHub (`./deploy/local.ps1`).
+Paste back (no secrets), for each step: the PR number, the first line of the comment, and the state of the check. Never paste a code, the `otpauth://` URI, a base32 secret, a token or setup output.
+
+Cleanup: close any PR you opened and did not merge, then put the stack back without GitHub (`./deploy/local.ps1`).
 
 ### 6e.5 Troubleshooting
 
@@ -637,6 +645,8 @@ Then put the stack back without GitHub (`./deploy/local.ps1`).
   - `carrier`: this PR carries the latest bootstrap proposal; skip another PR.
   - `canonical-present`: V1 exists.
   - `fork`: as above.
+  - A refused `skip` has already consumed its code: wait for a fresh code before the next command.
+- **A command answered `no-suite`.** It came before the bootstrap job created the Suite for the repository (right after the service starts or the repository is added). Wait a minute or two, then comment the command again (with a fresh code for `skip`).
 - **A cancelled proposal.** A protected push changed the coverage of a PR-head proposal. The check is `bootstrap-awaiting` and one cancelled comment names the reference. Comment `/suiteward propose` again. A push that restores the exact coverage makes the revision current again.
 - **A merge of a superseded PR.** Only the carrier of the latest PR-head proposal is decided as V1. Any other PR merged before V1, including the carrier of a superseded proposal, is `before-canonical`: no version. The default branch now holds its files, so comment `/suiteward propose` on an open PR (the branch path) when it has `.suiteward.yml`.
 - **A `propose` answered `failed`.** A transient GitHub or store failure, after 5 attempts. Comment `/suiteward propose` again.

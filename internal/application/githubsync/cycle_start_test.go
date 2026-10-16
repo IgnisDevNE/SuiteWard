@@ -180,3 +180,44 @@ func TestATickOfRepositoriesThatChangedNothingReportsNoChange(t *testing.T) {
 		t.Fatalf("Tick = %+v, %v; want 2 requests, no change, nothing first observed", result, err)
 	}
 }
+
+// A cycle that fails records no success, but its requests were spent: the pacing needs them.
+func TestAFailedCycleReportsTheRequestsItMadeAndNoChange(t *testing.T) {
+	store := githubsynctest.NewMemory()
+	reader := &fakeReader{
+		pulls:       map[string][]githubsync.ObservedPull{repo: {pull(1), pull(2)}},
+		comments:    map[int][]githubsync.ObservedComment{1: {comment(10, "lgtm")}},
+		commentsErr: map[int]error{2: &githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 502}},
+		openInfo:    &githubsync.ReadInfo{Date: t0, Requests: 3, Changed: true},
+		commentInfo: &githubsync.ReadInfo{Requests: 2, Changed: true},
+	}
+
+	result, err := newReconciler(t, reader, store, &clock{now: t0}).SyncRepo(t.Context(), repo)
+
+	if err != nil || result.Requests != 3+2+2 || result.Changed || len(result.FirstObserved) != 0 {
+		t.Fatalf("SyncRepo = %+v, %v; want the 7 requests of the open pulls and both comment listings, no change, no observation", result, err)
+	}
+	if state := stored(t, store, repo); state.LastError != githubsync.FailureStatus || !state.LastSuccess.IsZero() {
+		t.Errorf("state = %+v; want the recorded failure and no success", state)
+	}
+}
+
+func TestATickSumsTheRequestsOfAFailedCycleToo(t *testing.T) {
+	store := githubsynctest.NewMemory()
+	reader := &fakeReader{
+		pulls:       map[string][]githubsync.ObservedPull{"acme/ok": {pull(1)}, "acme/bad": {pull(2)}},
+		comments:    map[int][]githubsync.ObservedComment{1: {comment(10, "lgtm")}},
+		commentsErr: map[int]error{2: &githubsync.ReadError{Kind: githubsync.FailureTransport}},
+		openInfo:    &githubsync.ReadInfo{Date: t0, Requests: 1},
+		commentInfo: &githubsync.ReadInfo{Requests: 1, Changed: true},
+	}
+
+	result, err := newReconciler(t, reader, store, &clock{now: t0}).Tick(t.Context(), []string{"acme/ok", "acme/bad"}, time.Minute)
+
+	if err != nil || result.Requests != 4 || !result.Changed || len(result.FirstObserved) != 1 || result.FirstObserved[0].Repo != "acme/ok" {
+		t.Fatalf("Tick = %+v, %v; want 4 requests across both cycles, the change and the comment of the cycle that succeeded", result, err)
+	}
+	if state := stored(t, store, "acme/bad"); state.LastError != githubsync.FailureTransport {
+		t.Errorf("state of the failed repository = %+v; want the recorded failure", state)
+	}
+}

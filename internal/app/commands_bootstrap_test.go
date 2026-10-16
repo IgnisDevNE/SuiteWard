@@ -329,6 +329,34 @@ func TestProposeRefusesAPullRequestThatIsNotOpenOrNotIntoTheTargetBeforeReadingA
 	}
 }
 
+func TestProposeSummaryNamesTheEffectiveTier(t *testing.T) {
+	for _, tc := range []struct{ enrolled, configured, want string }{
+		{owner.TierIsolated, owner.TierIsolated, "isolated"},
+		{owner.TierCoLocated, owner.TierIsolated, "co-located"}, // a secret enrolled beside the agent stays within its reach
+		{owner.TierIsolated, owner.TierCoLocated, "co-located"},
+		{owner.TierCoLocated, owner.TierCoLocated, "co-located"},
+	} {
+		t.Run("enrolled "+tc.enrolled+" configured "+tc.configured, func(t *testing.T) {
+			w := newCjWorldWithTiers(t, tc.enrolled, tc.configured)
+			w.trees(bootFiles("v1"), bootFiles("v1"))
+			w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
+			w.mustRun()
+
+			message, found := w.message("bootstrap-summary:1001:P2-R1")
+			if !found {
+				t.Fatal("no bootstrap summary")
+			}
+			var payload bootstrapSummaryPayload
+			if err := json.Unmarshal(message.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Summary.Tier != tc.want {
+				t.Fatalf("tier %q, want %q", payload.Summary.Tier, tc.want)
+			}
+		})
+	}
+}
+
 func TestProposeTakesTheNextNumberBesideOlderProposalsOfEitherKind(t *testing.T) {
 	w := newCjWorld(t)
 	w.trees(bootFiles("v1"), bootFiles("v1"))

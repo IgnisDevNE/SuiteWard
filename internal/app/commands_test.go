@@ -150,10 +150,16 @@ type cjWorld struct {
 
 func newCjWorld(t *testing.T) *cjWorld {
 	t.Helper()
+	return newCjWorldWithTiers(t, owner.TierIsolated, owner.TierIsolated)
+}
+
+// newCjWorldWithTiers is newCjWorld for an owner enrolled at the tier enrolled, on an installation configured for configured.
+func newCjWorldWithTiers(t *testing.T, enrolledTier, configured string) *cjWorld {
+	t.Helper()
 	enrolled := ownertest.NewMemory()
 	projects := []owner.ProjectPolicy{{RepositoryID: cjID1, Repo: cjRepo1, TestCheck: "ci"}, {RepositoryID: cjID2, Repo: cjRepo2, TestCheck: "ci"}}
 	if err := enrolled.Enroll(t.Context(), owner.Enrollment{Owner: owner.Owner{AccountID: cjOwnerID, Login: cjLogin}, Secret: cjSecret, Projects: projects,
-		Step: 1, Tier: owner.TierIsolated, EnrolledAt: cjOrigin}); err != nil {
+		Step: 1, Tier: enrolledTier, EnrolledAt: cjOrigin}); err != nil {
 		t.Fatal(err)
 	}
 	w := &cjWorld{t: t, owners: &cjOwners{Store: enrolled}, obs: githubsynctest.NewMemory(), mem: governancetest.NewMemory(), logs: &bytes.Buffer{}, listed: map[int64][]cjComment{}}
@@ -162,7 +168,7 @@ func newCjWorld(t *testing.T) *cjWorld {
 	w.reader = &fakeBootReader{repos: map[string]*bootRepository{cjRepo1: newBootRepository(cjRepo1, cjID1), cjRepo2: newBootRepository(cjRepo2, cjID2)}, calls: map[string]int{}}
 	w.content = &fakeBootContent{stored: map[string]bool{}}
 	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
-		reader: w.reader, content: w.content, pulls: w.obs, tier: owner.TierIsolated,
+		reader: w.reader, content: w.content, pulls: w.obs, tier: configured,
 		bot: newBotAccount(func(context.Context) (int64, error) {
 			w.botCall++
 			return cjBotID, w.botErr

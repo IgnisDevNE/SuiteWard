@@ -242,7 +242,7 @@ func TestProposeRefusesAndSuggestsWhenNoTreeHoldsADeclaration(t *testing.T) {
 		main, head map[string]string
 		suggestion []string
 	}{
-		{"from the test-like paths of the pull request head", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"tests/a_test.go": "x", "src/main.go": "y"}, []string{"tests/**"}},
+		{"from the test-like paths of the pull request head", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"tests/a_test.go": "x", "src/main.go": "y"}, []string{"tests/**", "tests/*_test.*"}},
 		{"from the default branch when the pull request gives none", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"src/main.go": "y"}, []string{"spec/**"}},
 		{"empty when no path is test-like", map[string]string{"README.md": "x"}, map[string]string{"src/main.go": "y"}, nil},
 	} {
@@ -426,9 +426,9 @@ func TestSkipRejectsAnInvalidAndAReplayedCodeWithoutAReference(t *testing.T) {
 	w.syncAll([]cjComment{cjSkip(500, cjAt(10), 5).onPull(cjOtherPull), cjSkip(501, cjAt(20), 0).onPull(cjOtherPull), cjSkip(502, cjAt(20).Add(5*time.Second), 0).onPull(cjOtherPull)})
 	w.mustRun()
 
-	w.requireAckPayload(cjID1, 500, commands.InvalidCode, nil)
+	w.requireAckPayload(cjID1, 500, commands.InvalidCode, map[string]any{"pull": cjOtherPull})
 	w.requireDisposition(cjID1, 501, commands.Skipped)
-	w.requireAckPayload(cjID1, 502, commands.ReplayedCode, nil)
+	w.requireAckPayload(cjID1, 502, commands.ReplayedCode, map[string]any{"pull": cjOtherPull})
 	w.requireNothingLeaked(cjCode(cjAt(10), 0), cjCode(cjAt(10), 5), cjCode(cjAt(20), 0))
 }
 

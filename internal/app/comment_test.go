@@ -470,7 +470,6 @@ func TestCommentPublisherRefusesWhatDoesNotMatchItsKey(t *testing.T) {
 		{"an unknown disposition", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = cmtSecretText })},
 		{"a malformed disposition without a reason", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "malformed" })},
 		{"a reason that is not a code", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reason"] = "malformed", cmtSecretText })},
-		{"an invalid-code disposition without a reference", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "invalid-code" })},
 		{"an unknown-proposal disposition without a reference", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "unknown-proposal" })},
 		{"a reference that is not P<n>-R<m>", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reference"] = "no-suite", cmtSecretText })},
 		{"a reference on an edited-first disposition", "ack:1001:555", with(func(m map[string]any) { m["reference"] = "P1-R1" })},

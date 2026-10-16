@@ -365,7 +365,7 @@ Other rules:
 - `bootstrap-skipped` (`success`): "Skipped by the owner before the first contract." It says that no contract exists and nothing was assessed.
 - `bootstrap-pending` is replaced by `bootstrap-awaiting`.
 
-**Comment keys.** `bootstrap-notice:<repository id>:<pull>` and `bootstrap-cancelled:<repository id>:P<n>-R<m>` are new. `splitKey` accepts them. `ack:` payloads gain the dispositions `proposed` (not used: a proposal's ack is its `bootstrap-summary`), `propose-refused` (`reason`, plus `suggestion` and `branch` for `declaration-missing`), `skipped` and `skip-refused` (`reason`).
+**Comment keys.** `bootstrap-notice:<repository id>:<pull>` and `bootstrap-cancelled:<repository id>:P<n>-R<m>` are new. `splitKey` accepts them. `ack:` payloads gain the dispositions `proposed` (not used: a proposal's ack is its `bootstrap-summary`), `propose-refused` (`reason`: `canonical-present`, `fork`, `declaration-missing`, `invalid-source` or `empty-inventory`; plus `suggestion` and `branch` for `declaration-missing`), `skipped` and `skip-refused` (`reason`).
 
 ### Protection verification job (M1.5)
 

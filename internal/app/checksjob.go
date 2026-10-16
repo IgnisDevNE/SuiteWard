@@ -88,6 +88,9 @@ type checksJob struct {
 	// unchanged remembers, in memory, the heads found unchanged against a canonical: a later Suite write for another
 	// pull request does not make such a head read its tree again (consent cannot change an unchanged result).
 	unchanged map[checkPull]unchangedAt
+	// announced remembers, in memory, the keys of the bootstrap comments written or found written, so a pull request that waits
+	// does not try its comment again every run. The outbox key is the idempotency key, so a restart costs one refused insert each.
+	announced map[string]bool
 }
 
 // run decides the checks of every enrolled, configured project. A GitHub read failure keeps the stored check; any other
@@ -284,8 +287,8 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		}
 	}
 	// The comment comes before the check, so a run that fails between the two writes it again, and the check never goes without it.
-	// It is written when the pull request enters the state, not on every run.
-	if suite.exists && result.Reason == reasonBootstrapAwaiting && (!found || record.Reason != result.Reason || record.Reference != result.Reference) {
+	// It does not depend on the stored check: a pull request that waited before the Suite existed has the same reason and reference.
+	if suite.exists && result.Reason == reasonBootstrapAwaiting {
 		if err := j.announce(ctx, p, pull.Number, result.Reference); err != nil {
 			return "", err
 		}
@@ -345,10 +348,17 @@ func (j *checksJob) announce(ctx context.Context, p owner.ProjectPolicy, pull in
 	if err != nil {
 		return err
 	}
+	if j.announced[message.Key] {
+		return nil
+	}
 	err = j.suites.Do(ctx, owner.ProjectID(p.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, message) })
 	if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
 		return fmt.Errorf("write the comment %s: %w", message.Key, err)
 	}
+	if j.announced == nil {
+		j.announced = map[string]bool{}
+	}
+	j.announced[message.Key] = true
 	return nil
 }
 

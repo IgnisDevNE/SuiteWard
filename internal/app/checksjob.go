@@ -346,9 +346,12 @@ func (j *checksJob) bootstrap(ctx context.Context, enrollment owner.State, p own
 // written before and is not an error.
 func (j *checksJob) announce(ctx context.Context, p owner.ProjectPolicy, pull int, reference string) error {
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}
-	message, err := newNoticeMessage(target)
+	var message governance.OutboxMessage
+	var err error
 	if reference != "" {
 		message, err = newCancelledMessage(target, reference)
+	} else {
+		message, err = newNoticeMessage(target)
 	}
 	if err != nil {
 		return err

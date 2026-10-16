@@ -244,7 +244,7 @@ func checkAck(a Ack) {
 	if (a.Outcome == BootstrapPromoted) != (a.Source == 0) || a.Source < 0 {
 		panic(fmt.Sprintf("commandtext: source comment %d does not fit outcome %d", a.Source, a.Outcome))
 	}
-	referenceOf(a)
+	referenceOf(a) // called for its panic on a reference that does not fit the outcome
 	consent := a.Outcome == Approved || a.Outcome == Revoked || a.Outcome == NoActiveApproval || a.Outcome == Rejected
 	switch {
 	case !consent && a.Eligible:

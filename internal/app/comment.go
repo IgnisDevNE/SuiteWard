@@ -230,8 +230,9 @@ func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, dis
 }
 
 // newDeclarationMissingAck builds the refusal of a propose when no tree holds a .suiteward.yml: branch is the pull
-// request's head ref and suggestion the include patterns found, each cut to the payload bound (a cut pattern is
-// longer than the renderer accepts, so it is left out and counted, never suggested).
+// request's head ref and suggestion the include patterns found. Each is cut to the payload bound, which only keeps the
+// payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts those it
+// left out, so a cut pattern is never suggested.
 func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggestion []string) (governance.OutboxMessage, error) {
 	cut := make([]string, 0, len(suggestion))
 	for _, pattern := range suggestion {

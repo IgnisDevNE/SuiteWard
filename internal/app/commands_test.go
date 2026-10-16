@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -144,6 +145,7 @@ type cjWorld struct {
 	reader   *fakeBootReader  // GitHub, as /suiteward propose reads it
 	content  *fakeBootContent // the files a proposed baseline stored
 	headRepo string           // the head repository the observed pulls name; "" is not observed
+	baseRef  string           // the base branch the observed pulls name; "" is main
 }
 
 func newCjWorld(t *testing.T) *cjWorld {
@@ -205,12 +207,20 @@ func (w *cjWorld) observe(repositoryID int64, at time.Time, comments ...cjCommen
 	cycle := githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, c := range w.listed[repositoryID] {
 		if _, listed := cycle.Comments[c.pull]; !listed {
-			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: cjHead, HeadRef: cjBranch, HeadRepo: w.headRepo, BaseRef: "main", BaseSHA: "base", UpdatedAt: at})
+			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: cjHead, HeadRef: cjBranch, HeadRepo: w.headRepo, BaseRef: cmp.Or(w.baseRef, "main"), BaseSHA: "base", UpdatedAt: at})
 		}
 		cycle.Comments[c.pull] = append(cycle.Comments[c.pull], githubsync.ObservedComment{CommentID: c.id, AuthorID: c.author, AuthorLogin: "someone",
 			CreatedAt: c.created, UpdatedAt: c.updated, Body: c.body})
 	}
 	if err := w.obs.RecordCycle(w.t.Context(), cycle); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// closePull records a cycle of the repository that lists no open pull request, so the observed ones are not open any more.
+func (w *cjWorld) closePull(repositoryID int64, at time.Time) {
+	w.t.Helper()
+	if err := w.obs.RecordCycle(w.t.Context(), githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}); err != nil {
 		w.t.Fatal(err)
 	}
 }

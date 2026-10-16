@@ -12,6 +12,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -513,5 +514,51 @@ func TestChecksReportACancelledRunInsteadOfAWaitingCheck(t *testing.T) {
 	}
 	if strings.Contains(w.logs.String(), bootSecret) {
 		t.Fatalf("logs %s carry GitHub text", w.logs)
+	}
+}
+
+// The comment does not depend on the stored check: a pull request whose check said bootstrap-awaiting before the Suite existed
+// gets its notice once the Suite exists, although its reason and reference did not change.
+func TestChecksWriteTheNoticeOfAPullThatWaitedBeforeTheSuiteExisted(t *testing.T) {
+	w := newCJWorld(t, false)
+	w.sync(map[int]string{4: cjHead3})
+	w.mustCheck()
+	w.want(4, checks.InProgress, "bootstrap-awaiting", 1)
+	w.requireOutbox()
+
+	w.seedSuite(bootRepoID, "branch:main")
+	w.mustCheck()
+	w.mustCheck()
+
+	w.want(4, checks.InProgress, "bootstrap-awaiting", 1)
+	w.wantKeys("bootstrap-notice:", "bootstrap-notice:1001:4")
+}
+
+// A propose always moves the Suite revision, so the revision alone would keep a waited record out of the fast path. The record
+// here holds the very revision the carrier's assessment would: only its missing reference tells it from one.
+func TestChecksNeverTakeAWaitedRecordForTheCarrierEvenAtTheCurrentRevision(t *testing.T) {
+	w := newCJBootWorld(t)
+	w.tree(cjHead2, bootFiles("v1"))
+	w.sync(map[int]string{5: cjHead2})
+	w.pullProposal(5, cjHead2, bootFiles("v1"))
+	var revision int64
+	w.read(func(ctx context.Context, tx governance.Tx) {
+		state, err := tx.Suite(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revision = int64(state.Canonical.Suite().Revision())
+	})
+	waited := checks.Result{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2, State: checks.InProgress, Reason: "bootstrap-awaiting", Revision: revision}
+	if _, _, err := w.memory.Publish(t.Context(), waited, w.clock, func(generation int64) (governance.OutboxMessage, error) {
+		return newCheckMessage(bootRepo, waited, "isolated", "", generation)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w.mustCheck()
+
+	if record := w.want(5, checks.InProgress, "approval-missing", 2); record.Reference != "P1-R1" {
+		t.Fatalf("record %+v, want the assessment of P1-R1", record)
 	}
 }

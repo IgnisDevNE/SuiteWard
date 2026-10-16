@@ -373,9 +373,16 @@ func readListing[T any](ctx context.Context, client *rest.Client, path func(page
 	for page := 1; page <= maxPages; page++ {
 		p := path(page)
 		resp, err := client.Get(ctx, p)
+		if !errors.Is(err, rest.ErrBudgetExhausted) { // a refused request was never sent
+			info.Requests++
+		}
 		if err != nil {
 			return nil, info, err
 		}
+		if page == 1 {
+			info.Date = resp.Date
+		}
+		info.Changed = info.Changed || !resp.NotModified
 		got, err := items(p, resp.Body)
 		if err != nil {
 			return nil, info, err

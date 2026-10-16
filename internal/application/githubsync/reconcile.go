@@ -94,25 +94,60 @@ func (r *Reconciler) SyncRepo(ctx context.Context, repo string) (TickResult, err
 	}
 	cycle, err := r.list(ctx, repo)
 	if err != nil {
-		return TickResult{}, r.fail(ctx, repo, err)
+		return TickResult{Requests: cycle.Requests}, r.fail(ctx, repo, err)
 	}
 	cycle.At = r.now()
-	if _, err := r.store.RecordCycle(ctx, cycle); err != nil {
-		return TickResult{}, fmt.Errorf("record the cycle of %s: %w", repo, err)
+	ids, err := r.store.RecordCycle(ctx, cycle)
+	if err != nil {
+		return TickResult{Requests: cycle.Requests}, fmt.Errorf("record the cycle of %s: %w", repo, err)
 	}
-	return TickResult{}, nil
+	observed, err := firstObserved(cycle, state.CycleStartedAt, ids)
+	if err != nil {
+		return TickResult{Requests: cycle.Requests, Changed: cycle.Changed}, err
+	}
+	return TickResult{Requests: cycle.Requests, Changed: cycle.Changed, FirstObserved: observed}, nil
 }
 
-// list reads every listing of one cycle.
-func (r *Reconciler) list(ctx context.Context, repo string) (Cycle, error) {
-	pulls, _, err := r.reader.OpenPulls(ctx, repo)
-	if err != nil {
-		return Cycle{}, err
+// firstObserved describes the comments the store reported as new, with the start of the cycle that recorded them
+// and of the repository's previous successful one.
+func firstObserved(cycle Cycle, previous time.Time, ids []int64) ([]FirstObserved, error) {
+	created := map[int64]time.Time{}
+	for _, listing := range cycle.Comments {
+		for _, comment := range listing {
+			created[comment.CommentID] = comment.CreatedAt
+		}
 	}
-	cycle := Cycle{Repo: repo, InstallationID: r.installationID, OpenPulls: pulls, Comments: make(map[int][]ObservedComment, len(pulls))}
+	observed := make([]FirstObserved, 0, len(ids))
+	for _, id := range ids {
+		at, listed := created[id]
+		if !listed { // the store is a port boundary: it may only name comments of this cycle
+			return nil, fmt.Errorf("the store reported comment %d of %s as new, but the cycle did not list it", id, cycle.Repo)
+		}
+		observed = append(observed, FirstObserved{Repo: cycle.Repo, CommentID: id, CreatedAt: at, StartedAt: cycle.StartedAt, PreviousStartedAt: previous})
+	}
+	return observed, nil
+}
+
+// list reads every listing of one cycle. The cycle starts at the Date of the first one, GitHub's own clock; a read
+// without a Date fails as decode, since no local clock may stand in for it. Even when it fails the returned cycle
+// carries the requests made, for pacing.
+func (r *Reconciler) list(ctx context.Context, repo string) (Cycle, error) {
+	pulls, info, err := r.reader.OpenPulls(ctx, repo)
+	cycle := Cycle{Repo: repo, InstallationID: r.installationID, StartedAt: info.Date, Requests: info.Requests, Changed: info.Changed,
+		OpenPulls: pulls, Comments: make(map[int][]ObservedComment, len(pulls))}
+	if err != nil {
+		return cycle, err
+	}
+	if info.Date.IsZero() {
+		return cycle, &ReadError{Kind: FailureDecode}
+	}
 	for _, pull := range pulls {
-		if cycle.Comments[pull.Number], _, err = r.reader.PullComments(ctx, repo, pull.Number); err != nil {
-			return Cycle{}, err
+		var read ReadInfo
+		cycle.Comments[pull.Number], read, err = r.reader.PullComments(ctx, repo, pull.Number)
+		cycle.Requests += read.Requests
+		cycle.Changed = cycle.Changed || read.Changed
+		if err != nil {
+			return cycle, err
 		}
 	}
 	return cycle, nil
@@ -148,12 +183,13 @@ func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Dur
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	var (
-		wg    sync.WaitGroup
-		mu    sync.Mutex
-		errs  []error
-		slots = make(chan struct{}, maxInFlight)
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		errs    []error
+		results = make([]TickResult, len(repos)) // one slot per repository, so the goroutines never share one
+		slots   = make(chan struct{}, maxInFlight)
 	)
-	for _, repo := range repos {
+	for i, repo := range repos {
 		select {
 		case slots <- struct{}{}:
 		case <-ctx.Done():
@@ -165,7 +201,8 @@ func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Dur
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			if _, err := r.SyncRepo(ctx, repo); err != nil && ctx.Err() == nil {
+			var err error
+			if results[i], err = r.SyncRepo(ctx, repo); err != nil && ctx.Err() == nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -173,5 +210,11 @@ func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Dur
 		}()
 	}
 	wg.Wait()
-	return TickResult{}, errors.Join(errs...)
+	var total TickResult
+	for _, result := range results { // the requests of a cycle the deadline cut still count
+		total.Requests += result.Requests
+		total.Changed = total.Changed || result.Changed
+		total.FirstObserved = append(total.FirstObserved, result.FirstObserved...)
+	}
+	return total, errors.Join(errs...)
 }

@@ -198,7 +198,7 @@ func ValidatePullNumber(number int) error {
 }
 
 // Validate rejects a cycle the store cannot record consistently: a missing
-// repository, installation or time, a pull number out of range or listed
+// repository, installation, observation time or start, fewer than one request, a pull number out of range or listed
 // twice, a comment listing for a pull that is not open (or none for one that
 // is), or a comment id that is not positive, is listed twice, or has an unset
 // time. The error wraps ErrInvalidObservation.
@@ -208,6 +208,9 @@ func (c Cycle) Validate() error {
 	}
 	if c.At.IsZero() {
 		return fmt.Errorf("%w: cycle has no observation time", ErrInvalidObservation)
+	}
+	if c.StartedAt.IsZero() || c.Requests < 1 {
+		return fmt.Errorf("%w: cycle has no start in GitHub's clock or no requests", ErrInvalidObservation)
 	}
 	open := make(map[int]bool, len(c.OpenPulls))
 	for _, pull := range c.OpenPulls {

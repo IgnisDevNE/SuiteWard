@@ -59,7 +59,7 @@ func (s *Store) Repository(ctx context.Context, repo string) (githubsync.Reposit
 		return githubsync.RepositoryState{}, false, fmt.Errorf("read GitHub repository: %w", err)
 	}
 	return githubsync.RepositoryState{
-		Repo: row.Repo, InstallationID: row.InstallationID, LastSuccess: observedTime(row.LastSuccess),
+		Repo: row.Repo, InstallationID: row.InstallationID, LastSuccess: observedTime(row.LastSuccess), CycleStartedAt: observedTime(row.CycleStartedAt),
 		LastError: githubsync.FailureKind(row.LastError), LastStatus: int(row.LastStatus), WaitUntil: observedTime(row.WaitUntil),
 	}, true, nil
 }
@@ -82,20 +82,22 @@ func (s *Store) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int6
 			rollback(ctx, transaction)
 		}
 	}()
-	if err := recordCycle(ctx, dbgen.New(transaction), cycle); err != nil {
+	ids, err := recordCycle(ctx, dbgen.New(transaction), cycle)
+	if err != nil {
 		return nil, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit GitHub cycle transaction: %w", err)
 	}
 	committed = true
-	return nil, nil
+	return ids, nil
 }
 
-func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) error {
+// recordCycle writes the cycle and returns the ids of the comments the store had never seen.
+func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) ([]int64, error) {
 	at := timestamp(cycle.At)
-	if err := q.UpsertRepositorySuccess(ctx, dbgen.UpsertRepositorySuccessParams{Repo: cycle.Repo, InstallationID: cycle.InstallationID, At: at}); err != nil {
-		return fmt.Errorf("write GitHub repository: %w", err)
+	if err := q.UpsertRepositorySuccess(ctx, dbgen.UpsertRepositorySuccessParams{Repo: cycle.Repo, InstallationID: cycle.InstallationID, At: at, StartedAt: timestamp(cycle.StartedAt)}); err != nil {
+		return nil, fmt.Errorf("write GitHub repository: %w", err)
 	}
 
 	pulls, open := make([]pullRow, 0, len(cycle.OpenPulls)), make([]int32, 0, len(cycle.OpenPulls))
@@ -105,13 +107,13 @@ func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) 
 	}
 	pullsJSON, err := json.Marshal(pulls)
 	if err != nil {
-		return fmt.Errorf("encode GitHub pulls: %w", err)
+		return nil, fmt.Errorf("encode GitHub pulls: %w", err)
 	}
 	if err := q.UpsertPulls(ctx, dbgen.UpsertPullsParams{Repo: cycle.Repo, At: at, Pulls: pullsJSON}); err != nil {
-		return fmt.Errorf("write GitHub pulls: %w", err)
+		return nil, fmt.Errorf("write GitHub pulls: %w", err)
 	}
 	if err := q.MarkPullsNotOpen(ctx, dbgen.MarkPullsNotOpenParams{Repo: cycle.Repo, At: at, OpenNumbers: open}); err != nil {
-		return fmt.Errorf("mark GitHub pulls not open: %w", err)
+		return nil, fmt.Errorf("mark GitHub pulls not open: %w", err)
 	}
 
 	comments, seen := []commentRow{}, []int64{}
@@ -124,25 +126,29 @@ func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) 
 	}
 	commentsJSON, err := json.Marshal(comments)
 	if err != nil {
-		return fmt.Errorf("encode GitHub comments: %w", err)
+		return nil, fmt.Errorf("encode GitHub comments: %w", err)
 	}
 	changed, err := q.CommentsWithChangedCreation(ctx, dbgen.CommentsWithChangedCreationParams{Repo: cycle.Repo, Comments: commentsJSON})
 	if err != nil {
-		return fmt.Errorf("check GitHub comment creation times: %w", err)
+		return nil, fmt.Errorf("check GitHub comment creation times: %w", err)
 	}
 	if len(changed) > 0 {
-		return fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, changed[0])
+		return nil, fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, changed[0])
+	}
+	fresh, err := q.NewCommentIDs(ctx, dbgen.NewCommentIDsParams{Repo: cycle.Repo, Comments: commentsJSON})
+	if err != nil {
+		return nil, fmt.Errorf("find the GitHub comments first seen: %w", err)
 	}
 	if err := q.ClearCommentsNotSeen(ctx, dbgen.ClearCommentsNotSeenParams{Repo: cycle.Repo, CommentIds: seen}); err != nil {
-		return fmt.Errorf("clear GitHub comment absence: %w", err)
+		return nil, fmt.Errorf("clear GitHub comment absence: %w", err)
 	}
 	if err := q.InsertCommentVersions(ctx, dbgen.InsertCommentVersionsParams{Repo: cycle.Repo, At: at, Comments: commentsJSON}); err != nil {
-		return fmt.Errorf("write GitHub comments: %w", err)
+		return nil, fmt.Errorf("write GitHub comments: %w", err)
 	}
 	if err := q.MarkCommentsNotSeen(ctx, dbgen.MarkCommentsNotSeenParams{Repo: cycle.Repo, At: at, ListedPulls: open, ListedComments: seen}); err != nil {
-		return fmt.Errorf("mark GitHub comments not seen: %w", err)
+		return nil, fmt.Errorf("mark GitHub comments not seen: %w", err)
 	}
-	return nil
+	return fresh, nil
 }
 
 // RecordFailure implements githubsync.Store. One upsert is one transaction,

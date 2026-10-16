@@ -17,18 +17,22 @@ import (
 type gatedChecks struct {
 	running atomic.Int32
 	peak    atomic.Int32
-	release chan struct{}
+	step    chan struct{} // lets one blocked run finish
+	release chan struct{} // lets every run finish; closed when the test ends
 }
 
 func newGatedChecks(t *testing.T) *gatedChecks {
-	g := &gatedChecks{release: make(chan struct{})}
+	g := &gatedChecks{step: make(chan struct{}, 8), release: make(chan struct{})}
 	t.Cleanup(func() { close(g.release) })
 	return g
 }
 
 func (g *gatedChecks) run(context.Context) error {
 	g.peak.Store(max(g.peak.Load(), g.running.Add(1)))
-	<-g.release
+	select {
+	case <-g.step:
+	case <-g.release:
+	}
 	g.running.Add(-1)
 	return nil
 }
@@ -187,5 +191,26 @@ func TestAFailingWakeUpIsLoggedAtWarnWithTheKindOnlyAndDoesNotFailTheRun(t *test
 	}
 	if got := w.count("kind='github_checks'"); got != "0" {
 		t.Fatalf("%s checks jobs; want none", got)
+	}
+}
+
+func TestAWakeUpAndAPeriodicRunQueuedTogetherDoNotOverlap(t *testing.T) {
+	w := newWorld(t, 5)
+	checks := newGatedChecks(t)
+	config := wakeConfig(&logCapture{}, checks, river.Wake{river.ChecksKind}, nil)
+	config.ChecksInterval = 100 * time.Millisecond
+	runtime := startRuntime(t, w, config)
+	waitUntil(t, "the first checks run to block", func() bool { return checks.running.Load() == 1 })
+	wakeFromSyncRepo(t, w, runtime, "acme/widgets", "completed")
+
+	// The wake-up has no unique key, so once the first run ends the periodic insert is not blocked by it: the wake-up runs and the next periodic run waits.
+	checks.step <- struct{}{}
+	waitUntil(t, "a periodic run to queue behind the running wake-up", func() bool {
+		return w.count("kind='github_checks' AND state='available' AND unique_key IS NOT NULL") == "1"
+	})
+	time.Sleep(500 * time.Millisecond) // a negative assertion: the queued run must not start beside the running one
+
+	if got, peak := checks.running.Load(), checks.peak.Load(); got != 1 || peak != 1 {
+		t.Fatalf("%d checks runs at once, peak %d; want runs of one kind never to overlap", got, peak)
 	}
 }

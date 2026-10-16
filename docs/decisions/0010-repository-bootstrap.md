@@ -114,7 +114,7 @@ The owner moved the first-test-PR bootstrap path back into the MVP so that a rep
 - **Merge only.** A `pull` revision becomes the first canonical only from the exact merge commit of its carrier PR, after approval and validation of that commit. The domain refuses to promote it as an existing baseline.
 - **Which PR.** While the Suite has no canonical and the default branch has no protected files, the bootstrap proposal belongs to the lowest-numbered open PR whose head has protected files, one at a time.
 - **Revisions.** A protected push gives the next revision of the same proposal. A carrier closed without a merge hands the role to the next such PR, under a new proposal.
-- **Precedence.** Once the default branch has protected files (a merge, or a direct push), the existing-baseline path above applies, and a pending PR-head proposal is superseded. This keeps the canonical from drifting from what the branch holds (owner, 2026-10-15).
+- **Precedence** (superseded by the amendment of 2026-10-16: the newest proposal wins, and nothing is proposed automatically). Once the default branch has protected files (a merge, or a direct push), the existing-baseline path above applies, and a pending PR-head proposal is superseded. This keeps the canonical from drifting from what the branch holds (owner, 2026-10-15).
 - **Readiness.** The readiness check is `success`, "Bootstrap ready for integration", for the approved exact revision at that head. It never states that a canonical exists.
 
 ## Amendment (2026-10-16, phase M1.7b rework): an explicit bootstrap

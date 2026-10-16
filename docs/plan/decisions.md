@@ -206,7 +206,7 @@ Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-git
 
 *`bootstrap-ready`.* That PR's head gets `success`, titled "Bootstrap ready for integration", when the owner approved its exact current revision and the integrity assessment of that head passed. It says no canonical exists yet. Until then it is `in_progress`, `approval-missing`, with the reference. Every other PR stays `bootstrap-pending`.
 
-*Precedence.* Once the default branch has protected files, the existing-baseline path wins: a pending PR-head proposal is superseded, and V1 comes from the pinned default-branch commit. This avoids drift between the canonical and what the branch holds (owner: "the option that avoids conflicts or drift that could be irrecoverable").
+*Precedence* (superseded by the amendment of 2026-10-16: the newest proposal wins, and nothing is proposed automatically). Once the default branch has protected files, the existing-baseline path wins: a pending PR-head proposal is superseded, and V1 comes from the pinned default-branch commit. This avoids drift between the canonical and what the branch holds (owner: "the option that avoids conflicts or drift that could be irrecoverable").
 
 **Amendment (2026-10-15, after M1.7; owner).** *One comment per new revision.*
 - **When.** When a PR gets a new revision that needs approval, SuiteWard posts one comment with:

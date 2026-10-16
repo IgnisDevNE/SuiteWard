@@ -917,6 +917,8 @@ type Store interface {
 
 ## Bootstrap from a PR, and the revision comment (M1.7b; normative)
 
+The rework of 2026-10-16 replaces `Tx.BaselineProposalFor`, the `Summary` and `Committed` shape of `AssessBootstrapHead`, and the carrier-bound `PromoteMerge` below: see [Explicit bootstrap](#explicit-bootstrap-m17b-rework-2026-10-16-normative).
+
 Implements the ADR 0010 and D-CHECKS amendments of 2026-10-15. Migration `00016` adds every column below.
 
 ### Origin kind (`internal/domain/contract`)

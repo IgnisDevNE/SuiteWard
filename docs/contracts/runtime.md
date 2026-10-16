@@ -217,7 +217,7 @@ The job counts also exclude `github_merges` and `canonical_integrity`.
 
 ### Bootstrap from a PR and the revision comment (M1.7b)
 
-**Who writes what.**
+**Who writes what.** Superseded by [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16).
 - The bootstrap job writes only `branch` baselines.
 - The checks job writes the `pull` bootstrap proposal and every change-proposal revision.
 - The merges job decides V1 from a merged bootstrap PR.
@@ -309,6 +309,8 @@ This replaces these parts of the section above: "Who writes what", the `github_b
 1. **Refusals**, recorded `propose-refused` with ack `ack:<repository id>:<comment id>`:
    - `canonical-present`: the Suite has a canonical;
    - `fork`: the PR is a fork, by `HeadRepo` as in M1.7.
+   - `not-open`: the PR is no longer open in the synchronized state.
+   - `base-not-target`: the PR's base branch is not the Suite's target (the default branch), so its merge could never decide V1.
 2. **Pick the source.** Read the default branch head (`Reader.BranchHead`) and its tree.
    - The tree has `.suiteward.yml`: the source is that pinned commit, with origin kind `branch`.
    - Otherwise, read the PR head tree. If it has `.suiteward.yml`, the source is the PR head, with origin kind `pull`.
@@ -351,12 +353,14 @@ This replaces these parts of the section above: "Who writes what", the `github_b
 Other rules:
 - The owner-command `failure` applies only to `approve` and `revoke` dispositions. `proposed`, `propose-refused`, `skipped` and `skip-refused` never set it or clear it.
 - The automatic carrier choice, the default-branch plan and its cache are removed.
+- **One cancelled comment per revision.** The `bootstrap-cancelled` key names the revision, so if a push restores the coverage and a later push breaks it again, the check returns to `bootstrap-awaiting` with no second comment.
+- **Known limit: shared rejections on the carrier.** The ledger does not record the verb. A rejected disposition that every verb shares (`invalid-code`, `replayed-code`, `malformed`, `edited-first`) therefore turns the carrier `failure` / `owner-command-rejected` even when it came from a `skip` or a `propose`. A corrected `propose` does not clear it; a valid approve or a new head does.
 
 **`github_bootstrap` (promote only).**
 - It still creates the Suite on `ErrNotFound`, unchanged from M1.6a step 1. A `propose` that comes before that keeps today's `no-suite` disposition and its acknowledgment.
 - With no canonical, when the Suite's latest bootstrap proposal is `branch` and the owner approved its current revision, it re-reads the origin, records the assessment and calls `Bootstrap`, as before.
 - It proposes nothing.
-- Its `/status` codes are `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>` and `failed`. These were removed: `no-open-pull-request`, `awaiting-initial-contract`, `awaiting-merge-decision`.
+- Its `/status` codes are `read-failed`, `repository-changed`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>` and `failed`. These were removed: `no-open-pull-request`, `awaiting-initial-contract`, `awaiting-merge-decision`, and `invalid-source`. An unreadable origin is assessed as unavailable and stops at `origin-not-passed`.
 
 **`github_merges`.** `PromoteMerge` decides V1 only for the carrier of the Suite's latest bootstrap proposal, and only when that proposal is `pull`. Every other merge before V1 is `before-canonical`.
 
@@ -365,7 +369,7 @@ Other rules:
 - `bootstrap-skipped` (`success`): "Skipped by the owner before the first contract." It says that no contract exists and nothing was assessed.
 - `bootstrap-pending` is replaced by `bootstrap-awaiting`.
 
-**Comment keys.** `bootstrap-notice:<repository id>:<pull>` and `bootstrap-cancelled:<repository id>:P<n>-R<m>` are new. `splitKey` accepts them. `ack:` payloads gain the dispositions `proposed` (not used: a proposal's ack is its `bootstrap-summary`), `propose-refused` (`reason`: `canonical-present`, `fork`, `declaration-missing`, `invalid-source` or `empty-inventory`; plus `suggestion` and `branch` for `declaration-missing`), `skipped` and `skip-refused` (`reason`).
+**Comment keys.** `bootstrap-notice:<repository id>:<pull>` and `bootstrap-cancelled:<repository id>:P<n>-R<m>` are new. `splitKey` accepts them. `ack:` payloads gain the dispositions `proposed` (not used: a proposal's ack is its `bootstrap-summary`), `propose-refused` (`reason`: `canonical-present`, `fork`, `not-open`, `base-not-target`, `declaration-missing`, `invalid-source` or `empty-inventory`; plus `suggestion` and `branch` for `declaration-missing`), `skipped` and `skip-refused` (`reason`).
 
 ### Protection verification job (M1.5)
 

@@ -464,10 +464,7 @@ func proposedWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 	t.Helper()
 	w := newBootWorld(t, options...)
 	w.openPulls(bootRepo, 4)
-	w.mustRun()
-	if _, found := w.proposal(1); !found {
-		t.Fatalf("the setup did not propose P1-R1\nlogs: %s", w.logs)
-	}
+	w.branchProposal(4)
 	return w
 }
 

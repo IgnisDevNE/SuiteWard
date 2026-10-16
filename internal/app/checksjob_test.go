@@ -237,31 +237,6 @@ func TestChecksIgnoreRepositoriesThatAreNotConfigured(t *testing.T) {
 	w.wantNone(4)
 }
 
-func TestChecksSayBootstrapPendingOnEveryOpenPullWithoutACanonical(t *testing.T) {
-	t.Run("no suite", func(t *testing.T) {
-		w := newCJWorld(t, false)
-		w.sync(map[int]string{4: bootHead, 5: cjHead2})
-
-		w.mustCheck()
-
-		w.want(4, checks.InProgress, "bootstrap-pending", 1)
-		w.want(5, checks.InProgress, "bootstrap-pending", 1)
-		w.mustCheck()
-		w.want(4, checks.InProgress, "bootstrap-pending", 1) // the same state writes no new generation
-	})
-	t.Run("a suite without a canonical", func(t *testing.T) {
-		w := newCJWorld(t, false)
-		w.openPulls(bootRepo, 4)
-		w.mustRun() // proposes the baseline, which nobody approved
-		w.sync(map[int]string{4: bootHead, 5: cjHead2})
-
-		w.mustCheck()
-
-		w.want(4, checks.InProgress, "bootstrap-pending", 1)
-		w.want(5, checks.InProgress, "bootstrap-pending", 1)
-	})
-}
-
 func TestChecksPublishSuccessForAnUnchangedHeadAndDoNotReadItsTreeAgain(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.sync(map[int]string{4: bootHead})
@@ -644,7 +619,7 @@ func TestChecksFailTheRunOnAStoreErrorAfterEveryRepositoryAndShowItInStatus(t *t
 	if !errors.Is(err, errBootStore) {
 		t.Fatalf("run error %v, want the store error", err)
 	}
-	if record, found, _ := w.memory.Current(t.Context(), bootOtherRepoID, 3); !found || record.Reason != "bootstrap-pending" {
+	if record, found, _ := w.memory.Current(t.Context(), bootOtherRepoID, 3); !found || record.Reason != "bootstrap-awaiting" {
 		t.Fatalf("the other repository was not tried: %+v, found %v", record, found)
 	}
 	if got := w.problems.lookup(bootRepo); got != "failed" {

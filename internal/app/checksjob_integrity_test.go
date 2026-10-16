@@ -124,7 +124,7 @@ func TestChecksReadTheIntegrityVerdictOfTheSuiteOnlyWhenThereIsACanonical(t *tes
 
 	w.mustCheck()
 
-	w.want(4, checks.InProgress, "bootstrap-pending", 1)
+	w.want(4, checks.InProgress, "bootstrap-awaiting", 1)
 }
 
 func TestChecksFailClosedOnAForkPullAndNeverAssessIt(t *testing.T) {

@@ -51,9 +51,10 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
 		logger: logger, now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
-	if err := bootstrap.run(t.Context()); err != nil { // the Suite and the proposal P1-R1 that comment 101 approves
+	if err := bootstrap.run(t.Context()); err != nil { // the Suite
 		t.Fatal(err)
 	}
+	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // the proposal P1-R1 that comment 101 approves
 
 	command := func(id int64, created time.Time, verb string) githubsync.ObservedComment {
 		code, err := totp.Code(secret, totp.Step(created))

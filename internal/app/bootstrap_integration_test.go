@@ -51,6 +51,10 @@ func TestBootstrapJobOnPostgreSQLRunsTheFullSequence(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
 	count := func(query string) string { return scalar(t, databaseURL, query) }
 
+	if err := job.run(t.Context()); err != nil { // creates the Suite and proposes nothing
+		t.Fatal(err)
+	}
+	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // as the commands job would
 	for range 2 {
 		if err := job.run(t.Context()); err != nil {
 			t.Fatal(err)
@@ -122,10 +126,11 @@ func TestBootstrapJobOnPostgreSQLBootstrapsEveryRepository(t *testing.T) {
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID), bootOtherRepo: newBootRepository(bootOtherRepo, bootOtherRepoID)}, calls: map[string]int{}}
 	job := &bootstrapJob{repos: []string{bootRepo, bootOtherRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
-	if err := job.run(t.Context()); err != nil {
+	if err := job.run(t.Context()); err != nil { // creates both Suites
 		t.Fatal(err)
 	}
 	for i, id := range []int64{bootRepoID, bootOtherRepoID} {
+		proposeBaseline(t, store, artifacts, id, []string{bootRepo, bootOtherRepo}[i], contract.OriginBranch, 4+i, bootHead, bootFiles("v1")) // as the commands job would
 		reference := contract.ProposalReference{ProjectID: owner.ProjectID(id), SuiteID: "default", ProposalID: "P1", RevisionID: "R1"}
 		command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d", 101+i)), SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", 101+i)),
 			Actor: bootOwnerPrincipal(), Reference: reference, Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", id, 4+i)), Action: contract.ApproveConsent, Order: contract.CommandOrder(101 + i)}))

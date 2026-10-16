@@ -133,11 +133,10 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for range 2 { // the Suite and the proposal P1-R1
-		if err := bootstrap.run(t.Context()); err != nil {
-			t.Fatal(err)
-		}
+	if err := bootstrap.run(t.Context()); err != nil { // the Suite
+		t.Fatal(err)
 	}
+	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // P1-R1, as the commands job would
 	consent(contract.ApproveConsent, 101, 1, 4)
 	for range 3 { // the integrity assessment and the first canonical
 		if err := bootstrap.run(t.Context()); err != nil {

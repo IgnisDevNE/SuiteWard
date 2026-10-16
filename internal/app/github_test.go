@@ -1,9 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -82,7 +85,7 @@ func goodGitHubSettings() config.GitHub {
 func TestComposeGitHubRejectsAnUnusableKeyWithoutPrintingIt(t *testing.T) {
 	settings := goodGitHubSettings()
 	settings.AppKey = "SECRET-KEY-TEXT"
-	_, err := composeGitHub(settings, time.Minute, githubsynctest.NewMemory())
+	_, err := composeGitHub(settings, time.Minute, githubsynctest.NewMemory(), time.Now, quietLogger())
 	if err == nil || strings.Contains(err.Error(), "SECRET-KEY-TEXT") {
 		t.Fatalf("composeGitHub = %v; want an error that does not contain the key", err)
 	}
@@ -118,6 +121,219 @@ func (c *countingReader) OpenPulls(context.Context, string) ([]githubsync.Observ
 func (c *countingReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
 	c.calls++
 	return nil, githubsync.ReadInfo{Requests: 1}, nil
+}
+
+// paceReader lists no pulls and reports requests requests for its cycle, from the injected clock at, for sync
+// pacing tests (D-SYNC, "Sync pacing", M1.7c).
+type paceReader struct {
+	calls    int
+	requests int
+	at       func() time.Time
+}
+
+func (r *paceReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
+	r.calls++
+	return nil, githubsync.ReadInfo{Date: r.at(), Requests: r.requests}, nil
+}
+
+func (r *paceReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
+	return nil, githubsync.ReadInfo{}, nil
+}
+
+func paceSync(t *testing.T, reader *paceReader, now func() time.Time) *githubSync {
+	t.Helper()
+	reconciler, err := githubsync.NewReconciler(reader, githubsynctest.NewMemory(), time.Now, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &githubSync{reconciler: reconciler, repos: []string{"acme/widgets"}, jobTimeout: time.Minute, logger: quietLogger(), now: now}
+}
+
+func TestSyncTickRunsAtOnceOnTheFirstTickAfterAStart(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	reader := &paceReader{requests: 1, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+
+	if err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf("the first tick after a start made %d calls; want 1", reader.calls)
+	}
+}
+
+func TestSyncTickWaitsTwentySecondsSinceThePreviousStart(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	reader := &paceReader{requests: 1, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+	if err := s.tick(t.Context()); err != nil { // the first tick, always due
+		t.Fatal(err)
+	}
+
+	clock = clock.Add(19 * time.Second)
+	if err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 1 {
+		t.Fatal("a tick 19 s after the previous start called GitHub; want it to wait")
+	}
+
+	clock = clock.Add(time.Second) // 20 s after the previous start
+	if err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 2 {
+		t.Fatal("a tick 20 s after the previous start did not run")
+	}
+}
+
+func TestSyncTickWaitsLongerAfterAnExpensiveTick(t *testing.T) {
+	start := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	clock := start
+	reader := &paceReader{requests: 420, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+	if err := s.tick(t.Context()); err != nil { // the first tick: 420 requests, which paces the next one to 56 s
+		t.Fatal(err)
+	}
+
+	for _, elapsed := range []time.Duration{20 * time.Second, 55 * time.Second} {
+		clock = start.Add(elapsed)
+		if err := s.tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if reader.calls != 1 {
+			t.Fatalf("a tick %v after a 420-request tick called GitHub; want it to wait until 56 s", elapsed)
+		}
+	}
+
+	clock = start.Add(56 * time.Second)
+	if err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 2 {
+		t.Fatal("a tick 56 s after a 420-request tick did not run")
+	}
+}
+
+// detectorReader lists one pull and, for each successive cycle in order, the comments given for it: for the
+// listing-lag detector tests.
+type detectorReader struct {
+	cycle    int
+	dates    []time.Time
+	comments [][]githubsync.ObservedComment
+}
+
+func (r *detectorReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
+	at := r.dates[r.cycle]
+	return []githubsync.ObservedPull{{Number: 1, HeadSHA: "h", HeadRef: "f", BaseRef: "main", BaseSHA: "b", UpdatedAt: at}}, githubsync.ReadInfo{Date: at, Requests: 1}, nil
+}
+
+func (r *detectorReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
+	comments := r.comments[r.cycle]
+	r.cycle++
+	return comments, githubsync.ReadInfo{Requests: 1}, nil
+}
+
+// decodeLogLines decodes a buffer of JSON log lines, without requiring any particular field order.
+func decodeLogLines(t *testing.T, logs []byte) []map[string]any {
+	t.Helper()
+	var entries []map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(logs))
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatalf("log is not JSON: %v", err)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func TestSyncRepoLogsTheListingLagDetector(t *testing.T) {
+	const commentMarker = "SECRET-COMMENT-BODY-TEXT"
+	t0 := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Minute)
+	reader := &detectorReader{dates: []time.Time{t0, t1}, comments: [][]githubsync.ObservedComment{
+		nil, // the first cycle observes nothing new: no CycleStartedAt to miss against yet
+		{
+			{CommentID: 1, AuthorID: 7, CreatedAt: t0.Add(-5 * time.Second), UpdatedAt: t0.Add(-5 * time.Second), Body: commentMarker}, // created before the previous cycle's start: missed
+			{CommentID: 2, AuthorID: 7, CreatedAt: t1.Add(-time.Second), UpdatedAt: t1.Add(-time.Second), Body: commentMarker},         // created after the previous start: not missed
+		},
+	}}
+	reconciler, err := githubsync.NewReconciler(reader, githubsynctest.NewMemory(), time.Now, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &bytes.Buffer{}
+	s := &githubSync{reconciler: reconciler, repos: []string{"acme/widgets"}, jobTimeout: time.Minute, logger: slog.New(slog.NewJSONHandler(logs, nil)), now: time.Now}
+
+	if err := s.syncRepo(t.Context(), "acme/widgets"); err != nil { // nothing first-observed yet: no detector line
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "github comment first observed") {
+		t.Fatalf("a cycle that first-observed nothing logged the detector line: %s", logs)
+	}
+	if err := s.syncRepo(t.Context(), "acme/widgets"); err != nil {
+		t.Fatal(err)
+	}
+
+	var withMissed, withoutMissed int
+	for _, e := range decodeLogLines(t, logs.Bytes()) {
+		if e["msg"] != "github comment first observed" {
+			continue
+		}
+		if e["repo"] != "acme/widgets" || e["previous_cycle_started_at"] == nil {
+			t.Fatalf("entry missing repo or previous_cycle_started_at: %+v", e)
+		}
+		switch e["comment"] {
+		case float64(1):
+			missed, ok := e["missed_by_ms"]
+			if !ok || missed != float64(5000) {
+				t.Fatalf("comment 1 (created before the previous start) has missed_by_ms %v, ok %v; want 5000", missed, ok)
+			}
+			withMissed++
+		case float64(2):
+			if _, ok := e["missed_by_ms"]; ok {
+				t.Fatalf("comment 2 (created after the previous start) has missed_by_ms: %+v", e)
+			}
+			withoutMissed++
+		default:
+			t.Fatalf("unexpected detector entry: %+v", e)
+		}
+	}
+	if withMissed != 1 || withoutMissed != 1 {
+		t.Fatalf("%d lines with missed_by_ms and %d without; want 1 and 1", withMissed, withoutMissed)
+	}
+	if strings.Contains(logs.String(), commentMarker) {
+		t.Fatal("the detector logged comment text")
+	}
+}
+
+func TestSyncTickLogsTheListingLagDetector(t *testing.T) {
+	t0 := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Minute)
+	reader := &detectorReader{dates: []time.Time{t0, t1}, comments: [][]githubsync.ObservedComment{
+		nil,
+		{{CommentID: 9, AuthorID: 7, CreatedAt: t1.Add(-time.Second), UpdatedAt: t1.Add(-time.Second), Body: "x"}},
+	}}
+	reconciler, err := githubsync.NewReconciler(reader, githubsynctest.NewMemory(), time.Now, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &bytes.Buffer{}
+	clock := t0
+	s := &githubSync{reconciler: reconciler, repos: []string{"acme/widgets"}, jobTimeout: time.Minute, logger: slog.New(slog.NewJSONHandler(logs, nil)), now: func() time.Time { return clock }}
+
+	if err := s.tick(t.Context()); err != nil { // the first tick: nothing first-observed yet
+		t.Fatal(err)
+	}
+	clock = clock.Add(time.Minute) // past the pacing window
+	if err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), `"msg":"github comment first observed"`) || !strings.Contains(logs.String(), `"comment":9`) {
+		t.Fatalf("a tick that recorded a first-observed comment did not log the detector line: %s", logs)
+	}
 }
 
 func TestStatusReportsTheConfiguredRepositories(t *testing.T) {

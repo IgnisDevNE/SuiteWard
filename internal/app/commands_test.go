@@ -35,7 +35,6 @@ const (
 	cjLogin        = "octo-owner"
 	cjPull         = 7
 	cjMarker       = "SECRET-COMMENT-TEXT"
-	cjJobTimeout   = time.Minute
 	cjHead         = "3333333333333333333333333333333333333333" // the head of every observed pull request
 	cjBranch       = "feature"                                  // and its branch
 )
@@ -167,7 +166,7 @@ func newCjWorldWithTiers(t *testing.T, enrolledTier, configured string) *cjWorld
 	w.suites = &probeSuites{UnitOfWork: w.mem}
 	w.reader = &fakeBootReader{repos: map[string]*bootRepository{cjRepo1: newBootRepository(cjRepo1, cjID1), cjRepo2: newBootRepository(cjRepo2, cjID2)}, calls: map[string]int{}}
 	w.content = &fakeBootContent{stored: map[string]bool{}}
-	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
+	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, now: func() time.Time { return cjSync.Add(time.Hour) },
 		reader: w.reader, content: w.content, pulls: w.obs, tier: configured,
 		bot: newBotAccount(func(context.Context) (int64, error) {
 			w.botCall++
@@ -576,11 +575,10 @@ func TestCommandsJobProcessesInTheOrderOfCreationThenCommentIDAcrossRepositories
 }
 
 func TestCommandsJobWaitsForTheSyncWatermark(t *testing.T) {
-	horizon := cjSync.Add(-(cjJobTimeout + 30*time.Second))
 	w := newCjWorld(t)
-	ready := ownerCommand(500, horizon.Add(-time.Second), "approve", "P1-R2", 0)
-	atHorizon := ownerCommand(501, horizon, "approve", "P1-R2", 3)
-	w.syncAll([]cjComment{atHorizon, ready})
+	pending := ownerCommand(500, cjSync.Add(-11*time.Second), "approve", "P1-R2", 0) // 11 s before the earliest start: before the horizon (-10 s)
+	notYet := ownerCommand(501, cjSync.Add(-9*time.Second), "approve", "P1-R2", 3)   // 9 s before: not yet past the horizon
+	w.syncAll([]cjComment{notYet, pending})
 	w.mustRun()
 	w.requireProcessed(cjID1, 500)
 	w.requireNoEntry(cjID1, 501) // a synchronization that began before this comment may not have seen the owner's own earlier commands
@@ -588,11 +586,44 @@ func TestCommandsJobWaitsForTheSyncWatermark(t *testing.T) {
 
 func TestCommandsJobUsesTheEarliestSuccessfulCycle(t *testing.T) {
 	w := newCjWorld(t)
-	late := cjSync.Add(-(cjJobTimeout + 30*time.Second)).Add(-time.Minute) // before repository 1's horizon, after repository 2's
+	late := cjSync.Add(-commandListingMargin).Add(-time.Minute) // before repository 1's horizon, after repository 2's
 	w.observe(cjID1, cjSync, ownerCommand(500, late, "approve", "P1-R2", 0))
 	w.observe(cjID2, cjSync.Add(-30*time.Minute))
 	w.mustRun()
 	w.requireNoEntry(cjID1, 500)
+}
+
+func TestCommandsJobHorizonIsTheEarliestCycleStartMinusTheListingMargin(t *testing.T) {
+	w := newCjWorld(t)
+	w.observe(cjID1, cjSync)
+	w.observe(cjID2, cjSync.Add(-5*time.Minute))
+	enrollment, enrolled, err := w.owners.Current(w.t.Context())
+	if err != nil || !enrolled {
+		t.Fatalf("enrollment = %v, %v, %v", enrollment, enrolled, err)
+	}
+	horizon, ready, err := w.job.horizon(w.t.Context(), enrollment)
+	if err != nil || !ready {
+		t.Fatalf("horizon = %v, ready %v, err %v; want ready", horizon, ready, err)
+	}
+	if want := cjSync.Add(-5 * time.Minute).Add(-commandListingMargin); !horizon.Equal(want) {
+		t.Fatalf("horizon = %v; want the earliest start (%v) minus %v = %v", horizon, cjSync.Add(-5*time.Minute), commandListingMargin, want)
+	}
+}
+
+func TestCommandsJobHorizonIsNotReadyWhileAnEnrolledRepositoryHasNoCycleStart(t *testing.T) {
+	w := newCjWorld(t)
+	w.observe(cjID1, cjSync) // repository 2 has never synchronized: its CycleStartedAt is zero
+	enrollment, enrolled, err := w.owners.Current(w.t.Context())
+	if err != nil || !enrolled {
+		t.Fatalf("enrollment = %v, %v, %v", enrollment, enrolled, err)
+	}
+	horizon, ready, err := w.job.horizon(w.t.Context(), enrollment)
+	if err != nil || ready || !horizon.IsZero() {
+		t.Fatalf("horizon = %v, ready %v, err %v; want a zero horizon, not ready", horizon, ready, err)
+	}
+	if !strings.Contains(w.logs.String(), `"level":"WARN"`) || !strings.Contains(w.logs.String(), "has not synchronized yet") {
+		t.Fatalf("no Warn line says an enrolled repository has not synchronized yet; logs: %s", w.logs)
+	}
 }
 
 func TestCommandsJobDoesNothingWhileARepositoryHasNeverSynchronized(t *testing.T) {

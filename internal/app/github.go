@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,6 +28,13 @@ const (
 	githubTimeout = 30 * time.Second
 	// tickMargin is what a tick leaves of JOB_TIMEOUT to record its last cycles and return.
 	tickMargin = 5 * time.Second
+	// syncMinInterval is the shortest time between two ticks (D-SYNC, "Sync pacing", M1.7c).
+	syncMinInterval = 20 * time.Second
+	// syncPaceRequests is how many requests a minute this process paces its ticks to, half of GitHub's secondary
+	// limit of 900 points a minute (D-SYNC, M1.7c amendment of 2026-10-16).
+	syncPaceRequests = 450
+	// syncPaceInterval is the window syncPaceRequests governs.
+	syncPaceInterval = time.Minute
 )
 
 // repositoryStatus is one entry of the github section of /status.
@@ -160,6 +168,11 @@ type githubSync struct {
 	appID      int64
 	repos      []string
 	jobTimeout time.Duration
+	now        func() time.Time // injected clock, for sync pacing (D-SYNC, "Sync pacing", M1.7c)
+	logger     *slog.Logger     // the listing-lag detector
+
+	previousStart    time.Time // the start of the previous tick; zero before the first one after a process start
+	previousRequests int       // the requests that tick made, for pacing the next one
 }
 
 // The permission maps of the installation tokens (D-GITHUB-ACCESS): each use
@@ -264,7 +277,7 @@ func (a githubAccess) checkRuns(permissions map[string]string) (*github.Checks, 
 // reconciler over store. Synchronization is read-only: the token requests the
 // metadata, pull requests and contents permissions at read level; the
 // protection check uses the other reader (Metadata and Administration read).
-func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store, now func() time.Time, logger *slog.Logger) (*githubSync, error) {
 	access, err := newGitHubAccess(g) // one access, so one budget, for every token
 	if err != nil {
 		return nil, err
@@ -295,12 +308,25 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID}, nil
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID, now: now, logger: logger}, nil
 }
 
-// tick is the github_sync_tick job: one cycle of every configured repository.
+// tick is the github_sync_tick job: one cycle of every configured repository, paced by the previous tick's cost
+// (D-SYNC, "Sync pacing", M1.7c). It returns at once, recording nothing and calling no GitHub, while it is not yet
+// due: 20 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
+// at syncPaceRequests a minute. The first tick after a process start is always due.
 func (s *githubSync) tick(ctx context.Context) error {
-	_, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+	now := s.now()
+	if !s.previousStart.IsZero() {
+		pace := time.Duration(s.previousRequests) * syncPaceInterval / syncPaceRequests
+		if now.Sub(s.previousStart) < max(syncMinInterval, pace) {
+			return nil
+		}
+	}
+	s.previousStart = now
+	result, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+	s.previousRequests = result.Requests // a tick cut short by the deadline or a budget stop still counts what it made
+	s.logFirstObserved(ctx, result)
 	return err
 }
 
@@ -310,8 +336,24 @@ func (s *githubSync) syncRepo(ctx context.Context, repo string) error {
 	if !slices.Contains(s.repos, repo) {
 		return fmt.Errorf("repository %q is not one of the configured repositories", repo)
 	}
-	_, err := s.reconciler.SyncRepo(ctx, repo)
+	result, err := s.reconciler.SyncRepo(ctx, repo)
+	s.logFirstObserved(ctx, result)
 	return err
+}
+
+// logFirstObserved is the listing-lag detector (docs/contracts/runtime.md, "Latency (M1.7c)"): one Info line per
+// comment result records as first observed, from a tick or from syncRepo. It never logs comment text.
+func (s *githubSync) logFirstObserved(ctx context.Context, result githubsync.TickResult) {
+	for _, c := range result.FirstObserved {
+		args := []any{"repo", c.Repo, "comment", c.CommentID, "created_at", c.CreatedAt, "cycle_started_at", c.StartedAt}
+		if !c.PreviousStartedAt.IsZero() {
+			args = append(args, "previous_cycle_started_at", c.PreviousStartedAt)
+			if c.PreviousStartedAt.After(c.CreatedAt) {
+				args = append(args, "missed_by_ms", c.PreviousStartedAt.Sub(c.CreatedAt).Milliseconds())
+			}
+		}
+		s.logger.InfoContext(ctx, "github comment first observed", args...)
+	}
 }
 
 // tickDeadline is how long a tick may start repositories: JOB_TIMEOUT minus

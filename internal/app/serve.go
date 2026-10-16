@@ -90,7 +90,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	a := &api{store: store, owners: store, logger: logger, tier: tier}
 	backend := &mcpBackend{store: store, owners: store, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
-		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger})
+		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
 		if err != nil {
 			pool.Close()
 			return err
@@ -102,7 +102,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		problems := &bootstrapProblems{}
 		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, problems: problems, logger: logger, now: time.Now}
 		riverConfig.Bootstrap = noWake(bootstrap.run)
-		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, pulls: store, tier: tier, jobTimeout: cfg.JobTimeout, logger: logger, now: time.Now}
+		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
 		riverConfig.Commands = noWake(commandJob.run)
 		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store}
 		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger}

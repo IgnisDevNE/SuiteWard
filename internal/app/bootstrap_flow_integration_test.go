@@ -100,7 +100,7 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 		return &githubsync.ObservedComment{CommentID: id, AuthorID: bootOwnerID, AuthorLogin: "owner", CreatedAt: clock, UpdatedAt: clock, Body: body(code)}
 	}
 	commandsJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, reader: reader, content: artifacts, pulls: store, tier: owner.TierIsolated,
-		jobTimeout: time.Minute, logger: logger, now: func() time.Time { return clock },
+		logger: logger, now: func() time.Time { return clock },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	runCommands := func() {
 		t.Helper()

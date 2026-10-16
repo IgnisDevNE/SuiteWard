@@ -438,8 +438,9 @@ func (j *commandsJob) tree(ctx context.Context, repo, sha string) (*githubTree, 
 	return tree, entries, nil
 }
 
+// hasDeclaration reports whether entries hold .suiteward.yml as a file: a link or a submodule of that name is not a declaration.
 func hasDeclaration(entries []inventory.Entry) bool {
-	return slices.ContainsFunc(entries, func(e inventory.Entry) bool { return e.Path == scope.DeclarationPath })
+	return slices.ContainsFunc(entries, func(e inventory.Entry) bool { return e.Path == scope.DeclarationPath && e.Kind == inventory.File })
 }
 
 // source picks the tree to propose: the default branch's head when it has .suiteward.yml, else the pull request's head

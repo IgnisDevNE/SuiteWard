@@ -159,12 +159,12 @@ WHERE p.project_id = sqlc.arg(project_id) AND p.suite_id = sqlc.arg(suite_id) AN
                   WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
 ORDER BY p.proposal_id;
 
--- name: ListBaselineProposalsOfCarrier :many
+-- The proposals whose revisions all expect no canonical and none of which was promoted; the caller picks the newest.
+-- name: ListBootstrapProposals :many
 SELECT p.proposal_id FROM proposals p
-WHERE p.project_id = sqlc.arg(project_id) AND p.suite_id = sqlc.arg(suite_id) AND p.carrier_id = sqlc.arg(carrier_id)
+WHERE p.project_id = sqlc.arg(project_id) AND p.suite_id = sqlc.arg(suite_id)
   AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
-                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id
-                    AND (r.origin_kind <> 'pull' OR r.expected_version_id IS NOT NULL))
+                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id AND r.expected_version_id IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM promotions m
                   WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
 ORDER BY p.proposal_id;

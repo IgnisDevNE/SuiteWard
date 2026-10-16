@@ -1,9 +1,11 @@
 package governance
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -257,16 +259,34 @@ func HeadEvidence(inv inventory.Inventory, binding contract.ApprovalBinding, sou
 	return evidence, nil
 }
 
+// proposalNumber is n of a proposal named P<n> in canonical decimal, and 0 for any other name.
+func proposalNumber(id contract.ProposalID) uint64 {
+	digits, ok := strings.CutPrefix(string(id), "P")
+	n, err := strconv.ParseUint(digits, 10, 64)
+	if !ok || err != nil || strconv.FormatUint(n, 10) != digits {
+		return 0
+	}
+	return n
+}
+
 // NextNumberedProposalID returns P<n+1>, n being the highest number among ids named P<number> in canonical
 // decimal. Other names are not part of the numbering. Both stores use it so they number alike.
 func NextNumberedProposalID(ids []contract.ProposalID) contract.ProposalID {
 	var highest uint64
 	for _, id := range ids {
-		digits, ok := strings.CutPrefix(string(id), "P")
-		n, err := strconv.ParseUint(digits, 10, 64)
-		if ok && err == nil && n > highest && strconv.FormatUint(n, 10) == digits {
-			highest = n
-		}
+		highest = max(highest, proposalNumber(id))
 	}
 	return contract.ProposalID("P" + strconv.FormatUint(highest+1, 10))
+}
+
+// LatestProposalID returns the newest of ids, the one with the highest number among those named P<number>. A name that is
+// not numbered ranks below every numbered one, and such names are ordered by name. False when ids is empty. Both stores use
+// it for LatestBootstrapProposal so they agree.
+func LatestProposalID(ids []contract.ProposalID) (contract.ProposalID, bool) {
+	if len(ids) == 0 {
+		return "", false
+	}
+	return slices.MaxFunc(ids, func(a, b contract.ProposalID) int {
+		return cmp.Or(cmp.Compare(proposalNumber(a), proposalNumber(b)), strings.Compare(string(a), string(b)))
+	}), true
 }

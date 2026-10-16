@@ -352,12 +352,19 @@ func (j *checksJob) planBootstrap(ctx context.Context, p owner.ProjectPolicy, ta
 		}
 	}
 	err = j.suites.Do(ctx, owner.ProjectID(p.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		id, found, err := tx.LatestBootstrapProposal(ctx)
+		if err != nil || !found {
+			return err
+		}
+		proposal, _, err := tx.Proposal(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load the latest bootstrap proposal: %w", err)
+		}
+		if proposal.Current().OriginKind() != contract.OriginPull {
+			return nil
+		}
 		for _, pull := range open {
-			_, found, err := tx.BaselineProposalFor(ctx, carrierID(p.RepositoryID, pull.Number))
-			if err != nil {
-				return fmt.Errorf("find the bootstrap proposal of pull %d: %w", pull.Number, err)
-			}
-			if found {
+			if proposal.Current().Carrier() == carrierID(p.RepositoryID, pull.Number) {
 				plan.carrier = pull.Number
 				return nil
 			}
@@ -500,7 +507,7 @@ func (j *checksJob) assessed(head governance.HeadResult, base checks.Result) (ch
 func (j *checksJob) bootstrapped(head governance.BootstrapHeadResult, base checks.Result) (checks.Result, error) {
 	result := base
 	result.Revision = head.Revision
-	if head.Empty {
+	if head.Cancelled {
 		result.State, result.Reason = checks.InProgress, reasonBootstrapPending
 		return result, nil
 	}

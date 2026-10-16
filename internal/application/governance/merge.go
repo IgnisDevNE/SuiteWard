@@ -338,9 +338,10 @@ func originatesFromBranch(ctx context.Context, tx Tx, first contract.HistoricalC
 	return false, fmt.Errorf("%w: the first version names revision %v, which its proposal does not have", ErrInvalidState, reference)
 }
 
-// decideFirstMerge decides a merge of a Suite without a canonical. The merge of the bootstrap PR decides V1 (the carrier's
-// bootstrap proposal, assessed at the merge commit and promoted with an IntegrationMergedChange); every other merge is
-// before the canonical. None of them names a version, because there is none. The target is checked first, as with a
+// decideFirstMerge decides a merge of a Suite without a canonical. The merge of the bootstrap PR decides V1 (the Suite's
+// latest bootstrap proposal when it is a pull proposal carried by this PR, assessed at the merge commit and promoted with an
+// IntegrationMergedChange); every other merge, including that of a superseded carrier, is before the canonical. None of
+// them names a version, because there is none. The target is checked first, as with a
 // canonical, so a merge into another branch is never the bootstrap.
 func decideFirstMerge(ctx context.Context, tx Tx, request MergeRequest, refusal MergeReason, inv inventory.Inventory, integrated contract.ProtectedContract, state SuiteState) (MergeOutcome, error) {
 	if refusal == MergeReasonIntegrityFailed { // it names a stored canonical, and there is none
@@ -350,9 +351,9 @@ func decideFirstMerge(ctx context.Context, tx Tx, request MergeRequest, refusal 
 	if request.Target != state.Target {
 		return kept, nil
 	}
-	id, found, err := tx.BaselineProposalFor(ctx, request.Carrier)
+	id, found, err := tx.LatestBootstrapProposal(ctx)
 	if err != nil {
-		return MergeOutcome{}, fmt.Errorf("find the bootstrap proposal of %q: %w", request.Carrier, err)
+		return MergeOutcome{}, fmt.Errorf("find the latest bootstrap proposal: %w", err)
 	}
 	if !found {
 		return kept, nil
@@ -360,6 +361,9 @@ func decideFirstMerge(ctx context.Context, tx Tx, request MergeRequest, refusal 
 	proposal, _, err := tx.Proposal(ctx, id)
 	if err != nil {
 		return MergeOutcome{}, fmt.Errorf("load proposal: %w", err)
+	}
+	if latest := proposal.Current(); latest.OriginKind() != contract.OriginPull || latest.Carrier() != request.Carrier { // superseded, or promoted by the bootstrap job
+		return kept, nil
 	}
 	binding := proposal.Current().Binding()
 	reference := binding.Reference()

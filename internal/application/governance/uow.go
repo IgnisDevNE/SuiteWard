@@ -44,10 +44,6 @@ type Tx interface {
 	// whose revisions all expect a canonical (a baseline proposal expects none) and none of whose revisions was
 	// promoted. False when there is none; ErrInvalidState when more than one qualifies.
 	ChangeProposalFor(context.Context, contract.ApprovalCarrierID) (contract.ProposalID, bool, error)
-	// BaselineProposalFor returns the bootstrap proposal of carrier in the locked Suite: the proposal carried by it
-	// whose revisions are OriginPull, expect no canonical, and none of which was promoted. False when there is none;
-	// ErrInvalidState when more than one qualifies.
-	BaselineProposalFor(context.Context, contract.ApprovalCarrierID) (contract.ProposalID, bool, error)
 	// LatestBootstrapProposal returns the locked Suite's newest proposal whose revisions expect no canonical, of either
 	// origin kind, and none of which was promoted. False when there is none. Older ones are superseded, not an error.
 	// "Newest" is the highest proposal number (P<n>, as NextProposalID numbers them).

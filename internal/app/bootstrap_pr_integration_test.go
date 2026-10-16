@@ -22,6 +22,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -133,6 +134,16 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 		t.Fatalf("%s proposals after the bootstrap job, want none: the default branch has no protected files", got)
 	}
 
+	// The owner proposes the bootstrap on pull request 5, as the commands job does: P1-R1 from its head, with its summary.
+	tree := &bootTree{files: bootFiles("v1")}
+	summary := bootMust(newSummaryMessage(commentTarget{RepositoryID: bootRepoID, Repo: bootRepo, Pull: 5},
+		inventoryInputs(bootstrapSummaryInputs{Proposal: 1, Revision: 1, Source: sourcePull, Origin: cjHead2, Tier: "isolated"}, bootMust(inventory.Build(t.Context(), tree)))))
+	if _, err := governance.ProposeBaseline(t.Context(), store, artifacts, governance.BaselineRequest{
+		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: defaultSuite, ProposalID: "P1", RevisionID: "R1"},
+		Carrier:   carrierID(bootRepoID, 5), Origin: cjHead2, OriginKind: contract.OriginPull, Tree: tree, Outbox: []governance.OutboxMessage{summary}}); err != nil {
+		t.Fatalf("propose the bootstrap: %v", err)
+	}
+
 	checksJob := &checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(),
 		commands: store, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
 	step := func() {
@@ -172,7 +183,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 		}
 	}
 
-	// 1 and 2. The pull request with tests/ carries the bootstrap: a summary comment and approval-missing.
+	// 1 and 2. The pull request that carries the proposal: its summary comment and approval-missing.
 	step()
 	pass()
 	if record := current(5); record.State != checks.InProgress || record.Reason != "approval-missing" || record.Reference != "P1-R1" {

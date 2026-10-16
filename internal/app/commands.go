@@ -495,6 +495,15 @@ func (v bootstrapView) reusable(carrier contract.ApprovalCarrierID, src bootstra
 	return fmt.Sprintf("%s-%s", reference.ProposalID, reference.RevisionID), true, nil
 }
 
+// refusePropose records a propose-refused with the reason code of its acknowledgment.
+func (j *commandsJob) refusePropose(ctx context.Context, enrollment owner.State, c commands.Candidate, reason string) error {
+	ack, err := newBootstrapAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, c.Comment.CommentID, enrollment.Owner.Login, commands.ProposeRefused, reason, "")
+	if err != nil {
+		return &opaque{what: "build the acknowledgment", cause: err}
+	}
+	return j.record(ctx, c, commands.ProposeRefused, "", &ack)
+}
+
 // propose decides a /suiteward propose (docs/contracts/runtime.md, "Explicit bootstrap: propose and skip"). A read of
 // GitHub or of the store that fails is an error of this candidate: the retry rule runs it again and, after five
 // attempts, records it as failed with the propose-failed acknowledgment. A source that cannot be read as a contract (an
@@ -505,6 +514,13 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	view, done, err := j.gate(ctx, enrollment, c, commands.ProposeRefused)
 	if done || err != nil {
 		return err
+	}
+	// Before any tree is read: a pull request that is not open, or whose base is not the Suite's target, could never decide V1 by its merge.
+	switch {
+	case !view.pull.NotOpenSince.IsZero():
+		return j.refusePropose(ctx, enrollment, c, reasonNotOpen)
+	case contract.IntegrationTargetID(targetPrefix+view.pull.BaseRef) != view.target:
+		return j.refusePropose(ctx, enrollment, c, reasonBaseNotTarget)
 	}
 	// A source that cannot be read as a contract is a fact about the commit, so it is refused and never retried.
 	refuseSource := func() error {

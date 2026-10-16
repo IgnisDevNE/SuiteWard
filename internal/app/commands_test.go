@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -144,14 +145,21 @@ type cjWorld struct {
 	reader   *fakeBootReader  // GitHub, as /suiteward propose reads it
 	content  *fakeBootContent // the files a proposed baseline stored
 	headRepo string           // the head repository the observed pulls name; "" is not observed
+	baseRef  string           // the base branch the observed pulls name; "" is main
 }
 
 func newCjWorld(t *testing.T) *cjWorld {
 	t.Helper()
+	return newCjWorldWithTiers(t, owner.TierIsolated, owner.TierIsolated)
+}
+
+// newCjWorldWithTiers is newCjWorld for an owner enrolled at the tier enrolled, on an installation configured for configured.
+func newCjWorldWithTiers(t *testing.T, enrolledTier, configured string) *cjWorld {
+	t.Helper()
 	enrolled := ownertest.NewMemory()
 	projects := []owner.ProjectPolicy{{RepositoryID: cjID1, Repo: cjRepo1, TestCheck: "ci"}, {RepositoryID: cjID2, Repo: cjRepo2, TestCheck: "ci"}}
 	if err := enrolled.Enroll(t.Context(), owner.Enrollment{Owner: owner.Owner{AccountID: cjOwnerID, Login: cjLogin}, Secret: cjSecret, Projects: projects,
-		Step: 1, Tier: owner.TierIsolated, EnrolledAt: cjOrigin}); err != nil {
+		Step: 1, Tier: enrolledTier, EnrolledAt: cjOrigin}); err != nil {
 		t.Fatal(err)
 	}
 	w := &cjWorld{t: t, owners: &cjOwners{Store: enrolled}, obs: githubsynctest.NewMemory(), mem: governancetest.NewMemory(), logs: &bytes.Buffer{}, listed: map[int64][]cjComment{}}
@@ -160,7 +168,7 @@ func newCjWorld(t *testing.T) *cjWorld {
 	w.reader = &fakeBootReader{repos: map[string]*bootRepository{cjRepo1: newBootRepository(cjRepo1, cjID1), cjRepo2: newBootRepository(cjRepo2, cjID2)}, calls: map[string]int{}}
 	w.content = &fakeBootContent{stored: map[string]bool{}}
 	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
-		reader: w.reader, content: w.content, pulls: w.obs, tier: owner.TierIsolated,
+		reader: w.reader, content: w.content, pulls: w.obs, tier: configured,
 		bot: newBotAccount(func(context.Context) (int64, error) {
 			w.botCall++
 			return cjBotID, w.botErr
@@ -205,12 +213,20 @@ func (w *cjWorld) observe(repositoryID int64, at time.Time, comments ...cjCommen
 	cycle := githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, c := range w.listed[repositoryID] {
 		if _, listed := cycle.Comments[c.pull]; !listed {
-			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: cjHead, HeadRef: cjBranch, HeadRepo: w.headRepo, BaseRef: "main", BaseSHA: "base", UpdatedAt: at})
+			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: cjHead, HeadRef: cjBranch, HeadRepo: w.headRepo, BaseRef: cmp.Or(w.baseRef, "main"), BaseSHA: "base", UpdatedAt: at})
 		}
 		cycle.Comments[c.pull] = append(cycle.Comments[c.pull], githubsync.ObservedComment{CommentID: c.id, AuthorID: c.author, AuthorLogin: "someone",
 			CreatedAt: c.created, UpdatedAt: c.updated, Body: c.body})
 	}
 	if err := w.obs.RecordCycle(w.t.Context(), cycle); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// closePull records a cycle of the repository that lists no open pull request, so the observed ones are not open any more.
+func (w *cjWorld) closePull(repositoryID int64, at time.Time) {
+	w.t.Helper()
+	if err := w.obs.RecordCycle(w.t.Context(), githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}); err != nil {
 		w.t.Fatal(err)
 	}
 }

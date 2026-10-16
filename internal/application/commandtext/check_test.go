@@ -200,6 +200,28 @@ func TestCheckSummaryPanicsOnAnImpossibleCheck(t *testing.T) {
 	})
 }
 
+// Before the first contract no canonical exists, so a head cannot change it: the text names the proposed first contract.
+func TestCheckSummaryOfAMissingApprovalBeforeTheFirstContractNamesTheProposedFirstContract(t *testing.T) {
+	c := check(commandtext.CheckInProgress, "approval-missing")
+	c.Version = 0
+	_, summary := checkText(t, c)
+	for _, w := range []string{"carries the proposed first contract P3-R2", "awaiting the owner's approval of that exact revision", "```\n/suiteward approve P3-R2 <code>\n```", "- Proposal revision: P3-R2"} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("summary lacks %q:\n%s", w, summary)
+		}
+	}
+	if strings.Contains(summary, "changes the protected contract") || strings.Contains(summary, "V0") {
+		t.Errorf("a head cannot change a contract that does not exist:\n%s", summary)
+	}
+}
+
+func TestCheckSummaryOfAMissingApprovalAgainstACanonicalIsUnchanged(t *testing.T) {
+	_, summary := checkText(t, check(commandtext.CheckInProgress, "approval-missing"))
+	if !strings.Contains(summary, "This head changes the protected contract and has no current approval from the owner for its exact revision.") || strings.Contains(summary, "first contract") {
+		t.Errorf("the text against a canonical changed:\n%s", summary)
+	}
+}
+
 func bootstrapReady() commandtext.Check {
 	return commandtext.Check{State: commandtext.CheckSuccess, Reason: "bootstrap-ready", Proposal: 3, Revision: 2, Tier: commandtext.Isolated}
 }

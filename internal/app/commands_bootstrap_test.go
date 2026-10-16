@@ -295,6 +295,68 @@ func TestProposeRefusesAForkAndACanonicalAndNoSuite(t *testing.T) {
 	}
 }
 
+func TestProposeRefusesAPullRequestThatIsNotOpenOrNotIntoTheTargetBeforeReadingAnyTree(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fork    bool
+		baseRef string // "" is main, the target
+		closed  bool
+		reason  string
+	}{
+		{"a pull request that is not open", false, "", true, "not-open"},
+		{"a pull request into another branch", false, "release", false, "base-not-target"},
+		{"not open outranks another base", false, "release", true, "not-open"},
+		{"a fork outranks both", true, "release", true, "fork"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCjWorld(t)
+			w.trees(bootFiles("v1"), bootFiles("v2"))
+			w.baseRef = tc.baseRef
+			if tc.fork {
+				w.headRepo = "evil/widgets"
+			}
+			w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
+			if tc.closed {
+				w.closePull(cjID1, cjSync.Add(time.Minute))
+			}
+			w.mustRun()
+
+			w.requireAckPayload(cjID1, 500, commands.ProposeRefused, map[string]any{"reason": tc.reason})
+			if w.summaries() != 0 || len(w.owners.consumed) != 0 || w.reader.calls["head"] != 0 || w.reader.calls["tree"] != 0 {
+				t.Fatalf("%d summaries, %d consumed steps, %d branch reads and %d tree reads; a refused propose proposes and reads nothing", w.summaries(), len(w.owners.consumed), w.reader.calls["head"], w.reader.calls["tree"])
+			}
+		})
+	}
+}
+
+func TestProposeSummaryNamesTheEffectiveTier(t *testing.T) {
+	for _, tc := range []struct{ enrolled, configured, want string }{
+		{owner.TierIsolated, owner.TierIsolated, "isolated"},
+		{owner.TierCoLocated, owner.TierIsolated, "co-located"}, // a secret enrolled beside the agent stays within its reach
+		{owner.TierIsolated, owner.TierCoLocated, "co-located"},
+		{owner.TierCoLocated, owner.TierCoLocated, "co-located"},
+	} {
+		t.Run("enrolled "+tc.enrolled+" configured "+tc.configured, func(t *testing.T) {
+			w := newCjWorldWithTiers(t, tc.enrolled, tc.configured)
+			w.trees(bootFiles("v1"), bootFiles("v1"))
+			w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
+			w.mustRun()
+
+			message, found := w.message("bootstrap-summary:1001:P2-R1")
+			if !found {
+				t.Fatal("no bootstrap summary")
+			}
+			var payload bootstrapSummaryPayload
+			if err := json.Unmarshal(message.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Summary.Tier != tc.want {
+				t.Fatalf("tier %q, want %q", payload.Summary.Tier, tc.want)
+			}
+		})
+	}
+}
+
 func TestProposeTakesTheNextNumberBesideOlderProposalsOfEitherKind(t *testing.T) {
 	w := newCjWorld(t)
 	w.trees(bootFiles("v1"), bootFiles("v1"))
@@ -522,6 +584,8 @@ func TestCommentPublisherRendersTheBootstrapAcknowledgments(t *testing.T) {
 	}{
 		{"propose refused for a canonical", map[string]any{"disposition": "propose-refused", "reason": "canonical-present"}, ack(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.CanonicalPresent})},
 		{"propose refused for a fork", map[string]any{"disposition": "propose-refused", "reason": "fork"}, ack(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.Fork})},
+		{"propose refused for a pull request not open", map[string]any{"disposition": "propose-refused", "reason": "not-open"}, ack(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.NotOpen})},
+		{"propose refused for a base that is not the target", map[string]any{"disposition": "propose-refused", "reason": "base-not-target"}, ack(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.BaseNotTarget})},
 		{"propose refused for an empty inventory", map[string]any{"disposition": "propose-refused", "reason": "empty-inventory"}, ack(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.EmptyInventory})},
 		{"propose refused for a missing declaration", map[string]any{"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature/x", "suggestion": suggestion}, suggest("feature/x", suggestion)},
 		{"propose refused for a missing declaration with no suggestion", map[string]any{"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature"}, suggest("feature", nil)},

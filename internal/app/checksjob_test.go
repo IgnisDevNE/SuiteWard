@@ -523,6 +523,29 @@ func TestChecksKeepTheRecordOnATransientReadAndNeverLeaveANewHeadWithoutACheck(t
 	}
 }
 
+// An upgrade can leave a stored check of a reason the renderer no longer knows (bootstrap-pending): a failed read must not carry it
+// over to a message that cannot be rendered.
+func TestChecksNeverKeepAStoredReasonThatNoLongerExistsOnATransientRead(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.tree(cjHead2, bootFiles("v2"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	stored := checks.Result{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2, State: checks.InProgress, Reason: "bootstrap-pending"}
+	_, _, err := w.memory.Publish(t.Context(), stored, w.clock, func(generation int64) (governance.OutboxMessage, error) {
+		stored.Reason = reasonAssessmentPending // the message of the old record only needs to be a valid one
+		return newCheckMessage(bootRepo, stored, owner.TierIsolated, "", generation)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+
+	if err := w.runChecks(); err != nil {
+		t.Fatalf("a stored reason that no longer exists must not fail the run: %v", err)
+	}
+
+	w.want(5, checks.InProgress, "assessment-pending", 2)
+}
+
 func TestChecksGiveANewHeadWhoseFirstReadFailedAnAssessmentPendingCheck(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)

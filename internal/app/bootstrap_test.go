@@ -262,7 +262,7 @@ func newBootWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 		w.registerPolicy(owner.ProjectID(id))
 	}
 	w.problems = &bootstrapProblems{}
-	w.job = &bootstrapJob{repos: o.repos, reader: w.reader, owners: w.owners, suites: w.suites, content: w.content, problems: w.problems,
+	w.job = &bootstrapJob{repos: o.repos, reader: w.reader, owners: w.owners, suites: w.suites, problems: w.problems,
 		logger: slog.New(slog.NewJSONHandler(w.logs, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
 	return w
 }

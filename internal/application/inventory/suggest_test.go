@@ -39,11 +39,12 @@ func TestSuggestScope(t *testing.T) {
 		{"file matching two globs", []file{regular("pkg/a_test.spec.go", "")}, []string{"pkg/*.spec.*", "pkg/*_test.*"}},
 		{"sorted and de-duplicated", []file{
 			regular("z/b_test.go", ""), regular("z/a_test.go", ""), regular("tests/x", ""), regular("tests/y", ""), regular("a/c_test.go", ""),
-		}, []string{"a/*_test.*", "tests/**", "z/*_test.*"}},
+		}, []string{"tests/**", "a/*_test.*", "z/*_test.*"}}, // the top-level directory globs come first, each group sorted
 		{"directories, symlinks and submodules are ignored", []file{
 			symlink("tests/link"), submodule("spec/sub"), symlink("pkg/a_test.go"), submodule("pkg/b.spec.go"),
 		}, []string{}},
 		{"a directory with glob characters is skipped", []file{regular("a[b]/c_test.go", ""), regular("a*/c_test.go", ""), regular("a?/c_test.go", "")}, []string{}},
+		{"a directory name the scope parser rejects", []file{regular("!x/a_test.go", "")}, []string{}},
 		{"a top-level directory name alone is not a file inside it", []file{regular("tests", "")}, []string{}},
 	}
 	for _, tt := range tests {
@@ -67,6 +68,21 @@ func TestSuggestScopeCapKeepsTheFirstTwentySorted(t *testing.T) {
 	// The input order must not decide which patterns survive.
 	for i, j := 0, len(files)-1; i < j; i, j = i+1, j-1 {
 		files[i], files[j] = files[j], files[i]
+	}
+	if got := inventory.SuggestScope(entriesOf(files...)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("SuggestScope = %v, want %v", got, want)
+	}
+}
+
+func TestSuggestScopeKeepsTheTopLevelDirectoryGlobsWhenTheCapCutsTheRest(t *testing.T) {
+	var files []file
+	for i := 0; i < 25; i++ {
+		files = append(files, regular(fmt.Sprintf("d%02d/a_test.go", i), ""))
+	}
+	files = append(files, regular("tests/a.go", ""), regular("spec/a.rb", ""))
+	want := []string{"spec/**", "tests/**"} // each group sorted: they come first, then the 18 first of the rest
+	for i := 0; i < 18; i++ {
+		want = append(want, fmt.Sprintf("d%02d/*_test.*", i))
 	}
 	if got := inventory.SuggestScope(entriesOf(files...)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("SuggestScope = %v, want %v", got, want)

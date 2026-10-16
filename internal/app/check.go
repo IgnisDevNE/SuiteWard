@@ -50,32 +50,46 @@ type checkPayload struct {
 // output validates the payload and renders the title and the summary of its check run; key only names the
 // message in an error, which never quotes the payload.
 func (p checkPayload) output(key string) (title, summary string, err error) {
+	c, err := p.check(key)
+	if err != nil {
+		return "", "", err
+	}
+	return renderCheck(key, c)
+}
+
+// check validates the fields of the payload and returns what its output states. It does not render, so a message that
+// is dropped as stale never meets a reason that no longer exists.
+func (p checkPayload) check(key string) (commandtext.Check, error) {
 	state, tier := checkStates[checks.State(p.State)], checkTiers[p.Tier]
 	if err := p.validate(); err != nil {
-		return "", "", keyError(githubCheckKind, key, err.Error())
+		return commandtext.Check{}, keyError(githubCheckKind, key, err.Error())
 	}
 	switch {
 	case !headPattern.MatchString(p.HeadSHA):
-		return "", "", keyError(githubCheckKind, key, "the head is not 40 lowercase hexadecimal digits")
+		return commandtext.Check{}, keyError(githubCheckKind, key, "the head is not 40 lowercase hexadecimal digits")
 	case p.Generation < 1:
-		return "", "", keyError(githubCheckKind, key, "the generation must be positive")
+		return commandtext.Check{}, keyError(githubCheckKind, key, "the generation must be positive")
 	case state == 0 || tier == 0:
-		return "", "", keyError(githubCheckKind, key, "the state or the tier is unknown")
+		return commandtext.Check{}, keyError(githubCheckKind, key, "the state or the tier is unknown")
 	}
 	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier}
 	if p.Reference != "" {
 		var ok bool
 		if c.Proposal, c.Revision, ok = parseReference(p.Reference); !ok {
-			return "", "", keyError(githubCheckKind, key, "the reference is not P<n>-R<m>")
+			return commandtext.Check{}, keyError(githubCheckKind, key, "the reference is not P<n>-R<m>")
 		}
 	}
 	if p.Version != "" {
 		m := versionPattern.FindStringSubmatch(p.Version)
 		if m == nil {
-			return "", "", keyError(githubCheckKind, key, "the version is not V<n>")
+			return commandtext.Check{}, keyError(githubCheckKind, key, "the version is not V<n>")
 		}
 		c.Version, _ = strconv.Atoi(m[1]) // the pattern admits one to nine digits
 	}
+	return c, nil
+}
+
+func renderCheck(key string, c commandtext.Check) (title, summary string, err error) {
 	_, err = render(githubCheckKind, key, func() string { // a reason or a combination commandtext does not know panics there
 		title, summary = commandtext.CheckSummary(c)
 		return summary
@@ -152,7 +166,7 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 	if err != nil {
 		return err
 	}
-	title, summary, err := c.output(key)
+	check, err := c.check(key)
 	if err != nil {
 		return err
 	}
@@ -165,8 +179,12 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 		return fmt.Errorf("%s %s: read the check ledger: %w", githubCheckKind, key, err)
 	case !found:
 		return keyError(githubCheckKind, key, "the check ledger has no record of the pull request")
-	case record.Generation != generation: // a newer state or head superseded this message
+	case record.Generation != generation: // a newer state or head superseded this message; it is not rendered, as its reason may no longer exist
 		return nil
+	}
+	title, summary, err := renderCheck(key, check)
+	if err != nil {
+		return err
 	}
 	instance, err := p.instance.get(ctx)
 	if err != nil {

@@ -24,6 +24,23 @@ const (
 	BootstrapPromoted
 	RevokedAfterPromotion
 	ApprovedAfterPromotion
+	// The explicit bootstrap (M1.7b rework): ProposeRefused and SkipRefused carry a Refusal, AlreadyProposed names the
+	// existing proposal, ProposeFailed says a propose was dropped after its attempts.
+	ProposeRefused
+	AlreadyProposed
+	ProposeFailed
+	Skipped
+	SkipRefused
+)
+
+// Refusal is the reason of a ProposeRefused or SkipRefused outcome.
+type Refusal uint8
+
+const (
+	CanonicalPresent Refusal = iota + 1
+	Fork
+	EmptyInventory
+	Carrier
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -62,6 +79,8 @@ type Ack struct {
 	Owner     string
 	Source    int64
 	Eligible  bool
+	// Refusal is set exactly for ProposeRefused and SkipRefused.
+	Refusal Refusal
 }
 
 // Tier is the installation tier (ADR 0027, D-TIER).
@@ -481,3 +500,23 @@ func RevisionComment(r Revision) string {
 	}
 	return paragraphs(parts...)
 }
+
+// BootstrapNotice renders the comment that tells the owner how to start or skip the bootstrap.
+func BootstrapNotice() string { panic("not implemented") }
+
+// BootstrapCancelled renders the comment that says a protected push cancelled a bootstrap proposal.
+func BootstrapCancelled(proposal, revision int) string { panic("not implemented") }
+
+// DeclarationSuggestion is what the refusal of a propose for a missing declaration states: Repo (owner/name), Branch
+// (the pull request's head ref), Patterns (at most 20 include patterns, possibly none) and Source, the id of the
+// command comment, which the body links. It is not an Ack because it holds a slice, and an Ack stays comparable.
+type DeclarationSuggestion struct {
+	Source   int64
+	Repo     string
+	Branch   string
+	Patterns []string
+}
+
+// SuggestDeclaration renders the refusal of a propose when neither the default branch nor the pull request holds
+// a .suiteward.yml: a suggested declaration and a link that opens GitHub's editor with it.
+func SuggestDeclaration(a DeclarationSuggestion) string { panic("not implemented") }

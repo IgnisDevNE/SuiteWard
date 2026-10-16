@@ -43,6 +43,9 @@ type Verb uint8
 const (
 	Approve Verb = iota + 1
 	Revoke
+	// Propose takes no reference and no code; Skip takes only a code.
+	Propose
+	Skip
 )
 
 // Reason says why a command line is malformed.

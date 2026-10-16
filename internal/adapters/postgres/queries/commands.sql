@@ -48,3 +48,10 @@ WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_nu
   AND disposition IN ('malformed', 'invalid-code', 'replayed-code', 'unknown-proposal', 'edited-first', 'no-suite', 'processed')
 ORDER BY comment_id DESC
 LIMIT 1;
+
+-- Whether the pull has a skipped entry whose comment was created at or after the current enrollment's enrolled_at.
+-- name: PullSkipped :one
+SELECT EXISTS (
+    SELECT 1 FROM pr_commands
+    WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_number) AND disposition = 'skipped' AND created_at >= sqlc.arg(since)::timestamptz
+);

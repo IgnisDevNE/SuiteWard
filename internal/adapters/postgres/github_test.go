@@ -132,10 +132,10 @@ func TestGitHubObservationsLeaveGovernanceUntouched(t *testing.T) {
 	}
 	revision, before := w.revision(), counts()
 
-	cycle := githubsync.Cycle{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt,
+	cycle := githubsync.Cycle{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt, StartedAt: fxRecordedAt, Requests: 1,
 		OpenPulls: []githubsync.ObservedPull{{Number: 1, HeadSHA: "a", HeadRef: "f", BaseRef: "main", BaseSHA: "b", UpdatedAt: fxRecordedAt}},
 		Comments:  map[int][]githubsync.ObservedComment{1: {{CommentID: 10, AuthorID: 7, AuthorLogin: "reviewer", CreatedAt: fxRecordedAt, UpdatedAt: fxRecordedAt, Body: "approved"}}}}
-	if err := w.store.RecordCycle(t.Context(), cycle); err != nil {
+	if _, err := w.store.RecordCycle(t.Context(), cycle); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt, Kind: githubsync.FailureTransport}); err != nil {
@@ -164,7 +164,8 @@ func TestRecordCycleWaitsForTheRepositoryRow(t *testing.T) {
 		run  func(w *pgWorld) error
 	}{
 		{"cycle", func(w *pgWorld) error {
-			return w.store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt.Add(time.Minute)})
+			_, err := w.store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt.Add(time.Minute), StartedAt: fxRecordedAt.Add(time.Minute), Requests: 1})
+			return err
 		}},
 		{"failure", func(w *pgWorld) error {
 			return w.store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt, Kind: githubsync.FailureTransport})
@@ -172,7 +173,7 @@ func TestRecordCycleWaitsForTheRepositoryRow(t *testing.T) {
 	} {
 		t.Run(record.name, func(t *testing.T) {
 			w := newPGWorld(t)
-			if err := w.store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt}); err != nil {
+			if _, err := w.store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/widgets", InstallationID: 42, At: fxRecordedAt, StartedAt: fxRecordedAt, Requests: 1}); err != nil {
 				t.Fatal(err)
 			}
 			holder, err := w.pool.Begin(t.Context())

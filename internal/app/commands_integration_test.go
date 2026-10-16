@@ -44,7 +44,7 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 		t.Fatal(err)
 	}
 	pull := githubsync.ObservedPull{Number: 4, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}
-	if err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, OpenPulls: []githubsync.ObservedPull{pull}, Comments: map[int][]githubsync.ObservedComment{4: nil}}); err != nil {
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, StartedAt: bootTime, Requests: 1, OpenPulls: []githubsync.ObservedPull{pull}, Comments: map[int][]githubsync.ObservedComment{4: nil}}); err != nil {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
@@ -65,7 +65,7 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 	}
 	comments := []githubsync.ObservedComment{command(101, bootTime.Add(10*time.Minute), "approve"), command(102, bootTime.Add(10*time.Minute+5*time.Second), "approve"),
 		command(103, bootTime.Add(20*time.Minute), "revoke")}
-	if err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), OpenPulls: []githubsync.ObservedPull{pull},
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), StartedAt: bootTime.Add(time.Hour), Requests: 1, OpenPulls: []githubsync.ObservedPull{pull},
 		Comments: map[int][]githubsync.ObservedComment{4: comments}}); err != nil {
 		t.Fatal(err)
 	}

@@ -83,12 +83,12 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 			listed[pull] = append(listed[pull], *comment)
 		}
 		clock = clock.Add(10 * time.Minute)
-		cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: clock, Comments: map[int][]githubsync.ObservedComment{}}
+		cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: clock, StartedAt: clock, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 		for number, head := range heads {
 			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: clock, HeadRepo: bootRepo})
 			cycle.Comments[number] = listed[number]
 		}
-		if err := store.RecordCycle(t.Context(), cycle); err != nil {
+		if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 			t.Fatal(err)
 		}
 	}

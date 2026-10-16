@@ -300,7 +300,8 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 
 // tick is the github_sync_tick job: one cycle of every configured repository.
 func (s *githubSync) tick(ctx context.Context) error {
-	return s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+	_, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+	return err
 }
 
 // syncRepo is the github_sync_repo job. A repository that is not configured is
@@ -309,7 +310,8 @@ func (s *githubSync) syncRepo(ctx context.Context, repo string) error {
 	if !slices.Contains(s.repos, repo) {
 		return fmt.Errorf("repository %q is not one of the configured repositories", repo)
 	}
-	return s.reconciler.SyncRepo(ctx, repo)
+	_, err := s.reconciler.SyncRepo(ctx, repo)
+	return err
 }
 
 // tickDeadline is how long a tick may start repositories: JOB_TIMEOUT minus
@@ -322,29 +324,33 @@ func tickDeadline(jobTimeout time.Duration) time.Duration {
 // and classifies its errors.
 type githubReader struct{ reader *github.Reader }
 
-func (r githubReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, error) {
-	pulls, err := r.reader.OpenPulls(ctx, repo)
+func (r githubReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
+	pulls, info, err := r.reader.OpenPulls(ctx, repo)
 	if err != nil {
-		return nil, classifyReadError(err)
+		return nil, readInfo(info), classifyReadError(err)
 	}
 	observed := make([]githubsync.ObservedPull, len(pulls))
 	for i, p := range pulls {
 		observed[i] = githubsync.ObservedPull{Number: p.Number, HeadSHA: p.HeadSHA, HeadRef: p.HeadRef, BaseRef: p.BaseRef, BaseSHA: p.BaseSHA, UpdatedAt: p.UpdatedAt, HeadRepo: p.HeadRepo}
 	}
-	return observed, nil
+	return observed, readInfo(info), nil
 }
 
-func (r githubReader) PullComments(ctx context.Context, repo string, number int) ([]githubsync.ObservedComment, error) {
+func (r githubReader) PullComments(ctx context.Context, repo string, number int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
 	// No since: every cycle lists the comments in full, so no local clock decides what to fetch.
-	comments, err := r.reader.PullComments(ctx, repo, number, time.Time{})
+	comments, info, err := r.reader.PullComments(ctx, repo, number, time.Time{})
 	if err != nil {
-		return nil, classifyReadError(err)
+		return nil, readInfo(info), classifyReadError(err)
 	}
 	observed := make([]githubsync.ObservedComment, len(comments))
 	for i, c := range comments {
 		observed[i] = githubsync.ObservedComment{CommentID: c.ID, AuthorID: c.AuthorID, AuthorLogin: c.AuthorLogin, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, Body: c.Body}
 	}
-	return observed, nil
+	return observed, readInfo(info), nil
+}
+
+func readInfo(info github.ReadInfo) githubsync.ReadInfo {
+	return githubsync.ReadInfo{Date: info.Date, Requests: info.Requests, Changed: info.Changed}
 }
 
 // classifyReadError turns an error of the GitHub adapter into a

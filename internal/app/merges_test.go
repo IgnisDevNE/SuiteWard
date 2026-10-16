@@ -117,12 +117,12 @@ func (w *mgWorld) mustMerge() {
 // cycleAt records a cycle of repo at the given time in which exactly the pull requests of heads are open.
 func (w *mgWorld) cycleAt(at time.Time, repo string, heads map[int]string) {
 	w.t.Helper()
-	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}
+	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: at, StartedAt: at, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for number, head := range heads {
 		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime})
 		cycle.Comments[number] = nil
 	}
-	if err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
+	if _, err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
 		w.t.Fatal(err)
 	}
 }

@@ -210,7 +210,7 @@ func (w *cjWorld) seed(repositoryID int64) {
 func (w *cjWorld) observe(repositoryID int64, at time.Time, comments ...cjComment) {
 	w.t.Helper()
 	w.listed[repositoryID] = append(w.listed[repositoryID], comments...)
-	cycle := githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}
+	cycle := githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, StartedAt: at, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, c := range w.listed[repositoryID] {
 		if _, listed := cycle.Comments[c.pull]; !listed {
 			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: cjHead, HeadRef: cjBranch, HeadRepo: w.headRepo, BaseRef: cmp.Or(w.baseRef, "main"), BaseSHA: "base", UpdatedAt: at})
@@ -218,7 +218,7 @@ func (w *cjWorld) observe(repositoryID int64, at time.Time, comments ...cjCommen
 		cycle.Comments[c.pull] = append(cycle.Comments[c.pull], githubsync.ObservedComment{CommentID: c.id, AuthorID: c.author, AuthorLogin: "someone",
 			CreatedAt: c.created, UpdatedAt: c.updated, Body: c.body})
 	}
-	if err := w.obs.RecordCycle(w.t.Context(), cycle); err != nil {
+	if _, err := w.obs.RecordCycle(w.t.Context(), cycle); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -226,7 +226,7 @@ func (w *cjWorld) observe(repositoryID int64, at time.Time, comments ...cjCommen
 // closePull records a cycle of the repository that lists no open pull request, so the observed ones are not open any more.
 func (w *cjWorld) closePull(repositoryID int64, at time.Time) {
 	w.t.Helper()
-	if err := w.obs.RecordCycle(w.t.Context(), githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}); err != nil {
+	if _, err := w.obs.RecordCycle(w.t.Context(), githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, StartedAt: at, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}); err != nil {
 		w.t.Fatal(err)
 	}
 }

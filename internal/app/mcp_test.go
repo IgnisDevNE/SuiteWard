@@ -66,14 +66,14 @@ func testBackend(store observations, inserter syncInserter, logs *bytes.Buffer, 
 
 func recordCycle(t *testing.T, store *githubsynctest.Memory, repo string, pulls ...int) {
 	t.Helper()
-	cycle := githubsync.Cycle{Repo: repo, InstallationID: 2, At: mcpNow, Comments: map[int][]githubsync.ObservedComment{}}
+	cycle := githubsync.Cycle{Repo: repo, InstallationID: 2, At: mcpNow, StartedAt: mcpNow, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, number := range pulls {
 		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{
 			Number: number, HeadSHA: "sha-" + repo, HeadRef: "feature", BaseRef: "main", BaseSHA: "base", UpdatedAt: mcpNow.Add(-time.Hour),
 		})
 		cycle.Comments[number] = []githubsync.ObservedComment{{CommentID: int64(number), AuthorID: 9, AuthorLogin: "octo", CreatedAt: mcpNow, UpdatedAt: mcpNow, Body: "COMMENT-BODY-OF-" + repo}}
 	}
-	if err := store.RecordCycle(t.Context(), cycle); err != nil {
+	if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -306,12 +306,15 @@ func TestMCPBackendAppliesItsOwnTimeout(t *testing.T) {
 // statusReader fails a cycle with a classified error, as the GitHub reader does.
 type statusReader struct{ err error }
 
-func (r statusReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, error) {
-	return nil, r.err
+func (r statusReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
+	if r.err != nil {
+		return nil, githubsync.ReadInfo{}, r.err
+	}
+	return nil, githubsync.ReadInfo{Date: mcpNow, Requests: 1}, nil
 }
 
-func (r statusReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, error) {
-	return nil, r.err
+func (r statusReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
+	return nil, githubsync.ReadInfo{}, r.err
 }
 
 func TestAFailedCycleLogsOneWarnLineWithRepositoryKindAndStatus(t *testing.T) {
@@ -322,7 +325,7 @@ func TestAFailedCycleLogsOneWarnLineWithRepositoryKindAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := reconciler.SyncRepo(t.Context(), "acme/widgets"); err != nil {
+	if _, err := reconciler.SyncRepo(t.Context(), "acme/widgets"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -349,7 +352,7 @@ func TestACycleThatSucceedsOrCannotBeRecordedLogsNoFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ok.SyncRepo(t.Context(), "acme/widgets"); err != nil {
+	if _, err := ok.SyncRepo(t.Context(), "acme/widgets"); err != nil {
 		t.Fatal(err)
 	}
 	// A failure the store refuses is returned to the caller, not logged as recorded.

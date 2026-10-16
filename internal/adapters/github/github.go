@@ -247,27 +247,35 @@ func (r *Reader) ClosedPulls(ctx context.Context, repo string) ([]PullDetail, er
 	return pulls, nil
 }
 
-// OpenPulls returns the open pull requests of repo, sorted by number.
-func (r *Reader) OpenPulls(ctx context.Context, repo string) ([]Pull, error) {
+// ReadInfo describes what one listing cost and saw: the Date of its first page, the requests it sent and whether
+// any page was not a 304. A failed listing still reports the requests it sent.
+type ReadInfo struct {
+	Date     time.Time
+	Requests int
+	Changed  bool
+}
+
+// OpenPulls returns the open pull requests of repo, sorted by number, and what the listing read.
+func (r *Reader) OpenPulls(ctx context.Context, repo string) ([]Pull, ReadInfo, error) {
 	if err := checkRepo(repo); err != nil {
-		return nil, err
+		return nil, ReadInfo{}, err
 	}
-	raw, err := readPages[pullJSON](ctx, r.client, func(page int) string {
+	raw, info, err := readDecoded[pullJSON](ctx, r.client, func(page int) string {
 		return fmt.Sprintf("/repos/%s/pulls?state=open&per_page=%d&page=%d", repo, pageSize, page)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("open pull requests of %s: %w", repo, err)
+		return nil, info, fmt.Errorf("open pull requests of %s: %w", repo, err)
 	}
 	pulls := make([]Pull, 0, len(raw))
 	for _, p := range latest(raw, func(p pullJSON) int { return p.Number }) {
 		pull, err := p.pull(repo)
 		if err != nil {
-			return nil, err
+			return nil, info, err
 		}
 		pulls = append(pulls, pull)
 	}
 	slices.SortFunc(pulls, func(a, b Pull) int { return cmp.Compare(a.Number, b.Number) })
-	return pulls, nil
+	return pulls, info, nil
 }
 
 type commentJSON struct {
@@ -282,37 +290,37 @@ type commentJSON struct {
 }
 
 // PullComments returns the comments of pull request number of repo updated at
-// or after since (every comment when since is zero), sorted by ID.
-func (r *Reader) PullComments(ctx context.Context, repo string, number int, since time.Time) ([]Comment, error) {
+// or after since (every comment when since is zero), sorted by ID, and what the listing read.
+func (r *Reader) PullComments(ctx context.Context, repo string, number int, since time.Time) ([]Comment, ReadInfo, error) {
 	return pullComments(ctx, r.client, repo, number, since)
 }
 
-func pullComments(ctx context.Context, client *rest.Client, repo string, number int, since time.Time) ([]Comment, error) {
+func pullComments(ctx context.Context, client *rest.Client, repo string, number int, since time.Time) ([]Comment, ReadInfo, error) {
 	if err := checkRepo(repo); err != nil {
-		return nil, err
+		return nil, ReadInfo{}, err
 	}
 	if number <= 0 {
-		return nil, fmt.Errorf("%w: pull request number %d", ErrInvalidArgument, number)
+		return nil, ReadInfo{}, fmt.Errorf("%w: pull request number %d", ErrInvalidArgument, number)
 	}
 	var sinceParam string
 	if !since.IsZero() {
 		sinceParam = "&since=" + since.UTC().Format(time.RFC3339)
 	}
-	raw, err := readPages[commentJSON](ctx, client, func(page int) string {
+	raw, info, err := readDecoded[commentJSON](ctx, client, func(page int) string {
 		return fmt.Sprintf("/repos/%s/issues/%d/comments?per_page=%d&page=%d%s", repo, number, pageSize, page, sinceParam)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("comments of pull request %d of %s: %w", number, repo, err)
+		return nil, info, fmt.Errorf("comments of pull request %d of %s: %w", number, repo, err)
 	}
 	comments := make([]Comment, 0, len(raw))
 	for _, c := range latest(raw, func(c commentJSON) int64 { return c.ID }) {
 		switch {
 		case c.ID <= 0:
-			return nil, fmt.Errorf("%w: comment of pull request %d of %s without an id", ErrInvalidResponse, number, repo)
+			return nil, info, fmt.Errorf("%w: comment of pull request %d of %s without an id", ErrInvalidResponse, number, repo)
 		case c.User.Login == "" || c.User.ID <= 0:
-			return nil, fmt.Errorf("%w: comment %d of %s lacks its author", ErrInvalidResponse, c.ID, repo)
+			return nil, info, fmt.Errorf("%w: comment %d of %s lacks its author", ErrInvalidResponse, c.ID, repo)
 		case c.CreatedAt.IsZero() || c.UpdatedAt.IsZero():
-			return nil, fmt.Errorf("%w: comment %d of %s lacks created_at or updated_at", ErrInvalidResponse, c.ID, repo)
+			return nil, info, fmt.Errorf("%w: comment %d of %s lacks created_at or updated_at", ErrInvalidResponse, c.ID, repo)
 		}
 		comments = append(comments, Comment{
 			ID: c.ID, AuthorLogin: c.User.Login, AuthorID: c.User.ID, Body: c.Body,
@@ -320,7 +328,7 @@ func pullComments(ctx context.Context, client *rest.Client, repo string, number 
 		})
 	}
 	slices.SortFunc(comments, func(a, b Comment) int { return cmp.Compare(a.ID, b.ID) })
-	return comments, nil
+	return comments, info, nil
 }
 
 // latest keeps one item per key, the last one listed: an item shifted onto
@@ -336,7 +344,13 @@ func latest[T any, K comparable](items []T, key func(T) K) []T {
 // readPages reads pages 1, 2, … of a listing until one holds fewer than
 // pageSize items, or fails after maxPages; the result is never nil.
 func readPages[T any](ctx context.Context, client *rest.Client, path func(page int) string) ([]T, error) {
-	return readPagesOf(ctx, client, path, func(p string, body []byte) ([]T, error) {
+	all, _, err := readDecoded[T](ctx, client, path)
+	return all, err
+}
+
+// readDecoded is readPages that also reports what the listing read.
+func readDecoded[T any](ctx context.Context, client *rest.Client, path func(page int) string) ([]T, ReadInfo, error) {
+	return readListing(ctx, client, path, func(p string, body []byte) ([]T, error) {
 		var items []T
 		if err := decode(p, body, &items); err != nil {
 			return nil, err
@@ -348,26 +362,40 @@ func readPages[T any](ctx context.Context, client *rest.Client, path func(page i
 // readPagesOf is readPages for a listing whose items sit inside the answer;
 // items returns nil for an answer that is not a list.
 func readPagesOf[T any](ctx context.Context, client *rest.Client, path func(page int) string, items func(path string, body []byte) ([]T, error)) ([]T, error) {
+	all, _, err := readListing(ctx, client, path, items)
+	return all, err
+}
+
+// readListing is readPagesOf that also reports what the listing read.
+func readListing[T any](ctx context.Context, client *rest.Client, path func(page int) string, items func(path string, body []byte) ([]T, error)) ([]T, ReadInfo, error) {
 	all := []T{}
+	var info ReadInfo
 	for page := 1; page <= maxPages; page++ {
 		p := path(page)
 		resp, err := client.Get(ctx, p)
-		if err != nil {
-			return nil, err
+		if !errors.Is(err, rest.ErrBudgetExhausted) { // a refused request was never sent
+			info.Requests++
 		}
+		if err != nil {
+			return nil, info, err
+		}
+		if page == 1 {
+			info.Date = resp.Date
+		}
+		info.Changed = info.Changed || !resp.NotModified
 		got, err := items(p, resp.Body)
 		if err != nil {
-			return nil, err
+			return nil, info, err
 		}
 		if got == nil { // null decodes to nil; an empty page is []
-			return nil, fmt.Errorf("%w: the answer to %s is not a list", ErrInvalidResponse, p)
+			return nil, info, fmt.Errorf("%w: the answer to %s is not a list", ErrInvalidResponse, p)
 		}
 		all = append(all, got...)
 		if len(got) < pageSize {
-			return all, nil
+			return all, info, nil
 		}
 	}
-	return nil, fmt.Errorf("%w: the listing at %s runs past %d pages", ErrInvalidResponse, path(maxPages), maxPages)
+	return nil, info, fmt.Errorf("%w: the listing at %s runs past %d pages", ErrInvalidResponse, path(maxPages), maxPages)
 }
 
 // decode unmarshals body; its error names the path only, since the decoder's

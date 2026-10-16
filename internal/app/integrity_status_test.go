@@ -104,7 +104,7 @@ func TestSynchronizationStoresTheHeadRepositoryOfEveryOpenPull(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := reconciler.SyncRepo(t.Context(), "acme/widgets"); err != nil {
+	if _, err := reconciler.SyncRepo(t.Context(), "acme/widgets"); err != nil {
 		t.Fatal(err)
 	}
 

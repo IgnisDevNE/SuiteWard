@@ -38,6 +38,9 @@ func gsComment(id int64, body string, edit int) githubsync.ObservedComment {
 	return githubsync.ObservedComment{CommentID: id, AuthorID: 7, AuthorLogin: "reviewer", CreatedAt: gsTime(int(id)), UpdatedAt: gsTime(100 + edit), Body: body}
 }
 
+// gsStart is the start of the cycle observed at minute n: GitHub's clock, a little before the observation.
+func gsStart(n int) time.Time { return gsTime(n).Add(-30 * time.Second) }
+
 type gsListing = map[int][]githubsync.ObservedComment
 
 // gsCycleOf builds a valid cycle of repo at time at: every pull gets a listing, empty unless comments has one.
@@ -46,7 +49,7 @@ func gsCycleOf(repo string, at int, pulls []githubsync.ObservedPull, comments gs
 	for _, pull := range pulls {
 		full[pull.Number] = comments[pull.Number]
 	}
-	return githubsync.Cycle{Repo: repo, InstallationID: gsInstallation, At: gsTime(at), OpenPulls: pulls, Comments: full}
+	return githubsync.Cycle{Repo: repo, InstallationID: gsInstallation, At: gsTime(at), StartedAt: gsStart(at), Requests: 1, OpenPulls: pulls, Comments: full}
 }
 
 func gsCycle(at int, pulls []githubsync.ObservedPull, comments gsListing) githubsync.Cycle {
@@ -84,7 +87,8 @@ func (e *gsEnv) must(err error) {
 
 func (e *gsEnv) record(cycle githubsync.Cycle) {
 	e.t.Helper()
-	e.must(e.store.RecordCycle(context.Background(), cycle))
+	_, err := e.store.RecordCycle(context.Background(), cycle)
+	e.must(err)
 }
 
 func (e *gsEnv) fail(failure githubsync.Failure) {
@@ -176,6 +180,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) githubsync.Store) 
 		{"ConcurrentCyclesOfOneRepositoryEndAsOneAppliedLast", gsConcurrent},
 	}
 	cases = append(cases, gsMergeCases...)
+	cases = append(cases, gsCycleStartCases...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
@@ -198,7 +203,7 @@ func gsFirstCycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 
 	want := gsView{
 		Found:      true,
-		Repository: githubsync.RepositoryState{Repo: gsRepo, InstallationID: gsInstallation, LastSuccess: gsTime(1)},
+		Repository: githubsync.RepositoryState{Repo: gsRepo, InstallationID: gsInstallation, LastSuccess: gsTime(1), CycleStartedAt: gsStart(1)},
 		Pulls: []githubsync.PullState{
 			{Number: 1, HeadSHA: "head-1", HeadRef: "feature-1", BaseRef: "main", BaseSHA: "base-sha", UpdatedAt: gsTime(1), FirstSeen: gsTime(1), LastSeen: gsTime(1)},
 			{Number: 2, HeadSHA: "head-2", HeadRef: "feature-2", BaseRef: "main", BaseSHA: "base-sha", UpdatedAt: gsTime(2), FirstSeen: gsTime(1), LastSeen: gsTime(1)},
@@ -284,7 +289,7 @@ func gsCreatedAtChange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	// The pull changes in the same cycle, so a partial write would be visible.
 	forged := gsComment(10, "approved", 1)
 	forged.CreatedAt = gsTime(50)
-	err := e.store.RecordCycle(context.Background(), gsCycle(2, gsPulls(gsPull(1, "moved")), gsListing{1: gsComments(forged)}))
+	_, err := e.store.RecordCycle(context.Background(), gsCycle(2, gsPulls(gsPull(1, "moved")), gsListing{1: gsComments(forged)}))
 	if !errors.Is(err, githubsync.ErrCreationTimeChanged) {
 		e.t.Fatalf("a different created_at for a known comment id gave %v, want ErrCreationTimeChanged", err)
 	}
@@ -430,7 +435,7 @@ func gsRecovery(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.fail(githubsync.Failure{Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(2), Kind: githubsync.FailureBudgetExhausted, Status: 200, WaitUntil: gsTime(30)})
 	e.record(gsCycle(3, gsPulls(gsPull(1, "a")), nil))
 
-	want := githubsync.RepositoryState{Repo: gsRepo, InstallationID: gsInstallation, LastSuccess: gsTime(3)}
+	want := githubsync.RepositoryState{Repo: gsRepo, InstallationID: gsInstallation, LastSuccess: gsTime(3), CycleStartedAt: gsStart(3)}
 	if got := e.view().Repository; got != want {
 		e.t.Fatalf("repository %+v, want %+v", got, want)
 	}
@@ -447,6 +452,9 @@ func gsInvalidInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 		"no repository":                       valid(func(c *githubsync.Cycle) { c.Repo = " " }),
 		"no installation":                     valid(func(c *githubsync.Cycle) { c.InstallationID = 0 }),
 		"no time":                             valid(func(c *githubsync.Cycle) { c.At = time.Time{} }),
+		"no cycle start":                      valid(func(c *githubsync.Cycle) { c.StartedAt = time.Time{} }),
+		"no requests":                         valid(func(c *githubsync.Cycle) { c.Requests = 0 }),
+		"negative requests":                   valid(func(c *githubsync.Cycle) { c.Requests = -1 }),
 		"pull listed twice":                   valid(func(c *githubsync.Cycle) { c.OpenPulls = gsPulls(gsPull(1, "a"), gsPull(1, "b")) }),
 		"comments of a pull that is not open": valid(func(c *githubsync.Cycle) { c.Comments[2] = gsComments(gsComment(20, "x", 0)) }),
 		"no listing for an open pull":         valid(func(c *githubsync.Cycle) { c.Comments = gsListing{} }),
@@ -474,7 +482,7 @@ func gsInvalidInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 		}),
 	}
 	for name, cycle := range cycles {
-		if err := e.store.RecordCycle(ctx, cycle); !errors.Is(err, githubsync.ErrInvalidObservation) {
+		if _, err := e.store.RecordCycle(ctx, cycle); !errors.Is(err, githubsync.ErrInvalidObservation) {
 			e.t.Fatalf("cycle with %s gave %v, want ErrInvalidObservation", name, err)
 		}
 	}
@@ -512,7 +520,7 @@ func gsIndependentRepositories(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 func gsCanceled(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := e.store.RecordCycle(ctx, gsCycle(1, gsPulls(gsPull(1, "a")), nil)); err == nil {
+	if _, err := e.store.RecordCycle(ctx, gsCycle(1, gsPulls(gsPull(1, "a")), nil)); err == nil {
 		e.t.Fatal("a cycle was recorded on a canceled context")
 	}
 	if err := e.store.RecordFailure(ctx, githubsync.Failure{Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureTransport}); err == nil {
@@ -548,7 +556,7 @@ func gsConcurrent(e *gsEnv, newStore func(*testing.T) githubsync.Store) {
 		for i, cycle := range []githubsync.Cycle{x, y} {
 			workers.Go(func() {
 				<-start
-				failures[i] = racing.store.RecordCycle(context.Background(), cycle)
+				_, failures[i] = racing.store.RecordCycle(context.Background(), cycle)
 			})
 		}
 		close(start)

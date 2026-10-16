@@ -34,6 +34,8 @@ func mergeBootstrapCases() []struct {
 		{"MergeRefusedAsIntegrityFailedWithoutACanonicalIsInvalid", mbIntegrityFailedWithoutACanonical},
 		{"MergeOfAnotherPRBeforeAnyCanonicalIsBeforeTheCanonicalWithNoVersion", mbNonCarrier},
 		{"MergeOfTheBootstrapPRIntoAnotherTargetIsBeforeTheCanonical", mbOtherTarget},
+		{"MergeOfASupersededBootstrapCarrierIsBeforeTheCanonicalAndTheLatestStillPromotesV1", mbSupersededCarrier},
+		{"MergeWhileTheLatestBootstrapProposalIsABranchOneIsBeforeTheCanonical", mbLatestIsABranchProposal},
 		{"MergeAfterAMergedV1IsDecidedAgainstV1", mbChangeAfterAMergedV1},
 		{"MergeAfterABranchV1StillAppliesTheTimeRule", mbTimeRuleOfABranchV1},
 		{"MergeOutcomesWithACanonicalAlwaysNameItsVersion", mbVersionWithACanonical},
@@ -49,16 +51,17 @@ func mbRequest(carrier contract.ApprovalCarrierID, source contract.SourceRevisio
 		ObservedAt: cfRecordedAt.Add(time.Hour), Tree: tree, RecordedAt: cfRecordedAt.Add(2 * time.Hour), Message: messages.message}
 }
 
-// bootstrapPR seeds a Suite without a canonical and proposes the tree of content as the bootstrap PR's contract, from head-1.
+// bootstrapPR seeds a Suite without a canonical, proposes the tree of content as the bootstrap PR's contract from head-1 (a
+// pull proposal, as the commands job does) and assesses that head.
 // It returns the owner's consent on the proposal and its reference; approve it to make the merge ready.
 func (e *cfEnv) bootstrapPR(content string) (*bsConsent, contract.ProposalReference) {
 	e.t.Helper()
 	e.seedSimple(cfProject, cfSuite)
-	result := e.assessBootstrap(bsRequest("head-1", bsTree(content, "package main\n"), &bsSummaries{}))
-	if result.Reference == nil || *result.Reference != bsRef("P1", "R1") {
-		e.t.Fatalf("bootstrap proposal = %+v, want P1-R1", result)
+	reference := e.proposePull("P1", bsCarrier, "head-1", content)
+	if result := e.assessBootstrap(bsRequest("head-1", bsTree(content, "package main\n"))); result.Reference == nil || *result.Reference != reference {
+		e.t.Fatalf("assessment of the head = %+v, want P1-R1", result)
 	}
-	return &bsConsent{e: e}, *result.Reference
+	return &bsConsent{e: e}, reference
 }
 
 // requireNoCanonical fails if the Suite has a current version.
@@ -106,7 +109,7 @@ func mbPromotesV1(e *cfEnv) {
 	if assessment, found := e.assessmentAt(reference, mbSource); !found || !assessment.Passed() {
 		e.t.Fatalf("assessment of the merge commit = %+v (found %v), want a passed one", assessment, found)
 	}
-	e.requireQueued(nil, []string{"comment/" + string(bsCarrier), "summary/P1-R1"})
+	e.requireQueued(nil, []string{"comment/" + string(bsCarrier)})
 }
 
 func mbReplay(e *cfEnv) {
@@ -192,13 +195,11 @@ func mbRefusal(e *cfEnv) {
 
 	// The merge tree of another bootstrap PR is invalid: the use case refuses it, with the same outcome.
 	const second = contract.ApprovalCarrierID("github-pr:1/10")
-	secondHead := bsRequest("head-2", bsTree("v2", "package main\n"), &bsSummaries{})
-	secondHead.Carrier = second
-	proposed := e.assessBootstrap(secondHead)
+	proposed := e.proposePull("P2", second, "head-2", "v2")
 
 	got := e.merge(mbRequest(second, "merge-sha-second", invalid, &mcMessages{}))
 
-	e.requireOutcome(second, got.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: governance.MergeReasonInvalidSource, Source: "merge-sha-second", Reference: proposed.Reference})
+	e.requireOutcome(second, got.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: governance.MergeReasonInvalidSource, Source: "merge-sha-second", Reference: &proposed})
 	e.requireNoCanonical()
 }
 
@@ -239,13 +240,57 @@ func mbNonCarrier(e *cfEnv) {
 		e.t.Fatalf("message calls %d (last version %q), want the caller asked once and told there is no version", messages.calls, messages.last.Version)
 	}
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, []string{"summary/P1-R1"}) // only the bootstrap summary: the merge wrote no message
+	e.requireQueued(nil, nil) // the merge wrote no message
 	e.requireNoCanonical()
 
 	// A refusal of a PR with no bootstrap proposal records the same.
 	refused := mbRequest("github-pr:1/78", "merge-sha-refused", nil, &mcMessages{mute: true})
 	refused.Refusal = governance.MergeReasonSharedMergeCommit
 	e.requireOutcome("github-pr:1/78", e.merge(refused).MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBeforeCanonical, Source: "merge-sha-refused"})
+}
+
+// Only the latest bootstrap proposal decides V1: the merge of an earlier carrier is before the canonical, however it was
+// approved, and the latest one still promotes V1.
+func mbSupersededCarrier(e *cfEnv) {
+	consent, first := e.bootstrapPR("v1")
+	consent.approve(first)
+	const second = contract.ApprovalCarrierID("github-pr:1/10")
+	latest := e.proposePull("P2", second, "head-2", "v2")
+	(&bsConsent{e: e, carrier: second}).approve(latest)
+	before := e.revision()
+
+	superseded := e.merge(mbRequest(bsCarrier, mbSource, bsTree("v1", "package main\n"), &mcMessages{mute: true}))
+
+	e.requireOutcome(bsCarrier, superseded.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBeforeCanonical, Source: mbSource})
+	e.requireWrites(before, 0)
+	e.requireNoCanonical()
+
+	promoted := e.merge(mbRequest(second, "merge-sha-second", bsTree("v2", "package main\n"), &mcMessages{}))
+
+	e.requireOutcome(second, promoted.MergeOutcome, governance.MergeOutcome{Kind: governance.MergePromoted, Source: "merge-sha-second", Version: "V1", Reference: &latest})
+	if got := e.currentVersion(); got != "V1" {
+		e.t.Fatalf("current version = %q, want V1", got)
+	}
+}
+
+// A branch proposal is promoted by the bootstrap job, never by a merge; while it is the latest, no merge decides V1.
+func mbLatestIsABranchProposal(e *cfEnv) {
+	consent, first := e.bootstrapPR("v1")
+	consent.approve(first)
+	const second = contract.ApprovalCarrierID("github-pr:1/10")
+	latest := e.proposeAs("P2", second, "branch-head", contract.OriginBranch, "v2")
+	(&bsConsent{e: e, carrier: second}).approve(latest)
+	before := e.revision()
+
+	for carrier, tree := range map[contract.ApprovalCarrierID]*mcTree{bsCarrier: bsTree("v1", "package main\n"), second: bsTree("v2", "package main\n")} {
+		source := contract.SourceRevision("merge-sha-" + string(carrier))
+
+		result := e.merge(mbRequest(carrier, source, tree, &mcMessages{mute: true}))
+
+		e.requireOutcome(carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBeforeCanonical, Source: source})
+	}
+	e.requireWrites(before, 0)
+	e.requireNoCanonical()
 }
 
 func mbOtherTarget(e *cfEnv) {

@@ -431,15 +431,8 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 	case err != nil:
 		err = githubRead(err)
 	case suite.canonical == "": // the bootstrap carrier: its head becomes the first canonical only through its merge
-		bootstrap, err = governance.AssessBootstrapHead(ctx, j.suites, j.content, governance.BootstrapHeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
-			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},
-			Summary: func(reference contract.ProposalReference, inv inventory.Inventory) (governance.OutboxMessage, error) {
-				proposal, revision, ok := parseReference(referenceText(reference))
-				if !ok {
-					return governance.OutboxMessage{}, errors.New("the bootstrap revision is not P<n>-R<m>")
-				}
-				return newSummaryMessage(target, inventoryInputs(bootstrapSummaryInputs{Proposal: proposal, Revision: revision, Source: sourcePull, Origin: pull.HeadSHA, Tier: tier}, inv))
-			}})
+		bootstrap, err = governance.AssessBootstrapHead(ctx, j.suites, governance.BootstrapHeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
+			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}}})
 	default:
 		head, err = governance.AssessHead(ctx, j.suites, j.contents, j.content, governance.HeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
 			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},

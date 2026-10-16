@@ -353,6 +353,10 @@ func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalC
 	return "", false, fmt.Errorf("%w: proposals of %q: %d bootstrap proposals share one carrier", governance.ErrInvalidState, carrier, len(found))
 }
 
+func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
+	return "", false, t.live(ctx)
+}
+
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
 	if err := t.live(ctx); err != nil {
 		return "", err

@@ -366,6 +366,11 @@ func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalC
 	return contract.ProposalID(ids[0]), true, nil
 }
 
+func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
+	_, err := t.lock(ctx)
+	return "", false, err
+}
+
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
 	if _, err := t.lock(ctx); err != nil {
 		return "", err

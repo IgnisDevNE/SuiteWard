@@ -228,6 +228,7 @@ type bootWorld struct {
 	job       *bootstrapJob
 	problems  *bootstrapProblems
 	cycles    int
+	tier      string         // INSTALLATION_TIER, for the jobs that read it
 	headRepos map[int]string // the head repository of a pull request openPulls records; absent means not observed
 }
 
@@ -245,7 +246,7 @@ func newBootWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 		apply(&o)
 	}
 	w := &bootWorld{t: t, mem: governancetest.NewMemory(), owners: ownertest.NewMemory(), pulls: githubsynctest.NewMemory(),
-		content: &fakeBootContent{stored: map[string]bool{}}, logs: &bytes.Buffer{}}
+		content: &fakeBootContent{stored: map[string]bool{}}, logs: &bytes.Buffer{}, tier: o.configTier}
 	w.suites = &probeSuites{UnitOfWork: w.mem}
 	w.reader = &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID), bootOtherRepo: newBootRepository(bootOtherRepo, bootOtherRepoID)},
 		calls: map[string]int{}}
@@ -261,13 +262,9 @@ func newBootWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 		w.registerPolicy(owner.ProjectID(id))
 	}
 	w.problems = &bootstrapProblems{}
-	w.job = &bootstrapJob{repos: o.repos, reader: w.reader, owners: w.owners, suites: w.suites, content: w.content, pulls: w.pulls, tier: o.configTier, problems: w.problems,
+	w.job = &bootstrapJob{repos: o.repos, reader: w.reader, owners: w.owners, suites: w.suites, content: w.content, problems: w.problems,
 		logger: slog.New(slog.NewJSONHandler(w.logs, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
 	return w
-}
-
-func withTiers(enrolled, configured string) func(*bootOptions) {
-	return func(o *bootOptions) { o.enrolledTier, o.configTier = enrolled, configured }
 }
 
 func withRepos(repos ...string) func(*bootOptions) {
@@ -464,10 +461,7 @@ func proposedWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 	t.Helper()
 	w := newBootWorld(t, options...)
 	w.openPulls(bootRepo, 4)
-	w.mustRun()
-	if _, found := w.proposal(1); !found {
-		t.Fatalf("the setup did not propose P1-R1\nlogs: %s", w.logs)
-	}
+	w.branchProposal(4)
 	return w
 }
 
@@ -547,167 +541,6 @@ func TestBootstrapActsOnlyForEnrolledConfiguredRepositories(t *testing.T) {
 	})
 }
 
-func TestBootstrapProposesNothingWithoutAnOpenPull(t *testing.T) {
-	w := newBootWorld(t)
-	w.openPulls(bootRepo) // a cycle with no open PR
-
-	w.mustRun()
-
-	if _, found := w.proposal(1); found {
-		t.Fatal("a baseline was proposed without an open PR")
-	}
-	w.requireOutbox()
-	if w.reader.calls["head"] != 0 || w.reader.calls["tree"] != 0 {
-		t.Fatalf("the bootstrap read the branch %d times and the tree %d times without an open PR", w.reader.calls["head"], w.reader.calls["tree"])
-	}
-	w.requireProblem("no-open-pull-request")
-	w.openPulls(bootRepo, 4)
-	w.mustRun()
-	w.requireProblem("") // proposed: nothing is waiting any more
-}
-
-// D-INTEGRATION: a fork's pull request carries no proposal, so the baseline waits for a pull request of the repository itself.
-func TestBootstrapSkipsForkPullsWhenChoosingTheCarrier(t *testing.T) {
-	w := newBootWorld(t)
-	w.headRepos = map[int]string{1: "stranger/widgets", 3: "(deleted)", 4: "ACME/Widgets"} // 4 is the repository under another case; 2 is not observed
-	w.openPulls(bootRepo, 1, 3, 2, 4)
-
-	w.mustRun()
-
-	proposal, found := w.proposal(1)
-	if !found || proposal.Current().Carrier() != "github-pr:1001/2" {
-		t.Fatalf("P1 found %v, carried by %q, want github-pr:1001/2", found, proposal.Current().Carrier())
-	}
-}
-
-func TestBootstrapWaitsWhenEveryOpenPullIsAFork(t *testing.T) {
-	w := newBootWorld(t)
-	w.headRepos = map[int]string{1: "stranger/widgets", 2: "(deleted)"}
-	w.openPulls(bootRepo, 1, 2)
-
-	w.mustRun()
-
-	if _, found := w.proposal(1); found {
-		t.Fatal("a baseline was proposed on a fork pull request")
-	}
-	w.requireOutbox()
-	w.requireProblem("no-open-pull-request")
-}
-
-func TestBootstrapProposesTheBaselineOnTheLowestOpenPullWithItsSummary(t *testing.T) {
-	w := newBootWorld(t)
-	w.openPulls(bootRepo, 9, 4, 12)
-
-	w.mustRun()
-
-	proposal, found := w.proposal(1)
-	if !found {
-		t.Fatal("no baseline was proposed")
-	}
-	current := proposal.Current()
-	if current.Carrier() != "github-pr:1001/4" || current.Origin() != bootHead || current.Binding().Reference().RevisionID != "R1" {
-		t.Fatalf("P1 is carried by %q from %q as %q, want github-pr:1001/4 from the pinned head as R1", current.Carrier(), current.Origin(), current.Binding().Reference().RevisionID)
-	}
-	w.requireOutbox(summaryKey)
-	if got := len(w.content.stored); got != 3 {
-		t.Fatalf("%d blobs were stored, want the three protected files", got)
-	}
-	payload := w.payload(summaryKey)
-	if keys := slices.Sorted(maps.Keys(payload)); !slices.Equal(keys, []string{"pull", "repo", "repositoryId", "summary"}) {
-		t.Fatalf("payload keys = %v", keys)
-	}
-	if payload["repositoryId"] != float64(1001) || payload["repo"] != bootRepo || payload["pull"] != float64(4) {
-		t.Fatalf("payload target = %v", payload)
-	}
-	summary, _ := payload["summary"].(map[string]any)
-	if keys := slices.Sorted(maps.Keys(summary)); !slices.Equal(keys, []string{"branch", "exclude", "excludeTotal", "include", "includeTotal", "origin", "paths", "proposal", "protected", "revision", "source", "tier"}) {
-		t.Fatalf("summary keys = %v", keys)
-	}
-	want := map[string]any{"proposal": float64(1), "revision": float64(1), "source": "branch", "origin": bootHead, "branch": "main", "protected": float64(3), "tier": "isolated",
-		"paths":   []any{".github/workflows/ci.yml", ".suiteward.yml", "tests/a_test.go"},
-		"include": []any{"/tests/**"}, "exclude": []any{}, "includeTotal": float64(1), "excludeTotal": float64(0)}
-	for key, wanted := range want {
-		if fmt.Sprint(summary[key]) != fmt.Sprint(wanted) {
-			t.Errorf("summary %s = %v, want %v", key, summary[key], wanted)
-		}
-	}
-}
-
-// ADR 0010: a repository without protected files keeps awaiting its initial contract; an empty baseline is never proposed.
-func TestBootstrapNeverProposesAnEmptyBaselineAndProposesOnceTheTreeProtectsAFile(t *testing.T) {
-	w := newBootWorld(t)
-	w.reader.repos[bootRepo].trees[bootHead] = &bootTree{files: map[string]string{"src/main.go": "package main\n"}}
-	w.openPulls(bootRepo, 4)
-
-	w.mustRun()
-	w.mustRun()
-
-	if _, found := w.proposal(1); found {
-		t.Fatal("an empty baseline was proposed")
-	}
-	w.requireOutbox()
-	if !strings.Contains(w.logs.String(), "awaiting an initial contract") || strings.Contains(w.logs.String(), "src/main.go") {
-		t.Fatalf("logs = %s, want the awaiting notice without paths", w.logs)
-	}
-	w.requireProblem("awaiting-initial-contract")
-
-	w.reader.repos[bootRepo].heads["main"] = bootMovedHead
-	w.reader.repos[bootRepo].trees[bootMovedHead] = &bootTree{files: bootFiles("v1")}
-	w.mustRun()
-
-	if _, found := w.proposal(1); !found {
-		t.Fatalf("no baseline was proposed after the tree gained protected files\nlogs: %s", w.logs)
-	}
-	w.requireOutbox(summaryKey)
-	w.requireProblem("")
-}
-
-func TestBootstrapSaysNothingTwiceForUnchangedCoverage(t *testing.T) {
-	w := proposedWorld(t)
-	before := maps.Clone(w.reader.calls)
-
-	w.mustRun()
-	w.reader.repos[bootRepo].heads["main"] = bootMovedHead // the default branch moves: the origin stays pinned (ADR 0010)
-	w.reader.repos[bootRepo].trees[bootMovedHead] = &bootTree{files: bootFiles("v2")}
-	w.mustRun()
-
-	w.requireOutbox(summaryKey)
-	if !maps.Equal(before, w.reader.calls) {
-		t.Fatalf("GitHub reads %v after the proposal, want none beyond %v", w.reader.calls, before)
-	}
-	if proposal, _ := w.proposal(1); proposal.Current().Origin() != bootHead {
-		t.Fatalf("the origin moved to %q", proposal.Current().Origin())
-	}
-	if _, found := w.proposal(2); found {
-		t.Fatal("a second baseline was proposed while the carrier is open")
-	}
-}
-
-func TestBootstrapMovesAnUnapprovedBaselineWhenItsCarrierClosed(t *testing.T) {
-	w := proposedWorld(t)
-
-	w.openPulls(bootRepo) // the carrier closed and nothing else is open
-	w.mustRun()
-	if _, found := w.proposal(2); found {
-		t.Fatal("P2 was proposed without an open PR")
-	}
-	w.openPulls(bootRepo, 7, 9)
-	w.mustRun()
-	w.mustRun()
-
-	proposal, found := w.proposal(2)
-	if !found || proposal.Current().Carrier() != "github-pr:1001/7" || proposal.Current().Binding().Reference().RevisionID != "R1" {
-		t.Fatalf("P2 = %v (found %v), want R1 carried by the lowest open PR", proposal.Current().Carrier(), found)
-	}
-	w.requireOutbox(summaryKey, "bootstrap-summary:1001:P2-R1")
-	if got := w.payload("bootstrap-summary:1001:P2-R1")["pull"]; got != float64(7) {
-		t.Fatalf("the second summary is for pull %v, want 7", got)
-	}
-	if _, found := w.proposal(3); found {
-		t.Fatal("P3 was proposed")
-	}
-}
-
 func TestBootstrapPromotesAnApprovedBaselineOnce(t *testing.T) {
 	w := approvedWorld(t)
 	w.openPulls(bootRepo) // the carrier closes: an approved baseline does not wait for the PR to merge
@@ -741,7 +574,9 @@ func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
 	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
 	w.openPulls(bootRepo, 4)
 	w.openPulls(bootOtherRepo, 5)
-	w.mustRun()
+	w.mustRun() // creates both Suites
+	proposeBaseline(t, w.suites, w.content, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1"))
+	proposeBaseline(t, w.suites, w.content, bootOtherRepoID, bootOtherRepo, contract.OriginBranch, 5, bootHead, bootFiles("v1"))
 	w.approveIn(bootRepoID, 101, 1, 4)
 	w.approveIn(bootOtherRepoID, 201, 1, 5)
 
@@ -818,108 +653,11 @@ func TestBootstrapDoesNotPromoteAnOriginThatChangedOrCannotBeRead(t *testing.T) 
 	}
 }
 
-func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *testing.T) {
-	failures := map[string]func(*bootRepository){
-		"repository": func(r *bootRepository) { r.repoErr = errors.New(bootSecret) },
-		"branch":     func(r *bootRepository) { r.headErr = errors.New(bootSecret) },
-		"tree":       func(r *bootRepository) { r.treeErr[bootHead] = errors.New(bootSecret) },
-		"blob": func(r *bootRepository) {
-			r.trees[bootHead] = &bootTree{files: bootFiles("v1"), readErr: errors.New(bootSecret)}
-		},
-		"invalid": func(r *bootRepository) {
-			r.treeErr[bootHead] = fmt.Errorf("%w: %s", inventory.ErrInvalidTree, bootSecret)
-		},
-	}
-	for name, fail := range failures {
-		t.Run("proposal/"+name, func(t *testing.T) {
-			w := newBootWorld(t)
-			w.openPulls(bootRepo, 4)
-			good := w.reader.repo(bootRepo)
-			original := newBootRepository(bootRepo, bootRepoID)
-			fail(good)
-
-			if err := w.run(); err != nil {
-				t.Fatalf("a GitHub read failure failed the run: %v", err)
-			}
-
-			if _, found := w.proposal(1); found {
-				t.Fatal("a baseline was proposed from a failed read")
-			}
-			w.requireOutbox()
-			if strings.Contains(w.logs.String(), bootSecret) {
-				t.Fatalf("a log line holds the text GitHub sent:\n%s", w.logs)
-			}
-			*good = *original // the failure ends
-			w.mustRun()
-			if _, found := w.proposal(1); !found {
-				t.Fatalf("the next run did not propose the baseline\nlogs: %s", w.logs)
-			}
-		})
-	}
-	t.Run("promotion", func(t *testing.T) {
-		w := approvedWorld(t)
-		w.reader.repo(bootRepo).treeErr[bootHead] = errors.New(bootSecret)
-
-		w.mustRun()
-
-		if _, found := w.canonical(); found {
-			t.Fatal("a canonical exists after a failed read")
-		}
-		if _, found := w.assessmentOutcome(1, bootHead); found {
-			t.Fatal("a failed read was recorded as an assessment: it could never be Passed afterwards")
-		}
-		if strings.Contains(w.logs.String(), bootSecret) {
-			t.Fatalf("a log line holds the text GitHub sent:\n%s", w.logs)
-		}
-		delete(w.reader.repo(bootRepo).treeErr, bootHead)
-		w.mustRun()
-		if version, found := w.canonical(); !found || version != "V1" {
-			t.Fatalf("canonical = %q (found %v) after the read recovered, want V1", version, found)
-		}
-	})
-}
-
 // requireProblem requires the last bootstrap problem of the main repository to be code ("" for none).
 func (w *bootWorld) requireProblem(code string) {
 	w.t.Helper()
 	if got := w.problems.lookup(bootRepo); got != code {
 		w.t.Fatalf("bootstrap problem = %q, want %q; logs: %s", got, code, w.logs)
-	}
-}
-
-func TestBootstrapKeepsTheLastProblemOfAGitHubReadUntilTheProjectRunsCleanly(t *testing.T) {
-	failures := map[string]struct {
-		fail func(*bootRepository)
-		code string
-	}{
-		"repository": {func(r *bootRepository) { r.repoErr = errors.New(bootSecret) }, "read-failed"},
-		"branch":     {func(r *bootRepository) { r.headErr = errors.New(bootSecret) }, "read-failed"},
-		"tree":       {func(r *bootRepository) { r.treeErr[bootHead] = errors.New(bootSecret) }, "read-failed"},
-		"invalid": {func(r *bootRepository) {
-			r.treeErr[bootHead] = fmt.Errorf("%w: %s", inventory.ErrInvalidTree, bootSecret)
-		}, "invalid-source"},
-		"changed": {func(r *bootRepository) { r.info.ID = 5555 }, "repository-changed"},
-	}
-	for name, test := range failures {
-		t.Run(name, func(t *testing.T) {
-			w := newBootWorld(t)
-			w.openPulls(bootRepo, 4)
-			good := w.reader.repo(bootRepo)
-			original := newBootRepository(bootRepo, bootRepoID)
-			test.fail(good)
-
-			w.mustRun()
-
-			w.requireProblem(test.code)
-			if strings.Contains(w.logs.String(), bootSecret) || strings.Contains(w.problems.lookup(bootRepo), bootSecret) {
-				t.Fatalf("GitHub text reached the problem or the logs: %s", w.logs)
-			}
-			w.mustRun()
-			w.requireProblem(test.code) // still failing: still shown
-			*good = *original
-			w.mustRun()
-			w.requireProblem("")
-		})
 	}
 }
 
@@ -963,27 +701,6 @@ func TestBootstrapKeepsTheProblemOfAPromotionThatCannotProceed(t *testing.T) {
 	})
 }
 
-func TestBootstrapKeepsTheProblemOfAFailedRunAndClearsItWhenTheProjectIsCanonical(t *testing.T) {
-	w := newBootWorld(t)
-	w.openPulls(bootRepo, 4)
-	w.suites.failAt = 1
-
-	if err := w.run(); !errors.Is(err, errBootStore) {
-		t.Fatalf("run = %v, want the store failure", err)
-	}
-	w.requireProblem("failed")
-
-	w.suites.failAt = 0
-	w.mustRun()
-	w.requireProblem("") // proposed, nothing wrong
-	w.approve(1, 4)
-	w.mustRun()
-	w.requireProblem("")
-	if _, found := w.canonical(); !found {
-		t.Fatal("the baseline was not promoted")
-	}
-}
-
 func TestBootstrapBlockedReasonsHaveDistinctCodes(t *testing.T) {
 	seen := map[string]contract.PromotionReason{}
 	for reason := contract.PromotionReasonContextMismatch; reason <= contract.PromotionReasonCorrectionContextReused; reason++ {
@@ -995,138 +712,6 @@ func TestBootstrapBlockedReasonsHaveDistinctCodes(t *testing.T) {
 			t.Errorf("reasons %d and %d share the code %q", other, reason, code)
 		}
 		seen[code] = reason
-	}
-}
-
-func TestBootstrapContinuesWithTheNextProjectAfterAFailure(t *testing.T) {
-	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
-	w.openPulls(bootRepo, 4)
-	w.openPulls(bootOtherRepo, 5)
-	w.reader.repo(bootRepo).repoErr = errors.New(bootSecret)
-
-	w.mustRun()
-
-	err := w.mem.Do(t.Context(), owner.ProjectID(bootOtherRepoID), "default", func(ctx context.Context, tx governance.Tx) error {
-		_, _, err := tx.Proposal(ctx, "P1")
-		return err
-	})
-	if err != nil {
-		t.Fatalf("the second project has no baseline: %v", err)
-	}
-	w.requireOutbox("bootstrap-summary:1002:P1-R1")
-}
-
-func TestBootstrapSkipsARepositoryThatIsNotTheEnrolledOne(t *testing.T) {
-	w := newBootWorld(t)
-	w.openPulls(bootRepo, 4)
-	w.reader.repo(bootRepo).info.ID = 5555 // the name now belongs to another repository
-
-	w.mustRun()
-
-	if _, found := w.proposal(1); found {
-		t.Fatal("the baseline of another repository was proposed")
-	}
-}
-
-func TestBootstrapFailsTheRunOnAStoreFailureButTriesTheOtherProjects(t *testing.T) {
-	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
-	w.openPulls(bootRepo, 4)
-	w.openPulls(bootOtherRepo, 5)
-	w.suites.failAt = 1 // the first project's first store call
-
-	err := w.run()
-
-	if !errors.Is(err, errBootStore) {
-		t.Fatalf("run = %v, want the store failure", err)
-	}
-	w.requireOutbox("bootstrap-summary:1002:P1-R1")
-	w.suites.failAt = 0
-	w.mustRun()
-	w.requireOutbox(summaryKey, "bootstrap-summary:1002:P1-R1")
-}
-
-// crashAtEveryStoreCall runs the job on a fresh world once per store call, committing that call and then
-// crashing, reruns it cleanly and requires the same end state as an uninterrupted run.
-func crashAtEveryStoreCall(t *testing.T, setup func(t *testing.T) *bootWorld, final func(t *testing.T, w *bootWorld)) {
-	t.Helper()
-	for crashAt := 1; ; crashAt++ {
-		if crashAt > 25 {
-			t.Fatal("the job still crashes at the 25th store call")
-		}
-		w := setup(t)
-		w.suites.calls, w.suites.crashAt = 0, crashAt
-		err := w.run()
-		crashed := errors.Is(err, errBootCrash)
-		if err != nil && !crashed {
-			t.Fatalf("crash at call %d: run = %v", crashAt, err)
-		}
-		w.suites.crashAt = 0
-		w.mustRun()
-		w.mustRun()
-		final(t, w)
-		if t.Failed() {
-			t.Fatalf("the end state is wrong after a crash at store call %d", crashAt)
-		}
-		if !crashed {
-			return
-		}
-	}
-}
-
-func TestBootstrapReplayAfterACrashDuplicatesNothing(t *testing.T) {
-	t.Run("creating the suite and proposing", func(t *testing.T) {
-		crashAtEveryStoreCall(t, func(t *testing.T) *bootWorld {
-			w := newBootWorld(t)
-			w.openPulls(bootRepo, 4)
-			return w
-		}, func(t *testing.T, w *bootWorld) {
-			w.requireOutbox(summaryKey)
-			if _, found := w.proposal(2); found {
-				t.Error("a second proposal exists")
-			}
-			if len(w.suites.messages) != 1 {
-				t.Errorf("%d summary messages were committed, want 1", len(w.suites.messages))
-			}
-		})
-	})
-	t.Run("recording the assessment and promoting", func(t *testing.T) {
-		crashAtEveryStoreCall(t, func(t *testing.T) *bootWorld { return approvedWorld(t) }, func(t *testing.T, w *bootWorld) {
-			w.requireOutbox(promotedKey, summaryKey)
-			if version, found := w.canonical(); !found || version != "V1" {
-				t.Errorf("canonical = %q (found %v), want V1", version, found)
-			}
-			promoted := 0
-			for _, message := range w.suites.messages {
-				if message.Key == promotedKey {
-					promoted++
-				}
-			}
-			if promoted != 1 {
-				t.Errorf("%d promoted messages were committed, want 1", promoted)
-			}
-		})
-	})
-}
-
-func TestBootstrapSummaryNamesTheEffectiveTier(t *testing.T) {
-	tests := []struct {
-		enrolled, configured, want string
-	}{
-		{owner.TierIsolated, owner.TierIsolated, "isolated"},
-		{owner.TierCoLocated, owner.TierIsolated, "co-located"}, // a secret enrolled beside the agent stays within its reach
-		{owner.TierIsolated, owner.TierCoLocated, "co-located"},
-		{owner.TierCoLocated, owner.TierCoLocated, "co-located"},
-	}
-	for _, test := range tests {
-		t.Run("enrolled "+test.enrolled+" configured "+test.configured, func(t *testing.T) {
-			w := proposedWorld(t, withTiers(test.enrolled, test.configured))
-
-			summary, _ := w.payload(summaryKey)["summary"].(map[string]any)
-
-			if summary["tier"] != test.want {
-				t.Fatalf("tier = %v, want %s", summary["tier"], test.want)
-			}
-		})
 	}
 }
 
@@ -1208,64 +793,6 @@ func TestBootstrapSummaryCountsTheRulesItDropsAndMarksWhatItCut(t *testing.T) {
 	}
 }
 
-// A store error ends in river_job.errors, so it must not carry text the repository chose.
-func TestBootstrapErrorsNeverCarryRepositoryText(t *testing.T) {
-	const hostile = "HOSTILE-REPOSITORY-TEXT"
-	t.Run("a content store failure names a protected path", func(t *testing.T) {
-		w := newBootWorld(t)
-		w.openPulls(bootRepo, 4)
-		files := bootFiles("v1")
-		files[".github/workflows/"+hostile+".yml"] = "on: push\n" // sorts before ci.yml: the first path the store sees
-		w.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: files}
-		w.job.content = failingContent{}
-
-		err := w.run()
-
-		requireFailureWithoutText(t, err, hostile)
-		if !errors.Is(err, errBootContent) {
-			t.Fatalf("the cause was lost: %v", err)
-		}
-	})
-	t.Run("creating the suite names the default branch", func(t *testing.T) {
-		w := newBootWorld(t)
-		w.reader.repo(bootRepo).info.DefaultBranch = hostile
-		w.suites.createErr = func(target contract.IntegrationTargetID) error {
-			return fmt.Errorf("%w: targeting %q", errBootStore, target)
-		}
-
-		err := w.run()
-
-		requireFailureWithoutText(t, err, hostile)
-		if !errors.Is(err, errBootStore) {
-			t.Fatalf("the cause was lost: %v", err)
-		}
-	})
-	t.Run("a suite that targets something else than a branch", func(t *testing.T) {
-		w := newBootWorld(t)
-		w.seedSuite(bootRepoID, hostile)
-		w.openPulls(bootRepo, 4)
-
-		requireFailureWithoutText(t, w.run(), hostile)
-	})
-}
-
-func requireFailureWithoutText(t *testing.T, err error, text string) {
-	t.Helper()
-	if err == nil {
-		t.Fatal("the run did not fail")
-	}
-	if strings.Contains(err.Error(), text) {
-		t.Fatalf("the error carries repository text: %v", err)
-	}
-}
-
-var errBootContent = errors.New("disk full")
-
-// failingContent is a ContentWriter whose store is full.
-type failingContent struct{}
-
-func (failingContent) Put(context.Context, artifact.Digest, io.Reader) error { return errBootContent }
-
 // worstCase is a repository whose paths and rules are as large as JSON encoding can make them.
 func worstCase(unit string) bootstrapSummaryInputs {
 	entry := strings.Repeat(unit, 500)
@@ -1328,5 +855,231 @@ func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testin
 func TestSummaryInputsRejectAnUnknownTier(t *testing.T) {
 	if _, err := (bootstrapSummaryInputs{Tier: "somewhere"}).summary(); err == nil {
 		t.Fatal("an unknown tier was accepted")
+	}
+}
+
+// suiteOf reports whether the Suite of repository id exists.
+func (w *bootWorld) suiteOf(id int64) bool {
+	w.t.Helper()
+	err := w.mem.Do(w.t.Context(), owner.ProjectID(id), defaultSuite, func(context.Context, governance.Tx) error { return nil })
+	if err != nil && !errors.Is(err, governance.ErrNotFound) {
+		w.t.Fatal(err)
+	}
+	return err == nil
+}
+
+func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *testing.T) {
+	t.Run("suite creation", func(t *testing.T) {
+		w := newBootWorld(t)
+		w.reader.repo(bootRepo).repoErr = errors.New(bootSecret)
+
+		if err := w.run(); err != nil {
+			t.Fatalf("a GitHub read failure failed the run: %v", err)
+		}
+
+		if w.suiteExists() {
+			t.Fatal("the Suite was created from a failed read")
+		}
+		if strings.Contains(w.logs.String(), bootSecret) {
+			t.Fatalf("a log line holds the text GitHub sent:\n%s", w.logs)
+		}
+		w.reader.repo(bootRepo).repoErr = nil // the failure ends
+		w.mustRun()
+		if !w.suiteExists() {
+			t.Fatalf("the next run did not create the Suite\nlogs: %s", w.logs)
+		}
+	})
+	t.Run("promotion", func(t *testing.T) {
+		w := approvedWorld(t)
+		w.reader.repo(bootRepo).treeErr[bootHead] = errors.New(bootSecret)
+
+		w.mustRun()
+
+		if _, found := w.canonical(); found {
+			t.Fatal("a canonical exists after a failed read")
+		}
+		if _, found := w.assessmentOutcome(1, bootHead); found {
+			t.Fatal("a failed read was recorded as an assessment: it could never be Passed afterwards")
+		}
+		if strings.Contains(w.logs.String(), bootSecret) {
+			t.Fatalf("a log line holds the text GitHub sent:\n%s", w.logs)
+		}
+		delete(w.reader.repo(bootRepo).treeErr, bootHead)
+		w.mustRun()
+		if version, found := w.canonical(); !found || version != "V1" {
+			t.Fatalf("canonical = %q (found %v) after the read recovered, want V1", version, found)
+		}
+	})
+}
+
+func TestBootstrapKeepsTheLastProblemOfAGitHubReadUntilTheProjectRunsCleanly(t *testing.T) {
+	failures := map[string]struct {
+		fail func(*bootRepository)
+		code string
+	}{
+		"repository": {func(r *bootRepository) { r.repoErr = errors.New(bootSecret) }, "read-failed"},
+		"changed":    {func(r *bootRepository) { r.info.ID = 5555 }, "repository-changed"},
+	}
+	for name, test := range failures {
+		t.Run(name, func(t *testing.T) {
+			w := newBootWorld(t)
+			good := w.reader.repo(bootRepo)
+			original := newBootRepository(bootRepo, bootRepoID)
+			test.fail(good)
+
+			w.mustRun()
+
+			w.requireProblem(test.code)
+			if strings.Contains(w.logs.String(), bootSecret) || strings.Contains(w.problems.lookup(bootRepo), bootSecret) {
+				t.Fatalf("GitHub text reached the problem or the logs: %s", w.logs)
+			}
+			w.mustRun()
+			w.requireProblem(test.code) // still failing: still shown
+			*good = *original
+			w.mustRun()
+			w.requireProblem("")
+		})
+	}
+}
+
+func TestBootstrapKeepsTheProblemOfAFailedRunAndClearsItWhenTheProjectIsCanonical(t *testing.T) {
+	w := newBootWorld(t)
+	w.suites.failAt = 1
+
+	if err := w.run(); !errors.Is(err, errBootStore) {
+		t.Fatalf("run = %v, want the store failure", err)
+	}
+	w.requireProblem("failed")
+
+	w.suites.failAt = 0
+	w.mustRun() // creates the Suite
+	w.requireProblem("")
+	w.branchProposal(4)
+	w.approve(1, 4)
+	w.mustRun()
+	w.requireProblem("")
+	if _, found := w.canonical(); !found {
+		t.Fatal("the baseline was not promoted")
+	}
+}
+
+func TestBootstrapContinuesWithTheNextProjectAfterAFailure(t *testing.T) {
+	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
+	w.reader.repo(bootRepo).repoErr = errors.New(bootSecret)
+
+	w.mustRun()
+
+	if w.suiteOf(bootRepoID) || !w.suiteOf(bootOtherRepoID) {
+		t.Fatalf("the Suites exist for the first project %v and the second %v, want only the second", w.suiteOf(bootRepoID), w.suiteOf(bootOtherRepoID))
+	}
+}
+
+func TestBootstrapSkipsARepositoryThatIsNotTheEnrolledOne(t *testing.T) {
+	w := newBootWorld(t)
+	w.reader.repo(bootRepo).info.ID = 5555 // the name now belongs to another repository
+
+	w.mustRun()
+
+	if w.suiteExists() {
+		t.Fatal("the Suite of another repository was created")
+	}
+}
+
+func TestBootstrapFailsTheRunOnAStoreFailureButTriesTheOtherProjects(t *testing.T) {
+	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
+	w.suites.failAt = 1 // the first project's first store call
+
+	err := w.run()
+
+	if !errors.Is(err, errBootStore) {
+		t.Fatalf("run = %v, want the store failure", err)
+	}
+	if w.suiteOf(bootRepoID) || !w.suiteOf(bootOtherRepoID) {
+		t.Fatalf("the Suites exist for the first project %v and the second %v, want only the second", w.suiteOf(bootRepoID), w.suiteOf(bootOtherRepoID))
+	}
+	w.suites.failAt = 0
+	w.mustRun()
+	if !w.suiteOf(bootRepoID) {
+		t.Fatal("the first project's Suite was not created by the next run")
+	}
+}
+
+// crashAtEveryStoreCall runs the job on a fresh world once per store call, committing that call and then
+// crashing, reruns it cleanly and requires the same end state as an uninterrupted run.
+func crashAtEveryStoreCall(t *testing.T, setup func(t *testing.T) *bootWorld, final func(t *testing.T, w *bootWorld)) {
+	t.Helper()
+	for crashAt := 1; ; crashAt++ {
+		if crashAt > 25 {
+			t.Fatal("the job still crashes at the 25th store call")
+		}
+		w := setup(t)
+		w.suites.calls, w.suites.crashAt = 0, crashAt
+		err := w.run()
+		crashed := errors.Is(err, errBootCrash)
+		if err != nil && !crashed {
+			t.Fatalf("crash at call %d: run = %v", crashAt, err)
+		}
+		w.suites.crashAt = 0
+		w.mustRun()
+		w.mustRun()
+		final(t, w)
+		if t.Failed() {
+			t.Fatalf("the end state is wrong after a crash at store call %d", crashAt)
+		}
+		if !crashed {
+			return
+		}
+	}
+}
+
+func TestBootstrapReplayAfterACrashDuplicatesNothing(t *testing.T) {
+	t.Run("creating the suite", func(t *testing.T) {
+		crashAtEveryStoreCall(t, func(t *testing.T) *bootWorld { return newBootWorld(t) }, func(t *testing.T, w *bootWorld) {
+			if !w.suiteExists() {
+				t.Error("the Suite does not exist")
+			}
+			if _, found := w.proposal(1); found {
+				t.Error("a proposal exists: the bootstrap job proposes nothing")
+			}
+			w.requireOutbox()
+		})
+	})
+	t.Run("recording the assessment and promoting", func(t *testing.T) {
+		crashAtEveryStoreCall(t, func(t *testing.T) *bootWorld { return approvedWorld(t) }, func(t *testing.T, w *bootWorld) {
+			w.requireOutbox(promotedKey, summaryKey)
+			if version, found := w.canonical(); !found || version != "V1" {
+				t.Errorf("canonical = %q (found %v), want V1", version, found)
+			}
+			promoted := 0
+			for _, message := range w.suites.messages {
+				if message.Key == promotedKey {
+					promoted++
+				}
+			}
+			if promoted != 1 {
+				t.Errorf("%d promoted messages were committed, want 1", promoted)
+			}
+		})
+	})
+}
+
+func TestBootstrapErrorsNeverCarryTheDefaultBranchName(t *testing.T) {
+	const hostile = "HOSTILE-REPOSITORY-TEXT"
+	w := newBootWorld(t)
+	w.reader.repo(bootRepo).info.DefaultBranch = hostile
+	w.suites.createErr = func(target contract.IntegrationTargetID) error {
+		return fmt.Errorf("%w: targeting %q", errBootStore, target)
+	}
+
+	err := w.run()
+
+	if err == nil {
+		t.Fatal("the run did not fail")
+	}
+	if strings.Contains(err.Error(), hostile) {
+		t.Fatalf("the error carries repository text: %v", err)
+	}
+	if !errors.Is(err, errBootStore) {
+		t.Fatalf("the cause was lost: %v", err)
 	}
 }

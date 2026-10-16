@@ -54,7 +54,7 @@ func (g *prGitHub) tree(sha string, files map[string]string) {
 
 // TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd runs M1.7b against the real stores and a GitHub served over HTTP: a
 // repository whose default branch has no protected files gets its first canonical from the merge of a pull request.
-// The checks job proposes the bootstrap on the pull request that adds tests/, the owner approves it through
+// The owner proposes the bootstrap on the pull request that adds tests/ (the commands job writes it), approves it through
 // ProcessConsent, the check says bootstrap-ready, GitHub reports the merge, the merges job promotes V1, and the relay
 // posts the summary and the outcome. A second pull request that changes tests/ is then proposed against V1 and gets a
 // revision comment.
@@ -111,6 +111,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	gh := &prGitHub{mergeGitHub: newMergeGitHub(), head: bootHead}
 	gh.tree(bootHead, map[string]string{"src/main.go": "package main\n"})
 	gh.tree(cjHead2, bootFiles("v1"))
+	gh.tree(cjHead4, bootFiles("v1")) // the head of pull request 7, read only once V1 exists
 	server := httptest.NewServer(gh)
 	t.Cleanup(server.Close)
 	budget := bootMust(rest.NewBudget(0.5, time.Now))
@@ -118,13 +119,13 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	reader := bootMust(github.NewReader(client))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	clock := bootTime.Add(2 * time.Hour)
-	cycle(clock, map[int]string{5: cjHead2})
+	cycle(clock, map[int]string{5: cjHead2, 7: cjHead4}) // pull request 7 carries nothing
 
 	// The bootstrap job creates the Suite and then waits for an initial contract: it proposes nothing.
 	repository := newBootRepository(bootRepo, bootRepoID)
 	repository.trees[bootHead] = &bootTree{files: map[string]string{"src/main.go": "package main\n"}}
 	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: &fakeBootReader{repos: map[string]*bootRepository{bootRepo: repository}, calls: map[string]int{}}, owners: store, suites: store,
-		content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
+		content: artifacts, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
 	for range 2 {
 		if err := bootstrap.run(t.Context()); err != nil {
 			t.Fatal(err)
@@ -193,12 +194,23 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	if len(gh.posted(5)) != 1 {
 		t.Fatalf("%d comments on pull 5, want only the summary", len(gh.posted(5)))
 	}
+	if record := current(7); record.State != checks.InProgress || record.Reason != "bootstrap-awaiting" || record.Reference != "" {
+		t.Fatalf("check of pull 7 %+v, want in_progress bootstrap-awaiting: it carries no proposal", record.Result)
+	}
+	wantComment(7, "bootstrap-notice:1001:7", "/suiteward propose", "/suiteward skip <code>")
+	if len(gh.posted(7)) != 1 {
+		t.Fatalf("%d comments on pull 7, want only the notice", len(gh.posted(7)))
+	}
 
 	// 3 and 4. The owner approves the exact revision; the check says bootstrap-ready.
 	consent(201, 1, 5)
 	step()
 	if record := current(5); record.State != checks.Success || record.Reason != "bootstrap-ready" || record.Reference != "P1-R1" {
 		t.Fatalf("check of pull 5 %+v, want success bootstrap-ready under P1-R1", record.Result)
+	}
+	pass()
+	if len(gh.posted(7)) != 1 || len(gh.posted(5)) != 1 {
+		t.Fatalf("%d comments on pull 7 and %d on pull 5 after more runs, want one each: the notice and the summary are written once", len(gh.posted(7)), len(gh.posted(5)))
 	}
 	if got := scalar(t, databaseURL, "SELECT coalesce(current_version_id, 'none') FROM suites WHERE project_id = $1 AND suite_id = 'default'", string(owner.ProjectID(bootRepoID))); got != "none" {
 		t.Fatalf("canonical %s before the merge, want none", got)
@@ -207,7 +219,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	// 5 and 6. GitHub reports the merge, whose tree is the approved head; the merges job promotes V1 and says so once.
 	gh.merge(5, cjHead2, mgSHA5, bootFiles("v1"), clock.Add(time.Minute))
 	clock = clock.Add(5 * time.Minute)
-	cycle(clock, map[int]string{})
+	cycle(clock, map[int]string{7: cjHead4}) // pull request 5 merged; pull request 7 stays open
 	clock = clock.Add(time.Minute)
 	merges := &mergesJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(),
 		tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
@@ -235,7 +247,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 
 	// 7. A second pull request changes tests/: proposed against V1, with a revision comment and approval-missing.
 	gh.tree(cjHead3, bootFiles("v2"))
-	cycle(clock, map[int]string{6: cjHead3})
+	cycle(clock, map[int]string{6: cjHead3, 7: cjHead4})
 	step()
 	pass()
 	if record := current(6); record.State != checks.InProgress || record.Reason != "approval-missing" || record.Reference != "P2-R1" {
@@ -244,6 +256,9 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	wantComment(6, "revision:1001:P2-R1", "V1", "tests/a_test.go", "/suiteward approve P2-R1 <code>", "does not run tests")
 	if len(gh.posted(6)) != 1 {
 		t.Fatalf("%d comments on pull 6, want only the revision comment", len(gh.posted(6)))
+	}
+	if record := current(7); record.State != checks.Success || record.Reason != "unchanged" || len(gh.posted(7)) != 1 {
+		t.Fatalf("check of pull 7 %+v with %d comments, want success unchanged against V1 and still only the notice", record.Result, len(gh.posted(7)))
 	}
 	step()
 	pass()

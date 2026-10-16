@@ -94,7 +94,11 @@ func newChkWorld() *chkWorld {
 // chkMessage is the message of generation 3 for a result in the given state.
 func chkMessage(t *testing.T, state checks.State, reason, reference string) governance.OutboxMessage {
 	t.Helper()
-	m, err := newCheckMessage(cmtRepo, checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: reference}, owner.TierIsolated, "V2", 3)
+	version := "V2" // no canonical version before the first contract
+	if strings.HasPrefix(reason, "bootstrap-") {
+		version = ""
+	}
+	m, err := newCheckMessage(cmtRepo, checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: reference}, owner.TierIsolated, version, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +185,8 @@ func TestCheckPublisherPostsEveryState(t *testing.T) {
 		{checks.Failure, "invalid-source", "", "Invalid contract source", "completed", "failure"},
 		{checks.Failure, "integrity-failed", "P1-R2", "Canonical contract failed its integrity check", "completed", "failure"},
 		{checks.Failure, "owner-command-rejected", "P1-R2", "Owner command rejected", "completed", "failure"},
-		{checks.InProgress, "bootstrap-pending", "", "Waiting for the first baseline", "in_progress", ""},
+		{checks.InProgress, "bootstrap-awaiting", "", "No canonical contract yet", "in_progress", ""},
+		{checks.Success, "bootstrap-skipped", "", "Skipped before the first contract", "completed", "success"},
 		{checks.InProgress, "approval-missing", "P1-R2", "Awaiting owner approval", "in_progress", ""},
 		{checks.InProgress, "not-current", "P1-R2", "Contract change is not current", "in_progress", ""},
 		{checks.InProgress, "assessment-pending", "", "Assessment pending", "in_progress", ""},

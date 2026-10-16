@@ -26,7 +26,7 @@ Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 Final numbers come from the S1 walking skeleton.
 
 **Amendment (2026-10-15, after M1.7; owner).** *Latency.*
-- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
+- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
 - **Approved for phase M1.7c (before M1.8):**
   - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction;
   - shorten the synchronization poll to about 20–30 s.
@@ -110,6 +110,8 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 
 **TOTP**
 - The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-13).
+  - **Data for the decision before M1.8.** In the M1.7b live run (2026-10-16), one approval code was refused because of timing, per the owner. The offset was not captured.
+  - The commands job logs, for every rejected code, whether a window of 2 steps would have matched and at which offset (`github command code rejected`, `would_match`). The decision reads those lines from the host journal.
 - A step is consumed once per owner across all commands (ADR 0027). The consumed step records the command that used it, so a retry of the same command after a crash is not a replay.
 
 **Order and binding of a code to its command (ADR 0027)**

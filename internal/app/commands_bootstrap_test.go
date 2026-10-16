@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -640,4 +641,71 @@ func TestProposeTakesTheDeclarationOnlyFromAFileEntry(t *testing.T) {
 
 	w.requireNoAck(cjID1, 500, commands.Proposed)
 	w.requireProposal("P2", "R1", cjHead, contract.OriginPull, cjPull)
+}
+
+// linkedFile is a tree where one path is a symbolic link.
+type linkedFile struct {
+	*bootTree
+	path string
+}
+
+func (t linkedFile) Entries(ctx context.Context) ([]inventory.Entry, error) {
+	entries, err := t.bootTree.Entries(ctx)
+	for i := range entries {
+		if entries[i].Path == t.path {
+			entries[i].Kind = inventory.Symlink
+		}
+	}
+	return entries, err
+}
+
+func TestProposeRefusesASourceThatCannotBeReadAsAContract(t *testing.T) {
+	invalidDeclaration := map[string]string{".suiteward.yml": "version: 2\n", ".github/workflows/ci.yml": "on: push\n"}
+	for _, tc := range []struct {
+		name  string
+		setup func(w *cjWorld)
+	}{
+		{"an invalid declaration on the default branch", func(w *cjWorld) { w.trees(invalidDeclaration, bootFiles("v1")) }},
+		{"an invalid declaration in the pull request head", func(w *cjWorld) {
+			w.trees(map[string]string{"README.md": "x"}, invalidDeclaration)
+		}},
+		{"a link inside the protected files", func(w *cjWorld) {
+			w.trees(bootFiles("v1"), bootFiles("v1"))
+			w.reader.repo(cjRepo1).trees[bootHead] = linkedFile{&bootTree{files: bootFiles("v1")}, "tests/a_test.go"}
+		}},
+		{"a tree GitHub truncated", func(w *cjWorld) {
+			w.trees(bootFiles("v1"), bootFiles("v1"))
+			w.reader.repo(cjRepo1).treeErr[bootHead] = fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCjWorld(t)
+			tc.setup(w)
+			w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
+			w.mustRun() // refused at once: a deterministic source is not retried
+
+			w.requireAckPayload(cjID1, 500, commands.ProposeRefused, map[string]any{"reason": "invalid-source"})
+			w.requireNoProposal("P2")
+			w.requireNothingLeaked()
+		})
+	}
+}
+
+func TestProposeStillRetriesATransientTreeReadFailure(t *testing.T) {
+	w := newCjWorld(t)
+	w.trees(bootFiles("v1"), bootFiles("v1"))
+	w.reader.repo(cjRepo1).treeErr[bootHead] = errors.New(bootSecret)
+	w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
+	w.mustRun()
+
+	w.requireNoEntry(cjID1, 500)
+}
+
+func TestCommentPublisherRendersTheInvalidSourceRefusal(t *testing.T) {
+	w := newCmtWorld(t)
+	key := fmt.Sprintf("ack:%d:%d", cmtRepoID, cmtComment)
+	if err := w.pub.publish(t.Context(), key, cmtAckPayload(map[string]any{"disposition": "propose-refused", "reason": "invalid-source"})); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	w.wantPost(key, commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.InvalidSource, Owner: cmtOwner, Source: cmtComment}))
 }

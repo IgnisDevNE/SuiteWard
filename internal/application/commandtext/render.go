@@ -42,6 +42,7 @@ const (
 	Fork
 	EmptyInventory
 	Carrier
+	InvalidSource
 )
 
 // Rejection is the domain reason of a Rejected outcome.

@@ -35,7 +35,6 @@ const (
 	cjLogin        = "octo-owner"
 	cjPull         = 7
 	cjMarker       = "SECRET-COMMENT-TEXT"
-	cjJobTimeout   = time.Minute
 	cjHead         = "3333333333333333333333333333333333333333" // the head of every observed pull request
 	cjBranch       = "feature"                                  // and its branch
 )
@@ -167,7 +166,7 @@ func newCjWorldWithTiers(t *testing.T, enrolledTier, configured string) *cjWorld
 	w.suites = &probeSuites{UnitOfWork: w.mem}
 	w.reader = &fakeBootReader{repos: map[string]*bootRepository{cjRepo1: newBootRepository(cjRepo1, cjID1), cjRepo2: newBootRepository(cjRepo2, cjID2)}, calls: map[string]int{}}
 	w.content = &fakeBootContent{stored: map[string]bool{}}
-	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
+	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, now: func() time.Time { return cjSync.Add(time.Hour) },
 		reader: w.reader, content: w.content, pulls: w.obs, tier: configured,
 		bot: newBotAccount(func(context.Context) (int64, error) {
 			w.botCall++
@@ -587,7 +586,7 @@ func TestCommandsJobWaitsForTheSyncWatermark(t *testing.T) {
 
 func TestCommandsJobUsesTheEarliestSuccessfulCycle(t *testing.T) {
 	w := newCjWorld(t)
-	late := cjSync.Add(-10 * time.Second).Add(-time.Minute) // before repository 1's horizon, after repository 2's
+	late := cjSync.Add(-commandListingMargin).Add(-time.Minute) // before repository 1's horizon, after repository 2's
 	w.observe(cjID1, cjSync, ownerCommand(500, late, "approve", "P1-R2", 0))
 	w.observe(cjID2, cjSync.Add(-30*time.Minute))
 	w.mustRun()
@@ -606,8 +605,8 @@ func TestCommandsJobHorizonIsTheEarliestCycleStartMinusTheListingMargin(t *testi
 	if err != nil || !ready {
 		t.Fatalf("horizon = %v, ready %v, err %v; want ready", horizon, ready, err)
 	}
-	if want := cjSync.Add(-5 * time.Minute).Add(-10 * time.Second); !horizon.Equal(want) {
-		t.Fatalf("horizon = %v; want the earliest start (%v) minus 10s = %v", horizon, cjSync.Add(-5*time.Minute), want)
+	if want := cjSync.Add(-5 * time.Minute).Add(-commandListingMargin); !horizon.Equal(want) {
+		t.Fatalf("horizon = %v; want the earliest start (%v) minus %v = %v", horizon, cjSync.Add(-5*time.Minute), commandListingMargin, want)
 	}
 }
 

@@ -69,7 +69,7 @@ func TestCommandsJobOnPostgreSQLProposesAndSkips(t *testing.T) {
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, reader: reader, content: artifacts, pulls: store, tier: owner.TierIsolated,
-		jobTimeout: time.Minute, logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
+		logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	for range 2 { // the second run finds nothing to decide
 		if err := job.run(t.Context()); err != nil {

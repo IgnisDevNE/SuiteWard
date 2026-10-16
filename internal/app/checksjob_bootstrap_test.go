@@ -26,18 +26,14 @@ func newCJBootWorld(t *testing.T) *cjJobWorld {
 	return w
 }
 
-// summaryOf returns the inputs of the bootstrap-summary message written under key.
-func (w *cjJobWorld) summaryOf(key string) map[string]any {
-	w.t.Helper()
-	return w.payload(key)["summary"].(map[string]any)
-}
-
-// carrierPull opens pull 5 at head 2 (protected files, v1) and pull 4 at head 3 (none), and checks them.
+// carrierPull opens pull 5 at head 2 (protected files, v1) and pull 4 at head 3 (none), proposes the bootstrap on pull 5 as
+// the commands job would, and checks them.
 func (w *cjJobWorld) carrierPull() {
 	w.t.Helper()
 	w.tree(cjHead2, bootFiles("v1"))
 	w.tree(cjHead3, map[string]string{"src/main.go": "package main // 4\n"})
 	w.sync(map[int]string{4: cjHead3, 5: cjHead2})
+	w.pullProposal(5, cjHead2, bootFiles("v1"))
 	w.mustCheck()
 }
 
@@ -102,7 +98,7 @@ func TestChecksChooseNoCarrierWhenNoPullHasProtectedFilesAndReadEachHeadOnce(t *
 	}
 }
 
-func TestChecksProposeTheBootstrapOnTheCarrierAndMakeItReadyAfterApproval(t *testing.T) {
+func TestChecksAssessTheBootstrapProposalOfTheCarrierAndMakeItReadyAfterApproval(t *testing.T) {
 	w := newCJBootWorld(t)
 
 	w.carrierPull()
@@ -112,17 +108,6 @@ func TestChecksProposeTheBootstrapOnTheCarrierAndMakeItReadyAfterApproval(t *tes
 		t.Fatalf("record %+v, want the reference P1-R1", record)
 	}
 	w.want(4, checks.InProgress, "bootstrap-pending", 1)
-	proposal, found := w.proposal(1)
-	if !found || proposal.Current().OriginKind() != contract.OriginPull || proposal.Current().Origin() != cjHead2 || proposal.Current().Carrier() != carrierID(bootRepoID, 5) {
-		t.Fatalf("P1 = %+v (found %v), want a pull revision from head 2 carried by pull 5", proposal, found)
-	}
-	summary := w.summaryOf("bootstrap-summary:1001:P1-R1")
-	if summary["source"] != "pull" || summary["origin"] != cjHead2 || summary["branch"] != nil || summary["tier"] != "isolated" {
-		t.Fatalf("summary %v, want a pull summary of head 2", summary)
-	}
-	if w.payload("bootstrap-summary:1001:P1-R1")["pull"] != float64(5) {
-		t.Fatalf("the summary is not for pull 5: %v", w.payload("bootstrap-summary:1001:P1-R1"))
-	}
 	var check map[string]any
 	if err := json.Unmarshal(w.ledger.messages[len(w.ledger.messages)-1].Payload, &check); err != nil || check["pull"] != float64(5) || check["reason"] != "approval-missing" ||
 		check["reference"] != "P1-R1" || check["version"] != nil {
@@ -144,7 +129,7 @@ func TestChecksProposeTheBootstrapOnTheCarrierAndMakeItReadyAfterApproval(t *tes
 	}
 }
 
-func TestChecksAskForANewApprovalAfterAProtectedPushToTheCarrierAndKeepConsentAcrossAnImplementationPush(t *testing.T) {
+func TestChecksCancelAProtectedPushToTheCarrierAndKeepConsentAcrossAnImplementationPush(t *testing.T) {
 	w := newCJBootWorld(t)
 	w.carrierPull()
 	w.consent(contract.ApproveConsent, 201, 1, 1, 5)
@@ -163,11 +148,11 @@ func TestChecksAskForANewApprovalAfterAProtectedPushToTheCarrierAndKeepConsentAc
 	w.tree(cjHead5, bootFiles("v2"))
 	w.sync(map[int]string{4: cjHead3, 5: cjHead5}) // a protected push
 	w.mustCheck()
-	if record := w.want(5, checks.InProgress, "approval-missing", 4); record.Reference != "P1-R2" {
-		t.Fatalf("record %+v, want the new revision P1-R2", record)
+	if record := w.want(5, checks.InProgress, "bootstrap-pending", 4); record.Reference != "" {
+		t.Fatalf("record %+v, want a cancelled head with no reference", record)
 	}
-	if summary := w.summaryOf("bootstrap-summary:1001:P1-R2"); summary["source"] != "pull" || summary["origin"] != cjHead5 {
-		t.Fatalf("summary %v, want the pull summary of head 5: every bootstrap revision gets one", summary)
+	if proposal, _ := w.proposal(1); len(proposal.Revisions()) != 1 {
+		t.Fatalf("P1 has %d revisions, want the checks job to revise nothing", len(proposal.Revisions()))
 	}
 	if keys := w.revisionKeys(); len(keys) != 0 {
 		t.Fatalf("revision comments %v, want none: a bootstrap revision is announced by its summary", keys)
@@ -196,6 +181,7 @@ func TestChecksLetOnlyTheLowestPullWithProtectedFilesCarryAndReadNoHeadBeyondIt(
 	w.tree(cjHead2, bootFiles("v1"))
 	w.tree(cjHead4, bootFiles("v2"))
 	w.sync(map[int]string{5: cjHead2, 6: cjHead4})
+	w.pullProposal(5, cjHead2, bootFiles("v1"))
 
 	w.mustCheck()
 
@@ -214,6 +200,7 @@ func TestChecksKeepTheCarrierOfAnExistingProposalWhenALowerPullAppears(t *testin
 	w.tree(cjHead2, bootFiles("v1"))
 	w.tree(cjHead4, bootFiles("v2"))
 	w.sync(map[int]string{6: cjHead4})
+	w.pullProposal(6, cjHead4, bootFiles("v2"))
 	w.mustCheck()
 	w.want(6, checks.InProgress, "approval-missing", 1)
 
@@ -224,33 +211,13 @@ func TestChecksKeepTheCarrierOfAnExistingProposalWhenALowerPullAppears(t *testin
 	w.want(5, checks.InProgress, "bootstrap-pending", 1)
 }
 
-func TestChecksMoveTheBootstrapToTheNextPullWhenTheCarrierCloses(t *testing.T) {
-	w := newCJBootWorld(t)
-	w.tree(cjHead2, bootFiles("v1"))
-	w.tree(cjHead4, bootFiles("v2"))
-	w.sync(map[int]string{5: cjHead2, 6: cjHead4})
-	w.mustCheck()
-	w.want(6, checks.InProgress, "bootstrap-pending", 1)
-
-	w.sync(map[int]string{6: cjHead4}) // pull 5 closes; nothing writes to the Suite
-	w.mustCheck()
-	w.mustCheck()
-
-	record := w.want(6, checks.InProgress, "approval-missing", 2)
-	if record.Reference != "P2-R1" {
-		t.Fatalf("record %+v, want a new proposal P2-R1: P1 stays with the closed pull request", record)
-	}
-	if proposal, found := w.proposal(2); !found || proposal.Current().Carrier() != carrierID(bootRepoID, 6) {
-		t.Fatalf("P2 = %+v (found %v), want it carried by pull 6", proposal, found)
-	}
-}
-
 func TestChecksNeverChooseAForkAsTheCarrier(t *testing.T) {
 	w := newCJBootWorld(t)
 	w.headRepo = map[int]string{4: "evil/widgets"}
 	w.tree(cjHead3, bootFiles("v1"))
 	w.tree(cjHead2, bootFiles("v1"))
 	w.sync(map[int]string{4: cjHead3, 5: cjHead2})
+	w.pullProposal(5, cjHead2, bootFiles("v1"))
 
 	w.mustCheck()
 
@@ -314,6 +281,7 @@ func TestChecksMapTheTreeProblemsOfTheCarrier(t *testing.T) {
 
 		delete(w.reader.repos[bootRepo].treeErr, cjHead2) // GitHub answers again: a record that only waited is no assessment
 		w.tree(cjHead2, bootFiles("v1"))
+		w.pullProposal(5, cjHead2, bootFiles("v1"))
 		w.mustCheck()
 
 		w.want(5, checks.InProgress, "approval-missing", 2)
@@ -412,27 +380,6 @@ func TestChecksNeverMakeAPullHeadCanonicalOrAnnounceItAsAChange(t *testing.T) {
 	}
 	if _, found := w.canonical(); found {
 		t.Fatal("the checks job made a pull head canonical")
-	}
-}
-
-// Nothing wrote to the Suite, so its revision is still 0 and the stored record of a pull request that only waited
-// carries the same revision as a fresh assessment would: it must not be mistaken for one when the carrier closes.
-func TestChecksAssessANewCarrierWhoseRecordOnlyWaitedWhileTheSuiteWasNeverWritten(t *testing.T) {
-	w := newCJBootWorld(t)
-	files := bootFiles("v1")
-	files[".suiteward.yml"] = "version: 1\nunknown: [\n"
-	w.tree(cjHead2, files) // invalid: it is the carrier that says so, and writes nothing
-	w.tree(cjHead4, bootFiles("v2"))
-	w.sync(map[int]string{5: cjHead2, 6: cjHead4})
-	w.mustCheck()
-	w.want(5, checks.Failure, "invalid-source", 1)
-	w.want(6, checks.InProgress, "bootstrap-pending", 1)
-
-	w.sync(map[int]string{6: cjHead4}) // pull 5 closes
-	w.mustCheck()
-
-	if record := w.want(6, checks.InProgress, "approval-missing", 2); record.Reference != "P1-R1" {
-		t.Fatalf("record %+v, want the first proposal P1-R1", record)
 	}
 }
 

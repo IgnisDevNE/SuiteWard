@@ -661,25 +661,24 @@ func (q *Queries) InsertSuiteVersion(ctx context.Context, arg InsertSuiteVersion
 	return err
 }
 
-const listBaselineProposalsOfCarrier = `-- name: ListBaselineProposalsOfCarrier :many
+const listBootstrapProposals = `-- name: ListBootstrapProposals :many
 SELECT p.proposal_id FROM proposals p
-WHERE p.project_id = $1 AND p.suite_id = $2 AND p.carrier_id = $3
+WHERE p.project_id = $1 AND p.suite_id = $2
   AND NOT EXISTS (SELECT 1 FROM proposal_revisions r
-                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id
-                    AND (r.origin_kind <> 'pull' OR r.expected_version_id IS NOT NULL))
+                  WHERE r.project_id = p.project_id AND r.suite_id = p.suite_id AND r.proposal_id = p.proposal_id AND r.expected_version_id IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM promotions m
                   WHERE m.project_id = p.project_id AND m.suite_id = p.suite_id AND m.proposal_id = p.proposal_id)
 ORDER BY p.proposal_id
 `
 
-type ListBaselineProposalsOfCarrierParams struct {
+type ListBootstrapProposalsParams struct {
 	ProjectID string
 	SuiteID   string
-	CarrierID string
 }
 
-func (q *Queries) ListBaselineProposalsOfCarrier(ctx context.Context, arg ListBaselineProposalsOfCarrierParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listBaselineProposalsOfCarrier, arg.ProjectID, arg.SuiteID, arg.CarrierID)
+// The proposals whose revisions all expect no canonical and none of which was promoted; the caller picks the newest.
+func (q *Queries) ListBootstrapProposals(ctx context.Context, arg ListBootstrapProposalsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBootstrapProposals, arg.ProjectID, arg.SuiteID)
 	if err != nil {
 		return nil, err
 	}

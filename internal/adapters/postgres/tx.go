@@ -350,20 +350,20 @@ func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCar
 	return contract.ProposalID(ids[0]), true, nil
 }
 
-func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
 	if _, err := t.lock(ctx); err != nil {
 		return "", false, err
 	}
-	ids, err := t.q.ListBaselineProposalsOfCarrier(ctx, dbgen.ListBaselineProposalsOfCarrierParams{ProjectID: string(t.project), SuiteID: string(t.suite), CarrierID: string(carrier)})
-	switch {
-	case err != nil:
-		return "", false, fmt.Errorf("list bootstrap proposals of %q: %w", carrier, err)
-	case len(ids) > 1:
-		return "", false, invalidState("proposals of "+string(carrier), fmt.Errorf("%d bootstrap proposals share one carrier", len(ids)))
-	case len(ids) == 0:
-		return "", false, nil
+	rows, err := t.q.ListBootstrapProposals(ctx, dbgen.ListBootstrapProposalsParams{ProjectID: string(t.project), SuiteID: string(t.suite)})
+	if err != nil {
+		return "", false, fmt.Errorf("list bootstrap proposals: %w", err)
 	}
-	return contract.ProposalID(ids[0]), true, nil
+	ids := make([]contract.ProposalID, len(rows))
+	for i, row := range rows {
+		ids[i] = contract.ProposalID(row)
+	}
+	id, found := governance.LatestProposalID(ids)
+	return id, found, nil
 }
 
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {

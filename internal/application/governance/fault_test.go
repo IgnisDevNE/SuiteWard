@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -92,11 +91,11 @@ func (t *faultTx) ChangeProposalFor(ctx context.Context, carrier contract.Approv
 	return t.Tx.ChangeProposalFor(ctx, carrier)
 }
 
-func (t *faultTx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
-	if t.hits("BaselineProposalFor") {
+func (t *faultTx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
+	if t.hits("LatestBootstrapProposal") {
 		return "", false, t.failure()
 	}
-	return t.Tx.BaselineProposalFor(ctx, carrier)
+	return t.Tx.LatestBootstrapProposal(ctx)
 }
 
 func (t *faultTx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
@@ -112,85 +111,75 @@ type fault struct {
 	nth    int
 }
 
-func summaryOf(contract.ProposalReference, inventory.Inventory) (governance.OutboxMessage, error) {
-	return governance.OutboxMessage{Key: "summary/bootstrap", Kind: "bootstrap.summary", Payload: []byte(`{}`)}, nil
+func bootstrapHeadRequest(head string) governance.BootstrapHeadRequest {
+	return governance.BootstrapHeadRequest{Project: projectID, Suite: suiteID, Carrier: prA, Head: contract.SourceRevision(head), Tree: headTree("v1", "package main\n")}
 }
 
-func bootstrapHeadRequest(head string) governance.BootstrapHeadRequest {
-	return governance.BootstrapHeadRequest{Project: projectID, Suite: suiteID, Carrier: prA, Head: contract.SourceRevision(head),
-		Tree: headTree("v1", "package main\n"), Summary: summaryOf}
+// proposeBootstrap proposes the contract of headTree("v1") as P1-R1, sourced from a head of the pull request prA.
+func (w *world) proposeBootstrap() {
+	w.t.Helper()
+	w.propose(newFakeWriter(), governance.BaselineRequest{
+		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P1", RevisionID: "R1"},
+		Carrier:   prA, Origin: "head-0", OriginKind: contract.OriginPull, Tree: headTree("v1", "package main\n")})
 }
 
 func TestAssessBootstrapHeadSurfacesStoreFailuresAndWritesNothing(t *testing.T) {
 	for name, failure := range map[string]fault{
-		"suite":                             {"Suite", 1},
-		"bootstrap proposal of the carrier": {"BaselineProposalFor", 1},
-		"proposal id":                       {"NextProposalID", 1},
-		"proposal of the revision":          {"Proposal", 1},
-		"proposal after the revision":       {"Proposal", 2},
-		"assessment write":                  {"RecordAssessment", 1},
-		"assessment read":                   {"Assessment", 1},
-		"suite after the writes":            {"Suite", 2},
+		"suite":                     {"Suite", 1},
+		"latest bootstrap proposal": {"LatestBootstrapProposal", 1},
+		"proposal":                  {"Proposal", 1},
+		"assessment write":          {"RecordAssessment", 1},
+		"assessment read":           {"Assessment", 1},
+		"suite after the writes":    {"Suite", 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t)
+			w.proposeBootstrap()
 			before := w.revision()
 			uow := faulting(w.mem, failure.method, failure.nth)
 
-			_, err := governance.AssessBootstrapHead(context.Background(), uow, newFakeWriter(), bootstrapHeadRequest("head-a"))
+			_, err := governance.AssessBootstrapHead(context.Background(), uow, bootstrapHeadRequest("head-a"))
 
 			if !errors.Is(err, uow.err) {
 				t.Fatalf("error = %v, want the injected failure", err)
 			}
 			w.requireWrites(before, 0)
-			if w.hasProposal("P1") {
-				t.Fatal("a proposal outlived the failed assessment")
-			}
 		})
 	}
 }
 
-func TestAssessBootstrapHeadSurfacesTheFailureToLoadTheExistingProposal(t *testing.T) {
-	w := newWorld(t)
-	first, err := governance.AssessBootstrapHead(context.Background(), w.mem, newFakeWriter(), bootstrapHeadRequest("head-a"))
-	if err != nil || !first.Committed {
-		t.Fatalf("first assessment = %+v, error %v, want a committed proposal", first, err)
-	}
-	before := w.revision()
-	uow := faulting(w.mem, "Proposal", 1) // the carrier now has a proposal, so the first load is the existing one
+// A head that is cancelled still reads the Suite and the latest proposal, and a failure there is an error, not a cancellation.
+func TestAssessBootstrapHeadSurfacesStoreFailuresOfACancellation(t *testing.T) {
+	for name, failure := range map[string]fault{
+		"suite":                     {"Suite", 1},
+		"latest bootstrap proposal": {"LatestBootstrapProposal", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t) // no proposal, so the head is cancelled when the reads succeed
+			before := w.revision()
+			uow := faulting(w.mem, failure.method, failure.nth)
 
-	_, err = governance.AssessBootstrapHead(context.Background(), uow, newFakeWriter(), bootstrapHeadRequest("head-b"))
+			_, err := governance.AssessBootstrapHead(context.Background(), uow, bootstrapHeadRequest("head-a"))
 
-	if !errors.Is(err, uow.err) {
-		t.Fatalf("error = %v, want the injected failure", err)
+			if !errors.Is(err, uow.err) {
+				t.Fatalf("error = %v, want the injected failure", err)
+			}
+			w.requireWrites(before, 0)
+		})
 	}
-	w.requireWrites(before, 0)
 }
 
 func TestAssessBootstrapHeadNeedsTheAssessmentItJustRecorded(t *testing.T) {
 	w := newWorld(t)
+	w.proposeBootstrap()
 	before := w.revision()
 	uow := faulting(w.mem, "Assessment", 1)
 	uow.vanish = true
 
-	_, err := governance.AssessBootstrapHead(context.Background(), uow, newFakeWriter(), bootstrapHeadRequest("head-a"))
+	_, err := governance.AssessBootstrapHead(context.Background(), uow, bootstrapHeadRequest("head-a"))
 
 	if !errors.Is(err, governance.ErrInvalidState) {
 		t.Fatalf("error = %v, want invalid state for an assessment that vanished", err)
-	}
-	w.requireWrites(before, 0)
-}
-
-func TestAssessBootstrapHeadWritesNothingWhenContentCannotBeStored(t *testing.T) {
-	w := newWorld(t)
-	before := w.revision()
-	writer := newFakeWriter()
-	writer.fail = errors.New("disk full")
-
-	_, err := governance.AssessBootstrapHead(context.Background(), w.mem, writer, bootstrapHeadRequest("head-a"))
-
-	if !errors.Is(err, writer.fail) {
-		t.Fatalf("error = %v, want the store failure", err)
 	}
 	w.requireWrites(before, 0)
 }
@@ -237,14 +226,15 @@ func TestAssessHeadSurfacesTheFailureToLoadTheCarriersProposal(t *testing.T) {
 
 func TestPromoteMergeOfTheBootstrapCarrierSurfacesStoreFailuresAndWritesNothing(t *testing.T) {
 	for name, failure := range map[string]fault{
-		"bootstrap proposal of the carrier": {"BaselineProposalFor", 1},
-		"proposal of the carrier":           {"Proposal", 1},
-		"assessment of the merge commit":    {"RecordAssessment", 1},
-		"promotion":                         {"Suite", 2},
+		"latest bootstrap proposal":      {"LatestBootstrapProposal", 1},
+		"proposal of the carrier":        {"Proposal", 1},
+		"assessment of the merge commit": {"RecordAssessment", 1},
+		"promotion":                      {"Suite", 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t)
-			if _, err := governance.AssessBootstrapHead(context.Background(), w.mem, newFakeWriter(), bootstrapHeadRequest("head-a")); err != nil {
+			w.proposeBootstrap()
+			if _, err := governance.AssessBootstrapHead(context.Background(), w.mem, bootstrapHeadRequest("head-a")); err != nil {
 				t.Fatal(err)
 			}
 			before := w.revision()

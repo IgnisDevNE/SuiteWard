@@ -310,8 +310,8 @@ func (j *checksJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, suite 
 }
 
 // planBootstrap decides, for the open pull requests of a repository whose Suite has no canonical, whether the branch
-// path is pending (the default branch has protected files) and which pull request carries the bootstrap: the lowest
-// open non-fork one that already has a bootstrap proposal, else the lowest whose head has protected files. problem is
+// path is pending (the default branch has protected files) and which pull request carries the bootstrap: the open non-fork
+// one that carries the Suite's latest pull bootstrap proposal, else the lowest whose head has protected files. problem is
 // a code for /status.
 func (j *checksJob) planBootstrap(ctx context.Context, p owner.ProjectPolicy, target contract.IntegrationTargetID, pulls []githubsync.PullState) (plan bootstrapPlan, problem string, err error) {
 	branch, ok := strings.CutPrefix(string(target), targetPrefix)
@@ -352,12 +352,19 @@ func (j *checksJob) planBootstrap(ctx context.Context, p owner.ProjectPolicy, ta
 		}
 	}
 	err = j.suites.Do(ctx, owner.ProjectID(p.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		id, found, err := tx.LatestBootstrapProposal(ctx)
+		if err != nil || !found {
+			return err
+		}
+		proposal, _, err := tx.Proposal(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load the latest bootstrap proposal: %w", err)
+		}
+		if proposal.Current().OriginKind() != contract.OriginPull {
+			return nil
+		}
 		for _, pull := range open {
-			_, found, err := tx.BaselineProposalFor(ctx, carrierID(p.RepositoryID, pull.Number))
-			if err != nil {
-				return fmt.Errorf("find the bootstrap proposal of pull %d: %w", pull.Number, err)
-			}
-			if found {
+			if proposal.Current().Carrier() == carrierID(p.RepositoryID, pull.Number) {
 				plan.carrier = pull.Number
 				return nil
 			}
@@ -431,15 +438,8 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 	case err != nil:
 		err = githubRead(err)
 	case suite.canonical == "": // the bootstrap carrier: its head becomes the first canonical only through its merge
-		bootstrap, err = governance.AssessBootstrapHead(ctx, j.suites, j.content, governance.BootstrapHeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
-			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},
-			Summary: func(reference contract.ProposalReference, inv inventory.Inventory) (governance.OutboxMessage, error) {
-				proposal, revision, ok := parseReference(referenceText(reference))
-				if !ok {
-					return governance.OutboxMessage{}, errors.New("the bootstrap revision is not P<n>-R<m>")
-				}
-				return newSummaryMessage(target, inventoryInputs(bootstrapSummaryInputs{Proposal: proposal, Revision: revision, Source: sourcePull, Origin: pull.HeadSHA, Tier: tier}, inv))
-			}})
+		bootstrap, err = governance.AssessBootstrapHead(ctx, j.suites, governance.BootstrapHeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
+			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}}})
 	default:
 		head, err = governance.AssessHead(ctx, j.suites, j.contents, j.content, governance.HeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
 			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},
@@ -502,12 +502,12 @@ func (j *checksJob) assessed(head governance.HeadResult, base checks.Result) (ch
 	return readiness(result, head.Ready, head.Reason, reasonReady)
 }
 
-// bootstrapped maps the assessment of a bootstrap carrier's head to its check. A head with no protected files has no
-// bootstrap to approve: the pull request waits like any other.
+// bootstrapped maps the assessment of a bootstrap carrier's head to its check. A cancelled head (no proposal of this pull
+// request to approve, or other coverage than the proposal's) waits like any other pull request.
 func (j *checksJob) bootstrapped(head governance.BootstrapHeadResult, base checks.Result) (checks.Result, error) {
 	result := base
 	result.Revision = head.Revision
-	if head.Empty {
+	if head.Cancelled {
 		result.State, result.Reason = checks.InProgress, reasonBootstrapPending
 		return result, nil
 	}

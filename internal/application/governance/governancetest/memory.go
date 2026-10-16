@@ -327,30 +327,22 @@ func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCar
 	return "", false, fmt.Errorf("%w: proposals of %q: %d change proposals share one carrier", governance.ErrInvalidState, carrier, len(found))
 }
 
-func (t *tx) BaselineProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
+func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
 	if err := t.live(ctx); err != nil {
 		return "", false, err
 	}
-	var found []contract.ProposalID
+	var open []contract.ProposalID
 	for id, p := range t.s.proposals {
-		if p.proposal.Current().Carrier() != carrier {
-			continue
-		}
-		isBaseline := !slices.ContainsFunc(p.proposal.Revisions(), func(r contract.ProposalRevision) bool {
+		isBootstrap := !slices.ContainsFunc(p.proposal.Revisions(), func(r contract.ProposalRevision) bool {
 			_, promoted := t.promotionFor(r.Binding().Reference())
-			return promoted || r.OriginKind() != contract.OriginPull || r.Binding().ExpectedCanonical() != ""
+			return promoted || r.Binding().ExpectedCanonical() != ""
 		})
-		if isBaseline {
-			found = append(found, id)
+		if isBootstrap {
+			open = append(open, id)
 		}
 	}
-	switch len(found) {
-	case 0:
-		return "", false, nil
-	case 1:
-		return found[0], true, nil
-	}
-	return "", false, fmt.Errorf("%w: proposals of %q: %d bootstrap proposals share one carrier", governance.ErrInvalidState, carrier, len(found))
+	id, found := governance.LatestProposalID(open)
+	return id, found, nil
 }
 
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {

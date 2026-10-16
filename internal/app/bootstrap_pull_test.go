@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,23 +11,37 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// pullProposal proposes the bootstrap of pull request pull from its head, as the checks job does: P<n>-R1 of origin kind pull.
-func (w *bootWorld) pullProposal(pull int, head string, files map[string]string) governance.BootstrapHeadResult {
+// pullProposal proposes the bootstrap of pull request pull from its head, as the commands job does: P<n+1>-R1 of origin kind
+// pull, carried by the pull request, with its bootstrap summary.
+func (w *bootWorld) pullProposal(pull int, head string, files map[string]string) contract.ProposalReference {
 	w.t.Helper()
 	if !w.suiteExists() {
 		w.seedSuite(bootRepoID, "branch:main")
 	}
-	result, err := governance.AssessBootstrapHead(w.t.Context(), w.suites, w.content, governance.BootstrapHeadRequest{Project: w.project(), Suite: defaultSuite,
-		Carrier: carrierID(bootRepoID, pull), Head: contract.SourceRevision(head), Tree: &bootTree{files: files},
-		Summary: func(r contract.ProposalReference, inv inventory.Inventory) (governance.OutboxMessage, error) {
-			proposal, revision, _ := parseReference(referenceText(r))
-			inputs := inventoryInputs(bootstrapSummaryInputs{Proposal: proposal, Revision: revision, Source: sourcePull, Origin: head, Tier: "isolated"}, inv)
-			return newSummaryMessage(commentTarget{RepositoryID: bootRepoID, Repo: bootRepo, Pull: pull}, inputs)
-		}})
-	if err != nil || result.Reference == nil {
-		w.t.Fatalf("propose the bootstrap of pull %d: %+v, %v", pull, result, err)
+	var id contract.ProposalID
+	if err := w.mem.Do(w.t.Context(), w.project(), defaultSuite, func(ctx context.Context, tx governance.Tx) (err error) {
+		id, err = tx.NextProposalID(ctx)
+		return err
+	}); err != nil {
+		w.t.Fatal(err)
 	}
-	return result
+	reference := contract.ProposalReference{ProjectID: w.project(), SuiteID: defaultSuite, ProposalID: id, RevisionID: "R1"}
+	proposal, revision, _ := parseReference(referenceText(reference))
+	tree := &bootTree{files: files}
+	inv, err := inventory.Build(w.t.Context(), tree)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	message, err := newSummaryMessage(commentTarget{RepositoryID: bootRepoID, Repo: bootRepo, Pull: pull},
+		inventoryInputs(bootstrapSummaryInputs{Proposal: proposal, Revision: revision, Source: sourcePull, Origin: head, Tier: "isolated"}, inv))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	if _, err := governance.ProposeBaseline(w.t.Context(), w.suites, w.content, governance.BaselineRequest{Reference: reference, Carrier: carrierID(bootRepoID, pull),
+		Origin: contract.SourceRevision(head), OriginKind: contract.OriginPull, Tree: tree, Outbox: []governance.OutboxMessage{message}}); err != nil {
+		w.t.Fatalf("propose the bootstrap of pull %d: %v", pull, err)
+	}
+	return reference
 }
 
 func TestBootstrapNeverPromotesAnApprovedPullRevision(t *testing.T) {

@@ -3,13 +3,14 @@ package governancetest
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// The cases of the M1.7b bootstrap from a PR: the baseline proposal of a carrier, baselines from a PR head, the
-// assessment of a bootstrap PR's head, and the merge that decides V1.
+// The cases of the M1.7b bootstrap from a PR: the latest bootstrap proposal and baselines from a PR head. The assessment of a
+// bootstrap PR's head and the merge that decides V1 have their own files.
 
 func bootstrapCases() []struct {
 	name string
@@ -19,24 +20,29 @@ func bootstrapCases() []struct {
 		name string
 		run  func(*cfEnv)
 	}{
-		{"BaselineProposalForFindsThePullBootstrapOfACarrier", cfBaselineProposalForFindsThePullBootstrap},
-		{"BaselineProposalForSkipsAPromotedProposal", cfBaselineProposalForSkipsAPromotedProposal},
-		{"BaselineProposalForRejectsTwoBootstrapProposalsOfOneCarrier", cfBaselineProposalForRejectsTwo},
+		{"LatestBootstrapProposalIsTheNewestOfEitherKind", cfLatestBootstrapNewest},
+		{"LatestBootstrapProposalIsTheNewestPullOverAnOlderBranch", cfLatestBootstrapPullNewest},
+		{"LatestBootstrapProposalOrdersByProposalNumber", cfLatestBootstrapNumeric},
+		{"LatestBootstrapProposalSkipsAPromotedProposal", cfLatestBootstrapSkipsPromoted},
+		{"LatestBootstrapProposalIsFalseWhenEveryProposalWasPromoted", cfLatestBootstrapOnlyPromoted},
+		{"LatestBootstrapProposalNeverReturnsAChangeProposal", cfLatestBootstrapNoChange},
+		{"LatestBootstrapProposalIsFalseWithoutOne", cfLatestBootstrapNone},
+		{"ProposeBaselineTakesANewProposalWhileAnOlderOneIsOpen", cfProposeBaselineBesideAnOlderOne},
 		{"ProposeBaselineFromAPullHeadTakesLaterRevisions", cfProposeBaselineFromAPullHead},
 		{"ProposeBaselineNeedsAnOriginKind", cfProposeBaselineNeedsAnOriginKind},
 	}
 }
 
-func (e *cfEnv) requireBaselineProposal(carrier contract.ApprovalCarrierID, want contract.ProposalID) {
+func (e *cfEnv) requireLatestBootstrap(want contract.ProposalID) {
 	e.t.Helper()
 	var id contract.ProposalID
 	var found bool
 	err := e.do(func(ctx context.Context, tx governance.Tx) (err error) {
-		id, found, err = tx.BaselineProposalFor(ctx, carrier)
+		id, found, err = tx.LatestBootstrapProposal(ctx)
 		return err
 	})
 	if err != nil || id != want || found != (want != "") {
-		e.t.Fatalf("BaselineProposalFor(%q) = %q, %v, %v; want %q", carrier, id, found, err, want)
+		e.t.Fatalf("LatestBootstrapProposal = %q, %v, %v; want %q", id, found, err, want)
 	}
 }
 
@@ -46,41 +52,68 @@ func (e *cfEnv) proposeBaseline(reference contract.ProposalReference, carrier co
 		OriginKind: kind, Tree: mcTreeOf(content)})
 }
 
-func cfBaselineProposalForFindsThePullBootstrap(e *cfEnv) {
-	branch := e.candidate("p0", "", "v1") // a baseline from a pinned branch commit
-	pull := e.candidate("p1", "", "v2").asPull()
-	change := e.candidate("p2", "version-1", "v3")
-	e.seedSimple(cfProject, cfSuite, branch, pull, change)
+// A newer branch proposal supersedes an older pull one.
+func cfLatestBootstrapNewest(e *cfEnv) {
+	e.seedSimple(cfProject, cfSuite, e.candidate("P1", "", "v1").asPull(), e.candidate("P2", "", "v2"))
 
-	e.requireBaselineProposal(pull.carrier, "p1")
-	e.requireBaselineProposal(branch.carrier, "")
-	e.requireBaselineProposal(change.carrier, "")
-	e.requireBaselineProposal("carrier-unknown", "")
+	e.requireLatestBootstrap("P2")
 }
 
-func cfBaselineProposalForSkipsAPromotedProposal(e *cfEnv) {
-	open := mcCandidate("boot", "", "v2").asPull()
+// A newer pull proposal supersedes an older branch one.
+func cfLatestBootstrapPullNewest(e *cfEnv) {
+	e.seedSimple(cfProject, cfSuite, e.candidate("P1", "", "v1"), e.candidate("P2", "", "v2").asPull())
+
+	e.requireLatestBootstrap("P2")
+}
+
+// The order is the proposal number, not the text: P10 is newer than P9.
+func cfLatestBootstrapNumeric(e *cfEnv) {
+	e.seedSimple(cfProject, cfSuite, e.candidate("P9", "", "v1").asPull(), e.candidate("P10", "", "v2").asPull(), e.candidate("P2", "", "v3"))
+
+	e.requireLatestBootstrap("P10")
+}
+
+func cfLatestBootstrapSkipsPromoted(e *cfEnv) {
+	open := mcCandidate("P5", "", "v2").asPull()
 	e.mcSeedWith([]contract.SuiteVersionID{"V1"}, true, open) // p0 became V1 by its merge
 
-	e.requireBaselineProposal("carrier-p0", "")
-	e.requireBaselineProposal(open.carrier, "boot")
+	e.requireLatestBootstrap("P5")
 }
 
-func cfBaselineProposalForRejectsTwo(e *cfEnv) {
-	first, second := e.candidate("p1", "", "v1").asPull(), e.candidate("p2", "", "v2").asPull()
-	e.seedSimple(cfProject, cfSuite, first)
-	sameCarrier := cfMust(contract.NewProposalRevision(second.proposal.Current().Binding(), second.origin, contract.OriginPull, first.carrier))
-	if err := e.appendRevision(sameCarrier); err != nil {
-		e.t.Fatal(err)
-	}
+func cfLatestBootstrapOnlyPromoted(e *cfEnv) {
+	e.mcSeedWith([]contract.SuiteVersionID{"V1"}, true)
 
-	err := e.do(func(ctx context.Context, tx governance.Tx) error {
-		_, _, err := tx.BaselineProposalFor(ctx, first.carrier)
-		return err
-	})
+	e.requireLatestBootstrap("")
+}
 
-	if !errors.Is(err, governance.ErrInvalidState) {
-		e.t.Fatalf("BaselineProposalFor with two qualifying proposals = %v, want ErrInvalidState", err)
+func cfLatestBootstrapNoChange(e *cfEnv) {
+	boot := e.candidate("P1", "", "v1").asPull()
+	change := e.candidate("P2", "version-1", "v2") // newer, but it expects a canonical
+	e.seedSimple(cfProject, cfSuite, boot, change)
+
+	e.requireLatestBootstrap("P1")
+}
+
+func cfLatestBootstrapNone(e *cfEnv) {
+	e.seedSimple(cfProject, cfSuite)
+
+	e.requireLatestBootstrap("")
+}
+
+// R5a proposes P<n+1>-R1 for a new source while an older unpromoted proposal stays open, of either origin kind: a pull one
+// beside nothing, a branch one beside a pull one, a pull one beside a branch one.
+func cfProposeBaselineBesideAnOlderOne(e *cfEnv) {
+	e.seedSimple(cfProject, cfSuite)
+	for i, kind := range []contract.OriginKind{contract.OriginPull, contract.OriginBranch, contract.OriginPull} {
+		proposal := contract.ProposalID(fmt.Sprintf("P%d", i+1))
+		reference := contract.ProposalReference{ProjectID: cfProject, SuiteID: cfSuite, ProposalID: proposal, RevisionID: "R1"}
+
+		result, err := e.proposeBaseline(reference, contract.ApprovalCarrierID(fmt.Sprintf("carrier-%d", i+1)), contract.SourceRevision(fmt.Sprintf("head-%d", i+1)), kind, fmt.Sprintf("v%d", i+1))
+
+		if err != nil || !result.Revise.Committed || result.Revise.Current != reference {
+			e.t.Fatalf("%s-R1 of kind %s = %+v, %v; want a committed new proposal", proposal, kind, result.Revise, err)
+		}
+		e.requireLatestBootstrap(proposal)
 	}
 }
 
@@ -113,7 +146,7 @@ func cfProposeBaselineFromAPullHead(e *cfEnv) {
 		}
 		return nil
 	})
-	e.requireBaselineProposal(carrier, "P1")
+	e.requireLatestBootstrap("P1")
 }
 
 func cfProposeBaselineNeedsAnOriginKind(e *cfEnv) {

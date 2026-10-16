@@ -1062,6 +1062,56 @@ func AssessBootstrapHead(ctx context.Context, uow UnitOfWork, writer ContentWrit
   - not written for an unchanged head;
   - rolled back with the revision.
 
+### Explicit bootstrap (M1.7b rework, 2026-10-16; normative)
+
+This replaces the parts of the M1.7b section above that this list names.
+
+**Governance.**
+- **`Tx.LatestBootstrapProposal`** replaces `Tx.BaselineProposalFor(carrier)`, which is removed with its query:
+
+  ```go
+  // LatestBootstrapProposal returns the locked Suite's newest proposal whose revisions expect no canonical, of
+  // either origin kind, and none of which was promoted. False when there is none. Older ones are superseded.
+  LatestBootstrapProposal(context.Context) (contract.ProposalID, bool, error)
+  ```
+
+  "Newest" means the highest proposal sequence, in other words the latest first revision.
+- **`AssessBootstrapHead` is assess-only.**
+  - The request drops `Summary` and adds nothing.
+  - Inside `Do` it reads `LatestBootstrapProposal`. Neither of these is an error:
+    - when the proposal is missing, or its carrier is not `Carrier`, or it is not `OriginPull`, the result is `Cancelled`;
+    - when the head's coverage differs from the current revision, the result is also `Cancelled`.
+  - In both cases nothing is written.
+  - Otherwise it records the assessment at `Head` and evaluates `CheckPromotionReadiness`.
+  - It never revises or creates a proposal. `BootstrapHeadResult` gains `Cancelled bool` and drops `Committed`.
+- **`PromoteMerge` without a canonical** uses `LatestBootstrapProposal`. The bootstrap path applies only when that proposal is `OriginPull` and its carrier equals the request's carrier. Every other case is `before-canonical`.
+- **`ProposeBaseline`** is unchanged. The commands job calls it with R1 and the origin kind of its source.
+
+**Commands store (`internal/application/commands`).**
+- New dispositions `proposed`, `propose-refused`, `skipped` and `skip-refused`. None carries an operation id.
+- `LatestOwnerCommand` ignores them, so they never affect the owner-command `failure`.
+- The new read:
+
+  ```go
+  // Skipped reports whether the pull has a `skipped` entry whose comment was created at or after since
+  // (the current enrollment's enrolled_at).
+  Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error)
+  ```
+- Migration `00017` updates the `pr_commands` disposition CHECK.
+
+**Inventory.** `inventory.SuggestScope(entries []inventory.Entry) []string` returns the sorted, de-duplicated include patterns of the runtime contract's rule, at most 20, from file paths only.
+
+**Conformance:**
+- `LatestBootstrapProposal`: the newest wins, a promoted one is excluded, and both kinds are returned.
+- `AssessBootstrapHead`:
+  - cancelled when the coverage differs, when the proposal belongs to another carrier, or when it is a `branch` proposal;
+  - ready after approval;
+  - writes nothing when cancelled.
+- `PromoteMerge`: a superseded carrier's merge is `before-canonical`.
+- `Skipped`: the `since` boundary, and another pull is not matched.
+- The new dispositions are ignored by `LatestOwnerCommand`.
+- `SuggestScope`: the patterns, the cap and the ordering.
+
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
 ```go
@@ -1079,7 +1129,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |

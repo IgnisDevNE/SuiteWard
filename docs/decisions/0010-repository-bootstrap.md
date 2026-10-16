@@ -116,3 +116,17 @@ The owner moved the first-test-PR bootstrap path back into the MVP so that a rep
 - **Revisions.** A protected push gives the next revision of the same proposal. A carrier closed without a merge hands the role to the next such PR, under a new proposal.
 - **Precedence.** Once the default branch has protected files (a merge, or a direct push), the existing-baseline path above applies, and a pending PR-head proposal is superseded. This keeps the canonical from drifting from what the branch holds (owner, 2026-10-15).
 - **Readiness.** The readiness check is `success`, "Bootstrap ready for integration", for the approved exact revision at that head. It never states that a canonical exists.
+
+## Amendment (2026-10-16, phase M1.7b rework): an explicit bootstrap
+
+This replaces "Which PR" and "Revisions" in the amendment of 2026-10-15.
+
+- **Explicit trigger.** No bootstrap proposal is created automatically. The owner comments `/suiteward propose` on the PR that should carry it.
+- **The source follows the declaration:**
+  - `.suiteward.yml` on the default branch: the existing-baseline path;
+  - otherwise in the PR head: the first-test path;
+  - otherwise: no proposal, and a suggested declaration with a one-click link to add it.
+- **Cancellation.** A protected push after the proposal cancels it, and the owner proposes again.
+- **Skipping.** Before V1, the owner can let a PR merge with `/suiteward skip <code>`. That is not a contract assessment.
+
+"Detection produces a suggestion" (above) now means this suggested declaration. Authority stays with the owner's approval of the exact revision.

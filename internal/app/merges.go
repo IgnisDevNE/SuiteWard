@@ -81,7 +81,7 @@ type mergeRun struct {
 	integrityFailed bool      // the stored bytes of the current canonical failed their verification
 }
 
-// run advances the merges and wakes the checks when it promoted a canonical, so the owner sees it at once
+// run advances the merges and wakes the checks when it promoted or corrected a canonical, so the owner sees it at once
 // (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed after a promotion still wakes them.
 func (j *mergesJob) run(ctx context.Context) (river.Wake, error) {
 	j.promoted = false
@@ -335,7 +335,7 @@ func (j *mergesJob) decideMerge(ctx context.Context, run mergeRun, m githubsync.
 		return "", false, &opaque{what: fmt.Sprintf("decide the merge of pull %d", number), cause: err}
 	}
 	j.logger.InfoContext(ctx, "github merge decided", "repo", run.p.Repo, "pull", number, "kind", string(result.Kind), "reason", string(result.Reason), "duplicate", result.Duplicate)
-	j.promoted = j.promoted || result.Kind == governance.MergePromoted
+	j.promoted = j.promoted || result.Kind == governance.MergePromoted || result.Kind == governance.MergeCorrected // a correction records a new canonical version too
 	if result.Reason == governance.MergeReasonAssessmentConflict {
 		problem = problemAssessmentConflict
 	}

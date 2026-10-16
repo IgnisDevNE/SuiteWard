@@ -438,7 +438,7 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
   |---|---|---|
   | `github_sync_tick` | `github_commands`, `github_checks`, `github_merges` | at least one recorded cycle has `Changed` |
   | `github_commands` | `github_checks`, `github_bootstrap` | the run recorded at least one ledger entry |
-  | `github_merges` | `github_checks` | the run recorded at least one `promoted` outcome |
+  | `github_merges` | `github_checks` | the run recorded at least one `promoted` or `corrected` outcome; both record a new canonical version |
   | `github_bootstrap` | `github_checks` | the run promoted V1 |
 
 - `github_sync_repo` (MCP) wakes the same kinds as a tick, under the same condition.

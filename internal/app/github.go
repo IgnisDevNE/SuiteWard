@@ -40,15 +40,16 @@ const (
 
 // repositoryStatus is one entry of the github section of /status.
 type repositoryStatus struct {
-	Repo        string            `json:"repo"`
-	LastSuccess string            `json:"lastSuccess,omitempty"`
-	LastError   string            `json:"lastError,omitempty"` // the classification and status, never text GitHub sent
-	WaitUntil   string            `json:"waitUntil,omitempty"`
-	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
-	Bootstrap   string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
-	Checks      string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
-	Merges      string            `json:"merges,omitempty"`     // classification code of the last merges job problem; absent when none
-	Integrity   string            `json:"integrity,omitempty"`  // verdict of the current canonical (passed, failed, unavailable); absent before the first verification
+	Repo           string            `json:"repo"`
+	LastSuccess    string            `json:"lastSuccess,omitempty"`
+	CycleStartedAt string            `json:"cycleStartedAt,omitempty"` // when the last successful cycle started, GitHub's clock
+	LastError      string            `json:"lastError,omitempty"`      // the classification and status, never text GitHub sent
+	WaitUntil      string            `json:"waitUntil,omitempty"`
+	Protection     *protectionStatus `json:"protection,omitempty"` // absent before the first verification
+	Bootstrap      string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
+	Checks         string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
+	Merges         string            `json:"merges,omitempty"`     // classification code of the last merges job problem; absent when none
+	Integrity      string            `json:"integrity,omitempty"`  // verdict of the current canonical (passed, failed, unavailable); absent before the first verification
 }
 
 // repositoryReader is the part of the observation store /status reads.
@@ -129,6 +130,9 @@ func (g *githubStatus) report(ctx context.Context, protections map[string]owner.
 		entry := repositoryStatus{Repo: repo}
 		if !state.LastSuccess.IsZero() {
 			entry.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
+		}
+		if !state.CycleStartedAt.IsZero() {
+			entry.CycleStartedAt = state.CycleStartedAt.UTC().Format(time.RFC3339)
 		}
 		entry.LastError = lastErrorText(state)
 		entry.Bootstrap = g.problems.lookup(repo)
@@ -321,14 +325,14 @@ func (s *githubSync) tick(ctx context.Context) (river.Wake, error) {
 	if !s.previousStart.IsZero() {
 		pace := time.Duration(s.previousRequests) * syncPaceInterval / syncPaceRequests
 		if now.Sub(s.previousStart) < max(syncMinInterval, pace) {
-			return nil, nil
+			return nil, nil // not due: nothing ran, so nothing is woken
 		}
 	}
 	s.previousStart = now
 	result, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
 	s.previousRequests = result.Requests // a tick cut short by the deadline or a budget stop still counts what it made
 	s.logFirstObserved(ctx, result)
-	return nil, err
+	return syncWake(result), err
 }
 
 // syncRepo is the github_sync_repo job. A repository that is not configured is
@@ -339,7 +343,16 @@ func (s *githubSync) syncRepo(ctx context.Context, repo string) (river.Wake, err
 	}
 	result, err := s.reconciler.SyncRepo(ctx, repo)
 	s.logFirstObserved(ctx, result)
-	return nil, err
+	return syncWake(result), err
+}
+
+// syncWake is what a tick or syncRepo wakes: the jobs that read what a changed cycle recorded
+// (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed late still wakes what it recorded.
+func syncWake(result githubsync.TickResult) river.Wake {
+	if !result.Changed {
+		return nil
+	}
+	return river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}
 }
 
 // logFirstObserved is the listing-lag detector (docs/contracts/runtime.md, "Latency (M1.7c)"): one Info line per

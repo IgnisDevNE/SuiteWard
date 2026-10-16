@@ -54,7 +54,9 @@ func TestCommandsJobOnPostgreSQLDecidesACommentOnlyOnceACycleStartedTenSecondsAf
 	}
 	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now: func() time.Time { return created.Add(3 * time.Hour) }, bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
-	decided := func() string { return scalar(t, databaseURL, "SELECT count(*)::text FROM pr_commands WHERE comment_id = 101") }
+	decided := func() string {
+		return scalar(t, databaseURL, "SELECT count(*)::text FROM pr_commands WHERE comment_id = 101")
+	}
 
 	cycle(created.Add(9 * time.Second)) // the horizon is T-1 s: the comment is not past it
 	if wake, err := job.run(t.Context()); err != nil || len(wake) != 0 || decided() != "0" {

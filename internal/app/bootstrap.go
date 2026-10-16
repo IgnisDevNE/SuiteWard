@@ -307,14 +307,23 @@ type bootstrapJob struct {
 	problems *bootstrapProblems // shown in /status
 	logger   *slog.Logger
 	now      func() time.Time
+
+	promoted bool // the current run promoted V1; runs never overlap
 }
 
-// run advances every enrolled, configured project. A GitHub read failure skips that project until the next run;
-// any other failure fails the run after the other projects were tried.
+// run advances every project and wakes the checks when it promoted V1 (docs/contracts/runtime.md, "Queues and
+// wake-ups"). A run that failed after a promotion still wakes them.
 func (b *bootstrapJob) run(ctx context.Context) (river.Wake, error) {
-	return nil, b.advanceAll(ctx)
+	b.promoted = false
+	err := b.advanceAll(ctx)
+	if b.promoted {
+		return river.Wake{river.ChecksKind}, err
+	}
+	return nil, err
 }
 
+// advanceAll advances every enrolled, configured project. A GitHub read failure skips that project until the next
+// run; any other failure fails the run after the other projects were tried.
 func (b *bootstrapJob) advanceAll(ctx context.Context) error {
 	enrollment, enrolled, err := b.owners.Current(ctx)
 	if err != nil {
@@ -543,6 +552,7 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 		b.logger.WarnContext(ctx, "github bootstrap blocked", "repo", p.Repo, "proposal", s.reference.ProposalID, "reason", result.Reason)
 		return bootstrapStop(blockedCode(result.Reason))
 	}
+	b.promoted = true
 	b.logger.InfoContext(ctx, "github baseline promoted", "repo", p.Repo, "reference", reference, "version", string(firstVersion), "replayed", result.Duplicate)
 	return nil
 }

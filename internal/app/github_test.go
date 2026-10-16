@@ -371,7 +371,7 @@ func TestSyncTickLogsTheListingLagDetector(t *testing.T) {
 	reader := &detectorReader{dates: []time.Time{t0, t1}, comments: [][]githubsync.ObservedComment{
 		nil,
 		{
-			{CommentID: 9, AuthorID: 7, CreatedAt: t1.Add(-time.Second), UpdatedAt: t1.Add(-time.Second), Body: "x"},      // created after the previous start: not missed
+			{CommentID: 9, AuthorID: 7, CreatedAt: t1.Add(-time.Second), UpdatedAt: t1.Add(-time.Second), Body: "x"},          // created after the previous start: not missed
 			{CommentID: 10, AuthorID: 7, CreatedAt: t0.Add(-5 * time.Second), UpdatedAt: t0.Add(-5 * time.Second), Body: "x"}, // created before the previous start: missed
 		},
 	}}

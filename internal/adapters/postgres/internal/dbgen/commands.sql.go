@@ -201,3 +201,24 @@ func (q *Queries) PendingCommands(ctx context.Context, arg PendingCommandsParams
 	}
 	return items, nil
 }
+
+const pullSkipped = `-- name: PullSkipped :one
+SELECT EXISTS (
+    SELECT 1 FROM pr_commands
+    WHERE repository_id = $1 AND pull_number = $2 AND disposition = 'skipped' AND created_at >= $3::timestamptz
+)
+`
+
+type PullSkippedParams struct {
+	RepositoryID int64
+	PullNumber   int32
+	Since        pgtype.Timestamptz
+}
+
+// Whether the pull has a skipped entry whose comment was created at or after the current enrollment's enrolled_at.
+func (q *Queries) PullSkipped(ctx context.Context, arg PullSkippedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, pullSkipped, arg.RepositoryID, arg.PullNumber, arg.Since)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}

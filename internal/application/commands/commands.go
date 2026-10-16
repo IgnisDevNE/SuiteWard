@@ -48,7 +48,7 @@ const (
 	SkipRefused      Disposition = "skip-refused"      // owner-authored /suiteward skip that was refused; no operation id
 )
 
-var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed}
+var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused}
 
 // Dispositions returns every disposition.
 func Dispositions() []Disposition { return slices.Clone(dispositions) }
@@ -127,6 +127,14 @@ func (e Entry) Validate() error {
 func ValidateLatest(repositoryID int64, pull int, ownerID int64) error {
 	if repositoryID <= 0 || ownerID <= 0 || pull < 1 || pull > math.MaxInt32 {
 		return invalid("the repository and owner ids must be positive and the pull number between 1 and %d", math.MaxInt32)
+	}
+	return nil
+}
+
+// ValidateSkipped reports why Skipped cannot answer, as ErrInvalid.
+func ValidateSkipped(repositoryID int64, pull int) error {
+	if repositoryID <= 0 || pull < 1 || pull > math.MaxInt32 {
+		return invalid("the repository id must be positive and the pull number between 1 and %d", math.MaxInt32)
 	}
 	return nil
 }

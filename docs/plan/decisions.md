@@ -194,7 +194,9 @@ Their dispositions are `proposed`, `propose-refused`, `skipped` and `skip-refuse
   - A cycle's start is the HTTP `Date` of that repository's first response in the cycle, the first page of its open pull requests. This is GitHub's own clock, the same one as the comment's `created_at`, so no local clock skew enters.
   - The horizon is the earliest such start among the enrolled repositories, minus a margin of **10 s**. The margin covers GitHub's listing lag and the one-second resolution of `Date`.
   - `JOB_TIMEOUT` and the 30 s skew no longer enter the horizon.
-- **The margin is a named constant and has not been measured.** The M1.7c live run measures the listing lag: the time from a comment's `created_at` to the first cycle that lists it. The margin is raised if any lag comes near 10 s.
+- **The margin is a named constant and has not been measured.** The sync logs the listing lag it can see: a cycle that started after a comment was created but did not list it (`missed_by_ms`, runtime contract "Latency (M1.7c)").
+  - This is a detector, not a proof. It sees lag only when a cycle happens to start inside the lag window. The bot's acknowledgments give many samples.
+  - The margin is raised if any value comes near 10 s.
 - **Fail closed.** A repository that has no recorded start holds the horizon back, as a repository with no successful cycle does today. This is the case before its first cycle under M1.7c. A `Date` that is missing or cannot be parsed fails that cycle; it never falls back to the local clock.
 
 ### D-CHECKS: The `SuiteWard / Contract` check

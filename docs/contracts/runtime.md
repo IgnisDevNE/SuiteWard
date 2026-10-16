@@ -393,6 +393,14 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
   - That value is `Cycle.StartedAt`. It is never the tick's first response, and never the local clock.
   - A zero `Date` fails that repository's cycle with the failure kind `decode`. Nothing is recorded as a success, and `/status` shows `lastError` `decode`.
 - `Cycle.Requests` is the number of requests the cycle made, and `Cycle.Changed` reports whether any of them was not a 304.
+- **Listing-lag detector.** For each comment a cycle observes for the first time, the sync logs one Info line, "github comment first observed". It carries:
+  - the repository and the comment id;
+  - the comment's `created_at`;
+  - this cycle's `StartedAt`;
+  - that repository's previous successful `StartedAt`, kept in memory, or none after a restart;
+  - `missed_by_ms`, the previous start minus `created_at`, logged only when it is positive.
+
+  It carries no comment text. A positive `missed_by_ms` means a cycle that started after the comment did not list it, which is GitHub's listing lag. The margin must stay above the largest value seen.
 
 **Commands horizon.** `commandsJob.horizon` returns the earliest `CycleStartedAt` among the enrolled repositories, minus `commandListingMargin` = 10 s.
 - An enrolled repository with no `CycleStartedAt` makes `ready` false, with the Warn line "an enrolled repository has not synchronized yet", which is today's line for a missing `LastSuccess`.
@@ -408,7 +416,11 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
 **Queues and wake-ups.**
 - `github_sync_tick`, `github_commands`, `github_checks`, `github_merges` and `github_bootstrap` each run on their own River queue with `MaxWorkers` 1. Runs of one kind never overlap, so "a run does not start while an earlier one runs" no longer needs the unique periodic insert.
 - The periodic inserts keep their unique options, so periodic runs still coalesce.
-- A **wake-up** is a one-off insert of a job kind with no unique options, made after the waking run's last commit. A wake-up insert that fails is logged at Warn with the kind and nothing else. It never fails the waking run, because the periodic run is the fallback.
+- A **wake-up** is a one-off insert of a job kind with no unique options and `MaxAttempts` 1, made after the waking run's last commit.
+  - **It is skipped** when a job of that kind is already `available` or `scheduled`, including a pending periodic run. The River adapter checks this with one query on `river_job`.
+  - The race between two concurrent wakers can leave at most one extra job per waker, which is harmless.
+  - So wake-ups that arrive during a run queue one follow-up between them, and the queue never grows with the number of wake-ups.
+  - A wake-up whose check or insert fails is logged at Warn, with the kind and nothing else. It never fails the waking run, because the periodic run is the fallback.
 - **Who wakes whom:**
 
   | Run | Wakes | When |

@@ -190,7 +190,7 @@ func TestMergeCommentWithoutACanonicalSaysSoGivesTheReasonAndTheRecovery(t *test
 		text := mergeText(t, m)
 		for _, phrase := range []string{
 			tc.phrase, "SuiteWard has no canonical contract yet", "default branch now holds the merged files",
-			"proposes the default branch's contract for approval on an open pull request",
+			"comments `/suiteward propose` on an open pull request to propose the default branch's contract",
 		} {
 			if !strings.Contains(text, phrase) {
 				t.Errorf("%s: the comment lacks %q:\n%s", tc.reason, phrase, text)

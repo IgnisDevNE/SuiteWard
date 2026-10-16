@@ -37,6 +37,14 @@ type checkReason struct {
 }
 
 var checkReasons = map[string]checkReason{
+	"bootstrap-awaiting": {CheckInProgress, "No canonical contract yet",
+		"SuiteWard has no canonical contract yet. This head is not assessed against a contract until the first one exists.",
+		"Next: the owner comments `/suiteward propose` on the pull request that should carry the first contract, " +
+			"or `/suiteward skip <code>` with a current code from the authenticator app to let this pull request merge before the first contract."},
+	"bootstrap-skipped": {CheckSuccess, "Skipped before the first contract",
+		"Skipped by the owner before the first contract. No canonical contract exists and nothing was assessed on this head: this is not a contract assessment.",
+		"Next: nothing is required. Once the first contract exists, later pull requests are assessed against it."},
+	// shortcut: the checks job still emits bootstrap-pending, so it renders until the job moves to bootstrap-awaiting (M1.7b-R5b); delete it then.
 	"bootstrap-pending": {CheckInProgress, "Waiting for the first baseline",
 		"This repository has no approved baseline yet, so the contract of this head has nothing to be compared with.",
 		"Next: nothing is required on this pull request. The owner approves the bootstrap proposal on the pull request that carries it, in SuiteWard's comment there."},
@@ -91,8 +99,9 @@ func CheckSummary(c Check) (title, summary string) {
 	if (c.Proposal == 0) != (c.Revision == 0) || c.Version < 0 {
 		panic(fmt.Sprintf("commandtext: check reference P%d-R%d and version %d do not fit", c.Proposal, c.Revision, c.Version))
 	}
-	if c.Reason == "bootstrap-ready" && (c.Proposal == 0 || c.Version != 0) {
-		panic(fmt.Sprintf("commandtext: a ready bootstrap has a reference and no canonical version, got P%d-R%d and V%d", c.Proposal, c.Revision, c.Version))
+	beforeCanonical := c.Reason == "bootstrap-ready" || c.Reason == "bootstrap-awaiting" || c.Reason == "bootstrap-skipped"
+	if (beforeCanonical && c.Version != 0) || (c.Reason == "bootstrap-ready" && c.Proposal == 0) {
+		panic(fmt.Sprintf("commandtext: reason %q does not fit reference P%d-R%d and version V%d: it has no canonical version, and a ready bootstrap has a reference", c.Reason, c.Proposal, c.Revision, c.Version))
 	}
 	facts := []string{"- State: `" + checkStateName[c.State] + "`"}
 	var ref string

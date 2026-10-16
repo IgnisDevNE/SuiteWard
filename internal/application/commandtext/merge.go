@@ -125,7 +125,7 @@ func MergeComment(m Merge) string {
 		return paragraphs(parts...)
 	}
 	if noCanonical {
-		return paragraphs(append(parts, "To recover, the default branch now holds the merged files, so SuiteWard proposes the default branch's contract for approval on an open pull request. "+
+		return paragraphs(append(parts, "To recover, the default branch now holds the merged files: the owner comments `/suiteward propose` on an open pull request to propose the default branch's contract. "+
 			"Approve that proposal to make it the first canonical version.")...)
 	}
 	recovery := "open a new pull request that restores the protected files of " + version + ", or one that carries the integrated files for a new exact approval. There is no reset command."

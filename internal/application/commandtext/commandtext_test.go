@@ -280,7 +280,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed unknown verb",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the action must be `approve` or `revoke`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`"},
+			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose` or `skip`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`"},
 			[]string{"eligible"},
 		},
 		{
@@ -310,7 +310,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed extra text",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.ExtraText, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: nothing may follow the code on the command line. Nothing changed."},
+			[]string{"Your `/suiteward` command was not understood: nothing may follow the end of the command. Nothing changed."},
 			nil,
 		},
 		{
@@ -328,7 +328,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"no suite",
 			commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1, Source: source, Owner: owner},
-			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "bootstrap summary"},
+			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "comment `/suiteward propose`"},
 			[]string{"eligible"},
 		},
 		{
@@ -759,7 +759,7 @@ func TestMarkerKeyCannotCloseTheCommentEarly(t *testing.T) {
 }
 
 func TestHasMarkerWithContractKeys(t *testing.T) {
-	for _, key := range []string{"bootstrap-summary:7:P4-R1", "bootstrap-promoted:7:P4-R1", "ack:7:2345678901"} {
+	for _, key := range []string{"bootstrap-summary:7:P4-R1", "bootstrap-promoted:7:P4-R1", "ack:7:2345678901", "bootstrap-notice:7:12", "bootstrap-cancelled:7:P4-R1"} {
 		body := "text\n\n" + "<!-- suiteward:" + instance + ":" + key + " -->\n"
 		var got bool
 		func() {

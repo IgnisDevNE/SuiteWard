@@ -60,7 +60,7 @@ func TestWithoutAProtectionCheckNoProtectionJobIsRegistered(t *testing.T) {
 	w := newWorld(t, 5)
 	var checks atomic.Int32
 	config := protectionConfig(nil)
-	config.SyncTick, config.SyncRepo = func(context.Context) error { checks.Add(1); return nil }, noRepo
+	config.SyncTick, config.SyncRepo = noWake(func(context.Context) error { checks.Add(1); return nil }), noWakeRepo(noRepo)
 	startRuntime(t, w, config)
 	waitUntil(t, "the tick to run at start", func() bool { return checks.Load() >= 1 })
 

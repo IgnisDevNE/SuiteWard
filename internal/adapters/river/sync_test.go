@@ -15,7 +15,7 @@ import (
 
 func syncConfig(tick func(context.Context) error, repo func(context.Context, string) error) river.Config {
 	config := testConfig(&logCapture{})
-	config.SyncTick, config.SyncRepo = tick, repo
+	config.SyncTick, config.SyncRepo = noWake(tick), noWakeRepo(repo)
 	return config
 }
 
@@ -142,8 +142,8 @@ func TestASyncRepoJobIsRetriedUpToJobMaxAttempts(t *testing.T) {
 func TestSyncJobsNeedBothHandlersAndAreAbsentWithoutThem(t *testing.T) {
 	w := newWorld(t, 5)
 	for name, mutate := range map[string]func(*river.Config){
-		"a tick without a repo handler": func(c *river.Config) { c.SyncTick, c.SyncRepo = func(context.Context) error { return nil }, nil },
-		"a repo handler without a tick": func(c *river.Config) { c.SyncTick, c.SyncRepo = nil, noRepo },
+		"a tick without a repo handler": func(c *river.Config) { c.SyncTick, c.SyncRepo = noWake(func(context.Context) error { return nil }), nil },
+		"a repo handler without a tick": func(c *river.Config) { c.SyncTick, c.SyncRepo = nil, noWakeRepo(noRepo) },
 	} {
 		config := testConfig(&logCapture{})
 		mutate(&config)
@@ -159,4 +159,13 @@ func TestSyncJobsNeedBothHandlersAndAreAbsentWithoutThem(t *testing.T) {
 	if _, err := plain.InsertSyncRepo(t.Context(), "acme/widgets"); err == nil {
 		t.Error("InsertSyncRepo on a runtime without the synchronization jobs inserted a job nothing would run")
 	}
+}
+
+// noWake adapts a run that wakes nothing.
+func noWake(run func(context.Context) error) func(context.Context) (river.Wake, error) {
+	return func(ctx context.Context) (river.Wake, error) { return nil, run(ctx) }
+}
+
+func noWakeRepo(run func(context.Context, string) error) func(context.Context, string) (river.Wake, error) {
+	return func(ctx context.Context, repo string) (river.Wake, error) { return nil, run(ctx, repo) }
 }

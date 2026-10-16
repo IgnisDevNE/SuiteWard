@@ -21,11 +21,12 @@ func (mergesArgs) Kind() string { return MergesKind }
 
 type mergesWorker struct {
 	riverqueue.WorkerDefaults[mergesArgs]
-	run func(ctx context.Context) error
+	run func(ctx context.Context) (Wake, error)
 }
 
 func (w *mergesWorker) Work(ctx context.Context, _ *riverqueue.Job[mergesArgs]) error {
-	return w.run(ctx)
+	_, err := w.run(ctx)
+	return err
 }
 
 // addMerges registers the merges job of config in workers and returns its periodic job (none when config has no merges job).

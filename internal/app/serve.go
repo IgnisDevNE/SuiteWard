@@ -95,15 +95,15 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 			pool.Close()
 			return err
 		}
-		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
+		riverConfig.SyncTick, riverConfig.SyncRepo = noWake(gh.tick), func(ctx context.Context, repo string) (river.Wake, error) { return nil, gh.syncRepo(ctx, repo) }
 		ids := &repositoryIDs{}
 		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now, within: tickDeadline(cfg.JobTimeout)}
 		riverConfig.ProtectionCheck = check.run
 		problems := &bootstrapProblems{}
 		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, problems: problems, logger: logger, now: time.Now}
-		riverConfig.Bootstrap = bootstrap.run
+		riverConfig.Bootstrap = noWake(bootstrap.run)
 		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, pulls: store, tier: tier, jobTimeout: cfg.JobTimeout, logger: logger, now: time.Now}
-		riverConfig.Commands = commandJob.run
+		riverConfig.Commands = noWake(commandJob.run)
 		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store}
 		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger}
 		checkProblems := &bootstrapProblems{}
@@ -113,7 +113,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		mergeProblems := &bootstrapProblems{}
 		mergeJob := &mergesJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(), tier: tier,
 			problems: mergeProblems, logger: logger, now: time.Now}
-		riverConfig.Merges = mergeJob.run
+		riverConfig.Merges = noWake(mergeJob.run)
 		integrityJob := &integrityJob{owners: store, suites: store, content: artifacts, store: store.Integrity(), logger: logger, now: time.Now}
 		riverConfig.Integrity = integrityJob.run
 		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish, githubCheckKind: checkPoster.publish}
@@ -226,4 +226,9 @@ func shutdown(logger *slog.Logger, a *api, srv *http.Server, runtime *river.Runt
 	pool.Close()
 	logger.Info("database pool closed")
 	return errors.Join(errs...)
+}
+
+// noWake adapts a run that wakes nothing to river.Config; the runs return their wakes from M1.7c-A3.
+func noWake(run func(context.Context) error) func(context.Context) (river.Wake, error) {
+	return func(ctx context.Context) (river.Wake, error) { return nil, run(ctx) }
 }

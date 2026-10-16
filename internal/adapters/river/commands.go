@@ -21,11 +21,12 @@ func (commandsArgs) Kind() string { return CommandsKind }
 
 type commandsWorker struct {
 	riverqueue.WorkerDefaults[commandsArgs]
-	run func(ctx context.Context) error
+	run func(ctx context.Context) (Wake, error)
 }
 
 func (w *commandsWorker) Work(ctx context.Context, _ *riverqueue.Job[commandsArgs]) error {
-	return w.run(ctx)
+	_, err := w.run(ctx)
+	return err
 }
 
 // addCommands registers the commands job of config in workers and returns its periodic job (none when config has no commands).

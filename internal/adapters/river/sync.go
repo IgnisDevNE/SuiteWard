@@ -33,11 +33,12 @@ func (syncTickArgs) Kind() string { return SyncTickKind }
 
 type syncTickWorker struct {
 	riverqueue.WorkerDefaults[syncTickArgs]
-	run func(ctx context.Context) error
+	run func(ctx context.Context) (Wake, error)
 }
 
 func (w *syncTickWorker) Work(ctx context.Context, _ *riverqueue.Job[syncTickArgs]) error {
-	return w.run(ctx)
+	_, err := w.run(ctx)
+	return err
 }
 
 type syncRepoArgs struct {
@@ -53,11 +54,12 @@ func (syncRepoArgs) InsertOpts() riverqueue.InsertOpts {
 
 type syncRepoWorker struct {
 	riverqueue.WorkerDefaults[syncRepoArgs]
-	run func(ctx context.Context, repo string) error
+	run func(ctx context.Context, repo string) (Wake, error)
 }
 
 func (w *syncRepoWorker) Work(ctx context.Context, job *riverqueue.Job[syncRepoArgs]) error {
-	return w.run(ctx, job.Args.Repo)
+	_, err := w.run(ctx, job.Args.Repo)
+	return err
 }
 
 // addSync registers the synchronization jobs of config in workers and returns

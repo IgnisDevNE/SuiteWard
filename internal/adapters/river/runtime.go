@@ -40,23 +40,23 @@ type Config struct {
 	Publishers           map[string]Publisher         // by message kind, added to the probe publisher; the probe kind is reserved
 	// SyncTick and SyncRepo are the GitHub synchronization jobs (SyncTickKind every SyncInterval, SyncRepoKind per request);
 	// both are set or both nil, and nil registers neither.
-	SyncTick     func(ctx context.Context) error
-	SyncRepo     func(ctx context.Context, repo string) error
+	SyncTick     func(ctx context.Context) (Wake, error)
+	SyncRepo     func(ctx context.Context, repo string) (Wake, error)
 	SyncInterval time.Duration // zero means one minute
 	// ProtectionCheck is the protection verification job (ProtectionCheckKind every ProtectionInterval); nil registers none.
 	ProtectionCheck    func(ctx context.Context) error
 	ProtectionInterval time.Duration // zero means 15 minutes
 	// Bootstrap is the github_bootstrap job (BootstrapKind every minute); nil registers none.
-	Bootstrap         func(ctx context.Context) error
+	Bootstrap         func(ctx context.Context) (Wake, error)
 	BootstrapInterval time.Duration // zero means one minute
 	// Commands is the github_commands job (CommandsKind every CommandsInterval); nil registers none.
-	Commands         func(ctx context.Context) error
+	Commands         func(ctx context.Context) (Wake, error)
 	CommandsInterval time.Duration // zero means 15 seconds
 	// Checks is the github_checks job, the single writer of check states (ChecksKind every ChecksInterval); nil registers none.
 	Checks         func(ctx context.Context) error
 	ChecksInterval time.Duration // zero means 30 seconds
 	// Merges is the github_merges job, the only writer of merge facts (MergesKind every MergesInterval); nil registers none.
-	Merges         func(ctx context.Context) error
+	Merges         func(ctx context.Context) (Wake, error)
 	MergesInterval time.Duration // zero means 30 seconds
 	// Integrity is the canonical_integrity job (IntegrityKind every IntegrityInterval); nil registers none.
 	Integrity         func(ctx context.Context) error

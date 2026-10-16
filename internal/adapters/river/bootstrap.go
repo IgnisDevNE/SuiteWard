@@ -21,11 +21,12 @@ func (bootstrapArgs) Kind() string { return BootstrapKind }
 
 type bootstrapWorker struct {
 	riverqueue.WorkerDefaults[bootstrapArgs]
-	run func(ctx context.Context) error
+	run func(ctx context.Context) (Wake, error)
 }
 
 func (w *bootstrapWorker) Work(ctx context.Context, _ *riverqueue.Job[bootstrapArgs]) error {
-	return w.run(ctx)
+	_, err := w.run(ctx)
+	return err
 }
 
 // addBootstrap registers the bootstrap job of config in workers and returns its periodic job (none when config has no bootstrap).

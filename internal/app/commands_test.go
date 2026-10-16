@@ -35,6 +35,8 @@ const (
 	cjPull         = 7
 	cjMarker       = "SECRET-COMMENT-TEXT"
 	cjJobTimeout   = time.Minute
+	cjHead         = "3333333333333333333333333333333333333333" // the head of every observed pull request
+	cjBranch       = "feature"                                  // and its branch
 )
 
 var (
@@ -138,6 +140,10 @@ type cjWorld struct {
 	listed  map[int64][]cjComment
 	botErr  error
 	botCall int
+
+	reader   *fakeBootReader  // GitHub, as /suiteward propose reads it
+	content  *fakeBootContent // the files a proposed baseline stored
+	headRepo string           // the head repository the observed pulls name; "" is not observed
 }
 
 func newCjWorld(t *testing.T) *cjWorld {
@@ -151,7 +157,10 @@ func newCjWorld(t *testing.T) *cjWorld {
 	w := &cjWorld{t: t, owners: &cjOwners{Store: enrolled}, obs: githubsynctest.NewMemory(), mem: governancetest.NewMemory(), logs: &bytes.Buffer{}, listed: map[int64][]cjComment{}}
 	w.ledger = &cjLedger{Memory: commandstest.NewMemory(enrolled, w.obs)}
 	w.suites = &probeSuites{UnitOfWork: w.mem}
+	w.reader = &fakeBootReader{repos: map[string]*bootRepository{cjRepo1: newBootRepository(cjRepo1, cjID1), cjRepo2: newBootRepository(cjRepo2, cjID2)}, calls: map[string]int{}}
+	w.content = &fakeBootContent{stored: map[string]bool{}}
 	w.job = &commandsJob{ledger: w.ledger, owners: w.owners, suites: w.suites, syncs: w.obs, repos: []string{cjRepo1, cjRepo2}, jobTimeout: cjJobTimeout, now: func() time.Time { return cjSync.Add(time.Hour) },
+		reader: w.reader, content: w.content, pulls: w.obs, tier: owner.TierIsolated,
 		bot: newBotAccount(func(context.Context) (int64, error) {
 			w.botCall++
 			return cjBotID, w.botErr
@@ -196,7 +205,7 @@ func (w *cjWorld) observe(repositoryID int64, at time.Time, comments ...cjCommen
 	cycle := githubsync.Cycle{Repo: cjRepoName[repositoryID], InstallationID: 1, At: at, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, c := range w.listed[repositoryID] {
 		if _, listed := cycle.Comments[c.pull]; !listed {
-			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: "head", HeadRef: "feature", BaseRef: "main", BaseSHA: "base", UpdatedAt: at})
+			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: c.pull, HeadSHA: cjHead, HeadRef: cjBranch, HeadRepo: w.headRepo, BaseRef: "main", BaseSHA: "base", UpdatedAt: at})
 		}
 		cycle.Comments[c.pull] = append(cycle.Comments[c.pull], githubsync.ObservedComment{CommentID: c.id, AuthorID: c.author, AuthorLogin: "someone",
 			CreatedAt: c.created, UpdatedAt: c.updated, Body: c.body})

@@ -42,6 +42,7 @@ const (
 	Fork
 	EmptyInventory
 	Carrier
+	InvalidSource
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -280,7 +281,7 @@ func referenceOf(a Ack) string {
 func refusalFits(outcome Outcome, refusal Refusal) bool {
 	switch outcome {
 	case ProposeRefused:
-		return refusal == CanonicalPresent || refusal == Fork || refusal == EmptyInventory
+		return refusal == CanonicalPresent || refusal == Fork || refusal == EmptyInventory || refusal == InvalidSource
 	case SkipRefused:
 		return refusal == CanonicalPresent || refusal == Fork || refusal == Carrier
 	}
@@ -608,6 +609,9 @@ func proposeRefusal(r Refusal) string {
 	case EmptyInventory:
 		return refused(propose, "no file matches the include rules of `.suiteward.yml`, so there is nothing to protect",
 			"Fix the `include` rules so they match the files you want protected, then comment `/suiteward propose` again.")
+	case InvalidSource:
+		return refused(propose, "SuiteWard could not read the files to protect as a contract: the `.suiteward.yml` declaration is invalid, a protected path is a link, or the repository tree is too large",
+			"Fix the declaration or the files, then comment `/suiteward propose` again.")
 	}
 	panic(fmt.Sprintf("commandtext: unknown propose refusal %d", r))
 }
@@ -634,15 +638,8 @@ type DeclarationSuggestion struct {
 // one would change the rule), the branch is path-escaped and the declaration is URL-encoded. The repository name
 // and the branch are validated, and one that cannot be a GitHub repository or a git ref panics.
 func SuggestDeclaration(a DeclarationSuggestion) string {
-	if a.Source <= 0 {
-		panic(fmt.Sprintf("commandtext: source comment %d does not fit a suggestion", a.Source))
-	}
-	if _, name, _ := strings.Cut(a.Repo, "/"); !repoPattern.MatchString(a.Repo) || name == "." || name == ".." {
-		panic(fmt.Sprintf("commandtext: %q is not a GitHub repository", a.Repo))
-	}
-	checkBranch(a.Branch)
-	if len(a.Patterns) > maxListed {
-		panic(fmt.Sprintf("commandtext: %d suggested patterns, at most %d", len(a.Patterns), maxListed))
+	if err := ValidateSuggestion(a); err != nil {
+		panic(err.Error())
 	}
 	var usable []string
 	for _, p := range a.Patterns {
@@ -687,15 +684,32 @@ func suggestable(p string) bool {
 	return len(p) <= maxPattern && utf8.ValidString(p) && !strings.ContainsFunc(p, func(r rune) bool { return !strconv.IsGraphic(r) || r == '"' || r == '\\' })
 }
 
-// checkBranch panics unless b can be a git ref name (git check-ref-format, without its rarer rules): the branch
+// ValidateSuggestion reports why SuggestDeclaration would panic on a: the same checks, as an error that quotes the
+// offending value. A caller that stores the suggestion calls it first, so a payload that cannot be rendered is refused
+// where it is built and not retried for ever where it is published.
+func ValidateSuggestion(a DeclarationSuggestion) error {
+	if a.Source <= 0 {
+		return fmt.Errorf("commandtext: source comment %d does not fit a suggestion", a.Source)
+	}
+	if _, name, _ := strings.Cut(a.Repo, "/"); !repoPattern.MatchString(a.Repo) || name == "." || name == ".." {
+		return fmt.Errorf("commandtext: %q is not a GitHub repository", a.Repo)
+	}
+	if !gitBranch(a.Branch) {
+		return fmt.Errorf("commandtext: %q is not a git branch name", a.Branch)
+	}
+	if len(a.Patterns) > maxListed {
+		return fmt.Errorf("commandtext: %d suggested patterns, at most %d", len(a.Patterns), maxListed)
+	}
+	return nil
+}
+
+// gitBranch reports whether b can be a git ref name (git check-ref-format, without its rarer rules): the branch
 // is stored from GitHub, so anything else is an impossible state.
-func checkBranch(b string) {
+func gitBranch(b string) bool {
 	bad := b == "" || len(b) > 255 || !utf8.ValidString(b) || strings.Contains(b, "..") ||
 		strings.ContainsFunc(b, func(r rune) bool { return r <= ' ' || r == 0x7f || strings.ContainsRune("~^:?*[\\", r) })
 	for segment := range strings.SplitSeq(b, "/") {
 		bad = bad || segment == "" || segment[0] == '.'
 	}
-	if bad {
-		panic(fmt.Sprintf("commandtext: %q is not a git branch name", b))
-	}
+	return !bad
 }

@@ -55,18 +55,20 @@ func (t commentTarget) validate() error {
 // from what the facts say. Two shapes share it, told apart by Disposition.
 //
 // A processed command (the command job called ProcessConsent) has Project, Suite and Operation, and no
-// Disposition: the publisher reads the receipt of Operation. A rejected command (the job recorded a disposition
+// Disposition: the publisher reads the receipt of Operation. Any other command (the job recorded a disposition
 // without reaching ProcessConsent) has Disposition and none of the three: the payload holds the decision.
 type ackPayload struct {
 	commentTarget
 	Project     contract.ProjectID   `json:"project,omitempty"`     // processed: the project of the Suite
 	Suite       contract.SuiteID     `json:"suite,omitempty"`       // processed: the Suite whose receipt is read
 	Operation   contract.OperationID `json:"operation,omitempty"`   // processed: the operation of the consent receipt
-	Disposition string               `json:"disposition,omitempty"` // rejected: malformed, invalid-code, replayed-code, no-suite, unknown-proposal or edited-first
+	Disposition string               `json:"disposition,omitempty"` // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused or failed
 	Comment     int64                `json:"comment"`               // the id of the command comment
 	Owner       string               `json:"owner"`                 // the owner's GitHub login at processing time
-	Reason      string               `json:"reason,omitempty"`      // rejected malformed: the reason code
-	Reference   string               `json:"reference,omitempty"`   // rejected invalid-code, replayed-code, no-suite and unknown-proposal: P<n>-R<m> of the parsed command
+	Reason      string               `json:"reason,omitempty"`      // malformed: the reason code; propose-refused and skip-refused: the refusal
+	Reference   string               `json:"reference,omitempty"`   // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
+	Branch      string               `json:"branch,omitempty"`      // propose-refused for declaration-missing: the pull request's head ref
+	Suggestion  []string             `json:"suggestion,omitempty"`  // and the include patterns SuggestScope found
 }
 
 // The codes of the malformed reasons in a payload.
@@ -96,15 +98,65 @@ func codeReason(code string) (commandtext.Reason, bool) {
 	return 0, false
 }
 
+// The reasons of propose-refused and skip-refused in a payload (docs/contracts/runtime.md, "Comment keys").
+const (
+	reasonCanonicalPresent   = "canonical-present"
+	reasonFork               = "fork"
+	reasonEmptyInventory     = "empty-inventory"
+	refusalInvalidSource     = "invalid-source" // named like the bootstrap job's status code
+	reasonCarrier            = "carrier"
+	reasonDeclarationMissing = "declaration-missing" // rendered by commandtext.SuggestDeclaration, which is not an Ack
+)
+
+var (
+	proposeRefusals = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonEmptyInventory: commandtext.EmptyInventory, refusalInvalidSource: commandtext.InvalidSource}
+	skipRefusals    = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonCarrier: commandtext.Carrier}
+)
+
 // rejectedOutcomes maps the dispositions that get an acknowledgment without a receipt.
 var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.Malformed: commandtext.MalformedCommand, commands.InvalidCode: commandtext.InvalidCode, commands.ReplayedCode: commandtext.ReplayedCode,
 	commands.NoSuite: commandtext.NoSuite, commands.EditedFirst: commandtext.EditedFirst, commands.UnknownProposal: commandtext.Rejected,
+	commands.Proposed: commandtext.AlreadyProposed, commands.ProposeRefused: commandtext.ProposeRefused, commands.Skipped: commandtext.Skipped,
+	commands.SkipRefused: commandtext.SkipRefused, commands.Failed: commandtext.ProposeFailed, // a failed command is acknowledged only when it was a propose
 }
 
-// needsReference is true for the rejections of a command that parsed.
-func needsReference(d commands.Disposition) bool {
-	return d == commands.InvalidCode || d == commands.ReplayedCode || d == commands.NoSuite || d == commands.UnknownProposal
+// referenceRule says whether the acknowledgment of d names a reference: always, never, or only when the command had one
+// (a skip and a propose have none, so their code outcomes and no-suite come without).
+func referenceRule(d commands.Disposition) (required, allowed bool) {
+	switch d {
+	case commands.UnknownProposal, commands.Proposed:
+		return true, true
+	case commands.InvalidCode, commands.ReplayedCode, commands.NoSuite:
+		return false, true
+	}
+	return false, false
+}
+
+// reasonFits reports whether reason is one a payload of d may carry.
+func reasonFits(d commands.Disposition, reason string) bool {
+	switch d {
+	case commands.Malformed:
+		_, known := codeReason(reason)
+		return known
+	case commands.ProposeRefused:
+		_, known := proposeRefusals[reason]
+		return known || reason == reasonDeclarationMissing
+	case commands.SkipRefused:
+		_, known := skipRefusals[reason]
+		return known
+	}
+	return reason == ""
+}
+
+// declarationMissing is whether the payload is the refusal of a propose for want of a .suiteward.yml.
+func (a ackPayload) declarationMissing() bool {
+	return a.Disposition == string(commands.ProposeRefused) && a.Reason == reasonDeclarationMissing
+}
+
+// suggestion is what the renderer takes for a declaration-missing payload.
+func (a ackPayload) suggestion() commandtext.DeclarationSuggestion {
+	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -116,7 +168,7 @@ func (a ackPayload) validate() error {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
-		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" {
+		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || len(a.Suggestion) != 0 {
 			return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
 		}
 		return nil
@@ -125,15 +177,31 @@ func (a ackPayload) validate() error {
 	if _, known := rejectedOutcomes[d]; !known || a.Project != "" || a.Suite != "" || a.Operation != "" {
 		return errors.New("a rejected acknowledgment names a known disposition and no operation")
 	}
-	if _, known := codeReason(a.Reason); (d == commands.Malformed) != known || (d != commands.Malformed && a.Reason != "") {
-		return errors.New("the malformed reason fits only a malformed command")
+	if !reasonFits(d, a.Reason) {
+		return errors.New("the reason does not fit the disposition")
 	}
-	if needsReference(d) != (a.Reference != "") {
+	required, allowed := referenceRule(d)
+	if (required && a.Reference == "") || (!allowed && a.Reference != "") {
 		return errors.New("the reference fits only a command that parsed")
 	}
 	if a.Reference != "" {
 		if _, _, ok := parseReference(a.Reference); !ok {
 			return errors.New("the reference is not P<n>-R<m>")
+		}
+	}
+	if !a.declarationMissing() {
+		if a.Branch != "" || len(a.Suggestion) != 0 {
+			return errors.New("the branch and the suggestion fit only a missing declaration")
+		}
+		return nil
+	}
+	// SuggestDeclaration panics on what it refuses, which would loop the outbox job: refuse it here.
+	if commandtext.ValidateSuggestion(a.suggestion()) != nil {
+		return errors.New("the branch, the repository or the suggestion cannot be rendered")
+	}
+	for _, pattern := range a.Suggestion {
+		if len(pattern) > maxSummaryText {
+			return errors.New("a suggested pattern is too long")
 		}
 	}
 	return nil
@@ -147,9 +215,27 @@ func newProcessedAck(target commentTarget, comment int64, ownerLogin string, pro
 
 // newRejectedAck builds the acknowledgment of a command the job rejected before ProcessConsent: disposition is
 // Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal or EditedFirst. reference (P<n>-R<m>) is the
-// parsed command's, required for InvalidCode, ReplayedCode, NoSuite and UnknownProposal and empty otherwise.
+// parsed command's: required for UnknownProposal, optional for InvalidCode, ReplayedCode and NoSuite (a skip or a
+// propose has none) and empty otherwise.
 func newRejectedAck(target commentTarget, comment int64, ownerLogin string, disposition commands.Disposition, reason commandtext.Reason, reference string) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reasonCode(reason), Reference: reference})
+}
+
+// newBootstrapAck builds the acknowledgment of a propose or a skip: Proposed (already proposed, with its reference),
+// ProposeRefused or SkipRefused (with the refusal's code, other than declaration-missing), Skipped, or Failed.
+func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, disposition commands.Disposition, reason, reference string) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reason, Reference: reference})
+}
+
+// newDeclarationMissingAck builds the refusal of a propose when no tree holds a .suiteward.yml: branch is the pull
+// request's head ref and suggestion the include patterns found, each cut to the payload bound (a cut pattern is
+// longer than the renderer accepts, so it is left out and counted, never suggested).
+func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggestion []string) (governance.OutboxMessage, error) {
+	cut := make([]string, 0, len(suggestion))
+	for _, pattern := range suggestion {
+		cut = append(cut, cutBytes(pattern, maxSummaryText))
+	}
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch, Suggestion: cut})
 }
 
 func newAck(p ackPayload) (governance.OutboxMessage, error) {
@@ -357,6 +443,9 @@ func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string,
 		if ack, err = ackOf(receipt, a.Owner, a.Comment); err != nil {
 			return commentTarget{}, "", keyError(githubCommentKind, key, err.Error())
 		}
+	} else if a.declarationMissing() {
+		text, err := render(githubCommentKind, key, func() string { return commandtext.SuggestDeclaration(a.suggestion()) })
+		return a.commentTarget, text, err
 	} else {
 		ack = rejectedAckOf(a)
 	}
@@ -403,6 +492,12 @@ func rejectedAckOf(a ackPayload) commandtext.Ack {
 		ack.Rejection = commandtext.UnknownRevision
 	}
 	ack.Malformed, _ = codeReason(a.Reason)
+	switch d {
+	case commands.ProposeRefused:
+		ack.Refusal = proposeRefusals[a.Reason]
+	case commands.SkipRefused:
+		ack.Refusal = skipRefusals[a.Reason]
+	}
 	if a.Reference != "" {
 		ack.Proposal, ack.Revision, _ = parseReference(a.Reference)
 	}

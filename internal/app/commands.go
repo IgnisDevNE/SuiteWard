@@ -7,13 +7,17 @@ import (
 	"log/slog"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
 )
 
@@ -37,12 +41,22 @@ type commandsJob struct {
 	syncs      repositoryReader // the observation store: each repository's last successful cycle
 	repos      []string         // the configured repositories (GITHUB_REPOSITORIES)
 	bot        *botAccount
+	reader     commandsReader           // the default branch head and the trees that /suiteward propose reads
+	content    governance.ContentWriter // where a proposed baseline's files are stored
+	pulls      pullLister               // the observed pull requests: a command's head and head repository
+	tier       string                   // the configured INSTALLATION_TIER
 	jobTimeout time.Duration
 	logger     *slog.Logger
 	now        func() time.Time
 
 	failing commandFailure  // the candidate that failed last, in this process; runs never overlap
 	warned  map[string]bool // enrolled repositories already reported as not configured
+}
+
+// commandsReader is the part of the GitHub reader that /suiteward propose uses.
+type commandsReader interface {
+	BranchHead(ctx context.Context, repo, branch string) (string, error)
+	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
 }
 
 // commandFailure counts the consecutive failed attempts of one candidate.
@@ -101,7 +115,7 @@ func (j *commandsJob) run(ctx context.Context) error {
 			}
 			return nil
 		}
-		if err := j.record(ctx, candidate, commands.Failed, "", nil); err != nil {
+		if err := j.recordFailed(ctx, enrollment, candidate); err != nil {
 			return err
 		}
 		j.logger.ErrorContext(ctx, "github command recorded as failed", "repo", candidate.Repo, "comment", candidate.Comment.CommentID, "error", failure.Error())
@@ -179,7 +193,13 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 		return reject(commands.Malformed, parsed.Reason, "")
 	}
 	command := parsed.Command
-	reference := commandtext.Reference(command.Proposal, command.Revision)
+	if command.Verb == commandtext.Propose { // no code, no reference
+		return j.propose(ctx, enrollment, c)
+	}
+	var reference string // a skip names no proposal
+	if command.Verb != commandtext.Skip {
+		reference = commandtext.Reference(command.Proposal, command.Revision)
+	}
 	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
 	if errors.Is(err, totp.ErrInvalidCode) {
 		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
@@ -197,6 +217,9 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 		return reject(commands.ReplayedCode, 0, reference)
 	case err != nil:
 		return &opaque{what: "consume the step", cause: err}
+	}
+	if command.Verb == commandtext.Skip {
+		return j.skip(ctx, enrollment, c)
 	}
 	project, operation := owner.ProjectID(c.RepositoryID), contract.OperationID("consent:"+string(source))
 	ack, err := newProcessedAck(target, m.CommentID, enrollment.Owner.Login, project, defaultSuite, operation)
@@ -269,4 +292,293 @@ func consentRequest(enrollment owner.State, c commands.Candidate, command comman
 		return governance.ConsentRequest{}, &opaque{what: "build the command", cause: err}
 	}
 	return governance.ConsentRequest{Command: built}, nil
+}
+
+// recordFailed records a candidate that kept failing. The owner's own /suiteward propose gets an acknowledgment that
+// says nothing was proposed and asks for the command again; any other command is not acknowledged.
+func (j *commandsJob) recordFailed(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
+	m := c.Comment
+	parsed := commandtext.Parse(m.Body)
+	ownerPropose := parsed.Kind == commandtext.KindCommand && parsed.Command.Verb == commandtext.Propose && m.AuthorID == enrollment.Owner.AccountID &&
+		!m.CreatedAt.Before(enrollment.EnrolledAt) && m.UpdatedAt.Equal(m.CreatedAt) // the checks decide made before it reached propose
+	if !ownerPropose {
+		return j.record(ctx, c, commands.Failed, "", nil)
+	}
+	ack, err := newBootstrapAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, m.CommentID, enrollment.Owner.Login, commands.Failed, "", "")
+	if err != nil {
+		return &opaque{what: "build the acknowledgment", cause: err}
+	}
+	return j.record(ctx, c, commands.Failed, "", &ack)
+}
+
+// bootstrapView is what propose and skip read from the Suite in one unit of work.
+type bootstrapView struct {
+	canonical bool
+	target    contract.IntegrationTargetID
+	policy    contract.PolicyRevisionID
+	latest    contract.ProposalRevision // the current revision of the latest bootstrap proposal, when hasLatest
+	hasLatest bool
+	next      contract.ProposalID // P<n+1>, free only under the Suite lock: propose uses it in the one proposing call
+	pull      githubsync.PullState
+}
+
+// bootstrapView reads the Suite and the observed pull request of the candidate. governance.ErrNotFound means the Suite
+// does not exist.
+func (j *commandsJob) bootstrapView(ctx context.Context, c commands.Candidate) (v bootstrapView, err error) {
+	err = j.suites.Do(ctx, owner.ProjectID(c.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		state, err := tx.Suite(ctx)
+		if err != nil {
+			return err // Do and Suite report a missing Suite as ErrNotFound; the reads below never do, so they drop the wrapping
+		}
+		_, v.canonical = state.Canonical.Suite().CurrentVersionID()
+		v.target, v.policy = state.Target, state.Policy.RevisionID()
+		if v.canonical {
+			return nil
+		}
+		id, found, err := tx.LatestBootstrapProposal(ctx)
+		if err != nil {
+			return fmt.Errorf("find the latest bootstrap proposal: %v", err)
+		}
+		if found {
+			proposal, _, err := tx.Proposal(ctx, id)
+			if err != nil {
+				return fmt.Errorf("load the latest bootstrap proposal: %v", err)
+			}
+			v.latest, v.hasLatest = proposal.Current(), true
+		}
+		if v.next, err = tx.NextProposalID(ctx); err != nil {
+			return fmt.Errorf("number the next proposal: %v", err)
+		}
+		return nil
+	})
+	return v, err
+}
+
+// observedPull returns the observed state of the candidate's pull request.
+func (j *commandsJob) observedPull(ctx context.Context, c commands.Candidate) (githubsync.PullState, error) {
+	pulls, err := j.pulls.Pulls(ctx, c.Repo)
+	if err != nil {
+		return githubsync.PullState{}, &opaque{what: "read the observed pull requests", cause: err}
+	}
+	i := slices.IndexFunc(pulls, func(p githubsync.PullState) bool { return p.Number == c.PullNumber })
+	if i < 0 { // the comment was observed on this pull request, so the observation store must know it
+		return githubsync.PullState{}, &opaque{what: "find the observed pull request", cause: errors.New("the pull request is not observed")}
+	}
+	return pulls[i], nil
+}
+
+// gate reads what propose and skip both decide on and records their common refusals: no Suite, a canonical, and a fork.
+// done is true when it recorded one, with the acknowledgment of refused (ProposeRefused or SkipRefused).
+func (j *commandsJob) gate(ctx context.Context, enrollment owner.State, c commands.Candidate, refused commands.Disposition) (view bootstrapView, done bool, err error) {
+	m, target := c.Comment, commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
+	refuse := func(d commands.Disposition, ack governance.OutboxMessage, err error) (bootstrapView, bool, error) {
+		if err != nil {
+			return bootstrapView{}, false, &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return bootstrapView{}, true, j.record(ctx, c, d, "", &ack)
+	}
+	view, err = j.bootstrapView(ctx, c)
+	switch {
+	case errors.Is(err, governance.ErrNotFound):
+		ack, err := newRejectedAck(target, m.CommentID, enrollment.Owner.Login, commands.NoSuite, 0, "")
+		return refuse(commands.NoSuite, ack, err)
+	case err != nil:
+		return bootstrapView{}, false, &opaque{what: "read the suite", cause: err}
+	case view.canonical:
+		ack, err := newBootstrapAck(target, m.CommentID, enrollment.Owner.Login, refused, reasonCanonicalPresent, "")
+		return refuse(refused, ack, err)
+	}
+	if view.pull, err = j.observedPull(ctx, c); err != nil {
+		return bootstrapView{}, false, err
+	}
+	if isFork(view.pull.HeadRepo, c.Repo) {
+		ack, err := newBootstrapAck(target, m.CommentID, enrollment.Owner.Login, refused, reasonFork, "")
+		return refuse(refused, ack, err)
+	}
+	return view, false, nil
+}
+
+// skip decides a /suiteward skip whose code was verified and consumed: the pull request may merge before the first
+// contract, unless the Suite has a canonical, the pull request is a fork, or it carries the latest bootstrap proposal.
+func (j *commandsJob) skip(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
+	view, done, err := j.gate(ctx, enrollment, c, commands.SkipRefused)
+	if done || err != nil {
+		return err
+	}
+	d, reason := commands.Skipped, ""
+	if view.hasLatest && view.latest.Carrier() == carrierID(c.RepositoryID, c.PullNumber) {
+		d, reason = commands.SkipRefused, reasonCarrier
+	}
+	ack, err := newBootstrapAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, c.Comment.CommentID, enrollment.Owner.Login, d, reason, "")
+	if err != nil {
+		return &opaque{what: "build the acknowledgment", cause: err}
+	}
+	return j.record(ctx, c, d, "", &ack)
+}
+
+// bootstrapSource is the commit and tree a propose proposes as the first baseline.
+type bootstrapSource struct {
+	kind   contract.OriginKind
+	origin string // the commit
+	branch string // the default branch, for a branch source
+	tree   *githubTree
+}
+
+// tree reads a commit's tree and its entries; its errors are fixed text.
+func (j *commandsJob) tree(ctx context.Context, repo, sha string) (*githubTree, []inventory.Entry, error) {
+	read, err := j.reader.Tree(ctx, repo, sha)
+	if err != nil {
+		return nil, nil, &opaque{what: "read a tree", cause: githubRead(err)}
+	}
+	tree := &githubTree{tree: read, files: map[string][]byte{}}
+	entries, err := tree.Entries(ctx)
+	if err != nil {
+		return nil, nil, &opaque{what: "list a tree", cause: err}
+	}
+	return tree, entries, nil
+}
+
+// hasDeclaration reports whether entries hold .suiteward.yml as a file: a link or a submodule of that name is not a declaration.
+func hasDeclaration(entries []inventory.Entry) bool {
+	return slices.ContainsFunc(entries, func(e inventory.Entry) bool { return e.Path == scope.DeclarationPath && e.Kind == inventory.File })
+}
+
+// source picks the tree to propose: the default branch's head when it has .suiteward.yml, else the pull request's head
+// when that has it. found is false when neither does, with the patterns to suggest from the pull request's tree, or the
+// default branch's when the pull request's gives none.
+func (j *commandsJob) source(ctx context.Context, c commands.Candidate, view bootstrapView) (src bootstrapSource, suggestion []string, found bool, err error) {
+	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
+	if !ok {
+		return bootstrapSource{}, nil, false, errors.New("the suite does not target a branch")
+	}
+	head, err := j.reader.BranchHead(ctx, c.Repo, branch)
+	if err != nil {
+		return bootstrapSource{}, nil, false, &opaque{what: "read the default branch head", cause: githubRead(err)}
+	}
+	tree, mainEntries, err := j.tree(ctx, c.Repo, head)
+	if err != nil {
+		return bootstrapSource{}, nil, false, err
+	}
+	if hasDeclaration(mainEntries) {
+		return bootstrapSource{kind: contract.OriginBranch, origin: head, branch: branch, tree: tree}, nil, true, nil
+	}
+	tree, pullEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
+	if err != nil {
+		return bootstrapSource{}, nil, false, err
+	}
+	if hasDeclaration(pullEntries) {
+		return bootstrapSource{kind: contract.OriginPull, origin: view.pull.HeadSHA, tree: tree}, nil, true, nil
+	}
+	if suggestion = inventory.SuggestScope(pullEntries); len(suggestion) == 0 {
+		suggestion = inventory.SuggestScope(mainEntries)
+	}
+	return bootstrapSource{}, suggestion, false, nil
+}
+
+// reusable reports the reference of the latest bootstrap proposal when it is carried by carrier and its current
+// revision has the origin, kind and coverage of src and proposed. The coverage includes the policy revision, as the
+// checks job compares it with AssessBootstrapHead: a proposal that call would cancel must not be answered with
+// "already proposed".
+func (v bootstrapView) reusable(carrier contract.ApprovalCarrierID, src bootstrapSource, proposed contract.ProtectedContract) (string, bool, error) {
+	if !v.hasLatest || v.latest.Carrier() != carrier || v.latest.Origin() != contract.SourceRevision(src.origin) || v.latest.OriginKind() != src.kind {
+		return "", false, nil
+	}
+	reference := v.latest.Binding().Reference()
+	binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: reference, Manifest: proposed.Manifest().Digest(), Scope: proposed.ScopeDigest(),
+		PolicyRevision: v.policy, CoveredInputs: proposed.CoveredInputs()})
+	if err != nil {
+		return "", false, err
+	}
+	if !v.latest.Binding().SameCoverage(binding) {
+		return "", false, nil
+	}
+	return fmt.Sprintf("%s-%s", reference.ProposalID, reference.RevisionID), true, nil
+}
+
+// propose decides a /suiteward propose (docs/contracts/runtime.md, "Explicit bootstrap: propose and skip"). A read of
+// GitHub or of the store that fails is an error of this candidate: the retry rule runs it again and, after five
+// attempts, records it as failed with the propose-failed acknowledgment. A source that cannot be read as a contract (an
+// invalid declaration, a link in the protected files, a truncated tree) is refused with invalid-source.
+func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
+	m, login := c.Comment, enrollment.Owner.Login
+	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
+	view, done, err := j.gate(ctx, enrollment, c, commands.ProposeRefused)
+	if done || err != nil {
+		return err
+	}
+	// A source that cannot be read as a contract is a fact about the commit, so it is refused and never retried.
+	refuseSource := func() error {
+		j.logger.WarnContext(ctx, "github propose refused: the source cannot be read as a contract", "repo", c.Repo, "comment", m.CommentID)
+		ack, err := newBootstrapAck(target, m.CommentID, login, commands.ProposeRefused, refusalInvalidSource, "")
+		if err != nil {
+			return &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	}
+	src, suggestion, found, err := j.source(ctx, c, view)
+	if invalidSource(err) {
+		return refuseSource()
+	}
+	if err != nil {
+		return err
+	}
+	if !found {
+		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion)
+		if err != nil {
+			return &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	}
+	inv, err := inventory.Build(ctx, src.tree)
+	if invalidSource(err) {
+		return refuseSource()
+	}
+	if err != nil {
+		return &opaque{what: "inventory of the source", cause: err}
+	}
+	// ADR 0010: never manufacture an empty canonical suite. A source holds .suiteward.yml, which covers itself, so its
+	// inventory is never empty: this is an impossible state, not the empty-inventory refusal.
+	if len(inv.Manifest().Entries()) == 0 {
+		return &opaque{what: "inventory of the source", cause: governance.ErrInvalidState}
+	}
+	proposed, err := inv.Contract()
+	if err != nil {
+		return &opaque{what: "contract of the source", cause: err}
+	}
+	carrier := carrierID(c.RepositoryID, c.PullNumber)
+	reference, reused, err := view.reusable(carrier, src, proposed)
+	if err != nil {
+		return &opaque{what: "compare the proposal", cause: err}
+	}
+	if reused { // a retry after a crash between the proposal and the ledger, or a repeated command on an unchanged pull request
+		ack, err := newBootstrapAck(target, m.CommentID, login, commands.Proposed, "", reference)
+		if err != nil {
+			return &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return j.record(ctx, c, commands.Proposed, "", &ack)
+	}
+	number, err := strconv.Atoi(strings.TrimPrefix(string(view.next), "P"))
+	if err != nil {
+		return &opaque{what: "number the proposal", cause: err}
+	}
+	tier, _ := effectiveTier(j.tier, enrollment, true)
+	inputs := bootstrapSummaryInputs{Proposal: number, Revision: 1, Source: sourcePull, Origin: src.origin, Tier: tier}
+	if src.kind == contract.OriginBranch {
+		inputs.Source, inputs.Branch = sourceBranch, src.branch
+	}
+	message, err := newSummaryMessage(target, inventoryInputs(inputs, inv))
+	if err != nil {
+		return &opaque{what: "build the summary", cause: err}
+	}
+	result, err := governance.ProposeBaseline(ctx, j.suites, j.content, governance.BaselineRequest{
+		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(c.RepositoryID), SuiteID: defaultSuite, ProposalID: view.next, RevisionID: firstRevision},
+		Carrier:   carrier, Origin: contract.SourceRevision(src.origin), OriginKind: src.kind, Tree: src.tree, Outbox: []governance.OutboxMessage{message}})
+	if err != nil {
+		return &opaque{what: "propose the baseline", cause: err}
+	}
+	if !result.Revise.Committed { // a fresh proposal number cannot have the coverage already: the numbering raced with another writer
+		return &opaque{what: "propose the baseline", cause: errors.New("the proposal was not written")}
+	}
+	j.logger.InfoContext(ctx, "github baseline proposed", "repo", c.Repo, "proposal", number, "pull", c.PullNumber, "source", inputs.Source)
+	return j.record(ctx, c, commands.Proposed, "", nil)
 }

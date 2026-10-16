@@ -639,6 +639,8 @@ Cleanup: close any PR you opened and did not merge, then put the stack back with
 - **A refused `propose`.** The acknowledgment gives the reason:
   - `canonical-present`: the Suite already has V1; there is nothing to bootstrap.
   - `fork`: a PR from a fork or a deleted fork is not supported; open the PR from a branch of the repository.
+  - `not-open`: the PR was closed or merged before the command was decided; propose on an open PR.
+  - `base-not-target`: the PR does not target the default branch; propose on a PR into the default branch.
   - `declaration-missing`: neither the default branch nor the PR head has `.suiteward.yml`. Commit the suggested file (the link) and propose again.
   - `invalid-source`: `.suiteward.yml` is invalid, a protected path is a link, or the tree is truncated. It is deterministic, so it is refused and not retried; fix the source and propose again.
 - **A refused `skip`.**
@@ -647,7 +649,8 @@ Cleanup: close any PR you opened and did not merge, then put the stack back with
   - `fork`: as above.
   - A refused `skip` has already consumed its code: wait for a fresh code before the next command.
 - **A command answered `no-suite`.** It came before the bootstrap job created the Suite for the repository (right after the service starts or the repository is added). Wait a minute or two, then comment the command again (with a fresh code for `skip`).
-- **A cancelled proposal.** A protected push changed the coverage of a PR-head proposal. The check is `bootstrap-awaiting` and one cancelled comment names the reference. Comment `/suiteward propose` again. A push that restores the exact coverage makes the revision current again.
+- **A cancelled proposal.** A protected push changed the coverage of a PR-head proposal. The check is `bootstrap-awaiting` and one cancelled comment names the reference. Comment `/suiteward propose` again. A push that restores the exact coverage makes the revision current again. There is one cancelled comment per revision: if the coverage is restored and then broken again, the check goes back to `bootstrap-awaiting` with no second comment.
+- **A `failure` on the carrier after a mistyped `skip` or `propose`.** A bad code or a malformed command on the carrier PR turns its check `failure` (`owner-command-rejected`), whatever the verb. A corrected `propose` does not clear it; a valid approve or a new head does.
 - **A merge of a superseded PR.** Only the carrier of the latest PR-head proposal is decided as V1. Any other PR merged before V1, including the carrier of a superseded proposal, is `before-canonical`: no version. The default branch now holds its files, so comment `/suiteward propose` on an open PR (the branch path) when it has `.suiteward.yml`.
 - **A `propose` answered `failed`.** A transient GitHub or store failure, after 5 attempts. Comment `/suiteward propose` again.
 - **A large source.** The reads run in the single commands job, inside `JOB_TIMEOUT`. About 150 protected files fill one run of the default 1 minute; a larger source times out and ends `failed`. This is a known limit.

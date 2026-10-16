@@ -100,7 +100,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now, within: tickDeadline(cfg.JobTimeout)}
 		riverConfig.ProtectionCheck = check.run
 		problems := &bootstrapProblems{}
-		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, problems: problems, logger: logger, now: time.Now}
+		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, problems: problems, logger: logger, now: time.Now}
 		riverConfig.Bootstrap = bootstrap.run
 		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, pulls: store, tier: tier, jobTimeout: cfg.JobTimeout, logger: logger, now: time.Now}
 		riverConfig.Commands = commandJob.run

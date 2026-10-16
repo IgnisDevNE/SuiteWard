@@ -303,7 +303,6 @@ type bootstrapJob struct {
 	reader   bootstrapReader
 	owners   owner.Store
 	suites   governance.UnitOfWork
-	content  governance.ContentWriter
 	problems *bootstrapProblems // shown in /status
 	logger   *slog.Logger
 	now      func() time.Time
@@ -351,10 +350,6 @@ func (b *bootstrapJob) project(ctx context.Context, enrollment owner.State, p ow
 	case errors.Is(err, errRepositoryChanged):
 		b.logger.WarnContext(ctx, "github bootstrap skipped: the repository name no longer identifies the enrolled repository", "repo", p.Repo)
 		b.problems.set(p.Repo, "repository-changed")
-		return nil
-	case invalidSource(err):
-		b.logger.WarnContext(ctx, "github bootstrap skipped: the default branch cannot be proposed as a baseline", "repo", p.Repo)
-		b.problems.set(p.Repo, "invalid-source")
 		return nil
 	case errors.As(err, &stopped):
 		b.problems.set(p.Repo, string(stopped))

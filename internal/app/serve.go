@@ -90,7 +90,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	a := &api{store: store, owners: store, logger: logger, tier: tier}
 	backend := &mcpBackend{store: store, owners: store, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
-		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger})
+		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
 		if err != nil {
 			pool.Close()
 			return err

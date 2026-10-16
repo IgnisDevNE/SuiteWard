@@ -778,7 +778,7 @@ func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
 	t.Cleanup(server.Close)
 	settings := config.GitHub{AppID: setupAppID, AppKey: config.Secret(setupKey()), InstallationID: setupInstallID, Repositories: []string{"acme/widgets"}, APIURL: server.URL}
 
-	gh, err := composeGitHub(settings, time.Minute, githubsynctest.NewMemory())
+	gh, err := composeGitHub(settings, time.Minute, githubsynctest.NewMemory(), time.Now, quietLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

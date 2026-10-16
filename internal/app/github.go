@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -160,6 +161,11 @@ type githubSync struct {
 	appID      int64
 	repos      []string
 	jobTimeout time.Duration
+	now        func() time.Time // injected clock, for sync pacing (D-SYNC, "Sync pacing", M1.7c)
+	logger     *slog.Logger     // the listing-lag detector
+
+	previousStart    time.Time // the start of the previous tick; zero before the first one after a process start
+	previousRequests int       // the requests that tick made, for pacing the next one
 }
 
 // The permission maps of the installation tokens (D-GITHUB-ACCESS): each use
@@ -264,7 +270,7 @@ func (a githubAccess) checkRuns(permissions map[string]string) (*github.Checks, 
 // reconciler over store. Synchronization is read-only: the token requests the
 // metadata, pull requests and contents permissions at read level; the
 // protection check uses the other reader (Metadata and Administration read).
-func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store, now func() time.Time, logger *slog.Logger) (*githubSync, error) {
 	access, err := newGitHubAccess(g) // one access, so one budget, for every token
 	if err != nil {
 		return nil, err
@@ -295,7 +301,7 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID}, nil
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID, now: now, logger: logger}, nil
 }
 
 // tick is the github_sync_tick job: one cycle of every configured repository.

@@ -103,12 +103,13 @@ const (
 	reasonCanonicalPresent   = "canonical-present"
 	reasonFork               = "fork"
 	reasonEmptyInventory     = "empty-inventory"
+	refusalInvalidSource     = "invalid-source" // named like the bootstrap job's status code
 	reasonCarrier            = "carrier"
 	reasonDeclarationMissing = "declaration-missing" // rendered by commandtext.SuggestDeclaration, which is not an Ack
 )
 
 var (
-	proposeRefusals = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonEmptyInventory: commandtext.EmptyInventory}
+	proposeRefusals = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonEmptyInventory: commandtext.EmptyInventory, refusalInvalidSource: commandtext.InvalidSource}
 	skipRefusals    = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonCarrier: commandtext.Carrier}
 )
 

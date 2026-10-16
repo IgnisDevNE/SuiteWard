@@ -95,6 +95,12 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 			nil,
 		},
 		{
+			"propose refused: invalid source",
+			with(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.InvalidSource}),
+			[]string{"`/suiteward propose` was not processed: SuiteWard could not read the files to protect as a contract", "declaration is invalid", "a link", "too large", "Nothing changed.", "comment `/suiteward propose` again"},
+			nil,
+		},
+		{
 			"already proposed",
 			with(commandtext.Ack{Outcome: commandtext.AlreadyProposed, Proposal: 4, Revision: 2}),
 			[]string{"already proposed as P4-R2", "Nothing changed.", "bootstrap summary"},
@@ -380,6 +386,7 @@ func TestAcknowledgeProposeAndSkipPanicsOnImpossibleState(t *testing.T) {
 		"propose refused for a carrier":                 refused(commandtext.ProposeRefused, commandtext.Carrier),
 		"skip refused without a reason":                 refused(commandtext.SkipRefused, 0),
 		"skip refused for an empty inventory":           refused(commandtext.SkipRefused, commandtext.EmptyInventory),
+		"skip refused for an invalid source":            refused(commandtext.SkipRefused, commandtext.InvalidSource),
 		"a refusal on a skip":                           refused(commandtext.Skipped, commandtext.Fork),
 		"a refusal on an approval":                      {Outcome: commandtext.Approved, Refusal: commandtext.Fork, Proposal: 1, Revision: 1, Source: source, Owner: owner},
 		"already proposed without a reference":          {Outcome: commandtext.AlreadyProposed, Source: source, Owner: owner},

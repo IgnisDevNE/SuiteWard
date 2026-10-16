@@ -281,7 +281,7 @@ func referenceOf(a Ack) string {
 func refusalFits(outcome Outcome, refusal Refusal) bool {
 	switch outcome {
 	case ProposeRefused:
-		return refusal == CanonicalPresent || refusal == Fork || refusal == EmptyInventory
+		return refusal == CanonicalPresent || refusal == Fork || refusal == EmptyInventory || refusal == InvalidSource
 	case SkipRefused:
 		return refusal == CanonicalPresent || refusal == Fork || refusal == Carrier
 	}
@@ -609,6 +609,9 @@ func proposeRefusal(r Refusal) string {
 	case EmptyInventory:
 		return refused(propose, "no file matches the include rules of `.suiteward.yml`, so there is nothing to protect",
 			"Fix the `include` rules so they match the files you want protected, then comment `/suiteward propose` again.")
+	case InvalidSource:
+		return refused(propose, "SuiteWard could not read the files to protect as a contract: the `.suiteward.yml` declaration is invalid, a protected path is a link, or the repository tree is too large",
+			"Fix the declaration or the files, then comment `/suiteward propose` again.")
 	}
 	panic(fmt.Sprintf("commandtext: unknown propose refusal %d", r))
 }

@@ -496,9 +496,9 @@ func (v bootstrapView) reusable(carrier contract.ApprovalCarrierID, src bootstra
 }
 
 // propose decides a /suiteward propose (docs/contracts/runtime.md, "Explicit bootstrap: propose and skip"). A read of
-// GitHub or of the store that fails, and a source that cannot be used as a baseline (an invalid declaration, a link in
-// the protected files), are errors of this candidate: the retry rule runs it again and, after five attempts, records it
-// as failed with the propose-failed acknowledgment.
+// GitHub or of the store that fails is an error of this candidate: the retry rule runs it again and, after five
+// attempts, records it as failed with the propose-failed acknowledgment. A source that cannot be read as a contract (an
+// invalid declaration, a link in the protected files, a truncated tree) is refused with invalid-source.
 func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
 	m, login := c.Comment, enrollment.Owner.Login
 	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
@@ -506,7 +506,19 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	if done || err != nil {
 		return err
 	}
+	// A source that cannot be read as a contract is a fact about the commit, so it is refused and never retried.
+	refuseSource := func() error {
+		j.logger.WarnContext(ctx, "github propose refused: the source cannot be read as a contract", "repo", c.Repo, "comment", m.CommentID)
+		ack, err := newBootstrapAck(target, m.CommentID, login, commands.ProposeRefused, refusalInvalidSource, "")
+		if err != nil {
+			return &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	}
 	src, suggestion, found, err := j.source(ctx, c, view)
+	if invalidSource(err) {
+		return refuseSource()
+	}
 	if err != nil {
 		return err
 	}
@@ -518,18 +530,16 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
 	}
 	inv, err := inventory.Build(ctx, src.tree)
+	if invalidSource(err) {
+		return refuseSource()
+	}
 	if err != nil {
-		if invalidSource(err) {
-			j.logger.WarnContext(ctx, "github propose: the source cannot be proposed as a baseline", "repo", c.Repo, "comment", m.CommentID)
-		}
 		return &opaque{what: "inventory of the source", cause: err}
 	}
-	if len(inv.Manifest().Entries()) == 0 { // ADR 0010: never manufacture an empty canonical suite
-		ack, err := newBootstrapAck(target, m.CommentID, login, commands.ProposeRefused, reasonEmptyInventory, "")
-		if err != nil {
-			return &opaque{what: "build the acknowledgment", cause: err}
-		}
-		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	// ADR 0010: never manufacture an empty canonical suite. A source holds .suiteward.yml, which covers itself, so its
+	// inventory is never empty: this is an impossible state, not the empty-inventory refusal.
+	if len(inv.Manifest().Entries()) == 0 {
+		return &opaque{what: "inventory of the source", cause: governance.ErrInvalidState}
 	}
 	proposed, err := inv.Contract()
 	if err != nil {

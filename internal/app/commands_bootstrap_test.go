@@ -617,3 +617,27 @@ func TestAcknowledgmentConstructorsTakeNoReferenceForTheCodeOutcomes(t *testing.
 		}
 	}
 }
+
+// linkedDeclaration is a tree whose .suiteward.yml is a symbolic link.
+type linkedDeclaration struct{ *bootTree }
+
+func (t linkedDeclaration) Entries(ctx context.Context) ([]inventory.Entry, error) {
+	entries, err := t.bootTree.Entries(ctx)
+	for i := range entries {
+		if entries[i].Path == ".suiteward.yml" {
+			entries[i].Kind = inventory.Symlink
+		}
+	}
+	return entries, err
+}
+
+func TestProposeTakesTheDeclarationOnlyFromAFileEntry(t *testing.T) {
+	w := newCjWorld(t)
+	w.trees(bootFiles("v1"), bootFiles("v2"))
+	w.reader.repo(cjRepo1).trees[bootHead] = linkedDeclaration{&bootTree{files: bootFiles("v1")}} // not a file entry: the pull request head is read
+	w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
+	w.mustRun()
+
+	w.requireNoAck(cjID1, 500, commands.Proposed)
+	w.requireProposal("P2", "R1", cjHead, contract.OriginPull, cjPull)
+}

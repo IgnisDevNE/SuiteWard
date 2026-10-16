@@ -427,6 +427,11 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
   - The race between two concurrent wakers can leave at most one extra job per waker, which is harmless.
   - So wake-ups that arrive during a run queue one follow-up between them, and the queue never grows with the number of wake-ups.
   - A wake-up whose check or insert fails is logged at Warn, with the kind and nothing else. It never fails the waking run, because the periodic run is the fallback.
+- **How a run names its wake-ups.**
+  - In `river.Config`, `SyncTick`, `SyncRepo`, `Commands`, `Merges` and `Bootstrap` return `(river.Wake, error)`; `Wake` is the set of job kinds to wake.
+  - The River worker inserts those wake-ups after the run returns, whatever its error, because a run that failed late may still have committed work. So "after the commit" holds without passing the runtime to the jobs.
+  - `Checks`, `ProtectionCheck` and `Integrity` keep `func(ctx) error`.
+  - A kind outside commands, checks, merges and bootstrap is a programming error. The worker logs it at Error and inserts nothing.
 - **Who wakes whom:**
 
   | Run | Wakes | When |

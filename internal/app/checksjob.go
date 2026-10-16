@@ -225,6 +225,12 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 	return view, nil
 }
 
+// keptReasons are the reasons of a stored check that a failed read keeps. Not kept: the reasons of rules that may no longer apply
+// (integrity-failed, a fork, a skip, a carrier that was none), and any reason the renderer no longer knows, such as the
+// bootstrap-pending of an installation from before the M1.7b rework.
+var keptReasons = []string{reasonUnchanged, reasonReady, reasonBootstrapReady, reasonApprovalMissing, reasonNotCurrent, reasonAssessmentPending,
+	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand}
+
 // pull decides and publishes the check of one open pull request. problem is a code for /status when the decision had
 // to wait for the next run.
 func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState) (problem string, err error) {
@@ -271,8 +277,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if wait { // keep the stored check of this head, or say that a new head is pending, so it never stays without a check
 		result = base
 		result.State, result.Reason = checks.InProgress, reasonAssessmentPending
-		// these come from rules that may no longer apply (a skip, a carrier that was none), so they are not carried over
-		if sameHead && !slices.Contains([]string{reasonIntegrityFailed, reasonForkUnsupported, reasonBootstrapSkipped, reasonBootstrapAwaiting}, record.Reason) {
+		if sameHead && slices.Contains(keptReasons, record.Reason) {
 			result = record.Result
 		}
 	}

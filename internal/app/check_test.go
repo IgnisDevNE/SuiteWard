@@ -376,7 +376,6 @@ func TestCheckPublisherRefusesAPayloadThatDoesNotMatchItsKey(t *testing.T) {
 		{"a payload that is not an object", good.Key, json.RawMessage(`"` + cmtSecretText + `"`)},
 		{"trailing data", good.Key, json.RawMessage(string(same) + cmtSecretText)},
 		{"an unknown state", good.Key, with(func(m map[string]any) { m["state"] = cmtSecretText })},
-		{"a reason nobody can render", good.Key, with(func(m map[string]any) { m["reason"] = cmtSecretText })},
 		{"a tier that is not a tier", good.Key, with(func(m map[string]any) { m["tier"] = cmtSecretText })},
 		{"a head that is not a SHA", good.Key, with(func(m map[string]any) { m["headSha"] = cmtSecretText })},
 		{"another repository in the key", "check:1002:7:3", same},
@@ -407,6 +406,23 @@ func TestCheckPublisherRefusesAPayloadThatDoesNotMatchItsKey(t *testing.T) {
 				t.Fatal("GitHub or the ledger was called for a payload that was refused")
 			}
 		})
+	}
+}
+
+// A reason nobody can render is refused only for the current generation, after the ledger confirmed it.
+func TestCheckPublisherRefusesACurrentMessageWhoseReasonNobodyCanRender(t *testing.T) {
+	w := newChkWorld()
+	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
+	m.Payload = bytes.Replace(m.Payload, []byte("assessment-pending"), []byte(cmtSecretText), 1)
+	err := w.deliver(m)
+	if err == nil {
+		t.Fatal("publish succeeded")
+	}
+	if strings.Contains(err.Error(), cmtSecretText) || !strings.Contains(err.Error(), m.Key) {
+		t.Fatalf("the error %q holds payload text or does not name the key", err)
+	}
+	if len(w.runner.posts()) != 0 || len(w.runner.listed) != 0 {
+		t.Fatal("GitHub was called for a payload that was refused")
 	}
 }
 

@@ -127,7 +127,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: &fakeBootReader{repos: map[string]*bootRepository{bootRepo: repository}, calls: map[string]int{}}, owners: store, suites: store,
 		problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
 	for range 2 {
-		if err := bootstrap.run(t.Context()); err != nil {
+		if _, err := bootstrap.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -223,7 +223,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	clock = clock.Add(time.Minute)
 	merges := &mergesJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(),
 		tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
-	if err := merges.run(t.Context()); err != nil {
+	if _, err := merges.run(t.Context()); err != nil {
 		t.Fatalf("merges run: %v", err)
 	}
 	if got := scalar(t, databaseURL, "SELECT coalesce(current_version_id, 'none') FROM suites WHERE project_id = $1 AND suite_id = 'default'", string(owner.ProjectID(bootRepoID))); got != "V1" {
@@ -237,7 +237,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	if len(gh.posted(5)) != 2 {
 		t.Fatalf("%d comments on pull 5, want the summary and one merge comment", len(gh.posted(5)))
 	}
-	if err := merges.run(t.Context()); err != nil { // a replay decides and posts nothing again
+	if _, err := merges.run(t.Context()); err != nil { // a replay decides and posts nothing again
 		t.Fatalf("merges replay: %v", err)
 	}
 	pass()

@@ -254,7 +254,7 @@ func ownerCommand(id int64, created time.Time, verb, reference string, offset in
 
 func cjAt(minutes int) time.Time { return cjOrigin.Add(time.Duration(minutes) * time.Minute) }
 
-func (w *cjWorld) run() error { return w.job.run(w.t.Context()) }
+func (w *cjWorld) run() error { _, err := w.job.run(w.t.Context()); return err }
 
 func (w *cjWorld) mustRun() {
 	w.t.Helper()

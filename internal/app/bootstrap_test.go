@@ -296,7 +296,7 @@ func (w *bootWorld) seedSuite(id int64, target contract.IntegrationTargetID) {
 	w.seed(owner.ProjectID(id), "default", target)
 }
 
-func (w *bootWorld) run() error { return w.job.run(w.t.Context()) }
+func (w *bootWorld) run() error { _, err := w.job.run(w.t.Context()); return err }
 
 func (w *bootWorld) mustRun() {
 	w.t.Helper()

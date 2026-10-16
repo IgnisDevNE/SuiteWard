@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
@@ -67,7 +68,11 @@ type commandFailure struct {
 // run decides the pending comments up to the watermark. A candidate whose decision fails stops the run, so a later one
 // never goes ahead of it; the next run retries it, and its fifth consecutive failure records it as failed. Only a
 // ledger failure fails the job.
-func (j *commandsJob) run(ctx context.Context) error {
+func (j *commandsJob) run(ctx context.Context) (river.Wake, error) {
+	return nil, j.decideAll(ctx)
+}
+
+func (j *commandsJob) decideAll(ctx context.Context) error {
 	enrollment, enrolled, err := j.owners.Current(ctx)
 	if err != nil {
 		return fmt.Errorf("read the enrollment: %w", err)

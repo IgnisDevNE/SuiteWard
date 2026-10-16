@@ -182,13 +182,13 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 			t.Fatalf("approve P%d-R1: eligible %v, error %v", proposal, response.Receipt.CurrentApprovalEligible, err)
 		}
 	}
-	if err := bootstrap.run(t.Context()); err != nil { // the Suite
+	if _, err := bootstrap.run(t.Context()); err != nil { // the Suite
 		t.Fatal(err)
 	}
 	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // P1-R1, as the commands job would
 	consent(101, 1, 4)
 	for range 3 { // the integrity assessment and the first canonical
-		if err := bootstrap.run(t.Context()); err != nil {
+		if _, err := bootstrap.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -223,7 +223,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	clock = clock.Add(time.Minute)
 	merges := &mergesJob{repos: []string{bootRepo}, reader: bootMust(github.NewReader(client)), owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(),
 		tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
-	if err := merges.run(t.Context()); err != nil {
+	if _, err := merges.run(t.Context()); err != nil {
 		t.Fatalf("merges run: %v", err)
 	}
 
@@ -276,7 +276,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	check(5, "merge:1001:5", "stays at V2", "canonical contract changed after")
 
 	// A replay: the job decides nothing again and nothing is posted again.
-	if err := merges.run(t.Context()); err != nil {
+	if _, err := merges.run(t.Context()); err != nil {
 		t.Fatalf("merges replay: %v", err)
 	}
 	for range 2 {

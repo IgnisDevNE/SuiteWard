@@ -105,7 +105,7 @@ func newMgWorldOf(t *testing.T, cj *cjJobWorld) *mgWorld {
 
 func (w *mgWorld) advance(d time.Duration) { w.clock = w.clock.Add(d) }
 
-func (w *mgWorld) runMerges() error { return w.merges.run(w.t.Context()) }
+func (w *mgWorld) runMerges() error { _, err := w.merges.run(w.t.Context()); return err }
 
 func (w *mgWorld) mustMerge() {
 	w.t.Helper()

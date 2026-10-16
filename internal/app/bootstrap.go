@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -310,7 +311,11 @@ type bootstrapJob struct {
 
 // run advances every enrolled, configured project. A GitHub read failure skips that project until the next run;
 // any other failure fails the run after the other projects were tried.
-func (b *bootstrapJob) run(ctx context.Context) error {
+func (b *bootstrapJob) run(ctx context.Context) (river.Wake, error) {
+	return nil, b.advanceAll(ctx)
+}
+
+func (b *bootstrapJob) advanceAll(ctx context.Context) error {
 	enrollment, enrolled, err := b.owners.Current(ctx)
 	if err != nil {
 		return fmt.Errorf("read the enrollment: %w", err)

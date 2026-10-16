@@ -100,13 +100,13 @@ func TestSyncRepoRefusesARepositoryThatIsNotConfigured(t *testing.T) {
 	}
 	s := &githubSync{reconciler: reconciler, repos: []string{"acme/widgets"}, jobTimeout: time.Minute}
 
-	if err := s.syncRepo(t.Context(), "someone/else"); err == nil {
+	if _, err := s.syncRepo(t.Context(), "someone/else"); err == nil {
 		t.Fatal("syncRepo accepted a repository that is not configured")
 	}
 	if reader.calls != 0 {
 		t.Fatal("GitHub was called for a repository that is not configured")
 	}
-	if err := s.syncRepo(t.Context(), "acme/widgets"); err != nil || reader.calls == 0 {
+	if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil || reader.calls == 0 {
 		t.Fatalf("syncRepo of a configured repository = %v after %d calls; want a cycle", err, reader.calls)
 	}
 }
@@ -154,7 +154,7 @@ func TestSyncTickRunsAtOnceOnTheFirstTickAfterAStart(t *testing.T) {
 	reader := &paceReader{requests: 1, at: func() time.Time { return clock }}
 	s := paceSync(t, reader, func() time.Time { return clock })
 
-	if err := s.tick(t.Context()); err != nil {
+	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if reader.calls != 1 {
@@ -166,12 +166,12 @@ func TestSyncTickWaitsTwentySecondsSinceThePreviousStart(t *testing.T) {
 	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	reader := &paceReader{requests: 1, at: func() time.Time { return clock }}
 	s := paceSync(t, reader, func() time.Time { return clock })
-	if err := s.tick(t.Context()); err != nil { // the first tick, always due
+	if _, err := s.tick(t.Context()); err != nil { // the first tick, always due
 		t.Fatal(err)
 	}
 
 	clock = clock.Add(19 * time.Second)
-	if err := s.tick(t.Context()); err != nil {
+	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if reader.calls != 1 {
@@ -179,7 +179,7 @@ func TestSyncTickWaitsTwentySecondsSinceThePreviousStart(t *testing.T) {
 	}
 
 	clock = clock.Add(time.Second) // 20 s after the previous start
-	if err := s.tick(t.Context()); err != nil {
+	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if reader.calls != 2 {
@@ -192,13 +192,13 @@ func TestSyncTickWaitsLongerAfterAnExpensiveTick(t *testing.T) {
 	clock := start
 	reader := &paceReader{requests: 420, at: func() time.Time { return clock }}
 	s := paceSync(t, reader, func() time.Time { return clock })
-	if err := s.tick(t.Context()); err != nil { // the first tick: 420 requests, which paces the next one to 56 s
+	if _, err := s.tick(t.Context()); err != nil { // the first tick: 420 requests, which paces the next one to 56 s
 		t.Fatal(err)
 	}
 
 	for _, elapsed := range []time.Duration{20 * time.Second, 55 * time.Second} {
 		clock = start.Add(elapsed)
-		if err := s.tick(t.Context()); err != nil {
+		if _, err := s.tick(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if reader.calls != 1 {
@@ -207,7 +207,7 @@ func TestSyncTickWaitsLongerAfterAnExpensiveTick(t *testing.T) {
 	}
 
 	clock = start.Add(56 * time.Second)
-	if err := s.tick(t.Context()); err != nil {
+	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if reader.calls != 2 {
@@ -267,13 +267,13 @@ func TestSyncRepoLogsTheListingLagDetector(t *testing.T) {
 	logs := &bytes.Buffer{}
 	s := &githubSync{reconciler: reconciler, repos: []string{"acme/widgets"}, jobTimeout: time.Minute, logger: slog.New(slog.NewJSONHandler(logs, nil)), now: time.Now}
 
-	if err := s.syncRepo(t.Context(), "acme/widgets"); err != nil { // nothing first-observed yet: no detector line
+	if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil { // nothing first-observed yet: no detector line
 		t.Fatal(err)
 	}
 	if strings.Contains(logs.String(), "github comment first observed") {
 		t.Fatalf("a cycle that first-observed nothing logged the detector line: %s", logs)
 	}
-	if err := s.syncRepo(t.Context(), "acme/widgets"); err != nil {
+	if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -324,11 +324,11 @@ func TestSyncTickLogsTheListingLagDetector(t *testing.T) {
 	clock := t0
 	s := &githubSync{reconciler: reconciler, repos: []string{"acme/widgets"}, jobTimeout: time.Minute, logger: slog.New(slog.NewJSONHandler(logs, nil)), now: func() time.Time { return clock }}
 
-	if err := s.tick(t.Context()); err != nil { // the first tick: nothing first-observed yet
+	if _, err := s.tick(t.Context()); err != nil { // the first tick: nothing first-observed yet
 		t.Fatal(err)
 	}
 	clock = clock.Add(time.Minute) // past the pacing window
-	if err := s.tick(t.Context()); err != nil {
+	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(logs.String(), `"msg":"github comment first observed"`) || !strings.Contains(logs.String(), `"comment":9`) {

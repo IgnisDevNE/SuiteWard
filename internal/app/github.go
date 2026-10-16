@@ -13,6 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
@@ -315,30 +316,30 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 // (D-SYNC, "Sync pacing", M1.7c). It returns at once, recording nothing and calling no GitHub, while it is not yet
 // due: 20 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
 // at syncPaceRequests a minute. The first tick after a process start is always due.
-func (s *githubSync) tick(ctx context.Context) error {
+func (s *githubSync) tick(ctx context.Context) (river.Wake, error) {
 	now := s.now()
 	if !s.previousStart.IsZero() {
 		pace := time.Duration(s.previousRequests) * syncPaceInterval / syncPaceRequests
 		if now.Sub(s.previousStart) < max(syncMinInterval, pace) {
-			return nil
+			return nil, nil
 		}
 	}
 	s.previousStart = now
 	result, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
 	s.previousRequests = result.Requests // a tick cut short by the deadline or a budget stop still counts what it made
 	s.logFirstObserved(ctx, result)
-	return err
+	return nil, err
 }
 
 // syncRepo is the github_sync_repo job. A repository that is not configured is
 // an error: the job never calls GitHub for it.
-func (s *githubSync) syncRepo(ctx context.Context, repo string) error {
+func (s *githubSync) syncRepo(ctx context.Context, repo string) (river.Wake, error) {
 	if !slices.Contains(s.repos, repo) {
-		return fmt.Errorf("repository %q is not one of the configured repositories", repo)
+		return nil, fmt.Errorf("repository %q is not one of the configured repositories", repo)
 	}
 	result, err := s.reconciler.SyncRepo(ctx, repo)
 	s.logFirstObserved(ctx, result)
-	return err
+	return nil, err
 }
 
 // logFirstObserved is the listing-lag detector (docs/contracts/runtime.md, "Latency (M1.7c)"): one Info line per

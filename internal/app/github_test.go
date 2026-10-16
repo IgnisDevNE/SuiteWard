@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
@@ -128,12 +130,13 @@ func (c *countingReader) PullComments(context.Context, string, int) ([]githubsyn
 type paceReader struct {
 	calls    int
 	requests int
+	changed  bool // the cycle's listing was not a 304
 	at       func() time.Time
 }
 
 func (r *paceReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
 	r.calls++
-	return nil, githubsync.ReadInfo{Date: r.at(), Requests: r.requests}, nil
+	return nil, githubsync.ReadInfo{Date: r.at(), Requests: r.requests, Changed: r.changed}, nil
 }
 
 func (r *paceReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
@@ -212,6 +215,59 @@ func TestSyncTickWaitsLongerAfterAnExpensiveTick(t *testing.T) {
 	}
 	if reader.calls != 2 {
 		t.Fatal("a tick 56 s after a 420-request tick did not run")
+	}
+}
+
+func TestSyncTickWakesCommandsChecksAndMergesWhenACycleChanged(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := paceSync(t, &paceReader{requests: 1, changed: true, at: func() time.Time { return clock }}, func() time.Time { return clock })
+
+	wake, err := s.tick(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}
+	if !slices.Equal(wake, want) {
+		t.Fatalf("a tick with a changed cycle woke %v; want %v", wake, want)
+	}
+}
+
+func TestSyncTickWakesNothingWhenEveryRequestWasA304(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := paceSync(t, &paceReader{requests: 1, at: func() time.Time { return clock }}, func() time.Time { return clock })
+
+	if wake, err := s.tick(t.Context()); err != nil || len(wake) != 0 {
+		t.Fatalf("an all-304 tick = %v, %v; want no wake-ups", wake, err)
+	}
+}
+
+func TestSyncTickThatIsNotDueWakesNothing(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := paceSync(t, &paceReader{requests: 1, changed: true, at: func() time.Time { return clock }}, func() time.Time { return clock })
+	if _, err := s.tick(t.Context()); err != nil { // the first tick, always due
+		t.Fatal(err)
+	}
+
+	clock = clock.Add(time.Second)
+	if wake, err := s.tick(t.Context()); err != nil || len(wake) != 0 {
+		t.Fatalf("a tick that was not due = %v, %v; want no wake-ups", wake, err)
+	}
+}
+
+func TestSyncRepoWakesTheKindsOfATickWhenACycleChanged(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	changed := paceSync(t, &paceReader{requests: 1, changed: true, at: func() time.Time { return clock }}, time.Now)
+	unchanged := paceSync(t, &paceReader{requests: 1, at: func() time.Time { return clock }}, time.Now)
+
+	wake, err := changed.syncRepo(t.Context(), "acme/widgets")
+	if want := (river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}); err != nil || !slices.Equal(wake, want) {
+		t.Fatalf("syncRepo of a changed cycle = %v, %v; want %v", wake, err, want)
+	}
+	if wake, err := unchanged.syncRepo(t.Context(), "acme/widgets"); err != nil || len(wake) != 0 {
+		t.Fatalf("syncRepo of an all-304 cycle = %v, %v; want no wake-ups", wake, err)
+	}
+	if wake, err := changed.syncRepo(t.Context(), "someone/else"); err == nil || len(wake) != 0 {
+		t.Fatalf("syncRepo of an unconfigured repository = %v, %v; want an error and no wake-ups", wake, err)
 	}
 }
 
@@ -314,7 +370,10 @@ func TestSyncTickLogsTheListingLagDetector(t *testing.T) {
 	t1 := t0.Add(time.Minute)
 	reader := &detectorReader{dates: []time.Time{t0, t1}, comments: [][]githubsync.ObservedComment{
 		nil,
-		{{CommentID: 9, AuthorID: 7, CreatedAt: t1.Add(-time.Second), UpdatedAt: t1.Add(-time.Second), Body: "x"}},
+		{
+			{CommentID: 9, AuthorID: 7, CreatedAt: t1.Add(-time.Second), UpdatedAt: t1.Add(-time.Second), Body: "x"},      // created after the previous start: not missed
+			{CommentID: 10, AuthorID: 7, CreatedAt: t0.Add(-5 * time.Second), UpdatedAt: t0.Add(-5 * time.Second), Body: "x"}, // created before the previous start: missed
+		},
 	}}
 	reconciler, err := githubsync.NewReconciler(reader, githubsynctest.NewMemory(), time.Now, 2)
 	if err != nil {
@@ -331,8 +390,28 @@ func TestSyncTickLogsTheListingLagDetector(t *testing.T) {
 	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(logs.String(), `"msg":"github comment first observed"`) || !strings.Contains(logs.String(), `"comment":9`) {
-		t.Fatalf("a tick that recorded a first-observed comment did not log the detector line: %s", logs)
+	var withMissed, withoutMissed int
+	for _, e := range decodeLogLines(t, logs.Bytes()) {
+		if e["msg"] != "github comment first observed" {
+			continue
+		}
+		switch missed, ok := e["missed_by_ms"]; e["comment"] {
+		case float64(9):
+			if ok {
+				t.Fatalf("comment 9 (created after the previous start) has missed_by_ms: %+v", e)
+			}
+			withoutMissed++
+		case float64(10):
+			if !ok || missed != float64(5000) {
+				t.Fatalf("comment 10 (created before the previous start) has missed_by_ms %v, ok %v; want 5000", missed, ok)
+			}
+			withMissed++
+		default:
+			t.Fatalf("unexpected detector entry: %+v", e)
+		}
+	}
+	if withMissed != 1 || withoutMissed != 1 {
+		t.Fatalf("a tick logged %d detector lines with missed_by_ms and %d without; want 1 and 1: %s", withMissed, withoutMissed, logs)
 	}
 }
 
@@ -340,7 +419,7 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	store := githubsynctest.NewMemory()
 	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	wait := at.Add(30 * time.Minute)
-	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/ok", InstallationID: 2, At: at, StartedAt: at, Requests: 1}); err != nil {
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: "acme/ok", InstallationID: 2, At: at, StartedAt: at.Add(-2 * time.Second), Requests: 1}); err != nil { // GitHub's clock, not the local one
 		t.Fatal(err)
 	}
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/limited", InstallationID: 2, At: at, Kind: githubsync.FailureRateLimited, Status: 403, WaitUntil: wait}); err != nil {
@@ -357,7 +436,7 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 		"outbox":{"pending":0,"delivered":0,"failed":0},
 		"github":[
-			{"repo":"acme/ok","lastSuccess":"2026-10-11T12:00:00Z"},
+			{"repo":"acme/ok","lastSuccess":"2026-10-11T12:00:00Z","cycleStartedAt":"2026-10-11T11:59:58Z"},
 			{"repo":"acme/limited","lastError":"rate_limited (HTTP 403)","waitUntil":"2026-10-11T12:30:00Z"},
 			{"repo":"acme/down","lastError":"transport"},
 			{"repo":"acme/new"}]}`

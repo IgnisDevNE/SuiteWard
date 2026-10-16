@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands/commandstest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
@@ -607,6 +609,77 @@ func TestCommandsJobHorizonIsTheEarliestCycleStartMinusTheListingMargin(t *testi
 	}
 	if want := cjSync.Add(-5 * time.Minute).Add(-commandListingMargin); !horizon.Equal(want) {
 		t.Fatalf("horizon = %v; want the earliest start (%v) minus %v = %v", horizon, cjSync.Add(-5*time.Minute), commandListingMargin, want)
+	}
+}
+
+func TestCommandsJobHorizonFollowsTheCycleStartNotTheTimeTheCycleEnded(t *testing.T) {
+	w := newCjWorld(t)
+	started := cjSync
+	for _, id := range []int64{cjID1, cjID2} { // At, which is LastSuccess, is a minute after the cycle started on GitHub's clock
+		cycle := githubsync.Cycle{Repo: cjRepoName[id], InstallationID: 1, At: started.Add(time.Minute), StartedAt: started, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
+		if _, err := w.obs.RecordCycle(w.t.Context(), cycle); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enrollment, enrolled, err := w.owners.Current(w.t.Context())
+	if err != nil || !enrolled {
+		t.Fatalf("enrollment = %v, %v, %v", enrollment, enrolled, err)
+	}
+	horizon, ready, err := w.job.horizon(w.t.Context(), enrollment)
+	if err != nil || !ready {
+		t.Fatalf("horizon = %v, ready %v, err %v; want ready", horizon, ready, err)
+	}
+	if want := started.Add(-commandListingMargin); !horizon.Equal(want) {
+		t.Fatalf("horizon = %v; want StartedAt (%v) minus %v = %v, not derived from LastSuccess", horizon, started, commandListingMargin, want)
+	}
+}
+
+func TestCommandsJobWakesChecksAndBootstrapAfterRecordingAnEntry(t *testing.T) {
+	w := newCjWorld(t)
+	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)})
+
+	wake, err := w.job.run(t.Context())
+	if err != nil {
+		t.Fatalf("run: %v\nlogs: %s", err, w.logs)
+	}
+	if want := (river.Wake{river.ChecksKind, river.BootstrapKind}); !slices.Equal(wake, want) {
+		t.Fatalf("a run that recorded an entry woke %v; want %v", wake, want)
+	}
+}
+
+func TestCommandsJobWakesNothingWhenNothingWasPending(t *testing.T) {
+	w := newCjWorld(t)
+	w.syncAll(nil)
+
+	if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 {
+		t.Fatalf("a run with nothing pending = %v, %v; want no wake-ups", wake, err)
+	}
+}
+
+func TestCommandsJobWakesNothingWhileAnEnrolledRepositoryHasNotSynchronized(t *testing.T) {
+	w := newCjWorld(t)
+	w.observe(cjID1, cjSync, ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)) // repository 2 has no cycle
+
+	if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 {
+		t.Fatalf("a run held back by the horizon = %v, %v; want no wake-ups", wake, err)
+	}
+}
+
+func TestCommandsJobThatFailsStillWakesWhatItRecorded(t *testing.T) {
+	w := newCjWorld(t)
+	w.syncAll([]cjComment{
+		{pull: cjPull, id: 500, author: cjOwnerID, created: cjAt(10), updated: cjAt(10), body: "no command"}, // recorded
+		{pull: cjPull, id: 501, author: cjOtherID, created: cjAt(11), updated: cjAt(11), body: cjCommand("approve", "P1-R2", cjAt(11), 0)},
+	})
+	w.ledger.crashRecord = commands.IgnoredAuthor // the second entry commits and then the ledger reports a crash
+
+	wake, err := w.job.run(t.Context())
+	if !errors.Is(err, errLedger) {
+		t.Fatalf("run = %v; want the ledger failure", err)
+	}
+	w.requireDisposition(cjID1, 500, commands.NotCommand)
+	if want := (river.Wake{river.ChecksKind, river.BootstrapKind}); !slices.Equal(wake, want) {
+		t.Fatalf("a failed run woke %v after recording entries; want %v", wake, want)
 	}
 }
 

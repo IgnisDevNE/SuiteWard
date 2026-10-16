@@ -16,6 +16,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
@@ -301,6 +302,60 @@ func TestMergesPromoteAnApprovedMergeAndSayItInOneMessage(t *testing.T) {
 		t.Fatalf("the replay read %d more trees and wrote %d messages", len(w.gh.treeReads)-reads, len(w.mergeKeys()))
 	}
 	w.wantProblem("")
+}
+
+func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
+	w := newMgWorld(t)
+	w.approved(5, cjHead2, "v2", 2, 201)
+	w.leave(5)
+	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
+	w.advance(time.Minute)
+
+	wake, err := w.merges.run(t.Context())
+	if err != nil {
+		t.Fatalf("merges run: %v\nlogs: %s", err, w.logs)
+	}
+	w.wantOutcome(5, governance.MergePromoted, "")
+	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+		t.Fatalf("a run that promoted woke %v; want %v", wake, want)
+	}
+}
+
+func TestMergesWakeNothingWhenNoMergeWasPromoted(t *testing.T) {
+	t.Run("a blocked outcome", func(t *testing.T) {
+		w := newMgWorld(t)
+		w.approved(5, cjHead2, "v2", 2, 201)
+		w.leave(5)
+		w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
+		detail := w.gh.pulls[mgKey{bootRepo, 5}]
+		detail.HeadRepo = "mallory/widgets"
+		w.gh.pulls[mgKey{bootRepo, 5}] = detail
+
+		wake, err := w.merges.run(t.Context())
+		if err != nil || len(wake) != 0 {
+			t.Fatalf("a run that blocked = %v, %v; want no wake-ups", wake, err)
+		}
+		w.wantOutcome(5, governance.MergeBlocked, governance.MergeReasonForkUnsupported)
+	})
+	t.Run("a before-canonical outcome", func(t *testing.T) {
+		w := newMgBootWorld(t)
+		w.leave(4)
+		w.merged(4, cjHead3, mgSHA4, "v1", time.Minute) // the carrier, pull 5, is still open
+		w.advance(2 * time.Minute)
+
+		wake, err := w.merges.run(t.Context())
+		if err != nil || len(wake) != 0 {
+			t.Fatalf("a run that recorded before-canonical = %v, %v; want no wake-ups", wake, err)
+		}
+		w.wantOutcome(4, governance.MergeBeforeCanonical, "")
+	})
+	t.Run("nothing to decide", func(t *testing.T) {
+		w := newMgWorld(t)
+
+		if wake, err := w.merges.run(t.Context()); err != nil || len(wake) != 0 {
+			t.Fatalf("a run with nothing merged = %v, %v; want no wake-ups", wake, err)
+		}
+	})
 }
 
 func TestMergesWriteNoMessageForAMergeThatChangedNothingProtected(t *testing.T) {

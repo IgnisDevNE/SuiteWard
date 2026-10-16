@@ -44,10 +44,6 @@ var checkReasons = map[string]checkReason{
 	"bootstrap-skipped": {CheckSuccess, "Skipped before the first contract",
 		"Skipped by the owner before the first contract. No canonical contract exists and nothing was assessed on this head: this is not a contract assessment.",
 		"Next: nothing is required. Once the first contract exists, later pull requests are assessed against it."},
-	// shortcut: the checks job still emits bootstrap-pending, so it renders until the job moves to bootstrap-awaiting (M1.7b-R5b); delete it then.
-	"bootstrap-pending": {CheckInProgress, "Waiting for the first baseline",
-		"This repository has no approved baseline yet, so the contract of this head has nothing to be compared with.",
-		"Next: nothing is required on this pull request. The owner approves the bootstrap proposal on the pull request that carries it, in SuiteWard's comment there."},
 	"unchanged": {CheckSuccess, "No protected change",
 		"The protected files of this head match the canonical contract.",
 		"Next: nothing is required."},

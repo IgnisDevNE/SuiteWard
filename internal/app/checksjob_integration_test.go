@@ -122,7 +122,7 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	repository.trees[cjHead2] = &bootTree{files: bootFiles("v2")}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: repository}, calls: map[string]int{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
+	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, problems: &bootstrapProblems{},
 		logger: logger, now: func() time.Time { return bootTime.Add(time.Hour) }}
 	consent := func(action contract.ConsentAction, comment int64, proposal, pull int) {
 		t.Helper()

@@ -155,6 +155,7 @@ func TestChecksAssessTheCarrierOfAPullProposalAndMakeItReadyAfterApproval(t *tes
 
 func TestChecksSayApprovalMissingForTheCarrierOfABranchProposalUntilV1ExistsAndReadNoHead(t *testing.T) {
 	w := newCJBootWorld(t)
+	w.tree(cjHead3, bootFiles("v1"))
 	w.sync(map[int]string{4: bootHead, 5: cjHead3})
 	w.branchProposal(4)
 
@@ -174,7 +175,8 @@ func TestChecksSayApprovalMissingForTheCarrierOfABranchProposalUntilV1ExistsAndR
 	w.mustRun() // the bootstrap job promotes V1 from the approved branch proposal
 	w.mustCheck()
 
-	w.want(4, checks.Success, "unchanged", 2) // the pull request is assessed as a change against V1
+	w.want(4, checks.Success, "unchanged", 2) // the pull requests are assessed as changes against V1
+	w.want(5, checks.Success, "unchanged", 2)
 }
 
 func TestChecksSayBootstrapSkippedForASkippedPullAndReadItEveryRun(t *testing.T) {

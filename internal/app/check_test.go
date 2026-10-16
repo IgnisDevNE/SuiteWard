@@ -94,7 +94,11 @@ func newChkWorld() *chkWorld {
 // chkMessage is the message of generation 3 for a result in the given state.
 func chkMessage(t *testing.T, state checks.State, reason, reference string) governance.OutboxMessage {
 	t.Helper()
-	m, err := newCheckMessage(cmtRepo, checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: reference}, owner.TierIsolated, "V2", 3)
+	version := "V2" // no canonical version before the first contract
+	if strings.HasPrefix(reason, "bootstrap-") {
+		version = ""
+	}
+	m, err := newCheckMessage(cmtRepo, checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: reference}, owner.TierIsolated, version, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

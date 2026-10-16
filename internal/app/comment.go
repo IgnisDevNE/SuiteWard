@@ -22,7 +22,7 @@ import (
 )
 
 // The github_comment publisher (docs/contracts/runtime.md, "Outbox kind github_comment"). The payloads of
-// bootstrap-summary and bootstrap-promoted are in bootstrap.go; the acknowledgments of the command job are here.
+// bootstrap-summary, bootstrap-promoted, bootstrap-notice and bootstrap-cancelled are in bootstrap.go; the acknowledgments of the command job are here.
 
 const (
 	ackKey      = "ack"
@@ -332,7 +332,7 @@ func githubFailure(kind, key, step string, err error) error {
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
 	parts := strings.Split(key, ":")
-	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey && parts[0] != mergeKey && parts[0] != revisionKey) {
+	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey && parts[0] != bootstrapNoticeKey && parts[0] != bootstrapCancelledKey && parts[0] != mergeKey && parts[0] != revisionKey) {
 		return "", 0, "", false
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
@@ -388,6 +388,10 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		target, text, err = p.summary(key, tail, payload)
 	case bootstrapPromotedKey:
 		target, text, err = p.promoted(ctx, key, tail, payload)
+	case bootstrapNoticeKey:
+		target, text, err = p.notice(key, tail, payload)
+	case bootstrapCancelledKey:
+		target, text, err = p.cancelled(key, tail, payload)
 	case mergeKey:
 		target, text, err = p.merge(key, tail, payload)
 	case revisionKey:
@@ -586,6 +590,31 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: proposal, Revision: revision, Version: 1, Owner: state.Owner.Login})
 	})
 	return b.commentTarget, text, err
+}
+
+func (p *commentPublisher) notice(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+	n, err := decodePayload[bootstrapNoticePayload](githubCommentKind, key, payload)
+	if err != nil {
+		return commentTarget{}, "", err
+	}
+	if n.validate() != nil || tail != strconv.Itoa(n.Pull) {
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
+	}
+	text, err := render(githubCommentKind, key, commandtext.BootstrapNotice)
+	return n.commentTarget, text, err
+}
+
+func (p *commentPublisher) cancelled(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+	c, err := decodePayload[bootstrapCancelledPayload](githubCommentKind, key, payload)
+	if err != nil {
+		return commentTarget{}, "", err
+	}
+	proposal, revision, ok := parseReference(tail)
+	if !ok || c.validate() != nil || c.Reference != tail {
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
+	}
+	text, err := render(githubCommentKind, key, func() string { return commandtext.BootstrapCancelled(proposal, revision) })
+	return c.commentTarget, text, err
 }
 
 func parseVersion(s string) (int, bool) {

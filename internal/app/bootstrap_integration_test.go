@@ -47,7 +47,7 @@ func TestBootstrapJobOnPostgreSQLRunsTheFullSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
-	job := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
+	job := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, problems: &bootstrapProblems{},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
 	count := func(query string) string { return scalar(t, databaseURL, query) }
 
@@ -124,7 +124,7 @@ func TestBootstrapJobOnPostgreSQLBootstrapsEveryRepository(t *testing.T) {
 		}
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID), bootOtherRepo: newBootRepository(bootOtherRepo, bootOtherRepoID)}, calls: map[string]int{}}
-	job := &bootstrapJob{repos: []string{bootRepo, bootOtherRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
+	job := &bootstrapJob{repos: []string{bootRepo, bootOtherRepo}, reader: reader, owners: store, suites: store, content: artifacts, problems: &bootstrapProblems{},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
 	if err := job.run(t.Context()); err != nil { // creates both Suites
 		t.Fatal(err)

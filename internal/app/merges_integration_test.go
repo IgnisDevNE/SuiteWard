@@ -171,7 +171,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	repository.trees[cjHead3] = &bootTree{files: bootFiles("v3")}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: repository}, calls: map[string]int{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{},
+	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, problems: &bootstrapProblems{},
 		logger: logger, now: func() time.Time { return bootTime.Add(time.Hour) }}
 	consent := func(comment int64, proposal, pull int) {
 		t.Helper()

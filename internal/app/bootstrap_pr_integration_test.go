@@ -124,7 +124,7 @@ func TestBootstrapFromAPullRequestOnPostgreSQLEndToEnd(t *testing.T) {
 	repository := newBootRepository(bootRepo, bootRepoID)
 	repository.trees[bootHead] = &bootTree{files: map[string]string{"src/main.go": "package main\n"}}
 	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: &fakeBootReader{repos: map[string]*bootRepository{bootRepo: repository}, calls: map[string]int{}}, owners: store, suites: store,
-		content: artifacts, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
+		content: artifacts, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
 	for range 2 {
 		if err := bootstrap.run(t.Context()); err != nil {
 			t.Fatal(err)

@@ -113,7 +113,7 @@ func newCJWorld(t *testing.T, canonical bool, options ...func(*bootOptions)) *cj
 	w.reader = &cjCountingReader{fakeBootReader: b.reader, reads: map[string]int{}}
 	w.ledger = &cjRecordingLedger{Store: w.memory}
 	w.check = &checksJob{repos: b.job.repos, reader: w.reader, owners: b.owners, suites: b.suites, contents: nopContents{}, content: b.content, ledger: w.ledger, integrity: w.verdicts, commands: w.cmds,
-		pulls: b.pulls, tier: b.job.tier, problems: w.problems, logger: slog.New(slog.NewJSONHandler(b.logs, nil)), now: func() time.Time { return w.clock }}
+		pulls: b.pulls, tier: b.tier, problems: w.problems, logger: slog.New(slog.NewJSONHandler(b.logs, nil)), now: func() time.Time { return w.clock }}
 	return w
 }
 

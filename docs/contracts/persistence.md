@@ -1101,7 +1101,7 @@ This replaces the parts of the M1.7b section above that this list names.
   ```
 - Migration `00017` updates the `pr_commands` disposition CHECK.
 
-**Inventory.** `inventory.SuggestScope(entries []inventory.Entry) []string` returns the sorted, de-duplicated include patterns of the runtime contract's rule, at most 20, from file paths only.
+**Inventory.** `inventory.SuggestScope(entries []inventory.Entry) []string` returns the de-duplicated include patterns of the runtime contract's rule, from file paths only: the top-level directory globs first, then the file globs, each group sorted, then capped at 20, so the broadest suggestions survive the cap (E2, 2026-10-16).
 
 **Conformance:**
 - `LatestBootstrapProposal`: the newest wins, a promoted one is excluded, and both kinds are returned.

@@ -120,6 +120,11 @@ func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull
 		BodyDigest: digest, Disposition: commands.Disposition(row.Disposition), Operation: contract.OperationID(row.OperationID.String), DecidedAt: observedTime(row.DecidedAt)}, true, nil
 }
 
+// Skipped implements commands.Store.
+func (s *Store) Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error) {
+	return false, nil
+}
+
 // Instance implements commands.Store.
 func (s *Store) Instance(ctx context.Context) (string, error) {
 	id, err := dbgen.New(s.pool).GetInstanceID(ctx)

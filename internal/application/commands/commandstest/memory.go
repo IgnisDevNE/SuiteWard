@@ -157,6 +157,11 @@ func (m *Memory) LatestOwnerCommand(ctx context.Context, repositoryID int64, pul
 	return latest, found, nil
 }
 
+// Skipped implements commands.Store.
+func (m *Memory) Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error) {
+	return false, nil
+}
+
 // Instance implements commands.Store.
 func (m *Memory) Instance(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {

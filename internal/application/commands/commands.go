@@ -42,6 +42,10 @@ const (
 	ReplayedCode     Disposition = "replayed-code"     // owner-authored, the step was used by another command
 	UnknownProposal  Disposition = "unknown-proposal"  // owner-authored, valid code, for a proposal that does not exist on an existing Suite
 	Processed        Disposition = "processed"         // passed to ProcessConsent; the receipt holds the outcome
+	Proposed         Disposition = "proposed"          // owner-authored /suiteward propose that created or reused a bootstrap proposal; no operation id
+	ProposeRefused   Disposition = "propose-refused"   // owner-authored /suiteward propose that was refused; no operation id
+	Skipped          Disposition = "skipped"           // owner-authored /suiteward skip with a good code: the PR may merge before the first contract; no operation id
+	SkipRefused      Disposition = "skip-refused"      // owner-authored /suiteward skip that was refused; no operation id
 )
 
 var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed}
@@ -89,6 +93,9 @@ type Store interface {
 	// unknown-proposal, edited-first, no-suite, processed). Other dispositions never count, so an ordinary
 	// comment never hides an earlier rejected command. ErrInvalid for a non-positive id or a pull out of range.
 	LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (Entry, bool, error)
+	// Skipped reports whether the pull has a `skipped` entry whose comment was created at or after since (the current
+	// enrollment's enrolled_at). ErrInvalid for a non-positive id or a pull out of range.
+	Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error)
 	// Instance returns this installation's random identifier, created by migration 00013 and never changed.
 	Instance(ctx context.Context) (string, error)
 }

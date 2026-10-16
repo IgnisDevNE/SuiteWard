@@ -226,7 +226,8 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 
 	run("Record stores every disposition", func(e *cmdEnv) {
 		all := []commands.Disposition{commands.NotCommand, commands.BeforeEnrollment, commands.NoSuite, commands.EditedFirst, commands.Failed,
-			commands.IgnoredAuthor, commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.Processed}
+			commands.IgnoredAuthor, commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.Processed,
+			commands.Proposed, commands.ProposeRefused, commands.Skipped, commands.SkipRefused}
 		for i, d := range all {
 			e.must(e.store.Record(e.ctx, entry(10, int64(i+1), d), nil))
 			e.must(e.store.Record(e.ctx, entry(10, int64(i+1), d), nil)) // stored: a repeat is the same entry
@@ -429,7 +430,8 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 
 	run("LatestOwnerCommand counts only the command dispositions", func(e *cmdEnv) {
 		counted := []commands.Disposition{commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.Processed}
-		ignored := []commands.Disposition{commands.NotCommand, commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor}
+		ignored := []commands.Disposition{commands.NotCommand, commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor,
+			commands.Proposed, commands.ProposeRefused, commands.Skipped, commands.SkipRefused}
 		// A new disposition must be placed in exactly one set, so it cannot drift between IsCommand and the store's own list.
 		placed := map[commands.Disposition]int{}
 		for _, d := range counted {
@@ -470,6 +472,66 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 				e.t.Fatalf("after a %s command and ordinary comments: LatestOwnerCommand = %+v, found %v; want comment %d", d, got, found, want)
 			}
 		}
+	})
+
+	run("a skipped or proposed command never replaces the owner's latest approve or revoke", func(e *cmdEnv) {
+		record := func(comment int64, d commands.Disposition) {
+			x := entry(10, comment, d)
+			x.AuthorID = ownerAccount
+			e.must(e.store.Record(e.ctx, x, nil))
+		}
+		record(1, commands.InvalidCode) // a rejected approve
+		for i, d := range []commands.Disposition{commands.Skipped, commands.SkipRefused, commands.Proposed, commands.ProposeRefused} {
+			record(int64(i+2), d)
+			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount)
+			e.must(err)
+			if !found || got.CommentID != 1 || got.Disposition != commands.InvalidCode {
+				e.t.Fatalf("after %s: LatestOwnerCommand = %+v, found %v; want the rejected approve, comment 1", d, got, found)
+			}
+		}
+	})
+
+	run("Skipped is true for a skipped entry of the pull created at or after since", func(e *cmdEnv) {
+		skip := func(repository, comment int64, pull, created int, d commands.Disposition) {
+			x := entry(repository, comment, d)
+			x.PullNumber, x.CreatedAt = pull, cmdTime(created)
+			e.must(e.store.Record(e.ctx, x, nil))
+		}
+		skipped := func(repository int64, pull, since int, want bool) {
+			e.t.Helper()
+			got, err := e.store.Skipped(e.ctx, repository, pull, cmdTime(since))
+			e.must(err)
+			if got != want {
+				e.t.Fatalf("Skipped(%d, %d, since %d) = %v; want %v", repository, pull, since, got, want)
+			}
+		}
+		skipped(10, 1, 0, false) // nothing recorded
+		skip(10, 1, 1, 5, commands.Skipped)
+		skipped(10, 1, 5, true) // created exactly at since counts
+		skipped(10, 1, 4, true)
+		skipped(10, 1, 6, false) // created before the current enrollment
+		skipped(10, 2, 0, false) // another pull
+		skipped(20, 1, 0, false) // another repository
+		for i, d := range []commands.Disposition{commands.SkipRefused, commands.Proposed, commands.ProposeRefused, commands.Processed, commands.NotCommand} {
+			skip(10, int64(10+i), 3, 8, d)
+		}
+		skipped(10, 3, 0, false) // only a skipped entry counts
+		skip(10, 20, 3, 2, commands.Skipped)
+		skipped(10, 3, 3, false) // an older skip does not count, whatever else the pull holds
+		skipped(10, 3, 2, true)
+		for name, args := range map[string]struct {
+			repository int64
+			pull       int
+		}{"repository": {0, 1}, "pull": {10, 0}, "huge pull": {10, 1 << 31}} {
+			_, err := e.store.Skipped(e.ctx, args.repository, args.pull, cmdTime(0))
+			if !errors.Is(err, commands.ErrInvalid) {
+				e.t.Fatalf("%s: error = %v; want ErrInvalid", name, err)
+			}
+		}
+		ctx, cancel := context.WithCancel(e.ctx)
+		cancel()
+		_, err := e.store.Skipped(ctx, 10, 1, cmdTime(0))
+		e.requireErr(err, context.Canceled)
 	})
 
 	run("LatestOwnerCommand rejects an invalid request", func(e *cmdEnv) {

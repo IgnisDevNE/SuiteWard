@@ -43,6 +43,8 @@ const (
 	EmptyInventory
 	Carrier
 	InvalidSource
+	NotOpen
+	BaseNotTarget
 )
 
 // Rejection is the domain reason of a Rejected outcome.

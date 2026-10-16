@@ -236,6 +236,21 @@ func TestCheckPublisherDropsAStaleGeneration(t *testing.T) {
 	}
 }
 
+// An upgrade can leave a pending message of a reason the renderer no longer knows (bootstrap-pending was removed in the M1.7b
+// rework): once a newer generation superseded it, it is dropped, not failed.
+func TestCheckPublisherDropsAStaleMessageOfAReasonThatNoLongerExists(t *testing.T) {
+	w := newChkWorld()
+	w.ledger.record.Generation = 4
+	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
+	m.Payload = bytes.Replace(m.Payload, []byte("assessment-pending"), []byte("bootstrap-pending"), 1)
+	if err := w.deliver(m); err != nil {
+		t.Fatalf("a stale message of a removed reason must be dropped: %v", err)
+	}
+	if len(w.runner.posts()) != 0 || len(w.runner.listed) != 0 {
+		t.Fatal("GitHub was called for a stale message")
+	}
+}
+
 func TestCheckPublisherErrorsWhenTheLedgerCannotConfirmTheGeneration(t *testing.T) {
 	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
 	for name, set := range map[string]func(*fakeLedger){

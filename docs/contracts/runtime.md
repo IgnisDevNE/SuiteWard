@@ -317,7 +317,9 @@ This replaces these parts of the section above: "Who writes what", the `github_b
      - `branch`: the PR's head ref, for the link.
 
      When no test-like path is found, `suggestion` is empty. The text then gives a minimal `version: 1` with an `include:` placeholder to fill in, and the link carries that minimal file. The text shows the YAML and the link `https://github.com/<repo>/new/<path-escaped branch>?filename=.suiteward.yml&value=<URL-encoded YAML>` (verified 2026-10-16 on SuiteWardQ2: GitHub fills both the name and the content).
-3. **Empty inventory.** An empty inventory gives `propose-refused`, reason `empty-inventory`.
+3. **Invalid or empty source.**
+   - A source that cannot be read as a contract gives `propose-refused`, reason `invalid-source`: an invalid `.suiteward.yml`, a protected path that is a link, or a truncated tree. These are the cases the bootstrap job reports as `invalid-source`. They are deterministic, so they are refused rather than retried (clarified 2026-10-16).
+   - An empty inventory gives `propose-refused`, reason `empty-inventory`. A source that has `.suiteward.yml` always covers that file, so this cannot happen. The job treats it as an invalid state, an error, and the reason stays reserved.
 4. **Idempotent reuse.** If the Suite's latest bootstrap proposal is carried by this PR, and its current revision has the same origin and coverage as the source, reuse it: no new proposal. Record `proposed` with a short acknowledgment, "already proposed as `P<n>-R<m>`". This covers a retry after a failure between the proposal and the ledger write, and a repeated `propose` on an unchanged PR.
 5. **Otherwise propose.** Call `ProposeBaseline`:
    - `P<n+1>-R1`, with `n` the Suite's highest proposal number;
@@ -326,7 +328,7 @@ This replaces these parts of the section above: "Who writes what", the `github_b
    - with the `bootstrap-summary` message as the acknowledgment.
 
    Record `proposed`.
-6. **Errors.** A transient GitHub or store error is an error of this candidate. It follows the D-COMMANDS retry rule: the run stops, and after 5 attempts the candidate is recorded `failed`. A `propose` recorded `failed` gets an acknowledgment that tells the owner to comment `/suiteward propose` again.
+6. **Errors.** Only a transient GitHub read or store error is an error of this candidate. It follows the D-COMMANDS retry rule: the run stops, and after 5 attempts the candidate is recorded `failed`. A `propose` recorded `failed` gets an acknowledgment that tells the owner to comment `/suiteward propose` again.
 7. **Known limit.** The reads run inside the single serialized commands job and its `JOB_TIMEOUT`: the default-branch tree, possibly the PR tree, and one blob per protected file. At about 0.37 s per request (S1), about 150 protected files fill one run of the default 1 minute. A larger source times out, delays every command behind it for 5 runs, and then ends `failed`, with its acknowledgment. Raising `JOB_TIMEOUT` or moving the reads out of the queue comes in M1.7c or later.
 
 **`github_commands`: `/suiteward skip <code>`.** Owner-authored. The code is checked and consumed as for `approve`, with the same dispositions for a bad code.

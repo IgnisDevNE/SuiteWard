@@ -167,7 +167,7 @@ The assessment emitter is the service principal `suiteward` (kind Service).
 - **`/suiteward propose`.** No reference and no code: it only creates a proposal, which grants nothing.
 - **`/suiteward skip <code>`.** No reference, and it carries a TOTP code verified and consumed like `approve`. It lets a PR pass the check before the first contract.
 
-Their dispositions are `proposed`, `propose-refused`, `skipped` and `skip-refused`. They follow the existing serialized order and retry rules. A propose whose GitHub read fails is retried, and recorded `failed` after 5 attempts, like any other candidate. The rules are in D-CHECKS (amendment of 2026-10-16).
+Their dispositions are `proposed`, `propose-refused`, `skipped` and `skip-refused`. They follow the existing serialized order and retry rules. A propose whose GitHub read fails is retried, and recorded `failed` after 5 attempts, like any other candidate. A source that cannot be read as a contract (an invalid declaration, a link, a truncated tree) is deterministic: it is refused at once with reason `invalid-source`, so it never stalls the queue (clarified 2026-10-16). The rules are in D-CHECKS (amendment of 2026-10-16).
 
 ### D-CHECKS: The `SuiteWard / Contract` check
 

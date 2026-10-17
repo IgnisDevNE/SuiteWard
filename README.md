@@ -27,8 +27,11 @@ Delivered:
 - **GitHub walking skeleton (S1).** An end-to-end spike on both verification targets; the findings are in [s1-github](docs/spikes/s1-github.md).
 - **Runtime (M1.2).** `suiteward serve` and `suiteward probe`: configuration from the environment and secret files, migrations on start, River jobs enqueued in the same transaction as the governance write, a publication outbox with a relay, `/healthz`, `/readyz` and `/status`, graceful shutdown, and one container image built in CI, deployed and smoke-tested locally under Podman and on an isolated remote host.
 - **Scope and inventory (M1.3).** `.suiteward.yml` parsing with protected defaults, the exact protected inventory of a source tree, classification of a candidate as unchanged, protected change or scope reduction, proposal revisions, and the baseline proposal that feeds the existing-baseline bootstrap.
+- **GitHub integration and owner flows (M1.4 to M1.7c).** GitHub App authentication and pull request discovery without webhooks, owner enrollment with TOTP, the explicit bootstrap (`/suiteward propose` and `skip`), the `SuiteWard / Contract` check, approval of an exact revision, promotion on merge, canonical integrity checks, and command and check latency of tens of seconds.
 
-Not implemented yet: the GitHub integration in the service, owner enrollment and TOTP, the approval, check, and promotion flows on GitHub, integrity assessment, and canonical test execution. Next is M1.4 (GitHub App authentication and pull request discovery). The roadmap is in the [delivery plan](docs/plan/README.md) and the open product gates are in the [decision register](docs/plan/decisions.md).
+**MVP (M1.8), in acceptance.** SuiteWard is self-hosted, as a container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`), installed from the [install guide](docs/install.md), with a plain backup and restore runbook ([backup](docs/backup.md)). Acceptance runs a fresh install on both verification targets, and the first release candidate is `v0.1.0-rc.1`. There is no final release yet.
+
+Not implemented: canonical test execution (M2), a native binary, encrypted backups and guided restore, and a managed service. The roadmap is in the [delivery plan](docs/plan/README.md) and the open product gates are in the [decision register](docs/plan/decisions.md).
 
 ## Architecture
 
@@ -38,7 +41,7 @@ The [ADR index](docs/decisions/README.md) maps the decisions; the [persistence](
 
 ## Run and develop
 
-Run the service with `suiteward serve`, which needs `SUITEWARD_DATABASE_URL` (PostgreSQL) and `SUITEWARD_ARTIFACT_DIR` (an absolute path); every setting, endpoint, and exit code is in the [runtime contract](docs/contracts/runtime.md). The image is `ghcr.io/ignisdevne/suiteward`, and [deploy/](deploy/) holds the local Podman stack, the quadlets, and the host runbook.
+Run the service with `suiteward serve`, which needs `SUITEWARD_DATABASE_URL` (PostgreSQL) and `SUITEWARD_ARTIFACT_DIR` (an absolute path); every setting, endpoint, and exit code is in the [runtime contract](docs/contracts/runtime.md). The image is `ghcr.io/ignisdevne/suiteward`, and [deploy/](deploy/) holds the local Podman stack, the quadlets, and the host runbook. To install SuiteWard, follow the [install guide](docs/install.md); to back up, restore, or re-bootstrap an instance, follow the [backup runbook](docs/backup.md).
 
 Development targets Windows, with Windows and Linux CI and local PostgreSQL in Podman. In PowerShell 7, prepare a checkout with `./scripts/dev.ps1 setup`, verify it with `./scripts/dev.ps1 doctor`, and run checks with `./scripts/dev.ps1 check`. Domain-only work needs no database or containers. See [local development](docs/local-development.md) for pinned tools, isolated worktree databases, and commands, and [CI and coverage](docs/ci-and-coverage.md) for the checks and the coverage policy.
 

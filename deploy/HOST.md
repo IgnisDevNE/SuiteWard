@@ -1,4 +1,4 @@
-# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5, M1.6a, M1.6b, M1.7, M1.7b and M1.7c
+# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5, M1.6a, M1.6b, M1.7, M1.7b, M1.7c and M1.8
 
 Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, Podman 4.9.3, rootless for the unprivileged `suiteward` user. No inbound ports and no SSH daemon: you administer it through SSM Session Manager from your own workstation. This runs the product image and its PostgreSQL as two rootless containers from the Quadlet units in `deploy/quadlet/`. It needs three secrets, all Podman secrets mounted as files: a generated database password (section 3, you never type it), the GitHub App's private key and a generated MCP token (section 4a, M1.4). The three non-secret GitHub settings live in a host file you write (section 4a).
 
@@ -7,7 +7,7 @@ Never paste into chat, a file, a PR, or a log: any password or database URL, a G
 ## 0. Before the host steps (GitHub, once)
 
 1. The first run of the `Deploy` workflow creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the first run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5`, `phase/M1.6a`, `phase/M1.6b` (each phase builds from its branch) and `main` (once merges to `main` should promote) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
+2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5`, `phase/M1.6a`, `phase/M1.6b` (each phase builds from its branch) and `main` (since M1.8, a push to `main` triggers the deployment, and its `promote` waits for your approval like the others) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
 3. M1.6b (section 6c) needs `phase/M1.6b` in that list before its first `promote`; the other branches stay.
 
 ## 1. Open a session
@@ -779,12 +779,12 @@ No code, token, setup output or secret in tickets, logs or messages. The warning
 
 ## 6g. MVP acceptance (M1.8)
 
-M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/install.md) alone, protects a real repository end to end on both verification targets, with the backup and re-bootstrap runbooks rehearsed first ([the M1.8 exit](../docs/plan/phases/M1.8.md); [D-RELEASE, D-INSTALL and D-COMMANDS](../docs/plan/decisions.md)). This is the owner's rehearsal of an end user's experience, not another dev-loop verification: every install step below points to a section of [install.md](../docs/install.md) or [backup.md](../docs/backup.md) and never copies its commands. If following the guide alone needs anything else, record it as a guide gap (6g.8); the acceptance fails until the guide is fixed. Only the release tag, the dev-loop backup rehearsal of the running host, the paste-backs and the TOTP measurement below come from this file.
+M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/install.md) alone, protects a real repository end to end on both verification targets, with the backup and re-bootstrap runbooks rehearsed, the backup first and the re-bootstrap last ([the M1.8 exit](../docs/plan/phases/M1.8.md); [D-RELEASE, D-INSTALL and D-COMMANDS](../docs/plan/decisions.md)). This is the owner's rehearsal of an end user's experience, not another dev-loop verification: every install step below points to a section of [install.md](../docs/install.md) or [backup.md](../docs/backup.md) and never copies its commands. If following the guide alone needs anything else, record it as a guide gap (6g.8); the acceptance fails until the guide is fixed. Only the release tag, the dev-loop backup rehearsal of the running host, the maintainer check of `/licenses` in the image (6g.6 step 4), the paste-backs and the TOTP measurement below come from this file.
 
 ### 6g.1 Before you start (owner)
 
 1. The orchestrator pushes the tag `v0.1.0-rc.1`, with your authorization quoting the commit ([D-RELEASE](../docs/plan/decisions.md)).
-2. Approve the `release` environment run. Expect the image `ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`, and that `latest-stable` does not move: a pre-release never moves it.
+2. Approve the `release` environment run. The `release` environment exists: you created it on 2026-10-17, with yourself as the required reviewer and deployments from the tags `v*.*.*` only. If `publish` starts without waiting for your approval, the environment is unprotected: stop and report it. Otherwise approve, and expect the image `ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`, and that `latest-stable` does not move: a pre-release never moves it.
 3. Create two new test repositories, one per target. This runbook calls them `<host-repo>` and `<local-repo>`; you name them. Make them public, or use a plan that enforces rulesets, otherwise install.md section 7 reports `enforcement-unavailable`.
    - **On `main`, before the ruleset.** Each repository gets a file in `tests/` and a CI workflow that gives the test check. The ruleset requires that check, and once it is on, `main` takes changes only through pull requests. `.github/workflows/**` is protected by default, so the workflow becomes part of V1; that is expected.
    - **`<host-repo>` only:** its `main` also holds `.suiteward.yml` with `version: 1` and `include: [tests/**]` (as in 6e.4).
@@ -825,9 +825,20 @@ Expected, and not guide gaps:
 ### 6g.6 End to end on `<host-repo>`
 
 1. **Default-branch bootstrap.** `.suiteward.yml` is already on `main` (6g.1). Open a PR from `feature/acceptance` and comment `/suiteward propose`. Expect a `branch` baseline ([install.md section 8](../docs/install.md#8-first-use-bootstrap)). Approve it, and V1 follows. Then merge the PR.
-2. **A blocked PR.** On a new branch, open a PR that changes `tests/`. It stays `in_progress` until you approve it ([install.md section 9](../docs/install.md#9-day-to-day)).
-3. **TOTP approval, then merge, then promotion.** Run 6d.3 step 2 on the PR of step 2: approve it and merge it with a merge commit, which gives V2. Then run 6d.3 step 6 on a new PR: a correction back to V1's files.
-4. **Final `/status`.** Expect `merges` absent, `integrity` `passed`, `outbox.failed` 0, and `protection` `enforced`.
+2. **A blocked PR.** On a new branch, open a PR that changes `tests/`. It stays `in_progress` until you approve it ([install.md section 9](../docs/install.md#9-day-to-day)). Observe that GitHub's merge box blocks the merge while the check is `in_progress`.
+3. **TOTP approval, then merge, then promotion.** Run 6d.3 step 2 on the PR of step 2: approve it and merge it with a merge commit, which gives V2. Then open a new PR that restores V1's protected files exactly and follow [install.md, Correcting the canonical](../docs/install.md#correcting-the-canonical): approve it and merge it. The promotion comment says that it is a correction of the current version.
+4. **Final `/status`.** Expect `merges` absent, `integrity` `passed`, `outbox.failed` 0, and `protection` `enforced`. Expect also `version` `v0.1.0-rc.1`, `source` `https://github.com/IgnisDevNE/SuiteWard/tree/v0.1.0-rc.1` and `tier` `isolated`. Check that the promotion comments of step 3 say that SuiteWard did not run the tests. Then check that `/licenses/LICENSE` and `/licenses/THIRD_PARTY_NOTICES` are in the image. The image is distroless and has no shell, so copy the directory out of a created container into a scratch directory. These commands are a maintainer check, not a step of the guide, and the guide's reader does not run them. As `suiteward`:
+
+   ```
+   d=$(mktemp -d)
+   podman create --name suiteward-licenses ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1
+   podman cp suiteward-licenses:/licenses "$d"
+   ls "$d/licenses"
+   podman rm suiteward-licenses
+   ```
+
+   Expect `LICENSE` and `THIRD_PARTY_NOTICES`.
+5. **Re-bootstrap from the protected default branch.** Back up first ([backup.md section 2](../docs/backup.md#2-back-up)), then follow [backup.md section 4](../docs/backup.md#4-re-bootstrap-from-the-protected-default-branch) as written, on `<host-repo>`. Its `main` now holds V2 and the correction, so this checks that the first contract can be proposed again from the protected files. Keep the order of that section: purge the data volumes (the secrets stay, and so does the same App), run `setup` again with a new authenticator entry, then comment `/suiteward propose` on a new PR opened from the current `main`. Expect a `branch` baseline whose origin is the current `main` commit. Review the origin commit and the file list in the proposal comment, approve with a fresh code, and expect V1. Paste back the proposal's origin commit and `/status` (6g.8).
 
 ### 6g.7 Co-located acceptance on `<local-repo>`
 
@@ -840,7 +851,7 @@ Then follow install.md sections 5, 6 and 7 with `-Image ghcr.io/ignisdevne/suite
 - Open the link and check that GitHub fills both the file name and the content, on the branch `feature/acceptance`.
 - Commit the file. Then, as install.md section 8 says, wait about a minute, propose again, approve, and merge. V1 follows.
 
-Run 6g.6 steps 2 to 4 on `<local-repo>`. Then rehearse [backup.md section 5](../docs/backup.md#5-rehearse-on-the-co-located-stack), with the kept `.pem`, and delete the `.pem` afterwards. Then put the stack back without GitHub, as 6f.6 does.
+Run 6g.6 steps 2 to 4 on `<local-repo>`, except that step 4 expects `tier` `co-located` and does not repeat the `/licenses` check: it is the same image, already checked on the host. The co-located re-bootstrap (6g.6 step 5) is out of scope: the co-located side rehearses only the restore. Then rehearse [backup.md section 5](../docs/backup.md#5-rehearse-on-the-co-located-stack), with the kept `.pem`, and delete the `.pem` afterwards. Then put the stack back without GitHub, as 6f.6 does.
 
 ### 6g.8 What to paste back
 
@@ -848,13 +859,15 @@ Run 6g.6 steps 2 to 4 on `<local-repo>`. Then rehearse [backup.md section 5](../
 - the first line of each SuiteWard comment;
 - the `/status` before and after for 6g.2;
 - the 6g.3 fields;
+- from 6g.6 step 4, the `/status` `version`, `source` and `tier` of each target (`isolated` on the host, `co-located` locally), and the result of the `/licenses` check on the host;
+- from 6g.6 step 5, the proposal's origin commit, and the `/status` after V1;
 - the list of guide gaps.
 
 Never a code, a token, an `otpauth://` URI or setup output.
 
 ### 6g.9 Never
 
-Keep the warnings of 6e.6, and add: never purge before 6g.2 and 6g.3 are done and the backup has an off-host copy.
+Keep the warnings of 6e.6, and add: never purge before 6g.2 and 6g.3 are done and the backup has an off-host copy, and never run the purge of 6g.6 step 5 without a fresh backup.
 
 ## 7. Reach `/status`
 

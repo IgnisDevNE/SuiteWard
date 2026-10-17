@@ -77,7 +77,6 @@ Development is test-first for authority, consent, promotion, idempotency, concur
 - Effective-protection comparison and the check lifecycle (D-PROTECTION, D-CHECKS).
 - Supported merge contexts and strict GitHub gate-to-merge-to-promotion coordination; same-SHA PRs and a merged PR whose promotion fails need validated handling (D-INTEGRATION).
 - Final polling numbers, from the S1 walking skeleton.
-- Supported production platforms and the AGPL only-versus-or-later grant and notices (D-RELEASE).
 - M2's first supported execution ecosystem and RunnerProfile (D-EXECUTION).
 - Future managed execution location and trust model.
 - Post-MVP: the items deferred above (encrypted backups, guided restore, Release backups, priority queue, automatic protection setup and repair, first-test-PR bootstrap).

@@ -9,7 +9,7 @@ Two rules apply to every command:
 
 ## 1. What SuiteWard does and does not do
 
-SuiteWard blocks a pull request that changes the protected test files until the owner approves that exact revision. Until then, its `SuiteWard / Contract` check stays pending. When the pull request merges, SuiteWard checks the approval and the integrity of the protected files at the merge commit, and promotes the approved contract as the new canonical version.
+SuiteWard keeps the `SuiteWard / Contract` check of a pull request that changes the protected test files pending until the owner approves that exact revision, and your ruleset (section 7) blocks the merge: SuiteWard does not block it by itself. When the pull request merges, SuiteWard checks the approval and the integrity of the protected files at the merge commit, and promotes the approved contract as the new canonical version.
 
 SuiteWard does not run your tests, and it does not claim that your CI ran them. A merge is not proof that the tests ran, passed or are correct. Your review and your own test check decide that. The full statement is in [ADR 0014](decisions/0014-merge-triggered-canonical-promotion.md).
 
@@ -27,7 +27,7 @@ Never let two SuiteWard instances watch the same repository; one instance serves
 ## 3. Prerequisites
 
 - **Rootless Podman.** The units for the isolated host were checked with Podman 4.9.3. Section 10 checks your version.
-- **Co-located PC:** Windows with PowerShell 7.2 or later, run as `pwsh` (not Windows PowerShell 5.1), and a Podman machine.
+- **Co-located PC:** Windows with PowerShell 7.2 or later, run as `pwsh` (not Windows PowerShell 5.1), and a Podman machine. The co-located path (section 5) is Windows only: it runs `deploy/local.ps1`.
 - **Isolated host:** Linux with systemd user services (checked on Ubuntu 24.04), and an unprivileged account for SuiteWard. This guide calls it `suiteward`. Each step on this host is marked "as `suiteward`" or "as the administrator" (the steps with `sudo`). Use administrator rights only for the steps marked "as the administrator".
 - **An authenticator app** that scans an `otpauth://` URI or accepts a base32 secret.
 - **A GitHub account** that owns or administers the repositories, and up to 20 repositories to protect. The owner's login must be a user account, not an organization or a bot.
@@ -38,6 +38,7 @@ Never let two SuiteWard instances watch the same repository; one instance serves
 Create the App by hand, and tick each box when it is done:
 
 - [ ] Create a GitHub App under your user account, or under an organization you administer.
+- [ ] Set the **Homepage URL**. GitHub requires one, and any URL works, for example the repository's.
 - [ ] Leave the webhook inactive: uncheck **Active**. SuiteWard polls GitHub and receives no webhooks.
 - [ ] Set the repository permissions to exactly these, and nothing else:
   - Metadata: Read-only (GitHub requires it)
@@ -45,7 +46,8 @@ Create the App by hand, and tick each box when it is done:
   - Contents: Read-only
   - Administration: Read-only
   - Checks: Read and write
-- [ ] Generate a private key. GitHub downloads a `.pem` file. Keep it somewhere safe until section 5 or 10 stores it. Never commit it.
+- [ ] Answer "Where can this GitHub App be installed?" with **Only on this account**.
+- [ ] Generate a private key. GitHub downloads a `.pem` file. Keep it somewhere safe until section 5 or 10 stores it. Never commit it. Do this before the next item: the private key must exist before GitHub allows the installation.
 - [ ] Install the App on the repositories you want to protect, and no others. The limit is 20.
 - [ ] Note the **App ID** (on the App's settings page) and the **installation ID** (the number in the address of the installation's settings page).
 
@@ -105,7 +107,7 @@ Expect `"tier":"co-located"` in the output.
 
 To stop the stack and keep its state, run `./deploy/local.ps1 -Down`. Expect the two containers to be removed while the volumes and secrets stay. Start again with the command of step 5.3; the key file is not needed again.
 
-`./deploy/local.ps1 -Down -Purge` also removes the database, the artifact volume, the secrets, the MCP token copy and the network. That deletes your TOTP enrollment and every contract version. Use it only to start over, and back up first (section 11).
+`./deploy/local.ps1 -Down -Purge` also removes the database, the artifact volume, the secrets, the MCP token copy and the network. That deletes your TOTP enrollment and every contract version. Use it only to start over, and back up first (section 11, step 11.1, and [the backup runbook](backup.md)).
 
 ## 6. Run setup
 
@@ -244,9 +246,13 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 | failure, `integrity-failed` | A canonical artifact no longer matches its integrity record. SuiteWard fails the check on every pull request of that repository and does not promote; it does not block merges by itself — your branch protection does that, if you require the check. Restore the artifact from a trusted copy or a backup, never edit the database, and restart the service: it re-verifies at once. On the isolated host, use the restart command of step 11.3. On the co-located PC, run the `./deploy/local.ps1` command of step 5.3 again, with the same `-Image` and the three GitHub parameters. |
 | failure, `owner-command-rejected` | Your last `approve` or `revoke` was rejected. Post a valid command, or push a new head. |
 
-A success means that the protected files match what the owner approved. It never means that your tests ran or passed. Your own test check decides that.
+A success means that the protected files match what the owner approved, except `bootstrap-skipped`, where nothing was assessed. It never means that your tests ran or passed. Your own test check decides that.
 
 **At merge.** When a pull request with an approved revision merges, SuiteWard comments naming the new canonical version — or, if it could not promote, a comment saying it did not promote, with the reason (the merged files do not match the approved revision, for example a rebase that brought in another change). Recover with a new pull request: one that restores the protected files of the last canonical version, or one that carries the merged content for a new exact approval ([D-INTEGRATION](plan/decisions.md)). There is no reset command.
+
+### Correcting the canonical
+
+A correction puts the previous version's protected files back. Open a pull request whose protected files equal the previous version's exactly, for example a revert of the last protected merge, approve its revision like any other, and merge it. SuiteWard promotes a new version that holds the previous version's files, and its comment says that it is a correction of the current version. The version it corrects is kept: SuiteWard erases no version ([ADR 0018](decisions/0018-corrective-pr-rollback-and-audit-history.md)). Any other difference from the previous version's files is an ordinary promotion, not a correction.
 
 ## 10. Running on a separate host (operators)
 
@@ -494,7 +500,7 @@ cat > ~/.config/containers/systemd/suiteward-db.container
 cat > ~/.config/containers/systemd/suiteward.container
 ```
 
-After you paste `suiteward.container`, make two edits. Set its `Image=` line to `Image=ghcr.io/ignisdevne/suiteward:vX.Y.Z`, and delete the `AutoUpdate=registry` line. Keep `Environment=SUITEWARD_INSTALLATION_TIER=isolated`. The database unit stays as it is: its image is pinned by digest.
+After you paste `suiteward.container`, make two edits. Set its `Image=` line to `Image=ghcr.io/ignisdevne/suiteward:vX.Y.Z`, and delete the `AutoUpdate=registry` line. Keep `Environment=SUITEWARD_INSTALLATION_TIER=isolated` only if your coding agent cannot reach this account. Otherwise set it to `co-located` ([ADR 0027](decisions/0027-agent-human-trust-separation.md)). The database unit stays as it is: its image is pinned by digest.
 
 **10.10 Check that Podman reads every unit (as `suiteward`).** Check the Podman version, then run the generator's dry run:
 
@@ -582,7 +588,7 @@ Expect `{"schemaVersion":N,"status":"ready"}`, where `N` is the schema version o
 curl -s http://127.0.0.1:8081/status
 ```
 
-Expect JSON with `"tier":"isolated"`, `outbox.failed` at 0 and `jobs.discarded` at 0. The `github` list fills in after the first synchronization succeeds, and the `owner` field appears after setup (section 6).
+Expect JSON with `"tier"` set to the tier you chose (section 10, step 10.9's `SUITEWARD_INSTALLATION_TIER`), `outbox.failed` at 0 and `jobs.discarded` at 0. The `github` list fills in after the first synchronization succeeds, and the `owner` field appears after setup (section 6).
 
 The port is published on the host's loopback only. To read `/status` from another machine, forward the port with your own remote-access tool. SuiteWard does not provide one.
 
@@ -592,7 +598,7 @@ The host install is done: continue with setup (section 6), the ruleset (section 
 
 Pin one release, and update when you choose. Updates are manual unless you opt in, as described below.
 
-**11.1 Back up first.** The service runs database migrations when it starts. After a migration, an older image refuses to start, and there is no rollback to an older image. See the backup runbook, `docs/backup.md`. The backup holds the TOTP secret and the enrollment, so store it as a secret.
+**11.1 Back up first.** The service runs database migrations when it starts. After a migration, an older image refuses to start, and there is no rollback to an older image. See [the backup runbook](backup.md). The backup holds the TOTP secret and the enrollment, so store it as a secret.
 
 **11.2 Pull the new release image.** Use the new `vX.Y.Z`. On the isolated host, run it as `suiteward`:
 
@@ -660,9 +666,9 @@ Where you set them:
 
 SuiteWard is licensed under `AGPL-3.0-only`. The license text is in the repository's `LICENSE` file. The image carries that text as `/licenses/LICENSE`, and the license of every module it links as `/licenses/THIRD_PARTY_NOTICES`.
 
-`/status` reports the URL of the exact source revision the binary was built from, as `source`. For a release, that is `https://github.com/IgnisDevNE/SuiteWard/tree/vX.Y.Z`. If `source` is absent, the build set none.
+`/status` reports the URL of the exact source revision the binary was built from, as `source`. The project chose this as its pointer to the source ([D-RELEASE](plan/decisions.md#d-release-platforms-versions-license-and-notices)). For a release, that is `https://github.com/IgnisDevNE/SuiteWard/tree/vX.Y.Z`. If `source` is absent, the build set none.
 
-If you modify SuiteWard and run the modified version, you must point `source` at your modified source. The AGPL requires this in its section 13. Build the image yourself with the `SOURCE` build argument, alongside `VERSION`:
+`/status` is reachable only over the loopback address of the host, so it does not by itself satisfy section 13 of the AGPL for remote users. If you modify SuiteWard, you must offer the corresponding source of your modified version where your users interact with it, and point `source` at that source. Build the image yourself with the `SOURCE` build argument, alongside `VERSION`:
 
 ```
 podman build -f deploy/Containerfile --build-arg VERSION=sha-<commit> --build-arg SOURCE=<url of your modified source> -t localhost/suiteward:local .
@@ -703,4 +709,4 @@ Common problems:
 - **A command gets no reply.** Check that the first line starts with `/suiteward`, outside a code block, that it comes from your account, that you did not edit it, and that the pull request is still open. Another account's command gets no reply by design.
 - **An approval is rejected.** The reply gives the reason: an invalid, replayed or expired code, or an unknown revision. Use a fresh code, and check the reference against the newest revision comment.
 - **The check shows `approval-missing` after a push.** The push changed a protected file, which creates a new revision. Approve the revision named in the newest comment.
-- **The new image does not start after an update.** Do not start an older image, because after a migration it refuses to run. Read the logs and report them to the project. To return to the earlier state, restore your backup, as described in the backup runbook, `docs/backup.md`.
+- **The new image does not start after an update.** Do not start an older image, because after a migration it refuses to run. Read the logs and report them to the project. To return to the earlier state, restore your backup, as described in [the backup runbook](backup.md).

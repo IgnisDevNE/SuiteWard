@@ -16,7 +16,7 @@
 | [0006](0006-provider-agnostic-modular-monolith.md) | Provider-agnostic modular monolith | Control plane, execution plane, SCM adapter, and GitHub-first delivery. |
 | [0007](0007-canonical-contract-authority.md) | Canonical contract authority | Immutable versions, candidate non-authority, exact approval, bound evidence, and atomic promotion. Amended (R1): verify bytes at write; normalized state. |
 | [0008](0008-progressive-integrity-and-execution.md) | Integrity before canonical execution | M0-M3 sequence, distinct assurance levels, and DockerExecutionBackend in M2. |
-| [0009](0009-agpl-3.0-distribution.md) | AGPLv3 distribution | Accepted license direction and open release-notice details. |
+| [0009](0009-agpl-3.0-distribution.md) | AGPLv3 distribution | The grant is `AGPL-3.0-only`; D-RELEASE (2026-10-17) settles the release notices and the source offer. |
 | [0010](0010-repository-bootstrap.md) | Repository bootstrap | Initial authority, existing baseline import, first-test PR, and conditional first promotion. Amended (R1): first-test-PR path deferred. |
 | [0011](0011-approval-revocation-and-acknowledgments.md) | Approval revocation and PR acknowledgments | Explicit withdrawal, processed comment semantics, promotion races, and durable visible outcomes. |
 | [0012](0012-mvp-authorization-policy.md) | MVP authorization policy | Human owner and agent profiles, one eligible approval, approval by the PR author, and separated credentials. |
@@ -51,7 +51,7 @@ Details explicitly marked open remain open. In particular:
 - The normalized persistence schema is frozen in the [persistence contract](../contracts/persistence.md); real-adapter validation is still pending.
 - Strict GitHub gate-to-merge-to-promotion coordination is not proved by database CAS alone.
 - Hosted execution versus customer infrastructure remains a future decision.
-- AGPLv3 is selected, while the final only-versus-or-later grant and release notices remain unsettled.
+- The license grant is decided: `AGPL-3.0-only`, with the release notices and the source offer settled by D-RELEASE (2026-10-17).
 
 ## Relation to the earlier system design
 
@@ -66,7 +66,7 @@ The earlier Test Vault System Design v0.1 is historical planning input. These re
 | S3-compatible service in the default deployment | Dedicated local content-addressed volume; ADR 0001. S3 remains an optional extension. |
 | Inbound GitHub webhooks as the default trigger | Local MCP acceleration plus independent periodic API reconciliation; ADR 0001. |
 | Short approval command or extra challenge still under discussion | Explicit proposal revision in `/suiteward approve P42-R3`; ADR 0002, plus an owner TOTP code; ADR 0027. |
-| Open-source license undecided | AGPLv3 direction; ADR 0009. |
+| Open-source license undecided | `AGPL-3.0-only`; ADR 0009 and D-RELEASE. |
 
 This consolidation does not turn every proposal in the old design into an accepted requirement.
 

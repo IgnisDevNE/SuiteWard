@@ -13,3 +13,5 @@ The [development guide](development-guide.md) records accepted conventions for t
 The [local development guide](local-development.md) explains the project-local tool bootstrap, Podman database, verification commands, and isolated resources for parallel worktrees.
 
 The [CI and coverage guide](ci-and-coverage.md) records the quality gates, required checks, and Codecov policy.
+
+The [install guide](install.md) installs SuiteWard, creates its GitHub App and runs the owner setup. The [backup runbook](backup.md) backs up, restores and re-bootstraps an instance.

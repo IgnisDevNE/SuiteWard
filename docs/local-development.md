@@ -198,6 +198,10 @@ The scenario is in [HOST.md, section 6f](../deploy/HOST.md#6f-lower-latency-m17c
 - run the steps of HOST.md 6f.6 with the co-located entry's codes, the detector lines included. The stack watches only `IgnisDevNE/SuiteWardQ3`, so the host is not stopped;
 - then put the stack back without GitHub (`./deploy/local.ps1`).
 
+### M1.8 acceptance on the co-located stack
+
+The scenario is in [HOST.md, section 6g](../deploy/HOST.md#6g-mvp-acceptance-m18); 6g.7 is the stack side, with the co-located differences already written there (a fresh install from the install guide on a new test repository, the branch-head bootstrap through the `/` branch editor link, and the backup rehearsal). Run it from the checkout, in PowerShell 7, as the stack sides above do. The steps, the expected output and the paste-backs stay in HOST.md and the install and backup guides; this entry only points to them.
+
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.

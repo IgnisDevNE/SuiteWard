@@ -777,6 +777,71 @@ No code, token, setup output or secret in tickets, logs or messages. The warning
 
 **Paste back:** the PR numbers, the first line of each SuiteWard comment, and the detector lines of 6f.5 and 6f.6 that carry `missed_by_ms`. Never a code, a token or setup output.
 
+## 6g. MVP acceptance (M1.8)
+
+M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/install.md) alone, protects a real repository end to end on both verification targets, with the backup and re-bootstrap runbooks rehearsed first ([the M1.8 exit](../docs/plan/phases/M1.8.md); [D-RELEASE, D-INSTALL and D-COMMANDS](../docs/plan/decisions.md)). This is the owner's rehearsal of an end user's experience, not another dev-loop verification: every install step below points to a section of [install.md](../docs/install.md) or [backup.md](../docs/backup.md) and never copies its commands. If following the guide alone needs anything else, record it as a guide gap (6g.8); the acceptance fails until the guide is fixed. Only the release tag, the dev-loop backup rehearsal of the running host, the paste-backs and the TOTP measurement below come from this file.
+
+### 6g.1 Before you start (owner)
+
+1. The orchestrator pushes the tag `v0.1.0-rc.1`, with your authorization quoting the commit ([D-RELEASE](../docs/plan/decisions.md)).
+2. Approve the `release` environment run. Expect the image `ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`, and that `latest-stable` does not move: a pre-release never moves it.
+3. Create two new, empty test repositories, one per target. This runbook names them `<host-repo>` and `<local-repo>`; name them yourself. Each needs a `tests/` file, a CI workflow that gives a test check, and a `feature/acceptance` branch.
+4. Create one new GitHub App per target, following [install.md section 4](../docs/install.md#4-create-the-github-app) exactly.
+
+### 6g.2 Backup rehearsal on the current host
+
+Follow [backup.md section 2](../docs/backup.md#2-back-up), then [section 3](../docs/backup.md#3-restore), on the running host. Expect `/status` to match before and after: `version`, `schemaVersion`, each repository's `integrity` `passed`, `outbox.failed` 0, and the same `owner`. Keep this backup: it is the only copy of SuiteWardQ's V12 and SuiteWardQ2's state.
+
+### 6g.3 TOTP offsets
+
+As `suiteward` (section 1), grep the journal for `github command code rejected`, in the journal command form of [6f.5](#6f5-listing-lag-detector-host):
+
+```
+journalctl --user -u suiteward.service --no-pager | grep "github command code rejected"
+```
+
+Paste back only the `would_match` and `offset` fields; never the repository or comment id beyond what those lines already show. The orchestrator reads them for the [D-COMMANDS](../docs/plan/decisions.md) TOTP decision (keep ±1, widened only on a near miss).
+
+### 6g.4 Purge the host (owner's explicit yes in chat first)
+
+Only after 6g.2 has passed (6g.9). With your explicit yes in chat, follow the purge of [backup.md section 4](../docs/backup.md#4-re-bootstrap-from-the-protected-default-branch), and remove the old App key and env file as that section says.
+
+### 6g.5 Fresh install on the host, from the guide alone
+
+Follow [install.md sections 10, 6, 7 and 8](../docs/install.md#10-running-on-a-separate-host-operators), with `v0.1.0-rc.1` and `<host-repo>`. Record every point where the guide was unclear, wrong or not enough (6g.8).
+
+### 6g.6 End to end on `<host-repo>`
+
+1. **Default-branch bootstrap.** Commit `.suiteward.yml` on `main`, open a PR from `feature/acceptance`, and comment `/suiteward propose`. Expect a `branch` baseline ([install.md section 8](../docs/install.md#8-first-use-bootstrap)). Approve it, and V1 follows.
+2. **A blocked PR.** A PR that changes `tests/` stays `in_progress` until you approve it ([install.md section 9](../docs/install.md#9-day-to-day)).
+3. **TOTP approval, then merge, then promotion.** Run 6d.3 steps 2 and 6: a merge commit that gives a new version, then a correction.
+4. **Final `/status` clean,** as in 6d.3 step 7.
+
+### 6g.7 Co-located acceptance on `<local-repo>`
+
+Follow [install.md sections 5, 6, 7 and 8](../docs/install.md#5-install-co-located) with `-Image ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`.
+
+**Bootstrap from the PR head, with the `/` branch editor link.** `<local-repo>` has no `.suiteward.yml` on `main`.
+- Open a PR from `feature/acceptance` and comment `/suiteward propose`. Expect the suggestion with its editor link ([install.md section 8](../docs/install.md#8-first-use-bootstrap)).
+- Open the link and check that GitHub fills both the file name and the content, on the branch `feature/acceptance`.
+- Commit the file. Then, as install.md section 8 says, propose again, approve, and merge. V1 follows.
+
+Run 6g.6 steps 2 to 4 on `<local-repo>`. Then rehearse [backup.md section 5](../docs/backup.md#5-rehearse-on-the-co-located-stack). Then put the stack back without GitHub, as 6f.6 does.
+
+### 6g.8 What to paste back
+
+- the PR numbers;
+- the first line of each SuiteWard comment;
+- the `/status` before and after for 6g.2;
+- the 6g.3 fields;
+- the list of guide gaps.
+
+Never a code, a token, an `otpauth://` URI or setup output.
+
+### 6g.9 Never
+
+Keep the warnings of 6e.6, and add: never purge before 6g.2 has passed.
+
 ## 7. Reach `/status`
 
 From your workstation, in a second terminal:

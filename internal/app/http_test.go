@@ -91,6 +91,29 @@ func TestStatusReportsEveryStateEvenAtZero(t *testing.T) {
 	}
 }
 
+func TestStatusReportsTheSourceOnlyWhenTheBuildSetIt(t *testing.T) {
+	for name, source := range map[string]string{"set": "https://example.invalid/src", "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			previous := Source
+			t.Cleanup(func() { Source = previous })
+			Source = source
+			a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10}}
+			code, body := call(t, a, http.MethodGet, "/status")
+			var status map[string]any
+			if err := json.Unmarshal([]byte(body), &status); err != nil || code != http.StatusOK {
+				t.Fatalf("GET /status = %d %s (%v); want 200 JSON", code, body, err)
+			}
+			got, present := status["source"]
+			if source == "" && present {
+				t.Fatalf("GET /status has source %v; want none when the build set none", got)
+			}
+			if source != "" && got != source {
+				t.Fatalf("GET /status source = %v; want %s", got, source)
+			}
+		})
+	}
+}
+
 func TestStatusIsUnavailableWhenTheStoreFails(t *testing.T) {
 	const secretCause = "dial tcp db.internal:5432: password=hunter2"
 	for name, store := range map[string]fakeStore{

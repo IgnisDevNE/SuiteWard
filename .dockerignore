@@ -1,6 +1,8 @@
-# Allowlist: the image build needs only the module files and the Go sources it compiles.
+# Allowlist: the image build needs only the module files, the Go sources it compiles, the license and the notices script.
 *
 !go.mod
 !go.sum
 !cmd
 !internal
+!LICENSE
+!deploy/notices.sh

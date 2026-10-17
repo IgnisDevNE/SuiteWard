@@ -7,17 +7,25 @@ FROM --platform=$BUILDPLATFORM docker.io/library/golang:${GO_VERSION}-alpine AS 
 ARG TARGETOS TARGETARCH
 # What /status reports; CI passes sha-<commit>, the same string as the image tag.
 ARG VERSION=dev
+# What /status reports as the source (AGPL section 13); CI passes the URL of the exact revision.
+ARG SOURCE=
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-X github.com/IgnisDevNE/SuiteWard/internal/app.Version=${VERSION}" -o /out/suiteward ./cmd/suiteward \
-	&& mkdir -p /out/data/artifacts
+COPY LICENSE ./
+COPY deploy/notices.sh /notices.sh
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-X github.com/IgnisDevNE/SuiteWard/internal/app.Version=${VERSION} -X github.com/IgnisDevNE/SuiteWard/internal/app.Source=${SOURCE}" -o /out/suiteward ./cmd/suiteward \
+	&& mkdir -p /out/data/artifacts /out/licenses \
+	&& cp LICENSE /out/licenses/LICENSE \
+	&& GOOS=$TARGETOS GOARCH=$TARGETARCH sh /notices.sh /out/licenses/THIRD_PARTY_NOTICES
 
 # Distroless static ships CA certificates and a nonroot user (65532).
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/suiteward /suiteward
+# SuiteWard's own license and the license texts of everything linked into the binary.
+COPY --from=build /out/licenses /licenses
 # Empty directories owned by the nonroot user, so a fresh named volume mounted at /data is writable.
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV SUITEWARD_HTTP_ADDR=0.0.0.0:8080 \

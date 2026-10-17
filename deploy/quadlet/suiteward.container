@@ -1,4 +1,4 @@
-# The SuiteWard service. Outbound only: both published ports (8081 HTTP, 8091 MCP) are bound to loopback and reached through SSM port forwarding.
+# The SuiteWard service. Outbound only: both published ports (8081 HTTP, 8091 MCP) are bound to the host's loopback, so they are reached from the host only.
 # Quadlet 4.9 has no Notify=healthy, so the database is ordered with Requires/After only. If it is not accepting connections yet,
 # the service exits 1 at startup (no retry loop inside the process) and Restart=always tries again.
 [Unit]
@@ -12,7 +12,7 @@ StartLimitIntervalSec=0
 [Container]
 Image=ghcr.io/ignisdevne/suiteward:deploy
 ContainerName=suiteward
-# Polled by podman-auto-update.timer (daily by default); the host pulls, nothing pushes to it.
+# Checked by podman-auto-update.timer when you enable it (daily by default); remove AutoUpdate=registry to pin a version.
 AutoUpdate=registry
 Network=suiteward.network
 # The container listens on all its interfaces; the host side is loopback only.

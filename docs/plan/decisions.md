@@ -26,7 +26,7 @@ Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 Final numbers come from the S1 walking skeleton.
 
 **Amendment (2026-10-15, after M1.7; owner).** *Latency.*
-- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. After M1.7c (2026-10-17), on both targets, a command took 16–35 s to its answer, an approval 17–36 s to its check, and a push 12–31 s to its check. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
+- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. After M1.7c (2026-10-17), on both targets, a command took 16–35 s to its answer, an approval 17–36 s to its check, and a push 12–31 s to its check. Before M1.7c the floor for a command was the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s. Since M1.7c it is the earliest cycle start in GitHub's clock minus 10 s (D-COMMANDS amendment of 2026-10-16).
 - **Approved for phase M1.7c (before M1.8):**
   - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction;
   - shorten the synchronization poll to about 20–30 s.
@@ -132,12 +132,16 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 - The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-13).
   - **Data for the decision before M1.8.** In the M1.7b live run (2026-10-16), one approval code was refused because of timing, per the owner. The offset was not captured.
   - The commands job logs, for every rejected code, whether a window of 2 steps would have matched and at which offset (`github command code rejected`, `would_match`). The decision reads those lines from the host journal.
+  - **Decided 2026-10-17 (owner, M1.8 planning): keep ±1.** The M1.8 acceptance reads the host's `would_match` lines. Only near misses there widen the window to ±2, as a new owner decision.
+  - **Confirmed by the M1.8 acceptance (2026-10-17): the window stays ±1.**
+    - The host's journal held 20 rejected codes from 2026-10-15 to 2026-10-17, and every one had `would_match` false. These were wrong codes, not late ones: dead authenticator entries and one mistyped code.
+    - No near miss was seen.
 - A step is consumed once per owner across all commands (ADR 0027). The consumed step records the command that used it, so a retry of the same command after a crash is not a replay.
 
 **Order and binding of a code to its command (ADR 0027)**
 - Commands are processed one at a time across all repositories, ordered by the comment's `created_at` and then its comment id.
 - The command order given to the domain is the GitHub comment id.
-- **Sync watermark.** A comment is processed only once every enrolled repository has completed a successful synchronization cycle that began after the comment was created. "Began after" is approximated as finished at least `JOB_TIMEOUT` plus 30 s of clock skew after `created_at`.
+- **Sync watermark.** A comment is processed only once every enrolled repository has completed a successful synchronization cycle that began after the comment was created. "Began after" was approximated as finished at least `JOB_TIMEOUT` plus 30 s of clock skew after `created_at`. Since M1.7c it is measured in GitHub's clock (amendment of 2026-10-16 below), and `JOB_TIMEOUT` no longer delays commands.
   - Without the watermark, an agent using the owner's GitHub identity could copy the owner's code into a command on another repository, sync that repository first, and use the code before the owner's own command.
   - Cost: a repository that cannot synchronize delays every command. `/status` shows the reason.
 - **Edited before observed.** A comment whose first observed version was already edited (`updated_at` differs from `created_at`) is not a command. It uses up no step and is acknowledged with the reason.
@@ -300,6 +304,57 @@ Accepted 2026-10-15 (owner, phase M1.7), from the S1 proposals ([s1-github](../s
 
   A blocked merge leaves the canonical unchanged. Recovery is a later PR, which either restores the canonical content or carries the integrated content for a new exact approval (ADR 0018). There is no reset command.
 
+### D-RELEASE: Platforms, versions, license and notices
+
+Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisions/0009-agpl-3.0-distribution.md).
+
+- **Platforms.** The MVP ships only the container image `ghcr.io/ignisdevne/suiteward` for `linux/amd64` and `linux/arm64`. A native binary comes after the MVP.
+- **Versions.**
+  - A release is a `vX.Y.Z` git tag on a commit of `main`, and the release workflow checks that the commit is an ancestor of `main`. A pre-release `vX.Y.Z-rc.N` may sit on a phase branch.
+  - The workflow publishes the image tag `vX.Y.Z`. A release that is not a pre-release also moves `latest-stable`; a pre-release never moves it.
+  - `sha-<commit>` and `deploy` stay our internal build and promotion tags.
+  - **Publishing needs the owner's approval in a protected `release` environment**, as `remote-poc` does for promotion. The bot could push a tag by itself: it has Contents write, and it is the governed party once SuiteWard governs its own tests. So the tag alone is not the authorization.
+  - The bot pushes a tag only with the owner's authorization quoting the commit.
+  - **Amended 2026-10-17 (owner): only the owner creates release tags.**
+    - The workflow that runs on a tag is the one in the tagged commit, so a tag pushed by the bot could carry a `release.yml` without the environment gate.
+    - The repository therefore has a tag ruleset, `release-tags-owner-only`, on `v*`. It restricts creating, updating and deleting those tags to repository admins, and the bot has no bypass.
+    - The owner creates each release tag on GitHub's Releases page, on the commit the orchestrator names.
+    - `v0.1.0-rc.1` was the last tag pushed by the bot, before the ruleset existed.
+    - **Still open: this closes the git-tag path only, not the image tags.**
+      - The package's Actions access gives the SuiteWard repository the Admin role (checked 2026-10-17).
+      - So any workflow on any branch the bot pushes can declare `packages: write` and push `:vX.Y.Z`, `:latest-stable` or `:deploy` with `GITHUB_TOKEN`, without the `release` environment or the `verify` job.
+      - Closing it means a publishing credential scoped to the `release` and `remote-poc` environments, with the repository's package access lowered to Read. That is the owner's decision, needed before C2.
+      - Until then users should pin by digest, or accept that a tag can be rewritten.
+- **License.**
+  - `AGPL-3.0-only`.
+  - The repository carries the official text in `LICENSE`, and the README carries the notice.
+  - No per-file headers.
+- **Third-party notices.** The image build gathers the license file of every module linked into the binary into `/licenses/THIRD_PARTY_NOTICES`. A module without a license file fails the build.
+- **Corresponding source (AGPL section 13).** `/status` reports `source`: the URL of the exact revision the image was built from. The install guide says where the source is. A user who modifies SuiteWard must point `source` at their own modified source.
+
+### D-INSTALL: End-user install, update, backup and dogfooding
+
+Accepted 2026-10-17 (owner answers, M1.8 planning).
+
+- **The end user never needs our dev loop.** They install from the guide, create the GitHub App, run `setup` and create the ruleset once. After that they only approve, with `/suiteward approve`, the PRs that touch protected files. Phase branches, the `remote-poc` promotion and smoke tests are ours alone.
+- **The MVP is self-hosted; the managed service comes after it** (owner, 2026-10-17).
+  - The owner's target for the end user is the managed service. There the user installs our App, enrolls TOTP and points it at a repository, and all host wiring stays ours.
+  - It needs what the self-hosted design does not have: a public App, several owners per instance (D-IDENTITY is one owner), enrollment through a web page with a GitHub login instead of `setup`, and a trust model in which we are the host administrator (ADR 0027). It is recorded as D-MANAGED-SERVICE in Post-MVP.
+  - For the MVP, the install guide leads with the co-located path, one command on the user's machine. The isolated host is the operator path: ours, and for whoever self-hosts on a separate machine.
+- **Ruleset.** The user creates it, guided by a direct link to the repository's rulesets page and the exact boxes to tick. The App keeps no Administration write, so it can never change its own protection.
+- **GitHub App.** The user creates it by hand, from a checklist in the install guide that lists the exact permissions of [D-GITHUB-ACCESS](#d-github-access-github-app-permissions-and-token-lifecycle). The manifest flow is backlog.
+- **Updates.** The user pins `vX.Y.Z` and updates when they choose (`podman pull`, then restart). Podman auto-update on `latest-stable` is documented as an opt-in.
+- **Backup.** The MVP backup is a plain `pg_dump` plus a tarball of the artifact volume, kept by the user. The runbook warns that it holds the TOTP secret and the enrollment. Encrypted backups and guided restore stay post-MVP (D-ARCHIVE, D-RESTORE).
+- **Dogfooding.**
+  - SuiteWard governs its own tests on the isolated host, with `CI / test` as the test check, after the acceptance run on a test repository.
+  - The agent's bot (`ignisdevne`) is then the governed party. Its installation must have neither Checks write nor Administration write.
+  - The ruleset requires `SuiteWard / Contract` from the host's runtime App only.
+  - A PR that touches protected files then also needs the owner's approval of its current revision.
+  - **The governing host follows release tags** (2026-10-17; the owner asked for the best practice).
+    - It runs a pinned `vX.Y.Z` and is updated by hand, exactly as the install guide says, never by auto-update from `:deploy`.
+    - The reason: an instance that auto-deploys what is merged into the repository it governs would let a merged change replace its own governor.
+    - Deployment from `main` (D-DEPLOY) still builds and promotes `:deploy` for verification, but the governing host does not follow it.
+
 ### D-MIGRATIONS: Migration tooling
 
 Superseded by R1. Goose, pgx and sqlc stay ([ADR 0026](../decisions/0026-versioned-postgresql-migrations.md)); the migrations were reset to a single normalized `00001` (River and the outbox were added in M1.2) described in the [persistence contract](../contracts/persistence.md).
@@ -310,15 +365,15 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 
 ## Open
 
-- **D-DEPLOY:** remote verification host. Partly settled 2026-10-06: AWS EC2 in us-east-2 (cheapest region; close to the GitHub API), `t4g.small` Graviton (2 vCPU, 2 GiB; arm64, so images are multi-arch amd64+arm64), Ubuntu 24.04, 20 GiB encrypted gp3, 2 GiB swap, rootless Podman under an unprivileged `suiteward` user, `cloudflared` installed but not yet configured. No inbound ports and no SSH daemon; administration only through SSM Session Manager (instance role limited to `AmazonSSMManagedInstanceCore`; IMDSv2 is required; the hop limit of 1 does not stop a rootless container, see the IMDS mitigation below). Service access through Cloudflare Tunnel and Cloudflare Access on the owner's domain (service token for MCP sync/status). Deployment is pull-based: CI publishes a multi-arch image to GHCR, promotion to the deploy tag requires the owner's approval in a protected environment, and the host's Podman quadlet uses `AutoUpdate=registry`. Scale-out path: same image on ECS, PostgreSQL to RDS, artifacts to EFS or the S3 adapter. Done 2026-10-06: host `i-0f556162ae6b59b22`; cost budget `suiteward-poc-monthly` (US$25/month measured before credits, email alerts at 80% actual and 100% forecast); Cloudflare tunnel `suiteward-poc` (`09d32d23-e113-48d3-b870-ec1acda0dc69`) running as a system service on the host with hostname `suiteward-poc.magalz.space` answering 404 for everything; the agent's AWS session logged out afterwards. Remaining before S1-D: a Cloudflare Access application for the hostname (owner, Zero Trust dashboard) before any route reaches a service, the GHCR deployment workflow with its protected environment, and the owner placing the test App key on the host through Session Manager. Settled 2026-10-10 from the S1 findings ([s1-github](../spikes/s1-github.md)): CI publishes `ghcr.io/ignisdevne/suiteward` (tags `sha-<commit>` and `deploy`) with a workflow using `GITHUB_TOKEN`; the package is public so the host holds no registry credential; moving `deploy` requires the owner's approval in the `remote-poc` environment (deployment branch rule: `phase/M1.2`, `phase/M1.4` since M1.4-D and `phase/M1.5` since M1.5; `main` is added when the owner decides); the host adopts it through `AutoUpdate=registry` (the default timer is daily, so smoke runs start one update by hand); access is Session Manager only (no SSH daemon, no Tailscale), plus Cloudflare Access for any HTTP route. PostgreSQL runs as a rootless container beside the service on both targets (the image pinned by digest in CI, a named volume, the password in a Podman secret the owner creates); RDS stays the scale-out path. IMDS: a firewall rule on the host rejects `169.254.169.254` for the `suiteward` user and is re-verified with the S1 check; the SSM agent keeps its access. Cancelling a stale run waiting for approval is a human action. An agent never holds host access; the owner runs host steps in their own Session Manager session. The S1 spike service, its Podman secret and volume are removed from the host by the owner.
+- **D-DEPLOY:** remote verification host. Partly settled 2026-10-06: AWS EC2 in us-east-2 (cheapest region; close to the GitHub API), `t4g.small` Graviton (2 vCPU, 2 GiB; arm64, so images are multi-arch amd64+arm64), Ubuntu 24.04, 20 GiB encrypted gp3, 2 GiB swap, rootless Podman under an unprivileged `suiteward` user, `cloudflared` installed but not yet configured. No inbound ports and no SSH daemon; administration only through SSM Session Manager (instance role limited to `AmazonSSMManagedInstanceCore`; IMDSv2 is required; the hop limit of 1 does not stop a rootless container, see the IMDS mitigation below). Service access through Cloudflare Tunnel and Cloudflare Access on the owner's domain (service token for MCP sync/status). Deployment is pull-based: CI publishes a multi-arch image to GHCR, promotion to the deploy tag requires the owner's approval in a protected environment, and the host's Podman quadlet uses `AutoUpdate=registry`. Scale-out path: same image on ECS, PostgreSQL to RDS, artifacts to EFS or the S3 adapter. Done 2026-10-06: host `i-0f556162ae6b59b22`; cost budget `suiteward-poc-monthly` (US$25/month measured before credits, email alerts at 80% actual and 100% forecast); Cloudflare tunnel `suiteward-poc` (`09d32d23-e113-48d3-b870-ec1acda0dc69`) running as a system service on the host with hostname `suiteward-poc.magalz.space` answering 404 for everything; the agent's AWS session logged out afterwards. Remaining before S1-D (historical: S1-D has run): a Cloudflare Access application for the hostname (owner, Zero Trust dashboard) before any route reaches a service, the GHCR deployment workflow with its protected environment, and the owner placing the test App key on the host through Session Manager. Settled 2026-10-10 from the S1 findings ([s1-github](../spikes/s1-github.md)): CI publishes `ghcr.io/ignisdevne/suiteward` (tags `sha-<commit>` and `deploy`) with a workflow using `GITHUB_TOKEN`; the package is public so the host holds no registry credential; moving `deploy` requires the owner's approval in the `remote-poc` environment (deployment branch rule: `phase/M1.2`, `phase/M1.4` since M1.4-D and `phase/M1.5` since M1.5; `main` is added when the owner decides); the host adopts it through `AutoUpdate=registry` (the default timer is daily, so smoke runs start one update by hand); access is Session Manager only (no SSH daemon, no Tailscale), plus Cloudflare Access for any HTTP route. PostgreSQL runs as a rootless container beside the service on both targets (the image pinned by digest in CI, a named volume, the password in a Podman secret the owner creates); RDS stays the scale-out path. IMDS: a firewall rule on the host rejects `169.254.169.254` for the `suiteward` user and is re-verified with the S1 check; the SSM agent keeps its access. Cancelling a stale run waiting for approval is a human action. An agent never holds host access; the owner runs host steps in their own Session Manager session. The S1 spike service, its Podman secret and volume are removed from the host by the owner. Decided 2026-10-17 (M1.8): `main` triggers the deployment and is added to the `remote-poc` deployment branches. The promotion approval stays.
 - **D-JOB-RETENTION:** how long finished jobs stay visible on `/status`. Until decided, River v0.49.0's cleaner defaults apply (completed and cancelled 24 hours, discarded 7 days); the outbox keeps its terminal rows. Raised by the M1.2 phase review.
-- **D-RELEASE:** supported production and CLI platforms, and the AGPL only-versus-or-later grant and notices.
 - **D-EXECUTION:** first executable profile and execution trust model; decided in M2 before implementation.
 - **D-MANAGED-EXECUTION:** future provider-hosted or customer-infrastructure execution; nothing scheduled.
 - **D-HARDENING-CONTROLS:** justified future signing, provenance and transparency controls; nothing scheduled.
 
 ## Post-MVP
 
+- **D-MANAGED-SERVICE:** the paid managed service (owner's target, 2026-10-17), with a public App, several owners per instance, web enrollment and a hosted trust model (D-INSTALL, ADR 0009).
 - **D-QUEUE:** contract-change priority queue ([ADR 0022](../decisions/0022-contract-change-pr-priority.md)).
 - **D-ARCHIVE:** encrypted backup archive format ([ADR 0019](../decisions/0019-encrypted-backups-and-instance-recovery-key.md)).
 - **D-BACKUP-REMOTE:** Release backups and the 29-day contingency ([ADR 0021](../decisions/0021-release-backups-and-health-reconciliation.md)).

@@ -324,6 +324,11 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
 Accepted 2026-10-17 (owner answers, M1.8 planning).
 
 - **The end user never needs our dev loop.** They install from the guide, create the GitHub App, run `setup` and create the ruleset once. After that they only approve, with `/suiteward approve`, the PRs that touch protected files. Phase branches, the `remote-poc` promotion and smoke tests are ours alone.
+- **The MVP is self-hosted; the managed service comes after it** (owner, 2026-10-17).
+  - The owner's target for the end user is the managed service. There the user installs our App, enrolls TOTP and points it at a repository, and all host wiring stays ours.
+  - It needs what the self-hosted design does not have: a public App, several owners per instance (D-IDENTITY is one owner), enrollment through a web page with a GitHub login instead of `setup`, and a trust model in which we are the host administrator (ADR 0027). It is recorded as D-MANAGED-SERVICE in Post-MVP.
+  - For the MVP, the install guide leads with the co-located path, one command on the user's machine. The isolated host is the operator path: ours, and for whoever self-hosts on a separate machine.
+- **Ruleset.** The user creates it, guided by a direct link to the repository's rulesets page and the exact boxes to tick. The App keeps no Administration write, so it can never change its own protection.
 - **GitHub App.** The user creates it by hand, from a checklist in the install guide that lists the exact permissions of [D-GITHUB-ACCESS](#d-github-access-github-app-permissions-and-token-lifecycle). The manifest flow is backlog.
 - **Updates.** The user pins `vX.Y.Z` and updates when they choose (`podman pull`, then restart). Podman auto-update on `latest-stable` is documented as an opt-in.
 - **Backup.** The MVP backup is a plain `pg_dump` plus a tarball of the artifact volume, kept by the user. The runbook warns that it holds the TOTP secret and the enrollment. Encrypted backups and guided restore stay post-MVP (D-ARCHIVE, D-RESTORE).
@@ -351,6 +356,7 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 
 ## Post-MVP
 
+- **D-MANAGED-SERVICE:** the paid managed service (owner's target, 2026-10-17), with a public App, several owners per instance, web enrollment and a hosted trust model (D-INSTALL, ADR 0009).
 - **D-QUEUE:** contract-change priority queue ([ADR 0022](../decisions/0022-contract-change-pr-priority.md)).
 - **D-ARCHIVE:** encrypted backup archive format ([ADR 0019](../decisions/0019-encrypted-backups-and-instance-recovery-key.md)).
 - **D-BACKUP-REMOTE:** Release backups and the 29-day contingency ([ADR 0021](../decisions/0021-release-backups-and-health-reconciliation.md)).

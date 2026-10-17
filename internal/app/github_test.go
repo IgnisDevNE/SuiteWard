@@ -130,7 +130,7 @@ func (c *countingReader) PullComments(context.Context, string, int) ([]githubsyn
 type paceReader struct {
 	calls    int
 	requests int
-	changed  bool // the cycle's listing was not a 304
+	changed  bool  // the cycle's listing was not a 304
 	err      error // fails the open pulls listing
 	at       func() time.Time
 }

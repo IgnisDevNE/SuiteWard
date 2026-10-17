@@ -28,7 +28,7 @@ Never let two SuiteWard instances watch the same repository; one instance serves
 
 - **Rootless Podman.** The units for the isolated host were checked with Podman 4.9.3. Section 10 checks your version.
 - **Co-located PC:** Windows with PowerShell 7.2 or later, run as `pwsh` (not Windows PowerShell 5.1), and a Podman machine.
-- **Isolated host:** Linux with systemd user services (checked on Ubuntu 24.04), and an unprivileged account for SuiteWard. This guide calls it `suiteward`. Use administrator rights only for the steps marked `sudo`.
+- **Isolated host:** Linux with systemd user services (checked on Ubuntu 24.04), and an unprivileged account for SuiteWard. This guide calls it `suiteward`. Each step on this host is marked "as `suiteward`" or "as the administrator" (the steps with `sudo`). Use administrator rights only for the steps marked "as the administrator".
 - **An authenticator app** that scans an `otpauth://` URI or accepts a base32 secret.
 - **A GitHub account** that owns or administers the repositories, and up to 20 repositories to protect. The owner's login must be a user account, not an organization or a bot.
 - **The release source** at `https://github.com/IgnisDevNE/SuiteWard/tree/vX.Y.Z`. Download it, or clone the repository and check out the tag `vX.Y.Z`. The co-located install uses `deploy/local.ps1`; the isolated install uses the files in `deploy/quadlet/`.
@@ -93,7 +93,7 @@ Notes:
 podman machine ssh "curl -s http://127.0.0.1:8081/readyz"
 ```
 
-Expect `{"status":"ready","schemaVersion":N}`.
+Expect `{"schemaVersion":N,"status":"ready"}`.
 
 ```
 podman machine ssh "curl -s http://127.0.0.1:8081/status"
@@ -109,7 +109,7 @@ To stop the stack and keep its state, run `./deploy/local.ps1 -Down`. Expect the
 
 ## 6. Run setup
 
-Setup binds you as the owner and enrolls your TOTP secret. Run it yourself, once, in a terminal on this PC (co-located) or on the host (isolated). It needs a real terminal.
+Setup binds you as the owner and enrolls your TOTP secret. Run it yourself, once, in a terminal on this PC (co-located) or on the host (isolated, as `suiteward` in a shell opened as in step 10.1). It needs a real terminal.
 
 Before you start:
 
@@ -132,13 +132,13 @@ Setup then works through these steps:
 
 A missing, extra or duplicate `--test-check` is a usage error: exit code 2, and nothing is written. Setup exits with code 0 once enrollment succeeded, whatever the protection results.
 
-Afterwards, check the result. On the co-located PC, use the `podman machine ssh` form from section 5.4. On the isolated host, run `curl -s http://127.0.0.1:8081/status`. The output shows `owner` with your login and the `protection` result of each repository.
+Afterwards, check the result. On the co-located PC, use the `podman machine ssh` form from section 5.4. On the isolated host, as `suiteward`, run `curl -s http://127.0.0.1:8081/status`. The output shows `owner` with your login and the `protection` result of each repository.
 
 Running setup again replaces the TOTP secret. Delete the old authenticator entry and add the new secret. Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
 
 ## 7. Create the ruleset
 
-SuiteWard reports protection and never changes it, so you set the protection of each repository once, on its default branch. Open `https://github.com/<owner>/<repo>/settings/rules` for the repository (replace `<owner>/<repo>`), and create a ruleset (or classic branch protection, from the same page) that does the following:
+SuiteWard reports protection and never changes it, so you set the protection of each repository once, on its default branch. Open `https://github.com/<owner>/<repo>/settings/rules` for the repository (replace `<owner>/<repo>`), and create a ruleset (or classic branch protection, at `https://github.com/<owner>/<repo>/settings/branches`) that does the following:
 
 - [ ] Targets the default branch. SuiteWard reads the rules of that branch.
 - [ ] Requires the status check `SuiteWard / Contract`, with your SuiteWard App as its source. A check from any other source does not count.
@@ -241,7 +241,7 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 | in_progress, `fork-unsupported` | Pull requests from forks are not supported. |
 | in_progress, `assessment-pending` | SuiteWard is still reading the pull request. Wait a few minutes. |
 | failure, `invalid-source` | `.suiteward.yml` is invalid, or a protected path is a symbolic link or a submodule. Fix it. |
-| failure, `integrity-failed` | A canonical artifact no longer matches its integrity record. SuiteWard fails the check on every pull request of that repository and does not promote; it does not block merges by itself — your branch protection does that, if you require the check. Restore the artifact from a trusted copy or a backup, never edit the database, and restart the service: it re-verifies at once (section 14). |
+| failure, `integrity-failed` | A canonical artifact no longer matches its integrity record. SuiteWard fails the check on every pull request of that repository and does not promote; it does not block merges by itself — your branch protection does that, if you require the check. Restore the artifact from a trusted copy or a backup, never edit the database, and restart the service: it re-verifies at once. On the isolated host, use the restart command of step 11.3. On the co-located PC, run the `./deploy/local.ps1` command of step 5.3 again, with the same `-Image` and the three GitHub parameters. |
 | failure, `owner-command-rejected` | Your last `approve` or `revoke` was rejected. Post a valid command, or push a new head. |
 
 A success means that the protected files match what the owner approved. It never means that your tests ran or passed. Your own test check decides that.
@@ -330,7 +330,13 @@ command -v nft || sudo apt-get install -y nftables
 
 Expect a path to `nft`, or the installation output.
 
-Create the rule file. Run the next command, wait until the cursor stops, paste the block below it, then press Ctrl-D on an empty line:
+Create the rule directory:
+
+```
+sudo mkdir -p /etc/suiteward
+```
+
+Then create the rule file. Run the next command, wait until the cursor stops, paste the block below it, then press Ctrl-D on an empty line:
 
 ```
 sudo tee /etc/suiteward/imds-block.nft >/dev/null
@@ -570,7 +576,7 @@ curl -s http://127.0.0.1:8081/healthz
 curl -s http://127.0.0.1:8081/readyz
 ```
 
-Expect `{"status":"ready","schemaVersion":N}`, where `N` is the schema version of this release. A 503 means the database or the schema is not ready. Section 14 covers it.
+Expect `{"schemaVersion":N,"status":"ready"}`, where `N` is the schema version of this release. A 503 means the database or the schema is not ready. Section 14 covers it.
 
 ```
 curl -s http://127.0.0.1:8081/status
@@ -580,19 +586,21 @@ Expect JSON with `"tier":"isolated"`, `outbox.failed` at 0 and `jobs.discarded` 
 
 The port is published on the host's loopback only. To read `/status` from another machine, forward the port with your own remote-access tool. SuiteWard does not provide one.
 
+The host install is done: continue with setup (section 6), the ruleset (section 7) and bootstrap (section 8).
+
 ## 11. Updating
 
 Pin one release, and update when you choose. Updates are manual unless you opt in, as described below.
 
 **11.1 Back up first.** The service runs database migrations when it starts. After a migration, an older image refuses to start, and there is no rollback to an older image. See the backup runbook, `docs/backup.md`. The backup holds the TOTP secret and the enrollment, so store it as a secret.
 
-**11.2 Pull the new release image.** Use the new `vX.Y.Z`:
+**11.2 Pull the new release image.** Use the new `vX.Y.Z`. On the isolated host, run it as `suiteward`:
 
 ```
 podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
 ```
 
-**11.3 Update an isolated host.** Read the release notes first. Compare the new release's `deploy/quadlet/*` files with the units installed in `~/.config/containers/systemd/`, and carry over anything the new release adds: a new secret, a new entry in `/etc/suiteward/github.env`, or a new setting in a unit file. Then re-apply your two edits to the new `suiteward.container` before you install it: set its `Image=` line to the new tag, and delete its `AutoUpdate=registry` line (unless you opted into automatic updates below). Reload the units and restart the service:
+**11.3 Update an isolated host.** Read the release notes first. Compare the new release's `deploy/quadlet/*` files with the units installed in `~/.config/containers/systemd/`, and carry over anything the new release adds: a new secret (as `suiteward`), a new entry in `/etc/suiteward/github.env` (as the administrator), or a new setting in a unit file (as `suiteward`). Then re-apply your two edits to the new `suiteward.container` before you install it: set its `Image=` line to the new tag, and delete its `AutoUpdate=registry` line (unless you opted into automatic updates below). As `suiteward`, reload the units and restart the service:
 
 ```
 systemctl --user daemon-reload
@@ -608,7 +616,7 @@ Expect `/readyz` to answer `ready` again (section 10, step 10.16).
 
 If the new image fails to start, do not start an older image. Read the logs (section 14).
 
-**Automatic updates (opt-in).** Podman can follow the newest stable release. To opt in, set `Image=ghcr.io/ignisdevne/suiteward:latest-stable` and `AutoUpdate=registry` in `suiteward.container`, reload the units, and enable the timer:
+**Automatic updates (opt-in).** Podman can follow the newest stable release. To opt in, as `suiteward`, set `Image=ghcr.io/ignisdevne/suiteward:latest-stable` and `AutoUpdate=registry` in `suiteward.container`, reload the units, and enable the timer:
 
 ```
 systemctl --user enable --now podman-auto-update.timer
@@ -622,7 +630,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret can 
 
 Where you set them:
 
-- **Isolated host:** in the `Environment=` and `Secret=` lines of `suiteward.container`, and in `/etc/suiteward/github.env` for the three GitHub values. After an edit, run `systemctl --user daemon-reload` and `systemctl --user restart suiteward.service`.
+- **Isolated host:** in the `Environment=` and `Secret=` lines of `suiteward.container` (as `suiteward`), and in `/etc/suiteward/github.env` for the three GitHub values (as the administrator). After an edit, run `systemctl --user daemon-reload` and `systemctl --user restart suiteward.service` as `suiteward`.
 - **Co-located PC:** `deploy/local.ps1` has parameters only for the image and the GitHub values. The other settings keep their defaults on this PC. Changing one would mean changing the script, which this guide does not cover.
 
 | Setting | Default | Meaning |
@@ -666,7 +674,7 @@ podman build -f deploy/Containerfile --build-arg VERSION=sha-<commit> --build-ar
 
 Start with `/status` and the logs.
 
-- **Isolated host:** `curl -s http://127.0.0.1:8081/status`, then `journalctl --user -u suiteward.service -n 100 --no-pager`, and for the database `journalctl --user -u suiteward-db.service -n 50 --no-pager`.
+- **Isolated host (as `suiteward`):** `curl -s http://127.0.0.1:8081/status`, then `journalctl --user -u suiteward.service -n 100 --no-pager`, and for the database `journalctl --user -u suiteward-db.service -n 50 --no-pager`.
 - **Co-located PC:** `podman machine ssh "curl -s http://127.0.0.1:8081/status"`, then `podman logs --tail 50 suiteward`.
 
 These are the `/status` fields you read:
@@ -680,7 +688,7 @@ These are the `/status` fields you read:
   - `checks` is the last error while SuiteWard published that repository's check. It is absent when there is none.
   - `bootstrap` shows why the first contract is waiting or stopped. `read-failed` means GitHub could not be read, and SuiteWard retries. `repository-changed` means the configured name now points at a different repository from the one enrolled, so check the name. `origin-not-passed` means the default branch's contract could not be read as a passing source. `assessment-conflict` means two assessments of one source disagree. `blocked-<reason>` means a block for the stated reason. `failed` means the bootstrap failed for good. Read the logs for the last three. The field is absent when nothing is wrong.
   - `merges` shows merge decisions. `waiting` means GitHub has not yet reported the merge commit, and SuiteWard retries. `read-failed`, `assessment-conflict` and `failed` need the logs.
-  - `integrity` is `passed`, `failed` or `unavailable` for the current version. `failed` means SuiteWard refuses merges until the problem is resolved. `unavailable` changes no check.
+  - `integrity` is `passed`, `failed` or `unavailable` for the current version. `failed` means SuiteWard fails the check on every pull request of that repository and does not promote until the problem is resolved; it does not block merges by itself — your branch protection does that, if you require the check. `unavailable` changes no check.
 - `outbox.failed` counts messages that SuiteWard could not deliver to GitHub after its retries. It should be 0. Read the logs for the repository. A refused write is often a missing App permission, so compare with section 4.
 - `jobs.discarded` counts background jobs that failed for good. Read the logs.
 - `version`, `schemaVersion` and `source` identify the release and the database schema that run.
@@ -688,10 +696,10 @@ These are the `/status` fields you read:
 Common problems:
 
 - **The service does not start on the isolated host.** Podman refuses to start the container while a secret or `/etc/suiteward/github.env` is missing, and the journal shows which. The service restarts every five seconds until it starts. A unit that Podman cannot parse is not generated at all. Run the dry run in step 10.10.
-- **`/readyz` answers 503.** The database does not answer, or the schema is not ready. Check that `suiteward-db` is healthy with `podman ps`, and read its logs.
+- **`/readyz` answers 503.** The database does not answer, or the schema is not ready. Check that `suiteward-db` is healthy with `podman ps` (on the isolated host, as `suiteward`), and read its logs.
 - **Setup exits with code 2.** The `--test-check` list does not match the configured repositories. Give exactly one per repository, with no duplicates.
 - **Setup exits with code 1.** A lookup failed. The owner login may not be a user account, the App may not be installed on every configured repository, or GitHub could not be reached. Nothing was written.
-- **`propose` was refused.** The acknowledgment names the reason: `canonical-present` (the repository already has a contract; `propose` only works before the first one), `fork` (pull requests from forks are not supported), `not-open` (the pull request is no longer open), `base-not-target` (the pull request's base branch is not the repository's default branch, so merging it could never decide the first contract), `declaration-missing` (no `.suiteward.yml` was found on the default branch or the pull request head; see the suggested file and link, section 8), or `invalid-source` (`.suiteward.yml` is invalid, or a protected path is a symbolic link or a submodule).
+- **`propose` was refused.** The acknowledgment names the reason: `canonical-present` (the repository already has a contract; `propose` only works before the first one), `fork` (pull requests from forks are not supported), `not-open` (the pull request is no longer open), `base-not-target` (the pull request's base branch is not the repository's default branch, so merging it could never decide the first contract), `declaration-missing` (no `.suiteward.yml` was found on the default branch or the pull request head; see the suggested file and link, section 8), or `invalid-source` (`.suiteward.yml` is invalid, a protected path is a symbolic link or a submodule, or GitHub truncated the tree).
 - **A command gets no reply.** Check that the first line starts with `/suiteward`, outside a code block, that it comes from your account, that you did not edit it, and that the pull request is still open. Another account's command gets no reply by design.
 - **An approval is rejected.** The reply gives the reason: an invalid, replayed or expired code, or an unknown revision. Use a fresh code, and check the reference against the newest revision comment.
 - **The check shows `approval-missing` after a push.** The push changed a protected file, which creates a new revision. Approve the revision named in the newest comment.

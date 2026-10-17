@@ -3,6 +3,7 @@ package githubsynctest
 import (
 	"context"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ var gsCycleStartCases = []struct {
 	{"CycleStartRoundTripsMicrosecondTruncatedAndAnEarlierLaterStartIsStillRecorded", gsCycleStartRoundTrip},
 	{"FailureKeepsTheStoredCycleStart", gsFailureKeepsCycleStart},
 	{"RecordCycleReturnsTheIdsOfTheCommentsInsertedForTheFirstTime", gsFirstTimeCommentIDs},
+	{"ConcurrentCyclesCarryingOneNewCommentReturnItsIdExactlyOnce", gsConcurrentFirstTimeCommentID},
 }
 
 func gsCycleStartRoundTrip(e *gsEnv, _ func(*testing.T) githubsync.Store) {
@@ -81,4 +83,33 @@ func gsFirstTimeCommentIDs(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 
 	other := gsCycleOf(gsOtherRepo, 7, gsPulls(gsPull(1, "o")), gsListing{1: gsComments(gsComment(10, "y", 0))})
 	require("the first cycle of another repository with an id the first one has", e.newComments(other), []int64{10})
+}
+
+// gsConcurrentFirstTimeCommentID has two cycles of one repository, carrying the same new comment, race: between them
+// they return its id exactly once, since one of them stored it first.
+func gsConcurrentFirstTimeCommentID(e *gsEnv, newStore func(*testing.T) githubsync.Store) {
+	pulls, listing := gsPulls(gsPull(1, "a")), gsListing{1: gsComments(gsComment(10, "x", 0))}
+	for round := range 5 {
+		store := e.store
+		if round > 0 {
+			store = newStore(e.t)
+		}
+		start := make(chan struct{})
+		returned, failures := make([][]int64, 2), make([]error, 2)
+		var workers sync.WaitGroup
+		for i := range returned {
+			workers.Go(func() {
+				<-start
+				returned[i], failures[i] = store.RecordCycle(context.Background(), gsCycle(i+1, pulls, listing))
+			})
+		}
+		close(start)
+		workers.Wait()
+		for _, err := range failures {
+			e.must(err)
+		}
+		if got := slices.Concat(returned[0], returned[1]); !slices.Equal(got, []int64{10}) {
+			e.t.Fatalf("round %d: the two cycles returned %v and %v; want the id 10 exactly once between them", round+1, returned[0], returned[1])
+		}
+	}
 }

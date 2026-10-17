@@ -17,7 +17,7 @@ A backup does not hold what the installation keeps around that data:
 - `/etc/suiteward/github.env`, the file of the three GitHub settings on the isolated host;
 - the quadlet files, in `~/.config/containers/systemd/` on the isolated host.
 
-A restore on a new machine re-creates them first: install the stack as the [install guide](install.md) says for the backup's version (its section 5, or section 6 co-located), but do not run its `setup` step, because the restore brings the enrollment back. Only then restore the data (section 3). The database password and the MCP token are generated again there, which is fine because the dump holds no password; your MCP client needs the new token. Co-located, there is no settings file and no quadlet: `deploy/local.ps1` creates the secrets, stores none of the GitHub parameters, and needs the App key file again.
+A restore on a new machine re-creates them first: install the stack as the [install guide](install.md) says for the backup's version (its section 10 for the isolated host, or section 5 co-located), but do not run its `setup` step (section 6), because the restore brings the enrollment back. Only then restore the data (section 3). The database password and the MCP token are generated again there, which is fine because the dump holds no password; your MCP client needs the new token. Co-located, there is no settings file and no quadlet: `deploy/local.ps1` creates the secrets, stores none of the GitHub parameters, and needs the App key file again.
 
 > [!WARNING]
 > A backup holds the TOTP secret, so anyone with it can approve as the owner. Keep every backup offline and encrypted at rest by your own means. SuiteWard does not encrypt backups.
@@ -74,7 +74,7 @@ Stop the service container, not the database, so that the database and the artif
    curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
    ```
 
-   Expect `{"status":"ready","schemaVersion":N}`. The service needs a moment after the start, and the command retries while nothing answers. If it gives up (curl does not retry a connection that is reset), run it again until it answers.
+   Expect `{"schemaVersion":N,"status":"ready"}`. The service needs a moment after the start, and the command retries while nothing answers. If it gives up (curl does not retry a connection that is reset), run it again until it answers.
 
    ```bash
    curl -sS -o ~/suiteward-backup/status.json http://127.0.0.1:8081/status
@@ -189,7 +189,7 @@ Check the backup before anything is replaced:
    curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
    ```
 
-   Expect `{"status":"ready","schemaVersion":N}`. If it gives up, run it again until it answers.
+   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers.
 
    ```bash
    curl -sS http://127.0.0.1:8081/status
@@ -271,7 +271,7 @@ The co-located stack creates its volumes only when it starts, and a start also s
 
 ## 4. Re-bootstrap from the protected default branch
 
-Use this when no backup can be restored. The protected files are already on each repository's default branch, so the first contract is proposed again from them. The commands and their replies are those of the install guide's [First use: bootstrap](install.md#9-first-use-bootstrap), and the [runtime contract](contracts/runtime.md#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16) is normative.
+Use this when no backup can be restored. The protected files are already on each repository's default branch, so the first contract is proposed again from them. The commands and their replies are those of the install guide's [First use: bootstrap](install.md#8-first-use-bootstrap), and the [runtime contract](contracts/runtime.md#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16) is normative.
 
 > [!WARNING]
 > You lose the version history, the ledgers, the old enrollment and its TOTP secret, and the proposal history. Open pull requests wait for the new contract: their `SuiteWard / Contract` check stays pending (`bootstrap-awaiting`) until V1 exists. The protected files themselves stay in git, on the default branch.
@@ -304,7 +304,7 @@ Use this when no backup can be restored. The protected files are already on each
    curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
    ```
 
-   Expect `{"status":"ready","schemaVersion":N}`. If it gives up, run it again until it answers. The quadlet's first start may restart the service once while the database initialises; that is expected. Co-located: run the second command of the co-located restore (section 3, step 1) with the same version and the GitHub flags, then wait for readiness with `curl.exe`, or through the machine when `127.0.0.1:8081` does not answer from Windows.
+   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers. The quadlet's first start may restart the service once while the database initialises; that is expected. Co-located: run the second command of the co-located restore (section 3, step 1) with the same version and the GitHub flags, then wait for readiness with `curl.exe`, or through the machine when `127.0.0.1:8081` does not answer from Windows.
 
 3. Run `setup` once for the instance, not once for each repository: it enrolls one owner for all of them, and every run replaces the TOTP secret. This starts a new enrollment: remove the old entry from your authenticator app before you scan the new one. It needs the GitHub settings in place: the isolated host reads them from `/etc/suiteward/github.env`, and the co-located stack has them only when it was started with its GitHub parameters (step 2).
 

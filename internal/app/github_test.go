@@ -165,7 +165,7 @@ func TestSyncTickRunsAtOnceOnTheFirstTickAfterAStart(t *testing.T) {
 	}
 }
 
-func TestSyncTickWaitsTwentySecondsSinceThePreviousStart(t *testing.T) {
+func TestSyncTickIsDueEighteenSecondsAfterThePreviousStart(t *testing.T) {
 	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	reader := &paceReader{requests: 1, at: func() time.Time { return clock }}
 	s := paceSync(t, reader, func() time.Time { return clock })
@@ -173,20 +173,22 @@ func TestSyncTickWaitsTwentySecondsSinceThePreviousStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	clock = clock.Add(19 * time.Second)
+	start := clock
+	clock = start.Add(17900 * time.Millisecond)
 	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if reader.calls != 1 {
-		t.Fatal("a tick 19 s after the previous start called GitHub; want it to wait")
+		t.Fatal("a tick 17.9 s after the previous start called GitHub; want it to wait")
 	}
 
-	clock = clock.Add(time.Second) // 20 s after the previous start
+	// the 20 s periodic grid fires a little late, so a tick 19.9 s after the previous start must run
+	clock = start.Add(19900 * time.Millisecond)
 	if _, err := s.tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if reader.calls != 2 {
-		t.Fatal("a tick 20 s after the previous start did not run")
+		t.Fatal("a tick 19.9 s after the previous start did not run")
 	}
 }
 
@@ -199,7 +201,7 @@ func TestSyncTickWaitsLongerAfterAnExpensiveTick(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, elapsed := range []time.Duration{20 * time.Second, 55 * time.Second} {
+	for _, elapsed := range []time.Duration{20 * time.Second, 55900 * time.Millisecond} {
 		clock = start.Add(elapsed)
 		if _, err := s.tick(t.Context()); err != nil {
 			t.Fatal(err)

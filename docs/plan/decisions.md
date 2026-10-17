@@ -307,10 +307,11 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
 
 - **Platforms.** The MVP ships only the container image `ghcr.io/ignisdevne/suiteward` for `linux/amd64` and `linux/arm64`. A native binary comes after the MVP.
 - **Versions.**
-  - A release is a `vX.Y.Z` git tag on `main`. Pushing it publishes the image tag `vX.Y.Z`.
-  - A tag without a pre-release suffix also moves `latest-stable`. A pre-release (`vX.Y.Z-rc.N`) never moves it.
+  - A release is a `vX.Y.Z` git tag on a commit of `main`, and the release workflow checks that the commit is an ancestor of `main`. A pre-release `vX.Y.Z-rc.N` may sit on a phase branch.
+  - The workflow publishes the image tag `vX.Y.Z`. A release that is not a pre-release also moves `latest-stable`; a pre-release never moves it.
   - `sha-<commit>` and `deploy` stay our internal build and promotion tags.
-  - A tag is a GitHub write: the bot pushes it only with the owner's authorization quoting the commit.
+  - **Publishing needs the owner's approval in a protected `release` environment**, as `remote-poc` does for promotion. The bot could push a tag by itself: it has Contents write, and it is the governed party once SuiteWard governs its own tests. So the tag alone is not the authorization.
+  - The bot pushes a tag only with the owner's authorization quoting the commit.
 - **License.**
   - `AGPL-3.0-only`.
   - The repository carries the official text in `LICENSE`, and the README carries the notice.

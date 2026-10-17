@@ -29,8 +29,8 @@ const (
 	githubTimeout = 30 * time.Second
 	// tickMargin is what a tick leaves of JOB_TIMEOUT to record its last cycles and return.
 	tickMargin = 5 * time.Second
-	// syncMinInterval is the shortest time between two ticks (D-SYNC, "Sync pacing", M1.7c).
-	syncMinInterval = 20 * time.Second
+	// syncMinInterval is the shortest time between two ticks: the 20 s periodic grid less 2 s for pickup jitter (D-SYNC, "Sync pacing", M1.7c).
+	syncMinInterval = 18 * time.Second
 	// syncPaceRequests is how many requests a minute this process paces its ticks to, half of GitHub's secondary
 	// limit of 900 points a minute (D-SYNC, M1.7c amendment of 2026-10-16).
 	syncPaceRequests = 450
@@ -318,7 +318,7 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 
 // tick is the github_sync_tick job: one cycle of every configured repository, paced by the previous tick's cost
 // (D-SYNC, "Sync pacing", M1.7c). It returns at once, recording nothing and calling no GitHub, while it is not yet
-// due: 20 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
+// due: 18 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
 // at syncPaceRequests a minute. The first tick after a process start is always due.
 func (s *githubSync) tick(ctx context.Context) (river.Wake, error) {
 	now := s.now()

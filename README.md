@@ -12,7 +12,7 @@ The target experience lives in GitHub pull requests, comments, and checks, with 
 
 - **A protected scope.** A `.suiteward.yml` declaration, reviewed in the pull request, lists the tests, test runner configuration, workflows, and scripts that form the contract. A candidate cannot shrink what is protected by editing its own declaration.
 - **Proposals and exact approval.** A change to the protected scope becomes a proposal. The owner approves one exact revision with `/suiteward approve <ref> <TOTP code>`. The code comes from the verified owner, so on an isolated installation an agent that controls a GitHub account still cannot approve its own change.
-- **A required check.** The `SuiteWard / Contract` check blocks the merge until an eligible approval and an integrity assessment exist. An approval survives pushes that change only implementation; those trigger a fresh assessment instead of dismissing it.
+- **A required check.** The `SuiteWard / Contract` check stays pending, and the repository's ruleset blocks the merge, until an eligible approval and an integrity assessment exist. An approval survives pushes that change only implementation; those trigger a fresh assessment instead of dismissing it.
 - **Promotion and history.** When the pull request is merged, SuiteWard validates the integrated contract and promotes it atomically as a new canonical version. Every version and its artifacts are kept and never rewritten; a correction goes through a corrective pull request.
 - **Labeled assurance.** Isolated installations, where the service and its secrets are out of the agent's reach, give full assurance. Co-located installations are supported and reported with reduced assurance.
 

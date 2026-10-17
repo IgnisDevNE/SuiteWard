@@ -252,11 +252,15 @@ A success means that the protected files match what the owner approved, except `
 
 ### Correcting the canonical
 
-A correction puts the previous version's protected files back. Open a pull request whose protected files equal the previous version's exactly, for example a revert of the last protected merge, approve its revision like any other, and merge it. SuiteWard promotes a new version that holds the previous version's files, and its comment says that it is a correction of the current version. The version it corrects is kept: SuiteWard erases no version ([ADR 0018](decisions/0018-corrective-pr-rollback-and-audit-history.md)). Any other difference from the previous version's files is an ordinary promotion, not a correction.
+A correction puts an earlier version's protected files back, for example the previous version's.
+- **How:** open a pull request whose protected files equal that earlier version's exactly, for example a revert of the last protected merge. Approve its revision like any other, and merge it.
+- **What you see:** SuiteWard promotes a new version that holds those files, and its comment says that it is a correction of the current version.
+- **What is kept:** the corrected version stays. SuiteWard erases no version ([ADR 0018](decisions/0018-corrective-pr-rollback-and-audit-history.md)).
+- **Anything else:** protected files that match no earlier version exactly make an ordinary promotion, not a correction.
 
 ## 10. Running on a separate host (operators)
 
-This installs the isolated tier (section 2): SuiteWard on a separate host that your coding agent cannot reach, for whoever self-hosts on a machine the agent cannot reach. It gives the full assurance. The host runs Podman 4.9.3 and the units from `deploy/quadlet/` in the release source.
+This installs the isolated tier (section 2), unless step 10.9 sets the tier to `co-located`: SuiteWard on a separate host that your coding agent cannot reach, for whoever self-hosts on a machine the agent cannot reach. It gives the full assurance. The host runs Podman 4.9.3 and the units from `deploy/quadlet/` in the release source.
 
 **10.1 Enable linger, then open a shell as `suiteward`.** As the administrator, let the account's services start at boot:
 

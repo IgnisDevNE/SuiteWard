@@ -121,7 +121,15 @@ Check the backup before anything is replaced:
 
 **Isolated restore**
 
-3. Pin the image to the backup's version. In `~/.config/containers/systemd/suiteward.container`, set `Image=ghcr.io/ignisdevne/suiteward:<version>`, then reload the units.
+3. Pin the image to the backup's version. In `~/.config/containers/systemd/suiteward.container`, set the `Image=` line to `Image=ghcr.io/ignisdevne/suiteward:<version>`, check it, then reload the units.
+
+   ```bash
+   sed -i 's|^Image=.*|Image=ghcr.io/ignisdevne/suiteward:<version>|' ~/.config/containers/systemd/suiteward.container
+   ```
+
+   ```bash
+   grep ^Image= ~/.config/containers/systemd/suiteward.container
+   ```
 
    ```bash
    systemctl --user daemon-reload

@@ -10,6 +10,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
@@ -67,6 +68,8 @@ type mergesJob struct {
 	problems  *bootstrapProblems // shown in /status (github[].merges)
 	logger    *slog.Logger
 	now       func() time.Time
+
+	promoted bool // the current run decided a merge as promoted; runs never overlap
 }
 
 // mergeRun is what one repository's pass shares between its steps.
@@ -78,9 +81,20 @@ type mergeRun struct {
 	integrityFailed bool      // the stored bytes of the current canonical failed their verification
 }
 
-// run advances the merges of every enrolled, configured repository. A GitHub read failure stops that repository until
-// the next run; any other failure fails the run after every repository was tried.
-func (j *mergesJob) run(ctx context.Context) error {
+// run advances the merges and wakes the checks when it promoted or corrected a canonical, so the owner sees it at once
+// (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed after a promotion still wakes them.
+func (j *mergesJob) run(ctx context.Context) (river.Wake, error) {
+	j.promoted = false
+	err := j.advanceAll(ctx)
+	if j.promoted {
+		return river.Wake{river.ChecksKind}, err
+	}
+	return nil, err
+}
+
+// advanceAll advances the merges of every enrolled, configured repository. A GitHub read failure stops that
+// repository until the next run; any other failure fails the run after every repository was tried.
+func (j *mergesJob) advanceAll(ctx context.Context) error {
 	enrollment, enrolled, err := j.owners.Current(ctx)
 	if err != nil {
 		return fmt.Errorf("read the enrollment: %w", err)
@@ -321,6 +335,7 @@ func (j *mergesJob) decideMerge(ctx context.Context, run mergeRun, m githubsync.
 		return "", false, &opaque{what: fmt.Sprintf("decide the merge of pull %d", number), cause: err}
 	}
 	j.logger.InfoContext(ctx, "github merge decided", "repo", run.p.Repo, "pull", number, "kind", string(result.Kind), "reason", string(result.Reason), "duplicate", result.Duplicate)
+	j.promoted = j.promoted || result.Kind == governance.MergePromoted || result.Kind == governance.MergeCorrected // a correction records a new canonical version too
 	if result.Reason == governance.MergeReasonAssessmentConflict {
 		problem = problemAssessmentConflict
 	}

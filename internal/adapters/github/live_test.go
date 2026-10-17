@@ -113,7 +113,7 @@ func TestLive(t *testing.T) {
 	})
 
 	t.Run("open pulls", func(t *testing.T) {
-		pulls, err := reader.OpenPulls(stepCtx(t), repo)
+		pulls, _, err := reader.OpenPulls(stepCtx(t), repo)
 		if err != nil {
 			t.Fatalf("OpenPulls: %s", failure(err))
 		}
@@ -187,7 +187,7 @@ func TestLive(t *testing.T) {
 		if number == 0 {
 			t.Fatal("no pull number: the pull by number step failed")
 		}
-		comments, err := reader.PullComments(stepCtx(t), repo, number, time.Time{})
+		comments, _, err := reader.PullComments(stepCtx(t), repo, number, time.Time{})
 		if err != nil {
 			t.Fatalf("PullComments: %s", failure(err))
 		}

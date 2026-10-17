@@ -41,9 +41,9 @@ func TestBootstrapJobOnPostgreSQLRunsTheFullSequence(t *testing.T) {
 	if err := store.Enroll(t.Context(), enrollment); err != nil {
 		t.Fatal(err)
 	}
-	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, Comments: map[int][]githubsync.ObservedComment{4: nil},
+	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, StartedAt: bootTime, Requests: 1, Comments: map[int][]githubsync.ObservedComment{4: nil},
 		OpenPulls: []githubsync.ObservedPull{{Number: 4, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}}}
-	if err := store.RecordCycle(t.Context(), cycle); err != nil {
+	if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
@@ -51,12 +51,12 @@ func TestBootstrapJobOnPostgreSQLRunsTheFullSequence(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
 	count := func(query string) string { return scalar(t, databaseURL, query) }
 
-	if err := job.run(t.Context()); err != nil { // creates the Suite and proposes nothing
+	if _, err := job.run(t.Context()); err != nil { // creates the Suite and proposes nothing
 		t.Fatal(err)
 	}
 	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // as the commands job would
 	for range 2 {
-		if err := job.run(t.Context()); err != nil {
+		if _, err := job.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -71,7 +71,7 @@ func TestBootstrapJobOnPostgreSQLRunsTheFullSequence(t *testing.T) {
 		t.Fatalf("approve: eligible %v, %v", response.Receipt.CurrentApprovalEligible, err)
 	}
 	for range 3 {
-		if err := job.run(t.Context()); err != nil {
+		if _, err := job.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -117,16 +117,16 @@ func TestBootstrapJobOnPostgreSQLBootstrapsEveryRepository(t *testing.T) {
 	}
 	for i, repo := range []string{bootRepo, bootOtherRepo} {
 		pull := 4 + i
-		cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime, Comments: map[int][]githubsync.ObservedComment{pull: nil},
+		cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime, StartedAt: bootTime, Requests: 1, Comments: map[int][]githubsync.ObservedComment{pull: nil},
 			OpenPulls: []githubsync.ObservedPull{{Number: pull, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}}}
-		if err := store.RecordCycle(t.Context(), cycle); err != nil {
+		if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 			t.Fatal(err)
 		}
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID), bootOtherRepo: newBootRepository(bootOtherRepo, bootOtherRepoID)}, calls: map[string]int{}}
 	job := &bootstrapJob{repos: []string{bootRepo, bootOtherRepo}, reader: reader, owners: store, suites: store, problems: &bootstrapProblems{},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
-	if err := job.run(t.Context()); err != nil { // creates both Suites
+	if _, err := job.run(t.Context()); err != nil { // creates both Suites
 		t.Fatal(err)
 	}
 	for i, id := range []int64{bootRepoID, bootOtherRepoID} {
@@ -138,7 +138,7 @@ func TestBootstrapJobOnPostgreSQLBootstrapsEveryRepository(t *testing.T) {
 			t.Fatalf("approve %d: eligible %v, %v", id, response.Receipt.CurrentApprovalEligible, err)
 		}
 	}
-	if err := job.run(t.Context()); err != nil {
+	if _, err := job.run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []int64{bootRepoID, bootOtherRepoID} {

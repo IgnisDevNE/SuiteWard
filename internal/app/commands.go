@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
@@ -22,10 +23,10 @@ import (
 )
 
 const (
-	commandBatch       = 100              // candidates one run takes from the ledger
-	commandSkew        = 30 * time.Second // clock skew the watermark allows, on top of the job timeout (D-COMMANDS)
-	commandTolerance   = 1                // TOTP steps either side of the comment's creation (D-COMMANDS)
-	maxCommandFailures = 5                // consecutive failed attempts of one candidate before it is recorded as failed
+	commandBatch         = 100              // candidates one run takes from the ledger
+	commandListingMargin = 10 * time.Second // covers GitHub's listing lag and the one-second resolution of Date (D-COMMANDS, M1.7c)
+	commandTolerance     = 1                // TOTP steps either side of the comment's creation (D-COMMANDS)
+	maxCommandFailures   = 5                // consecutive failed attempts of one candidate before it is recorded as failed
 )
 
 // errLedger marks a failure to read or write the command ledger: the only failure that fails the job.
@@ -35,22 +36,22 @@ var errLedger = errors.New("command ledger failed")
 // D-COMMANDS, once every enrolled repository has synchronized past them (docs/contracts/runtime.md, "Command and
 // bootstrap jobs (M1.6a)"). Every step is safe to repeat after a crash.
 type commandsJob struct {
-	ledger     commands.Store
-	owners     owner.Store
-	suites     governance.UnitOfWork
-	syncs      repositoryReader // the observation store: each repository's last successful cycle
-	repos      []string         // the configured repositories (GITHUB_REPOSITORIES)
-	bot        *botAccount
-	reader     commandsReader           // the default branch head and the trees that /suiteward propose reads
-	content    governance.ContentWriter // where a proposed baseline's files are stored
-	pulls      pullLister               // the observed pull requests: a command's head and head repository
-	tier       string                   // the configured INSTALLATION_TIER
-	jobTimeout time.Duration
-	logger     *slog.Logger
-	now        func() time.Time
+	ledger  commands.Store
+	owners  owner.Store
+	suites  governance.UnitOfWork
+	syncs   repositoryReader // the observation store: each repository's last successful cycle
+	repos   []string         // the configured repositories (GITHUB_REPOSITORIES)
+	bot     *botAccount
+	reader  commandsReader           // the default branch head and the trees that /suiteward propose reads
+	content governance.ContentWriter // where a proposed baseline's files are stored
+	pulls   pullLister               // the observed pull requests: a command's head and head repository
+	tier    string                   // the configured INSTALLATION_TIER
+	logger  *slog.Logger
+	now     func() time.Time
 
-	failing commandFailure  // the candidate that failed last, in this process; runs never overlap
-	warned  map[string]bool // enrolled repositories already reported as not configured
+	failing  commandFailure  // the candidate that failed last, in this process; runs never overlap
+	recorded bool            // the current run recorded a ledger entry
+	warned   map[string]bool // enrolled repositories already reported as not configured
 }
 
 // commandsReader is the part of the GitHub reader that /suiteward propose uses.
@@ -65,10 +66,22 @@ type commandFailure struct {
 	attempts            int
 }
 
-// run decides the pending comments up to the watermark. A candidate whose decision fails stops the run, so a later one
-// never goes ahead of it; the next run retries it, and its fifth consecutive failure records it as failed. Only a
-// ledger failure fails the job.
-func (j *commandsJob) run(ctx context.Context) error {
+// run decides the pending comments and wakes the jobs that read what it recorded: the checks, which show the owner's
+// consent, and the bootstrap, which promotes an approved baseline (docs/contracts/runtime.md, "Queues and wake-ups").
+// A run that failed after recording an entry still wakes them.
+func (j *commandsJob) run(ctx context.Context) (river.Wake, error) {
+	j.recorded = false
+	err := j.decidePending(ctx)
+	if j.recorded {
+		return river.Wake{river.ChecksKind, river.BootstrapKind}, err
+	}
+	return nil, err
+}
+
+// decidePending decides the pending comments up to the watermark. A candidate whose decision fails stops the run, so a
+// later one never goes ahead of it; the next run retries it, and its fifth consecutive failure records it as failed.
+// Only a ledger failure fails the job.
+func (j *commandsJob) decidePending(ctx context.Context) error {
 	enrollment, enrolled, err := j.owners.Current(ctx)
 	if err != nil {
 		return fmt.Errorf("read the enrollment: %w", err)
@@ -124,9 +137,10 @@ func (j *commandsJob) run(ctx context.Context) error {
 	return nil
 }
 
-// horizon is the sync watermark (D-COMMANDS): the earliest last successful cycle among the enrolled repositories,
-// minus the job timeout and the clock skew. ready is false, with a Warn line (every command waits), while an enrolled repository has no
-// successful cycle: nothing can be decided before it has been seen.
+// horizon is the sync watermark (D-COMMANDS, "The sync watermark in GitHub's clock", M1.7c): the earliest
+// CycleStartedAt among the enrolled repositories, GitHub's own clock, minus commandListingMargin. ready is false,
+// with a Warn line (every command waits), while an enrolled repository has no recorded cycle start: nothing can be
+// decided before it has been seen. JOB_TIMEOUT and the former clock skew no longer enter the horizon.
 func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (horizon time.Time, ready bool, err error) {
 	var earliest time.Time
 	for _, project := range enrollment.Projects {
@@ -142,15 +156,15 @@ func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (hori
 		if err != nil {
 			return time.Time{}, false, fmt.Errorf("read the synchronization state of %s: %w", project.Repo, err)
 		}
-		if state.LastSuccess.IsZero() {
+		if state.CycleStartedAt.IsZero() {
 			j.logger.WarnContext(ctx, "github commands wait: an enrolled repository has not synchronized yet", "repo", project.Repo)
 			return time.Time{}, false, nil
 		}
-		if earliest.IsZero() || state.LastSuccess.Before(earliest) {
-			earliest = state.LastSuccess
+		if earliest.IsZero() || state.CycleStartedAt.Before(earliest) {
+			earliest = state.CycleStartedAt
 		}
 	}
-	return earliest.Add(-(j.jobTimeout + commandSkew)), true, nil
+	return earliest.Add(-commandListingMargin), true, nil
 }
 
 // record writes the decision for the candidate, with its acknowledgment in the same transaction. Its error is a ledger failure.
@@ -161,6 +175,7 @@ func (j *commandsJob) record(ctx context.Context, c commands.Candidate, d comman
 	if err := j.ledger.Record(ctx, entry, ack); err != nil {
 		return &opaque{what: "record the command", cause: errors.Join(errLedger, err)}
 	}
+	j.recorded = true
 	return nil
 }
 

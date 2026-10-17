@@ -42,8 +42,8 @@ func addChecks(workers *riverqueue.Workers, config Config) (jobs []*riverqueue.P
 	}
 	run := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			// A run does not start while an earlier one runs; one that failed is not retried, the next run is.
-			return checksArgs{}, &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
+			// Periodic runs coalesce while one is unfinished (the kind has a queue of one worker); one that failed is not retried, the next run is.
+			return checksArgs{}, &riverqueue.InsertOpts{Queue: ChecksKind, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: ChecksKind, RunOnStart: true})
 	return append(jobs, run), nil

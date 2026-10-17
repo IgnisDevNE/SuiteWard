@@ -44,14 +44,14 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 		t.Fatal(err)
 	}
 	pull := githubsync.ObservedPull{Number: 4, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}
-	if err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, OpenPulls: []githubsync.ObservedPull{pull}, Comments: map[int][]githubsync.ObservedComment{4: nil}}); err != nil {
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, StartedAt: bootTime, Requests: 1, OpenPulls: []githubsync.ObservedPull{pull}, Comments: map[int][]githubsync.ObservedComment{4: nil}}); err != nil {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	bootstrap := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, problems: &bootstrapProblems{},
 		logger: logger, now: func() time.Time { return bootTime.Add(time.Hour + 123456789*time.Nanosecond) }}
-	if err := bootstrap.run(t.Context()); err != nil { // the Suite
+	if _, err := bootstrap.run(t.Context()); err != nil { // the Suite
 		t.Fatal(err)
 	}
 	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // the proposal P1-R1 that comment 101 approves
@@ -65,14 +65,14 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 	}
 	comments := []githubsync.ObservedComment{command(101, bootTime.Add(10*time.Minute), "approve"), command(102, bootTime.Add(10*time.Minute+5*time.Second), "approve"),
 		command(103, bootTime.Add(20*time.Minute), "revoke")}
-	if err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), OpenPulls: []githubsync.ObservedPull{pull},
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), StartedAt: bootTime.Add(time.Hour), Requests: 1, OpenPulls: []githubsync.ObservedPull{pull},
 		Comments: map[int][]githubsync.ObservedComment{4: comments}}); err != nil {
 		t.Fatal(err)
 	}
-	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, jobTimeout: time.Minute, logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
+	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	for range 2 { // the second run finds nothing to decide
-		if err := job.run(t.Context()); err != nil {
+		if _, err := job.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}

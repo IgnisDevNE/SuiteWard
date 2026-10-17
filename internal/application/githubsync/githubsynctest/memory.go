@@ -62,12 +62,12 @@ func (m *Memory) Repository(ctx context.Context, repo string) (githubsync.Reposi
 }
 
 // RecordCycle implements githubsync.Store.
-func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error {
+func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int64, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := cycle.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -76,7 +76,7 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 			for _, comment := range listing {
 				for _, version := range r.versions {
 					if version.CommentID == comment.CommentID && !version.CreatedAt.Equal(comment.CreatedAt) {
-						return fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, comment.CommentID)
+						return nil, fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, comment.CommentID)
 					}
 				}
 			}
@@ -84,7 +84,22 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 	}
 
 	r := m.repository(cycle.Repo)
-	r.state = githubsync.RepositoryState{Repo: cycle.Repo, InstallationID: cycle.InstallationID, LastSuccess: cycle.At}
+	known := map[int64]bool{}
+	for _, version := range r.versions {
+		known[version.CommentID] = true
+	}
+	var fresh []int64
+	for _, listing := range cycle.Comments {
+		for _, comment := range listing {
+			if !known[comment.CommentID] {
+				known[comment.CommentID] = true
+				fresh = append(fresh, comment.CommentID)
+			}
+		}
+	}
+	slices.Sort(fresh)
+	r.state = githubsync.RepositoryState{Repo: cycle.Repo, InstallationID: cycle.InstallationID, LastSuccess: cycle.At,
+		CycleStartedAt: cycle.StartedAt.Truncate(time.Microsecond)} // PostgreSQL keeps microseconds
 
 	open := map[int]bool{}
 	for _, observed := range cycle.OpenPulls {
@@ -138,7 +153,7 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) error 
 			r.versions[i].NotSeenSince = cycle.At
 		}
 	}
-	return nil
+	return fresh, nil
 }
 
 // versionOrder orders the versions of one comment: by GitHub's updated_at, then

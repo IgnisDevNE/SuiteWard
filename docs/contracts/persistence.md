@@ -1114,6 +1114,36 @@ This replaces the parts of the M1.7b section above that this list names.
 - The new dispositions are ignored by `LatestOwnerCommand`.
 - `SuggestScope`: the patterns, the cap and the ordering.
 
+## Cycle start (M1.7c; normative)
+
+**`internal/application/githubsync`.**
+- `Cycle` gains:
+  - `StartedAt time.Time`, GitHub's `Date` of the cycle's first response; required, so a zero value is `ErrInvalid` in `Validate`;
+  - `Requests int`, at least 1;
+  - `Changed bool`.
+- `RepositoryState` gains `CycleStartedAt time.Time`, which is zero until a cycle has recorded one.
+- `RecordCycle` stores `StartedAt` in the same transaction as `last_success`. A later cycle with an earlier `StartedAt` is still recorded, because the value is the cycle's own. The horizon takes the minimum over repositories, never over cycles.
+- `RecordFailure` leaves `cycle_started_at` unchanged, as it leaves `last_success`.
+- `Requests` and `Changed` are not stored.
+- `RecordCycle(ctx, cycle) ([]int64, error)` returns the ids of the comments that this call inserted for the first time, in ascending order. A comment it already had is never returned.
+- Conformance: a second identical `RecordCycle` returns no ids.
+
+**Migration `00018_cycle_start.sql`** (forward-only):
+
+```sql
+ALTER TABLE github_repositories ADD COLUMN cycle_started_at timestamptz;
+```
+
+- `SupportedVersion` is 18.
+- `UpsertRepositorySuccess` sets `cycle_started_at = excluded.cycle_started_at`.
+- The repository read selects it.
+
+**Conformance (fake and PostgreSQL):**
+- `StartedAt` round-trips, microsecond-truncated as `last_success` is.
+- A zero `StartedAt` is `ErrInvalid` and writes nothing.
+- `RecordFailure` keeps the stored start.
+- A row from before `00018` reads a zero `CycleStartedAt`.
+
 ## Domain reconstitution (R1-C implements in `internal/domain/contract`)
 
 ```go
@@ -1131,7 +1161,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |

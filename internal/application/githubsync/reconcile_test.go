@@ -46,20 +46,31 @@ type fakeReader struct {
 	// commentsErr fails the comment listing of one pull number.
 	commentsErr map[int]error
 	calls       []string
+	// openInfo and commentInfo are what the listings report. Nil is a listing that sent one request and, for the
+	// open pulls, was answered at t0 on GitHub's clock; a pointer to a zero ReadInfo is a listing with no Date.
+	openInfo, commentInfo *githubsync.ReadInfo
 }
 
-func (f *fakeReader) OpenPulls(_ context.Context, repo string) ([]githubsync.ObservedPull, error) {
+func (f *fakeReader) OpenPulls(_ context.Context, repo string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "pulls "+repo)
-	return f.pulls[repo], f.pullsErr
+	info := githubsync.ReadInfo{Date: t0, Requests: 1}
+	if f.openInfo != nil {
+		info = *f.openInfo
+	}
+	return f.pulls[repo], info, f.pullsErr
 }
 
-func (f *fakeReader) PullComments(_ context.Context, repo string, number int) ([]githubsync.ObservedComment, error) {
+func (f *fakeReader) PullComments(_ context.Context, repo string, number int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "comments "+repo+" "+strconv.Itoa(number))
-	return f.comments[number], f.commentsErr[number]
+	info := githubsync.ReadInfo{Requests: 1}
+	if f.commentInfo != nil {
+		info = *f.commentInfo
+	}
+	return f.comments[number], info, f.commentsErr[number]
 }
 
 func (f *fakeReader) callLog() []string {
@@ -93,7 +104,7 @@ func TestACycleRecordsExactlyTheListings(t *testing.T) {
 		comments: map[int][]githubsync.ObservedComment{1: {comment(10, "lgtm"), comment(11, "ship it")}, 2: nil},
 	}
 
-	if err := newReconciler(t, reader, store, c).SyncRepo(t.Context(), repo); err != nil {
+	if _, err := newReconciler(t, reader, store, c).SyncRepo(t.Context(), repo); err != nil {
 		t.Fatalf("SyncRepo: %v", err)
 	}
 
@@ -125,14 +136,14 @@ func TestAPullNoLongerOpenIsNotListedForComments(t *testing.T) {
 		comments: map[int][]githubsync.ObservedComment{1: {comment(10, "a")}, 2: {comment(20, "b")}},
 	}
 	r := newReconciler(t, reader, store, c)
-	if err := r.SyncRepo(t.Context(), repo); err != nil {
+	if _, err := r.SyncRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 
 	reader.pulls[repo] = []githubsync.ObservedPull{pull(1)}
 	reader.calls = nil
 	c.Advance(time.Minute)
-	if err := r.SyncRepo(t.Context(), repo); err != nil {
+	if _, err := r.SyncRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 
@@ -195,7 +206,7 @@ func TestAReadErrorRecordsAFailureAndNoObservation(t *testing.T) {
 				commentsErr: map[int]error{2: test.commentsErr}, // the second pull's listing fails after the first succeeded
 			}
 
-			if err := newReconciler(t, reader, store, c).SyncRepo(t.Context(), repo); err != nil {
+			if _, err := newReconciler(t, reader, store, c).SyncRepo(t.Context(), repo); err != nil {
 				t.Fatalf("SyncRepo = %v; a failed cycle is recorded, not returned", err)
 			}
 
@@ -218,13 +229,13 @@ func TestAFailureAfterASuccessKeepsTheObservations(t *testing.T) {
 	c := &clock{now: t0}
 	reader := &fakeReader{pulls: map[string][]githubsync.ObservedPull{repo: {pull(1)}}, comments: map[int][]githubsync.ObservedComment{1: {comment(10, "a")}}}
 	r := newReconciler(t, reader, store, c)
-	if err := r.SyncRepo(t.Context(), repo); err != nil {
+	if _, err := r.SyncRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 
 	reader.pullsErr = &githubsync.ReadError{Kind: githubsync.FailureTransport}
 	c.Advance(time.Minute)
-	if err := r.SyncRepo(t.Context(), repo); err != nil {
+	if _, err := r.SyncRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,7 +260,7 @@ func TestARepositoryStillWaitingIsNotCalled(t *testing.T) {
 	r := newReconciler(t, reader, store, c)
 
 	c.Advance(5 * time.Minute)
-	if err := r.SyncRepo(t.Context(), repo); err != nil {
+	if _, err := r.SyncRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	if calls := reader.callLog(); len(calls) != 0 {
@@ -261,7 +272,7 @@ func TestARepositoryStillWaitingIsNotCalled(t *testing.T) {
 	}
 
 	c.Advance(5 * time.Minute) // exactly wait_until: the wait has passed
-	if err := r.SyncRepo(t.Context(), repo); err != nil {
+	if _, err := r.SyncRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	state, _, _ = store.Repository(t.Context(), repo)
@@ -287,7 +298,7 @@ func TestAnUnclassifiedErrorOrACanceledContextRecordsNothing(t *testing.T) {
 				cancel()
 			}
 
-			if err := newReconciler(t, reader, store, &clock{now: t0}).SyncRepo(ctx, repo); err == nil {
+			if _, err := newReconciler(t, reader, store, &clock{now: t0}).SyncRepo(ctx, repo); err == nil {
 				t.Fatal("SyncRepo = nil; want the error, since it is no classified GitHub failure")
 			}
 			if _, found, _ := store.Repository(t.Context(), repo); found {
@@ -325,7 +336,7 @@ type gatedReader struct {
 	max      int
 }
 
-func (g *gatedReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, error) {
+func (g *gatedReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
 	g.mu.Lock()
 	g.inflight++
 	g.max = max(g.max, g.inflight)
@@ -338,9 +349,9 @@ func (g *gatedReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.
 	}()
 	select {
 	case <-g.gate:
-		return nil, nil
+		return nil, githubsync.ReadInfo{Date: t0, Requests: 1}, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, githubsync.ReadInfo{}, ctx.Err()
 	}
 }
 
@@ -358,7 +369,7 @@ func TestATickRunsAtMostFourCyclesAtOnce(t *testing.T) {
 	r := newReconciler(t, reader, store, &clock{now: t0})
 	all := repos(20)
 	done := make(chan error, 1)
-	go func() { done <- r.Tick(t.Context(), all, time.Minute) }()
+	go func() { _, err := r.Tick(t.Context(), all, time.Minute); done <- err }()
 
 	// Four start; then each release finishes one cycle and lets the next start.
 	for range 4 {
@@ -387,7 +398,7 @@ func TestATickDeadlineStopsNewRepositoriesAndRecordsOnlyFinishedCycles(t *testin
 	r := newReconciler(t, reader, store, &clock{now: t0})
 	all := repos(8)
 
-	if err := r.Tick(t.Context(), all, 100*time.Millisecond); err != nil {
+	if _, err := r.Tick(t.Context(), all, 100*time.Millisecond); err != nil {
 		t.Fatalf("Tick = %v; the deadline is an expected end", err)
 	}
 
@@ -407,17 +418,17 @@ type selectiveReader struct {
 	blocked chan string
 }
 
-func (s *selectiveReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, error) {
+func (s *selectiveReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
 	if s.finish[repo] {
-		return nil, nil
+		return nil, githubsync.ReadInfo{Date: t0, Requests: 1}, nil
 	}
 	s.blocked <- repo
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return nil, githubsync.ReadInfo{}, ctx.Err()
 }
 
-func (s *selectiveReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, error) {
-	return nil, nil
+func (s *selectiveReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
+	return nil, githubsync.ReadInfo{Requests: 1}, nil
 }
 
 func TestACanceledTickRecordsOnlyFinishedCycles(t *testing.T) {
@@ -428,7 +439,7 @@ func TestACanceledTickRecordsOnlyFinishedCycles(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- r.Tick(ctx, all, time.Minute) }()
+	go func() { _, err := r.Tick(ctx, all, time.Minute); done <- err }()
 
 	for range 4 { // the four unfinished repositories are all in flight, so the finished two are done
 		<-reader.blocked
@@ -450,11 +461,13 @@ type failingStore struct {
 	err error
 }
 
-func (f *failingStore) RecordCycle(context.Context, githubsync.Cycle) error { return f.err }
+func (f *failingStore) RecordCycle(context.Context, githubsync.Cycle) ([]int64, error) {
+	return nil, f.err
+}
 
 func TestATickReturnsAStoreFailure(t *testing.T) {
 	failing := &failingStore{Store: githubsynctest.NewMemory(), err: errors.New("database down")}
-	err := newReconciler(t, &fakeReader{}, failing, &clock{now: t0}).Tick(t.Context(), repos(3), time.Minute)
+	_, err := newReconciler(t, &fakeReader{}, failing, &clock{now: t0}).Tick(t.Context(), repos(3), time.Minute)
 	if !errors.Is(err, failing.err) {
 		t.Fatalf("Tick = %v; want the store failure", err)
 	}

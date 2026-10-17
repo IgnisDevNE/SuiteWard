@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
@@ -296,7 +297,7 @@ func (w *bootWorld) seedSuite(id int64, target contract.IntegrationTargetID) {
 	w.seed(owner.ProjectID(id), "default", target)
 }
 
-func (w *bootWorld) run() error { return w.job.run(w.t.Context()) }
+func (w *bootWorld) run() error { _, err := w.job.run(w.t.Context()); return err }
 
 func (w *bootWorld) mustRun() {
 	w.t.Helper()
@@ -309,12 +310,12 @@ func (w *bootWorld) mustRun() {
 func (w *bootWorld) openPulls(repo string, numbers ...int) {
 	w.t.Helper()
 	w.cycles++
-	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), Comments: map[int][]githubsync.ObservedComment{}}
+	cycle := githubsync.Cycle{Repo: repo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), StartedAt: bootTime.Add(time.Duration(w.cycles) * time.Minute), Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for _, number := range numbers {
 		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepos[number]})
 		cycle.Comments[number] = nil
 	}
-	if err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
+	if _, err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -593,6 +594,39 @@ func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
 			t.Fatalf("repository %d: canonical = %q, %v; want V1\nlogs: %s", id, version, err, w.logs)
 		}
 	}
+}
+
+func TestBootstrapWakesChecksAfterPromotingV1(t *testing.T) {
+	w := approvedWorld(t)
+	w.openPulls(bootRepo)
+
+	wake, err := w.job.run(t.Context())
+	if err != nil {
+		t.Fatalf("run: %v\nlogs: %s", err, w.logs)
+	}
+	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+		t.Fatalf("a run that promoted V1 woke %v; want %v", wake, want)
+	}
+	if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 { // the canonical exists now: nothing is promoted again
+		t.Fatalf("the run after the promotion = %v, %v; want no wake-ups", wake, err)
+	}
+}
+
+func TestBootstrapWakesNothingWhenItPromotedNothing(t *testing.T) {
+	t.Run("it only created the Suite", func(t *testing.T) {
+		w := newBootWorld(t)
+
+		if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 {
+			t.Fatalf("a run that created the Suite = %v, %v; want no wake-ups", wake, err)
+		}
+	})
+	t.Run("the baseline is not approved", func(t *testing.T) {
+		w := proposedWorld(t)
+
+		if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 {
+			t.Fatalf("a run of an unapproved baseline = %v, %v; want no wake-ups", wake, err)
+		}
+	})
 }
 
 func TestBootstrapDoesNotPromoteWithoutApproval(t *testing.T) {

@@ -83,12 +83,12 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 			listed[pull] = append(listed[pull], *comment)
 		}
 		clock = clock.Add(10 * time.Minute)
-		cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: clock, Comments: map[int][]githubsync.ObservedComment{}}
+		cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: clock, StartedAt: clock, Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 		for number, head := range heads {
 			cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: clock, HeadRepo: bootRepo})
 			cycle.Comments[number] = listed[number]
 		}
-		if err := store.RecordCycle(t.Context(), cycle); err != nil {
+		if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,11 +100,11 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 		return &githubsync.ObservedComment{CommentID: id, AuthorID: bootOwnerID, AuthorLogin: "owner", CreatedAt: clock, UpdatedAt: clock, Body: body(code)}
 	}
 	commandsJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, reader: reader, content: artifacts, pulls: store, tier: owner.TierIsolated,
-		jobTimeout: time.Minute, logger: logger, now: func() time.Time { return clock },
+		logger: logger, now: func() time.Time { return clock },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	runCommands := func() {
 		t.Helper()
-		if err := commandsJob.run(t.Context()); err != nil {
+		if _, err := commandsJob.run(t.Context()); err != nil {
 			t.Fatalf("commands run: %v", err)
 		}
 	}
@@ -215,7 +215,7 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 	clock = clock.Add(time.Minute)
 	merges := &mergesJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(),
 		tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
-	if err := merges.run(t.Context()); err != nil {
+	if _, err := merges.run(t.Context()); err != nil {
 		t.Fatalf("merges run: %v", err)
 	}
 	if got := scalar(t, databaseURL, "SELECT coalesce(current_version_id, 'none') FROM suites WHERE project_id = $1 AND suite_id = 'default'", string(owner.ProjectID(bootRepoID))); got != "V1" {

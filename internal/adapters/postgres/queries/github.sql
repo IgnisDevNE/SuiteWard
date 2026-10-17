@@ -4,11 +4,12 @@
 -- their marks from the state that lock protects.
 
 -- name: UpsertRepositorySuccess :exec
-INSERT INTO github_repositories (repo, installation_id, last_success)
-VALUES (sqlc.arg(repo), sqlc.arg(installation_id), sqlc.arg(at)::timestamptz)
+INSERT INTO github_repositories (repo, installation_id, last_success, cycle_started_at)
+VALUES (sqlc.arg(repo), sqlc.arg(installation_id), sqlc.arg(at)::timestamptz, sqlc.arg(started_at)::timestamptz)
 ON CONFLICT (repo) DO UPDATE
 SET installation_id = excluded.installation_id,
     last_success = excluded.last_success,
+    cycle_started_at = excluded.cycle_started_at,
     last_error = '',
     last_status = 0,
     wait_until = NULL;
@@ -64,6 +65,13 @@ WHERE repo = sqlc.arg(repo)
   AND comment_id = ANY(sqlc.arg(comment_ids)::bigint[])
   AND not_seen_since IS NOT NULL;
 
+-- The ids of the listing that have no stored version yet, ascending: the comments this cycle sees for the first time.
+-- name: NewCommentIDs :many
+SELECT DISTINCT (c->>'comment_id')::bigint AS comment_id
+FROM jsonb_array_elements(sqlc.arg(comments)::jsonb) AS c
+WHERE NOT EXISTS (SELECT 1 FROM github_comment_versions v WHERE v.repo = sqlc.arg(repo) AND v.comment_id = (c->>'comment_id')::bigint)
+ORDER BY comment_id;
+
 -- A repeated version (same id, updated_at and body) changes nothing. The body travels base64-encoded: it is raw bytes.
 -- name: InsertCommentVersions :exec
 INSERT INTO github_comment_versions (repo, comment_id, updated_at, pull_number, author_id, author_login, created_at, body, body_digest, first_seen)
@@ -85,7 +93,7 @@ WHERE v.repo = sqlc.arg(repo)
                   AND (later.updated_at, later.first_seen, later.body_digest COLLATE "C") > (v.updated_at, v.first_seen, v.body_digest COLLATE "C"));
 
 -- name: GetGitHubRepository :one
-SELECT repo, installation_id, last_success, last_error, last_status, wait_until
+SELECT repo, installation_id, last_success, cycle_started_at, last_error, last_status, wait_until
 FROM github_repositories WHERE repo = sqlc.arg(repo);
 
 -- name: ListGitHubPulls :many

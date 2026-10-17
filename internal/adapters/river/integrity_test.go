@@ -60,7 +60,7 @@ func TestWithoutAnIntegrityJobNoIntegrityJobIsRegistered(t *testing.T) {
 	w := newWorld(t, 5)
 	var ticks atomic.Int32
 	config := integrityConfig(nil)
-	config.SyncTick, config.SyncRepo = func(context.Context) error { ticks.Add(1); return nil }, noRepo
+	config.SyncTick, config.SyncRepo = noWake(func(context.Context) error { ticks.Add(1); return nil }), noWakeRepo(noRepo)
 	startRuntime(t, w, config)
 	waitUntil(t, "the tick to run at start", func() bool { return ticks.Load() >= 1 })
 

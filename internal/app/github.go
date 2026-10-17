@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
@@ -27,19 +29,27 @@ const (
 	githubTimeout = 30 * time.Second
 	// tickMargin is what a tick leaves of JOB_TIMEOUT to record its last cycles and return.
 	tickMargin = 5 * time.Second
+	// syncMinInterval is the shortest time between two ticks: the 20 s periodic grid less 2 s for pickup jitter (D-SYNC, "Sync pacing", M1.7c).
+	syncMinInterval = 18 * time.Second
+	// syncPaceRequests is how many requests a minute this process paces its ticks to, half of GitHub's secondary
+	// limit of 900 points a minute (D-SYNC, M1.7c amendment of 2026-10-16).
+	syncPaceRequests = 450
+	// syncPaceInterval is the window syncPaceRequests governs.
+	syncPaceInterval = time.Minute
 )
 
 // repositoryStatus is one entry of the github section of /status.
 type repositoryStatus struct {
-	Repo        string            `json:"repo"`
-	LastSuccess string            `json:"lastSuccess,omitempty"`
-	LastError   string            `json:"lastError,omitempty"` // the classification and status, never text GitHub sent
-	WaitUntil   string            `json:"waitUntil,omitempty"`
-	Protection  *protectionStatus `json:"protection,omitempty"` // absent before the first verification
-	Bootstrap   string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
-	Checks      string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
-	Merges      string            `json:"merges,omitempty"`     // classification code of the last merges job problem; absent when none
-	Integrity   string            `json:"integrity,omitempty"`  // verdict of the current canonical (passed, failed, unavailable); absent before the first verification
+	Repo           string            `json:"repo"`
+	LastSuccess    string            `json:"lastSuccess,omitempty"`
+	CycleStartedAt string            `json:"cycleStartedAt,omitempty"` // when the last successful cycle started, GitHub's clock
+	LastError      string            `json:"lastError,omitempty"`      // the classification and status, never text GitHub sent
+	WaitUntil      string            `json:"waitUntil,omitempty"`
+	Protection     *protectionStatus `json:"protection,omitempty"` // absent before the first verification
+	Bootstrap      string            `json:"bootstrap,omitempty"`  // classification code of the last bootstrap problem; absent when none
+	Checks         string            `json:"checks,omitempty"`     // classification code of the last check job problem; absent when none
+	Merges         string            `json:"merges,omitempty"`     // classification code of the last merges job problem; absent when none
+	Integrity      string            `json:"integrity,omitempty"`  // verdict of the current canonical (passed, failed, unavailable); absent before the first verification
 }
 
 // repositoryReader is the part of the observation store /status reads.
@@ -121,6 +131,9 @@ func (g *githubStatus) report(ctx context.Context, protections map[string]owner.
 		if !state.LastSuccess.IsZero() {
 			entry.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
 		}
+		if !state.CycleStartedAt.IsZero() {
+			entry.CycleStartedAt = state.CycleStartedAt.UTC().Format(time.RFC3339)
+		}
 		entry.LastError = lastErrorText(state)
 		entry.Bootstrap = g.problems.lookup(repo)
 		entry.Checks = g.checks.lookup(repo)
@@ -160,6 +173,11 @@ type githubSync struct {
 	appID      int64
 	repos      []string
 	jobTimeout time.Duration
+	now        func() time.Time // injected clock, for sync pacing (D-SYNC, "Sync pacing", M1.7c)
+	logger     *slog.Logger     // the listing-lag detector
+
+	previousStart    time.Time // the start of the previous tick; zero before the first one after a process start
+	previousRequests int       // the requests that tick made, for pacing the next one
 }
 
 // The permission maps of the installation tokens (D-GITHUB-ACCESS): each use
@@ -264,7 +282,7 @@ func (a githubAccess) checkRuns(permissions map[string]string) (*github.Checks, 
 // reconciler over store. Synchronization is read-only: the token requests the
 // metadata, pull requests and contents permissions at read level; the
 // protection check uses the other reader (Metadata and Administration read).
-func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store) (*githubSync, error) {
+func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.Store, now func() time.Time, logger *slog.Logger) (*githubSync, error) {
 	access, err := newGitHubAccess(g) // one access, so one budget, for every token
 	if err != nil {
 		return nil, err
@@ -295,21 +313,65 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID}, nil
+	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID, now: now, logger: logger}, nil
 }
 
-// tick is the github_sync_tick job: one cycle of every configured repository.
-func (s *githubSync) tick(ctx context.Context) error {
-	return s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+// tick is the github_sync_tick job: one cycle of every configured repository, paced by the previous tick's cost
+// (D-SYNC, "Sync pacing", M1.7c). It returns at once, recording nothing and calling no GitHub, while it is not yet
+// due: 18 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
+// at syncPaceRequests a minute. The first tick after a process start is always due.
+func (s *githubSync) tick(ctx context.Context) (river.Wake, error) {
+	now := s.now()
+	if !s.previousStart.IsZero() {
+		pace := time.Duration(s.previousRequests) * syncPaceInterval / syncPaceRequests
+		if now.Sub(s.previousStart) < max(syncMinInterval, pace) {
+			return nil, nil // not due: nothing ran, so nothing is woken
+		}
+	}
+	s.previousStart = now
+	result, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+	s.previousRequests = result.Requests // a tick cut short by the deadline or a budget stop still counts what it made
+	s.logFirstObserved(ctx, result)
+	return syncWake(result), err
 }
 
 // syncRepo is the github_sync_repo job. A repository that is not configured is
 // an error: the job never calls GitHub for it.
-func (s *githubSync) syncRepo(ctx context.Context, repo string) error {
+func (s *githubSync) syncRepo(ctx context.Context, repo string) (river.Wake, error) {
 	if !slices.Contains(s.repos, repo) {
-		return fmt.Errorf("repository %q is not one of the configured repositories", repo)
+		return nil, fmt.Errorf("repository %q is not one of the configured repositories", repo)
 	}
-	return s.reconciler.SyncRepo(ctx, repo)
+	result, err := s.reconciler.SyncRepo(ctx, repo)
+	s.logFirstObserved(ctx, result)
+	return syncWake(result), err
+}
+
+// syncWake is what a tick or syncRepo wakes (docs/contracts/runtime.md, "Queues and wake-ups"): the commands after any
+// recorded cycle, since one that only moves the horizon can make an observed comment decidable, and the checks and the
+// merges after a changed one. A run that failed late still wakes what it recorded.
+func syncWake(result githubsync.TickResult) river.Wake {
+	switch {
+	case result.Changed:
+		return river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}
+	case result.Recorded > 0:
+		return river.Wake{river.CommandsKind}
+	}
+	return nil
+}
+
+// logFirstObserved is the listing-lag detector (docs/contracts/runtime.md, "Latency (M1.7c)"): one Info line per
+// comment result records as first observed, from a tick or from syncRepo. It never logs comment text.
+func (s *githubSync) logFirstObserved(ctx context.Context, result githubsync.TickResult) {
+	for _, c := range result.FirstObserved {
+		args := []any{"repo", c.Repo, "comment", c.CommentID, "created_at", c.CreatedAt, "cycle_started_at", c.StartedAt}
+		if !c.PreviousStartedAt.IsZero() {
+			args = append(args, "previous_cycle_started_at", c.PreviousStartedAt)
+			if c.PreviousStartedAt.After(c.CreatedAt) {
+				args = append(args, "missed_by_ms", c.PreviousStartedAt.Sub(c.CreatedAt).Milliseconds())
+			}
+		}
+		s.logger.InfoContext(ctx, "github comment first observed", args...)
+	}
 }
 
 // tickDeadline is how long a tick may start repositories: JOB_TIMEOUT minus
@@ -322,29 +384,33 @@ func tickDeadline(jobTimeout time.Duration) time.Duration {
 // and classifies its errors.
 type githubReader struct{ reader *github.Reader }
 
-func (r githubReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, error) {
-	pulls, err := r.reader.OpenPulls(ctx, repo)
+func (r githubReader) OpenPulls(ctx context.Context, repo string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
+	pulls, info, err := r.reader.OpenPulls(ctx, repo)
 	if err != nil {
-		return nil, classifyReadError(err)
+		return nil, readInfo(info), classifyReadError(err)
 	}
 	observed := make([]githubsync.ObservedPull, len(pulls))
 	for i, p := range pulls {
 		observed[i] = githubsync.ObservedPull{Number: p.Number, HeadSHA: p.HeadSHA, HeadRef: p.HeadRef, BaseRef: p.BaseRef, BaseSHA: p.BaseSHA, UpdatedAt: p.UpdatedAt, HeadRepo: p.HeadRepo}
 	}
-	return observed, nil
+	return observed, readInfo(info), nil
 }
 
-func (r githubReader) PullComments(ctx context.Context, repo string, number int) ([]githubsync.ObservedComment, error) {
+func (r githubReader) PullComments(ctx context.Context, repo string, number int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
 	// No since: every cycle lists the comments in full, so no local clock decides what to fetch.
-	comments, err := r.reader.PullComments(ctx, repo, number, time.Time{})
+	comments, info, err := r.reader.PullComments(ctx, repo, number, time.Time{})
 	if err != nil {
-		return nil, classifyReadError(err)
+		return nil, readInfo(info), classifyReadError(err)
 	}
 	observed := make([]githubsync.ObservedComment, len(comments))
 	for i, c := range comments {
 		observed[i] = githubsync.ObservedComment{CommentID: c.ID, AuthorID: c.AuthorID, AuthorLogin: c.AuthorLogin, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, Body: c.Body}
 	}
-	return observed, nil
+	return observed, readInfo(info), nil
+}
+
+func readInfo(info github.ReadInfo) githubsync.ReadInfo {
+	return githubsync.ReadInfo{Date: info.Date, Requests: info.Requests, Changed: info.Changed}
 }
 
 // classifyReadError turns an error of the GitHub adapter into a

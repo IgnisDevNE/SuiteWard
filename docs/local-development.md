@@ -188,6 +188,16 @@ The scenario is in [HOST.md, section 6e](../deploy/HOST.md#6e-the-explicit-boots
 - run HOST.md 6e.4 on SuiteWardQ3 with the co-located entry's codes: `skip` a PR that adds `.suiteward.yml`, the CI workflow and tests and merge it (no V1), then `propose` on another PR (the branch path) and approve it, so that V1 is promoted at approval. Read `/status` through the machine (`podman machine ssh "curl -s http://127.0.0.1:8081/status"`);
 - then put the stack back without GitHub (`./deploy/local.ps1`).
 
+### Verifying M1.7c on the co-located stack
+
+The scenario is in [HOST.md, section 6f](../deploy/HOST.md#6f-lower-latency-m17c); the stack side is the one of M1.7b above, with these differences:
+- **The update has no purge and no new `setup`.** The stack keeps its enrollment, its authenticator entry and its canonical versions. Pull the image and re-run `./deploy/local.ps1` with the GitHub id parameters only, as in M1.7b: `podman pull ghcr.io/ignisdevne/suiteward:deploy`, then `./deploy/local.ps1 -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ3`. The App key secret is reused, so the PEM is not needed;
+- run the smoke test with the full 40-hex commit the `Deploy` run built: `Get-Content -Raw deploy/smoke.sh | podman machine ssh "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"`;
+- **there is no image rollback:** once migration `00018` is applied, an older image refuses to start (forward-only migrations). If the new image fails, do not start an older one; capture `podman logs --tail 50 suiteward` and report;
+- `/status` must show `schemaVersion` 18, a `cycleStartedAt` in each `github` entry (it appears after the first cycle under the new image), no `lastError` in `github`, and `outbox.failed` 0;
+- run the steps of HOST.md 6f.6 with the co-located entry's codes, the detector lines included. The stack watches only `IgnisDevNE/SuiteWardQ3`, so the host is not stopped;
+- then put the stack back without GitHub (`./deploy/local.ps1`).
+
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.

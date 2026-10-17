@@ -330,7 +330,7 @@ func gsBlankHeadRepository(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	for _, blank := range []string{" ", "\t", " \n "} {
 		blankPull := gsPull(2, "b")
 		blankPull.HeadRepo = blank
-		if err := e.store.RecordCycle(ctx, gsCycle(3, gsPulls(blankPull), nil)); !errors.Is(err, githubsync.ErrInvalidObservation) {
+		if _, err := e.store.RecordCycle(ctx, gsCycle(3, gsPulls(blankPull), nil)); !errors.Is(err, githubsync.ErrInvalidObservation) {
 			e.t.Fatalf("cycle with head repository %q = %v, want ErrInvalidObservation", blank, err)
 		}
 		r := gsResolution(1, 2, 40, 3)

@@ -92,15 +92,15 @@ func TestCommentPublisherOnPostgreSQLPostsEachMessageOnce(t *testing.T) {
 	if err := store.Enroll(t.Context(), enrollment); err != nil {
 		t.Fatal(err)
 	}
-	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, Comments: map[int][]githubsync.ObservedComment{4: nil},
+	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime, StartedAt: bootTime, Requests: 1, Comments: map[int][]githubsync.ObservedComment{4: nil},
 		OpenPulls: []githubsync.ObservedPull{{Number: 4, HeadSHA: bootHead, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime}}}
-	if err := store.RecordCycle(t.Context(), cycle); err != nil {
+	if _, err := store.RecordCycle(t.Context(), cycle); err != nil {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
 	job := &bootstrapJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, problems: &bootstrapProblems{},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), now: func() time.Time { return bootTime.Add(time.Hour) }}
-	if err := job.run(t.Context()); err != nil { // the Suite
+	if _, err := job.run(t.Context()); err != nil { // the Suite
 		t.Fatal(err)
 	}
 	proposeBaseline(t, store, artifacts, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, bootFiles("v1")) // P1-R1 and its summary message, as the commands job would

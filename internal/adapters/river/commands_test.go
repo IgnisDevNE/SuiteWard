@@ -13,7 +13,7 @@ import (
 
 func commandsConfig(job func(context.Context) error) river.Config {
 	config := testConfig(&logCapture{})
-	config.Commands = job
+	config.Commands = noWake(job)
 	return config
 }
 
@@ -62,7 +62,7 @@ func TestWithoutCommandsNoCommandsJobIsRegistered(t *testing.T) {
 	w := newWorld(t, 5)
 	var checks atomic.Int32
 	config := commandsConfig(nil)
-	config.SyncTick, config.SyncRepo = func(context.Context) error { checks.Add(1); return nil }, noRepo
+	config.SyncTick, config.SyncRepo = noWake(func(context.Context) error { checks.Add(1); return nil }), noWakeRepo(noRepo)
 	startRuntime(t, w, config)
 	waitUntil(t, "the tick to run at start", func() bool { return checks.Load() >= 1 })
 

@@ -69,7 +69,7 @@ func (w *Writer) CommentsByAuthor(ctx context.Context, repo string, number int, 
 	if authorID <= 0 {
 		return nil, fmt.Errorf("%w: author id %d", ErrInvalidArgument, authorID)
 	}
-	all, err := pullComments(ctx, w.client, repo, number, time.Time{})
+	all, _, err := pullComments(ctx, w.client, repo, number, time.Time{})
 	if err != nil {
 		return nil, err
 	}

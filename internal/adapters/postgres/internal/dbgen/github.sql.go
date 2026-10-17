@@ -67,7 +67,7 @@ func (q *Queries) CommentsWithChangedCreation(ctx context.Context, arg CommentsW
 }
 
 const getGitHubRepository = `-- name: GetGitHubRepository :one
-SELECT repo, installation_id, last_success, last_error, last_status, wait_until
+SELECT repo, installation_id, last_success, cycle_started_at, last_error, last_status, wait_until
 FROM github_repositories WHERE repo = $1
 `
 
@@ -75,6 +75,7 @@ type GetGitHubRepositoryRow struct {
 	Repo           string
 	InstallationID int64
 	LastSuccess    pgtype.Timestamptz
+	CycleStartedAt pgtype.Timestamptz
 	LastError      string
 	LastStatus     int32
 	WaitUntil      pgtype.Timestamptz
@@ -87,6 +88,7 @@ func (q *Queries) GetGitHubRepository(ctx context.Context, repo string) (GetGitH
 		&i.Repo,
 		&i.InstallationID,
 		&i.LastSuccess,
+		&i.CycleStartedAt,
 		&i.LastError,
 		&i.LastStatus,
 		&i.WaitUntil,
@@ -433,6 +435,39 @@ func (q *Queries) MarkPullsNotOpen(ctx context.Context, arg MarkPullsNotOpenPara
 	return err
 }
 
+const newCommentIDs = `-- name: NewCommentIDs :many
+SELECT DISTINCT (c->>'comment_id')::bigint AS comment_id
+FROM jsonb_array_elements($1::jsonb) AS c
+WHERE NOT EXISTS (SELECT 1 FROM github_comment_versions v WHERE v.repo = $2 AND v.comment_id = (c->>'comment_id')::bigint)
+ORDER BY comment_id
+`
+
+type NewCommentIDsParams struct {
+	Comments []byte
+	Repo     string
+}
+
+// The ids of the listing that have no stored version yet, ascending: the comments this cycle sees for the first time.
+func (q *Queries) NewCommentIDs(ctx context.Context, arg NewCommentIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, newCommentIDs, arg.Comments, arg.Repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var comment_id int64
+		if err := rows.Scan(&comment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, comment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordResolution = `-- name: RecordResolution :execrows
 UPDATE github_pulls
 SET head_sha = $1,
@@ -559,11 +594,12 @@ func (q *Queries) UpsertRepositoryFailure(ctx context.Context, arg UpsertReposit
 
 const upsertRepositorySuccess = `-- name: UpsertRepositorySuccess :exec
 
-INSERT INTO github_repositories (repo, installation_id, last_success)
-VALUES ($1, $2, $3::timestamptz)
+INSERT INTO github_repositories (repo, installation_id, last_success, cycle_started_at)
+VALUES ($1, $2, $3::timestamptz, $4::timestamptz)
 ON CONFLICT (repo) DO UPDATE
 SET installation_id = excluded.installation_id,
     last_success = excluded.last_success,
+    cycle_started_at = excluded.cycle_started_at,
     last_error = '',
     last_status = 0,
     wait_until = NULL
@@ -573,6 +609,7 @@ type UpsertRepositorySuccessParams struct {
 	Repo           string
 	InstallationID int64
 	At             pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
 }
 
 // GitHub observations (docs/contracts/persistence.md, "GitHub observations").
@@ -580,6 +617,11 @@ type UpsertRepositorySuccessParams struct {
 // which locks it until the transaction ends; the statements after it compute
 // their marks from the state that lock protects.
 func (q *Queries) UpsertRepositorySuccess(ctx context.Context, arg UpsertRepositorySuccessParams) error {
-	_, err := q.db.Exec(ctx, upsertRepositorySuccess, arg.Repo, arg.InstallationID, arg.At)
+	_, err := q.db.Exec(ctx, upsertRepositorySuccess,
+		arg.Repo,
+		arg.InstallationID,
+		arg.At,
+		arg.StartedAt,
+	)
 	return err
 }

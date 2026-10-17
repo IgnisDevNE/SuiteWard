@@ -63,16 +63,16 @@ func TestCommandsJobOnPostgreSQLProposesAndSkips(t *testing.T) {
 		4: {command(101, bootTime.Add(10*time.Minute), func(string) string { return "/suiteward propose" })},
 		5: {command(102, bootTime.Add(20*time.Minute), func(code string) string { return "/suiteward skip " + code })},
 	}
-	if err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), OpenPulls: pulls, Comments: comments}); err != nil {
+	if _, err := store.RecordCycle(t.Context(), githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Hour), StartedAt: bootTime.Add(time.Hour), Requests: 1, OpenPulls: pulls, Comments: comments}); err != nil {
 		t.Fatal(err)
 	}
 	reader := &fakeBootReader{repos: map[string]*bootRepository{bootRepo: newBootRepository(bootRepo, bootRepoID)}, calls: map[string]int{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, reader: reader, content: artifacts, pulls: store, tier: owner.TierIsolated,
-		jobTimeout: time.Minute, logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
+		logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	for range 2 { // the second run finds nothing to decide
-		if err := job.run(t.Context()); err != nil {
+		if _, err := job.run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}

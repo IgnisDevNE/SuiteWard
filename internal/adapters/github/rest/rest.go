@@ -28,11 +28,14 @@ type Response struct {
 	Body        []byte
 	NotModified bool
 	ETag        string
+	Date        time.Time // this response's own HTTP Date in UTC (a 304's too, never the cache entry's); zero when missing or unparsable
 }
 
 var (
 	// ErrBudgetExhausted matches a *BudgetExhaustedError.
 	ErrBudgetExhausted = errors.New("github: request budget exhausted")
+	// ErrNotSent matches the failure to get a token, which happens before any request is sent.
+	ErrNotSent = errors.New("github: request not sent")
 	// ErrUnauthorized matches a *StatusError for 401.
 	ErrUnauthorized = errors.New("github: unauthorized")
 	// ErrForbidden matches a *StatusError for a 403 without rate-limit signals.
@@ -322,7 +325,7 @@ type answer struct {
 func (c *Client) send(ctx context.Context, method, path string, payload []byte, useCache bool) (answer, string, error) {
 	value, identity, err := c.token(ctx)
 	if err != nil {
-		return answer{}, "", fmt.Errorf("token: %w", err)
+		return answer{}, "", fmt.Errorf("%w: token: %w", ErrNotSent, err)
 	}
 	var entry cached
 	var hadCache bool
@@ -371,7 +374,7 @@ func (c *Client) interpret(a answer, value string) (Response, error) {
 		if !a.hadCache {
 			return Response{}, errors.New("github answered 304 to an unconditional request")
 		}
-		return Response{Status: a.status, Body: bytes.Clone(a.cached.body), NotModified: true, ETag: a.cached.etag}, nil
+		return Response{Status: a.status, Body: bytes.Clone(a.cached.body), NotModified: true, ETag: a.cached.etag, Date: responseDate(a.header)}, nil
 	case a.status >= 200 && a.status < 300:
 		etag := a.header.Get("ETag")
 		if a.useCache {
@@ -385,7 +388,7 @@ func (c *Client) interpret(a answer, value string) (Response, error) {
 			}
 			c.mu.Unlock()
 		}
-		return Response{Status: a.status, Body: a.body, ETag: etag}, nil
+		return Response{Status: a.status, Body: a.body, ETag: etag, Date: responseDate(a.header)}, nil
 	}
 	body := errorBody(a.body, value)
 	if a.status == http.StatusForbidden || a.status == http.StatusTooManyRequests {
@@ -395,6 +398,16 @@ func (c *Client) interpret(a answer, value string) (Response, error) {
 		}
 	}
 	return Response{}, &StatusError{Status: a.status, Body: body}
+}
+
+// responseDate is the answer's own Date in UTC, zero when the header is missing or cannot be parsed. Unlike the
+// budget's offset it is not filtered: the caller decides what a zero or a far Date means.
+func responseDate(h http.Header) time.Time {
+	date, err := http.ParseTime(h.Get("Date"))
+	if err != nil {
+		return time.Time{}
+	}
+	return date.UTC()
 }
 
 // retryTime prefers Retry-After (seconds or an HTTP date) over X-RateLimit-Reset

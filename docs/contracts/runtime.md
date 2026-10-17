@@ -64,14 +64,14 @@ Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none r
 | --- | --- |
 | `GET /healthz` | Liveness: 200 `{"status":"ok"}` while the process serves. |
 | `GET /readyz` | Readiness: 200 when the database answers, the schema version equals `SupportedVersion` and the service is not shutting down; 503 otherwise. It does not query River: River starts before the listener opens, the process never cancels the context it started with, and only the shutdown stops it, so River runs while this answers 200. During shutdown the 503 is best effort: the listener closes at once and `net/http` drops a request it reads after the drain began, so only a request in flight at that instant sees it. Body `{"status":"ready","schemaVersion":N}` or `{"status":"unavailable","reason":"..."}`. |
-| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>`, `awaiting-merge-decision` (M1.7b) or `failed`; since the M1.7b rework the bootstrap codes are those of [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16)), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. Since M1.7 each entry also has `merges` and `integrity`, and the job counts also exclude `github_merges` and `canonical_integrity` (see "Merges and integrity jobs"). |
+| `GET /status` | JSON: `version`, `schemaVersion`, `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>`, `awaiting-merge-decision` (M1.7b) or `failed`; since the M1.7b rework the bootstrap codes are those of [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16)), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. Since M1.7 each entry also has `merges` and `integrity`, and the job counts also exclude `github_merges` and `canonical_integrity` (see "Merges and integrity jobs"). Since M1.7c each `github` entry also has `cycleStartedAt` when one is recorded (see "Latency (M1.7c)"). |
 
 ### Command and bootstrap jobs (M1.6a)
 
 Both jobs are registered only when the GitHub settings are set, and they act only for repositories with an enrolled owner (D-COMMANDS).
 
 **`github_bootstrap`**
-- Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
+- Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished. Since M1.7c it runs on its own one-worker queue and can be woken; see "Latency (M1.7c)" below.
 - For each enrolled project:
   1. If `Do` reports that the Suite does not exist (`ErrNotFound`), create it with `UnitOfWork.CreateSuite`: `default`, the owner's governing policy and `branch:<default branch>`. Never call `CreateSuite` for an existing Suite. After a same-owner re-enrollment it would conflict on the policy.
   2. Propose a baseline when the Suite has no canonical and either of these holds:
@@ -377,9 +377,76 @@ Other rules:
 
 ### Synchronization jobs (M1.4)
 
-- `github_sync_tick`: one periodic River job every 60 s (D-SYNC) with `RunOnStart`, so a restart catches up at once. It syncs every configured repository whose `wait_until` has passed, with at most 4 repositories in flight (S1: serial requests take about 0.37 s each, so 20 repositories with several open PRs would overrun 60 s serially). One cycle of one repository is the reconciliation of the [GitHub observations](persistence.md#github-observations-m14-normative). The tick gives itself a deadline below `JOB_TIMEOUT` (`JOB_TIMEOUT` minus 5 s), starts no repository after it, and records only the cycles it finished; repositories it did not reach wait for the next tick. A tick does not start while an earlier one is still running (River's unique insert for the periodic job, or an explicit skip that completes at once).
+- `github_sync_tick` (every 20 s and paced since M1.7c, see "Latency (M1.7c)" below): one periodic River job every 60 s (D-SYNC) with `RunOnStart`, so a restart catches up at once. It syncs every configured repository whose `wait_until` has passed, with at most 4 repositories in flight (S1: serial requests take about 0.37 s each, so 20 repositories with several open PRs would overrun 60 s serially). One cycle of one repository is the reconciliation of the [GitHub observations](persistence.md#github-observations-m14-normative). The tick gives itself a deadline below `JOB_TIMEOUT` (`JOB_TIMEOUT` minus 5 s), starts no repository after it, and records only the cycles it finished; repositories it did not reach wait for the next tick. A tick does not start while an earlier one is still running (River's unique insert for the periodic job, or an explicit skip that completes at once).
 - `github_sync_repo` (args: `repo`): one repository now, inserted by the local MCP `sync` (M1.4-C); unique by args while unfinished (available, pending, retryable, running or scheduled; River requires `running` among the unique states), so repeated requests coalesce, including one that arrives while that repository's sync is running: the next tick covers it. It honors `wait_until` like the tick (it returns without calling GitHub and records nothing while waiting).
 - A rate limit or exhausted budget ends that repository's cycle with `wait_until`; other repositories continue. A failed cycle is not a failed job: the job completes and the failure is in `/status`. `/readyz` does not depend on GitHub.
+
+### Latency (M1.7c; normative)
+
+This section is normative from M1.7c. It amends "Synchronization jobs" and "Command and bootstrap jobs" above. The decisions are in [D-SYNC](../plan/decisions.md) and [D-COMMANDS](../plan/decisions.md), both amended 2026-10-16.
+
+**Cycle start.**
+- `rest.Response` carries the server `Date`, parsed as `time.Time` in UTC. It is zero when the header is missing or cannot be parsed.
+  - A 304 carries the `Date` of that 304, never the cached entry's.
+  - The budget keeps its own use of `Date` unchanged.
+- One repository's cycle starts at the `Date` of its first response, the first page of the open pull requests.
+  - That value is `Cycle.StartedAt`. It is never the tick's first response, and never the local clock.
+  - A zero `Date` fails that repository's cycle with the failure kind `decode`. Nothing is recorded as a success, and `/status` shows `lastError` `decode`.
+  - **Sanity bound.** A `Date` more than 5 minutes ahead of the local clock fails the cycle the same way. A broken or hostile `Date` would otherwise push the horizon ahead of real time. The local clock is only a bound here and never enters the horizon.
+- `Cycle.Requests` is the number of requests the cycle made, and `Cycle.Changed` reports whether any of them was not a 304.
+- `Reconciler.Tick` and `SyncRepo` return a `TickResult`, which carries:
+  - `Requests`, summed over the cycles;
+  - `Changed`, true if any recorded cycle changed;
+  - `Recorded`, the number of cycles recorded (M1.7c-E), which decides the commands wake-up;
+  - `FirstObserved`, the comments recorded for the first time, each with its repository, id, `created_at`, the cycle's `StartedAt` and the previous `CycleStartedAt`.
+
+  The app logs the detector line from it and decides the wake-ups. `RecordCycle` returns the ids of the comments it inserted for the first time.
+- **Listing-lag detector.** For each comment a cycle observes for the first time, the sync logs one Info line, "github comment first observed". It carries:
+  - the repository and the comment id;
+  - the comment's `created_at`;
+  - this cycle's `StartedAt`;
+  - that repository's previous successful `StartedAt`, which is its stored `CycleStartedAt` read at the start of the cycle, or none;
+  - `missed_by_ms`, the previous start minus `created_at`, logged only when it is positive.
+
+  It carries no comment text. A positive `missed_by_ms` means a cycle that started after the comment did not list it, which is GitHub's listing lag. The margin must stay above the largest value seen.
+
+**Commands horizon.** `commandsJob.horizon` returns the earliest `CycleStartedAt` among the enrolled repositories, minus `commandListingMargin` = 10 s.
+- An enrolled repository with no `CycleStartedAt` makes `ready` false, with the Warn line "an enrolled repository has not synchronized yet", which is today's line for a missing `LastSuccess`.
+- `commandSkew` and `jobTimeout` no longer enter the horizon. `jobTimeout` stays for the tick deadline.
+
+**Sync pacing.**
+- `github_sync_tick` runs every 20 s, with `RunOnStart`.
+- A tick returns at once, recording nothing and calling no GitHub, while it is not yet due:
+  - it is due 18 s after the previous tick started. The 20 s periodic grid fires on fixed multiples, but each run starts a little after its slot, so a gate of exactly 20 s would skip about half of the ticks. The 2 s tolerance absorbs that pickup jitter (whole-phase review, 2026-10-16);
+  - and no sooner than `previous requests × 60 s / 450` after that start.
+- The previous tick's start and request count are kept in memory, and a restart starts at once. A tick that ends early (a deadline or a budget stop) counts the requests it made.
+
+**Queues and wake-ups.**
+- `github_sync_tick`, `github_commands`, `github_checks`, `github_merges` and `github_bootstrap` each run on their own River queue with `MaxWorkers` 1. Runs of one kind never overlap, so "a run does not start while an earlier one runs" no longer needs the unique periodic insert.
+- The periodic inserts keep their unique options, so periodic runs still coalesce.
+- A **wake-up** is a one-off insert of a job kind with no unique options and `MaxAttempts` 1, made after the waking run's last commit.
+  - **It is skipped** when a job of that kind is already `available` or `scheduled`, including a pending periodic run. The River adapter checks this with one query on `river_job`.
+  - The race between two concurrent wakers can leave at most one extra job per waker, which is harmless.
+  - So wake-ups that arrive during a run queue one follow-up between them, and the queue never grows with the number of wake-ups.
+  - A wake-up whose check or insert fails is logged at Warn, with the kind and nothing else. It never fails the waking run, because the periodic run is the fallback.
+- **How a run names its wake-ups.**
+  - In `river.Config`, `SyncTick`, `SyncRepo`, `Commands`, `Merges` and `Bootstrap` return `(river.Wake, error)`; `Wake` is the set of job kinds to wake.
+  - The River worker inserts those wake-ups after the run returns, whatever its error, because a run that failed late may still have committed work. So "after the commit" holds without passing the runtime to the jobs.
+  - `Checks`, `ProtectionCheck` and `Integrity` keep `func(ctx) error`.
+  - A kind outside commands, checks, merges and bootstrap is a programming error. The worker logs it at Error and inserts nothing.
+- **Who wakes whom:**
+
+  | Run | Wakes | When |
+  |---|---|---|
+  | `github_sync_tick` | `github_commands` | at least one cycle was recorded, changed or not: a cycle that only moves the horizon can make an observed comment decidable |
+  | `github_sync_tick` | `github_checks`, `github_merges` | at least one recorded cycle has `Changed` |
+  | `github_commands` | `github_checks`, `github_bootstrap` | the run recorded at least one ledger entry |
+  | `github_merges` | `github_checks` | the run recorded at least one `promoted` or `corrected` outcome; both record a new canonical version |
+  | `github_bootstrap` | `github_checks` | the run promoted V1 |
+
+- `github_sync_repo` (MCP) wakes the same kinds as a tick, under the same condition.
+
+**`/status`.** Each `github` entry gains `cycleStartedAt` (RFC 3339, GitHub's clock) when one is recorded. Nothing else changes.
 
 ## Local MCP (M1.4; normative)
 

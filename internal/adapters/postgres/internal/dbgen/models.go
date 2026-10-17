@@ -146,6 +146,7 @@ type GithubRepository struct {
 	LastStatus      int32
 	WaitUntil       pgtype.Timestamptz
 	ClosedWatermark pgtype.Timestamptz
+	CycleStartedAt  pgtype.Timestamptz
 }
 
 type Operation struct {

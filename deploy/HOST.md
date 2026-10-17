@@ -779,7 +779,7 @@ No code, token, setup output or secret in tickets, logs or messages. The warning
 
 ## 6g. MVP acceptance (M1.8)
 
-M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/install.md) alone, protects a real repository end to end on both verification targets, with the backup and re-bootstrap runbooks rehearsed first ([the M1.8 exit](../docs/plan/phases/M1.8.md); [D-RELEASE, D-INSTALL and D-COMMANDS](../docs/plan/decisions.md)). This is the owner's rehearsal of an end user's experience, not another dev-loop verification: every install step below points to a section of [install.md](../docs/install.md) or [backup.md](../docs/backup.md) and never copies its commands. If following the guide alone needs anything else, record it as a guide gap (6g.8); the acceptance fails until the guide is fixed. Only the release tag, the dev-loop backup rehearsal of the running host, the paste-backs and the TOTP measurement below come from this file.
+M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/install.md) alone, protects a real repository end to end on both verification targets, with the backup and re-bootstrap runbooks rehearsed, the backup first and the re-bootstrap last ([the M1.8 exit](../docs/plan/phases/M1.8.md); [D-RELEASE, D-INSTALL and D-COMMANDS](../docs/plan/decisions.md)). This is the owner's rehearsal of an end user's experience, not another dev-loop verification: every install step below points to a section of [install.md](../docs/install.md) or [backup.md](../docs/backup.md) and never copies its commands. If following the guide alone needs anything else, record it as a guide gap (6g.8); the acceptance fails until the guide is fixed. Only the release tag, the dev-loop backup rehearsal of the running host, the maintainer check of `/licenses` in the image (6g.6 step 4), the paste-backs and the TOTP measurement below come from this file.
 
 ### 6g.1 Before you start (owner)
 
@@ -851,7 +851,7 @@ Then follow install.md sections 5, 6 and 7 with `-Image ghcr.io/ignisdevne/suite
 - Open the link and check that GitHub fills both the file name and the content, on the branch `feature/acceptance`.
 - Commit the file. Then, as install.md section 8 says, wait about a minute, propose again, approve, and merge. V1 follows.
 
-Run 6g.6 steps 2 to 4 on `<local-repo>`. The co-located re-bootstrap (6g.6 step 5) is out of scope: the co-located side rehearses only the restore. Then rehearse [backup.md section 5](../docs/backup.md#5-rehearse-on-the-co-located-stack), with the kept `.pem`, and delete the `.pem` afterwards. Then put the stack back without GitHub, as 6f.6 does.
+Run 6g.6 steps 2 to 4 on `<local-repo>`, except that step 4 expects `tier` `co-located` and does not repeat the `/licenses` check: it is the same image, already checked on the host. The co-located re-bootstrap (6g.6 step 5) is out of scope: the co-located side rehearses only the restore. Then rehearse [backup.md section 5](../docs/backup.md#5-rehearse-on-the-co-located-stack), with the kept `.pem`, and delete the `.pem` afterwards. Then put the stack back without GitHub, as 6f.6 does.
 
 ### 6g.8 What to paste back
 
@@ -859,7 +859,7 @@ Run 6g.6 steps 2 to 4 on `<local-repo>`. The co-located re-bootstrap (6g.6 step 
 - the first line of each SuiteWard comment;
 - the `/status` before and after for 6g.2;
 - the 6g.3 fields;
-- from 6g.6 step 4, the `/status` `version`, `source` and `tier`, and the result of the `/licenses` check;
+- from 6g.6 step 4, the `/status` `version`, `source` and `tier` of each target (`isolated` on the host, `co-located` locally), and the result of the `/licenses` check on the host;
 - from 6g.6 step 5, the proposal's origin commit, and the `/status` after V1;
 - the list of guide gaps.
 

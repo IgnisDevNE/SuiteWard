@@ -41,4 +41,4 @@ A task states its outcome, applicable ADRs and contracts, dependencies, owned fi
 
 ## Decisions still required
 
-See the [decision register](plan/decisions.md). Open gates: D-GITHUB-ACCESS, D-IDENTITY, D-PROTECTION, D-CHECKS, D-INTEGRATION, D-EXECUTION, D-MANAGED-EXECUTION, and D-HARDENING-CONTROLS. D-RELEASE is decided. The MVP backup is a plain `pg_dump` plus a tarball (D-INSTALL); encrypted backups, guided restore, the priority queue, and automatic protection repair are deferred to post-MVP.
+See the [decision register](plan/decisions.md). Open gates: D-DEPLOY, D-JOB-RETENTION, D-EXECUTION, D-MANAGED-EXECUTION, and D-HARDENING-CONTROLS. D-RELEASE is decided. The MVP backup is a plain `pg_dump` plus a tarball (D-INSTALL); encrypted backups, guided restore, the priority queue, and automatic protection repair are deferred to post-MVP.

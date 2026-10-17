@@ -9,7 +9,7 @@ Two rules apply to every command:
 
 ## 1. What SuiteWard does and does not do
 
-SuiteWard blocks a pull request that changes the protected test files until the owner approves that exact revision. Until then, its `SuiteWard / Contract` check stays pending, and your ruleset (section 7) blocks the merge: SuiteWard does not block it by itself. When the pull request merges, SuiteWard checks the approval and the integrity of the protected files at the merge commit, and promotes the approved contract as the new canonical version.
+SuiteWard keeps the `SuiteWard / Contract` check of a pull request that changes the protected test files pending until the owner approves that exact revision, and your ruleset (section 7) blocks the merge: SuiteWard does not block it by itself. When the pull request merges, SuiteWard checks the approval and the integrity of the protected files at the merge commit, and promotes the approved contract as the new canonical version.
 
 SuiteWard does not run your tests, and it does not claim that your CI ran them. A merge is not proof that the tests ran, passed or are correct. Your review and your own test check decide that. The full statement is in [ADR 0014](decisions/0014-merge-triggered-canonical-promotion.md).
 
@@ -248,7 +248,7 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 
 A success means that the protected files match what the owner approved, except `bootstrap-skipped`, where nothing was assessed. It never means that your tests ran or passed. Your own test check decides that.
 
-**At merge.** When a pull request with an approved revision merges, SuiteWard comments naming the new canonical version — or, if it could not promote, a comment saying it did not promote, with the reason (the merged files do not match the approved revision, for example a rebase that brought in another change). Recover with a new pull request: one that restores the protected files of the last canonical version ([Correcting the canonical](#correcting-the-canonical)), or one that carries the merged content for a new exact approval ([D-INTEGRATION](plan/decisions.md)). There is no reset command.
+**At merge.** When a pull request with an approved revision merges, SuiteWard comments naming the new canonical version — or, if it could not promote, a comment saying it did not promote, with the reason (the merged files do not match the approved revision, for example a rebase that brought in another change). Recover with a new pull request: one that restores the protected files of the last canonical version, or one that carries the merged content for a new exact approval ([D-INTEGRATION](plan/decisions.md)). There is no reset command.
 
 ### Correcting the canonical
 
@@ -588,7 +588,7 @@ Expect `{"schemaVersion":N,"status":"ready"}`, where `N` is the schema version o
 curl -s http://127.0.0.1:8081/status
 ```
 
-Expect JSON with `"tier":"isolated"`, `outbox.failed` at 0 and `jobs.discarded` at 0. The `github` list fills in after the first synchronization succeeds, and the `owner` field appears after setup (section 6).
+Expect JSON with `"tier"` set to the tier you chose (section 10, step 10.9's `SUITEWARD_INSTALLATION_TIER`), `outbox.failed` at 0 and `jobs.discarded` at 0. The `github` list fills in after the first synchronization succeeds, and the `owner` field appears after setup (section 6).
 
 The port is published on the host's loopback only. To read `/status` from another machine, forward the port with your own remote-access tool. SuiteWard does not provide one.
 

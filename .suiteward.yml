@@ -1,0 +1,11 @@
+version: 1
+include:
+  - "**/*_test.go"
+  - "**/testdata/**"
+  - scripts/test-*.ps1
+runner:
+  - scripts/ci.ps1
+  - scripts/check-*.ps1
+  - scripts/dev-env.ps1
+  - /.golangci.yml
+  - /codecov.yml

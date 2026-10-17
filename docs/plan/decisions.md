@@ -350,7 +350,7 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
 - **Updates.** The user pins `vX.Y.Z` and updates when they choose (`podman pull`, then restart). Podman auto-update on `latest-stable` is documented as an opt-in.
 - **Backup.** The MVP backup is a plain `pg_dump` plus a tarball of the artifact volume, kept by the user. The runbook warns that it holds the TOTP secret and the enrollment. Encrypted backups and guided restore stay post-MVP (D-ARCHIVE, D-RESTORE).
 - **Dogfooding.**
-  - SuiteWard governs its own tests on the isolated host, with `CI / test` as the test check, after the acceptance run on a test repository.
+  - SuiteWard governs its own tests on the isolated host, with `CI / Gate` as the test check (the name of the required check of `ci.yml`), after the acceptance run on a test repository.
   - The agent's bot (`ignisdevne`) is then the governed party. Its installation must have neither Checks write nor Administration write.
   - The ruleset requires `SuiteWard / Contract` from the host's runtime App only.
   - A PR that touches protected files then also needs the owner's approval of its current revision.
@@ -358,6 +358,14 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
     - It runs a pinned `vX.Y.Z` and is updated by hand, exactly as the install guide says, never by auto-update from `:deploy`.
     - The reason: an instance that auto-deploys what is merged into the repository it governs would let a merged change replace its own governor.
     - Deployment from `main` (D-DEPLOY) still builds and promotes `:deploy` for verification, but the governing host does not follow it.
+  - **What C2 set up** (owner, 2026-10-17):
+    - **The host** runs `v0.1.0` pinned by digest, with `SUITEWARD_JOB_TIMEOUT=3m`.
+    - **The scope** covers tests and runner. It protects the Go tests and testdata, the script tests, the CI scripts (`scripts/ci.ps1`, `scripts/check-*.ps1`, `scripts/dev-env.ps1`), `.golangci.yml` and `codecov.yml`, so that a PR cannot weaken `CI / Gate` or `codecov/patch` without an approval.
+    - **The protection.** `main` keeps its classic protection (`CI / Gate`, `codecov/patch`, up to date, administrators included) and gains the ruleset `suiteward-contract`: `SuiteWard / Contract` pinned to the host's App, `CI / Gate`, up to date, and an empty bypass list. Classic protection only offers checks that ran in the last week, so a check that has never run can only be required through a ruleset.
+  - **The isolation gap** (owner, 2026-10-17). This session could reach the host App's private key, which was stored on the owner's PC, and the host itself, through the owner's AWS terminal. Until the owner closes both, SuiteWard's `isolated` tier is not assured for this repository. To close them, without an agent session running, the owner:
+    1. rotates the App key and installs the new one on the host;
+    2. deletes the PC copy and revokes the old key;
+    3. stops leaving an AWS session open where an agent can reach it.
 
 ### D-MIGRATIONS: Migration tooling
 

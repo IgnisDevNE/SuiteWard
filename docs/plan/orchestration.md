@@ -38,6 +38,15 @@ Two consequences of the configuration:
 7. The orchestrator publishes one PR for the phase using the `ignisdevne[bot]` App.
 8. The user authorizes the merge; it is a merge commit, so test-first commits are preserved.
 
+## SuiteWard governs this repository
+
+Since M1.8, the host instance governs IgnisDevNE/SuiteWard. Its scope is in [`.suiteward.yml`](../../.suiteward.yml): the tests, the testdata, the CI scripts and their configuration, plus `.suiteward.yml` and `.github/workflows/**`, which are always protected. `main` requires `SuiteWard / Contract` from the host's App and `CI / Gate`.
+
+- A PR that changes a protected file shows `approval-missing` until the owner posts `/suiteward approve <ref> <code>` on its current revision. Every push that changes a protected file needs a new approval. The orchestrator says which protected files a PR changes when it asks for the merge.
+- The agent never posts a `/suiteward` command, never generates a TOTP code, and never proposes, skips or revokes. Those are the owner's.
+- The agent never reaches the host, its App key or its database. If one of them becomes reachable, it tells the owner instead of using it.
+- Keep test changes in as few PRs and pushes as possible, since each protected revision costs the owner one approval.
+
 ## Parallel waves
 
 Tasks without shared files and with satisfied dependencies run in parallel in one wave. Shared declarations, module files, migrations, generators, CI, and composition have exactly one owner per wave; a task needing such a file it does not own stops and reports. A later wave starts only after its dependencies are merged into the phase branch, or when it depends only on a frozen contract document.

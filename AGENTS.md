@@ -45,4 +45,6 @@ All GitHub writes go through the `ignisdevne[bot]` GitHub App, within its grante
 
 The user authorizes every merge into `main` and every message to other people. Passing CI, a prepared PR, or bot capability is not that authorization.
 
+SuiteWard governs this repository ([details](docs/plan/orchestration.md#suiteward-governs-this-repository)). A PR that changes a protected file, as listed in `.suiteward.yml`, also needs the owner's `/suiteward approve` on its current revision. Never post a `/suiteward` command or generate a TOTP code, and never reach the host, its App key or its database.
+
 Report honestly: behavior changed, checks run and the exact revision tested, remaining limitations, and any blocked publication.

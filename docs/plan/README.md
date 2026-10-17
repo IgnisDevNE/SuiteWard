@@ -54,7 +54,6 @@ Remote deployment runs through a GitHub Actions workflow bound to a protected en
 Deferred by the R1 amendments, in no fixed order until the MVP is in use:
 
 - Contract-change priority queue and `/suiteward prioritize` (ADR 0022).
-- First-test PR bootstrap path (ADR 0010).
 - Automatic protection setup and confirmed repair (ADRs 0016, 0017).
 - Encrypted backups, Release storage, contingency PRs and guided restore (ADRs 0019–0021).
 - M2: canonical execution. Research on the first execution profile and isolation (D-EXECUTION) may start at any time.

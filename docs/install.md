@@ -140,7 +140,7 @@ A missing, extra or duplicate `--test-check` is a usage error: exit code 2, and 
 
 Afterwards, check the result. On the co-located PC, use the `podman machine ssh` form from section 5.4. On the isolated host, as `suiteward`, run `curl -s http://127.0.0.1:8081/status`. The output shows `owner` with your login and the `protection` result of each repository.
 
-Only a setup that ends with the enrollment message counts. Confirm it with `/status`: `owner.enrolledAt` changes on every successful run, so a value that did not change means that setup did not complete. An interrupted setup can leave an authenticator entry that matches nothing: delete it.
+Only a setup that prints the protection result of each repository and exits with code 0 counts. Confirm it with `/status`: `owner.enrolledAt` changes on every successful run, so a value that did not change means that setup did not complete. An interrupted setup can leave an authenticator entry that matches nothing: delete it.
 
 Running setup again replaces the TOTP secret. Delete the old authenticator entry and add the new secret. Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
 

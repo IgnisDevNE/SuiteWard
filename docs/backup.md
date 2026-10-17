@@ -98,7 +98,7 @@ Stop the service container, not the database, so that the database and the artif
    python3 -m http.server <port> --bind 127.0.0.1 --directory ~/suiteward-backup
    ```
 
-   Pick a free local port for the forward: a port already in use locally can reset every connection. Download `suiteward.sql`, `suiteward-artifacts.tar` and `status.json` from `http://127.0.0.1:<local port>/`, then stop the forward and the server (Ctrl-C). The forwarding command depends on your remote-access tool.
+   Pick a free local port for the forward: a port already in use locally can reset every connection. Download `suiteward.sql`, `suiteward-artifacts.tar` and `status.json` from `http://127.0.0.1:<local port>/`, then stop the forward and the server (Ctrl-C). The forwarding command depends on your remote-access tool. While both run, any local user of either machine can read the files, and `suiteward.sql` holds the TOTP secret. So do this on machines only you use, stop both as soon as the download ends, and compare the file sizes with `ls -l` on the host.
 
 ## 3. Restore
 

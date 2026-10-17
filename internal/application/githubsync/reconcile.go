@@ -14,6 +14,10 @@ const maxInFlight = 4
 // defaultWait is how long a rate limit that names no reset waits: one tick.
 const defaultWait = time.Minute
 
+// maxDateAhead is how far ahead of the local clock a response's Date may be. A broken or hostile Date would otherwise
+// push the repository's horizon ahead of real time; the local clock is only this bound and never enters the horizon.
+const maxDateAhead = 5 * time.Minute
+
 // Reader lists what one cycle reads from GitHub, in this package's terms; the
 // composition adapts the GitHub adapter to it and classifies its errors.
 type Reader interface {
@@ -130,8 +134,8 @@ func firstObserved(cycle Cycle, previous time.Time, ids []int64) ([]FirstObserve
 }
 
 // list reads every listing of one cycle. The cycle starts at the Date of the first one, GitHub's own clock; a read
-// without a Date fails as decode, since no local clock may stand in for it. Even when it fails the returned cycle
-// carries the requests made, for pacing.
+// without a Date, or with one more than maxDateAhead ahead of the local clock, fails as decode, since no local clock
+// may stand in for it. Even when it fails the returned cycle carries the requests made, for pacing.
 func (r *Reconciler) list(ctx context.Context, repo string) (Cycle, error) {
 	pulls, info, err := r.reader.OpenPulls(ctx, repo)
 	cycle := Cycle{Repo: repo, InstallationID: r.installationID, StartedAt: info.Date, Requests: info.Requests, Changed: info.Changed,
@@ -139,7 +143,7 @@ func (r *Reconciler) list(ctx context.Context, repo string) (Cycle, error) {
 	if err != nil {
 		return cycle, err
 	}
-	if info.Date.IsZero() {
+	if info.Date.IsZero() || info.Date.Sub(r.now()) > maxDateAhead {
 		return cycle, &ReadError{Kind: FailureDecode}
 	}
 	for _, pull := range pulls {

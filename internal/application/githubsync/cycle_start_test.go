@@ -71,6 +71,46 @@ func TestACycleWithoutAnOpenPullsDateFailsAsDecode(t *testing.T) {
 	}
 }
 
+// A Date far ahead of the local clock would push the horizon ahead of real time. The local clock only bounds it.
+func TestACycleWithADateMoreThanFiveMinutesAheadFailsAsDecode(t *testing.T) {
+	for name, test := range map[string]struct {
+		ahead time.Duration
+		want  githubsync.FailureKind // empty: recorded
+	}{
+		"4 minutes ahead is recorded":     {4 * time.Minute, ""},
+		"6 minutes ahead fails as decode": {6 * time.Minute, githubsync.FailureDecode},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := githubsynctest.NewMemory()
+			date := t0.Add(test.ahead)
+			reader := &fakeReader{
+				pulls:    map[string][]githubsync.ObservedPull{repo: {pull(1)}},
+				comments: map[int][]githubsync.ObservedComment{1: {comment(10, "lgtm")}},
+				openInfo: &githubsync.ReadInfo{Date: date, Requests: 1},
+			}
+
+			result, err := newReconciler(t, reader, store, &clock{now: t0}).SyncRepo(t.Context(), repo)
+
+			if err != nil {
+				t.Fatalf("SyncRepo = %v; a failed cycle is recorded, not returned", err)
+			}
+			state := stored(t, store, repo)
+			if test.want == "" {
+				if !state.CycleStartedAt.Equal(date) || state.LastError != "" || result.Recorded != 1 {
+					t.Errorf("state = %+v, result = %+v; want the cycle recorded at GitHub's Date %v", state, result, date)
+				}
+				return
+			}
+			if state.LastError != test.want || !state.LastSuccess.IsZero() || !state.CycleStartedAt.IsZero() || result.Recorded != 0 {
+				t.Errorf("state = %+v, result = %+v; want the %s failure and no success", state, result, test.want)
+			}
+			if pulls, _ := store.Pulls(t.Context(), repo); len(pulls) != 0 {
+				t.Errorf("pulls = %+v; want nothing recorded", pulls)
+			}
+		})
+	}
+}
+
 func TestACycleSumsTheRequestsAndChangesOfItsListings(t *testing.T) {
 	for name, test := range map[string]struct {
 		open, comments githubsync.ReadInfo

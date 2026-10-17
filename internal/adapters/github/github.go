@@ -373,7 +373,7 @@ func readListing[T any](ctx context.Context, client *rest.Client, path func(page
 	for page := 1; page <= maxPages; page++ {
 		p := path(page)
 		resp, err := client.Get(ctx, p)
-		if !errors.Is(err, rest.ErrBudgetExhausted) { // a refused request was never sent
+		if !errors.Is(err, rest.ErrBudgetExhausted) && !errors.Is(err, rest.ErrNotSent) { // a refused request, or one with no token, was never sent
 			info.Requests++
 		}
 		if err != nil {

@@ -698,6 +698,8 @@ M1.7c shortens the time from a PR event to its answer: the cycle starts at GitHu
 
 ### 6f.3 Latency on SuiteWardQ2 (host)
 
+Make every file change in this section with GitHub's web editor ("Add file" or the pencil on a file, then commit to the PR branch). Its commit time is GitHub's own clock, so the orchestrator can time a push to its check. A local `git push` carries your computer's clock instead.
+
 Run it on `SuiteWardQ2`, with the host entry for every approval. The `/suiteward approve <ref> <code>` command is in the check's details (open "Details" on the check). Each code is used once: wait for the next code before every command that takes one.
 
 1. **Open a PR.** Open a PR that changes a file in `tests/`. Expect the `revision` comment and the check `in_progress`. Target: the check within 45 s of the push.

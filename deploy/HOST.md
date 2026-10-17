@@ -789,7 +789,7 @@ M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/
    - **On `main`, before the ruleset.** Each repository gets a file in `tests/` and a CI workflow that gives the test check. The ruleset requires that check, and once it is on, `main` takes changes only through pull requests. `.github/workflows/**` is protected by default, so the workflow becomes part of V1; that is expected.
    - **`<host-repo>` only:** its `main` also holds `.suiteward.yml` with `version: 1` and `include: [tests/**]` (as in 6e.4).
    - **`<local-repo>`:** its `main` has no `.suiteward.yml`.
-   - **The PR branch.** Each repository gets a branch `feature/acceptance` that differs from `main`, for example by one more file in `tests/`.
+   - **The PR branch.** Each repository gets a branch `feature/acceptance` that differs from `main` by one more file outside `tests/`, so that after V1 its PR is not a protected change and merges without a new approval.
 4. Create one new GitHub App per target, following [install.md section 4](../docs/install.md#4-create-the-github-app) exactly. Keep the co-located App's `.pem` until the 6g.7 backup rehearsal is done, because that rehearsal needs it again. A key cannot be downloaded twice.
 
 ### 6g.2 Backup rehearsal on the current host
@@ -826,7 +826,7 @@ Expected, and not guide gaps:
 
 1. **Default-branch bootstrap.** `.suiteward.yml` is already on `main` (6g.1). Open a PR from `feature/acceptance` and comment `/suiteward propose`. Expect a `branch` baseline ([install.md section 8](../docs/install.md#8-first-use-bootstrap)). Approve it, and V1 follows. Then merge the PR.
 2. **A blocked PR.** On a new branch, open a PR that changes `tests/`. It stays `in_progress` until you approve it ([install.md section 9](../docs/install.md#9-day-to-day)).
-3. **TOTP approval, then merge, then promotion.** Run 6d.3 steps 2 and 6 on new PRs: a merge commit that gives V2, then a correction back to V1's files.
+3. **TOTP approval, then merge, then promotion.** Run 6d.3 step 2 on the PR of step 2: approve it and merge it with a merge commit, which gives V2. Then run 6d.3 step 6 on a new PR: a correction back to V1's files.
 4. **Final `/status`.** Expect `merges` absent, `integrity` `passed`, `outbox.failed` 0, and `protection` `enforced`.
 
 ### 6g.7 Co-located acceptance on `<local-repo>`

@@ -17,6 +17,10 @@ import (
 // -ldflags "-X github.com/IgnisDevNE/SuiteWard/internal/app.Version=1.2.3".
 var Version = "dev"
 
+// Source is the URL of the source revision the binary was built from, which /status reports (AGPL section 13).
+// The release build sets it like Version: -ldflags "-X github.com/IgnisDevNE/SuiteWard/internal/app.Source=https://...".
+var Source string
+
 const usage = `usage: suiteward serve
        suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
        suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]

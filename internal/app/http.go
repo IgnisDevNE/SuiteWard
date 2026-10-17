@@ -94,6 +94,9 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 	if note != "" {
 		body["tierNote"] = note
 	}
+	if Source != "" {
+		body["source"] = Source
+	}
 	if enrolled {
 		body["owner"] = map[string]any{"login": enrollment.Owner.Login, "accountId": enrollment.Owner.AccountID, "enrolledAt": enrollment.EnrolledAt.UTC().Format(time.RFC3339)}
 	}

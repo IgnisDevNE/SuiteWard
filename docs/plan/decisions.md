@@ -320,6 +320,11 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
     - The repository therefore has a tag ruleset, `release-tags-owner-only`, on `v*`. It restricts creating, updating and deleting those tags to repository admins, and the bot has no bypass.
     - The owner creates each release tag on GitHub's Releases page, on the commit the orchestrator names.
     - `v0.1.0-rc.1` was the last tag pushed by the bot, before the ruleset existed.
+    - **Still open: this closes the git-tag path only, not the image tags.**
+      - The package's Actions access gives the SuiteWard repository the Admin role (checked 2026-10-17).
+      - So any workflow on any branch the bot pushes can declare `packages: write` and push `:vX.Y.Z`, `:latest-stable` or `:deploy` with `GITHUB_TOKEN`, without the `release` environment or the `verify` job.
+      - Closing it means a publishing credential scoped to the `release` and `remote-poc` environments, with the repository's package access lowered to Read. That is the owner's decision, needed before C2.
+      - Until then users should pin by digest, or accept that a tag can be rewritten.
 - **License.**
   - `AGPL-3.0-only`.
   - The repository carries the official text in `LICENSE`, and the README carries the notice.

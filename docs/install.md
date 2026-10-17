@@ -510,7 +510,7 @@ cat > ~/.config/containers/systemd/suiteward-db.container
 cat > ~/.config/containers/systemd/suiteward.container
 ```
 
-After you paste `suiteward.container`, make two edits. Set its `Image=` line to `Image=ghcr.io/ignisdevne/suiteward:vX.Y.Z`, and delete the `AutoUpdate=registry` line. Keep `Environment=SUITEWARD_INSTALLATION_TIER=isolated` only if your coding agent cannot reach this account. Otherwise set it to `co-located` ([ADR 0027](decisions/0027-agent-human-trust-separation.md)). The database unit stays as it is: its image is pinned by digest.
+After you paste `suiteward.container`, make two edits. Set its `Image=` line to `Image=ghcr.io/ignisdevne/suiteward:vX.Y.Z`, and delete the `AutoUpdate=registry` line. Keep `Environment=SUITEWARD_INSTALLATION_TIER=isolated` only if your coding agent cannot reach this account. Otherwise set it to `co-located` ([ADR 0027](decisions/0027-agent-human-trust-separation.md)). The database unit stays as it is: its image is pinned by digest. To pin SuiteWard the same way, which is safer because a tag can be rewritten and a digest cannot, use `Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>`. Read the digest after pulling the release tag, with `podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z`.
 
 **10.10 Check that Podman reads every unit (as `suiteward`).** Check the Podman version, then run the generator's dry run:
 

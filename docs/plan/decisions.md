@@ -323,8 +323,12 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
     - **Still open: this closes the git-tag path only, not the image tags.**
       - The package's Actions access gives the SuiteWard repository the Admin role (checked 2026-10-17).
       - So any workflow on any branch the bot pushes can declare `packages: write` and push `:vX.Y.Z`, `:latest-stable` or `:deploy` with `GITHUB_TOKEN`, without the `release` environment or the `verify` job.
-      - Closing it means a publishing credential scoped to the `release` and `remote-poc` environments, with the repository's package access lowered to Read. That is the owner's decision, needed before C2.
-      - Until then users should pin by digest, or accept that a tag can be rewritten.
+      - **Decided 2026-10-17 (the owner asked for the market standard).** For the MVP, keep publishing with `GITHUB_TOKEN` inside the protected environments, and pin by digest wherever it matters.
+        - The install guide offers `Image=…@sha256:<digest>`.
+        - The governing host of C2 runs `v0.1.0` pinned by its digest.
+      - **The real closure is signing, post-MVP (D-HARDENING-CONTROLS).**
+        - The release job signs the image (cosign keyless or GitHub's provenance attestation).
+        - Users verify the signature against the `release.yml` workflow on a `refs/tags/v*` ref, so an image pushed by any other workflow or ref fails verification. This needs no extra secret.
 - **License.**
   - `AGPL-3.0-only`.
   - The repository carries the official text in `LICENSE`, and the README carries the notice.
@@ -369,7 +373,7 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 - **D-JOB-RETENTION:** how long finished jobs stay visible on `/status`. Until decided, River v0.49.0's cleaner defaults apply (completed and cancelled 24 hours, discarded 7 days); the outbox keeps its terminal rows. Raised by the M1.2 phase review.
 - **D-EXECUTION:** first executable profile and execution trust model; decided in M2 before implementation.
 - **D-MANAGED-EXECUTION:** future provider-hosted or customer-infrastructure execution; nothing scheduled.
-- **D-HARDENING-CONTROLS:** justified future signing, provenance and transparency controls; nothing scheduled.
+- **D-HARDENING-CONTROLS:** justified future signing, provenance and transparency controls. The first candidate, since 2026-10-17, is signing the release image and verifying it against `release.yml` on a `refs/tags/v*` ref (D-RELEASE).
 
 ## Post-MVP
 

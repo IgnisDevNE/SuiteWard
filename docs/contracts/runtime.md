@@ -71,7 +71,7 @@ Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none r
 Both jobs are registered only when the GitHub settings are set, and they act only for repositories with an enrolled owner (D-COMMANDS).
 
 **`github_bootstrap`**
-- Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished.
+- Periodic every 60 s with `RunOnStart`, `MaxAttempts` 1, unique while unfinished. Since M1.7c it runs on its own one-worker queue and can be woken; see "Latency (M1.7c)" below.
 - For each enrolled project:
   1. If `Do` reports that the Suite does not exist (`ErrNotFound`), create it with `UnitOfWork.CreateSuite`: `default`, the owner's governing policy and `branch:<default branch>`. Never call `CreateSuite` for an existing Suite. After a same-owner re-enrollment it would conflict on the policy.
   2. Propose a baseline when the Suite has no canonical and either of these holds:
@@ -377,7 +377,7 @@ Other rules:
 
 ### Synchronization jobs (M1.4)
 
-- `github_sync_tick`: one periodic River job every 60 s (D-SYNC) with `RunOnStart`, so a restart catches up at once. It syncs every configured repository whose `wait_until` has passed, with at most 4 repositories in flight (S1: serial requests take about 0.37 s each, so 20 repositories with several open PRs would overrun 60 s serially). One cycle of one repository is the reconciliation of the [GitHub observations](persistence.md#github-observations-m14-normative). The tick gives itself a deadline below `JOB_TIMEOUT` (`JOB_TIMEOUT` minus 5 s), starts no repository after it, and records only the cycles it finished; repositories it did not reach wait for the next tick. A tick does not start while an earlier one is still running (River's unique insert for the periodic job, or an explicit skip that completes at once).
+- `github_sync_tick` (every 20 s and paced since M1.7c, see "Latency (M1.7c)" below): one periodic River job every 60 s (D-SYNC) with `RunOnStart`, so a restart catches up at once. It syncs every configured repository whose `wait_until` has passed, with at most 4 repositories in flight (S1: serial requests take about 0.37 s each, so 20 repositories with several open PRs would overrun 60 s serially). One cycle of one repository is the reconciliation of the [GitHub observations](persistence.md#github-observations-m14-normative). The tick gives itself a deadline below `JOB_TIMEOUT` (`JOB_TIMEOUT` minus 5 s), starts no repository after it, and records only the cycles it finished; repositories it did not reach wait for the next tick. A tick does not start while an earlier one is still running (River's unique insert for the periodic job, or an explicit skip that completes at once).
 - `github_sync_repo` (args: `repo`): one repository now, inserted by the local MCP `sync` (M1.4-C); unique by args while unfinished (available, pending, retryable, running or scheduled; River requires `running` among the unique states), so repeated requests coalesce, including one that arrives while that repository's sync is running: the next tick covers it. It honors `wait_until` like the tick (it returns without calling GitHub and records nothing while waiting).
 - A rate limit or exhausted budget ends that repository's cycle with `wait_until`; other repositories continue. A failed cycle is not a failed job: the job completes and the failure is in `/status`. `/readyz` does not depend on GitHub.
 
@@ -392,6 +392,7 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
 - One repository's cycle starts at the `Date` of its first response, the first page of the open pull requests.
   - That value is `Cycle.StartedAt`. It is never the tick's first response, and never the local clock.
   - A zero `Date` fails that repository's cycle with the failure kind `decode`. Nothing is recorded as a success, and `/status` shows `lastError` `decode`.
+  - **Sanity bound.** A `Date` more than 5 minutes ahead of the local clock fails the cycle the same way. A broken or hostile `Date` would otherwise push the horizon ahead of real time. The local clock is only a bound here and never enters the horizon.
 - `Cycle.Requests` is the number of requests the cycle made, and `Cycle.Changed` reports whether any of them was not a 304.
 - `Reconciler.Tick` and `SyncRepo` return a `TickResult`, which carries:
   - `Requests`, summed over the cycles;
@@ -415,7 +416,7 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
 **Sync pacing.**
 - `github_sync_tick` runs every 20 s, with `RunOnStart`.
 - A tick returns at once, recording nothing and calling no GitHub, while it is not yet due:
-  - it is due 20 s after the previous tick started;
+  - it is due 18 s after the previous tick started. The 20 s periodic grid fires on fixed multiples, but each run starts a little after its slot, so a gate of exactly 20 s would skip about half of the ticks. The 2 s tolerance absorbs that pickup jitter (whole-phase review, 2026-10-16);
   - and no sooner than `previous requests × 60 s / 450` after that start.
 - The previous tick's start and request count are kept in memory, and a restart starts at once. A tick that ends early (a deadline or a budget stop) counts the requests it made.
 
@@ -436,7 +437,8 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
 
   | Run | Wakes | When |
   |---|---|---|
-  | `github_sync_tick` | `github_commands`, `github_checks`, `github_merges` | at least one recorded cycle has `Changed` |
+  | `github_sync_tick` | `github_commands` | at least one cycle was recorded, changed or not: a cycle that only moves the horizon can make an observed comment decidable |
+  | `github_sync_tick` | `github_checks`, `github_merges` | at least one recorded cycle has `Changed` |
   | `github_commands` | `github_checks`, `github_bootstrap` | the run recorded at least one ledger entry |
   | `github_merges` | `github_checks` | the run recorded at least one `promoted` or `corrected` outcome; both record a new canonical version |
   | `github_bootstrap` | `github_checks` | the run promoted V1 |

@@ -35,13 +35,16 @@ Final numbers come from the S1 walking skeleton.
 
 **Amendment (2026-10-16, phase M1.7c; owner).** *Latency.*
 - **Poll.** Synchronization runs every 20 s, paced by its cost.
-  - A tick starts no sooner than 20 s after the previous one.
+  - A tick starts no sooner than 18 s after the previous one. The 2 s tolerance absorbs the pickup jitter on the 20 s periodic grid.
   - It also starts no sooner than the previous tick's request count allows at 450 requests a minute. That is half of GitHub's secondary limit of 900 points a minute; a REST GET costs one point (GitHub's REST rate-limit documentation, read 2026-10-16). For example, a tick of 150 requests waits 20 s and one of 420 requests waits 56 s.
   - A cycle costs one request per repository plus one per open PR.
   - The primary budget stays at 50%. A 304 is not counted against it, and the ETag cache of each read client resets only when its token rotates, about once an hour.
   - The limit stays at 20 repositories. At that limit with 20 open PRs each, a tick costs 420 requests, so pacing spaces ticks about 56 s apart. The secondary limit is never crossed.
 - **Wake-ups.** A job that may unblock another inserts a one-off run of it **after its own commit**, and the periodic runs stay as the fallback. A wake-up lost to a crash only delays the work to the next periodic run. This revises "in the same transaction" in the amendment of 2026-10-15 (owner, 2026-10-16).
-  - **Sync to commands, checks and merges.** A sync tick that observed a change (any response that was not a 304) wakes `github_commands`, `github_checks` and `github_merges`.
+  - **Sync to commands, checks and merges.**
+    - A sync tick that observed a change (any response that was not a 304) wakes `github_checks` and `github_merges`.
+    - Any tick that recorded a cycle wakes `github_commands`, because a cycle that changed nothing can still move the horizon past a comment observed earlier (whole-phase review, 2026-10-16).
+    - A `Date` more than 5 minutes ahead of the local clock fails the cycle. This is only a sanity bound, and the local clock never enters the horizon.
   - **Commands to checks and bootstrap.** A commands run that decided at least one candidate wakes `github_checks` and `github_bootstrap`.
   - **Promotion to checks.** A promotion, by the merges job or by the bootstrap job, wakes `github_checks`.
   - **Queues.** Each of these job kinds runs on its own queue with one worker, so runs never overlap. River requires `running` in every unique state set, so a wake-up cannot coalesce with a run in progress. It is therefore inserted without uniqueness, and one that arrives during a run queues exactly one follow-up.

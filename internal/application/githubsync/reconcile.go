@@ -44,6 +44,7 @@ type FirstObserved struct {
 // it recorded for the first time (a Tick's in the order of its repositories, then by comment id).
 type TickResult struct {
 	Requests      int
+	Recorded      int
 	Changed       bool
 	FirstObserved []FirstObserved
 }

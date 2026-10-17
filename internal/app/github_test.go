@@ -131,12 +131,13 @@ type paceReader struct {
 	calls    int
 	requests int
 	changed  bool // the cycle's listing was not a 304
+	err      error // fails the open pulls listing
 	at       func() time.Time
 }
 
 func (r *paceReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
 	r.calls++
-	return nil, githubsync.ReadInfo{Date: r.at(), Requests: r.requests, Changed: r.changed}, nil
+	return nil, githubsync.ReadInfo{Date: r.at(), Requests: r.requests, Changed: r.changed}, r.err
 }
 
 func (r *paceReader) PullComments(context.Context, string, int) ([]githubsync.ObservedComment, githubsync.ReadInfo, error) {
@@ -234,12 +235,23 @@ func TestSyncTickWakesCommandsChecksAndMergesWhenACycleChanged(t *testing.T) {
 	}
 }
 
-func TestSyncTickWakesNothingWhenEveryRequestWasA304(t *testing.T) {
+func TestSyncTickWakesOnlyCommandsWhenEveryRequestWasA304ButACycleWasRecorded(t *testing.T) {
 	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := paceSync(t, &paceReader{requests: 1, at: func() time.Time { return clock }}, func() time.Time { return clock })
 
+	wake, err := s.tick(t.Context())
+	if want := (river.Wake{river.CommandsKind}); err != nil || !slices.Equal(wake, want) {
+		t.Fatalf("an all-304 tick that recorded a cycle = %v, %v; want %v", wake, err, want)
+	}
+}
+
+func TestSyncTickWhoseEveryCycleFailedWakesNothing(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	reader := &paceReader{requests: 1, changed: true, err: &githubsync.ReadError{Kind: githubsync.FailureTransport}, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+
 	if wake, err := s.tick(t.Context()); err != nil || len(wake) != 0 {
-		t.Fatalf("an all-304 tick = %v, %v; want no wake-ups", wake, err)
+		t.Fatalf("a tick whose every cycle failed = %v, %v; want no wake-ups", wake, err)
 	}
 }
 
@@ -256,7 +268,7 @@ func TestSyncTickThatIsNotDueWakesNothing(t *testing.T) {
 	}
 }
 
-func TestSyncRepoWakesTheKindsOfATickWhenACycleChanged(t *testing.T) {
+func TestSyncRepoWakesTheKindsOfATick(t *testing.T) {
 	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	changed := paceSync(t, &paceReader{requests: 1, changed: true, at: func() time.Time { return clock }}, time.Now)
 	unchanged := paceSync(t, &paceReader{requests: 1, at: func() time.Time { return clock }}, time.Now)
@@ -265,8 +277,12 @@ func TestSyncRepoWakesTheKindsOfATickWhenACycleChanged(t *testing.T) {
 	if want := (river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}); err != nil || !slices.Equal(wake, want) {
 		t.Fatalf("syncRepo of a changed cycle = %v, %v; want %v", wake, err, want)
 	}
-	if wake, err := unchanged.syncRepo(t.Context(), "acme/widgets"); err != nil || len(wake) != 0 {
-		t.Fatalf("syncRepo of an all-304 cycle = %v, %v; want no wake-ups", wake, err)
+	if wake, err := unchanged.syncRepo(t.Context(), "acme/widgets"); err != nil || !slices.Equal(wake, river.Wake{river.CommandsKind}) {
+		t.Fatalf("syncRepo of an all-304 cycle = %v, %v; want only the commands woken", wake, err)
+	}
+	failed := paceSync(t, &paceReader{requests: 1, changed: true, err: &githubsync.ReadError{Kind: githubsync.FailureTransport}, at: func() time.Time { return clock }}, time.Now)
+	if wake, err := failed.syncRepo(t.Context(), "acme/widgets"); err != nil || len(wake) != 0 {
+		t.Fatalf("syncRepo of a failed cycle = %v, %v; want no wake-ups", wake, err)
 	}
 	if wake, err := changed.syncRepo(t.Context(), "someone/else"); err == nil || len(wake) != 0 {
 		t.Fatalf("syncRepo of an unconfigured repository = %v, %v; want an error and no wake-ups", wake, err)

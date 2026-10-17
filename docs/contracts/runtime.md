@@ -397,6 +397,7 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
 - `Reconciler.Tick` and `SyncRepo` return a `TickResult`, which carries:
   - `Requests`, summed over the cycles;
   - `Changed`, true if any recorded cycle changed;
+  - `Recorded`, the number of cycles recorded (M1.7c-E), which decides the commands wake-up;
   - `FirstObserved`, the comments recorded for the first time, each with its repository, id, `created_at`, the cycle's `StartedAt` and the previous `CycleStartedAt`.
 
   The app logs the detector line from it and decides the wake-ups. `RecordCycle` returns the ids of the comments it inserted for the first time.

@@ -785,7 +785,7 @@ M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/
 
 1. The orchestrator pushes the tag `v0.1.0-rc.1`, with your authorization quoting the commit ([D-RELEASE](../docs/plan/decisions.md)).
 2. Approve the `release` environment run. Expect the image `ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`, and that `latest-stable` does not move: a pre-release never moves it.
-3. Create two new, empty test repositories, one per target. This runbook names them `<host-repo>` and `<local-repo>`; name them yourself. Each needs a `tests/` file, a CI workflow that gives a test check, and a `feature/acceptance` branch.
+3. Create two new, empty test repositories, one per target. This runbook names them `<host-repo>` and `<local-repo>`; name them yourself. Each needs a `tests/` file, a CI workflow that gives a test check, and a `feature/acceptance` branch. `<host-repo>`'s `main` also holds a `.suiteward.yml` from the start (the example of [install.md section 8](../docs/install.md#8-first-use-bootstrap)): once the ruleset of 6g.5 is on, `main` takes changes only through pull requests. `<local-repo>`'s `main` has none.
 4. Create one new GitHub App per target, following [install.md section 4](../docs/install.md#4-create-the-github-app) exactly.
 
 ### 6g.2 Backup rehearsal on the current host
@@ -812,7 +812,7 @@ Follow [install.md sections 10, 6, 7 and 8](../docs/install.md#10-running-on-a-s
 
 ### 6g.6 End to end on `<host-repo>`
 
-1. **Default-branch bootstrap.** Commit `.suiteward.yml` on `main`, open a PR from `feature/acceptance`, and comment `/suiteward propose`. Expect a `branch` baseline ([install.md section 8](../docs/install.md#8-first-use-bootstrap)). Approve it, and V1 follows.
+1. **Default-branch bootstrap.** With `.suiteward.yml` already on `main` (6g.1), open a PR from `feature/acceptance`, and comment `/suiteward propose`. Expect a `branch` baseline ([install.md section 8](../docs/install.md#8-first-use-bootstrap)). Approve it, and V1 follows.
 2. **A blocked PR.** A PR that changes `tests/` stays `in_progress` until you approve it ([install.md section 9](../docs/install.md#9-day-to-day)).
 3. **TOTP approval, then merge, then promotion.** Run 6d.3 steps 2 and 6: a merge commit that gives a new version, then a correction.
 4. **Final `/status` clean,** as in 6d.3 step 7.

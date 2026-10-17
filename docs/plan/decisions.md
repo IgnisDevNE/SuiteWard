@@ -133,6 +133,9 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
   - **Data for the decision before M1.8.** In the M1.7b live run (2026-10-16), one approval code was refused because of timing, per the owner. The offset was not captured.
   - The commands job logs, for every rejected code, whether a window of 2 steps would have matched and at which offset (`github command code rejected`, `would_match`). The decision reads those lines from the host journal.
   - **Decided 2026-10-17 (owner, M1.8 planning): keep ±1.** The M1.8 acceptance reads the host's `would_match` lines. Only near misses there widen the window to ±2, as a new owner decision.
+  - **Confirmed by the M1.8 acceptance (2026-10-17): the window stays ±1.**
+    - The host's journal held 20 rejected codes from 2026-10-15 to 2026-10-17, and every one had `would_match` false. These were wrong codes, not late ones: dead authenticator entries and one mistyped code.
+    - No near miss was seen.
 - A step is consumed once per owner across all commands (ADR 0027). The consumed step records the command that used it, so a retry of the same command after a crash is not a replay.
 
 **Order and binding of a code to its command (ADR 0027)**
@@ -312,6 +315,11 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
   - `sha-<commit>` and `deploy` stay our internal build and promotion tags.
   - **Publishing needs the owner's approval in a protected `release` environment**, as `remote-poc` does for promotion. The bot could push a tag by itself: it has Contents write, and it is the governed party once SuiteWard governs its own tests. So the tag alone is not the authorization.
   - The bot pushes a tag only with the owner's authorization quoting the commit.
+  - **Amended 2026-10-17 (owner): only the owner creates release tags.**
+    - The workflow that runs on a tag is the one in the tagged commit, so a tag pushed by the bot could carry a `release.yml` without the environment gate.
+    - The repository therefore has a tag ruleset, `release-tags-owner-only`, on `v*`. It restricts creating, updating and deleting those tags to repository admins, and the bot has no bypass.
+    - The owner creates each release tag on GitHub's Releases page, on the commit the orchestrator names.
+    - `v0.1.0-rc.1` was the last tag pushed by the bot, before the ruleset existed.
 - **License.**
   - `AGPL-3.0-only`.
   - The repository carries the official text in `LICENSE`, and the README carries the notice.
@@ -337,6 +345,10 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
   - The agent's bot (`ignisdevne`) is then the governed party. Its installation must have neither Checks write nor Administration write.
   - The ruleset requires `SuiteWard / Contract` from the host's runtime App only.
   - A PR that touches protected files then also needs the owner's approval of its current revision.
+  - **The governing host follows release tags** (2026-10-17; the owner asked for the best practice).
+    - It runs a pinned `vX.Y.Z` and is updated by hand, exactly as the install guide says, never by auto-update from `:deploy`.
+    - The reason: an instance that auto-deploys what is merged into the repository it governs would let a merged change replace its own governor.
+    - Deployment from `main` (D-DEPLOY) still builds and promotes `:deploy` for verification, but the governing host does not follow it.
 
 ### D-MIGRATIONS: Migration tooling
 

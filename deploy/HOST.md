@@ -783,7 +783,7 @@ M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/
 
 ### 6g.1 Before you start (owner)
 
-1. The orchestrator pushes the tag `v0.1.0-rc.1`, with your authorization quoting the commit ([D-RELEASE](../docs/plan/decisions.md)).
+1. The release candidate tag `v0.1.0-rc.1` is created on the commit the orchestrator names. The bot pushed it on 2026-10-17, with your authorization quoting the commit. Since then the tag ruleset `release-tags-owner-only` reserves `v*` tags to you, so a later candidate or release is created by you on GitHub's Releases page ([D-RELEASE](../docs/plan/decisions.md)).
 2. Approve the `release` environment run. The `release` environment exists: you created it on 2026-10-17, with yourself as the required reviewer and deployments from the tags `v*.*.*` only. If `publish` starts without waiting for your approval, the environment is unprotected: stop and report it. Otherwise approve, and expect the image `ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`, and that `latest-stable` does not move: a pre-release never moves it.
 3. Create two new test repositories, one per target. This runbook calls them `<host-repo>` and `<local-repo>`; you name them. Make them public, or use a plan that enforces rulesets, otherwise install.md section 7 reports `enforcement-unavailable`.
    - **On `main`, before the ruleset.** Each repository gets a file in `tests/` and a CI workflow that gives the test check. The ruleset requires that check, and once it is on, `main` takes changes only through pull requests. `.github/workflows/**` is protected by default, so the workflow becomes part of V1; that is expected.

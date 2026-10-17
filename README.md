@@ -48,4 +48,4 @@ Development is test-first for authority, consent, promotion, idempotency, concur
 
 ## License
 
-Distribution is planned as AGPLv3. The final license grant and release notices remain an explicit pre-release decision in [ADR 0009](docs/decisions/0009-agpl-3.0-distribution.md).
+SuiteWard is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`); see [LICENSE](LICENSE). The image carries it, and the license texts of every third-party module linked into the binary, under `/licenses` (`LICENSE` and `THIRD_PARTY_NOTICES`). See [ADR 0009](docs/decisions/0009-agpl-3.0-distribution.md).

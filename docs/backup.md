@@ -92,6 +92,14 @@ Stop the service container, not the database, so that the database and the artif
 
 6. Keep a copy of the backup folder off this machine, offline and encrypted, as the warning in section 1 says. No command.
 
+   Operator note, for a host you reach only through a remote shell that cannot copy files: serve the folder on the host's loopback, forward that port to your PC with your remote-access tool, download each file, then stop both.
+
+   ```bash
+   python3 -m http.server <port> --bind 127.0.0.1 --directory ~/suiteward-backup
+   ```
+
+   Pick a free local port for the forward: a port already in use locally can reset every connection. Download `suiteward.sql`, `suiteward-artifacts.tar` and `status.json` from `http://127.0.0.1:<local port>/`, then stop the forward and the server (Ctrl-C). The forwarding command depends on your remote-access tool.
+
 ## 3. Restore
 
 > [!CAUTION]
@@ -203,7 +211,7 @@ Check the backup before anything is replaced:
    curl -sS http://127.0.0.1:8081/status
    ```
 
-   Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup. Co-located: `curl.exe` in place of `curl`, or the machine commands of section 2, step 5 when `127.0.0.1:8081` does not answer from Windows.
+   Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts and then every hour, so wait for it or restart the service. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup. Co-located: `curl.exe` in place of `curl`, or the machine commands of section 2, step 5 when `127.0.0.1:8081` does not answer from Windows.
 
 9. Return `Image=` to your update path. Step 3 pinned it to the backup's version, and the service stays on that version until you change the line. The install guide's [Updating](install.md#11-updating) gives both paths: if you update by hand, update when you choose, with a fresh backup first; if you chose automatic updates, put back the `Image=` line that it gives. After any change to the line, reload the units and restart the service:
 

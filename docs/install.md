@@ -113,6 +113,10 @@ To stop the stack and keep its state, run `./deploy/local.ps1 -Down`. Expect the
 
 Setup binds you as the owner and enrolls your TOTP secret. Run it yourself, once, in a terminal on this PC (co-located) or on the host (isolated, as `suiteward` in a shell opened as in step 10.1). It needs a real terminal.
 
+Run setup on the machine that runs the instance you are enrolling: the PC for co-located, the host for isolated. Its `--test-check` options name only the repositories of that instance, and each instance keeps its own owner and secret.
+
+Until setup succeeds, SuiteWard comments nothing and publishes no `SuiteWard / Contract` check, so a pull request shows that required check as waiting. This is expected.
+
 Before you start:
 
 - Have your authenticator app ready.
@@ -135,6 +139,8 @@ Setup then works through these steps:
 A missing, extra or duplicate `--test-check` is a usage error: exit code 2, and nothing is written. Setup exits with code 0 once enrollment succeeded, whatever the protection results.
 
 Afterwards, check the result. On the co-located PC, use the `podman machine ssh` form from section 5.4. On the isolated host, as `suiteward`, run `curl -s http://127.0.0.1:8081/status`. The output shows `owner` with your login and the `protection` result of each repository.
+
+Only a setup that ends with the enrollment message counts. Confirm it with `/status`: `owner.enrolledAt` changes on every successful run, so a value that did not change means that setup did not complete. An interrupted setup can leave an authenticator entry that matches nothing: delete it.
 
 Running setup again replaces the TOTP secret. Delete the old authenticator entry and add the new secret. Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
 
@@ -698,7 +704,7 @@ These are the `/status` fields you read:
   - `checks` is the last error while SuiteWard published that repository's check. It is absent when there is none.
   - `bootstrap` shows why the first contract is waiting or stopped. `read-failed` means GitHub could not be read, and SuiteWard retries. `repository-changed` means the configured name now points at a different repository from the one enrolled, so check the name. `origin-not-passed` means the default branch's contract could not be read as a passing source. `assessment-conflict` means two assessments of one source disagree. `blocked-<reason>` means a block for the stated reason. `failed` means the bootstrap failed for good. Read the logs for the last three. The field is absent when nothing is wrong.
   - `merges` shows merge decisions. `waiting` means GitHub has not yet reported the merge commit, and SuiteWard retries. `read-failed`, `assessment-conflict` and `failed` need the logs.
-  - `integrity` is `passed`, `failed` or `unavailable` for the current version. `failed` means SuiteWard fails the check on every pull request of that repository and does not promote until the problem is resolved; it does not block merges by itself — your branch protection does that, if you require the check. `unavailable` changes no check.
+  - `integrity` is `passed`, `failed` or `unavailable` for the current version. It appears after the first integrity check, which runs when the service starts and then every hour, so a canonical created after the start shows no `integrity` for up to an hour: wait, or restart the service. `failed` means SuiteWard fails the check on every pull request of that repository and does not promote until the problem is resolved; it does not block merges by itself — your branch protection does that, if you require the check. `unavailable` changes no check.
 - `outbox.failed` counts messages that SuiteWard could not deliver to GitHub after its retries. It should be 0. Read the logs for the repository. A refused write is often a missing App permission, so compare with section 4.
 - `jobs.discarded` counts background jobs that failed for good. Read the logs.
 - `version`, `schemaVersion` and `source` identify the release and the database schema that run.

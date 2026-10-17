@@ -71,6 +71,46 @@ func TestACycleWithoutAnOpenPullsDateFailsAsDecode(t *testing.T) {
 	}
 }
 
+// A Date far ahead of the local clock would push the horizon ahead of real time. The local clock only bounds it.
+func TestACycleWithADateMoreThanFiveMinutesAheadFailsAsDecode(t *testing.T) {
+	for name, test := range map[string]struct {
+		ahead time.Duration
+		want  githubsync.FailureKind // empty: recorded
+	}{
+		"4 minutes ahead is recorded":     {4 * time.Minute, ""},
+		"6 minutes ahead fails as decode": {6 * time.Minute, githubsync.FailureDecode},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := githubsynctest.NewMemory()
+			date := t0.Add(test.ahead)
+			reader := &fakeReader{
+				pulls:    map[string][]githubsync.ObservedPull{repo: {pull(1)}},
+				comments: map[int][]githubsync.ObservedComment{1: {comment(10, "lgtm")}},
+				openInfo: &githubsync.ReadInfo{Date: date, Requests: 1},
+			}
+
+			result, err := newReconciler(t, reader, store, &clock{now: t0}).SyncRepo(t.Context(), repo)
+
+			if err != nil {
+				t.Fatalf("SyncRepo = %v; a failed cycle is recorded, not returned", err)
+			}
+			state := stored(t, store, repo)
+			if test.want == "" {
+				if !state.CycleStartedAt.Equal(date) || state.LastError != "" || result.Recorded != 1 {
+					t.Errorf("state = %+v, result = %+v; want the cycle recorded at GitHub's Date %v", state, result, date)
+				}
+				return
+			}
+			if state.LastError != test.want || !state.LastSuccess.IsZero() || !state.CycleStartedAt.IsZero() || result.Recorded != 0 {
+				t.Errorf("state = %+v, result = %+v; want the %s failure and no success", state, result, test.want)
+			}
+			if pulls, _ := store.Pulls(t.Context(), repo); len(pulls) != 0 {
+				t.Errorf("pulls = %+v; want nothing recorded", pulls)
+			}
+		})
+	}
+}
+
 func TestACycleSumsTheRequestsAndChangesOfItsListings(t *testing.T) {
 	for name, test := range map[string]struct {
 		open, comments githubsync.ReadInfo
@@ -176,8 +216,8 @@ func TestATickOfRepositoriesThatChangedNothingReportsNoChange(t *testing.T) {
 
 	result, err := newReconciler(t, reader, githubsynctest.NewMemory(), &clock{now: t0}).Tick(t.Context(), []string{repo}, time.Minute)
 
-	if err != nil || result.Changed || result.Requests != 2 || len(result.FirstObserved) != 0 {
-		t.Fatalf("Tick = %+v, %v; want 2 requests, no change, nothing first observed", result, err)
+	if err != nil || result.Changed || result.Recorded != 1 || result.Requests != 2 || len(result.FirstObserved) != 0 {
+		t.Fatalf("Tick = %+v, %v; want 2 requests, one recorded cycle, no change, nothing first observed", result, err)
 	}
 }
 
@@ -194,8 +234,8 @@ func TestAFailedCycleReportsTheRequestsItMadeAndNoChange(t *testing.T) {
 
 	result, err := newReconciler(t, reader, store, &clock{now: t0}).SyncRepo(t.Context(), repo)
 
-	if err != nil || result.Requests != 3+2+2 || result.Changed || len(result.FirstObserved) != 0 {
-		t.Fatalf("SyncRepo = %+v, %v; want the 7 requests of the open pulls and both comment listings, no change, no observation", result, err)
+	if err != nil || result.Requests != 3+2+2 || result.Recorded != 0 || result.Changed || len(result.FirstObserved) != 0 {
+		t.Fatalf("SyncRepo = %+v, %v; want the 7 requests of the open pulls and both comment listings, no recorded cycle, no change, no observation", result, err)
 	}
 	if state := stored(t, store, repo); state.LastError != githubsync.FailureStatus || !state.LastSuccess.IsZero() {
 		t.Errorf("state = %+v; want the recorded failure and no success", state)
@@ -214,8 +254,8 @@ func TestATickSumsTheRequestsOfAFailedCycleToo(t *testing.T) {
 
 	result, err := newReconciler(t, reader, store, &clock{now: t0}).Tick(t.Context(), []string{"acme/ok", "acme/bad"}, time.Minute)
 
-	if err != nil || result.Requests != 4 || !result.Changed || len(result.FirstObserved) != 1 || result.FirstObserved[0].Repo != "acme/ok" {
-		t.Fatalf("Tick = %+v, %v; want 4 requests across both cycles, the change and the comment of the cycle that succeeded", result, err)
+	if err != nil || result.Requests != 4 || result.Recorded != 1 || !result.Changed || len(result.FirstObserved) != 1 || result.FirstObserved[0].Repo != "acme/ok" {
+		t.Fatalf("Tick = %+v, %v; want 4 requests across both cycles, one recorded cycle, the change and the comment of the cycle that succeeded", result, err)
 	}
 	if state := stored(t, store, "acme/bad"); state.LastError != githubsync.FailureTransport {
 		t.Errorf("state of the failed repository = %+v; want the recorded failure", state)

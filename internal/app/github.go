@@ -29,8 +29,8 @@ const (
 	githubTimeout = 30 * time.Second
 	// tickMargin is what a tick leaves of JOB_TIMEOUT to record its last cycles and return.
 	tickMargin = 5 * time.Second
-	// syncMinInterval is the shortest time between two ticks (D-SYNC, "Sync pacing", M1.7c).
-	syncMinInterval = 20 * time.Second
+	// syncMinInterval is the shortest time between two ticks: the 20 s periodic grid less 2 s for pickup jitter (D-SYNC, "Sync pacing", M1.7c).
+	syncMinInterval = 18 * time.Second
 	// syncPaceRequests is how many requests a minute this process paces its ticks to, half of GitHub's secondary
 	// limit of 900 points a minute (D-SYNC, M1.7c amendment of 2026-10-16).
 	syncPaceRequests = 450
@@ -318,7 +318,7 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 
 // tick is the github_sync_tick job: one cycle of every configured repository, paced by the previous tick's cost
 // (D-SYNC, "Sync pacing", M1.7c). It returns at once, recording nothing and calling no GitHub, while it is not yet
-// due: 20 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
+// due: 18 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
 // at syncPaceRequests a minute. The first tick after a process start is always due.
 func (s *githubSync) tick(ctx context.Context) (river.Wake, error) {
 	now := s.now()
@@ -346,13 +346,17 @@ func (s *githubSync) syncRepo(ctx context.Context, repo string) (river.Wake, err
 	return syncWake(result), err
 }
 
-// syncWake is what a tick or syncRepo wakes: the jobs that read what a changed cycle recorded
-// (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed late still wakes what it recorded.
+// syncWake is what a tick or syncRepo wakes (docs/contracts/runtime.md, "Queues and wake-ups"): the commands after any
+// recorded cycle, since one that only moves the horizon can make an observed comment decidable, and the checks and the
+// merges after a changed one. A run that failed late still wakes what it recorded.
 func syncWake(result githubsync.TickResult) river.Wake {
-	if !result.Changed {
-		return nil
+	switch {
+	case result.Changed:
+		return river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}
+	case result.Recorded > 0:
+		return river.Wake{river.CommandsKind}
 	}
-	return river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}
+	return nil
 }
 
 // logFirstObserved is the listing-lag detector (docs/contracts/runtime.md, "Latency (M1.7c)"): one Info line per

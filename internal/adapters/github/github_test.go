@@ -940,3 +940,26 @@ func TestAFailedListingReportsTheRequestsItSent(t *testing.T) {
 		t.Errorf("OpenPulls = info %+v, error %v; want the failure with the 2 requests sent", info, err)
 	}
 }
+
+// A token failure happens before any request is sent, so the listing does not count it.
+func TestAListingDoesNotCountARequestThatFailedToGetAToken(t *testing.T) {
+	budget, err := rest.NewBudget(0.5, time.Now)
+	if err != nil {
+		t.Fatalf("NewBudget: %v", err)
+	}
+	token := func(context.Context) (string, string, error) { return "", "", errors.New("the token endpoint is down") }
+	client, err := rest.NewClient(token, http.DefaultClient, "http://127.0.0.1:1", budget)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	reader, err := github.NewReader(client)
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+
+	_, info, err := reader.OpenPulls(t.Context(), repo)
+
+	if err == nil || info.Requests != 0 {
+		t.Fatalf("OpenPulls = %+v, %v; want an error and no request counted", info, err)
+	}
+}

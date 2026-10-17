@@ -34,6 +34,8 @@ type Response struct {
 var (
 	// ErrBudgetExhausted matches a *BudgetExhaustedError.
 	ErrBudgetExhausted = errors.New("github: request budget exhausted")
+	// ErrNotSent matches the failure to get a token, which happens before any request is sent.
+	ErrNotSent = errors.New("github: request not sent")
 	// ErrUnauthorized matches a *StatusError for 401.
 	ErrUnauthorized = errors.New("github: unauthorized")
 	// ErrForbidden matches a *StatusError for a 403 without rate-limit signals.
@@ -323,7 +325,7 @@ type answer struct {
 func (c *Client) send(ctx context.Context, method, path string, payload []byte, useCache bool) (answer, string, error) {
 	value, identity, err := c.token(ctx)
 	if err != nil {
-		return answer{}, "", fmt.Errorf("token: %w", err)
+		return answer{}, "", fmt.Errorf("%w: token: %w", ErrNotSent, err)
 	}
 	var entry cached
 	var hadCache bool

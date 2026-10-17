@@ -366,6 +366,7 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
     1. rotates the App key and installs the new one on the host;
     2. deletes the PC copy and revokes the old key;
     3. stops leaving an AWS session open where an agent can reach it.
+  - **Closed** (owner, 2026-10-17). The owner rotated the App key from terminals outside any agent session, revoked the old key and deleted the PC copies, then logged out of AWS. The `isolated` tier holds again for this repository, as long as the host, its App key and AWS access stay out of agent sessions (orchestration.md).
 
 ### D-MIGRATIONS: Migration tooling
 

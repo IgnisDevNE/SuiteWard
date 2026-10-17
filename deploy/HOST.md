@@ -785,12 +785,16 @@ M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/
 
 1. The orchestrator pushes the tag `v0.1.0-rc.1`, with your authorization quoting the commit ([D-RELEASE](../docs/plan/decisions.md)).
 2. Approve the `release` environment run. Expect the image `ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`, and that `latest-stable` does not move: a pre-release never moves it.
-3. Create two new, empty test repositories, one per target. This runbook names them `<host-repo>` and `<local-repo>`; name them yourself. Each needs a `tests/` file, a CI workflow that gives a test check, and a `feature/acceptance` branch. `<host-repo>`'s `main` also holds a `.suiteward.yml` from the start (the example of [install.md section 8](../docs/install.md#8-first-use-bootstrap)): once the ruleset of 6g.5 is on, `main` takes changes only through pull requests. `<local-repo>`'s `main` has none.
-4. Create one new GitHub App per target, following [install.md section 4](../docs/install.md#4-create-the-github-app) exactly.
+3. Create two new test repositories, one per target. This runbook calls them `<host-repo>` and `<local-repo>`; you name them. Make them public, or use a plan that enforces rulesets, otherwise install.md section 7 reports `enforcement-unavailable`.
+   - **On `main`, before the ruleset.** Each repository gets a file in `tests/` and a CI workflow that gives the test check. The ruleset requires that check, and once it is on, `main` takes changes only through pull requests. `.github/workflows/**` is protected by default, so the workflow becomes part of V1; that is expected.
+   - **`<host-repo>` only:** its `main` also holds `.suiteward.yml` with `version: 1` and `include: [tests/**]` (as in 6e.4).
+   - **`<local-repo>`:** its `main` has no `.suiteward.yml`.
+   - **The PR branch.** Each repository gets a branch `feature/acceptance` that differs from `main`, for example by one more file in `tests/`.
+4. Create one new GitHub App per target, following [install.md section 4](../docs/install.md#4-create-the-github-app) exactly. Keep the co-located App's `.pem` until the 6g.7 backup rehearsal is done, because that rehearsal needs it again. A key cannot be downloaded twice.
 
 ### 6g.2 Backup rehearsal on the current host
 
-Follow [backup.md section 2](../docs/backup.md#2-back-up), then [section 3](../docs/backup.md#3-restore), on the running host. Expect `/status` to match before and after: `version`, `schemaVersion`, each repository's `integrity` `passed`, `outbox.failed` 0, and the same `owner`. Keep this backup: it is the only copy of SuiteWardQ's V12 and SuiteWardQ2's state.
+Follow [backup.md section 2](../docs/backup.md#2-back-up), then [section 3](../docs/backup.md#3-restore), on the running host. Expect `/status` to match before and after: `version`, `schemaVersion`, each repository's `integrity` `passed`, `outbox.failed` 0, and the same `owner`. Keep this backup, with its off-host copy (backup.md section 2): it is the only copy of SuiteWardQ's V12 and SuiteWardQ2's state.
 
 ### 6g.3 TOTP offsets
 
@@ -800,33 +804,43 @@ As `suiteward` (section 1), grep the journal for `github command code rejected`,
 journalctl --user -u suiteward.service --no-pager | grep "github command code rejected"
 ```
 
-Paste back only the `would_match` and `offset` fields; never the repository or comment id beyond what those lines already show. The orchestrator reads them for the [D-COMMANDS](../docs/plan/decisions.md) TOTP decision (keep ±1, widened only on a near miss).
+Paste back only the `would_match` and `offset` fields, not the `repo` or `comment` values those lines also carry. The orchestrator reads them for the [D-COMMANDS](../docs/plan/decisions.md) TOTP decision: keep ±1, and widen only on a near miss.
 
 ### 6g.4 Purge the host (owner's explicit yes in chat first)
 
-Only after 6g.2 has passed (6g.9). With your explicit yes in chat, follow the purge of [backup.md section 4](../docs/backup.md#4-re-bootstrap-from-the-protected-default-branch), and remove the old App key and env file as that section says.
+Do this only after 6g.2 and 6g.3 are done and the backup's off-host copy exists (6g.9), and only with your explicit yes in chat.
+1. Follow the purge of [backup.md section 4](../docs/backup.md#4-re-bootstrap-from-the-protected-default-branch). It removes the data volumes only.
+2. The four Podman secrets stay; their names are in backup.md section 1. The old App key among them belongs to the old App, and `podman secret create` refuses a name that exists. So remove the four secrets now, with the `podman secret rm <name>` that install.md section 10.8 names.
+3. `github.env` and the quadlets need nothing: install.md 10.6 and 10.9 overwrite them.
 
 ### 6g.5 Fresh install on the host, from the guide alone
 
-Follow [install.md sections 10, 6, 7 and 8](../docs/install.md#10-running-on-a-separate-host-operators), with `v0.1.0-rc.1` and `<host-repo>`. Record every point where the guide was unclear, wrong or not enough (6g.8).
+Follow [install.md sections 10, 6 and 7](../docs/install.md#10-running-on-a-separate-host-operators), with `v0.1.0-rc.1` and `<host-repo>`. Section 8, the bootstrap, is 6g.6 step 1. Record every point where the guide was unclear, wrong or not enough (6g.8).
+
+Expected, and not guide gaps:
+- This host already blocks the metadata service (section 4), so 10.5's first check prints `000` where the guide expects `200`.
+- Delete the old authenticator entry (install.md section 6).
+- `setup` consumes a TOTP step, so wait for the next code before the first approve.
 
 ### 6g.6 End to end on `<host-repo>`
 
-1. **Default-branch bootstrap.** With `.suiteward.yml` already on `main` (6g.1), open a PR from `feature/acceptance`, and comment `/suiteward propose`. Expect a `branch` baseline ([install.md section 8](../docs/install.md#8-first-use-bootstrap)). Approve it, and V1 follows.
-2. **A blocked PR.** A PR that changes `tests/` stays `in_progress` until you approve it ([install.md section 9](../docs/install.md#9-day-to-day)).
-3. **TOTP approval, then merge, then promotion.** Run 6d.3 steps 2 and 6: a merge commit that gives a new version, then a correction.
-4. **Final `/status` clean,** as in 6d.3 step 7.
+1. **Default-branch bootstrap.** `.suiteward.yml` is already on `main` (6g.1). Open a PR from `feature/acceptance` and comment `/suiteward propose`. Expect a `branch` baseline ([install.md section 8](../docs/install.md#8-first-use-bootstrap)). Approve it, and V1 follows. Then merge the PR.
+2. **A blocked PR.** On a new branch, open a PR that changes `tests/`. It stays `in_progress` until you approve it ([install.md section 9](../docs/install.md#9-day-to-day)).
+3. **TOTP approval, then merge, then promotion.** Run 6d.3 steps 2 and 6 on new PRs: a merge commit that gives V2, then a correction back to V1's files.
+4. **Final `/status`.** Expect `merges` absent, `integrity` `passed`, `outbox.failed` 0, and `protection` `enforced`.
 
 ### 6g.7 Co-located acceptance on `<local-repo>`
 
-Follow [install.md sections 5, 6, 7 and 8](../docs/install.md#5-install-co-located) with `-Image ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`.
+The co-located stack still holds the SuiteWardQ3 state and the old App key, and `local.ps1` reads `-GitHubAppKeyFile` only while that secret is missing. That state is disposable. Start with `./deploy/local.ps1 -Down -Purge`, the start-over of [install.md section 5](../docs/install.md#5-install-co-located).
 
-**Bootstrap from the PR head, with the `/` branch editor link.** `<local-repo>` has no `.suiteward.yml` on `main`.
+Then follow install.md sections 5, 6 and 7 with `-Image ghcr.io/ignisdevne/suiteward:v0.1.0-rc.1`.
+
+**The PR-head bootstrap (a `pull` baseline), through the `/` branch editor link.** `<local-repo>` has no `.suiteward.yml` on `main`.
 - Open a PR from `feature/acceptance` and comment `/suiteward propose`. Expect the suggestion with its editor link ([install.md section 8](../docs/install.md#8-first-use-bootstrap)).
 - Open the link and check that GitHub fills both the file name and the content, on the branch `feature/acceptance`.
-- Commit the file. Then, as install.md section 8 says, propose again, approve, and merge. V1 follows.
+- Commit the file. Then, as install.md section 8 says, wait about a minute, propose again, approve, and merge. V1 follows.
 
-Run 6g.6 steps 2 to 4 on `<local-repo>`. Then rehearse [backup.md section 5](../docs/backup.md#5-rehearse-on-the-co-located-stack). Then put the stack back without GitHub, as 6f.6 does.
+Run 6g.6 steps 2 to 4 on `<local-repo>`. Then rehearse [backup.md section 5](../docs/backup.md#5-rehearse-on-the-co-located-stack), with the kept `.pem`, and delete the `.pem` afterwards. Then put the stack back without GitHub, as 6f.6 does.
 
 ### 6g.8 What to paste back
 
@@ -840,7 +854,7 @@ Never a code, a token, an `otpauth://` URI or setup output.
 
 ### 6g.9 Never
 
-Keep the warnings of 6e.6, and add: never purge before 6g.2 has passed.
+Keep the warnings of 6e.6, and add: never purge before 6g.2 and 6g.3 are done and the backup has an off-host copy.
 
 ## 7. Reach `/status`
 

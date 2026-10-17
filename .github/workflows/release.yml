@@ -1,0 +1,90 @@
+# Publishes a release image to GHCR when a `vX.Y.Z` or `vX.Y.Z-rc.N` tag is pushed (D-RELEASE).
+# Not part of the CI gate and not a required check.
+# The tag alone does not publish: the `publish` job waits for the owner's approval in the protected `release` environment.
+# A final `vX.Y.Z` must sit on a commit of `main`; a pre-release may sit anywhere and never moves `latest-stable`.
+# Same build as deploy.yml, with the tag as the version and the tag's source tree as the corresponding source (AGPL section 13).
+# No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/ignisdevne/suiteward
+  # moby/buildkit:buildx-stable-1 as of 2026-10-09.
+  BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
+jobs:
+  verify:
+    name: Verify the tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # All history and branches, so origin/main is there for the ancestor check.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: tag
+        name: Check the tag and, for a final release, that it is on main
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::The tag $TAG is neither vX.Y.Z nor vX.Y.Z-rc.N"
+            exit 1
+          fi
+          if [[ "$TAG" == *-rc.* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            git merge-base --is-ancestor "$COMMIT" origin/main || { echo "::error::The final release $TAG is not on a commit of main"; exit 1; }
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Build and push the release (owner approval)
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create the builder
+        run: docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Build and push linux/amd64 and linux/arm64
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          tags=(--tag "$IMAGE:$TAG")
+          if [ "$PRERELEASE" = false ]; then tags+=(--tag "$IMAGE:latest-stable"); fi
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+            --build-arg "GO_VERSION=$(cat .go-version)" \
+            --build-arg "VERSION=$TAG" \
+            --build-arg "SOURCE=https://github.com/IgnisDevNE/SuiteWard/tree/$TAG" \
+            --label org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
+            --label "org.opencontainers.image.revision=$COMMIT" \
+            --annotation index:org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
+            --file deploy/Containerfile "${tags[@]}" .

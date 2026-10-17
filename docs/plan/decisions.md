@@ -26,7 +26,7 @@ Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 Final numbers come from the S1 walking skeleton.
 
 **Amendment (2026-10-15, after M1.7; owner).** *Latency.*
-- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
+- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. After M1.7c (2026-10-17), on both targets, a command took 16–35 s to its answer, an approval 17–36 s to its check, and a push 12–31 s to its check. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
 - **Approved for phase M1.7c (before M1.8):**
   - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction;
   - shorten the synchronization poll to about 20–30 s.

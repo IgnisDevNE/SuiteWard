@@ -26,7 +26,7 @@ Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 Final numbers come from the S1 walking skeleton.
 
 **Amendment (2026-10-15, after M1.7; owner).** *Latency.*
-- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. After M1.7c (2026-10-17), on both targets, a command took 16–35 s to its answer, an approval 17–36 s to its check, and a push 12–31 s to its check. The floor for a command is the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s.
+- **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. After M1.7c (2026-10-17), on both targets, a command took 16–35 s to its answer, an approval 17–36 s to its check, and a push 12–31 s to its check. Before M1.7c the floor for a command was the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s. Since M1.7c it is the earliest cycle start in GitHub's clock minus 10 s (D-COMMANDS amendment of 2026-10-16).
 - **Approved for phase M1.7c (before M1.8):**
   - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction;
   - shorten the synchronization poll to about 20–30 s.
@@ -138,7 +138,7 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 **Order and binding of a code to its command (ADR 0027)**
 - Commands are processed one at a time across all repositories, ordered by the comment's `created_at` and then its comment id.
 - The command order given to the domain is the GitHub comment id.
-- **Sync watermark.** A comment is processed only once every enrolled repository has completed a successful synchronization cycle that began after the comment was created. "Began after" is approximated as finished at least `JOB_TIMEOUT` plus 30 s of clock skew after `created_at`.
+- **Sync watermark.** A comment is processed only once every enrolled repository has completed a successful synchronization cycle that began after the comment was created. "Began after" was approximated as finished at least `JOB_TIMEOUT` plus 30 s of clock skew after `created_at`. Since M1.7c it is measured in GitHub's clock (amendment of 2026-10-16 below), and `JOB_TIMEOUT` no longer delays commands.
   - Without the watermark, an agent using the owner's GitHub identity could copy the owner's code into a command on another repository, sync that repository first, and use the code before the owner's own command.
   - Cost: a repository that cannot synchronize delays every command. `/status` shows the reason.
 - **Edited before observed.** A comment whose first observed version was already edited (`updated_at` differs from `created_at`) is not a command. It uses up no step and is acknowledged with the reason.

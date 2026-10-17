@@ -1,4 +1,4 @@
-# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5, M1.6a, M1.6b and M1.7
+# Remote host (isolated target): owner runbook for M1.2, M1.4, M1.5, M1.6a, M1.6b, M1.7, M1.7b and M1.7c
 
 Host `i-0f556162ae6b59b22`, us-east-2, Ubuntu 24.04 arm64, Podman 4.9.3, rootless for the unprivileged `suiteward` user. No inbound ports and no SSH daemon: you administer it through SSM Session Manager from your own workstation. This runs the product image and its PostgreSQL as two rootless containers from the Quadlet units in `deploy/quadlet/`. It needs three secrets, all Podman secrets mounted as files: a generated database password (section 3, you never type it), the GitHub App's private key and a generated MCP token (section 4a, M1.4). The three non-secret GitHub settings live in a host file you write (section 4a).
 
@@ -668,6 +668,7 @@ M1.7c shortens the time from a PR event to its answer: the cycle starts at GitHu
 
 1. Add `phase/M1.7c` to the deployment branches of the `remote-poc` environment (GitHub, repository Settings, Environments). Without it the `promote` job of the `Deploy` run is refused.
 2. Nothing else changes: no setup, no new authenticator entry, the same repositories.
+3. **Precondition.** `SuiteWardQ2` and `SuiteWardQ3` already hold a canonical version from 6e (V1 or later). Without one, step 1 of 6f.3 shows `bootstrap-awaiting` and step 4 gives no `canonical-present`: stop and report.
 
 ### 6f.2 Deploy on the host
 

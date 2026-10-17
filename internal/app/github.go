@@ -346,13 +346,17 @@ func (s *githubSync) syncRepo(ctx context.Context, repo string) (river.Wake, err
 	return syncWake(result), err
 }
 
-// syncWake is what a tick or syncRepo wakes: the jobs that read what a changed cycle recorded
-// (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed late still wakes what it recorded.
+// syncWake is what a tick or syncRepo wakes (docs/contracts/runtime.md, "Queues and wake-ups"): the commands after any
+// recorded cycle, since one that only moves the horizon can make an observed comment decidable, and the checks and the
+// merges after a changed one. A run that failed late still wakes what it recorded.
 func syncWake(result githubsync.TickResult) river.Wake {
-	if !result.Changed {
-		return nil
+	switch {
+	case result.Changed:
+		return river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}
+	case result.Recorded > 0:
+		return river.Wake{river.CommandsKind}
 	}
-	return river.Wake{river.CommandsKind, river.ChecksKind, river.MergesKind}
+	return nil
 }
 
 // logFirstObserved is the listing-lag detector (docs/contracts/runtime.md, "Latency (M1.7c)"): one Info line per

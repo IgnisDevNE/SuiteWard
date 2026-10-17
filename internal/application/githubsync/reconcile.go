@@ -40,8 +40,8 @@ type FirstObserved struct {
 	PreviousStartedAt time.Time // the repository's stored CycleStartedAt before this cycle; zero when it had none
 }
 
-// TickResult is what SyncRepo or Tick did: the requests it made, whether a recorded cycle changed, and the comments
-// it recorded for the first time (a Tick's in the order of its repositories, then by comment id).
+// TickResult is what SyncRepo or Tick did: the requests it made, the cycles it recorded, whether a recorded cycle
+// changed, and the comments it recorded for the first time (a Tick's in the order of its repositories, then by comment id).
 type TickResult struct {
 	Requests      int
 	Recorded      int
@@ -104,9 +104,9 @@ func (r *Reconciler) SyncRepo(ctx context.Context, repo string) (TickResult, err
 	}
 	observed, err := firstObserved(cycle, state.CycleStartedAt, ids)
 	if err != nil {
-		return TickResult{Requests: cycle.Requests, Changed: cycle.Changed}, err
+		return TickResult{Requests: cycle.Requests, Recorded: 1, Changed: cycle.Changed}, err
 	}
-	return TickResult{Requests: cycle.Requests, Changed: cycle.Changed, FirstObserved: observed}, nil
+	return TickResult{Requests: cycle.Requests, Recorded: 1, Changed: cycle.Changed, FirstObserved: observed}, nil
 }
 
 // firstObserved describes the comments the store reported as new, with the start of the cycle that recorded them
@@ -214,6 +214,7 @@ func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Dur
 	var total TickResult
 	for _, result := range results { // the requests of a cycle the deadline cut still count
 		total.Requests += result.Requests
+		total.Recorded += result.Recorded
 		total.Changed = total.Changed || result.Changed
 		total.FirstObserved = append(total.FirstObserved, result.FirstObserved...)
 	}

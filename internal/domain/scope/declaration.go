@@ -162,12 +162,30 @@ func (d Declaration) Runner() []Pattern {
 // The result is a valid declaration; when there is nothing to add it is raw itself, byte for byte. Rewriting the file
 // reindents it with two spaces, so the owner approves the new bytes (D-SCOPE-DISCOVERY).
 func AddPatterns(raw []byte, include, runner []string) ([]byte, error) {
+	return addToLists(raw, []listAdd{{"include", include}, {"runner", runner}})
+}
+
+// AddExcludes returns raw with paths appended to its exclude list, under the rules of AddPatterns. A path is added as the pattern it spells,
+// so a name without a slash excludes that name at every depth.
+func AddExcludes(raw []byte, paths []string) ([]byte, error) {
+	return addToLists(raw, []listAdd{{"exclude", paths}})
+}
+
+// listAdd is the patterns to append to the list under key.
+type listAdd struct {
+	key      string
+	patterns []string
+}
+
+func addToLists(raw []byte, adds []listAdd) ([]byte, error) {
 	if _, err := ParseDeclaration(raw); err != nil {
 		return nil, err
 	}
-	for _, pattern := range slices.Concat(include, runner) {
-		if _, err := ParsePattern(pattern); err != nil {
-			return nil, err
+	for _, add := range adds {
+		for _, pattern := range add.patterns {
+			if _, err := ParsePattern(pattern); err != nil {
+				return nil, err
+			}
 		}
 	}
 	var root yaml.Node
@@ -175,9 +193,11 @@ func AddPatterns(raw []byte, include, runner []string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidDeclaration, err)
 	}
 	top := root.Content[0] // ParseDeclaration accepted raw: one document holding a mapping
-	changed := appendToList(top, "include", include)
-	if appendToList(top, "runner", runner) {
-		changed = true
+	changed := false
+	for _, add := range adds {
+		if appendToList(top, add.key, add.patterns) {
+			changed = true
+		}
 	}
 	if !changed {
 		return slices.Clone(raw), nil

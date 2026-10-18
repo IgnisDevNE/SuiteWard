@@ -36,6 +36,7 @@ const (
 	reasonIntegrityFailed   = "integrity-failed"
 	reasonForkUnsupported   = "fork-unsupported"
 	reasonOwnerCommand      = "owner-command-rejected"
+	reasonRunnerUncovered   = "runner-uncovered"
 
 	problemReadFailed = "read-failed" // a GitHub read failed; the next run tries again
 	problemConflict   = "conflict"    // the canonical moved under the assessment; the next run tries again
@@ -97,6 +98,8 @@ type checksJob struct {
 	// does not try its comment again every run. The outbox key is the idempotency key, so a restart costs one refused insert each.
 	// It also holds the sets of uncovered paths that the scope notice decided (scope-set:...).
 	announced map[string]bool
+	// runners remembers, in memory, the runner files found for the head and canonical of a pull request, so a head is read for them once (docs/contracts/runtime.md, "Check reason runner-uncovered").
+	runners map[checkPull]*runnerSet
 }
 
 // run decides the checks of every enrolled, configured project. A GitHub read failure keeps the stored check; any other
@@ -235,7 +238,7 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 // (integrity-failed, a fork, a skip, a carrier that was none), and any reason the renderer no longer knows, such as the
 // bootstrap-pending of an installation from before the M1.7b rework.
 var keptReasons = []string{reasonUnchanged, reasonReady, reasonBootstrapReady, reasonApprovalMissing, reasonNotCurrent, reasonAssessmentPending,
-	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand}
+	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand, reasonRunnerUncovered}
 
 // pull decides and publishes the check of one open pull request. problem is a code for /status when the decision had
 // to wait for the next run.
@@ -298,6 +301,26 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			result.State, result.Reason = checks.Failure, reasonOwnerCommand
 		}
 	}
+	// A runner file outside the head's scope blocks a success (docs/contracts/runtime.md, "Check reason runner-uncovered"). It comes after the other reasons,
+	// so a rejected command, an approval that is missing and every failure keep precedence. A head whose runner files cannot be read is never success.
+	var runners *runnerSet
+	if suite.canonical != "" && (result.State == checks.Success || result.Reason == reasonRunnerUncovered) {
+		var runnerWait bool
+		if runners, runnerWait, err = j.runnerFiles(ctx, p, pull, suite.canonical); err != nil {
+			return "", err
+		}
+		switch {
+		case runnerWait:
+			result = base
+			result.State, result.Reason = checks.InProgress, reasonAssessmentPending
+			problem = problemReadFailed
+		case len(runners.paths) > 0:
+			result.State, result.Reason = checks.InProgress, reasonRunnerUncovered
+		case result.Reason == reasonRunnerUncovered: // the stored check cannot say which success it replaced: assess again
+			result = base
+			result.State, result.Reason = checks.InProgress, reasonAssessmentPending
+		}
+	}
 	// The comment comes before the check, so a run that fails between the two writes it again, and the check never goes without it.
 	// It does not depend on the stored check: a pull request that waited before the Suite existed has the same reason and reference.
 	if suite.exists && result.Reason == reasonBootstrapAwaiting {
@@ -314,10 +337,23 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	}
 	// Publishing every run, also an unchanged result, lets the ledger resend a message that ended failed.
 	_, _, err = j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
+		if result.Reason == reasonRunnerUncovered { // the block above decided it from a runner set, so a republish has the files too
+			if runners == nil {
+				return governance.OutboxMessage{}, errors.New("a runner-uncovered check has no runner set")
+			}
+			return newCheckMessageWithPaths(p.Repo, result, tier, string(suite.canonical), generation, runners.paths, len(runners.paths))
+		}
 		return newCheckMessage(p.Repo, result, tier, string(suite.canonical), generation)
 	})
 	if err != nil {
 		return "", fmt.Errorf("publish the check: %w", err)
+	}
+	// After the check, so a failure here never delays or changes it: the comment is evidence and decides nothing.
+	if runners != nil && len(runners.paths) > 0 && result.Reason == reasonRunnerUncovered && !runners.written {
+		if err := j.explainRunners(ctx, p, pull, runners); err != nil {
+			return "", err
+		}
+		runners.written = true
 	}
 	// After the check, so a failure here never delays or changes it: the notice is evidence and decides nothing.
 	if suite.canonical != "" && !suite.integrityFailed && !isFork(pull.HeadRepo, p.Repo) {
@@ -454,17 +490,15 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 	return checks.Result{}, "", false, sourceProblem{}, &opaque{what: "assess the head", cause: err}
 }
 
-// sourceProblem is what made the source of a head invalid, as the comment states it: kind is declaration, link or truncated, and path
+// sourceProblem is what made the source of a head invalid, as the comment states it: kind is declaration or link, and path
 // names a link. Its zero value is no problem.
 type sourceProblem struct{ kind, path string }
 
 // sourceProblemOf names the problem that err, an invalid-source error, reports. It cannot for an error that holds no path (an unsafe
-// entry that is not an UnsafeEntryError) or that is none of the three kinds (an invalid tree that GitHub did not truncate).
+// entry that is not an UnsafeEntryError) or that is neither kind (an invalid tree, for example).
 func sourceProblemOf(err error) (sourceProblem, bool) {
 	var unsafe *inventory.UnsafeEntryError
 	switch {
-	case errors.Is(err, github.ErrTreeTruncated):
-		return sourceProblem{kind: sourceTruncated}, true
 	case errors.As(err, &unsafe) && unsafe.Path == scope.DeclarationPath:
 		return sourceProblem{kind: sourceDeclaration}, true // a declaration that is no regular file
 	case errors.As(err, &unsafe):

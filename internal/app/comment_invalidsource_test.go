@@ -29,7 +29,6 @@ func TestCommentPublisherRendersTheInvalidSourceOfEachKind(t *testing.T) {
 	for _, tc := range []struct{ kind, says string }{
 		{"declaration", "not a valid declaration"},
 		{"link", "```\nspec_link\n```"},
-		{"truncated", "truncated the file tree"},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			w := newCmtWorld(t)
@@ -79,7 +78,7 @@ func TestCommentPublisherRefusesAnInvalidSourceThatDoesNotMatchItsKeyOrCannotBeR
 		{"no kind", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { delete(m, "kind") })},
 		{"a link without a path", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { delete(m, "path") })},
 		{"a declaration with a path", cmtInvalidKey, cmtInvalidPayload("declaration", func(m map[string]any) { m["path"] = ".suiteward.yml" })},
-		{"a truncated tree with a path", cmtInvalidKey, cmtInvalidPayload("truncated", func(m map[string]any) { m["path"] = "a" })},
+		{"a kind that no longer exists", cmtInvalidKey, cmtInvalidPayload("truncated", nil)},
 		{"a path over the payload bound", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["path"] = strings.Repeat("p", 151) })},
 		{"a repository that is not owner/name", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["repo"] = "SECRET" })},
 	} {

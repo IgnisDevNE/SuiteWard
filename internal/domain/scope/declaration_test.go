@@ -367,3 +367,46 @@ func TestAddPatternsFollowsTheQuotingOfTheListsItems(t *testing.T) {
 		})
 	}
 }
+
+func TestAddExcludesAppendsToTheExcludeListAndCreatesIt(t *testing.T) {
+	got, err := scope.AddExcludes([]byte("version: 1\ninclude:\n  - /tests/**\nexclude:\n  - gen/\n"), []string{"jest.config.js", "gen/", "packages/a/jest.config.js"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "version: 1\ninclude:\n  - /tests/**\nexclude:\n  - gen/\n  - jest.config.js\n  - packages/a/jest.config.js\n"; string(got) != want {
+		t.Fatalf("AddExcludes = %q, want %q", got, want)
+	}
+	got, err = scope.AddExcludes([]byte("version: 1\ninclude: [/tests/**]\n"), []string{"jest.config.js"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := mustParse(t, got)
+	if got := patternStrings(d.Exclude()); !reflect.DeepEqual(got, []string{"jest.config.js"}) || !reflect.DeepEqual(patternStrings(d.Include()), []string{"/tests/**"}) {
+		t.Fatalf("AddExcludes created exclude %q, include %q", got, patternStrings(d.Include()))
+	}
+}
+
+func TestAddExcludesQuotesLikeAddPatternsAndKeepsComments(t *testing.T) {
+	got, err := scope.AddExcludes([]byte("# Owner notes.\nversion: 1\nexclude:\n  - \"a\"\n  - \"b\"\n"), []string{"c d", "x: y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# Owner notes.\nversion: 1\nexclude:\n  - \"a\"\n  - \"b\"\n  - \"c d\"\n  - \"x: y\"\n"; string(got) != want {
+		t.Fatalf("AddExcludes = %q, want %q", got, want)
+	}
+}
+
+func TestAddExcludesWithNothingNewReturnsTheBytesUnchangedAndRejectsInvalidInput(t *testing.T) {
+	raw := []byte("version:   1\nexclude: [a,   b]\n")
+	if got, err := scope.AddExcludes(raw, []string{"b", "a"}); err != nil || !bytes.Equal(got, raw) {
+		t.Errorf("all present: AddExcludes = %q, %v; want the input", got, err)
+	}
+	if got, err := scope.AddExcludes([]byte("version: 2\n"), []string{"x"}); !errors.Is(err, scope.ErrInvalidDeclaration) || got != nil {
+		t.Errorf("wrong version: AddExcludes = %q, %v; want ErrInvalidDeclaration", got, err)
+	}
+	for _, pattern := range []string{"!x", "../x", `a\b`, "", "a/**b"} {
+		if got, err := scope.AddExcludes([]byte("version: 1\n"), []string{pattern}); !errors.Is(err, scope.ErrInvalidPattern) || got != nil {
+			t.Errorf("exclude %q: AddExcludes = %q, %v; want ErrInvalidPattern", pattern, got, err)
+		}
+	}
+}

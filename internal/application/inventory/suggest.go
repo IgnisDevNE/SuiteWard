@@ -186,12 +186,50 @@ func reached(submodules, patterns []string) []string {
 // Uncovered returns the sorted test-like and runner file paths of entries that s does not cover. A path that an exclude of s
 // matches is never returned: an exclusion is the owner's choice, and adding patterns cannot undo it.
 func Uncovered(entries []Entry, s scope.Scope) ([]string, error) {
-	uncovered := []string{}
-	for _, entry := range entries {
-		if entry.Kind != File {
+	return uncoveredWhere(entries, s, func(e Entry) bool {
+		include, runner := classify(e.Path)
+		return e.Kind == File && len(include)+len(runner) > 0
+	})
+}
+
+// UncoveredRunners is Uncovered for the files of the runner families only (a name of runnerGroups): a test file is never one, although
+// classify brings the pytest group for a Python test file. A symbolic link with a runner name counts like a file: a link the scope covers is invalid
+// already, and one it does not cover can still make the runner read another file. A submodule never counts.
+func UncoveredRunners(entries []Entry, s scope.Scope) ([]string, error) {
+	return uncoveredWhere(entries, s, func(e Entry) bool { return (e.Kind == File || e.Kind == Symlink) && isRunnerFile(e.Path) })
+}
+
+// isRunnerFile reports whether p is not vendored and its base name is one of a runner group.
+func isRunnerFile(p string) bool {
+	_, name, ok := splitFile(p)
+	return ok && slices.ContainsFunc(runnerGroups, func(group []string) bool { return nameMatches(group, name) })
+}
+
+// RunnerPatterns returns the runner patterns that protecting the files at paths adds: the whole group of each runner family found,
+// sorted and without repeats. A path that is no runner file brings nothing.
+func RunnerPatterns(paths []string) []string {
+	found := map[string]bool{}
+	for _, p := range paths {
+		_, name, ok := splitFile(p)
+		if !ok {
 			continue
 		}
-		if include, runner := classify(entry.Path); len(include)+len(runner) == 0 {
+		for _, group := range runnerGroups {
+			if nameMatches(group, name) {
+				for _, pattern := range group {
+					found[pattern] = true
+				}
+			}
+		}
+	}
+	return append([]string{}, slices.Sorted(maps.Keys(found))...)
+}
+
+// uncoveredWhere returns the sorted paths of the entries that keep accepts and s neither covers nor excludes.
+func uncoveredWhere(entries []Entry, s scope.Scope, keep func(Entry) bool) ([]string, error) {
+	uncovered := []string{}
+	for _, entry := range entries {
+		if !keep(entry) {
 			continue
 		}
 		covered, err := s.Covers(entry.Path)

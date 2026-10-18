@@ -39,8 +39,8 @@ type blockedReason struct {
 
 var blockedReasons = map[string]blockedReason{
 	"unapproved-change": {text: "This pull request changed the protected files, but SuiteWard never saw a contract change proposal for it, so no owner approval exists for what was merged."},
-	"invalid-source": {text: "The protected source or the declaration (`.suiteward.yml`) of the merge commit is invalid, for example an invalid declaration or a symlink or " +
-		"submodule inside the protected scope, so SuiteWard cannot read its protected files."},
+	"invalid-source": {text: "The protected source or the declaration (`.suiteward.yml`) of the merge commit is invalid, for example an invalid declaration or " +
+		"a symlink that the protected scope reaches and whose target is not a regular file of the tree, so SuiteWard cannot read its protected files."},
 	"assessment-conflict":       {text: "SuiteWard already holds a different integrity assessment for this commit, so it cannot assess this merge again."},
 	"approval-missing":          {text: "The owner's approval of this exact revision was not current when the pull request was merged."},
 	"differs-from-approved":     {text: "The protected files at the merge commit differ from the exact revision the owner approved."},

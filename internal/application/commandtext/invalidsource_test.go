@@ -19,8 +19,6 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 			[]string{"`.suiteward.yml` of this pull request's head is not a valid declaration", "fix `.suiteward.yml`"}},
 		{"link", commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link"},
 			[]string{"symbolic link", "```\nspec_link\n```", "remove the link, point it to a file, or narrow the pattern that reaches it"}},
-		{"truncated", commandtext.InvalidSourceNotice{Problem: commandtext.TruncatedProblem},
-			[]string{"truncated the file tree", "too large for this release"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,10 +50,9 @@ func TestInvalidSourceCommentShowsThePathInAnEscapedFence(t *testing.T) {
 func TestInvalidSourceCommentRefusesWhatItCannotRender(t *testing.T) {
 	tests := map[string]commandtext.InvalidSourceNotice{
 		"no problem":              {},
-		"an unknown problem":      {Problem: commandtext.TruncatedProblem + 1},
+		"an unknown problem":      {Problem: commandtext.LinkProblem + 1},
 		"a link without a path":   {Problem: commandtext.LinkProblem},
 		"a declaration with path": {Problem: commandtext.DeclarationProblem, Path: ".suiteward.yml"},
-		"a truncated tree + path": {Problem: commandtext.TruncatedProblem, Path: "a"},
 	}
 	for name, problem := range tests {
 		t.Run(name, func(t *testing.T) {

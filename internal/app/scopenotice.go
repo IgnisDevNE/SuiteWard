@@ -119,15 +119,58 @@ func (p *commentPublisher) scopeNotice(key, tail string, payload json.RawMessage
 // scopeSuggestion is one review comment of a scope review: the new patterns of one list of the head's .suiteward.yml, with the
 // list item (line and text) they are suggested after. Its marker key is the message's key and ":" and List.
 type scopeSuggestion struct {
-	List     string   `json:"list"`     // include or runner
+	List     string   `json:"list"`     // include or runner, for a scope notice; protect or ignore, for a runner-uncovered check
 	Line     int      `json:"line"`     // the line of the list item in the head's file
 	Anchor   string   `json:"anchor"`   // that line without its line break
 	Patterns []string `json:"patterns"` // the new patterns, none of which the head's list holds
+	// NewList, for a choice only, names the list the suggestion creates after the anchor, the last item of another list: runner for protect, exclude for ignore.
+	// KeyIndent is then the spaces before its key.
+	NewList   string `json:"newList,omitempty"`
+	KeyIndent string `json:"keyIndent,omitempty"`
 }
 
-// indent is the spaces before the item's dash.
+// choices are the lists of a runner-uncovered check's review suggestions, each the commandtext choice it renders.
+var choices = map[string]commandtext.RunnerChoice{"protect": commandtext.ProtectChoice, "ignore": commandtext.IgnoreChoice}
+
+// indent is the spaces before the item's dash, or before the key of the list a suggestion creates.
 func (s scopeSuggestion) indent() string {
+	if s.NewList != "" {
+		return s.KeyIndent
+	}
 	return s.Anchor[:len(s.Anchor)-len(strings.TrimLeft(s.Anchor, " "))]
+}
+
+// validate reports why the suggestion cannot be rendered. The error quotes nothing: its text may be kept.
+func (s scopeSuggestion) validate() error {
+	choice, isChoice := choices[s.List]
+	switch {
+	case s.List != "include" && s.List != "runner" && !isChoice:
+		return errors.New("the list is unknown")
+	case s.Line <= 0:
+		return errors.New("the line is not positive")
+	case !isChoice && (s.NewList != "" || s.KeyIndent != ""):
+		return errors.New("only a choice creates a list")
+	case s.NewList == "" && s.KeyIndent != "":
+		return errors.New("an indent without a created list")
+	}
+	var err error
+	if isChoice {
+		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+	} else {
+		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns)
+	}
+	if err != nil { // its text quotes the anchor line and the patterns
+		return errors.New("the anchor line, its indent or the patterns do not fit the suggestion")
+	}
+	return nil
+}
+
+// body renders the review comment of the suggestion; it panics on one that does not validate.
+func (s scopeSuggestion) body() string {
+	if choice, isChoice := choices[s.List]; isChoice {
+		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+	}
+	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns)
 }
 
 // scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<review digest>: one or two suggestions, the include
@@ -148,12 +191,12 @@ func (p scopeReviewPayload) validate() error {
 	}
 	seen := map[string]bool{}
 	for _, s := range p.Suggestions {
-		if (s.List != "include" && s.List != "runner") || seen[s.List] || s.Line <= 0 {
-			return errors.New("a suggestion names an unknown or a repeated list, or a line that is not positive")
+		if seen[s.List] {
+			return errors.New("a suggestion names a repeated list")
 		}
 		seen[s.List] = true
-		if commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns) != nil { // its text quotes the anchor line and the patterns
-			return errors.New("the anchor line, its indent or the patterns do not fit the suggestion")
+		if err := s.validate(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -209,7 +252,7 @@ func (p *commentPublisher) publishReview(ctx context.Context, key string, reposi
 		if slices.ContainsFunc(existing, func(c github.Comment) bool { return commandtext.HasMarker(c.Body, instance, marked) }) {
 			continue
 		}
-		text, err := render(githubCommentKind, key, func() string { return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns) })
+		text, err := render(githubCommentKind, key, s.body)
 		if err != nil {
 			return err
 		}

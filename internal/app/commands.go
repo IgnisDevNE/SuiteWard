@@ -634,6 +634,16 @@ const (
 	baseContract      = "contract"       // the canonical's, after the first contract
 )
 
+// invalidBase says that the file a suggest compares with, base (pull or default-branch), is not a valid declaration. It stays an invalid source
+// for invalidSource, and carries only the base: its text is never logged or sent, because it may quote the file.
+type invalidBase struct {
+	base string
+	err  error
+}
+
+func (e *invalidBase) Error() string { return "the " + e.base + " declaration is not valid" }
+func (e *invalidBase) Unwrap() error { return e.err }
+
 // suggest decides a /suiteward suggest (docs/contracts/runtime.md, "Scope discovery (M1.9)"). It is owner only and takes no code, so it reads
 // no step and grants nothing: a fork or a closed pull request is refused, and otherwise the acknowledgment compares the head with a base declaration
 // (the canonical's after the first contract, before it the head's own file or else the default branch's) and shows only the difference. Before the
@@ -661,8 +671,8 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	if view.pull, err = j.observedPull(ctx, c); err != nil {
 		return err
 	}
-	refuse := func(reason string) error {
-		ack, err := newBootstrapAck(target, m.CommentID, login, commands.SuggestRefused, reason, "")
+	refuse := func(reason, base string) error {
+		ack, err := newSuggestRefusedAck(target, m.CommentID, login, reason, base)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
@@ -670,18 +680,22 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	}
 	switch {
 	case isFork(view.pull.HeadRepo, c.Repo):
-		return refuse(reasonFork)
+		return refuse(reasonFork, "")
 	case !view.pull.NotOpenSince.IsZero():
-		return refuse(reasonNotOpen)
+		return refuse(reasonNotOpen, "")
 	}
 	ack, reviews, err := j.suggestion(ctx, target, c, login, view)
+	var invalid *invalidBase
 	switch {
 	case errors.Is(err, errDeclarationTooLarge):
 		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
-		return refuse(reasonDeclarationTooLarge)
+		return refuse(reasonDeclarationTooLarge, "")
+	case errors.As(err, &invalid):
+		j.logger.InfoContext(ctx, "github suggest refused: the base declaration is not valid", "repo", c.Repo, "comment", m.CommentID, "base", invalid.base)
+		return refuse(refusalInvalidSource, invalid.base)
 	case invalidSource(err) || errors.Is(err, errNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
 		j.logger.InfoContext(ctx, "github suggest refused: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
-		return refuse(refusalInvalidSource)
+		return refuse(refusalInvalidSource, "")
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github suggest read failed", c.Repo, err)
 		return &opaque{what: "read for the suggestion", cause: err}
@@ -728,25 +742,35 @@ func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c co
 	if err != nil {
 		return governance.OutboxMessage{}, nil, err
 	}
-	declaration, err := scope.ParseDeclaration(raw) // an invalid file is invalid-source
-	if err != nil {
+	declaration, err := scope.ParseDeclaration(raw)
+	switch {
+	case errors.Is(err, scope.ErrInvalidDeclaration): // invalid-source, naming the file
+		return governance.OutboxMessage{}, nil, &invalidBase{base: base, err: err}
+	case err != nil:
 		return governance.OutboxMessage{}, nil, err
 	}
 	return j.compare(ctx, target, c, login, view, head, base, raw, scope.NewScope(declaration))
 }
 
-// compare answers a suggest by the test-like paths of the head that the base declaration raw, which declares governing, does not cover.
-// The review edits the head's file, so it goes only with a base that is that file or the canonical, never with the default branch's.
+// compare answers a suggest by the missing patterns of the base declaration raw, which declares governing: those for the test-like paths of
+// the head it does not cover, and the runner patterns it neither lists nor covers, which need no file in the head (live run 3). The review edits the head's file, so it goes only with a base that is that file or the canonical, never with the default branch's.
 func (j *commandsJob) compare(ctx context.Context, target commentTarget, c commands.Candidate, login string, view bootstrapView, head *githubTree, base string, raw []byte, governing scope.Scope) (governance.OutboxMessage, []governance.OutboxMessage, error) {
 	found, err := discoverUnder(ctx, head, raw, governing)
 	if err != nil {
 		return governance.OutboxMessage{}, nil, err
 	}
-	if len(found.Paths) == 0 {
+	missing, err := inventory.MissingRunner(found.entries, governing)
+	if err != nil {
+		return governance.OutboxMessage{}, nil, fmt.Errorf("find the missing runner names: %w", err)
+	}
+	// The names a missing path already brings are no news: only the others, which no uncovered file explains, are part of the review's key.
+	fromPaths := pathsSuggestion(found.Paths)
+	unexplained := slices.DeleteFunc(missing, func(pattern string) bool { return slices.Contains(fromPaths.Runner, pattern) })
+	if len(found.Paths) == 0 && len(unexplained) == 0 {
 		ack, err := newNothingUncoveredAck(target, c.Comment.CommentID, login, base)
 		return ack, nil, err
 	}
-	suggested, declaration, err := found.declaration(found.Paths)
+	suggested, declaration, err := found.declarationWith(fromPaths, unexplained)
 	if err != nil {
 		return governance.OutboxMessage{}, nil, err
 	}
@@ -760,7 +784,7 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 	if base == baseDefaultBranch {
 		return ack, nil, nil
 	}
-	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested, setDigest(found.Paths))
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested, setDigest(slices.Concat(found.Paths, unexplained)))
 	return ack, reviews, err
 }
 

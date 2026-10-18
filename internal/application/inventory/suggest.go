@@ -217,3 +217,52 @@ func Uncovered(entries []Entry, s scope.Scope) ([]string, error) {
 	slices.Sort(uncovered)
 	return uncovered, nil
 }
+
+// MissingRunner returns the runner patterns Suggest offers for entries that s neither lists nor covers, in Suggest's order. A runner
+// name matches no file until someone adds one, so it can be missing while Uncovered finds nothing. A pattern is not missing when s
+// lists the same string in its include or runner list, or, for a name with no glob character, when s covers that name as a root path
+// or an exclude of s removes it (an exclusion is the owner's choice). A glob pattern is missing unless the same string is listed.
+func MissingRunner(entries []Entry, s scope.Scope) ([]string, error) {
+	d := s.Declaration()
+	listed := map[string]bool{}
+	for _, p := range slices.Concat(d.Include(), d.Runner()) {
+		listed[p.String()] = true
+	}
+	missing := []string{}
+	for _, pattern := range Suggest(entries).Runner {
+		if listed[pattern] {
+			continue
+		}
+		if !strings.ContainsAny(pattern, "*?[") {
+			covered, err := s.Covers(pattern)
+			if err != nil {
+				return nil, err
+			}
+			excluded := false
+			for _, exclude := range d.Exclude() {
+				if excluded, err = exclude.Match(pattern); err != nil || excluded {
+					break
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+			if covered || excluded {
+				continue
+			}
+		}
+		missing = append(missing, pattern)
+	}
+	return missing, nil
+}
+
+// WithRunner returns s with the runner patterns extra added, sorted and without repeats. The limit of maxSuggestions include and runner
+// patterns together holds: the patterns past it are dropped and Cut is set.
+func (s Suggestion) WithRunner(extra []string) Suggestion {
+	runner := append([]string{}, slices.Compact(slices.Sorted(slices.Values(slices.Concat(s.Runner, extra))))...)
+	if room := max(0, maxSuggestions-len(s.Include)); len(runner) > room {
+		runner, s.Cut = runner[:room], true
+	}
+	s.Runner = runner
+	return s
+}

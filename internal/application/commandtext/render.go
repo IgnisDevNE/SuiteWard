@@ -88,7 +88,8 @@ type Ack struct {
 	Owner     string
 	Source    int64
 	Eligible  bool
-	// Base, only for NothingUncovered, names what the head was compared with; none is the words written before M1.9-E5.
+	// Base, for NothingUncovered and for the InvalidSource refusal of a suggest, names what the head was compared with, or the file that is not a
+	// valid declaration; none is the words written before M1.9-E5.
 	Base ScopeBase
 	// Refusal is set exactly for ProposeRefused and SkipRefused.
 	Refusal Refusal
@@ -234,7 +235,7 @@ func acknowledgment(a Ack) string {
 	case SkipRefused:
 		return skipRefusal(a.Refusal)
 	case SuggestRefused:
-		return suggestRefusal(a.Refusal)
+		return suggestRefusal(a.Refusal, a.Base)
 	case NothingUncovered:
 		covered := "in the scope already"
 		if a.Base != 0 {
@@ -276,7 +277,7 @@ func checkAck(a Ack) {
 		panic(fmt.Sprintf("commandtext: malformed reason %d does not fit outcome %d", a.Malformed, a.Outcome))
 	case (a.Outcome == BootstrapPromoted) != (a.Version != 0):
 		panic(fmt.Sprintf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome))
-	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered):
+	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && !(a.Outcome == SuggestRefused && a.Refusal == InvalidSource)):
 		panic(fmt.Sprintf("commandtext: base %d does not fit outcome %d", a.Base, a.Outcome))
 	case !refusalFits(a.Outcome, a.Refusal):
 		panic(fmt.Sprintf("commandtext: refusal %d does not fit outcome %d", a.Refusal, a.Outcome))
@@ -666,7 +667,7 @@ func refused(command, reason, next string) string {
 	return paragraphs("`" + command + "` was not processed: " + reason + ". Nothing changed.\n" + next)
 }
 
-func suggestRefusal(r Refusal) string {
+func suggestRefusal(r Refusal, base ScopeBase) string {
 	const suggest = "/suiteward suggest"
 	switch r {
 	case Fork:
@@ -675,6 +676,10 @@ func suggestRefusal(r Refusal) string {
 	case NotOpen:
 		return refused(suggest, "this pull request is no longer open", "Comment `/suiteward suggest` on an open pull request.")
 	case InvalidSource:
+		if base != 0 { // the file that failed, named and not quoted
+			_, file := baseNames(base)
+			return refused(suggest, file+" is not a valid declaration", "Fix the declaration, then comment `/suiteward suggest` again.")
+		}
 		return refused(suggest, "SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
 			"Fix the files or the declaration, then comment `/suiteward suggest` again.")
 	case DeclarationTooLarge:

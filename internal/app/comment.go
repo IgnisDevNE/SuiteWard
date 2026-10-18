@@ -80,7 +80,7 @@ type ackPayload struct {
 	PathsTotal  int                  `json:"pathsTotal,omitempty"`  // how many there are,
 	Declaration string               `json:"declaration,omitempty"` // and the canonical declaration with the new patterns added, at most 8192 bytes
 	Declared    bool                 `json:"declared,omitempty"`    // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded)
-	Base        string               `json:"base,omitempty"`        // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; none in a notice written before M1.9-E5
+	Base        string               `json:"base,omitempty"`        // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; none in a notice written before M1.9-E5. Also an invalid-source suggest-refused, for the file that is not a valid declaration
 	AddInclude  []string             `json:"addInclude,omitempty"`  // with a base: the include patterns the base lacks,
 	AddRunner   []string             `json:"addRunner,omitempty"`   // and the runner patterns, at most 20 together
 }
@@ -196,6 +196,11 @@ func (a ackPayload) nothingUncovered() bool {
 	return a.Disposition == string(commands.Suggested) && a.Reason == reasonNothingUncovered
 }
 
+// invalidFile is whether the payload is the refusal of a suggest whose base file is not a valid declaration, which names the file in Base.
+func (a ackPayload) invalidFile() bool {
+	return a.Disposition == string(commands.SuggestRefused) && a.Reason == refusalInvalidSource
+}
+
 // hasNotice is whether the payload holds any field that only a scope notice uses. Base is not one: nothing-uncovered names it too.
 func (a ackPayload) hasNotice() bool {
 	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != "" || len(a.AddInclude) != 0 || len(a.AddRunner) != 0
@@ -254,7 +259,7 @@ func (a ackPayload) validate() error {
 	case a.scopeNotice():
 		return a.validateNotice()
 	case !a.declarationMissing():
-		if a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered()) {
+		if a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered() && !a.invalidFile()) {
 			return errors.New("the branch, the suggestion and the notice fit only a missing declaration or a scope notice")
 		}
 		return nil
@@ -342,6 +347,11 @@ func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch, 
 	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
 		Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut,
 		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner)})
+}
+
+// newSuggestRefusedAck builds the refusal of a suggest. base, when not empty, says which file is not a valid declaration (invalid-source only).
+func newSuggestRefusedAck(target commentTarget, comment int64, ownerLogin, reason, base string) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.SuggestRefused), Comment: comment, Owner: ownerLogin, Reason: reason, Base: base})
 }
 
 // newNothingUncoveredAck builds the answer of a suggest that found the base (pull, default-branch or contract) to cover every test-like path.

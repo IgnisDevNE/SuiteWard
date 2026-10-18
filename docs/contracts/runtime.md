@@ -478,6 +478,17 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **A symlink.** It is checked only if the scope covers it or may cover a path below it. Then its target is resolved in the same tree. The target is the link's blob, taken relative to the link's directory, and at most 8 links are followed. The target is resolved one component at a time, never by cleaning the text: `.` and empty components are skipped; `..` steps back one component, and stepping past the root leaves the target unresolved; every other component before the last must be a real directory of the tree, not a link, file or submodule. Intermediate links are not followed. If the target is a regular file, the link is unsafe only if the scope covers the link's path. Any other target (a directory, outside the repository, dangling, or a loop) keeps today's rule: unsafe.
 - **A submodule.** It is never unsafe and never read. `Suggest` returns the submodules that its patterns would reach as `Submodules` (at most 20). Every reply that suggests a declaration warns that their contents are not protected.
 
+**Check reason `runner-uncovered` (new, 2026-10-18; D-SCOPE-DISCOVERY).**
+- **When it applies.** After V1, for an open, non-fork PR, the checks job takes the head's runner files: the paths matching a runner family name, not covered by the governing scope, not excluded and not vendored.
+  - **If there are none,** nothing changes, and it makes no extra read.
+  - **If there are some,** it reads `Reader.PullFiles` once per head and keeps the ones the PR adds, modifies or renames into place.
+  - **If any remain,** the check is `in_progress` with reason `runner-uncovered` wherever it would otherwise be `success`.
+  - **A head that is also `approval-missing`** stays `approval-missing` first. After the approval, it becomes `runner-uncovered`.
+  - **Every other reason keeps precedence:** `invalid-source`, `integrity-failed`, `not-current` and the rest.
+- **The summary** lists the runner files, at most 20, and gives the two ways out: protect them by committing the suggested declaration and approving it, or exclude them by adding the paths to `exclude` and approving it. It never claims tests ran.
+- **The scope notice** for the same head is unchanged, and still carries the suggested declaration.
+- **Resolution** is by the usual flow: the next head's assessment sees the changed scope.
+
 **Outbox `github_comment`, key `invalid-source:<repository id>:<pull>:<problem digest>` (new, 2026-10-18, live run 5).**
 - **When it is written.** When the checks job publishes `failure` with reason `invalid-source` for an open, non-fork PR, it also writes one comment that explains the problem.
 - **The problem** has three kinds:

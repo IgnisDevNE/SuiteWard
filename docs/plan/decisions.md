@@ -104,6 +104,12 @@ Accepted 2026-10-17 (owner, M1.9 planning, after the C2 finding in [M1.8](phases
   - **The head's own scope only silences.** A test path that the PR's valid `.suiteward.yml` already covers is not reported. That only suppresses an advisory; the widening still needs approval.
 - **Exclusions are respected.** A test-like path that matches an `exclude` of the governing scope is never reported, because adding patterns cannot undo an exclusion.
 - **One notice per set.** The notice is keyed by the set of added uncovered paths, so later pushes that add nothing new do not repeat it.
+- **Uncovered runner files block** (owner, 2026-10-18, M1.9 live run).
+  - **The risk.** A runner file can change how the protected tests run without touching any of them. A root `conftest.py` can skip them, and a `jest.config.js` can narrow `testMatch`. So, unlike an uncovered test file, an uncovered runner file is a bypass, and a notice alone is not enough.
+  - **The rule.** After V1, a PR that adds or modifies a file matching a runner family name, outside the governing scope and not excluded, gets the check `in_progress` with reason `runner-uncovered`. It is never `success` until the owner decides.
+  - **Protecting the file.** The owner commits the suggested declaration, which adds the pattern, and approves it.
+  - **Ignoring the file.** The owner adds the path to `exclude` and approves it. That is a scope reduction, which needs approval anyway, so the decision is recorded in the contract.
+  - **What stays non-blocking.** Uncovered test files stay a notice only: they add no bypass of the existing protection, and their detection is heuristic. The runner family names are a short, exact list.
   - Rewriting the YAML can drop the owner's comments. Comments are part of the approved bytes, so the owner sees that change and approves it.
 - **Widening is a protected change.** Any edit to `.suiteward.yml` creates a revision that needs approval, comments included. An agent widens the scope with such a PR; it never posts `suggest`.
 - **A reduction is detailed.** The revision comment lists the rules and paths a reduction removes.

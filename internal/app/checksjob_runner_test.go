@@ -104,7 +104,7 @@ func TestChecksBlockANewRunnerFileOutsideTheScopeAndWriteOneCommentWithBothDecla
 	if got := w.runnerPayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}
-	if !strings.Contains(protect, "runner:\n  - jest.config.*") || !strings.Contains(ignore, "exclude:\n  - jest.config.js") {
+	if !strings.Contains(protect, "runner:\n  - jest.config.*") || !strings.Contains(ignore, "exclude:\n  - /jest.config.js") {
 		t.Fatalf("the declarations are not what the test means: protect %q, ignore %q", protect, ignore)
 	}
 	if got := w.scopeKeys("scope-review:"); len(got) != 0 {

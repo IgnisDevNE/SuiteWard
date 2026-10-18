@@ -76,7 +76,7 @@ func TestRunnerUncoveredCommentEscapesWhatComesFromTheRepository(t *testing.T) {
 	n := runnerNotice()
 	n.Paths, n.PathsTotal = []string{"a```b\n--> <script>\u202e/conftest.py"}, 1
 	n.Protect = []byte("version: 1\n# ````\nrunner:\n  - conftest.py\n")
-	n.Branch = "feature/a b#c"
+	n.Branch = "feature/a#c%20"
 	body := runnerText(t, n)
 	if !strings.Contains(body, "````\n\"a```b\\n--> <script>\\u202e/conftest.py\"\n````\n") {
 		t.Errorf("the path is not shown quoted inside a longer fence:\n%s", body)
@@ -84,7 +84,7 @@ func TestRunnerUncoveredCommentEscapesWhatComesFromTheRepository(t *testing.T) {
 	if !strings.Contains(body, "`````\nversion: 1\n# ````\nrunner:") {
 		t.Errorf("the declaration is not fenced against its own backticks:\n%s", body)
 	}
-	if _, u := editorLink(t, body); u.EscapedPath() != "/octo-org/widgets/edit/feature/a%20b%23c/.suiteward.yml" {
+	if _, u := editorLink(t, body); u.EscapedPath() != "/octo-org/widgets/edit/feature/a%23c%2520/.suiteward.yml" {
 		t.Errorf("the branch is not path-escaped: %q", u.EscapedPath())
 	}
 }

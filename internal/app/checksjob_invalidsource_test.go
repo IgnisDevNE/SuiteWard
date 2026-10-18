@@ -66,7 +66,7 @@ func problemDigest(kind, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func invalidSourceKey(pull int, kind, path string) string {
+func invalidKeyOf(pull int, kind, path string) string {
 	return fmt.Sprintf("invalid-source:%d:%d:%s", bootRepoID, pull, problemDigest(kind, path))
 }
 
@@ -94,7 +94,7 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidSourceKey(5, "link", "spec_link"))
+	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"))
 	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "link", "path": "spec_link"}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
@@ -108,14 +108,14 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 	w.sync(map[int]string{4: bootHead, 5: cjHead5})
 	w.mustCheck()
 	w.want(5, checks.Failure, "invalid-source", 2)
-	w.wantInvalidSource(invalidSourceKey(5, "link", "spec_link"))
+	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"))
 
 	// Another bad link is another problem.
 	w.linkHead(cjHead4, "other_link")
 	w.sync(map[int]string{4: bootHead, 5: cjHead4})
 	w.mustCheck()
 	w.want(5, checks.Failure, "invalid-source", 3)
-	w.wantInvalidSource(invalidSourceKey(5, "link", "spec_link"), invalidSourceKey(5, "link", "other_link"))
+	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"), invalidKeyOf(5, "link", "other_link"))
 }
 
 func TestChecksExplainAnInvalidDeclarationWithoutQuotingIt(t *testing.T) {
@@ -128,7 +128,7 @@ func TestChecksExplainAnInvalidDeclarationWithoutQuotingIt(t *testing.T) {
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidSourceKey(5, "declaration", ""))
+	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
 	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "declaration"}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
@@ -147,7 +147,7 @@ func TestChecksCallAnUnsafeDeclarationFileADeclarationProblem(t *testing.T) {
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidSourceKey(5, "declaration", ""))
+	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
 }
 
 func TestChecksBoundThePathOfALinkAndDigestTheWholePath(t *testing.T) {
@@ -158,7 +158,7 @@ func TestChecksBoundThePathOfALinkAndDigestTheWholePath(t *testing.T) {
 
 	w.mustCheck()
 
-	w.wantInvalidSource(invalidSourceKey(5, "link", long))
+	w.wantInvalidSource(invalidKeyOf(5, "link", long))
 	path, _ := w.invalidSourcePayload(0)["path"].(string)
 	if len(path) == 0 || len(path) > 150 || !strings.HasPrefix(path, "lll") || !strings.HasSuffix(path, "…") {
 		t.Fatalf("payload path %q (%d bytes), want the path cut to at most 150 bytes", path, len(path))
@@ -251,5 +251,5 @@ func TestChecksExplainTheInvalidSourceOfTheBootstrapCarrier(t *testing.T) {
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidSourceKey(5, "declaration", ""))
+	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
 }

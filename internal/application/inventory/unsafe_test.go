@@ -35,9 +35,13 @@ func TestAnUnsafeEntryNamesItsPath(t *testing.T) {
 }
 
 func TestEvaluateNamesTheUnsafeEntryUnderTheGoverningScope(t *testing.T) {
-	governing := scope.NewScope(scope.NoDeclaration())
+	parsed, err := scope.ParseDeclaration([]byte("version: 1\ninclude: [/tests/**]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	governing := scope.NewScope(parsed)
 
-	_, err := inventory.Evaluate(context.Background(), newTree(t, symlink("tests/link")), governing)
+	_, err = inventory.Evaluate(context.Background(), newTree(t, symlink("tests/link")), governing)
 
 	var unsafe *inventory.UnsafeEntryError
 	if !errors.Is(err, inventory.ErrUnsafeEntry) || !errors.As(err, &unsafe) || unsafe.Path != "tests/link" {

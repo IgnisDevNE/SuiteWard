@@ -12,14 +12,14 @@ import (
 func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 	tests := []struct {
 		name    string
-		problem commandtext.InvalidSource
+		problem commandtext.InvalidSourceNotice
 		says    []string
 	}{
-		{"declaration", commandtext.InvalidSource{Problem: commandtext.DeclarationProblem},
+		{"declaration", commandtext.InvalidSourceNotice{Problem: commandtext.DeclarationProblem},
 			[]string{"`.suiteward.yml` of this pull request's head is not a valid declaration", "fix `.suiteward.yml`"}},
-		{"link", commandtext.InvalidSource{Problem: commandtext.LinkProblem, Path: "spec_link"},
+		{"link", commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link"},
 			[]string{"symbolic link", "```\nspec_link\n```", "remove the link, point it to a file, or narrow the pattern that reaches it"}},
-		{"truncated", commandtext.InvalidSource{Problem: commandtext.TruncatedProblem},
+		{"truncated", commandtext.InvalidSourceNotice{Problem: commandtext.TruncatedProblem},
 			[]string{"truncated the file tree", "too large for this release"}},
 	}
 	for _, tc := range tests {
@@ -41,16 +41,16 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 // The path comes from the repository: it is shown only in a fence that backticks cannot close, with control characters escaped.
 func TestInvalidSourceCommentShowsThePathInAnEscapedFence(t *testing.T) {
 	body := render(t, func() string {
-		return commandtext.InvalidSourceComment(commandtext.InvalidSource{Problem: commandtext.LinkProblem, Path: "a```b\n--> <script>\u202e"})
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "a```b\n--> <script>\u202e"})
 	})
 
-	if !strings.Contains(body, "````\n\"a```b\n--> <script>\u202e\"\n````\n") {
+	if !strings.Contains(body, "````\n\"a```b\\n--> <script>\\u202e\"\n````\n") {
 		t.Errorf("the path is not shown quoted inside a longer fence:\n%s", body)
 	}
 }
 
 func TestInvalidSourceCommentRefusesWhatItCannotRender(t *testing.T) {
-	tests := map[string]commandtext.InvalidSource{
+	tests := map[string]commandtext.InvalidSourceNotice{
 		"no problem":              {},
 		"an unknown problem":      {Problem: commandtext.TruncatedProblem + 1},
 		"a link without a path":   {Problem: commandtext.LinkProblem},

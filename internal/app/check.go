@@ -229,3 +229,8 @@ func (p *checkPublisher) vanished(err error, key string, c checkPayload) bool {
 	p.logger.Warn("github_check: the head no longer exists on GitHub; the message counts as delivered", "key", key, "repo", c.Repo, "head", c.HeadSHA)
 	return true
 }
+
+// newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths and total are its runner files.
+func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
+	return newCheckMessage(repo, r, tier, version, generation)
+}

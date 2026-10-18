@@ -337,6 +337,12 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	}
 	// Publishing every run, also an unchanged result, lets the ledger resend a message that ended failed.
 	_, _, err = j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
+		if result.Reason == reasonRunnerUncovered { // the block above decided it from a runner set, so a republish has the files too
+			if runners == nil {
+				return governance.OutboxMessage{}, errors.New("a runner-uncovered check has no runner set")
+			}
+			return newCheckMessageWithPaths(p.Repo, result, tier, string(suite.canonical), generation, runners.paths, len(runners.paths))
+		}
 		return newCheckMessage(p.Repo, result, tier, string(suite.canonical), generation)
 	})
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,9 @@ type checkPayload struct {
 	Reference  string `json:"reference,omitempty"` // P<n>-R<m>, the revision the check concerns
 	Tier       string `json:"tier"`                // the effective tier: owner.TierIsolated or owner.TierCoLocated
 	Version    string `json:"version,omitempty"`   // V<n>, the canonical version
+	// A runner-uncovered check lists its runner files: at most 20, each cut to maxSummaryText bytes, and how many there are. No other reason has them.
+	Paths      []string `json:"paths,omitempty"`
+	PathsTotal int      `json:"pathsTotal,omitempty"`
 }
 
 // output validates the payload and renders the title and the summary of its check run; key only names the
@@ -71,8 +75,10 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 		return commandtext.Check{}, keyError(githubCheckKind, key, "the generation must be positive")
 	case state == 0 || tier == 0:
 		return commandtext.Check{}, keyError(githubCheckKind, key, "the state or the tier is unknown")
+	case slices.ContainsFunc(p.Paths, func(path string) bool { return len(path) > maxSummaryText }):
+		return commandtext.Check{}, keyError(githubCheckKind, key, "a path is too long")
 	}
-	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier}
+	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal}
 	if p.Reference != "" {
 		var ok bool
 		if c.Proposal, c.Revision, ok = parseReference(p.Reference); !ok {
@@ -105,8 +111,17 @@ var (
 // newCheckMessage builds the github_check message of generation for the decided result r of a pull request of
 // repo (owner/name). tier is the effective tier and version the canonical version (V<n>), empty for none.
 func newCheckMessage(repo string, r checks.Result, tier, version string, generation int64) (governance.OutboxMessage, error) {
+	return newCheckMessageWithPaths(repo, r, tier, version, generation, nil, 0)
+}
+
+// newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths are its runner files and total how many there are. The
+// payload keeps at most 20, each cut to maxSummaryText bytes.
+func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
 	p := checkPayload{commentTarget: commentTarget{RepositoryID: r.RepositoryID, Repo: repo, Pull: r.PullNumber}, HeadSHA: r.HeadSHA, Generation: generation,
-		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version}
+		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total}
+	if len(paths) > 0 {
+		p.Paths = boundedText(paths)
+	}
 	key := fmt.Sprintf("%s:%d:%d:%d", checkKey, r.RepositoryID, r.PullNumber, generation)
 	if _, _, err := p.output(key); err != nil {
 		return governance.OutboxMessage{}, err
@@ -228,9 +243,4 @@ func (p *checkPublisher) vanished(err error, key string, c checkPayload) bool {
 	}
 	p.logger.Warn("github_check: the head no longer exists on GitHub; the message counts as delivered", "key", key, "repo", c.Repo, "head", c.HeadSHA)
 	return true
-}
-
-// newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths and total are its runner files.
-func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
-	return newCheckMessage(repo, r, tier, version, generation)
 }

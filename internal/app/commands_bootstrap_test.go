@@ -675,7 +675,7 @@ func TestCommentPublisherRefusesRunnerMixedAndCutOutsideADeclarationMissingPaylo
 
 func TestDeclarationMissingAckBoundsItsRepositoryText(t *testing.T) {
 	long := strings.Repeat("x", 300)
-	message, err := newDeclarationMissingAck(cmtTarget(), cmtComment, cmtOwner, "feature", inventory.Suggestion{Include: []string{long}, Runner: []string{long}, Mixed: []string{long}, Cut: true})
+	message, err := newDeclarationMissingAck(cmtTarget(), cmtComment, cmtOwner, "feature", inventory.Suggestion{Include: []string{long}, Runner: []string{long}, Mixed: []string{long}, Cut: true}, commands.ProposeRefused)
 	if err != nil {
 		t.Fatal(err)
 	}

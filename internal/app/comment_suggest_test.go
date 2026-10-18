@@ -29,13 +29,18 @@ func TestCommentPublisherRendersTheSuggestAcknowledgments(t *testing.T) {
 		extra map[string]any
 		text  func() string
 	}{
-		{"suggest refused for a fork", map[string]any{"disposition": "suggest-refused", "reason": "fork"}, ack(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.Fork})},
-		{"suggest refused for a pull request not open", map[string]any{"disposition": "suggest-refused", "reason": "not-open"}, ack(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.NotOpen})},
+		{"suggest refused for a fork", map[string]any{"disposition": "suggest-refused", "reason": "fork"}, ack(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.Fork})},
+		{"suggest refused for a pull request not open", map[string]any{"disposition": "suggest-refused", "reason": "not-open"}, ack(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.NotOpen})},
+		{"suggest refused for an invalid source", map[string]any{"disposition": "suggest-refused", "reason": "invalid-source"}, ack(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.InvalidSource})},
+		{"suggest refused for a declaration too large", map[string]any{"disposition": "suggest-refused", "reason": "declaration-too-large"}, ack(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.DeclarationTooLarge})},
+		{"suggested before the first contract with a declaration", map[string]any{"disposition": "suggested", "reason": "declaration-missing", "branch": "feature/x", "suggestion": []string{"tests/**"}, "declared": true}, func() string {
+			return commandtext.SuggestDeclaration(commandtext.DeclarationSuggestion{Source: cmtComment, Repo: cmtRepo, Branch: "feature/x", Patterns: []string{"tests/**"}, Suggest: true, Declared: true})
+		}},
 		{"suggested with nothing uncovered", map[string]any{"disposition": "suggested", "reason": "nothing-uncovered"}, ack(commandtext.Ack{Outcome: commandtext.NothingUncovered})},
 		{"suggested before the first contract", map[string]any{"disposition": "suggested", "reason": "declaration-missing", "branch": "feature/x", "suggestion": []string{"tests/**"}, "runner": []string{"conftest.py"},
 			"mixed": []string{"package.json"}, "cut": true}, func() string {
 			return commandtext.SuggestDeclaration(commandtext.DeclarationSuggestion{Source: cmtComment, Repo: cmtRepo, Branch: "feature/x", Patterns: []string{"tests/**"},
-				Runner: []string{"conftest.py"}, Mixed: []string{"package.json"}, Cut: true})
+				Runner: []string{"conftest.py"}, Mixed: []string{"package.json"}, Cut: true, Suggest: true})
 		}},
 		{"suggested after the first contract", map[string]any{"disposition": "suggested", "reason": "scope-notice", "branch": "feature/x", "paths": []string{"pkg/a_test.go", "conftest.py"},
 			"pathsTotal": 30, "declaration": suggestDeclaration, "mixed": []string{"package.json"}, "cut": true}, notice},
@@ -63,6 +68,9 @@ func TestCommentPublisherRefusesASuggestPayloadThatDoesNotFit(t *testing.T) {
 	}
 	twentyOne := strings.Split(strings.Repeat("a_test.go,", 21), ",")[:21]
 	for name, extra := range map[string]map[string]any{
+		"a declared flag on a propose refusal": {"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature", "declared": true},
+		"a declared flag on a scope notice":    notice("declared", true),
+		"a declared flag on nothing uncovered": {"disposition": "suggested", "reason": "nothing-uncovered", "declared": true},
 		"a suggest refused for a canonical":    {"disposition": "suggest-refused", "reason": "canonical-present"},
 		"a suggest refused for a base":         {"disposition": "suggest-refused", "reason": "base-not-target"},
 		"a suggest refused without a reason":   {"disposition": "suggest-refused"},

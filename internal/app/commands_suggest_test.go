@@ -73,15 +73,19 @@ func TestSuggestBeforeTheFirstContractRepliesWithTheDeclarationMissingReply(t *t
 		readsMain  bool // the default branch is read too
 	}{
 		{"from the test-like paths of the pull request head", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"tests/a_test.go": "x", "src/main.go": "y"},
-			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}}, false},
+			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}}, true}, // the default branch is read to see whether it holds a declaration
 		{"from the default branch when the pull request gives none", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"src/main.go": "y"},
 			map[string]any{"suggestion": []string{"/spec/", "*_spec.rb"}}, true},
 		{"empty when no path is test-like", map[string]string{"README.md": "x"}, map[string]string{"src/main.go": "y"}, nil, true},
 		{"with the runner files and the mixed files found", nil, runnerFiles,
-			map[string]any{"runner": []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}, "mixed": []string{"package.json"}}, false},
-		// A declaration that exists changes nothing: the owner asked for a suggestion, and gets the one the head's paths give.
+			map[string]any{"runner": []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}, "mixed": []string{"package.json"}}, true},
+		// A declaration that exists changes nothing in the suggestion, which the head's paths give, but the reply says so.
 		{"although the default branch and the head hold a declaration", bootFiles("v1"), bootFiles("v2"),
-			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}}, false},
+			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}, "declared": true}, false}, // the head says so: the default branch is not read
+		{"although only the default branch holds a declaration", bootFiles("v1"), map[string]string{"tests/a_test.go": "x"},
+			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}, "declared": true}, true},
+		{"although only the head holds a declaration", map[string]string{"README.md": "x"}, bootFiles("v2"),
+			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}, "declared": true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -93,7 +97,7 @@ func TestSuggestBeforeTheFirstContractRepliesWithTheDeclarationMissingReply(t *t
 			maps.Copy(extra, tc.extra)
 			w.requireAckPayload(cjID1, 500, commands.Suggested, extra)
 			if reads := w.reader.calls["head"]; (reads != 0) != tc.readsMain {
-				t.Fatalf("%d default branch reads; want them only when the head gives no pattern (%v)", reads, tc.readsMain)
+				t.Fatalf("%d default branch reads; want them only when the head leaves the answer open (%v)", reads, tc.readsMain)
 			}
 			w.requireNoProposal("P2")
 			if w.summaries() != 0 || len(w.owners.consumed) != 0 {
@@ -273,32 +277,33 @@ func TestSuggestIsNotTheOwnersLatestCommand(t *testing.T) {
 	}
 }
 
-// A source the suggestion cannot be built from is a fact about the commit: the command is recorded at once as suggested without an answer, never retried.
-func TestSuggestRecordsASourceItCannotReadAsSuggestedWithoutAnAnswer(t *testing.T) {
+// A source the suggestion cannot be built from is a fact about the commit: the command is recorded at once as refused, with a fixed reason, and never retried.
+func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T) {
 	truncated := fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
 	tooLong := "version: 1\ninclude:\n"
 	for i := range 400 {
 		tooLong += fmt.Sprintf("  - \"tests/directory%03d/**\"\n", i)
 	}
 	for _, tc := range []struct {
-		name  string
-		setup func(w *cjWorld) int64
+		name   string
+		reason string
+		setup  func(w *cjWorld) int64
 	}{
-		{"a truncated head tree before the first contract", func(w *cjWorld) int64 {
+		{"a truncated head tree before the first contract", "invalid-source", func(w *cjWorld) int64 {
 			w.reader.repo(cjRepo1).treeErr[cjHead] = truncated
 			return cjID1
 		}},
-		{"a truncated head tree after the first contract", func(w *cjWorld) int64 {
+		{"a truncated head tree after the first contract", "invalid-source", func(w *cjWorld) int64 {
 			w.seedDeclared(cjID2, cjDecl, bootFiles("v1"))
 			w.reader.repo(cjRepo2).treeErr[cjHead] = truncated
 			return cjID2
 		}},
-		{"a canonical that holds no declaration", func(w *cjWorld) int64 {
+		{"a canonical that holds no declaration", "invalid-source", func(w *cjWorld) int64 {
 			w.seedCanonical(cjID2)
 			w.reader.repo(cjRepo2).trees[cjHead] = &bootTree{files: withFiles(bootFiles("v1"), cjUtilTst)}
 			return cjID2
 		}},
-		{"a declaration over the limit of a notice", func(w *cjWorld) int64 {
+		{"a declaration over the limit of a notice", "declaration-too-large", func(w *cjWorld) int64 {
 			w.seedDeclared(cjID2, tooLong, withFiles(bootFiles("v1"), cjUtilTst))
 			return cjID2
 		}},
@@ -313,7 +318,7 @@ func TestSuggestRecordsASourceItCannotReadAsSuggestedWithoutAnAnswer(t *testing.
 			}
 			w.mustRun()
 
-			w.requireSilent(repository, 500, commands.Suggested)
+			w.requireAckPayload(repository, 500, commands.SuggestRefused, map[string]any{"reason": tc.reason})
 			if !strings.Contains(w.logs.String(), "github suggest skipped") {
 				t.Fatalf("no log line says the suggestion was skipped\nlogs: %s", w.logs)
 			}

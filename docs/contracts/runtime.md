@@ -466,6 +466,8 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - **Excludes and the review key.**
     - A runner name without glob characters that an `exclude` of the base removes is not reported. A glob runner pattern counts as handled when the base lists the same string in `include`, `runner` or `exclude`. Either way, the exclusion is the owner's choice.
     - The command's `scope-review` key digests the uncovered paths together with the missing runner names. It matches the checks job's key, and so posts one review between them, only when no runner name is missing.
+    - **The review key also digests the head's `.suiteward.yml` bytes** (amended 2026-10-18, live run 4). A review is anchored to the lines of one version of the file, and GitHub marks it outdated after a change. So a later `suggest` after the file changed posts a fresh review, while a repeat on the same file does not.
+    - The added list items follow the quoting style of the list's existing items.
 
   **Payload guard.** A suggest ack or a scope notice whose JSON payload would exceed 60 KiB is treated as not renderable, which can happen when a hostile repository has many escaped characters in its paths. A command is then refused as `invalid-source`. The checks job logs the notice as skipped and remembers the set.
 

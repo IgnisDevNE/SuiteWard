@@ -460,33 +460,33 @@ func hasDeclaration(entries []inventory.Entry) bool {
 }
 
 // source picks the tree to propose: the default branch's head when it has .suiteward.yml, else the pull request's head
-// when that has it. found is false when neither does, with the patterns to suggest from the pull request's tree, or the
-// default branch's when the pull request's gives none.
-func (j *commandsJob) source(ctx context.Context, c commands.Candidate, view bootstrapView) (src bootstrapSource, suggestion []string, found bool, err error) {
+// when that has it. found is false when neither does, with the suggestion built from the pull request's tree, or the
+// default branch's when the pull request's gives no pattern.
+func (j *commandsJob) source(ctx context.Context, c commands.Candidate, view bootstrapView) (src bootstrapSource, suggestion inventory.Suggestion, found bool, err error) {
 	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
 	if !ok {
-		return bootstrapSource{}, nil, false, errors.New("the suite does not target a branch")
+		return bootstrapSource{}, inventory.Suggestion{}, false, errors.New("the suite does not target a branch")
 	}
 	head, err := j.reader.BranchHead(ctx, c.Repo, branch)
 	if err != nil {
-		return bootstrapSource{}, nil, false, &opaque{what: "read the default branch head", cause: githubRead(err)}
+		return bootstrapSource{}, inventory.Suggestion{}, false, &opaque{what: "read the default branch head", cause: githubRead(err)}
 	}
 	tree, mainEntries, err := j.tree(ctx, c.Repo, head)
 	if err != nil {
-		return bootstrapSource{}, nil, false, err
+		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	if hasDeclaration(mainEntries) {
-		return bootstrapSource{kind: contract.OriginBranch, origin: head, branch: branch, tree: tree}, nil, true, nil
+		return bootstrapSource{kind: contract.OriginBranch, origin: head, branch: branch, tree: tree}, inventory.Suggestion{}, true, nil
 	}
 	tree, pullEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
 	if err != nil {
-		return bootstrapSource{}, nil, false, err
+		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	if hasDeclaration(pullEntries) {
-		return bootstrapSource{kind: contract.OriginPull, origin: view.pull.HeadSHA, tree: tree}, nil, true, nil
+		return bootstrapSource{kind: contract.OriginPull, origin: view.pull.HeadSHA, tree: tree}, inventory.Suggestion{}, true, nil
 	}
-	if suggestion = inventory.SuggestScope(pullEntries); len(suggestion) == 0 {
-		suggestion = inventory.SuggestScope(mainEntries)
+	if suggestion = inventory.Suggest(pullEntries); len(suggestion.Include)+len(suggestion.Runner) == 0 {
+		suggestion = inventory.Suggest(mainEntries)
 	}
 	return bootstrapSource{}, suggestion, false, nil
 }
@@ -555,7 +555,7 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return err
 	}
 	if !found {
-		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, inventory.Suggestion{Include: suggestion})
+		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}

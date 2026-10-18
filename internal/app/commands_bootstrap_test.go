@@ -251,7 +251,7 @@ func TestProposeRefusesAndSuggestsWhenNoTreeHoldsADeclaration(t *testing.T) {
 			map[string]any{"suggestion": []string{"/spec/", "*_spec.rb"}}},
 		{"empty when no path is test-like", map[string]string{"README.md": "x"}, map[string]string{"src/main.go": "y"}, nil},
 		{"with the runner files and the mixed files found", nil, map[string]string{"conftest.py": "x", "package.json": "{}"},
-			map[string]any{"runner": []string{"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "conftest.py"}, "mixed": []string{"package.json"}}},
+			map[string]any{"runner": []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}, "mixed": []string{"package.json"}}},
 		{"the mixed files come with the tree that gives the patterns", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"package.json": "{}"},
 			map[string]any{"suggestion": []string{"/spec/", "*_spec.rb"}}}, // the default branch gives the patterns, and its own mixed files: none
 		{"cut at the limit", nil, runnerFiles, map[string]any{"cut": true, "runner": []string{".c8rc*", ".codecov.yml", ".coveragerc", ".mocharc.*", ".nycrc*", ".pytest.ini", ".pytest.toml", ".rspec", "codecov.yml",

@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,7 +70,7 @@ type ackPayload struct {
 	Reason      string               `json:"reason,omitempty"`      // malformed: the reason code; propose-refused and skip-refused: the refusal
 	Reference   string               `json:"reference,omitempty"`   // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
 	Branch      string               `json:"branch,omitempty"`      // propose-refused for declaration-missing: the pull request's head ref
-	Suggestion  []string             `json:"suggestion,omitempty"`  // and the include patterns SuggestScope found
+	Suggestion  []string             `json:"suggestion,omitempty"`  // and the include patterns inventory.Suggest found
 	Runner      []string             `json:"runner,omitempty"`      // and the runner patterns,
 	Mixed       []string             `json:"mixed,omitempty"`       // the mixed files, shown and never suggested,
 	Cut         bool                 `json:"cut,omitempty"`         // and whether the limit of 20 patterns cut the lists
@@ -160,9 +161,14 @@ func (a ackPayload) declarationMissing() bool {
 	return a.Disposition == string(commands.ProposeRefused) && a.Reason == reasonDeclarationMissing
 }
 
+// suggested is whether the payload holds any of the lists of a suggestion.
+func (a ackPayload) suggested() bool {
+	return len(a.Suggestion) != 0 || len(a.Runner) != 0 || len(a.Mixed) != 0 || a.Cut
+}
+
 // suggestion is what the renderer takes for a declaration-missing payload.
 func (a ackPayload) suggestion() commandtext.DeclarationSuggestion {
-	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion}
+	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Cut: a.Cut}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -174,7 +180,7 @@ func (a ackPayload) validate() error {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
-		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || len(a.Suggestion) != 0 {
+		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() {
 			return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
 		}
 		return nil
@@ -196,7 +202,7 @@ func (a ackPayload) validate() error {
 		}
 	}
 	if !a.declarationMissing() {
-		if a.Branch != "" || len(a.Suggestion) != 0 {
+		if a.Branch != "" || a.suggested() {
 			return errors.New("the branch and the suggestion fit only a missing declaration")
 		}
 		return nil
@@ -205,9 +211,9 @@ func (a ackPayload) validate() error {
 	if commandtext.ValidateSuggestion(a.suggestion()) != nil {
 		return errors.New("the branch, the repository or the suggestion cannot be rendered")
 	}
-	for _, pattern := range a.Suggestion {
-		if len(pattern) > maxSummaryText {
-			return errors.New("a suggested pattern is too long")
+	for _, text := range slices.Concat(a.Suggestion, a.Runner, a.Mixed) {
+		if len(text) > maxSummaryText {
+			return errors.New("a suggested pattern or a mixed path is too long")
 		}
 	}
 	return nil
@@ -234,15 +240,19 @@ func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, dis
 }
 
 // newDeclarationMissingAck builds the refusal of a propose when no tree holds a .suiteward.yml: branch is the pull
-// request's head ref and suggestion the include patterns found. Each is cut to the payload bound, which only keeps the
-// payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts those it
-// left out, so a cut pattern is never suggested.
+// request's head ref and suggested the patterns and the mixed files found. Each is cut to the payload bound, which only
+// keeps the payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts
+// those it left out, so a cut pattern is never suggested.
 func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggested inventory.Suggestion) (governance.OutboxMessage, error) {
-	cut := make([]string, 0, len(suggested.Include))
-	for _, pattern := range suggested.Include {
-		cut = append(cut, cutBytes(pattern, maxSummaryText))
+	cut := func(list []string) []string {
+		var bounded []string // nil without entries: the payload then omits the list
+		for _, entry := range list {
+			bounded = append(bounded, cutBytes(entry, maxSummaryText))
+		}
+		return bounded
 	}
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch, Suggestion: cut})
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch,
+		Suggestion: cut(suggested.Include), Runner: cut(suggested.Runner), Mixed: cut(suggested.Mixed), Cut: suggested.Cut})
 }
 
 func newAck(p ackPayload) (governance.OutboxMessage, error) {

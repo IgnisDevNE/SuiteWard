@@ -30,6 +30,7 @@ type fakeTree struct {
 	unreadable map[string]bool
 	entriesErr error
 	readErr    error
+	readErrFor map[string]error // a Read of a path in it fails with that error
 	reads      []string
 }
 
@@ -62,6 +63,9 @@ func (f *fakeTree) Read(_ context.Context, path string) ([]byte, error) {
 	f.reads = append(f.reads, path)
 	if f.unreadable[path] {
 		f.t.Errorf("read of uncovered path %q", path)
+	}
+	if err := f.readErrFor[path]; err != nil {
+		return nil, err
 	}
 	if f.readErr != nil {
 		return nil, f.readErr

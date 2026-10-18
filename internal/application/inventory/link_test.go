@@ -140,7 +140,7 @@ func TestBuildReadsALinkOnlyWhenItWouldBeUnsafe(t *testing.T) {
 func TestBuildFailsWhenALinkCannotBeRead(t *testing.T) {
 	tree := newTree(t, regular(declaration, "version: 1\ninclude: ['*_test.go']\n"), regular("CLAUDE.md", "c"), link("AGENTS.md", "CLAUDE.md"))
 	failure := errors.New("blob unavailable")
-	tree.readErr = failure
+	tree.readErrFor = map[string]error{"AGENTS.md": failure} // the declaration is read first and must succeed
 
 	_, err := inventory.Build(context.Background(), tree)
 
@@ -182,4 +182,40 @@ func TestBuildAcceptsARunnerPatternThatMatchesNoFile(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	requireManifest(t, built.Manifest(), tree.files, []string{declaration})
+}
+
+// TestBuildResolvesTargetsComponentByComponent: a target is resolved the way a filesystem does, so a ".." after a
+// symlink, a file or a missing directory is not collapsed lexically, and an intermediate link is never followed.
+func TestBuildResolvesTargetsComponentByComponent(t *testing.T) {
+	anchored := regular(declaration, "version: 1\ninclude: [/pkg/**]\n")
+	base := []file{anchored, regular("f", "f"), regular("g", "g"), regular("a/x", "x"), regular("sub/deep/x", "x"), regular("sub/f/test_evil.py", "e")}
+	with := func(extra ...file) []file { return slices.Concat(base, extra) }
+	tests := []struct {
+		name  string
+		files []file
+		safe  bool
+	}{
+		{"target through a real directory", with(link("pkg", "a/../f")), true},
+		{"target through a dot and a real directory", with(link("pkg", "./a/../f")), true},
+		{"a dot in the middle", with(link("pkg", "a/./../f")), true},
+		{"a plain path", with(link("pkg", "sub/f/test_evil.py")), true},
+		{"the reviewer's bypass: .. after a link to a directory", with(link("dl", "sub/deep"), link("pkg", "dl/../f")), false},
+		{"an intermediate link is not followed", with(link("dl", "sub/deep"), link("pkg", "dl/x")), false},
+		{"an intermediate link to a file", with(link("fl", "f"), link("pkg", "fl/../g")), false},
+		{"an intermediate file", with(link("pkg", "f/../g")), false},
+		{"an intermediate file without a parent segment", with(link("pkg", "f/g")), false},
+		{"an intermediate missing directory", with(link("pkg", "missing/../f")), false},
+		{"an intermediate submodule", with(submodule("lib"), link("pkg", "lib/../f")), false},
+		{"a trailing dot", with(link("pkg", "f/.")), false},
+		{"popping past the root", with(link("pkg", "a/../../f")), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := inventory.Build(context.Background(), newTree(t, tc.files...))
+
+			if tc.safe != (err == nil) || (err != nil && !errors.Is(err, inventory.ErrUnsafeEntry)) {
+				t.Fatalf("Build error = %v, want safe = %v", err, tc.safe)
+			}
+		})
+	}
 }

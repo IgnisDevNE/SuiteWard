@@ -376,3 +376,10 @@ func TestSuggestLimitsTheSubmodulesToTwenty(t *testing.T) {
 		t.Fatalf("Suggest = %#v, want the first 20 submodules and no cut", got)
 	}
 }
+
+func TestSuggestSkipsASubmoduleWithAnInvalidPath(t *testing.T) {
+	got := inventory.Suggest(entriesOf(regular("a_test.go", ""), submodule("a//b"), submodule("../x"), submodule("lib")))
+	if want := []string{"lib"}; !reflect.DeepEqual(got.Submodules, want) {
+		t.Fatalf("Submodules = %#v, want %#v", got.Submodules, want)
+	}
+}

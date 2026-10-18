@@ -408,6 +408,11 @@ func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull
 	if _, err := scope.ParseDeclaration(own); err != nil { // the file may be invalid: the notice still stands
 		return nil, nil
 	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(own, &root); err != nil {
+		return nil, fmt.Errorf("read the head's %s as YAML: %w", scope.DeclarationPath, err)
+	}
+	top := root.Content[0] // ParseDeclaration accepted own: one document holding a mapping
 	files, err := j.reader.PullFiles(ctx, p.Repo, pull.Number)
 	if err != nil {
 		if kind := readFailure(err).Kind; kind == githubsync.FailureRateLimited || kind == githubsync.FailureBudgetExhausted {
@@ -430,7 +435,7 @@ func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull
 		name     string
 		patterns []string
 	}{{"include", s.Include}, {"runner", s.Runner}} {
-		if suggested, ok := listSuggestion(own, list.name, list.patterns, hunks); ok {
+		if suggested, ok := listSuggestion(top, strings.Split(string(own), "\n"), list.name, list.patterns, hunks); ok {
 			suggestions = append(suggestions, suggested)
 		}
 	}
@@ -445,14 +450,10 @@ func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull
 	return []governance.OutboxMessage{message}, nil
 }
 
-// listSuggestion is the suggestion of patterns for the list called name in the declaration raw: the last item of the block-style
-// list that lies in a hunk is the anchor, and patterns the list already holds are left out. False when there is nothing to suggest.
-func listSuggestion(raw []byte, name string, patterns []string, hunks []github.LineRange) (scopeSuggestion, bool) {
-	var root yaml.Node
-	if err := yaml.Unmarshal(raw, &root); err != nil || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
-		return scopeSuggestion{}, false // the caller parsed raw as a declaration, so this does not happen
-	}
-	top := root.Content[0]
+// listSuggestion is the suggestion of patterns for the list called name in the declaration top (a mapping node, whose text is
+// lines): the last item of the block-style list that lies in a hunk is the anchor, and patterns the list already holds are
+// left out. False when there is nothing to suggest.
+func listSuggestion(top *yaml.Node, lines []string, name string, patterns []string, hunks []github.LineRange) (scopeSuggestion, bool) {
 	for i := 0; i+1 < len(top.Content); i += 2 {
 		list := top.Content[i+1]
 		if top.Content[i].Value != name || list.Kind != yaml.SequenceNode || list.Style&yaml.FlowStyle != 0 {
@@ -466,10 +467,9 @@ func listSuggestion(raw []byte, name string, patterns []string, hunks []github.L
 		if len(fresh) == 0 {
 			return scopeSuggestion{}, false
 		}
-		lines := strings.Split(string(raw), "\n")
 		for k := len(list.Content) - 1; k >= 0; k-- {
 			item := list.Content[k]
-			if !slices.ContainsFunc(hunks, func(h github.LineRange) bool { return item.Line >= h.Start && item.Line <= h.End }) || item.Line > len(lines) {
+			if !slices.ContainsFunc(hunks, func(h github.LineRange) bool { return item.Line >= h.Start && item.Line <= h.End }) {
 				continue
 			}
 			anchor := strings.TrimSuffix(lines[item.Line-1], "\r")

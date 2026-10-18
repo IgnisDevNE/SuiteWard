@@ -93,3 +93,21 @@ func TestCommentPublisherRefusesAScopeNoticeThatDoesNotMatchItsKeyOrCannotBeRend
 		})
 	}
 }
+
+// The limit of the notice's declaration is commandtext's, 8192 bytes: the job's own constant must not be above it.
+func TestCommentPublisherRendersAScopeNoticeWhoseDeclarationIsAtTheLimit(t *testing.T) {
+	const head = "version: 1\n#"
+	declaration := head + strings.Repeat("x", maxScopeDeclaration-len(head)-1) + "\n"
+	if len(declaration) != maxScopeDeclaration {
+		t.Fatalf("the test declaration has %d bytes, want %d", len(declaration), maxScopeDeclaration)
+	}
+	w := newCmtWorld(t)
+
+	if err := w.pub.publish(t.Context(), cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["declaration"] = declaration })); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	if posts := w.writer.posts(); len(posts) != 1 || len(posts[0].body) > 65535 {
+		t.Fatalf("posted %d comments, want 1 within GitHub's limit", len(posts))
+	}
+}

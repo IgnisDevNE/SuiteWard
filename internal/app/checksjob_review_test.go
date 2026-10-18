@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 )
@@ -181,4 +183,25 @@ func TestChecksWriteTheScopeNoticeWhenTheListOfFilesCannotBeRead(t *testing.T) {
 		w.mustCheck()
 		w.wantReview([]string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 	})
+}
+
+func TestListSuggestionNeverAnchorsOnAScalarThatSpansLines(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a folded scalar":        "version: 1\ninclude:\n  - /tests/**\n  - >-\n    /x/**\n",
+		"a multi-line plain one": "version: 1\ninclude:\n  - /tests/**\n  - /x/\n    y/**\n",
+		"a multi-line quoted":    "version: 1\ninclude:\n  - /tests/**\n  - \"/x/\n    y/**\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var root yaml.Node
+			if err := yaml.Unmarshal([]byte(raw), &root); err != nil {
+				t.Fatal(err)
+			}
+
+			got, ok := listSuggestion(root.Content[0], strings.Split(raw, "\n"), "include", []string{"*_test.go"}, []github.LineRange{{Start: 1, End: 6}})
+
+			if want := (scopeSuggestion{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}}); !ok || !reflect.DeepEqual(got, want) {
+				t.Fatalf("suggestion %+v (%v), want %+v on the last item that is one line", got, ok, want)
+			}
+		})
+	}
 }

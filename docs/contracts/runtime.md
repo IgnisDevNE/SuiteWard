@@ -371,6 +371,59 @@ Other rules:
 
 **Comment keys.** `bootstrap-notice:<repository id>:<pull>` and `bootstrap-cancelled:<repository id>:P<n>-R<m>` are new. `splitKey` accepts them. `ack:` payloads gain the dispositions `proposed` (not used: a proposal's ack is its `bootstrap-summary`), `propose-refused` (`reason`: `canonical-present`, `fork`, `not-open`, `base-not-target`, `declaration-missing`, `invalid-source` or `empty-inventory`; plus `suggestion` and `branch` for `declaration-missing`), `skipped` and `skip-refused` (`reason`).
 
+### Scope discovery (M1.9)
+
+[D-SCOPE-DISCOVERY](../plan/decisions.md#d-scope-discovery-suggesting-and-widening-the-scope) decides the rules. This section changes the `declaration-missing` reply above, the revision comment, and the command list.
+
+**Suggestion.** `inventory.Suggest(entries)` replaces `SuggestScope`. It returns the following, from the paths of `File` entries only:
+- `include`: the test-file patterns and the test-directory patterns of D-SCOPE-DISCOVERY, each emitted only when it matches a file, and never under a vendored directory;
+- `runner`: the runner files found, plus the higher-priority files of every runner whose files were found. A higher-priority pattern may match nothing;
+- `mixed`: the mixed files found (at most 20 paths);
+- `cut`: true when the limit of 20 patterns, include and runner together, dropped some.
+
+The order is deterministic: directory patterns first, then file patterns, each group sorted. The runner list comes after them, sorted. The limit keeps the first patterns in that order.
+
+**The `declaration-missing` reply.** The ack payload keeps `suggestion` (the include list) and `branch`, and adds `runner`, `mixed` and `cut`, all optional, so a payload written under `v0.1.0` still decodes.
+- The text renders `include:` and `runner:`.
+- When `cut` is set, it says that the list was cut at the limit and that the owner should review it.
+- When `mixed` is not empty, it lists those files and says that they may hold test settings, and that SuiteWard does not suggest them.
+- The editor link stays within the URL budget of the worst case: at most 8000 bytes, with 20 patterns of 100 bytes and the longest branch.
+
+**Revision comment.** The `revision:` payload adds `reducedRules` (at most 20) and `reducedPaths` (at most 20, each cut to 150 bytes), plus `reducedPathsTotal`, all optional. When `reduced` is set, the text lists the rules and paths that the reduction removes, inside code fences.
+
+**Outbox `github_comment`, key `scope-notice:<repository id>:<pull>:<head sha>` (new).**
+- **When it is written.** For an open, non-fork PR whose Suite has a canonical, the checks job looks for test-like paths in the head tree, using `inventory.Uncovered(entries, governing scope)`.
+  - When there are none, nothing more is read.
+  - When there are some, it reads the tree of the PR's base commit and keeps the paths absent from it, which are the ones this PR adds.
+  - When any remain, it writes one message per head.
+- **Payload:**
+  - `repositoryId`, `repo`, `pull`, `head`, `branch`;
+  - `paths`: at most 20, each cut to 150 bytes, plus `pathsTotal`;
+  - `declaration`: the canonical declaration bytes with the new patterns added by `scope.AddPatterns`. It is never built from the PR head's file;
+  - `mixed`.
+- **The text:**
+  - it lists the paths and says they are not protected by the current contract;
+  - it gives the full `declaration` in a fenced block (GitHub shows a copy button) and the link `https://github.com/<repo>/edit/<path-escaped branch>/.suiteward.yml`;
+  - it says that committing it creates a protected change for the owner to approve, and that nothing is protected until then;
+  - it never changes the check and never claims tests ran.
+- `splitKey` accepts the kind with its four parts.
+
+**Outbox `github_comment`, key `scope-review:<repository id>:<pull>:<head sha>` (new).**
+- **When it is written.** Only together with a `scope-notice`, and only when `Reader.PullFiles` shows `.suiteward.yml` among the PR's changed files with a hunk that contains a line of the `include:` or `runner:` list.
+- **What it posts.** A review comment (`POST /repos/{repo}/pulls/{pull}/comments`, `commit_id` = head, `path` = `.suiteward.yml`, `side` = `RIGHT`) on that line. The body is a `suggestion` block holding that line followed by the new patterns at the same indentation.
+- **Where the lines come from.** This is the only place that starts from the PR head's file ([D-SCOPE-DISCOVERY](../plan/decisions.md#d-scope-discovery-suggesting-and-widening-the-scope)).
+- **Dedup** uses `Writer.ReviewCommentsByAuthor` and the marker.
+- **A 422** from GitHub (the line is no longer in the diff) completes the message without retry, and the job logs the `kind` and `status` of the failure.
+
+**Command `/suiteward suggest`.** It is owner only and takes no code. The parser accepts the verb without argument. An extra token is `ExtraText`, as for `propose`.
+- On a fork or a closed PR, it records `suggest-refused` with the same reasons as `propose-refused` (`fork`, `not-open`).
+- Otherwise it records `suggested`. Its ack holds the following:
+  - **before V1:** the `declaration-missing` reply computed for that PR (head tree, or default branch);
+  - **after V1:** a `scope-notice` body for the head, or, when nothing is uncovered, a short ack saying that every test-like path of the head is in the scope.
+- Neither disposition is counted by `LatestOwnerCommand`.
+
+**Bot identity.** When the bot account cannot be resolved, the commands job logs the failure's `kind` and `status` (`readFailure`), never GitHub's text. This also covers a refused App JWT on `GET /app`.
+
 ### Protection verification job (M1.5)
 
 - `github_protection_check`: one periodic River job every 15 minutes with `RunOnStart`, `MaxAttempts` 1 and unique while unfinished, registered only when the GitHub settings are set. It verifies every configured repository (D-PROTECTION) with the protection token (Metadata and Administration read) through the same budget as synchronization, records each result (persistence contract, M1.5), and never fails the job for a GitHub answer: a read failure is the result `unknown`. A budget or rate-limit wait skips the repository until the next run. The check starts no repository after the tick deadline (`JOB_TIMEOUT` minus 5 s) and records only the repositories it finished. Results are keyed by the repository's numeric id: an enrolled repository is recorded even when its read fails (`unknown`), while a repository that was never read and is not enrolled has no result yet, so `/status` omits its `protection` until a read succeeds.

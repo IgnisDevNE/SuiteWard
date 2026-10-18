@@ -1114,6 +1114,60 @@ This replaces the parts of the M1.7b section above that this list names.
 - The new dispositions are ignored by `LatestOwnerCommand`.
 - `SuggestScope`: the patterns, the cap and the ordering.
 
+## Scope discovery (M1.9; normative)
+
+The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This section gives the signatures, the migration and the conformance.
+
+- **Inventory.**
+
+  ```go
+  // Suggestion is a suggested declaration from file paths only.
+  type Suggestion struct {
+  	Include []string
+  	Runner  []string
+  	Mixed   []string
+  	Cut     bool
+  }
+
+  // Suggest replaces SuggestScope.
+  func Suggest(entries []Entry) Suggestion
+
+  // Uncovered returns the test-like file paths of entries that s does not cover, sorted.
+  func Uncovered(entries []Entry, s scope.Scope) ([]string, error)
+  ```
+
+  `SuggestScope` is removed when the callers move to `Suggest`.
+- **Scope.**
+
+  ```go
+  // AddPatterns returns raw with include and runner appended to their lists. It creates a list that is
+  // missing, skips a pattern already present, keeps the comments yaml.v3 keeps, and never removes or
+  // reorders a pattern. The result is a valid declaration.
+  func AddPatterns(raw []byte, include, runner []string) ([]byte, error)
+  ```
+- **Commands.**
+  - The new dispositions are `suggested` and `suggest-refused`. Neither carries an operation id, and neither is counted by `LatestOwnerCommand`.
+  - Migration `00019` updates the `pr_commands` disposition CHECK, as `00017` did, and `SupportedVersion` becomes 19.
+- **GitHub adapter.**
+  - `Reader.PullFiles(ctx, repo, pull)` returns each changed file's path, status and `patch`.
+  - `Writer.PostReviewComment(ctx, repo, pull, commitSHA, path, startLine, line, body)` and `Writer.ReviewCommentsByAuthor(ctx, repo, pull, authorID)` read and write review comments.
+
+**Conformance:**
+- `Suggest`:
+  - the conventions;
+  - directories at any depth;
+  - the top-level rule for `tests/`, `test/` and `spec/`;
+  - vendored paths excluded;
+  - the higher-priority runner files;
+  - `mixed`;
+  - the shared limit and `cut`;
+  - the order;
+  - SuiteWard's own paths, a fixture: every `*_test.go`, all `testdata/` and `codecov.yml` covered, with `cut` false.
+- `Uncovered`: covered paths are excluded, and only test-like ones are returned.
+- `AddPatterns`, by round trip: the output parses, keeps every original pattern, and adds exactly the requested new ones.
+- `suggested` and `suggest-refused` are ignored by `LatestOwnerCommand`: after a rejected `approve`, a `suggest` keeps `owner-command-rejected`.
+- Payloads: an ack or revision payload of the `v0.1.0` shape still decodes.
+
 ## Cycle start (M1.7c; normative)
 
 **`internal/application/githubsync`.**
@@ -1161,7 +1215,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |

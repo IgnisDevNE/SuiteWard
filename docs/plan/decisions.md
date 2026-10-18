@@ -73,6 +73,32 @@ Accepted 2026-10-11 (owner, phase M1.3). The ADR 0013 amendment protects the wor
 - The declaration is YAML, parsed with `go.yaml.in/yaml/v3`; its schema is fixed by the M1.3-A2 brief.
 - An `exclude` pattern that matches `.suiteward.yml` has no effect on coverage but is still classified as a scope reduction (decided by the integrator at the owner's request, 2026-10-11): the rule-level check is syntactic, and such an edit changes a covered file, so it needs approval either way; an exact rule would need a special case that buys no safety.
 
+### D-SCOPE-DISCOVERY: Suggesting and widening the scope
+
+Accepted 2026-10-17 (owner, M1.9 planning, after the C2 finding in [M1.8](phases/M1.8.md#c2-outcome-dogfooding-2026-10-17)). Discovery stays a suggestion (ADR 0013): only the owner's approval changes the contract.
+
+- **Detection is path-only.** The suggestion is built from the file paths of a tree, with no file contents.
+  - **Test files.** Patterns follow the frameworks' own conventions and match at any depth (`*_test.go`, `test_*.py`, `*.spec.*`…). There is no longer one pattern per directory.
+  - **Test directories.** `testdata/`, `__tests__/`, `__snapshots__/`, `__mocks__/`, `__fixtures__/` and `src/test/` count at any depth. `tests/`, `test/` and `spec/` count at the top level, or when they hold a test-named file.
+  - **Runner files.** The runner list holds the files found by name, plus the higher-priority files that a runner reads first, even when they do not exist yet: pytest reads `pytest.toml` before `pytest.ini`. A suggested pattern may therefore match no file.
+  - **Vendored directories** never count: `node_modules`, `vendor`, `.venv`, `venv`, `.tox`, `__pycache__`, `bower_components`, `jspm_packages`.
+  - **The limit** covers include and runner patterns together. When the limit cuts the list, the reply says so.
+- **Mixed files.** `package.json`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `Cargo.toml`, `*.csproj` and `CMakeLists.txt` can hold test settings among other content. The reply warns about the ones it finds and never suggests them, because protecting them would put every dependency update behind an approval.
+- **The scope notice.** After V1, a PR revision that adds test-like files outside the governing scope gets one comment.
+  - The comment lists those files and gives the full declaration to commit, with the edit link to `.suiteward.yml` on the PR branch.
+  - When the PR's diff already touches `.suiteward.yml`, it also gets a review comment with a suggestion block, so the owner can use GitHub's "Commit suggestion".
+  - The notice is evidence, not authority. It never changes the check, never protects a file and grants nothing.
+- **`/suiteward suggest`** (owner only, no code) asks for the same reply on any open PR.
+  - Before V1, the reply is the bootstrap reply of a `propose` that finds no declaration.
+  - After V1, the reply is the scope notice for the PR head.
+  - It is not a command for the check: it never clears `owner-command-rejected`.
+- **Where a suggested declaration starts from.** The notice and `suggest` start from the **canonical** declaration bytes, never from the PR head's file, and only add patterns. A PR that narrowed the scope therefore never comes back as a suggestion.
+  - **The one exception is the review suggestion.** It inserts the new lines into the PR head's own `.suiteward.yml`, on a list line inside a diff hunk, because GitHub accepts review comments only on such lines. This grants nothing either: a narrowing in the head is still listed as a reduction and still needs approval. When no list line falls inside a hunk, there is no review suggestion.
+  - Rewriting the YAML can drop the owner's comments. Comments are part of the approved bytes, so the owner sees that change and approves it.
+- **Widening is a protected change.** Any edit to `.suiteward.yml` creates a revision that needs approval, comments included. An agent widens the scope with such a PR; it never posts `suggest`.
+- **A reduction is detailed.** The revision comment lists the rules and paths a reduction removes.
+- **After the MVP:** reading the content of config files (pytest `testpaths`, Jest `testMatch`, Vitest `include`, `phpunit.xml`, `Cargo.toml` `[[test]]`); protecting a single section of a mixed file; listing complete trees for monorepos.
+
 ### D-GITHUB-ACCESS: GitHub App permissions and token lifecycle
 
 Accepted 2026-10-11 (owner, from the S1 findings in [s1-github](../spikes/s1-github.md)).
@@ -127,6 +153,7 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 - `/suiteward approve <ref> <code>` and `/suiteward revoke <ref> <code>` (ADR 0027).
 - The first line of the comment body that starts with `/suiteward`, outside fenced code blocks, is the command; the rest of the body is ignored.
 - `<ref>` is `P<n>-R<m>` (ADR 0002 and ADR 0010 examples), resolved inside the PR's project and its single Suite. `<code>` is the 6-digit TOTP code.
+- `/suiteward suggest` takes no argument and no code. It asks for a suggested declaration ([D-SCOPE-DISCOVERY](#d-scope-discovery-suggesting-and-widening-the-scope)), grants nothing, and is not counted as the owner's latest command.
 
 **TOTP**
 - The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-13).

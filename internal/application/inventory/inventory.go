@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -130,27 +132,46 @@ func listEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 	return entries, nil
 }
 
-// manifestOf rejects a symlink or submodule inside effective, then hashes
-// every covered file, reading from the tree only what known lacks.
+// maxLinkHops bounds the links followed to resolve one symlink (D-SCOPE).
+const maxLinkHops = 8
+
+// manifestOf rejects a symlink inside effective that may hide protected content, then hashes every covered file,
+// reading from the tree only what known lacks. A submodule is outside the scope: it is never rejected and never read.
 func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
+	index := newLayout(entries)
+	targets := map[string]string{} // the blobs of the links read so far
 	covered := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		covers, err := effective.Covers(entry.Path)
 		if err != nil {
 			return artifact.Manifest{}, err
 		}
-		if entry.Kind == File {
+		switch entry.Kind {
+		case File:
 			if covers {
 				covered = append(covered, entry.Path)
 			}
 			continue
+		case Submodule:
+			continue
 		}
-		below, err := effective.MayCoverBelow(entry.Path)
-		if err != nil {
-			return artifact.Manifest{}, err
+		// D-SCOPE: a link the scope covers makes the declaration invalid. A link that a pattern may reach below does too,
+		// unless it resolves to a regular file of the tree, which behaves as a file.
+		unsafe := covers
+		if !unsafe {
+			below, err := effective.MayCoverBelow(entry.Path)
+			if err != nil {
+				return artifact.Manifest{}, err
+			}
+			if below {
+				resolved, err := resolvesToFile(ctx, tree, index, targets, entry.Path)
+				if err != nil {
+					return artifact.Manifest{}, err
+				}
+				unsafe = !resolved
+			}
 		}
-		if covers || below {
-			// D-SCOPE: a link inside the scope makes the declaration invalid.
+		if unsafe {
 			return artifact.Manifest{}, fmt.Errorf("%w: %q", ErrUnsafeEntry, entry.Path)
 		}
 	}
@@ -167,6 +188,88 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 		files = append(files, artifact.Entry{Path: path, Content: artifact.Hash(content)})
 	}
 	return artifact.NewManifest(files)
+}
+
+// layout indexes the entries of a tree for link resolution: the kind of each entry, and every directory, which has an
+// entry somewhere below it and none of its own.
+type layout struct {
+	kinds map[string]EntryKind
+	dirs  map[string]bool
+}
+
+func newLayout(entries []Entry) layout {
+	l := layout{kinds: make(map[string]EntryKind, len(entries)), dirs: map[string]bool{}}
+	for _, entry := range entries {
+		l.kinds[entry.Path] = entry.Kind
+		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
+			l.dirs[dir] = true
+		}
+	}
+	return l
+}
+
+func (l layout) isDir(p string) bool { return p == "" || (l.dirs[p] && l.kinds[p] == 0) }
+
+// resolve returns the path that target names from the directory dir, the way a filesystem walks it: "" and "." stay,
+// ".." leaves the last directory, and every directory passed through must be a real directory of the tree. A link, a file
+// or a submodule in the middle, a missing directory, a ".." past the root and a target that ends in a directory form
+// resolve to nothing, because a lexical join would send ".." through a link somewhere the tree does not show.
+func (l layout) resolve(dir, target string) (string, bool) {
+	segments := strings.Split(target, "/")
+	if last := segments[len(segments)-1]; target == "" || target[0] == '/' || last == "" || last == "." || last == ".." {
+		return "", false
+	}
+	var parts []string
+	if dir != "." {
+		parts = strings.Split(dir, "/")
+	}
+	for _, segment := range segments {
+		if segment == "" || segment == "." {
+			continue
+		}
+		if !l.isDir(strings.Join(parts, "/")) {
+			return "", false
+		}
+		if segment != ".." {
+			parts = append(parts, segment)
+		} else if len(parts) == 0 {
+			return "", false
+		} else {
+			parts = parts[:len(parts)-1]
+		}
+	}
+	return strings.Join(parts, "/"), true
+}
+
+// resolvesToFile follows the symlink at link, in the same tree, through at most maxLinkHops links and reports whether
+// it ends at a regular file. A link's blob is its target, relative to the link's directory (layout.resolve). Every
+// target that resolves to nothing, a submodule, a directory and a loop end at no file. A failed read is an error, not
+// an answer.
+func resolvesToFile(ctx context.Context, tree Tree, l layout, targets map[string]string, link string) (bool, error) {
+	for range maxLinkHops {
+		target, read := targets[link]
+		if !read {
+			blob, err := tree.Read(ctx, link)
+			if err != nil {
+				return false, fmt.Errorf("read link %q: %w", link, err)
+			}
+			target = string(blob)
+			targets[link] = target
+		}
+		next, ok := l.resolve(path.Dir(link), target)
+		if !ok {
+			return false, nil
+		}
+		switch l.kinds[next] { // a directory has no entry: the zero kind
+		case File:
+			return true, nil
+		case Symlink:
+			link = next
+		default:
+			return false, nil
+		}
+	}
+	return false, nil
 }
 
 // Change classifies a candidate against the governing contract; its zero

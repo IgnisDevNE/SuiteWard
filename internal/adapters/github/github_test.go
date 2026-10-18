@@ -505,8 +505,28 @@ func TestTreeReadDecodesABlobOnlyWhenCalled(t *testing.T) {
 	}
 }
 
+// The blob of a symlink is its target; the inventory reads it to resolve a link (D-SCOPE, amended 2026-10-17).
+func TestTreeReadDecodesTheBlobOfASymlink(t *testing.T) {
+	const linkBlob = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+	reader, _ := newReader(t, map[string]reply{
+		treeURI:             ok(fixture(t, "tree.json")),
+		blobsURI + linkBlob: ok([]byte(`{"sha":"` + linkBlob + `","size":12,"content":"Li4vUkVBRE1FLm1k","encoding":"base64"}`)),
+	})
+	tree, err := reader.Tree(t.Context(), repo, commitSHA)
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+	content, err := tree.Read(t.Context(), "docs/link")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(content) != "../README.md" {
+		t.Errorf("Read = %q, want the link target", content)
+	}
+}
+
 func TestTreeReadRejectsPathsWithoutAFileBlob(t *testing.T) {
-	for _, path := range []string{"docs/link", "vendor/lib", "tests", "missing.txt"} {
+	for _, path := range []string{"vendor/lib", "tests", "missing.txt"} {
 		t.Run(path, func(t *testing.T) {
 			reader, gh := newReader(t, map[string]reply{treeURI: ok(fixture(t, "tree.json"))})
 			tree, err := reader.Tree(t.Context(), repo, commitSHA)

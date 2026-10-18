@@ -1,11 +1,13 @@
 package inventory
 
 import (
+	"fmt"
 	"maps"
 	"path"
 	"slices"
 	"strings"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
@@ -17,6 +19,8 @@ type Suggestion struct {
 	Include []string
 	Runner  []string
 	Mixed   []string
+	// Submodules are the non-vendored submodules that an Include or Runner pattern reaches; their content is not protected.
+	Submodules []string
 	// Cut is true when maxSuggestions dropped some include or runner patterns.
 	Cut bool
 }
@@ -97,12 +101,17 @@ func classify(p string) (include, runner []string) {
 
 // Suggest proposes a declaration from the paths of the File entries of a tree (D-SCOPE-DISCOVERY): include patterns for
 // the test files and directories of the frameworks' conventions, runner patterns for the runner files found, and the mixed
-// files that may hold test settings. The lists are never nil. Include is the directory patterns then the file patterns,
-// each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut is set.
+// files that may hold test settings. Submodules, sorted, are the non-vendored ones that a kept pattern covers or may cover
+// below, because their content is outside the scope. The lists are never nil. Include is the directory patterns then the file
+// patterns, each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut
+// is set. Mixed and Submodules have their own limit.
 func Suggest(entries []Entry) Suggestion {
 	directories, files, runner := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	var mixed []string
+	var mixed, submodules []string
 	for _, entry := range entries {
+		if entry.Kind == Submodule && !slices.ContainsFunc(strings.Split(entry.Path, "/"), func(s string) bool { return slices.Contains(vendoredDirectories, s) }) {
+			submodules = append(submodules, entry.Path)
+		}
 		if entry.Kind != File {
 			continue
 		}
@@ -131,11 +140,47 @@ func Suggest(entries []Entry) Suggestion {
 	kept := all[:min(len(all), maxSuggestions)]
 	slices.Sort(mixed)
 	return Suggestion{
-		Include: append([]string{}, kept[:min(includeCount, len(kept))]...),
-		Runner:  append([]string{}, kept[min(includeCount, len(kept)):]...),
-		Mixed:   append([]string{}, mixed[:min(len(mixed), maxSuggestions)]...),
-		Cut:     len(all) > len(kept),
+		Include:    append([]string{}, kept[:min(includeCount, len(kept))]...),
+		Runner:     append([]string{}, kept[min(includeCount, len(kept)):]...),
+		Mixed:      append([]string{}, mixed[:min(len(mixed), maxSuggestions)]...),
+		Submodules: reached(submodules, kept),
+		Cut:        len(all) > len(kept),
 	}
+}
+
+// reached returns the first maxSuggestions of the sorted submodule paths that any pattern covers or may cover below. A
+// submodule whose path is not valid is skipped: Suggest takes unvalidated entries, and such a path is not one a pattern
+// can protect. Every pattern is one Suggest built from constants, so a pattern that does not parse is a programming
+// error, like scope.mustParsePattern's.
+func reached(submodules, patterns []string) []string {
+	parsed := make([]scope.Pattern, 0, len(patterns))
+	for _, pattern := range patterns {
+		p, err := scope.ParsePattern(pattern)
+		if err != nil {
+			panic(fmt.Sprintf("inventory: suggested pattern %q does not parse: %v", pattern, err))
+		}
+		parsed = append(parsed, p)
+	}
+	slices.Sort(submodules)
+	result := []string{}
+	for _, submodule := range submodules {
+		if !artifact.ValidPath(submodule) {
+			continue
+		}
+		hit := slices.ContainsFunc(parsed, func(p scope.Pattern) bool {
+			// Neither call can fail: the pattern parsed and the path is valid.
+			covers, err := p.Match(submodule)
+			below, belowErr := p.MayMatchBelow(submodule)
+			if err != nil || belowErr != nil {
+				panic(fmt.Sprintf("inventory: matching %q against %q: %v %v", submodule, p, err, belowErr))
+			}
+			return covers || below
+		})
+		if hit && len(result) < maxSuggestions {
+			result = append(result, submodule)
+		}
+	}
+	return result
 }
 
 // Uncovered returns the sorted test-like and runner file paths of entries that s does not cover. A path that an exclude of s

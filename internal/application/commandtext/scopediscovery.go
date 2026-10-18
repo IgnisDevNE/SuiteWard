@@ -41,7 +41,8 @@ type ScopeNotice struct {
 	Submodules  []string
 	Cut         bool // the limit of 20 patterns cut the new patterns, so the declaration may lack some
 	// Base, with a Source, makes the notice the reply of /suiteward suggest: it names the base, lists AddInclude and AddRunner
-	// (the patterns the base lacks, at most 20 together) and ends with the next step. Without a base both lists stay empty.
+	// (the patterns the base lacks, at most 20 together) and ends with the next step. Without a base both lists stay empty. With a base
+	// Paths may be empty: a runner name can be missing before any file of that name exists.
 	Base       ScopeBase
 	AddInclude []string
 	AddRunner  []string
@@ -57,8 +58,8 @@ func ValidateScopeNotice(n ScopeNotice) error {
 		return err
 	}
 	switch {
-	case len(n.Paths) == 0 || len(n.Paths) > maxListed:
-		return fmt.Errorf("commandtext: %d paths in a notice, want 1 to %d", len(n.Paths), maxListed)
+	case len(n.Paths) > maxListed || (len(n.Paths) == 0 && (n.Base == 0 || len(n.AddInclude)+len(n.AddRunner) == 0)):
+		return fmt.Errorf("commandtext: %d paths in a notice, want 1 to %d (none only in a reply with new patterns)", len(n.Paths), maxListed)
 	case len(n.Mixed) > maxListed:
 		return fmt.Errorf("commandtext: %d mixed files, at most %d", len(n.Mixed), maxListed)
 	case len(n.Submodules) > maxListed:
@@ -131,15 +132,21 @@ func baseNames(base ScopeBase) (subject, file string) {
 // the patterns that base lacks and the declaration with them, and ends with the next step. declaration ends with a newline.
 func scopeSuggestReply(n ScopeNotice, declaration string) string {
 	subject, file := baseNames(n.Base)
-	parts := []string{
-		"`/suiteward suggest`: compared with " + subject + ", the head of this pull request has test-like files that are not covered. Nothing changed.",
-		listingAndMore("Test-like files in this pull request's head that "+subject+" does not cover", n.Paths, n.PathsTotal),
+	var parts []string
+	if len(n.Paths) == 0 {
+		parts = []string{"`/suiteward suggest`: compared with " + subject + ", no test-like file of the head of this pull request is uncovered, but some patterns are missing. Nothing changed."}
+	} else {
+		parts = []string{
+			"`/suiteward suggest`: compared with " + subject + ", the head of this pull request has test-like files that are not covered. Nothing changed.",
+			listingAndMore("Test-like files in this pull request's head that "+subject+" does not cover", n.Paths, n.PathsTotal),
+		}
 	}
 	if len(n.AddInclude) > 0 {
 		parts = append(parts, "Patterns missing from the `include` list:\n\n"+fencedLines(n.AddInclude))
 	}
 	if len(n.AddRunner) > 0 {
-		parts = append(parts, "Patterns missing from the `runner` list:\n\n"+fencedLines(n.AddRunner))
+		parts = append(parts, "Patterns missing from the `runner` list:\n\n"+fencedLines(n.AddRunner),
+			"Runner names matter before a file of that name exists: a file with one of these names, added later, can change how the tests run.")
 	}
 	parts = append(parts, "SuiteWard suggests this declaration, "+file+" with the missing patterns added. Review it and change it as needed:\n\n"+fenced(declaration))
 	if n.Cut {

@@ -321,11 +321,22 @@ func withoutCovered(paths []string, s scope.Scope) ([]string, error) {
 // declaration returns the base declaration with the new patterns for paths added, and the suggestion those patterns
 // come from. After the first contract the base is the canonical's, never the head's file.
 func (h headScope) declaration(paths []string) (inventory.Suggestion, []byte, error) {
+	return h.declarationWith(pathsSuggestion(paths), nil)
+}
+
+// pathsSuggestion is the suggestion for the files at paths.
+func pathsSuggestion(paths []string) inventory.Suggestion {
 	entries := make([]inventory.Entry, len(paths))
 	for i, path := range paths {
 		entries[i] = inventory.Entry{Path: path, Kind: inventory.File}
 	}
-	suggestion := inventory.Suggest(entries)
+	return inventory.Suggest(entries)
+}
+
+// declarationWith returns the base declaration with the patterns of suggestion and the runner patterns extra added, and the suggestion
+// with extra in it.
+func (h headScope) declarationWith(suggestion inventory.Suggestion, extra []string) (inventory.Suggestion, []byte, error) {
+	suggestion = suggestion.WithRunner(extra)
 	declaration, err := scope.AddPatterns(h.base, suggestion.Include, suggestion.Runner)
 	return suggestion, declaration, err
 }

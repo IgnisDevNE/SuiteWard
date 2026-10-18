@@ -48,10 +48,11 @@ type scopeNoticePayload struct {
 	PathsTotal  int      `json:"pathsTotal"`
 	Declaration string   `json:"declaration"` // the canonical declaration with the new patterns added, at most 8192 bytes
 	Mixed       []string `json:"mixed,omitempty"`
+	Cut         bool     `json:"cut,omitempty"` // the limit of 20 patterns cut the declaration's new patterns
 }
 
 func (p scopeNoticePayload) notice() commandtext.ScopeNotice {
-	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed}
+	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed, Cut: p.Cut}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -90,8 +91,8 @@ func setDigest(paths []string) string {
 
 // newScopeNoticeMessage builds the notice of the added uncovered paths, bounding the repository text it carries. A payload
 // the publisher could not render is an error, so nobody writes a message that nobody can post.
-func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed []string) (governance.OutboxMessage, error) {
-	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed)}
+func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed []string, cut bool) (governance.OutboxMessage, error) {
+	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Cut: cut}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope notice: %w", err)
 	}
@@ -402,7 +403,7 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 		return nil
 	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
-	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed)
+	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed, suggestion.Cut)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil

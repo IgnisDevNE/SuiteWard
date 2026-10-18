@@ -614,3 +614,15 @@ func TestScopeNoticeDoesNotClaimThatThePullRequestAddedTheFiles(t *testing.T) {
 		t.Errorf("the title claims more than the head holds:\n%s", body)
 	}
 }
+
+// The notice and the bootstrap reply warn about a cut in the same words.
+func TestScopeNoticeAndSuggestDeclarationWarnAboutACutAlike(t *testing.T) {
+	n := notice()
+	n.Cut = true
+	const line = "This list was cut at the limit of 20 patterns, so test-like paths may be missing from it. Please review it and add what is missing."
+	for name, body := range map[string]string{"notice": noticeText(t, n), "reply": suggestionText(t, missingWith([]string{"tests/**"}, nil, nil, true))} {
+		if !strings.Contains(body, line) {
+			t.Errorf("the %s lacks the line %q:\n%s", name, line, body)
+		}
+	}
+}

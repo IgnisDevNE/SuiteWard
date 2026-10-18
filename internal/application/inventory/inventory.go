@@ -138,10 +138,7 @@ const maxLinkHops = 8
 // manifestOf rejects a symlink inside effective that may hide protected content, then hashes every covered file,
 // reading from the tree only what known lacks. A submodule is outside the scope: it is never rejected and never read.
 func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
-	kinds := make(map[string]EntryKind, len(entries))
-	for _, entry := range entries {
-		kinds[entry.Path] = entry.Kind
-	}
+	index := newLayout(entries)
 	targets := map[string]string{} // the blobs of the links read so far
 	covered := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -167,7 +164,7 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 				return artifact.Manifest{}, err
 			}
 			if below {
-				resolved, err := resolvesToFile(ctx, tree, kinds, targets, entry.Path)
+				resolved, err := resolvesToFile(ctx, tree, index, targets, entry.Path)
 				if err != nil {
 					return artifact.Manifest{}, err
 				}
@@ -193,11 +190,62 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 	return artifact.NewManifest(files)
 }
 
+// layout indexes the entries of a tree for link resolution: the kind of each entry, and every directory, which has an
+// entry somewhere below it and none of its own.
+type layout struct {
+	kinds map[string]EntryKind
+	dirs  map[string]bool
+}
+
+func newLayout(entries []Entry) layout {
+	l := layout{kinds: make(map[string]EntryKind, len(entries)), dirs: map[string]bool{}}
+	for _, entry := range entries {
+		l.kinds[entry.Path] = entry.Kind
+		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
+			l.dirs[dir] = true
+		}
+	}
+	return l
+}
+
+func (l layout) isDir(p string) bool { return p == "" || (l.dirs[p] && l.kinds[p] == 0) }
+
+// resolve returns the path that target names from the directory dir, the way a filesystem walks it: "" and "." stay,
+// ".." leaves the last directory, and every directory passed through must be a real directory of the tree. A link, a file
+// or a submodule in the middle, a missing directory, a ".." past the root and a target that ends in a directory form
+// resolve to nothing, because a lexical join would send ".." through a link somewhere the tree does not show.
+func (l layout) resolve(dir, target string) (string, bool) {
+	segments := strings.Split(target, "/")
+	if last := segments[len(segments)-1]; target == "" || target[0] == '/' || last == "" || last == "." || last == ".." {
+		return "", false
+	}
+	var parts []string
+	if dir != "." {
+		parts = strings.Split(dir, "/")
+	}
+	for _, segment := range segments {
+		if segment == "" || segment == "." {
+			continue
+		}
+		if !l.isDir(strings.Join(parts, "/")) {
+			return "", false
+		}
+		if segment != ".." {
+			parts = append(parts, segment)
+		} else if len(parts) == 0 {
+			return "", false
+		} else {
+			parts = parts[:len(parts)-1]
+		}
+	}
+	return strings.Join(parts, "/"), true
+}
+
 // resolvesToFile follows the symlink at link, in the same tree, through at most maxLinkHops links and reports whether
-// it ends at a regular file. A link's blob is its target, relative to the link's directory; an empty, absolute or
-// directory-like target, a target that leaves the repository, a missing entry, a submodule, a directory and a loop all
-// resolve to no file. A failed read is an error, not an answer.
-func resolvesToFile(ctx context.Context, tree Tree, kinds map[string]EntryKind, targets map[string]string, link string) (bool, error) {
+// it ends at a regular file. A link's blob is its target, relative to the link's directory (layout.resolve). Every
+// target that resolves to nothing, a submodule, a directory and a loop end at no file. A failed read is an error, not
+// an answer.
+func resolvesToFile(ctx context.Context, tree Tree, l layout, targets map[string]string, link string) (bool, error) {
 	for range maxLinkHops {
 		target, read := targets[link]
 		if !read {
@@ -208,14 +256,11 @@ func resolvesToFile(ctx context.Context, tree Tree, kinds map[string]EntryKind, 
 			target = string(blob)
 			targets[link] = target
 		}
-		if target == "" || strings.HasPrefix(target, "/") || strings.HasSuffix(target, "/") {
+		next, ok := l.resolve(path.Dir(link), target)
+		if !ok {
 			return false, nil
 		}
-		next := path.Join(path.Dir(link), target)
-		if next == ".." || strings.HasPrefix(next, "../") {
-			return false, nil
-		}
-		switch kinds[next] { // a directory has no entry: the zero kind
+		switch l.kinds[next] { // a directory has no entry: the zero kind
 		case File:
 			return true, nil
 		case Symlink:

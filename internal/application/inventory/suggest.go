@@ -1,11 +1,13 @@
 package inventory
 
 import (
+	"fmt"
 	"maps"
 	"path"
 	"slices"
 	"strings"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
@@ -146,20 +148,32 @@ func Suggest(entries []Entry) Suggestion {
 	}
 }
 
-// reached returns the first maxSuggestions of the sorted submodule paths that any pattern covers or may cover below. Every
-// pattern is one Suggest built from constants, which TestSuggestPatternsParseAndIncludeOnesMatchAFile parses.
+// reached returns the first maxSuggestions of the sorted submodule paths that any pattern covers or may cover below. A
+// submodule whose path is not valid is skipped: Suggest takes unvalidated entries, and such a path is not one a pattern
+// can protect. Every pattern is one Suggest built from constants, so a pattern that does not parse is a programming
+// error, like scope.mustParsePattern's.
 func reached(submodules, patterns []string) []string {
 	parsed := make([]scope.Pattern, 0, len(patterns))
 	for _, pattern := range patterns {
-		p, _ := scope.ParsePattern(pattern)
+		p, err := scope.ParsePattern(pattern)
+		if err != nil {
+			panic(fmt.Sprintf("inventory: suggested pattern %q does not parse: %v", pattern, err))
+		}
 		parsed = append(parsed, p)
 	}
 	slices.Sort(submodules)
 	result := []string{}
 	for _, submodule := range submodules {
+		if !artifact.ValidPath(submodule) {
+			continue
+		}
 		hit := slices.ContainsFunc(parsed, func(p scope.Pattern) bool {
-			covers, _ := p.Match(submodule)
-			below, _ := p.MayMatchBelow(submodule)
+			// Neither call can fail: the pattern parsed and the path is valid.
+			covers, err := p.Match(submodule)
+			below, belowErr := p.MayMatchBelow(submodule)
+			if err != nil || belowErr != nil {
+				panic(fmt.Sprintf("inventory: matching %q against %q: %v %v", submodule, p, err, belowErr))
+			}
 			return covers || below
 		})
 		if hit && len(result) < maxSuggestions {

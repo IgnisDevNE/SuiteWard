@@ -449,7 +449,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
     - `base`: `pull`, `default-branch` or `contract`;
     - `addInclude` and `addRunner`: the missing patterns, at most 20 in all.
 
-    When the base is the default branch's file, the head has no file to edit. The reply then links GitHub's new-file page with only `filename=.suiteward.yml`, because a prefilled declaration would exceed the URL budget, and the owner pastes the file.
+    When the base is the default branch's file, the change belongs on the default branch. The reply then has no link and no review suggestion. It gives the updated file to commit or merge there, and then `/suiteward propose`.
     - The text names the base: "this pull request's `.suiteward.yml`", "the default branch's `.suiteward.yml`" or "the current contract". It shows the missing patterns and the updated file.
     - The text gives the next step as a copyable command:
       - base `pull`: commit the change on this branch, then `/suiteward propose`;

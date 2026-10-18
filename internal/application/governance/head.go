@@ -221,6 +221,11 @@ func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request H
 	return revised, previous, nil
 }
 
+// CanonicalDeclaration is a stub until the refactor.
+func CanonicalDeclaration(ctx context.Context, reader ContentReader, canonical contract.CanonicalSnapshot) ([]byte, scope.Declaration, error) {
+	return nil, scope.Declaration{}, errors.New("not implemented")
+}
+
 // governingOf rebuilds the governing scope and exact inventory of the canonical. The scope comes from the
 // canonical's own .suiteward.yml bytes, read back from the content store, and must hash to the digest the
 // canonical was approved with.

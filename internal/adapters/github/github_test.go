@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1060,6 +1062,10 @@ func TestNewLineRanges(t *testing.T) {
 		{"pure deletion has no new-side range", "@@ -1,2 +0,0 @@\n-one\n-two", nil},
 		{"deletion hunk between additions", "@@ -5,2 +5,0 @@\n-a\n-b\n@@ -20 +18,2 @@\n+c", []github.LineRange{{Start: 18, End: 19}}},
 		{"content that looks like a header is not one", "@@ -1 +1 @@\n+@@ not a header", []github.LineRange{{Start: 1, End: 1}}},
+		{"new file from line zero", "@@ -0,0 +1 @@\n+x", []github.LineRange{{Start: 1, End: 1}}},
+		{"no newline marker is not a header", "@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n\\ No newline at end of file", []github.LineRange{{Start: 1, End: 1}}},
+		{"section text with @@ after the header", "@@ -3,2 +3,2 @@ func f() { // @@ -9 +9 @@\n a\n+b", []github.LineRange{{Start: 3, End: 4}}},
+		{"last representable line", fmt.Sprintf("@@ -1 +%d @@\n+x", math.MaxInt), []github.LineRange{{Start: math.MaxInt, End: math.MaxInt}}},
 	}
 	for _, c := range cases {
 		got, err := github.PullFile{Patch: c.patch}.NewLineRanges()
@@ -1078,6 +1084,7 @@ func TestNewLineRangesRejectsAMalformedHeader(t *testing.T) {
 		"negative count":  "@@ -1,2 +1,-2 @@\n+x",
 		"overflowing":     "@@ -1 +99999999999999999999 @@\n+x",
 		"bad second hunk": "@@ -1 +1 @@\n+x\n@@ -2 +b @@\n+y",
+		"range overflows": fmt.Sprintf("@@ -1 +%d,2 @@\n+x", math.MaxInt),
 	} {
 		if got, err := (github.PullFile{Patch: patch}).NewLineRanges(); err == nil {
 			t.Errorf("%s: NewLineRanges = %v, want an error", name, got)

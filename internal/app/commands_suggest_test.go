@@ -19,8 +19,8 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
-// The command /suiteward suggest (docs/contracts/runtime.md, "Scope discovery (M1.9)"): before the first contract it answers like
-// a propose that finds no declaration, afterwards with the scope notice of the head. Repository 2 gets a canonical of its own
+// The command /suiteward suggest (docs/contracts/runtime.md, "Scope discovery (M1.9)"): before the first contract without any declaration it answers like
+// a propose that finds no declaration, otherwise with the scope notice of the head against the base declaration (commands_suggest_base_test.go). Repository 2 gets a canonical of its own
 // where a test needs one, because repository 1 holds the bootstrap Suite of the default world.
 
 func cjSuggest(id int64, created time.Time) cjComment {
@@ -53,7 +53,7 @@ func (w *cjWorld) seedDeclared(repositoryID int64, declaration string, head map[
 	w.reader.repo(cjRepoName[repositoryID]).trees[cjHead] = &bootTree{files: head}
 }
 
-// scopeKeys are the keys of the scope-notice and scope-review messages a unit of work wrote: a command writes none, for its answer is its acknowledgment.
+// scopeKeys are the keys of the scope-notice and scope-review messages a unit of work wrote: a command writes a review only when the pull request edits the file.
 func (w *cjWorld) scopeKeys() []string {
 	var keys []string
 	for _, m := range w.suites.messages {
@@ -79,13 +79,6 @@ func TestSuggestBeforeTheFirstContractRepliesWithTheDeclarationMissingReply(t *t
 		{"empty when no path is test-like", map[string]string{"README.md": "x"}, map[string]string{"src/main.go": "y"}, nil, true},
 		{"with the runner files and the mixed files found", nil, runnerFiles,
 			map[string]any{"runner": []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}, "mixed": []string{"package.json"}}, true},
-		// A declaration that exists changes nothing in the suggestion, which the head's paths give, but the reply says so.
-		{"although the default branch and the head hold a declaration", bootFiles("v1"), bootFiles("v2"),
-			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}, "declared": true}, false}, // the head says so: the default branch is not read
-		{"although only the default branch holds a declaration", bootFiles("v1"), map[string]string{"tests/a_test.go": "x"},
-			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}, "declared": true}, true},
-		{"although only the head holds a declaration", map[string]string{"README.md": "x"}, bootFiles("v2"),
-			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}, "declared": true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -137,9 +130,9 @@ func TestSuggestAfterTheFirstContractRepliesWithTheScopeNoticeOfTheHead(t *testi
 		t.Fatal(err)
 	}
 	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "paths": []string{"pkg/util_test.go"}, "pathsTotal": 1,
-		"declaration": string(declaration), "mixed": []string{"package.json"}})
+		"declaration": string(declaration), "mixed": []string{"package.json"}, "base": "contract", "addInclude": []string{"*_test.go"}})
 	if keys := w.scopeKeys(); len(keys) != 0 {
-		t.Fatalf("scope messages %v; a command answers in its acknowledgment and writes no notice or review", keys)
+		t.Fatalf("scope messages %v; the head's file is not in the diff, so a command writes neither a notice nor a review", keys)
 	}
 	if len(w.owners.consumed) != 0 {
 		t.Fatalf("consumed %v; a suggestion uses no code", w.owners.consumed)
@@ -162,7 +155,8 @@ func TestSuggestAfterTheFirstContractListsTwentyPathsAndCountsAllOfThem(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "paths": extra[:20], "pathsTotal": 25, "declaration": string(declaration)})
+	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "paths": extra[:20], "pathsTotal": 25, "declaration": string(declaration),
+		"base": "contract", "addInclude": []string{"*_test.go"}})
 }
 
 func TestSuggestAfterTheFirstContractSaysWhenNothingIsUncovered(t *testing.T) {

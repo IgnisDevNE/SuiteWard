@@ -70,7 +70,10 @@ func (p scopeNoticePayload) validate() error {
 			return errors.New("a path is too long")
 		}
 	}
-	return commandtext.ValidateScopeNotice(p.notice())
+	if commandtext.ValidateScopeNotice(p.notice()) != nil { // its text quotes the repository and the branch, so only a fixed reason is kept
+		return errors.New("the repository, the branch, the paths or the declaration do not fit the notice")
+	}
+	return nil
 }
 
 // scopeTail is whether tail is <pull>:<set digest> of the pull request.
@@ -148,8 +151,8 @@ func (p scopeReviewPayload) validate() error {
 			return errors.New("a suggestion names an unknown or a repeated list, or a line that is not positive")
 		}
 		seen[s.List] = true
-		if err := commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns); err != nil {
-			return err
+		if commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns) != nil { // its text quotes the anchor line and the patterns
+			return errors.New("the anchor line, its indent or the patterns do not fit the suggestion")
 		}
 	}
 	return nil
@@ -401,7 +404,7 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
 	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed)
 	if err != nil {
-		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number)
+		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
 	}
 	reviews, err := j.scopeReview(ctx, p, pull, head, found, suggestion, setDigest(added))
@@ -466,7 +469,7 @@ func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull
 	}
 	message, err := newScopeReviewMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}, pull.HeadSHA, digest, suggestions)
 	if err != nil {
-		j.logger.WarnContext(ctx, "github checks scope review skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number)
+		j.logger.WarnContext(ctx, "github checks scope review skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil, nil
 	}
 	return []governance.OutboxMessage{message}, nil

@@ -415,6 +415,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 
 **Outbox `github_comment`, key `scope-review:<repository id>:<pull>:<set digest>` (new).**
 - **When it is written.** Only together with a `scope-notice`. `Reader.PullFiles` must show `.suiteward.yml` among the PR's changed files, the head's file must be a valid declaration in block style, and a hunk must contain an item line of the `include:` list, the `runner:` list, or both.
+- **Payload:** `repositoryId`, `repo`, `pull`, `head`, and `suggestions`: one or two entries `{list, line, anchor, patterns}`, one per list (`include` or `runner`). The marker of each posted comment is the key followed by `:include` or `:runner`.
 - **What it posts.** One review comment (`POST /repos/{repo}/pulls/{pull}/comments`, `commit_id` = head, `path` = `.suiteward.yml`, `side` = `RIGHT`) per list that has such a line, on that line.
   - The body is a `suggestion` block holding that line followed by the list's new patterns, at the same indentation.
   - It leaves out the patterns that the head's file already lists, so the result never holds a duplicate.

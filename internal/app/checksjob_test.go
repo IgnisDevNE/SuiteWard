@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,6 +89,7 @@ type cjJobWorld struct {
 	memory   *checkstest.Memory
 	verdicts *integritytest.Memory
 	headRepo map[int]string // the observed head repository of a pull request; absent means not observed
+	bases    map[int]string // the observed base commit of a pull request; absent means bootHead
 	cmds     *commandstest.Memory
 	check    *checksJob
 	problems *bootstrapProblems
@@ -108,6 +110,36 @@ func newCJWorld(t *testing.T, canonical bool, options ...func(*bootOptions)) *cj
 	default:
 		b = newBootWorld(t, options...)
 	}
+	return wrapCJWorld(t, b)
+}
+
+// newCJWorldOf is a canonical world whose V1 is the tree of files: the default branch holds them and the owner approved them.
+func newCJWorldOf(t *testing.T, files map[string]string) *cjJobWorld {
+	t.Helper()
+	b := newBootWorld(t)
+	b.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: files}
+	b.openPulls(bootRepo, 4)
+	b.seedSuite(bootRepoID, "branch:main")
+	proposeBaseline(t, b.suites, b.content, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, files)
+	b.approve(1, 4)
+	b.mustRun() // promotes V1
+	if _, found := b.canonical(); !found {
+		t.Fatalf("the setup did not bootstrap the canonical\nlogs: %s", b.logs)
+	}
+	w := wrapCJWorld(t, b)
+	w.check.contents = declarationContents(files[".suiteward.yml"])
+	return w
+}
+
+// declarationContents answers every read with the same declaration, the canonical's own.
+type declarationContents string
+
+func (c declarationContents) Read(context.Context, artifact.Digest) ([]byte, error) {
+	return []byte(c), nil
+}
+
+func wrapCJWorld(t *testing.T, b *bootWorld) *cjJobWorld {
+	t.Helper()
 	w := &cjJobWorld{bootWorld: b, memory: checkstest.NewMemory(), verdicts: integritytest.NewMemory(), cmds: commandstest.NewMemory(b.owners, b.pulls), problems: &bootstrapProblems{},
 		clock: bootTime.Add(2 * time.Hour), heads: map[int]string{4: bootHead}}
 	w.reader = &cjCountingReader{fakeBootReader: b.reader, reads: map[string]int{}}
@@ -136,7 +168,7 @@ func (w *cjJobWorld) sync(heads map[int]string) {
 	w.cycles++
 	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), StartedAt: bootTime.Add(time.Duration(w.cycles) * time.Minute), Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for number, head := range heads {
-		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
+		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: cmp.Or(w.bases[number], bootHead), UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
 		cycle.Comments[number] = nil
 	}
 	if _, err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {

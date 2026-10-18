@@ -361,9 +361,9 @@ func TestChecksDecideAgainAfterARestartWithoutAnotherComment(t *testing.T) {
 }
 
 func TestChecksResolveARunnerBlockWhenTheNextHeadProtectsOrIgnoresTheFile(t *testing.T) {
-	for name, declaration := range map[string]string{
-		"protect": "version: 1\ninclude: [/tests/**]\nrunner: [jest.config.*]\n",
-		"ignore":  "version: 1\ninclude: [/tests/**]\nexclude: [jest.config.js]\n",
+	for name, tc := range map[string]struct{ declaration, change string }{
+		"protect": {"version: 1\ninclude: [/tests/**]\nrunner: [jest.config.*]\n", "protected-change"},
+		"ignore":  {"version: 1\ninclude: [/tests/**]\nexclude: [jest.config.js]\n", "scope-reduction"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)
@@ -371,10 +371,12 @@ func TestChecksResolveARunnerBlockWhenTheNextHeadProtectsOrIgnoresTheFile(t *tes
 			w.want(5, checks.InProgress, "runner-uncovered", 1)
 
 			w.reader.files = map[int][]github.PullFile{5: append(added(cjJest), github.PullFile{Path: ".suiteward.yml", Status: "modified"})}
-			w.tree(cjHead3, withDeclaration(withFiles(bootFiles("v1"), cjJest), declaration))
+			w.tree(cjHead3, withDeclaration(withFiles(bootFiles("v1"), cjJest), tc.declaration))
 			w.sync(map[int]string{4: bootHead, 5: cjHead3})
 			w.mustCheck()
-			w.want(5, checks.InProgress, "approval-missing", 2) // the owner's decision is a protected change like any other
+			if record := w.want(5, checks.InProgress, "approval-missing", 2); record.Change != tc.change { // the owner's decision is a change like any other
+				t.Fatalf("the declaration is classified %q, want %q", record.Change, tc.change)
+			}
 
 			w.consent(contract.ApproveConsent, 201, 2, 1, 5)
 			w.mustCheck()

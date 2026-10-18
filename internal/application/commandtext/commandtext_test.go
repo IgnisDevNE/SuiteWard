@@ -1080,3 +1080,24 @@ func TestBootstrapSummaryWithRunnerRulesFitsInAComment(t *testing.T) {
 		})
 	}
 }
+
+// The same text as the branch golden above, with the runner section a declaration's runner rules add.
+func TestBootstrapSummaryWithRunnerRulesHasItsExactText(t *testing.T) {
+	want := "**SuiteWard bootstrap proposal P1-R1**\n\n" +
+		"SuiteWard proposes this repository's protected baseline as P1-R1. Nothing is canonical yet.\n\n" +
+		"- Origin commit: `" + origin + "` on branch `main` (pinned: it does not move if the branch advances)\n" +
+		"- Protected files: 1\n" +
+		"- Installation tier: `isolated`\n\n" +
+		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
+		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
+		"Scope runner rules:\n\n```\npytest.ini\nconftest.py\n```\n\n" +
+		"Scope exclude rules:\n\n```\ntests/tmp/\n```\n\n" +
+		"Review the inventory and the scope. To approve this exact baseline, comment:\n\n" +
+		"```\n/suiteward approve P1-R1 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
+		"Approving P1-R1 does not approve the other changes in this PR.\n"
+	s := summary(1, pathList(1), commandtext.Isolated)
+	s.Runner = []string{"pytest.ini", "conftest.py"}
+	if got := render(t, func() string { return commandtext.BootstrapSummary(s) }); got != want {
+		t.Errorf("the text with runner rules changed:\n%s", got)
+	}
+}

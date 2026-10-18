@@ -25,6 +25,7 @@ type ScopeNotice struct {
 	PathsTotal  int
 	Declaration []byte
 	Mixed       []string
+	Cut         bool // the limit of 20 patterns cut the new patterns, so the declaration may lack some
 }
 
 // ValidateScopeNotice reports why ScopeNoticeComment would panic on n, as an error: a caller that stores the notice

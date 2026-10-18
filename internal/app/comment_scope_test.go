@@ -36,6 +36,17 @@ func TestCommentPublisherRendersTheScopeNotice(t *testing.T) {
 		Declaration: []byte(cmtScopeDecl), Mixed: []string{"package.json"}}))
 }
 
+func TestCommentPublisherRendersTheCutOfAScopeNotice(t *testing.T) {
+	w := newCmtWorld(t)
+
+	if err := w.pub.publish(t.Context(), cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["cut"] = true })); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	w.wantPost(cmtScopeKey, commandtext.ScopeNoticeComment(commandtext.ScopeNotice{Repo: cmtRepo, Branch: "feature/x", Paths: []string{"pkg/a_test.go", "pkg/b_test.go"}, PathsTotal: 3,
+		Declaration: []byte(cmtScopeDecl), Mixed: []string{"package.json"}, Cut: true}))
+}
+
 func TestCommentPublisherPostsTheScopeNoticeOnce(t *testing.T) {
 	w := newCmtWorld(t)
 

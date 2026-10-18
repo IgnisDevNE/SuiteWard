@@ -249,6 +249,21 @@ func TestScopeNoticeListsThePathsAndGivesTheDeclarationAndTheEditLink(t *testing
 	checkBody(t, body)
 }
 
+func TestScopeNoticeSaysWhenTheDeclarationWasCut(t *testing.T) {
+	n := notice()
+	n.Cut = true
+	body := noticeText(t, n)
+	for _, w := range []string{"cut at the limit of 20 patterns", "review"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	if plain := noticeText(t, notice()); strings.Contains(plain, "cut at the limit") {
+		t.Errorf("a notice that was not cut says it was:\n%s", plain)
+	}
+	checkBody(t, body)
+}
+
 func TestScopeNoticeEscapesTheBranchInThePath(t *testing.T) {
 	n := notice()
 	n.Branch = "fix/a#b%d/ünï"

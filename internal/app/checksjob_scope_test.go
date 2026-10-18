@@ -380,3 +380,38 @@ func TestChecksLogTheReasonWhenTheNoticeCannotBeRendered(t *testing.T) {
 		t.Fatalf("the logs quote the branch: %s", w.logs)
 	}
 }
+
+// More than 20 patterns are needed: the declaration is cut at the limit, and the notice says so instead of showing a partial one.
+func TestChecksSayThatTheDeclarationOfAScopeNoticeWasCut(t *testing.T) {
+	runners := []string{"jest.config.js", "vitest.config.js", ".mocharc.js", "karma.conf.js", "playwright.config.ts", "cypress.config.ts", ".coveragerc", "phpunit.xml", ".rspec",
+		"test_helper.rb", "dart_test.yaml", "codecov.yml", "conftest.py"} // 25 runner patterns
+	w := newCJWorld(t, true)
+
+	w.scopePull(cjHead2, withFiles(bootFiles("v1"), runners...), bootFiles("v1"))
+
+	messages := w.scopeMessages("scope-notice:")
+	if len(messages) != 1 {
+		t.Fatalf("notices %v, want one\nlogs: %s", w.scopeKeys("scope-notice:"), w.logs)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(messages[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["cut"] != true {
+		t.Fatalf("payload %v, want cut: the 25 runner patterns do not fit the limit of 20", payload)
+	}
+}
+
+func TestChecksLeaveCutOutOfAScopeNoticeThatWasNotCut(t *testing.T) {
+	w := newCJWorld(t, true)
+
+	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+
+	var payload map[string]any
+	if err := json.Unmarshal(w.scopeMessages("scope-notice:")[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := payload["cut"]; present {
+		t.Fatalf("payload %v carries cut", payload)
+	}
+}

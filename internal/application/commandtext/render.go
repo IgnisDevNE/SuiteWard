@@ -114,19 +114,23 @@ const (
 // and Exclude list at most 20 rules each and may be longer; IncludeTotal and
 // ExcludeTotal are how many rules there are (like Protected for Paths), and the
 // body counts the unlisted ones from them. A total below the list, or zero, is
-// taken as the length of the list.
+// taken as the length of the list. Runner lists the runner rules the same way, with
+// RunnerTotal; a nil Runner means the caller has no runner rules to state (a message
+// written before M1.9-E4), so the body has no runner section, while an empty one states
+// that there are none.
 type Summary struct {
-	Proposal                   int
-	Revision                   int
-	Source                     Source
-	Origin                     string
-	Branch                     string
-	Protected                  int
-	Paths                      []string
-	Include                    []string
-	Exclude                    []string
-	IncludeTotal, ExcludeTotal int
-	Tier                       Tier
+	Proposal                                int
+	Revision                                int
+	Source                                  Source
+	Origin                                  string
+	Branch                                  string
+	Protected                               int
+	Paths                                   []string
+	Include                                 []string
+	Runner                                  []string
+	Exclude                                 []string
+	IncludeTotal, RunnerTotal, ExcludeTotal int
+	Tier                                    Tier
 }
 
 // Acknowledge renders the acknowledgment body of a processed command. It
@@ -382,7 +386,11 @@ func BootstrapSummary(s Summary) string {
 		intro,
 		origin + "\n" + count + "\n- Installation tier: `" + tier + "`",
 	}
-	parts = append(parts, listing("Inventory", s.Paths, len(s.Paths)), listing("Scope include rules", s.Include, s.IncludeTotal), listing("Scope exclude rules", s.Exclude, s.ExcludeTotal))
+	parts = append(parts, listing("Inventory", s.Paths, len(s.Paths)), listing("Scope include rules", s.Include, s.IncludeTotal))
+	if s.Runner != nil {
+		parts = append(parts, listing("Scope runner rules", s.Runner, s.RunnerTotal))
+	}
+	parts = append(parts, listing("Scope exclude rules", s.Exclude, s.ExcludeTotal))
 	if s.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}

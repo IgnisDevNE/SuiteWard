@@ -317,7 +317,7 @@ func TestCommentPublisherRendersEveryKeyKind(t *testing.T) {
 			return cmtMust(newSummaryMessage(cmtTarget(), cmtSummaryInputs()))
 		}, func(*cmtWorld) string {
 			inputs := cmtSummaryInputs()
-			inputs.IncludeTotal, inputs.ExcludeTotal = len(inputs.Include), len(inputs.Exclude) // the constructor counts the rules it was given
+			inputs.IncludeTotal, inputs.ExcludeTotal, inputs.Runner = len(inputs.Include), len(inputs.Exclude), []string{} // the constructor counts the rules it was given and states that there are no runner rules
 			return commandtext.BootstrapSummary(cmtMust(inputs.summary()))
 		}},
 		{"bootstrap promotion", func(*cmtWorld) governance.OutboxMessage {

@@ -23,6 +23,7 @@ var checkReasons = []struct {
 	{commandtext.CheckInProgress, "not-current", "is not current", "update the branch", "in_progress"},
 	{commandtext.CheckInProgress, "assessment-pending", "has not finished assessing", "nothing is required", "in_progress"},
 	{commandtext.CheckInProgress, "source-unavailable", "truncated the file tree", "reducing the number of files", "in_progress"},
+	{commandtext.CheckInProgress, "runner-uncovered", "runner files that the protected scope does not cover", "protect the files", "in_progress"},
 	{commandtext.CheckInProgress, "fork-unsupported", "from forks are not supported yet", "from a branch of this repository", "in_progress"},
 	{commandtext.CheckFailure, "invalid-source", "is invalid", "and push", "failure"},
 	{commandtext.CheckFailure, "integrity-failed", "stored canonical contract failed its integrity verification", "restore the artifact store from a backup", "failure"},

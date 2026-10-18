@@ -12,6 +12,9 @@ import (
 // three times its size, which with the other lists keeps the notice below three quarters of GitHub's comment limit.
 const maxDeclaration = 8192
 
+// cutWarning is the line that SuggestDeclaration shows for a list cut at the limit, word for word.
+const cutWarning = "This list was cut at the limit of 20 patterns, so test-like paths may be missing from it. Please review it and add what is missing."
+
 // ScopeNotice is what the scope-notice comment states. Repo (owner/name) and Branch (the pull request's head ref) build
 // the editor link. Paths holds at most 20 of the PathsTotal test-like paths that the current contract does not protect,
 // each already cut by the caller; a total below the list is taken as its length. Declaration is the full declaration to
@@ -25,6 +28,7 @@ type ScopeNotice struct {
 	PathsTotal  int
 	Declaration []byte
 	Mixed       []string
+	Cut         bool // the limit of 20 patterns cut the new patterns, so the declaration may lack some
 }
 
 // ValidateScopeNotice reports why ScopeNoticeComment would panic on n, as an error: a caller that stores the notice
@@ -65,6 +69,9 @@ func ScopeNoticeComment(n ScopeNotice) string {
 		listingAndMore("Test-like files in this pull request's head that the current contract does not protect", n.Paths, n.PathsTotal),
 		"These files are not protected by the current contract: SuiteWard assesses only the protected files, so a change to them needs no approval.",
 		"SuiteWard suggests this declaration, the current canonical `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n" + fenced(declaration),
+	}
+	if n.Cut {
+		parts = append(parts, cutWarning)
 	}
 	if len(n.Mixed) > 0 {
 		parts = append(parts, mixedWarning(n.Mixed))

@@ -104,7 +104,7 @@ func (e *cfEnv) requireNotice(got, want governance.RevisionNotice) {
 	e.t.Helper()
 	samePrevious := (got.Previous == nil) == (want.Previous == nil) && (got.Previous == nil || *got.Previous == *want.Previous)
 	if got.Reference != want.Reference || !samePrevious || got.Canonical != want.Canonical || got.Reduced != want.Reduced ||
-		!slices.Equal(got.Added, want.Added) || !slices.Equal(got.Modified, want.Modified) || !slices.Equal(got.Removed, want.Removed) {
+		!slices.Equal(got.ReducedRules, want.ReducedRules) || !slices.Equal(got.ReducedPaths, want.ReducedPaths) || !slices.Equal(got.Added, want.Added) || !slices.Equal(got.Modified, want.Modified) || !slices.Equal(got.Removed, want.Removed) {
 		e.t.Fatalf("notice = %+v (previous %v), want %+v (previous %v)", got, got.Previous, want, want.Previous)
 	}
 }
@@ -166,6 +166,10 @@ func cfRevisionNoticeContents(e *cfEnv) {
 	if reduction.Change != inventory.ScopeReduction || len(notices.calls) != 2 || !notices.calls[1].Reduced || notices.calls[1].Reference != bsRef("P1", "R2") {
 		e.t.Fatalf("result = %+v with notices %+v, want a scope reduction as P1-R2 that the notice reports as reduced", reduction, notices.calls)
 	}
+	// The notice details the reduction: the rule the head dropped and the path it no longer covers.
+	previous := bsRef("P1", "R1")
+	e.requireNotice(notices.calls[1], governance.RevisionNotice{Reference: bsRef("P1", "R2"), Previous: &previous, Canonical: "V1", Reduced: true,
+		ReducedRules: []string{"rule /tests/**"}, ReducedPaths: []string{"tests/a.txt"}, Added: []string{"tests/b.txt"}, Modified: []string{".suiteward.yml"}, Removed: []string{"tests/a.txt"}})
 }
 
 func cfRevisionCommentFalse(e *cfEnv) {

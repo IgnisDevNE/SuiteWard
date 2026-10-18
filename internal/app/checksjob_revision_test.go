@@ -80,3 +80,27 @@ func anyStrings(value any) []string {
 	}
 	return strs
 }
+
+func TestChecksRevisionCommentDetailsAScopeReduction(t *testing.T) {
+	w := newCJWorld(t, true)
+	files := bootFiles("v1")
+	files[".suiteward.yml"] = "version: 1\ninclude: [/tests/a_test.go]\n" // the canonical protects /tests/**
+	files["tests/b_test.go"] = "package b\n"
+	w.tree(cjHead2, files)
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+	w.mustCheck()
+
+	messages := w.revisionMessages()
+	if len(messages) != 1 {
+		t.Fatalf("revision comments %v, want the one of the first revision", w.revisionKeys())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(messages[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["reduced"] != true || !slices.Equal(anyStrings(payload["reducedRules"]), []string{"rule /tests/**"}) ||
+		!slices.Equal(anyStrings(payload["reducedPaths"]), []string{"tests/b_test.go"}) || payload["reducedPathsTotal"] != float64(1) {
+		t.Fatalf("payload %v, want the reduction of /tests/** and the path tests/b_test.go", payload)
+	}
+}

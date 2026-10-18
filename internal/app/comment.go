@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -68,7 +71,10 @@ type ackPayload struct {
 	Reason      string               `json:"reason,omitempty"`      // malformed: the reason code; propose-refused and skip-refused: the refusal
 	Reference   string               `json:"reference,omitempty"`   // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
 	Branch      string               `json:"branch,omitempty"`      // propose-refused for declaration-missing: the pull request's head ref
-	Suggestion  []string             `json:"suggestion,omitempty"`  // and the include patterns SuggestScope found
+	Suggestion  []string             `json:"suggestion,omitempty"`  // and the include patterns inventory.Suggest found
+	Runner      []string             `json:"runner,omitempty"`      // and the runner patterns,
+	Mixed       []string             `json:"mixed,omitempty"`       // the mixed files, shown and never suggested,
+	Cut         bool                 `json:"cut,omitempty"`         // and whether the limit of 20 patterns cut the lists
 }
 
 // The codes of the malformed reasons in a payload.
@@ -156,9 +162,14 @@ func (a ackPayload) declarationMissing() bool {
 	return a.Disposition == string(commands.ProposeRefused) && a.Reason == reasonDeclarationMissing
 }
 
+// suggested is whether the payload holds any of the lists of a suggestion.
+func (a ackPayload) suggested() bool {
+	return len(a.Suggestion) != 0 || len(a.Runner) != 0 || len(a.Mixed) != 0 || a.Cut
+}
+
 // suggestion is what the renderer takes for a declaration-missing payload.
 func (a ackPayload) suggestion() commandtext.DeclarationSuggestion {
-	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion}
+	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Cut: a.Cut}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -170,7 +181,7 @@ func (a ackPayload) validate() error {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
-		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || len(a.Suggestion) != 0 {
+		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() {
 			return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
 		}
 		return nil
@@ -192,7 +203,7 @@ func (a ackPayload) validate() error {
 		}
 	}
 	if !a.declarationMissing() {
-		if a.Branch != "" || len(a.Suggestion) != 0 {
+		if a.Branch != "" || a.suggested() {
 			return errors.New("the branch and the suggestion fit only a missing declaration")
 		}
 		return nil
@@ -201,9 +212,9 @@ func (a ackPayload) validate() error {
 	if commandtext.ValidateSuggestion(a.suggestion()) != nil {
 		return errors.New("the branch, the repository or the suggestion cannot be rendered")
 	}
-	for _, pattern := range a.Suggestion {
-		if len(pattern) > maxSummaryText {
-			return errors.New("a suggested pattern is too long")
+	for _, text := range slices.Concat(a.Suggestion, a.Runner, a.Mixed) {
+		if len(text) > maxSummaryText {
+			return errors.New("a suggested pattern or a mixed path is too long")
 		}
 	}
 	return nil
@@ -230,15 +241,19 @@ func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, dis
 }
 
 // newDeclarationMissingAck builds the refusal of a propose when no tree holds a .suiteward.yml: branch is the pull
-// request's head ref and suggestion the include patterns found. Each is cut to the payload bound, which only keeps the
-// payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts those it
-// left out, so a cut pattern is never suggested.
-func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggestion []string) (governance.OutboxMessage, error) {
-	cut := make([]string, 0, len(suggestion))
-	for _, pattern := range suggestion {
-		cut = append(cut, cutBytes(pattern, maxSummaryText))
+// request's head ref and suggested the patterns and the mixed files found. Each is cut to the payload bound, which only
+// keeps the payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts
+// those it left out, so a cut pattern is never suggested.
+func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggested inventory.Suggestion) (governance.OutboxMessage, error) {
+	cut := func(list []string) []string {
+		var bounded []string // nil without entries: the payload then omits the list
+		for _, entry := range list {
+			bounded = append(bounded, cutBytes(entry, maxSummaryText))
+		}
+		return bounded
 	}
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch, Suggestion: cut})
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch,
+		Suggestion: cut(suggested.Include), Runner: cut(suggested.Runner), Mixed: cut(suggested.Mixed), Cut: suggested.Cut})
 }
 
 func newAck(p ackPayload) (governance.OutboxMessage, error) {
@@ -304,6 +319,8 @@ func (b *botAccount) ID(ctx context.Context) (int64, error) { return b.get(ctx) 
 type commentWriter interface {
 	PostComment(ctx context.Context, repo string, number int, body string) (int64, error)
 	CommentsByAuthor(ctx context.Context, repo string, number int, authorID int64) ([]github.Comment, error)
+	ReviewCommentsByAuthor(ctx context.Context, repo string, number int, authorID int64) ([]github.Comment, error)
+	PostReviewComment(ctx context.Context, repo string, number int, commitSHA, path string, startLine, line int, body string) (int64, error)
 }
 
 type ownerSource interface {
@@ -317,6 +334,7 @@ type commentPublisher struct {
 	instance *lazy[string] // commands.Store.Instance, read once
 	owners   ownerSource
 	suites   governance.UnitOfWork
+	logger   *slog.Logger
 }
 
 func keyError(kind, key, what string) error { return fmt.Errorf("%s %s: %s", kind, key, what) }
@@ -332,17 +350,21 @@ func githubFailure(kind, key, step string, err error) error {
 	return &opaque{what: fmt.Sprintf("%s %s: %s (%s)", kind, key, step, text), cause: err}
 }
 
+// keyParts is the number of ':' separated parts of the keys of each github_comment kind: three, but four for the scope notice,
+// whose tail is <pull>:<set digest>.
+var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4}
+
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
 	parts := strings.Split(key, ":")
-	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey && parts[0] != bootstrapNoticeKey && parts[0] != bootstrapCancelledKey && parts[0] != mergeKey && parts[0] != revisionKey) {
+	if want, known := keyParts[parts[0]]; !known || len(parts) != want {
 		return "", 0, "", false
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != parts[1] {
 		return "", 0, "", false
 	}
-	return parts[0], id, parts[2], true
+	return parts[0], id, strings.Join(parts[2:], ":"), true
 }
 
 // decodePayload reads a payload strictly: unknown fields, trailing data and non-objects are errors whose text
@@ -379,6 +401,9 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	if !ok {
 		return keyError(githubCommentKind, key, "not a github_comment key")
 	}
+	if kind == scopeReviewKey { // posts on the diff, so it has no issue comment to find or to write
+		return p.publishReview(ctx, key, repositoryID, tail, payload)
+	}
 	var (
 		target commentTarget
 		text   string
@@ -399,6 +424,8 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		target, text, err = p.merge(key, tail, payload)
 	case revisionKey:
 		target, text, err = p.revision(key, tail, payload)
+	case scopeNoticeKey:
+		target, text, err = p.scopeNotice(key, tail, payload)
 	}
 	if err != nil {
 		return err
@@ -743,7 +770,11 @@ type revisionPayload struct {
 	ModifiedTotal int      `json:"modifiedTotal"`
 	RemovedTotal  int      `json:"removedTotal"`
 	Reduced       bool     `json:"reduced"`
-	Tier          string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
+	// ReducedRules, ReducedPaths and ReducedPathsTotal detail a reduction, bounded like the lists above; only with Reduced.
+	ReducedRules      []string `json:"reducedRules,omitempty"`
+	ReducedPaths      []string `json:"reducedPaths,omitempty"`
+	ReducedPathsTotal int      `json:"reducedPathsTotal,omitempty"`
+	Tier              string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
 }
 
 // revision maps the payload to the values the renderer takes. The renderer checks the rest and panics on what cannot be stored.
@@ -757,11 +788,15 @@ func (p revisionPayload) revision() (commandtext.Revision, error) {
 	case owner.TierCoLocated:
 		tier = commandtext.CoLocated
 	}
-	if p.validate() != nil || !validReference || !validCanonical || tier == 0 || min(p.AddedTotal, p.ModifiedTotal, p.RemovedTotal) < 0 {
+	if p.validate() != nil || !validReference || !validCanonical || tier == 0 || min(p.AddedTotal, p.ModifiedTotal, p.RemovedTotal, p.ReducedPathsTotal) < 0 {
 		return commandtext.Revision{}, errors.New("the reference, the base version, a total or the tier is invalid")
 	}
+	if !p.Reduced && (len(p.ReducedRules) > 0 || len(p.ReducedPaths) > 0 || p.ReducedPathsTotal != 0) {
+		return commandtext.Revision{}, errors.New("reduction detail on a revision that does not reduce the scope")
+	}
 	return commandtext.Revision{Proposal: proposal, Revision: revision, Previous: p.Previous, Canonical: canonical, Added: p.Added, Modified: p.Modified, Removed: p.Removed,
-		AddedTotal: p.AddedTotal, ModifiedTotal: p.ModifiedTotal, RemovedTotal: p.RemovedTotal, Reduced: p.Reduced, Tier: tier}, nil
+		AddedTotal: p.AddedTotal, ModifiedTotal: p.ModifiedTotal, RemovedTotal: p.RemovedTotal, Reduced: p.Reduced, Tier: tier,
+		ReducedRules: p.ReducedRules, ReducedPaths: p.ReducedPaths, ReducedPathsTotal: p.ReducedPathsTotal}, nil
 }
 
 // text renders the comment of the payload stored under key, without quoting the payload in an error.
@@ -783,6 +818,7 @@ func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, 
 	p := revisionPayload{commentTarget: target, Reference: referenceText(notice.Reference), Canonical: string(notice.Canonical),
 		Added: boundedText(notice.Added), Modified: boundedText(notice.Modified), Removed: boundedText(notice.Removed),
 		AddedTotal: len(notice.Added), ModifiedTotal: len(notice.Modified), RemovedTotal: len(notice.Removed), Reduced: notice.Reduced, Tier: tier}
+	p.ReducedRules, p.ReducedPaths, p.ReducedPathsTotal = boundedText(notice.ReducedRules), boundedText(notice.ReducedPaths), len(notice.ReducedPaths)
 	if notice.Previous != nil {
 		p.Previous = referenceText(*notice.Previous)
 	}

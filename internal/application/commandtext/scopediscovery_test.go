@@ -249,6 +249,21 @@ func TestScopeNoticeListsThePathsAndGivesTheDeclarationAndTheEditLink(t *testing
 	checkBody(t, body)
 }
 
+func TestScopeNoticeSaysWhenTheDeclarationWasCut(t *testing.T) {
+	n := notice()
+	n.Cut = true
+	body := noticeText(t, n)
+	for _, w := range []string{"cut at the limit of 20 patterns", "review"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	if plain := noticeText(t, notice()); strings.Contains(plain, "cut at the limit") {
+		t.Errorf("a notice that was not cut says it was:\n%s", plain)
+	}
+	checkBody(t, body)
+}
+
 func TestScopeNoticeEscapesTheBranchInThePath(t *testing.T) {
 	n := notice()
 	n.Branch = "fix/a#b%d/ünï"
@@ -597,5 +612,17 @@ func TestScopeNoticeDoesNotClaimThatThePullRequestAddedTheFiles(t *testing.T) {
 	body := noticeText(t, notice())
 	if !strings.Contains(body, "in this pull request's head that the current contract does not protect") || strings.Contains(body, "adds") {
 		t.Errorf("the title claims more than the head holds:\n%s", body)
+	}
+}
+
+// The notice and the bootstrap reply warn about a cut in the same words.
+func TestScopeNoticeAndSuggestDeclarationWarnAboutACutAlike(t *testing.T) {
+	n := notice()
+	n.Cut = true
+	const line = "This list was cut at the limit of 20 patterns, so test-like paths may be missing from it. Please review it and add what is missing."
+	for name, body := range map[string]string{"notice": noticeText(t, n), "reply": suggestionText(t, missingWith([]string{"tests/**"}, nil, nil, true))} {
+		if !strings.Contains(body, line) {
+			t.Errorf("the %s lacks the line %q:\n%s", name, line, body)
+		}
 	}
 }

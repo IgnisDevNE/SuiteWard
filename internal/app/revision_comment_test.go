@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -303,4 +304,69 @@ func TestMergeMessageRefusesAnEmptyVersionWhereACanonicalExists(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRevisionMessageCarriesTheBoundedReductionDetail(t *testing.T) {
+	notice := cmtNotice()
+	notice.Reduced = true
+	for i := range 25 {
+		notice.ReducedRules = append(notice.ReducedRules, fmt.Sprintf("rule /r%02d/**", i))
+		notice.ReducedPaths = append(notice.ReducedPaths, "tests/"+strings.Repeat("x", 200)+string(rune('a'+i)))
+	}
+	message := cmtRevisionMessage(t, notice, "isolated")
+
+	var payload struct {
+		ReducedRules      []string `json:"reducedRules"`
+		ReducedPaths      []string `json:"reducedPaths"`
+		ReducedPathsTotal int      `json:"reducedPathsTotal"`
+	}
+	if err := json.Unmarshal(message.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.ReducedRules) != 20 || len(payload.ReducedPaths) != 20 || payload.ReducedPathsTotal != 25 {
+		t.Fatalf("%d rules, %d paths and a total of %d, want 20, 20 and the true total 25", len(payload.ReducedRules), len(payload.ReducedPaths), payload.ReducedPathsTotal)
+	}
+	for _, entry := range payload.ReducedPaths {
+		if len(entry) > 150 || !strings.HasSuffix(entry, "…") {
+			t.Fatalf("path %q has %d bytes, want one cut to 150 bytes that ends with the marker", entry, len(entry))
+		}
+	}
+
+	w := newCmtWorld(t)
+	w.mustDeliver(message)
+	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: notice.Added, Modified: notice.Modified,
+		Removed: notice.Removed, AddedTotal: 1, ModifiedTotal: 2, RemovedTotal: 1, Reduced: true, ReducedRules: payload.ReducedRules, ReducedPaths: payload.ReducedPaths,
+		ReducedPathsTotal: 25, Tier: commandtext.Isolated}))
+}
+
+func TestRevisionMessageOmitsTheReductionDetailOfAnotherChange(t *testing.T) {
+	message := cmtRevisionMessage(t, cmtNotice(), "isolated")
+
+	for _, field := range []string{"reducedRules", "reducedPaths", "reducedPathsTotal"} {
+		if strings.Contains(string(message.Payload), field) {
+			t.Fatalf("payload %s holds %s, want none for a revision that does not reduce the scope", message.Payload, field)
+		}
+	}
+}
+
+func TestRevisionMessageRefusesReductionDetailWithoutAReduction(t *testing.T) {
+	notice := cmtNotice()
+	notice.ReducedRules = []string{"rule /tests/**"}
+	if _, err := newRevisionMessage(cmtTarget(), notice, "isolated"); err == nil {
+		t.Fatal("newRevisionMessage accepted reduction detail on a revision that does not reduce the scope")
+	}
+}
+
+// A payload written under v0.1.0 has none of the reduction fields: it still decodes and renders as it did.
+func TestCommentPublisherRendersARevisionPayloadOfV010(t *testing.T) {
+	payload := json.RawMessage(`{"repositoryId":1001,"repo":"acme/widgets","pull":7,"reference":"P2-R2","previous":"P2-R1","canonical":"V1",` +
+		`"added":["tests/new_test.go"],"modified":["tests/a_test.go"],"removed":[],"addedTotal":1,"modifiedTotal":1,"removedTotal":0,"reduced":true,"tier":"isolated"}`)
+	w := newCmtWorld(t)
+
+	if err := w.pub.publish(t.Context(), cmtRevisionKey, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: []string{"tests/new_test.go"},
+		Modified: []string{"tests/a_test.go"}, Removed: []string{}, AddedTotal: 1, ModifiedTotal: 1, Reduced: true, Tier: commandtext.Isolated}))
 }

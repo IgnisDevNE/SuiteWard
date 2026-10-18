@@ -500,7 +500,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **The problem** has three kinds:
   - **`declaration`:** the head's `.suiteward.yml` is not a valid declaration;
   - **`link`:** a symbolic link the scope covers or may cover below, whose target is not a regular file of the tree; the payload adds `path`, the link's path cut to 150 bytes;
-  - **`truncated`:** GitHub truncated the tree.
+  - A truncated tree is `source-unavailable`, not `invalid-source`, so it gets no such comment.
 - **The key.** The problem digest is the SHA-256 of the kind and the path. A later push with the same problem posts nothing; a different problem posts a new comment.
 - **The text:**
   - it names the problem and gives the next step:

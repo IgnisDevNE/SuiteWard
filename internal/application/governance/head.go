@@ -221,6 +221,9 @@ func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request H
 	return revised, previous, nil
 }
 
+// ErrNoCanonicalDeclaration reports that the canonical holds no .suiteward.yml.
+var ErrNoCanonicalDeclaration = errors.New("the canonical has no declaration")
+
 // CanonicalDeclaration is a stub until the refactor.
 func CanonicalDeclaration(ctx context.Context, reader ContentReader, canonical contract.CanonicalSnapshot) ([]byte, scope.Declaration, error) {
 	return nil, scope.Declaration{}, errors.New("not implemented")

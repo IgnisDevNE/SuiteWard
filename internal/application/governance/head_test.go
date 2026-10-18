@@ -524,8 +524,8 @@ func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
 	t.Run("no entry", func(t *testing.T) {
 		e := newHeadEnvOn(t, newFakeTree(regularFile("src/main.go", "package main\n")))
 		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
-		if err != nil || raw != nil || d.Present() {
-			t.Fatalf("raw = %q, present = %v, error = %v; want no bytes and no declaration", raw, d.Present(), err)
+		if !errors.Is(err, governance.ErrNoCanonicalDeclaration) || raw != nil || d.Present() {
+			t.Fatalf("raw = %q, present = %v, error = %v; want no bytes, no declaration and ErrNoCanonicalDeclaration", raw, d.Present(), err)
 		}
 	})
 	stored := artifact.Hash([]byte(declaration))

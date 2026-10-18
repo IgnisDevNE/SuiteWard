@@ -346,17 +346,21 @@ func githubFailure(kind, key, step string, err error) error {
 	return &opaque{what: fmt.Sprintf("%s %s: %s (%s)", kind, key, step, text), cause: err}
 }
 
+// keyParts is the number of ':' separated parts of the keys of each github_comment kind: three, but four for the scope notice,
+// whose tail is <pull>:<set digest>.
+var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4}
+
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
 	parts := strings.Split(key, ":")
-	if len(parts) != 3 || (parts[0] != ackKey && parts[0] != bootstrapSummaryKey && parts[0] != bootstrapPromotedKey && parts[0] != bootstrapNoticeKey && parts[0] != bootstrapCancelledKey && parts[0] != mergeKey && parts[0] != revisionKey) {
+	if want, known := keyParts[parts[0]]; !known || len(parts) != want {
 		return "", 0, "", false
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != parts[1] {
 		return "", 0, "", false
 	}
-	return parts[0], id, parts[2], true
+	return parts[0], id, strings.Join(parts[2:], ":"), true
 }
 
 // decodePayload reads a payload strictly: unknown fields, trailing data and non-objects are errors whose text
@@ -413,6 +417,8 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		target, text, err = p.merge(key, tail, payload)
 	case revisionKey:
 		target, text, err = p.revision(key, tail, payload)
+	case scopeNoticeKey:
+		target, text, err = p.scopeNotice(key, tail, payload)
 	}
 	if err != nil {
 		return err

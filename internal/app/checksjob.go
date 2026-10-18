@@ -88,6 +88,9 @@ type checksJob struct {
 	// unchanged remembers, in memory, the heads found unchanged against a canonical: a later Suite write for another
 	// pull request does not make such a head read its tree again (consent cannot change an unchanged result).
 	unchanged map[checkPull]unchangedAt
+	// scoped remembers, in memory, the head and canonical a pull request's scope notice was last decided for, so a head is read for
+	// it once: a restart costs one more decision for each open pull request, and the outbox key stops a second notice.
+	scoped map[checkPull]unchangedAt
 	// announced remembers, in memory, the keys of the bootstrap comments written or found written, so a pull request that waits
 	// does not try its comment again every run. The outbox key is the idempotency key, so a restart costs one refused insert each.
 	announced map[string]bool
@@ -304,6 +307,12 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	})
 	if err != nil {
 		return "", fmt.Errorf("publish the check: %w", err)
+	}
+	// After the check, so a failure here never delays or changes it: the notice is evidence and decides nothing.
+	if suite.canonical != "" && !suite.integrityFailed && !isFork(pull.HeadRepo, p.Repo) {
+		if err := j.scopeNotice(ctx, p, pull, suite.canonical); err != nil {
+			return "", err
+		}
 	}
 	return problem, nil
 }

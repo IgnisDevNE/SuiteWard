@@ -299,3 +299,32 @@ func TestChecksWriteNoScopeNoticeForADeclarationTooLargeToShow(t *testing.T) {
 	}
 	w.want(5, checks.Success, "unchanged", 1)
 }
+
+// discoverHead is what the suggest command will call: the uncovered paths of a head with no base filter, and the declaration for them.
+func TestDiscoverHeadReportsTheUncoveredPathsAndTheDeclarationForThem(t *testing.T) {
+	w := newCJWorld(t, true)
+	head := &bootTree{files: withFiles(bootFiles("v1"), cjUtilTst, "conftest.py", "package.json", "tests/b_test.go")}
+
+	found, err := discoverHead(t.Context(), w.suites, nopContents{}, w.project(), head)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"conftest.py", cjUtilTst}; !slices.Equal(found.Paths, want) {
+		t.Fatalf("paths %v, want %v (tests/b_test.go is protected)", found.Paths, want)
+	}
+	if !slices.Equal(found.Mixed, []string{"package.json"}) {
+		t.Fatalf("mixed %v, want package.json", found.Mixed)
+	}
+	suggestion, declaration, err := found.declaration(found.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := scope.AddPatterns([]byte(cjDecl), []string{"*_test.go"}, []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(declaration) != string(want) || !slices.Equal(suggestion.Include, []string{"*_test.go"}) {
+		t.Fatalf("declaration %q for include %v, want %q", declaration, suggestion.Include, want)
+	}
+}

@@ -94,6 +94,7 @@ type checksJob struct {
 	scoped map[checkPull]unchangedAt
 	// announced remembers, in memory, the keys of the bootstrap comments written or found written, so a pull request that waits
 	// does not try its comment again every run. The outbox key is the idempotency key, so a restart costs one refused insert each.
+	// It also holds the sets of uncovered paths that the scope notice decided (scope-set:...).
 	announced map[string]bool
 }
 

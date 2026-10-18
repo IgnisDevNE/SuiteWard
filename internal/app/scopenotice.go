@@ -340,11 +340,12 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()
+	// Before the read failure, which wraps an invalid argument such as a base commit that is not a SHA: that will never succeed.
+	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, errNoCanonicalDeclaration):
+		j.logger.InfoContext(ctx, "github checks scope notice skipped: the source cannot be read", "repo", p.Repo, "pull", pull.Number)
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github checks scope notice read failed", p.Repo, err)
 		return nil
-	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, errNoCanonicalDeclaration):
-		j.logger.InfoContext(ctx, "github checks scope notice skipped: the source cannot be read", "repo", p.Repo, "pull", pull.Number)
 	case err != nil:
 		return &opaque{what: "decide the scope notice", cause: err}
 	}
@@ -355,18 +356,36 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 	return nil
 }
 
-// decideScope reads the head tree, then the base tree only when the head has uncovered paths, and writes the notice.
+// decideScope reads the head tree, then the base tree only when the head has uncovered paths that no earlier head of the pull
+// request had, and writes the notice. The set of uncovered paths of the head, which is the added set when the pull request
+// adds them all, is remembered once decided: a push that leaves it as it was reads nothing more.
 func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState) error {
-	project := owner.ProjectID(p.RepositoryID)
 	read, err := j.reader.Tree(ctx, p.Repo, pull.HeadSHA)
 	if err != nil {
 		return githubRead(err)
 	}
 	head := &githubTree{tree: read, files: map[string][]byte{}}
-	found, err := discoverHead(ctx, j.suites, j.contents, project, head)
+	found, err := discoverHead(ctx, j.suites, j.contents, owner.ProjectID(p.RepositoryID), head)
 	if err != nil || len(found.Paths) == 0 {
 		return err
 	}
+	decided := fmt.Sprintf("scope-set:%d:%d:%s", p.RepositoryID, pull.Number, setDigest(found.Paths))
+	if j.announced[decided] {
+		return nil
+	}
+	if err := j.reportAdded(ctx, p, pull, head, found); err != nil {
+		return err
+	}
+	if j.announced == nil {
+		j.announced = map[string]bool{}
+	}
+	j.announced[decided] = true
+	return nil
+}
+
+// reportAdded keeps the uncovered paths that the base commit lacks and writes the notice for them, with its review.
+func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, head *githubTree, found headScope) error {
+	project := owner.ProjectID(p.RepositoryID)
 	added, err := j.absentFromBase(ctx, p.Repo, pull.BaseSHA, found.Paths)
 	if err != nil || len(added) == 0 {
 		return err
@@ -405,8 +424,11 @@ func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scope.ParseDeclaration(own); err != nil { // the file may be invalid: the notice still stands
+	switch _, err := scope.ParseDeclaration(own); {
+	case errors.Is(err, scope.ErrInvalidDeclaration): // the head's file may be invalid: the notice still stands
 		return nil, nil
+	case err != nil:
+		return nil, err
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(own, &root); err != nil {

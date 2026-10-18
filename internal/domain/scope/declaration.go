@@ -157,7 +157,73 @@ func (d Declaration) Runner() []Pattern {
 	return slices.Clone(d.runner)
 }
 
-// AddPatterns returns raw with include and runner appended to their lists.
+// AddPatterns returns raw with include and runner appended to their lists. It creates a list that is missing (in block
+// style), skips a pattern already in its list, keeps the comments yaml.v3 keeps, and never removes or reorders a pattern.
+// The result is a valid declaration; when there is nothing to add it is raw itself, byte for byte. Rewriting the file
+// reindents it with two spaces, so the owner approves the new bytes (D-SCOPE-DISCOVERY).
 func AddPatterns(raw []byte, include, runner []string) ([]byte, error) {
-	return nil, errors.New("not implemented")
+	if _, err := ParseDeclaration(raw); err != nil {
+		return nil, err
+	}
+	for _, pattern := range slices.Concat(include, runner) {
+		if _, err := ParsePattern(pattern); err != nil {
+			return nil, err
+		}
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidDeclaration, err)
+	}
+	top := root.Content[0] // ParseDeclaration accepted raw: one document holding a mapping
+	changed := appendToList(top, "include", include)
+	if appendToList(top, "runner", runner) {
+		changed = true
+	}
+	if !changed {
+		return slices.Clone(raw), nil
+	}
+	var out bytes.Buffer
+	encoder := yaml.NewEncoder(&out)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&root); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	if _, err := ParseDeclaration(out.Bytes()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// appendToList appends the patterns that the list under key lacks, creating the list when it is missing, and reports
+// whether it added any.
+func appendToList(top *yaml.Node, key string, patterns []string) bool {
+	var list *yaml.Node
+	present := map[string]bool{}
+	for i := 0; i < len(top.Content); i += 2 {
+		if top.Content[i].Value == key {
+			list = top.Content[i+1]
+			for _, item := range list.Content {
+				present[item.Value] = true
+			}
+		}
+	}
+	var added []*yaml.Node
+	for _, pattern := range patterns {
+		if !present[pattern] {
+			present[pattern] = true
+			added = append(added, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: pattern})
+		}
+	}
+	if len(added) == 0 {
+		return false
+	}
+	if list == nil {
+		list = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		top.Content = append(top.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, list)
+	}
+	list.Content = append(list.Content, added...)
+	return true
 }

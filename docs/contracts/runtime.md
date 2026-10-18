@@ -437,7 +437,8 @@ The order is deterministic: directory patterns first, then file patterns, each g
   A canonical that fails its integrity check gets no reply: the command is retried, then recorded `failed`, like any other failure.
 - Otherwise it records **`suggested`**, and its ack replies to the command. The reply compares the head with a **base declaration**:
   - **after V1**, the canonical declaration;
-  - **before V1**, the head's own `.suiteward.yml` if it has one, else the default branch's. An invalid head file is refused as `invalid-source`. This grants nothing: before V1 only `propose` binds.
+  - **before V1**, the default branch's `.suiteward.yml` if it has one, else the head's own. This is the same order `propose` uses to choose its source. An invalid base file is refused as `invalid-source`. This grants nothing: before V1 only `propose` binds.
+  - **After V1 the reply compares strictly with the canonical.** A path that the head's own file covers but the canonical does not is still reported. Only the checks job's unsolicited notice is silenced by the head's file.
   - **Before V1 with no declaration anywhere**, there is nothing to compare, and the reason is `declaration-missing`: the suggested declaration for that PR, built from the head tree or else the default branch.
 
   With a base, the reason is one of:
@@ -450,9 +451,14 @@ The order is deterministic: directory patterns first, then file patterns, each g
 
     When the base is the default branch's file, the head has no file to edit. The reply then links GitHub's new-file page with only `filename=.suiteward.yml`, because a prefilled declaration would exceed the URL budget, and the owner pastes the file.
     - The text names the base: "this pull request's `.suiteward.yml`", "the default branch's `.suiteward.yml`" or "the current contract". It shows the missing patterns and the updated file.
-    - The text gives the next step as a copyable command. Before V1 that is `/suiteward propose`, once the change is committed. After V1, the owner approves the new revision SuiteWard posts.
+    - The text gives the next step as a copyable command:
+      - base `pull`: commit the change on this branch, then `/suiteward propose`;
+      - base `default-branch`: the first contract is proposed from the default branch's file, so the change must reach the default branch first, then `/suiteward propose`;
+      - after V1: approve the new revision SuiteWard posts.
     - The command also writes a **`scope-review`** under the same rules as the checks job: the PR's diff shows `.suiteward.yml` in block style with a list item line inside a hunk, the lines are inserted into the head's file, and patterns already listed are skipped. The key is the same `scope-review:<repository id>:<pull>:<set digest>`, so a notice and a command for the same set post one review.
-  - **`nothing-uncovered`:** a short ack saying that the base covers every test-like path of the head.
+  - **`nothing-uncovered`:** a short ack that names the base and says that it covers every test-like path of the head.
+
+  **Payload guard.** A suggest ack or a scope notice whose JSON payload would exceed 60 KiB is treated as not renderable, which can happen when a hostile repository has many escaped characters in its paths. A command is then refused as `invalid-source`. The checks job logs the notice as skipped and remembers the set.
 
   The `declared` ack field is no longer written. It still decodes in older messages.
 - Neither disposition is counted by `LatestOwnerCommand`. A `suggest` on a project with no Suite records `suggested` with the no-suite acknowledgment.

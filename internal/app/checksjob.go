@@ -454,17 +454,15 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 	return checks.Result{}, "", false, sourceProblem{}, &opaque{what: "assess the head", cause: err}
 }
 
-// sourceProblem is what made the source of a head invalid, as the comment states it: kind is declaration, link or truncated, and path
+// sourceProblem is what made the source of a head invalid, as the comment states it: kind is declaration or link, and path
 // names a link. Its zero value is no problem.
 type sourceProblem struct{ kind, path string }
 
 // sourceProblemOf names the problem that err, an invalid-source error, reports. It cannot for an error that holds no path (an unsafe
-// entry that is not an UnsafeEntryError) or that is none of the three kinds (an invalid tree that GitHub did not truncate).
+// entry that is not an UnsafeEntryError) or that is neither kind (an invalid tree, for example).
 func sourceProblemOf(err error) (sourceProblem, bool) {
 	var unsafe *inventory.UnsafeEntryError
 	switch {
-	case errors.Is(err, github.ErrTreeTruncated):
-		return sourceProblem{kind: sourceTruncated}, true
 	case errors.As(err, &unsafe) && unsafe.Path == scope.DeclarationPath:
 		return sourceProblem{kind: sourceDeclaration}, true // a declaration that is no regular file
 	case errors.As(err, &unsafe):

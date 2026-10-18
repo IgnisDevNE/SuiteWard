@@ -962,10 +962,9 @@ func (p *commentPublisher) revision(key, tail string, payload json.RawMessage) (
 const (
 	sourceDeclaration = "declaration" // the head's .suiteward.yml is not a valid declaration
 	sourceLink        = "link"        // a link the scope covers or may cover below, whose target is no regular file of the tree
-	sourceTruncated   = "truncated"   // GitHub truncated the tree
 )
 
-var sourceProblems = map[string]commandtext.SourceProblem{sourceDeclaration: commandtext.DeclarationProblem, sourceLink: commandtext.LinkProblem, sourceTruncated: commandtext.TruncatedProblem}
+var sourceProblems = map[string]commandtext.SourceProblem{sourceDeclaration: commandtext.DeclarationProblem, sourceLink: commandtext.LinkProblem}
 
 // invalidSourcePayload is the payload of invalid-source:<repository id>:<pull>:<problem digest>. It holds a code and, for a link, the
 // path cut to maxSummaryText bytes, never file content. The key's digest is that of the whole path, which the cut one cannot

@@ -11,7 +11,6 @@ type SourceProblem uint8
 const (
 	DeclarationProblem SourceProblem = iota + 1 // the head's .suiteward.yml is not a valid declaration
 	LinkProblem                                 // a symbolic link the scope covers or may cover below, whose target is no regular file of the tree
-	TruncatedProblem                            // GitHub truncated the head's tree
 )
 
 // InvalidSourceNotice is what the comment of an invalid-source check states. Path, already cut by the caller, names the link of a
@@ -24,7 +23,7 @@ type InvalidSourceNotice struct {
 // ValidateInvalidSource reports why InvalidSourceComment would panic on s, as an error.
 func ValidateInvalidSource(s InvalidSourceNotice) error {
 	switch {
-	case s.Problem < DeclarationProblem || s.Problem > TruncatedProblem:
+	case s.Problem < DeclarationProblem || s.Problem > LinkProblem:
 		return fmt.Errorf("commandtext: source problem %d is unknown", s.Problem)
 	case (s.Problem == LinkProblem) != (s.Path != ""):
 		return errors.New("commandtext: only a link problem names a path, and it must")
@@ -49,9 +48,6 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 		problem = "This pull request's head has a symbolic link that the protected scope covers or may cover below, and whose target is not a regular file of the tree, " +
 			"so SuiteWard cannot tell what protecting it would mean:\n\n" + fencedLines([]string{s.Path})
 		next = "Next: remove the link, point it to a file, or narrow the pattern that reaches it, and push."
-	case TruncatedProblem:
-		problem = "GitHub truncated the file tree of this pull request's head, so SuiteWard cannot read its protected files in full."
-		next = "Next: the repository is too large for this release; reducing the number of files in it may help."
 	}
 	return paragraphs("**SuiteWard could not read the contract source of this pull request**", problem, next,
 		"Any canonical contract already in force stays in force, and the check stays `failure` until a push fixes it.",

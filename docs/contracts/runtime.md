@@ -391,7 +391,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 
 **Revision comment.** The `revision:` payload adds `reducedRules` (at most 20) and `reducedPaths` (at most 20, each cut to 150 bytes), plus `reducedPathsTotal`, all optional. When `reduced` is set, the text lists the rules and paths that the reduction removes, inside code fences.
 
-**Test-like and uncovered.** `Suggest` and `Uncovered` share one classifier, so they always agree on what counts as test-like. `Uncovered(entries, s)` returns the test-like file paths that `s` does not cover. It never returns a path that matches an `exclude` of `s`, because an exclusion is the owner's choice and adding patterns cannot undo it. The **new patterns** for a set of uncovered paths are `Suggest` applied to those entries: its include list and its runner list.
+**Test-like and uncovered.** `Suggest` and `Uncovered` share one classifier, so they always agree on what counts as test-like. Test-like means the include rules plus the runner file names. `Uncovered(entries, s)` returns the test-like file paths that `s` does not cover. For example, a new `conftest.py` outside the scope is reported. It never returns a path that matches an `exclude` of `s`, because an exclusion is the owner's choice and adding patterns cannot undo it. The **new patterns** for a set of uncovered paths are `Suggest` applied to those entries: its include list and its runner list.
 
 **Outbox `github_comment`, key `scope-notice:<repository id>:<pull>:<set digest>` (new).**
 - **When it is written.** For an open, non-fork PR whose Suite has a canonical, the checks job follows these steps.

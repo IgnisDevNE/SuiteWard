@@ -963,3 +963,124 @@ func TestAListingDoesNotCountARequestThatFailedToGetAToken(t *testing.T) {
 		t.Fatalf("OpenPulls = %+v, %v; want an error and no request counted", info, err)
 	}
 }
+
+const filesURI = "/repos/octo-org/octo-repo/pulls/42/files?per_page=100&page="
+
+func TestPullFilesReturnsPathStatusAndPatch(t *testing.T) {
+	reader, gh := newReader(t, map[string]reply{filesURI + "1": ok(fixture(t, "pull_files.json"))})
+
+	got, err := reader.PullFiles(t.Context(), repo, 42)
+	if err != nil {
+		t.Fatalf("PullFiles: %v", err)
+	}
+	want := []github.PullFile{
+		{Path: "internal/core/engine.go", Status: "modified", Patch: "@@ -10,6 +10,7 @@ func Run() {\n a\n b\n+c\n d\n@@ -40 +41,2 @@ func Stop() {\n-x\n+y\n+z"},
+		{Path: "docs/old.md", Status: "removed", Patch: "@@ -1,2 +0,0 @@\n-one\n-two"},
+		{Path: "assets/logo.png", Status: "renamed"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("PullFiles = %+v, want %+v (a file without a patch keeps an empty Patch)", got, want)
+	}
+	if uris := gh.uris(); !slices.Equal(uris, []string{filesURI + "1"}) {
+		t.Errorf("requests = %v, want the first page only", uris)
+	}
+}
+
+func TestPullFilesPagesThroughTheListing(t *testing.T) {
+	page := make([]map[string]any, 100)
+	for i := range page {
+		page[i] = map[string]any{"filename": "f" + strconv.Itoa(i), "status": "added"}
+	}
+	reader, gh := newReader(t, map[string]reply{
+		filesURI + "1": ok(encode(t, page)),
+		filesURI + "2": ok(fixture(t, "pull_files.json")),
+	})
+
+	got, err := reader.PullFiles(t.Context(), repo, 42)
+	if err != nil {
+		t.Fatalf("PullFiles: %v", err)
+	}
+	if len(got) != 103 || got[0].Path != "f0" || got[100].Path != "internal/core/engine.go" {
+		t.Errorf("got %d files, want the 100 of page 1 then the 3 of page 2 in listing order", len(got))
+	}
+	if uris := gh.uris(); !slices.Equal(uris, []string{filesURI + "1", filesURI + "2"}) {
+		t.Errorf("requests = %v, want pages 1 and 2", uris)
+	}
+}
+
+func TestPullFilesEmptyListingIsAnEmptySlice(t *testing.T) {
+	reader, _ := newReader(t, map[string]reply{filesURI + "1": ok([]byte("[]"))})
+	if got, err := reader.PullFiles(t.Context(), repo, 42); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("PullFiles = %#v, %v; want an empty, non-nil slice", got, err)
+	}
+}
+
+func TestPullFilesRejectsInvalidArgumentsBeforeAnyRequest(t *testing.T) {
+	reader, gh := newReader(t, map[string]reply{})
+	for name, call := range map[string]func() error{
+		"repo":     func() error { _, err := reader.PullFiles(t.Context(), "octo-repo", 42); return err },
+		"zero":     func() error { _, err := reader.PullFiles(t.Context(), repo, 0); return err },
+		"negative": func() error { _, err := reader.PullFiles(t.Context(), repo, -1); return err },
+	} {
+		if err := call(); !errors.Is(err, github.ErrInvalidArgument) {
+			t.Errorf("bad %s: err = %v, want ErrInvalidArgument", name, err)
+		}
+	}
+	if uris := gh.uris(); len(uris) != 0 {
+		t.Errorf("requests = %v, want none", uris)
+	}
+}
+
+func TestPullFilesRejectsAnInvalidAnswer(t *testing.T) {
+	for name, body := range map[string][]byte{
+		"missing filename": mutated(t, "pull_files.json", func(f map[string]any) { delete(f, "filename") }),
+		"empty filename":   mutated(t, "pull_files.json", func(f map[string]any) { f["filename"] = "" }),
+		"missing status":   mutated(t, "pull_files.json", func(f map[string]any) { delete(f, "status") }),
+		"not a list":       []byte(`{"message":"x"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader, _ := newReader(t, map[string]reply{filesURI + "1": ok(body)})
+			if got, err := reader.PullFiles(t.Context(), repo, 42); !errors.Is(err, github.ErrInvalidResponse) {
+				t.Fatalf("PullFiles = %+v, %v; want ErrInvalidResponse", got, err)
+			}
+		})
+	}
+}
+
+func TestNewLineRanges(t *testing.T) {
+	cases := []struct {
+		name  string
+		patch string
+		want  []github.LineRange
+	}{
+		{"no patch", "", nil},
+		{"one hunk", "@@ -10,6 +10,7 @@ func Run() {\n a\n+b", []github.LineRange{{Start: 10, End: 16}}},
+		{"count defaults to one", "@@ -40 +41 @@\n-x\n+y", []github.LineRange{{Start: 41, End: 41}}},
+		{"multiple hunks", "@@ -1,2 +1,3 @@\n a\n@@ -40 +41,2 @@ func Stop() {\n-x\n+y", []github.LineRange{{Start: 1, End: 3}, {Start: 41, End: 42}}},
+		{"pure deletion has no new-side range", "@@ -1,2 +0,0 @@\n-one\n-two", nil},
+		{"deletion hunk between additions", "@@ -5,2 +5,0 @@\n-a\n-b\n@@ -20 +18,2 @@\n+c", []github.LineRange{{Start: 18, End: 19}}},
+		{"content that looks like a header is not one", "@@ -1 +1 @@\n+@@ not a header", []github.LineRange{{Start: 1, End: 1}}},
+	}
+	for _, c := range cases {
+		got, err := github.PullFile{Patch: c.patch}.NewLineRanges()
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("%s: NewLineRanges = %v, %v; want %v", c.name, got, err, c.want)
+		}
+	}
+}
+
+func TestNewLineRangesRejectsAMalformedHeader(t *testing.T) {
+	for name, patch := range map[string]string{
+		"no ranges":       "@@ @@\n+x",
+		"missing new":     "@@ -1,2 @@\n+x",
+		"not numbers":     "@@ -a,b +c,d @@\n+x",
+		"unterminated":    "@@ -1,2 +1,2\n+x",
+		"negative count":  "@@ -1,2 +1,-2 @@\n+x",
+		"overflowing":     "@@ -1 +99999999999999999999 @@\n+x",
+		"bad second hunk": "@@ -1 +1 @@\n+x\n@@ -2 +b @@\n+y",
+	} {
+		if got, err := (github.PullFile{Patch: patch}).NewLineRanges(); err == nil {
+			t.Errorf("%s: NewLineRanges = %v, want an error", name, got)
+		}
+	}
+}

@@ -114,7 +114,7 @@ func TestSuggestDeclarationSaysWhenTheListWasCut(t *testing.T) {
 func TestSuggestDeclarationWarnsAboutMixedFilesInTheTextOnly(t *testing.T) {
 	mixed := []string{"package.json", "web/pyproject.toml", "we\nird/Cargo.toml", "tick`/tox.ini"}
 	body := suggestionText(t, missingWith([]string{"tests/**"}, []string{"pytest.ini"}, mixed, false))
-	for _, w := range []string{"may hold test settings", "does not suggest", "`package.json`", "`web/pyproject.toml`", `"we\nird/Cargo.toml"`, "``tick`/tox.ini``"} {
+	for _, w := range []string{"may hold test settings", "does not suggest", "```\npackage.json\nweb/pyproject.toml\n" + `"we\nird/Cargo.toml"` + "\ntick`/tox.ini\n```"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
@@ -273,7 +273,7 @@ func TestScopeNoticeShowsRepositoryTextOnlyInsideCode(t *testing.T) {
 	n.Declaration = []byte("version: 1\ninclude:\n  - \"a/```/b\"\n")
 	n.Mixed = []string{"package.json", "we\nird/tox.ini"}
 	body := noticeText(t, n)
-	for _, w := range []string{`"a\nb/x_test.go"`, `\u202e`, "tick```/x_test.go\n````", `\xff`, "````\nversion: 1\ninclude:\n  - \"a/```/b\"\n````", "may hold test settings", "`package.json`", `"we\nird/tox.ini"`} {
+	for _, w := range []string{`"a\nb/x_test.go"`, `\u202e`, "tick```/x_test.go\n````", `\xff`, "````\nversion: 1\ninclude:\n  - \"a/```/b\"\n````", "may hold test settings", "```\npackage.json\n" + `"we\nird/tox.ini"` + "\n```"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
@@ -325,7 +325,7 @@ func scopeNoticeCases() map[string]func(*commandtext.ScopeNotice) {
 		"21 mixed files":                  func(n *commandtext.ScopeNotice) { n.Mixed = slices.Repeat([]string{"package.json"}, 21) },
 		"no declaration":                  func(n *commandtext.ScopeNotice) { n.Declaration = nil },
 		"a declaration that is not UTF-8": func(n *commandtext.ScopeNotice) { n.Declaration = []byte("version: 1\n\xff") },
-		"a declaration of 16385 bytes":    func(n *commandtext.ScopeNotice) { n.Declaration = []byte(strings.Repeat("#", 16385)) },
+		"a declaration of 8193 bytes":     func(n *commandtext.ScopeNotice) { n.Declaration = []byte(strings.Repeat("#", 8193)) },
 	}
 }
 
@@ -342,7 +342,7 @@ func TestScopeNoticeIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	// The largest allowed notice.
 	n := notice()
-	n.Paths, n.Mixed, n.Declaration = slices.Repeat([]string{"x_test.go"}, 20), slices.Repeat([]string{"package.json"}, 20), []byte(strings.Repeat("#", 16384))
+	n.Paths, n.Mixed, n.Declaration = slices.Repeat([]string{"x_test.go"}, 20), slices.Repeat([]string{"package.json"}, 20), []byte(strings.Repeat("#", 8192))
 	n.Repo, n.Branch = "a"+strings.Repeat("b", 38)+"/"+strings.Repeat("c", 100), strings.Repeat("b", 255)
 	if err := commandtext.ValidateScopeNotice(n); err != nil {
 		t.Errorf("the largest notice is refused: %v", err)
@@ -353,7 +353,8 @@ func TestScopeNoticeIsRefusedOnAnImpossibleState(t *testing.T) {
 }
 
 // The largest notice: 20 paths of 150 bytes of what escapes worst, 20 mixed files of any length, a declaration at the
-// limit, and the longest branch and repository. Half of GitHub's limit stays free.
+// limit, and the longest branch and repository. A quarter of GitHub's limit stays free: a declaration that is one run of
+// backticks is fenced with a run longer than itself at both ends, so it counts three times.
 func TestScopeNoticeFitsInAComment(t *testing.T) {
 	for name, unit := range map[string]string{"plain": "a", "invalid UTF-8": "\xff", "backticks": "`", "bidi control": "\u202e", "newline": "\n", "3-byte printable": "\u20ac"} {
 		t.Run(name, func(t *testing.T) {
@@ -367,15 +368,15 @@ func TestScopeNoticeFitsInAComment(t *testing.T) {
 			n := notice()
 			n.Repo, n.Branch = "a"+strings.Repeat("b", 38)+"/"+strings.Repeat("c", 100), strings.Repeat("\u20ac", 85)
 			n.PathsTotal, n.Source = 1<<62, source
-			n.Declaration = []byte(strings.Repeat("a: b\n", 16384/5)) // valid UTF-8 whatever the unit
+			n.Declaration = []byte(strings.Repeat("a: b\n", 8192/5)) // valid UTF-8 whatever the unit
 			if unit == "`" {
-				n.Declaration = []byte(strings.Repeat("`", 16384)) // one backtick run: the fence grows with it
+				n.Declaration = []byte(strings.Repeat("`", 8192)) // one backtick run: the fence grows with it
 			}
 			for _, size := range []int{150, 4096} {
 				n.Paths, n.Mixed = long(size), long(size)
 				body := noticeText(t, n)
-				if body == "" || len(body) >= maxComment/2 || !utf8.ValidString(body) {
-					t.Errorf("entries of %d bytes: body has %d bytes or is not UTF-8, want 0 < n < %d", size, len(body), maxComment/2)
+				if body == "" || len(body) >= maxComment*3/4 || !utf8.ValidString(body) {
+					t.Errorf("entries of %d bytes: body has %d bytes or is not UTF-8, want 0 < n < %d", size, len(body), maxComment*3/4)
 				}
 			}
 		})
@@ -461,7 +462,7 @@ func TestScopeSuggestionBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 		"a pattern of 101 bytes":             {`  - "a"`, "  ", []string{strings.Repeat("a", 101)}},
 		"an anchor with a newline":           {"  - \"a\"\n  - b", "  ", []string{"x"}},
 		"an anchor with a carriage return":   {"  - \"a\"\r", "  ", []string{"x"}},
-		"an anchor of 1001 bytes":            {"  - " + strings.Repeat("a", 996), "  ", []string{"x"}},
+		"an anchor of 1001 bytes":            {"  - " + strings.Repeat("a", 997), "  ", []string{"x"}},
 		"an anchor that is not UTF-8":        {"  - \xff", "  ", []string{"x"}},
 		"an anchor that is no list item":     {"  include:", "  ", []string{"x"}},
 		"an indent with a tab":               {"\t- a", "\t", []string{"x"}},
@@ -562,6 +563,7 @@ func TestRevisionCommentRefusesReductionDetailThatDoesNotFit(t *testing.T) {
 	}
 }
 
+// Five lists of 20 entries: three quarters of the limit, as for the notice.
 func TestRevisionCommentWithReductionDetailFitsInAComment(t *testing.T) {
 	for name, unit := range map[string]string{"plain": "a", "invalid UTF-8": "\xff", "backticks": "`", "bidi control": "\u202e", "newline": "\n"} {
 		t.Run(name, func(t *testing.T) {
@@ -579,8 +581,8 @@ func TestRevisionCommentWithReductionDetailFitsInAComment(t *testing.T) {
 				r.Added, r.Modified, r.Removed = long(size), long(size), long(size)
 				r.ReducedRules, r.ReducedPaths = long(size), long(size)
 				body := revisionText(t, r)
-				if body == "" || len(body) >= maxComment/2 || !utf8.ValidString(body) {
-					t.Errorf("entries of %d bytes: body has %d bytes or is not UTF-8, want 0 < n < %d", size, len(body), maxComment/2)
+				if body == "" || len(body) >= maxComment*3/4 || !utf8.ValidString(body) {
+					t.Errorf("entries of %d bytes: body has %d bytes or is not UTF-8, want 0 < n < %d", size, len(body), maxComment*3/4)
 				}
 			}
 		})

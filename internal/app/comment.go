@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,9 +30,10 @@ import (
 // bootstrap-summary, bootstrap-promoted, bootstrap-notice and bootstrap-cancelled are in bootstrap.go; the acknowledgments of the command job are here.
 
 const (
-	ackKey      = "ack"
-	mergeKey    = "merge"
-	revisionKey = "revision"
+	ackKey           = "ack"
+	mergeKey         = "merge"
+	revisionKey      = "revision"
+	invalidSourceKey = "invalid-source" // invalid-source:<repository id>:<pull>:<problem digest>
 )
 
 var (
@@ -453,9 +456,9 @@ func githubFailure(kind, key, step string, err error) error {
 	return &opaque{what: fmt.Sprintf("%s %s: %s (%s)", kind, key, step, text), cause: err}
 }
 
-// keyParts is the number of ':' separated parts of the keys of each github_comment kind: three, but four for the scope notice,
-// whose tail is <pull>:<set digest>.
-var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4}
+// keyParts is the number of ':' separated parts of the keys of each github_comment kind: three, but four for the scope notice, the scope
+// review and the invalid-source comment, whose tail is <pull>:<digest>.
+var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4, invalidSourceKey: 4}
 
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
@@ -529,6 +532,8 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		target, text, err = p.revision(key, tail, payload)
 	case scopeNoticeKey:
 		target, text, err = p.scopeNotice(key, tail, payload)
+	case invalidSourceKey:
+		target, text, err = p.invalidSource(key, tail, payload)
 	}
 	if err != nil {
 		return err
@@ -951,4 +956,73 @@ func (p *commentPublisher) revision(key, tail string, payload json.RawMessage) (
 	}
 	text, err := r.text(key)
 	return r.commentTarget, text, err
+}
+
+// The kinds of the problem of an invalid source in a payload (docs/contracts/runtime.md, "Outbox github_comment, key invalid-source:...").
+const (
+	sourceDeclaration = "declaration" // the head's .suiteward.yml is not a valid declaration
+	sourceLink        = "link"        // a link the scope covers or may cover below, whose target is no regular file of the tree
+	sourceTruncated   = "truncated"   // GitHub truncated the tree
+)
+
+var sourceProblems = map[string]commandtext.SourceProblem{sourceDeclaration: commandtext.DeclarationProblem, sourceLink: commandtext.LinkProblem, sourceTruncated: commandtext.TruncatedProblem}
+
+// invalidSourcePayload is the payload of invalid-source:<repository id>:<pull>:<problem digest>. It holds a code and, for a link, the
+// path cut to maxSummaryText bytes, never file content. The key's digest is that of the whole path, which the cut one cannot
+// reproduce, so the publisher checks only its shape.
+type invalidSourcePayload struct {
+	commentTarget
+	Kind string `json:"kind"`
+	Path string `json:"path,omitempty"` // a link only
+}
+
+func (p invalidSourcePayload) source() commandtext.InvalidSourceNotice {
+	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path}
+}
+
+// validate reports why the payload cannot be rendered, without quoting it.
+func (p invalidSourcePayload) validate() error {
+	if err := p.commentTarget.validate(); err != nil {
+		return err
+	}
+	if len(p.Path) > maxSummaryText {
+		return errors.New("the path is too long")
+	}
+	if commandtext.ValidateInvalidSource(p.source()) != nil {
+		return errors.New("the kind or the path does not fit the comment")
+	}
+	return nil
+}
+
+// invalidSourceDigest is the SHA-256 hex digest of the kind, a newline and the whole path.
+func invalidSourceDigest(kind, path string) string {
+	sum := sha256.Sum256([]byte(kind + "\n" + path))
+	return hex.EncodeToString(sum[:])
+}
+
+// newInvalidSourceMessage builds the comment that explains one problem of a pull request's source. A payload the publisher could not
+// render is an error, so nobody writes a message that nobody can post.
+func newInvalidSourceMessage(target commentTarget, s sourceProblem) (governance.OutboxMessage, error) {
+	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText)}
+	if err := p.validate(); err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("invalid-source comment: %w", err)
+	}
+	payload, err := marshalPayload(p)
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("encode the invalid-source comment: %w", err)
+	}
+	key := fmt.Sprintf("%s:%d:%d:%s", invalidSourceKey, target.RepositoryID, target.Pull, invalidSourceDigest(s.kind, s.path))
+	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
+}
+
+func (p *commentPublisher) invalidSource(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+	s, err := decodePayload[invalidSourcePayload](githubCommentKind, key, payload)
+	if err != nil {
+		return commentTarget{}, "", err
+	}
+	if s.validate() != nil || !scopeTail(tail, s.Pull) {
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
+	}
+	text, err := render(githubCommentKind, key, func() string { return commandtext.InvalidSourceComment(s.source()) })
+	return s.commentTarget, text, err
 }

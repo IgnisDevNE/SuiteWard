@@ -44,6 +44,14 @@ var (
 	ErrInvalidGoverning = errors.New("invalid governing contract")
 )
 
+// UnsafeEntryError is the ErrUnsafeEntry of one entry: Path is the link, or the declaration that is no regular file, that the
+// protected scope cannot take. Its text is that of the sentinel and the quoted path.
+type UnsafeEntryError struct{ Path string }
+
+func (e *UnsafeEntryError) Error() string { return fmt.Sprintf("%v: %q", ErrUnsafeEntry, e.Path) }
+
+func (e *UnsafeEntryError) Unwrap() error { return ErrUnsafeEntry }
+
 // Inventory is the protected inventory of a tree under its own declaration.
 type Inventory struct {
 	manifest artifact.Manifest
@@ -63,7 +71,7 @@ func Build(ctx context.Context, tree Tree) (Inventory, error) {
 	known := map[string][]byte{}
 	if i := slices.IndexFunc(entries, func(e Entry) bool { return e.Path == scope.DeclarationPath }); i >= 0 {
 		if entries[i].Kind != File {
-			return Inventory{}, fmt.Errorf("%w: %s is not a regular file", ErrUnsafeEntry, scope.DeclarationPath)
+			return Inventory{}, &UnsafeEntryError{Path: scope.DeclarationPath}
 		}
 		raw, err := tree.Read(ctx, scope.DeclarationPath)
 		if err != nil {
@@ -172,7 +180,7 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 			}
 		}
 		if unsafe {
-			return artifact.Manifest{}, fmt.Errorf("%w: %q", ErrUnsafeEntry, entry.Path)
+			return artifact.Manifest{}, &UnsafeEntryError{Path: entry.Path}
 		}
 	}
 

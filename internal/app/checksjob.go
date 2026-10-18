@@ -18,6 +18,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // The reasons of the checks (docs/contracts/runtime.md, "Check job and publisher (M1.6b)") and the problem codes /status shows.
@@ -253,6 +254,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	var (
 		result checks.Result
 		wait   bool
+		source sourceProblem // what made the head invalid, when this run assessed it
 	)
 	final := false // a result the owner's commands cannot change
 	switch {
@@ -260,7 +262,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		result = base
 		result.State, result.Reason = checks.InProgress, reasonBootstrapAwaiting
 	case suite.canonical == "": // nothing to compare the head with: only the bootstrap carrier is assessed
-		if result, final, problem, wait, err = j.bootstrap(ctx, enrollment, p, suite, pull, base, record, sameHead, tier); err != nil {
+		if result, final, problem, wait, source, err = j.bootstrap(ctx, enrollment, p, suite, pull, base, record, sameHead, tier); err != nil {
 			return "", err
 		}
 	case suite.integrityFailed: // the canonical cannot be trusted: no head is compared with it, and no tree is read
@@ -275,7 +277,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		result = base
 		result.State, result.Reason, result.Change, result.Revision = checks.Success, reasonUnchanged, record.Change, suite.revision
 	default:
-		if result, problem, wait, err = j.assess(ctx, p, suite, pull, base, tier); err != nil {
+		if result, problem, wait, source, err = j.assess(ctx, p, suite, pull, base, tier); err != nil {
 			return "", err
 		}
 	}
@@ -303,6 +305,13 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			return "", err
 		}
 	}
+	// Like the bootstrap comment, before the check: a run that fails between the two writes it again. Only the check that says invalid-source
+	// gets it, and only when this run assessed the head: an earlier run wrote it for the same head.
+	if source.kind != "" && result.Reason == reasonInvalidSource {
+		if err := j.explainInvalidSource(ctx, p, pull.Number, source); err != nil {
+			return "", err
+		}
+	}
 	// Publishing every run, also an unchanged result, lets the ledger resend a message that ended failed.
 	_, _, err = j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		return newCheckMessage(p.Repo, result, tier, string(suite.canonical), generation)
@@ -323,7 +332,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 // before V1"), in the contract's order: a fork, the carrier of the latest bootstrap proposal, a skipped pull request, and any
 // other pull request, which waits.
 func (j *checksJob) bootstrap(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, record checks.Record,
-	sameHead bool, tier string) (result checks.Result, final bool, problem string, wait bool, err error) {
+	sameHead bool, tier string) (result checks.Result, final bool, problem string, wait bool, source sourceProblem, err error) {
 	result = base
 	carrier := suite.carrier
 	reference := referenceText(carrier.reference)
@@ -338,18 +347,18 @@ func (j *checksJob) bootstrap(ctx context.Context, enrollment owner.State, p own
 	case carrier.found && carrier.pull == pull.Number && sameHead && record.Reference == reference && record.Revision == suite.revision && record.CommandID == base.CommandID:
 		result = record.Result
 	case carrier.found && carrier.pull == pull.Number:
-		result, problem, wait, err = j.assess(ctx, p, suite, pull, base, tier)
+		result, problem, wait, source, err = j.assess(ctx, p, suite, pull, base, tier)
 	default:
 		var skipped bool // read every run: the fast path above keys on the latest owner command, which ignores a skip
 		if skipped, err = j.commands.Skipped(ctx, p.RepositoryID, pull.Number, enrollment.EnrolledAt); err != nil {
-			return result, false, "", false, fmt.Errorf("read the skip of the pull request: %w", err)
+			return result, false, "", false, sourceProblem{}, fmt.Errorf("read the skip of the pull request: %w", err)
 		}
 		result.State, result.Reason = checks.InProgress, reasonBootstrapAwaiting
 		if skipped {
 			result.State, result.Reason = checks.Success, reasonBootstrapSkipped
 		}
 	}
-	return result, final, problem, wait, err
+	return result, final, problem, wait, source, err
 }
 
 // announce writes the comment that goes with a bootstrap-awaiting check, once: the notice (no reference) for the pull request,
@@ -388,8 +397,9 @@ func isFork(headRepo, repo string) bool {
 }
 
 // assess reads the head's tree and assesses it against the canonical. wait is true when that cannot be done now (a failed
-// GitHub read, a canonical that moved) and problem says why; any other failure is the error.
-func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, tier string) (result checks.Result, problem string, wait bool, err error) {
+// GitHub read, a canonical that moved) and problem says why; any other failure is the error. source says what made an invalid head
+// invalid, when it can be named.
+func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, tier string) (result checks.Result, problem string, wait bool, source sourceProblem, err error) {
 	var (
 		head      governance.HeadResult
 		bootstrap governance.BootstrapHeadResult
@@ -418,26 +428,62 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 	switch {
 	case err == nil && suite.canonical == "":
 		result, err = j.bootstrapped(bootstrap, result)
-		return result, "", false, err
+		return result, "", false, sourceProblem{}, err
 	case err == nil:
 		result, err = j.assessed(head, base)
-		return result, "", false, err
+		return result, "", false, sourceProblem{}, err
 	case ctx.Err() != nil:
-		return checks.Result{}, "", false, ctx.Err()
+		return checks.Result{}, "", false, sourceProblem{}, ctx.Err()
 	case errors.Is(err, github.ErrTreeTruncated): // a GitHub limit, not the owner's source
 		result.State, result.Reason = checks.InProgress, reasonSourceUnavailable
-		return result, "", false, nil
+		return result, "", false, sourceProblem{}, nil
 	case invalidSource(err):
 		result.State, result.Reason = checks.Failure, reasonInvalidSource
-		return result, "", false, nil
+		var named bool
+		if source, named = sourceProblemOf(err); !named { // the check is the same, only the comment is left out
+			j.logger.InfoContext(ctx, "github checks invalid-source comment skipped: the problem cannot be named", "repo", p.Repo, "pull", pull.Number)
+		}
+		return result, "", false, source, nil
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github checks read failed", p.Repo, err)
-		return checks.Result{}, problemReadFailed, true, nil
+		return checks.Result{}, problemReadFailed, true, sourceProblem{}, nil
 	case errors.Is(err, governance.ErrCanonicalMoved): // another ErrConflict is deterministic: a retry would repeat it
 		j.logger.WarnContext(ctx, "github checks retry: the canonical moved while the head was assessed", "repo", p.Repo, "pull", pull.Number)
-		return checks.Result{}, problemConflict, true, nil
+		return checks.Result{}, problemConflict, true, sourceProblem{}, nil
 	}
-	return checks.Result{}, "", false, &opaque{what: "assess the head", cause: err}
+	return checks.Result{}, "", false, sourceProblem{}, &opaque{what: "assess the head", cause: err}
+}
+
+// sourceProblem is what made the source of a head invalid, as the comment states it: kind is declaration, link or truncated, and path
+// names a link. Its zero value is no problem.
+type sourceProblem struct{ kind, path string }
+
+// sourceProblemOf names the problem that err, an invalid-source error, reports. It cannot for an error that holds no path (an unsafe
+// entry that is not an UnsafeEntryError) or that is none of the three kinds (an invalid tree that GitHub did not truncate).
+func sourceProblemOf(err error) (sourceProblem, bool) {
+	var unsafe *inventory.UnsafeEntryError
+	switch {
+	case errors.Is(err, github.ErrTreeTruncated):
+		return sourceProblem{kind: sourceTruncated}, true
+	case errors.As(err, &unsafe) && unsafe.Path == scope.DeclarationPath:
+		return sourceProblem{kind: sourceDeclaration}, true // a declaration that is no regular file
+	case errors.As(err, &unsafe):
+		return sourceProblem{kind: sourceLink, path: unsafe.Path}, true
+	case errors.Is(err, scope.ErrInvalidDeclaration):
+		return sourceProblem{kind: sourceDeclaration}, true
+	}
+	return sourceProblem{}, false
+}
+
+// explainInvalidSource writes the comment that explains an invalid-source check, once for each problem of a pull request: the key
+// is the idempotency key, so a problem that was written before is not an error.
+func (j *checksJob) explainInvalidSource(ctx context.Context, p owner.ProjectPolicy, pull int, s sourceProblem) error {
+	message, err := newInvalidSourceMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, s)
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks invalid-source comment skipped: it cannot be rendered", "repo", p.Repo, "pull", pull, "reason", err.Error())
+		return nil
+	}
+	return outboxOnce(ctx, j.suites, owner.ProjectID(p.RepositoryID), []governance.OutboxMessage{message})
 }
 
 // assessed maps the assessment of a head to its check (docs/contracts/runtime.md, the state and reason table) and

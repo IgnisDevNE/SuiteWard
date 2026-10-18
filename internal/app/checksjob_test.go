@@ -98,6 +98,7 @@ type cjJobWorld struct {
 	verdicts *integritytest.Memory
 	headRepo map[int]string // the observed head repository of a pull request; absent means not observed
 	bases    map[int]string // the observed base commit of a pull request; absent means bootHead
+	refs     map[int]string // the observed head ref of a pull request; absent means "feature"
 	cmds     *commandstest.Memory
 	check    *checksJob
 	problems *bootstrapProblems
@@ -181,7 +182,7 @@ func (w *cjJobWorld) sync(heads map[int]string) {
 	w.cycles++
 	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), StartedAt: bootTime.Add(time.Duration(w.cycles) * time.Minute), Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for number, head := range heads {
-		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: cmp.Or(w.bases[number], bootHead), UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
+		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: cmp.Or(w.refs[number], "feature"), BaseRef: "main", BaseSHA: cmp.Or(w.bases[number], bootHead), UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
 		cycle.Comments[number] = nil
 	}
 	if _, err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {

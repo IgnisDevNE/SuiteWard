@@ -348,3 +348,35 @@ func TestDiscoverHeadReportsTheUncoveredPathsAndTheDeclarationForThem(t *testing
 		t.Fatalf("declaration %q for include %v, want %q", declaration, suggestion.Include, want)
 	}
 }
+
+// logged returns the fields of the first log line whose message contains msg.
+func (w *cjJobWorld) logged(msg string) map[string]any {
+	w.t.Helper()
+	for _, line := range strings.Split(w.logs.String(), "\n") {
+		var fields map[string]any
+		if json.Unmarshal([]byte(line), &fields) == nil {
+			if text, _ := fields["msg"].(string); strings.Contains(text, msg) {
+				return fields
+			}
+		}
+	}
+	w.t.Fatalf("no log line says %q\nlogs: %s", msg, w.logs)
+	return nil
+}
+
+// A skipped notice says why. The reason is fixed text: the branch is the repository's, and the renderer's own error quotes it.
+func TestChecksLogTheReasonWhenTheNoticeCannotBeRendered(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.refs = map[int]string{5: "a..b"} // not a git ref name
+
+	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+
+	w.wantNoScopeMessages()
+	line := w.logged("scope notice skipped: it cannot be rendered")
+	if reason, _ := line["reason"].(string); reason == "" || strings.Contains(reason, "a..b") {
+		t.Fatalf("log line %v, want a reason that does not quote the branch", line)
+	}
+	if strings.Contains(w.logs.String(), "a..b") {
+		t.Fatalf("the logs quote the branch: %s", w.logs)
+	}
+}

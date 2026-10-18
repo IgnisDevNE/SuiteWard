@@ -210,3 +210,22 @@ func TestListSuggestionNeverAnchorsOnAScalarThatSpansLines(t *testing.T) {
 		})
 	}
 }
+
+func TestChecksLogTheReasonWhenTheReviewCannotBeRendered(t *testing.T) {
+	long := strings.Repeat("a", 1100)
+	w := newCJWorld(t, true)
+	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,4 +1,4 @@")}
+
+	w.scopePull(cjHead2, reviewFiles(reviewDecl+"  - /"+long+"/**\n", cjUtilTst), bootFiles("v1"))
+
+	if keys := w.scopeKeys("scope-notice:"); len(keys) != 1 || len(w.scopeKeys("scope-review:")) != 0 {
+		t.Fatalf("scope messages %v, want the notice and no review", w.scopeKeys("scope-"))
+	}
+	line := w.logged("scope review skipped: it cannot be rendered")
+	if reason, _ := line["reason"].(string); reason == "" || strings.Contains(reason, long) {
+		t.Fatalf("log line %v, want a reason that does not quote the anchor line", line)
+	}
+	if strings.Contains(w.logs.String(), long) {
+		t.Fatal("the logs quote the anchor line")
+	}
+}

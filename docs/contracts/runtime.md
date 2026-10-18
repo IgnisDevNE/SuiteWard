@@ -441,7 +441,14 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - **Before V1 with no declaration anywhere**, there is nothing to compare, and the reason is `declaration-missing`: the suggested declaration for that PR, built from the head tree or else the default branch.
 
   With a base, the reason is one of:
-  - **`scope-notice`:** a reply with the head's test-like paths that the base does not cover. These are not filtered by the PR's base commit, and the base's excludes are respected. The ack fields are `paths`, `pathsTotal`, `declaration` (the base bytes plus the new patterns, from `scope.AddPatterns`), `cut`, `mixed` and `submodules`.
+  - **`scope-notice`:** a reply with the head's test-like paths that the base does not cover. These are not filtered by the PR's base commit, and the base's excludes are respected. The ack fields are:
+    - `paths`, `pathsTotal`;
+    - `declaration`: the base bytes plus the new patterns, from `scope.AddPatterns`;
+    - `cut`, `mixed`, `submodules`;
+    - `base`: `pull`, `default-branch` or `contract`;
+    - `addInclude` and `addRunner`: the missing patterns, at most 20 in all.
+
+    When the base is the default branch's file, the head has no file to edit. The reply then links GitHub's new-file page with only `filename=.suiteward.yml`, because a prefilled declaration would exceed the URL budget, and the owner pastes the file.
     - The text names the base: "this pull request's `.suiteward.yml`", "the default branch's `.suiteward.yml`" or "the current contract". It shows the missing patterns and the updated file.
     - The text gives the next step as a copyable command. Before V1 that is `/suiteward propose`, once the change is committed. After V1, the owner approves the new revision SuiteWard posts.
     - The command also writes a **`scope-review`** under the same rules as the checks job: the PR's diff shows `.suiteward.yml` in block style with a list item line inside a hunk, the lines are inserted into the head's file, and patterns already listed are skipped. The key is the same `scope-review:<repository id>:<pull>:<set digest>`, so a notice and a command for the same set post one review.

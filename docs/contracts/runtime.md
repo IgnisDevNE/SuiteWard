@@ -456,7 +456,13 @@ The order is deterministic: directory patterns first, then file patterns, each g
       - base `default-branch`: the first contract is proposed from the default branch's file, so the change must reach the default branch first, then `/suiteward propose`;
       - after V1: approve the new revision SuiteWard posts.
     - The command also writes a **`scope-review`** under the same rules as the checks job: the PR's diff shows `.suiteward.yml` in block style with a list item line inside a hunk, the lines are inserted into the head's file, and patterns already listed are skipped. The key is the same `scope-review:<repository id>:<pull>:<set digest>`, so a notice and a command for the same set post one review.
-  - **`nothing-uncovered`:** a short ack that names the base and says that it covers every test-like path of the head.
+    - **The missing patterns are of two kinds** (amended 2026-10-18, live run 3):
+      - the patterns of `Suggest(uncovered entries)`, for the test-like files the base does not cover;
+      - the runner patterns of `Suggest(head entries)` that the base neither lists nor covers.
+
+      A runner name can match no file yet, so a missing runner name is reported even when no file is uncovered. The text explains that runner names matter before their files exist. The checks job's unsolicited notice keeps the first kind only: it reports what a pull request adds.
+  - **`nothing-uncovered`:** a short ack that names the base and says that it covers every test-like path of the head. It is sent only when neither kind of missing pattern exists.
+  - **An invalid base file** is refused as `invalid-source`. The text names the file ("this pull request's `.suiteward.yml` is not a valid declaration") without quoting it.
 
   **Payload guard.** A suggest ack or a scope notice whose JSON payload would exceed 60 KiB is treated as not renderable, which can happen when a hostile repository has many escaped characters in its paths. A command is then refused as `invalid-source`. The checks job logs the notice as skipped and remembers the set.
 

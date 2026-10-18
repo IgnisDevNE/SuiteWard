@@ -383,7 +383,7 @@ Other rules:
 
 The order is deterministic: directory patterns first, then file patterns, each group sorted. The runner list comes after them, sorted. The limit keeps the first patterns in that order.
 
-**The `declaration-missing` reply.** The ack payload keeps `suggestion` (the include list) and `branch`, and adds `runner`, `mixed` and `cut`, all optional, so a payload written under `v0.1.0` still decodes.
+**The `declaration-missing` reply.** The ack payload keeps `suggestion` (the include list) and `branch`, and adds `runner`, `mixed`, `cut` and `submodules`, all optional, so a payload written under `v0.1.0` still decodes.
 - The text renders `include:` and `runner:`.
 - When `cut` is set, it says that the list was cut at the limit and that the owner should review it.
 - When `mixed` is not empty, it lists those files and says that they may hold test settings, and that SuiteWard does not suggest them.
@@ -406,6 +406,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - `paths`: at most 20, each cut to 150 bytes, plus `pathsTotal`;
   - `declaration`: the canonical declaration bytes with the new patterns added by `scope.AddPatterns`. It is never built from the PR head's file. It is at most 8192 bytes (`maxDeclaration`, which bounds the comment). For a larger declaration the job writes no notice and logs that it skipped it;
   - `mixed`;
+  - `submodules` (optional): the submodules that `Suggest(head entries)` would reach, listed with a warning that their contents are not protected;
   - `cut` (optional): set when the new patterns were cut at the limit of 20, so the text says the declaration is partial and asks the owner to review it.
 - **The text:**
   - it lists the paths and says they are not protected by the current contract;
@@ -435,7 +436,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 
   A canonical that fails its integrity check gets no reply: the command is retried, then recorded `failed`, like any other failure.
 - Otherwise it records **`suggested`**, and its ack replies to the command. Before V1 its reason is `declaration-missing`: the suggested declaration for that PR, built from the head tree or else the default branch. The ack adds `declared`, true when a `.suiteward.yml` already exists on the default branch or in the head, and the text says so. After V1:
-  - reason `scope-notice`: the scope notice for the head's uncovered paths, not filtered by the base. The ack fields are `paths`, `pathsTotal`, `declaration`, `cut` and `mixed`. No `scope-review` is written.
+  - reason `scope-notice`: the scope notice for the head's uncovered paths, not filtered by the base. The ack fields are `paths`, `pathsTotal`, `declaration`, `cut`, `mixed` and `submodules`. No `scope-review` is written.
   - reason `nothing-uncovered`: a short ack saying that every test-like path of the head is in the scope.
 - Neither disposition is counted by `LatestOwnerCommand`. A `suggest` on a project with no Suite records `suggested` with the no-suite acknowledgment.
 

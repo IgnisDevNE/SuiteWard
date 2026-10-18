@@ -105,7 +105,8 @@ func (j *commandsJob) decidePending(ctx context.Context) error {
 		if cancelled := ctx.Err(); cancelled != nil {
 			return cancelled
 		}
-		j.logger.WarnContext(ctx, "github commands stopped: the bot account could not be resolved")
+		failure := readFailure(err)
+		j.logger.WarnContext(ctx, "github commands stopped: the bot account could not be resolved", "kind", string(failure.Kind), "status", failure.Status)
 		return nil
 	}
 	for _, candidate := range pending {

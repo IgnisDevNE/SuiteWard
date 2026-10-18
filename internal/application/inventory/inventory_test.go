@@ -45,7 +45,7 @@ func paths(entries []artifact.Entry) []string {
 // guard marks every File of tree outside want as unreadable.
 func guard(tree *fakeTree, want []string) {
 	for _, f := range tree.files {
-		if !slices.Contains(want, f.path) {
+		if f.kind == inventory.File && !slices.Contains(want, f.path) { // a link's own blob may be read to resolve it
 			tree.unreadable[f.path] = true
 		}
 	}

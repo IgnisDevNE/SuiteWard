@@ -99,12 +99,17 @@ func classify(p string) (include, runner []string) {
 
 // Suggest proposes a declaration from the paths of the File entries of a tree (D-SCOPE-DISCOVERY): include patterns for
 // the test files and directories of the frameworks' conventions, runner patterns for the runner files found, and the mixed
-// files that may hold test settings. The lists are never nil. Include is the directory patterns then the file patterns,
-// each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut is set.
+// files that may hold test settings. Submodules, sorted, are the non-vendored ones that a kept pattern covers or may cover
+// below, because their content is outside the scope. The lists are never nil. Include is the directory patterns then the file
+// patterns, each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut
+// is set. Mixed and Submodules have their own limit.
 func Suggest(entries []Entry) Suggestion {
 	directories, files, runner := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	var mixed []string
+	var mixed, submodules []string
 	for _, entry := range entries {
+		if entry.Kind == Submodule && !slices.ContainsFunc(strings.Split(entry.Path, "/"), func(s string) bool { return slices.Contains(vendoredDirectories, s) }) {
+			submodules = append(submodules, entry.Path)
+		}
 		if entry.Kind != File {
 			continue
 		}
@@ -133,11 +138,35 @@ func Suggest(entries []Entry) Suggestion {
 	kept := all[:min(len(all), maxSuggestions)]
 	slices.Sort(mixed)
 	return Suggestion{
-		Include: append([]string{}, kept[:min(includeCount, len(kept))]...),
-		Runner:  append([]string{}, kept[min(includeCount, len(kept)):]...),
-		Mixed:   append([]string{}, mixed[:min(len(mixed), maxSuggestions)]...),
-		Cut:     len(all) > len(kept),
+		Include:    append([]string{}, kept[:min(includeCount, len(kept))]...),
+		Runner:     append([]string{}, kept[min(includeCount, len(kept)):]...),
+		Mixed:      append([]string{}, mixed[:min(len(mixed), maxSuggestions)]...),
+		Submodules: reached(submodules, kept),
+		Cut:        len(all) > len(kept),
 	}
+}
+
+// reached returns the first maxSuggestions of the sorted submodule paths that any pattern covers or may cover below. Every
+// pattern is one Suggest built from constants, which TestSuggestPatternsParseAndIncludeOnesMatchAFile parses.
+func reached(submodules, patterns []string) []string {
+	parsed := make([]scope.Pattern, 0, len(patterns))
+	for _, pattern := range patterns {
+		p, _ := scope.ParsePattern(pattern)
+		parsed = append(parsed, p)
+	}
+	slices.Sort(submodules)
+	result := []string{}
+	for _, submodule := range submodules {
+		hit := slices.ContainsFunc(parsed, func(p scope.Pattern) bool {
+			covers, _ := p.Match(submodule)
+			below, _ := p.MayMatchBelow(submodule)
+			return covers || below
+		})
+		if hit && len(result) < maxSuggestions {
+			result = append(result, submodule)
+		}
+	}
+	return result
 }
 
 // Uncovered returns the sorted test-like and runner file paths of entries that s does not cover. A path that an exclude of s

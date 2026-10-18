@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -130,27 +132,49 @@ func listEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 	return entries, nil
 }
 
-// manifestOf rejects a symlink or submodule inside effective, then hashes
-// every covered file, reading from the tree only what known lacks.
+// maxLinkHops bounds the links followed to resolve one symlink (D-SCOPE).
+const maxLinkHops = 8
+
+// manifestOf rejects a symlink inside effective that may hide protected content, then hashes every covered file,
+// reading from the tree only what known lacks. A submodule is outside the scope: it is never rejected and never read.
 func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
+	kinds := make(map[string]EntryKind, len(entries))
+	for _, entry := range entries {
+		kinds[entry.Path] = entry.Kind
+	}
+	targets := map[string]string{} // the blobs of the links read so far
 	covered := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		covers, err := effective.Covers(entry.Path)
 		if err != nil {
 			return artifact.Manifest{}, err
 		}
-		if entry.Kind == File {
+		switch entry.Kind {
+		case File:
 			if covers {
 				covered = append(covered, entry.Path)
 			}
 			continue
+		case Submodule:
+			continue
 		}
-		below, err := effective.MayCoverBelow(entry.Path)
-		if err != nil {
-			return artifact.Manifest{}, err
+		// D-SCOPE: a link the scope covers makes the declaration invalid. A link that a pattern may reach below does too,
+		// unless it resolves to a regular file of the tree, which behaves as a file.
+		unsafe := covers
+		if !unsafe {
+			below, err := effective.MayCoverBelow(entry.Path)
+			if err != nil {
+				return artifact.Manifest{}, err
+			}
+			if below {
+				resolved, err := resolvesToFile(ctx, tree, kinds, targets, entry.Path)
+				if err != nil {
+					return artifact.Manifest{}, err
+				}
+				unsafe = !resolved
+			}
 		}
-		if covers || below {
-			// D-SCOPE: a link inside the scope makes the declaration invalid.
+		if unsafe {
 			return artifact.Manifest{}, fmt.Errorf("%w: %q", ErrUnsafeEntry, entry.Path)
 		}
 	}
@@ -167,6 +191,40 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 		files = append(files, artifact.Entry{Path: path, Content: artifact.Hash(content)})
 	}
 	return artifact.NewManifest(files)
+}
+
+// resolvesToFile follows the symlink at link, in the same tree, through at most maxLinkHops links and reports whether
+// it ends at a regular file. A link's blob is its target, relative to the link's directory; an empty, absolute or
+// directory-like target, a target that leaves the repository, a missing entry, a submodule, a directory and a loop all
+// resolve to no file. A failed read is an error, not an answer.
+func resolvesToFile(ctx context.Context, tree Tree, kinds map[string]EntryKind, targets map[string]string, link string) (bool, error) {
+	for range maxLinkHops {
+		target, read := targets[link]
+		if !read {
+			blob, err := tree.Read(ctx, link)
+			if err != nil {
+				return false, fmt.Errorf("read link %q: %w", link, err)
+			}
+			target = string(blob)
+			targets[link] = target
+		}
+		if target == "" || strings.HasPrefix(target, "/") || strings.HasSuffix(target, "/") {
+			return false, nil
+		}
+		next := path.Join(path.Dir(link), target)
+		if next == ".." || strings.HasPrefix(next, "../") {
+			return false, nil
+		}
+		switch kinds[next] { // a directory has no entry: the zero kind
+		case File:
+			return true, nil
+		case Symlink:
+			link = next
+		default:
+			return false, nil
+		}
+	}
+	return false, nil
 }
 
 // Change classifies a candidate against the governing contract; its zero

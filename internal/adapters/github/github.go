@@ -486,14 +486,14 @@ func (t *tree) Entries(context.Context) ([]inventory.Entry, error) {
 	return slices.Clone(t.entries), nil
 }
 
-// Read fetches and decodes the blob of a listed regular file.
+// Read fetches and decodes the blob of a listed regular file or symlink; a symlink's blob is its target.
 func (t *tree) Read(ctx context.Context, path string) ([]byte, error) {
 	entry, listed := t.byPath[path]
 	switch {
 	case !listed:
 		return nil, fmt.Errorf("github tree: %q is not listed", path)
-	case entry.kind != inventory.File:
-		return nil, fmt.Errorf("github tree: %q is not a regular file", path)
+	case entry.kind != inventory.File && entry.kind != inventory.Symlink:
+		return nil, fmt.Errorf("github tree: %q is neither a regular file nor a symlink", path)
 	}
 	blobPath := "/repos/" + t.repo + "/git/blobs/" + entry.sha
 	resp, err := t.client.GetImmutable(ctx, blobPath)

@@ -509,7 +509,7 @@ func TestTreeReadDecodesABlobOnlyWhenCalled(t *testing.T) {
 func TestTreeReadDecodesTheBlobOfASymlink(t *testing.T) {
 	const linkBlob = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
 	reader, _ := newReader(t, map[string]reply{
-		treeURI:              ok(fixture(t, "tree.json")),
+		treeURI:             ok(fixture(t, "tree.json")),
 		blobsURI + linkBlob: ok([]byte(`{"sha":"` + linkBlob + `","size":12,"content":"Li4vUkVBRE1FLm1k","encoding":"base64"}`)),
 	})
 	tree, err := reader.Tree(t.Context(), repo, commitSHA)

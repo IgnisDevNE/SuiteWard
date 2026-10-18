@@ -410,9 +410,34 @@ func listing(title string, items []string, total int) string {
 	for i, item := range items {
 		shown[i] = display(item)
 	}
-	content := strings.Join(shown, "\n")
-	fence := strings.Repeat("`", max(3, longestBacktickRun(content)+1))
-	return title + ":\n\n" + fence + "\n" + content + "\n" + fence
+	return title + ":\n\n" + fenced(strings.Join(shown, "\n")+"\n")
+}
+
+// listingAndMore is listing for paths: the entries inside a fence, then "and N more" for the ones the total counts
+// beyond them. The items are at most maxListed; a total below them is their number.
+func listingAndMore(title string, items []string, total int) string {
+	body := listing(title, items, len(items))
+	if unlisted := total - len(items); unlisted > 0 {
+		body += fmt.Sprintf("\n\nand %d more", unlisted)
+	}
+	return body
+}
+
+// fenced shows block, which ends with a newline, in a code fence that a run of backticks inside it cannot close.
+func fenced(block string) string {
+	fence := strings.Repeat("`", max(3, longestBacktickRun(block)+1))
+	return fence + "\n" + block + fence
+}
+
+// mixedWarning says that files may hold test settings among other content and are not suggested. They are listed only
+// in text: a mixed file never goes into a declaration.
+func mixedWarning(mixed []string) string {
+	shown := make([]string, len(mixed))
+	for i, f := range mixed {
+		shown[i] = display(f)
+	}
+	return "These files may hold test settings among other content, so SuiteWard does not suggest them: protecting one would put every change to it, " +
+		"even a dependency update, behind an approval. Decide for yourself:\n\n" + fenced(strings.Join(shown, "\n")+"\n")
 }
 
 // maxListed bounds the entries of each listing; maxShown bounds the bytes of
@@ -506,7 +531,8 @@ const rollback = "a separately approved rollback (corrective) proposal: a new PR
 // Revision is what the comment of a new change-proposal revision states. Previous is the reference this revision
 // supersedes (an earlier revision of the same proposal), empty for the first. Each list shows at most 20 entries
 // of the total; a total below the list is taken as its length. Reduced says that the revision reduces the
-// protected scope.
+// protected scope; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail what it removes and
+// are set only with Reduced.
 type Revision struct {
 	Proposal, Revision                      int
 	Previous                                string
@@ -514,6 +540,8 @@ type Revision struct {
 	Added, Modified, Removed                []string
 	AddedTotal, ModifiedTotal, RemovedTotal int
 	Reduced                                 bool
+	ReducedRules, ReducedPaths              []string
+	ReducedPathsTotal                       int
 	Tier                                    Tier
 }
 
@@ -527,6 +555,12 @@ func RevisionComment(r Revision) string {
 	tier := tierName(r.Tier)
 	if r.AddedTotal < 0 || r.ModifiedTotal < 0 || r.RemovedTotal < 0 {
 		panic(fmt.Sprintf("commandtext: negative totals %d, %d and %d", r.AddedTotal, r.ModifiedTotal, r.RemovedTotal))
+	}
+	switch {
+	case r.ReducedPathsTotal < 0 || len(r.ReducedRules) > maxListed || len(r.ReducedPaths) > maxListed:
+		panic(fmt.Sprintf("commandtext: %d reduced rules, %d reduced paths and a total of %d", len(r.ReducedRules), len(r.ReducedPaths), r.ReducedPathsTotal))
+	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
+		panic("commandtext: reduction detail on a revision that does not reduce the scope")
 	}
 	var supersedes string
 	if r.Previous != "" {
@@ -544,6 +578,12 @@ func RevisionComment(r Revision) string {
 	}
 	if r.Reduced {
 		parts = append(parts, "**This revision reduces the protected scope.** Review it carefully before approving.")
+		if len(r.ReducedRules) > 0 {
+			parts = append(parts, listing("Rules removed from the scope", r.ReducedRules, len(r.ReducedRules)))
+		}
+		if len(r.ReducedPaths) > 0 {
+			parts = append(parts, listingAndMore("Paths that the scope no longer covers", r.ReducedPaths, r.ReducedPathsTotal))
+		}
 	}
 	if r.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
@@ -626,18 +666,23 @@ func proposeRefusal(r Refusal) string {
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}/[A-Za-z0-9._-]{1,100}$`)
 
-// maxPattern bounds a suggested pattern in bytes. With 20 of them and the longest branch, the editor link stays near
-// 7,500 bytes, below what browsers and GitHub accept in a URL.
+// maxPattern bounds a suggested pattern in bytes. With 20 of them, include and runner together in any split, and the
+// longest branch, the editor link stays near 7,350 bytes (7,342 measured, M1.9), below what browsers and GitHub accept.
 const maxPattern = 100
 
 // DeclarationSuggestion is what the refusal of a propose for a missing declaration states: Repo (owner/name), Branch
-// (the pull request's head ref), Patterns (at most 20 include patterns, possibly none) and Source, the id of the
-// command comment, which the body links. It is not an Ack because it holds a slice, and an Ack stays comparable.
+// (the pull request's head ref), Patterns (include patterns, possibly none), Runner (runner patterns) and Source, the id
+// of the command comment, which the body links. Patterns and Runner together hold at most 20, which is the limit that
+// Cut says dropped some; Mixed (at most 20 files) is shown in the text only, never in the declaration or the link. It is
+// not an Ack because it holds a slice, and an Ack stays comparable.
 type DeclarationSuggestion struct {
 	Source   int64
 	Repo     string
 	Branch   string
 	Patterns []string
+	Runner   []string
+	Mixed    []string
+	Cut      bool
 }
 
 // SuggestDeclaration renders the refusal of a propose when neither the default branch nor the pull request holds
@@ -649,42 +694,58 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 	if err := ValidateSuggestion(a); err != nil {
 		panic(err.Error())
 	}
-	var usable []string
-	for _, p := range a.Patterns {
-		if suggestable(p) {
-			usable = append(usable, p)
-		}
-	}
-	left := len(a.Patterns) - len(usable)
+	usable, runner := suggestableOnly(a.Patterns), suggestableOnly(a.Runner)
+	left := len(a.Patterns) + len(a.Runner) - len(usable) - len(runner)
 	intro := "SuiteWard suggests this declaration, built from the test-like paths of this repository. Review it and change it as needed:"
-	if len(usable) == 0 {
+	if len(usable)+len(runner) == 0 {
 		usable = []string{"path/to/tests/**"}
 		intro = "SuiteWard found no test-like path to suggest, so this is a minimal file. Replace the placeholder with patterns that match your tests:"
 	}
-	declaration := "version: 1\ninclude:\n"
-	for _, p := range usable {
-		declaration += "  - \"" + p + "\"\n"
-	}
-	fence := strings.Repeat("`", max(3, longestBacktickRun(declaration)+1))
+	declaration := "version: 1\n" + yamlList("include", usable) + yamlList("runner", runner)
 	parts := []string{
 		"`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, " +
 			"so it cannot tell which files to protect and proposed nothing. Nothing changed.",
-		intro + "\n\n" + fence + "\n" + declaration + fence,
+		intro + "\n\n" + fenced(declaration),
 	}
 	if left > 0 {
 		parts = append(parts, fmt.Sprintf("Left out of this suggestion because they are too long or contain unusual characters: %d.", left))
 	}
-	segments := strings.Split(a.Branch, "/")
-	for i, segment := range segments {
-		segments[i] = url.PathEscape(segment)
+	if a.Cut {
+		parts = append(parts, "This list was cut at the limit of 20 patterns, so test-like paths may be missing from it. Please review it and add what is missing.")
+	}
+	if len(a.Mixed) > 0 {
+		parts = append(parts, mixedWarning(a.Mixed))
 	}
 	// QueryEscape writes a space as +, which the editor may keep; %20 is read the same everywhere.
-	link := "https://github.com/" + a.Repo + "/new/" + strings.Join(segments, "/") + "?filename=.suiteward.yml&value=" +
+	link := "https://github.com/" + a.Repo + "/new/" + pathEscape(a.Branch) + "?filename=.suiteward.yml&value=" +
 		strings.ReplaceAll(url.QueryEscape(declaration), "+", "%20")
 	return replyTo(paragraphs(append(parts,
 		"To add it on this pull request's branch, [open GitHub's editor with this file filled in]("+link+"). SuiteWard never commits it for you: the commit is yours.",
 		"After the file is on this branch, comment `/suiteward propose` again.",
 	)...), a.Source)
+}
+
+// suggestableOnly keeps the patterns that can be suggested, in order.
+func suggestableOnly(patterns []string) []string {
+	var usable []string
+	for _, p := range patterns {
+		if suggestable(p) {
+			usable = append(usable, p)
+		}
+	}
+	return usable
+}
+
+// yamlList is a block-style list of double-quoted patterns under key, and nothing for no patterns.
+func yamlList(key string, patterns []string) string {
+	if len(patterns) == 0 {
+		return ""
+	}
+	list := key + ":\n"
+	for _, p := range patterns {
+		list += "  - \"" + p + "\"\n"
+	}
+	return list
 }
 
 // suggestable reports whether p can be written inside a double-quoted YAML scalar and a URL as it is.
@@ -699,14 +760,25 @@ func ValidateSuggestion(a DeclarationSuggestion) error {
 	if a.Source <= 0 {
 		return fmt.Errorf("commandtext: source comment %d does not fit a suggestion", a.Source)
 	}
-	if _, name, _ := strings.Cut(a.Repo, "/"); !repoPattern.MatchString(a.Repo) || name == "." || name == ".." {
-		return fmt.Errorf("commandtext: %q is not a GitHub repository", a.Repo)
+	if err := checkRepoAndBranch(a.Repo, a.Branch); err != nil {
+		return err
 	}
-	if !gitBranch(a.Branch) {
-		return fmt.Errorf("commandtext: %q is not a git branch name", a.Branch)
+	if len(a.Patterns)+len(a.Runner) > maxListed {
+		return fmt.Errorf("commandtext: %d suggested patterns, at most %d", len(a.Patterns)+len(a.Runner), maxListed)
 	}
-	if len(a.Patterns) > maxListed {
-		return fmt.Errorf("commandtext: %d suggested patterns, at most %d", len(a.Patterns), maxListed)
+	if len(a.Mixed) > maxListed {
+		return fmt.Errorf("commandtext: %d mixed files, at most %d", len(a.Mixed), maxListed)
+	}
+	return nil
+}
+
+// checkRepoAndBranch reports a repository that is not owner/name or a branch that is not a git ref name.
+func checkRepoAndBranch(repo, branch string) error {
+	if _, name, _ := strings.Cut(repo, "/"); !repoPattern.MatchString(repo) || name == "." || name == ".." {
+		return fmt.Errorf("commandtext: %q is not a GitHub repository", repo)
+	}
+	if !gitBranch(branch) {
+		return fmt.Errorf("commandtext: %q is not a git branch name", branch)
 	}
 	return nil
 }

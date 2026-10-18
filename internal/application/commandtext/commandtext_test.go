@@ -280,7 +280,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed unknown verb",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose` or `skip`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`"},
+			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose`, `skip` or `suggest`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`", "`/suiteward suggest`"},
 			[]string{"eligible"},
 		},
 		{

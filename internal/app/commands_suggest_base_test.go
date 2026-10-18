@@ -229,10 +229,12 @@ func TestSuggestBeforeTheFirstContractRefusesAnInvalidDeclarationAsInvalidSource
 	for _, tc := range []struct {
 		name       string
 		main, head map[string]string
+		base       string
 	}{
-		{"the head's declaration is invalid and the default branch has none", map[string]string{"README.md": "x"}, reviewFiles(invalid, cjUtilTst)},
-		{"the default branch's declaration is invalid and the head has none", withDeclaration(bootFiles("v1"), invalid), map[string]string{cjUtilTst: "x"}},
-		{"the default branch's declaration is invalid although the head's is valid", withDeclaration(bootFiles("v1"), invalid), reviewFiles(reviewDecl, cjUtilTst)},
+		{"the head's declaration is invalid and the default branch has none", map[string]string{"README.md": "x"}, reviewFiles(invalid, cjUtilTst), "pull"},
+		{"the head's declaration has an include list with no item", map[string]string{"README.md": "x"}, reviewFiles("version: 1\ninclude:\n", cjUtilTst), "pull"},
+		{"the default branch's declaration is invalid and the head has none", withDeclaration(bootFiles("v1"), invalid), map[string]string{cjUtilTst: "x"}, "default-branch"},
+		{"the default branch's declaration is invalid although the head's is valid", withDeclaration(bootFiles("v1"), invalid), reviewFiles(reviewDecl, cjUtilTst), "default-branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -241,7 +243,7 @@ func TestSuggestBeforeTheFirstContractRefusesAnInvalidDeclarationAsInvalidSource
 			w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 			w.mustRun()
 
-			w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "invalid-source"})
+			w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "invalid-source", "base": tc.base})
 			if !strings.Contains(w.logs.String(), "github suggest refused") {
 				t.Fatalf("no log line says the suggestion was refused\nlogs: %s", w.logs)
 			}
@@ -407,14 +409,14 @@ func TestCommentPublisherRefusesASuggestReplyWithABaseThatDoesNotFit(t *testing.
 		return payload
 	}
 	for name, extra := range map[string]map[string]any{
-		"an unknown base":                      notice("base", "canonical"),
-		"new patterns without a base":          notice("base", nil),
-		"an unknown base on nothing uncovered": {"disposition": "suggested", "reason": "nothing-uncovered", "base": "canonical"},
-		"a base on a missing declaration":      {"disposition": "suggested", "reason": "declaration-missing", "branch": "feature", "base": "pull"},
-		"new patterns on nothing uncovered":    {"disposition": "suggested", "reason": "nothing-uncovered", "addInclude": []string{"*_test.go"}},
-		"21 new patterns":                      notice("addInclude", strings.Split(strings.Repeat("x,", 21), ",")[:21]),
-		"a base on a refusal":                  {"disposition": "suggest-refused", "reason": "invalid-source", "base": "pull"},
-		"a declared flag with a base":          notice("declared", true),
+		"an unknown base":                        notice("base", "canonical"),
+		"new patterns without a base":            notice("base", nil),
+		"an unknown base on nothing uncovered":   {"disposition": "suggested", "reason": "nothing-uncovered", "base": "canonical"},
+		"a base on a missing declaration":        {"disposition": "suggested", "reason": "declaration-missing", "branch": "feature", "base": "pull"},
+		"new patterns on nothing uncovered":      {"disposition": "suggested", "reason": "nothing-uncovered", "addInclude": []string{"*_test.go"}},
+		"21 new patterns":                        notice("addInclude", strings.Split(strings.Repeat("x,", 21), ",")[:21]),
+		"a base on a refusal that is not a file": {"disposition": "suggest-refused", "reason": "fork", "base": "pull"},
+		"a declared flag with a base":            notice("declared", true),
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCmtWorld(t)

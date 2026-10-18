@@ -36,6 +36,13 @@ func TestCommentPublisherRendersTheSuggestAcknowledgments(t *testing.T) {
 		{"suggested before the first contract with a declaration", map[string]any{"disposition": "suggested", "reason": "declaration-missing", "branch": "feature/x", "suggestion": []string{"tests/**"}, "declared": true}, func() string {
 			return commandtext.SuggestDeclaration(commandtext.DeclarationSuggestion{Source: cmtComment, Repo: cmtRepo, Branch: "feature/x", Patterns: []string{"tests/**"}, Suggest: true, Declared: true})
 		}},
+		{"suggest refused for an invalid file of the head", map[string]any{"disposition": "suggest-refused", "reason": "invalid-source", "base": "pull"},
+			ack(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.InvalidSource, Base: commandtext.BasePull})},
+		{"suggest refused for an invalid file of the default branch", map[string]any{"disposition": "suggest-refused", "reason": "invalid-source", "base": "default-branch"},
+			ack(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.InvalidSource, Base: commandtext.BaseDefaultBranch})},
+		{"suggested with runner names alone", map[string]any{"disposition": "suggested", "reason": "scope-notice", "branch": "feature/x", "base": "pull", "declaration": suggestDeclaration, "addRunner": []string{"conftest.py"}}, func() string {
+			return commandtext.ScopeNoticeComment(commandtext.ScopeNotice{Source: cmtComment, Repo: cmtRepo, Branch: "feature/x", Declaration: []byte(suggestDeclaration), Base: commandtext.BasePull, AddRunner: []string{"conftest.py"}})
+		}},
 		{"suggested with nothing uncovered", map[string]any{"disposition": "suggested", "reason": "nothing-uncovered"}, ack(commandtext.Ack{Outcome: commandtext.NothingUncovered})},
 		{"suggested before the first contract", map[string]any{"disposition": "suggested", "reason": "declaration-missing", "branch": "feature/x", "suggestion": []string{"tests/**"}, "runner": []string{"conftest.py"},
 			"mixed": []string{"package.json"}, "cut": true}, func() string {

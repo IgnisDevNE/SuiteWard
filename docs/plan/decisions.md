@@ -162,6 +162,7 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 **Command syntax**
 - `/suiteward approve <ref> <code>` and `/suiteward revoke <ref> <code>` (ADR 0027).
 - The first line of the comment body that starts with `/suiteward`, outside fenced code blocks, is the command; the rest of the body is ignored.
+  - **Amended 2026-10-18 (owner, M1.9 live run).** The prefix and the verb are matched without regard to case, so `/SuiteWard suggest` or `/Suiteward Approve P1-R1 123456` from a phone's auto-capitalization is a command. A missing argument, an extra token or a malformed reference or code is still refused as malformed. The reference stays `P<n>-R<m>` as written.
 - `<ref>` is `P<n>-R<m>` (ADR 0002 and ADR 0010 examples), resolved inside the PR's project and its single Suite. `<code>` is the 6-digit TOTP code.
 - `/suiteward suggest` takes no argument and no code. It asks for a suggested declaration ([D-SCOPE-DISCOVERY](#d-scope-discovery-suggesting-and-widening-the-scope)), grants nothing, and is not counted as the owner's latest command.
 

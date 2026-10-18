@@ -666,8 +666,8 @@ func proposeRefusal(r Refusal) string {
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}/[A-Za-z0-9._-]{1,100}$`)
 
-// maxPattern bounds a suggested pattern in bytes. With 20 of them and the longest branch, the editor link stays near
-// 7,500 bytes, below what browsers and GitHub accept in a URL.
+// maxPattern bounds a suggested pattern in bytes. With 20 of them, include and runner together in any split, and the
+// longest branch, the editor link stays near 7,350 bytes (7,342 measured, M1.9), below what browsers and GitHub accept.
 const maxPattern = 100
 
 // DeclarationSuggestion is what the refusal of a propose for a missing declaration states: Repo (owner/name), Branch

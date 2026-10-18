@@ -190,19 +190,22 @@ func TestSuggestDeclarationWithRunnerStaysInsideALinkAndAComment(t *testing.T) {
 					}
 					mixed = append(mixed, strings.Repeat("\u20ac`\n", 400)+string(rune('a'+i)))
 				}
-				a := missingWith(include, runner, mixed, true)
-				a.Repo = "a" + strings.Repeat("b", 38) + "/" + strings.Repeat("c", 100)
-				a.Branch = strings.Repeat("\u20ac", 85)
-				body := suggestionText(t, a)
-				raw := linkPattern.FindStringSubmatch(body)
-				if raw == nil {
-					t.Fatalf("no link in body:\n%s", body)
-				}
-				if len(raw[1]) > 8000 {
-					t.Errorf("the link has %d bytes", len(raw[1]))
-				}
-				if len(body) > maxComment/2 || !utf8.ValidString(body) {
-					t.Errorf("the body has %d bytes or is not UTF-8", len(body))
+				// Without mixed files the body keeps the bound of M1.7b, a quarter of the limit; with them, half.
+				for bound, withMixed := range map[int][]string{maxComment / 4: nil, maxComment / 2: mixed} {
+					a := missingWith(include, runner, withMixed, true)
+					a.Repo = "a" + strings.Repeat("b", 38) + "/" + strings.Repeat("c", 100)
+					a.Branch = strings.Repeat("\u20ac", 85)
+					body := suggestionText(t, a)
+					raw := linkPattern.FindStringSubmatch(body)
+					if raw == nil {
+						t.Fatalf("no link in body:\n%s", body)
+					}
+					if len(raw[1]) > 8000 {
+						t.Errorf("the link has %d bytes", len(raw[1]))
+					}
+					if len(body) > bound || !utf8.ValidString(body) {
+						t.Errorf("the body has %d bytes with %d mixed files or is not UTF-8, want at most %d", len(body), len(withMixed), bound)
+					}
 				}
 			})
 		}

@@ -45,6 +45,8 @@ type RevisionNotice struct {
 	Canonical                contract.SuiteVersionID     // the base version
 	Added, Modified, Removed []string                    // inventory.Classify against the canonical, sorted
 	Reduced                  bool                        // a scope reduction
+	// ReducedRules and ReducedPaths detail the reduction (inventory.Classify), sorted, and are empty unless Reduced.
+	ReducedRules, ReducedPaths []string
 }
 
 type HeadResult struct {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -210,12 +211,24 @@ func TestSuggestIsRefusedForAForkAndAClosedPullRequestBeforeAnyTreeIsRead(t *tes
 	}
 }
 
-func TestSuggestForAProjectWithNoSuiteIsNoSuite(t *testing.T) {
+// The owner is told that the bootstrap is pending, as for a propose, but the entry is a suggestion: a no-suite entry would count as the
+// owner's latest command, and a rejected approve could then stop showing as owner-command-rejected once the Suite exists.
+func TestSuggestForAProjectWithNoSuiteSaysTheBootstrapIsPendingAndIsNotACommand(t *testing.T) {
 	w := newCjWorld(t)
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
 
-	w.requireAckPayload(cjID2, 500, commands.NoSuite, nil)
+	_, ack := w.requireDisposition(cjID2, 500, commands.Suggested)
+	if ack == nil {
+		t.Fatal("no acknowledgment")
+	}
+	var payload ackPayload
+	if err := json.Unmarshal(ack.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Disposition != string(commands.NoSuite) || payload.Reference != "" {
+		t.Fatalf("acknowledgment %+v; want the no-suite one without a reference", payload)
+	}
 	if len(w.owners.consumed) != 0 {
 		t.Fatalf("consumed %v; a suggestion uses no code", w.owners.consumed)
 	}
@@ -260,8 +273,8 @@ func TestSuggestIsNotTheOwnersLatestCommand(t *testing.T) {
 	}
 }
 
-// A source the suggestion cannot be built from is a fact about the commit: the command is recorded at once, refused and unanswered, never retried.
-func TestSuggestRecordsASourceItCannotReadAsRefusedWithoutAnAnswer(t *testing.T) {
+// A source the suggestion cannot be built from is a fact about the commit: the command is recorded at once as suggested without an answer, never retried.
+func TestSuggestRecordsASourceItCannotReadAsSuggestedWithoutAnAnswer(t *testing.T) {
 	truncated := fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
 	tooLong := "version: 1\ninclude:\n"
 	for i := range 400 {
@@ -300,7 +313,7 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithoutAnAnswer(t *testing.T)
 			}
 			w.mustRun()
 
-			w.requireSilent(repository, 500, commands.SuggestRefused)
+			w.requireSilent(repository, 500, commands.Suggested)
 			if !strings.Contains(w.logs.String(), "github suggest skipped") {
 				t.Fatalf("no log line says the suggestion was skipped\nlogs: %s", w.logs)
 			}

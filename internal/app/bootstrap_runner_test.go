@@ -35,7 +35,7 @@ func TestBootstrapSummaryNamesTheRunnerRulesTheDeclarationHas(t *testing.T) {
 	if err := json.Unmarshal(message.Payload, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if s := decoded.Summary; len(s.Runner) != 20 || s.RunnerTotal != 25 || !strings.HasSuffix(s.Runner[0], "\u2026") || len(s.Runner[0]) > maxSummaryText {
+	if s := decoded.Summary; len(s.Runner) != 20 || s.RunnerTotal != 25 || !strings.HasSuffix(s.Runner[0], "\u2026") || len(s.Runner[0]) > maxRunnerText {
 		t.Fatalf("runner holds %d rules of %d, first %q; want 20 of 25, the first cut to the limit", len(s.Runner), s.RunnerTotal, s.Runner[0])
 	}
 	rendered := cmtMust(decoded.Summary.summary())

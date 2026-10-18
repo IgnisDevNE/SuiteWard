@@ -227,7 +227,7 @@ func TestBootstrapSummaryFromAPullStatesTheHeadAndNoBranch(t *testing.T) {
 	want := cmtSummaryInputs()
 	want.IncludeTotal, want.ExcludeTotal = len(want.Include), len(want.Exclude)
 	w.wantPost(message.Key, commandtext.BootstrapSummary(commandtext.Summary{Proposal: 1, Revision: 1, Source: commandtext.SourcePull, Origin: bootHead, Protected: 2, Paths: want.Paths,
-		Include: want.Include, Exclude: want.Exclude, IncludeTotal: want.IncludeTotal, ExcludeTotal: want.ExcludeTotal, Tier: commandtext.CoLocated}))
+		Include: want.Include, Runner: []string{}, Exclude: want.Exclude, IncludeTotal: want.IncludeTotal, ExcludeTotal: want.ExcludeTotal, Tier: commandtext.CoLocated}))
 }
 
 func TestBootstrapSummaryPayloadsWithoutASourceAreFromTheBranch(t *testing.T) {

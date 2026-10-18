@@ -40,8 +40,9 @@ const (
 	firstRevision  contract.ProposalRevisionID = "R1"
 	targetPrefix                               = "branch:"
 	carrierPrefix                              = "github-pr:"
-	maxSummaryRun                              = 20  // paths, include rules and exclude rules the summary carries
+	maxSummaryRun                              = 20  // paths, include, runner and exclude rules the summary carries
 	maxSummaryText                             = 150 // bytes of one path, one rule or the branch in the payload
+	maxRunnerText                              = 64  // bytes of one runner rule: a fourth list must still fit the outbox limit when every byte of every entry is escaped
 )
 
 // commentTarget is what every github_comment payload carries: the repository
@@ -59,9 +60,9 @@ type bootstrapSummaryPayload struct {
 	Summary bootstrapSummaryInputs `json:"summary"`
 }
 
-// bootstrapSummaryInputs mirror commandtext.Summary. Repository text (Branch, Paths, Include, Exclude) is cut to
+// bootstrapSummaryInputs mirror commandtext.Summary. Repository text (Branch, Paths, Include, Runner, Exclude) is cut to
 // maxSummaryText bytes, a cut entry ending in "…", and each list holds at most maxSummaryRun entries, so the payload
-// stays within the outbox limit. The totals are the true counts.
+// stays within the outbox limit (a runner rule to maxRunnerText bytes, so that four lists fit). The totals are the true counts.
 type bootstrapSummaryInputs struct {
 	Proposal     int      `json:"proposal"`
 	Revision     int      `json:"revision"`
@@ -70,11 +71,13 @@ type bootstrapSummaryInputs struct {
 	Branch       string   `json:"branch,omitempty"` // absent from a pull request
 	Protected    int      `json:"protected"`        // all protected files, of which Paths lists the first ones
 	Paths        []string `json:"paths"`
-	Include      []string `json:"include"`      // the declared include rules
-	Exclude      []string `json:"exclude"`      // the declared exclude rules
-	IncludeTotal int      `json:"includeTotal"` // how many include rules the declaration has, of which Include lists the first ones
-	ExcludeTotal int      `json:"excludeTotal"` // likewise for exclude
-	Tier         string   `json:"tier"`         // the effective tier: owner.TierIsolated or owner.TierCoLocated
+	Include      []string `json:"include"`               // the declared include rules
+	Runner       []string `json:"runner,omitzero"`       // the declared runner rules; nil in a message written before M1.9-E4, which omitempty would not tell from none
+	Exclude      []string `json:"exclude"`               // the declared exclude rules
+	IncludeTotal int      `json:"includeTotal"`          // how many include rules the declaration has, of which Include lists the first ones
+	ExcludeTotal int      `json:"excludeTotal"`          // likewise for exclude
+	RunnerTotal  int      `json:"runnerTotal,omitempty"` // likewise for runner
+	Tier         string   `json:"tier"`                  // the effective tier: owner.TierIsolated or owner.TierCoLocated
 }
 
 // summary maps the inputs to the values the renderer takes.
@@ -97,8 +100,8 @@ func (s bootstrapSummaryInputs) summary() (commandtext.Summary, error) {
 		return commandtext.Summary{}, fmt.Errorf("unknown source %q", s.Source)
 	}
 	return commandtext.Summary{Proposal: s.Proposal, Revision: s.Revision, Source: source, Origin: s.Origin, Branch: s.Branch, Protected: s.Protected,
-		Paths: s.Paths, Include: s.Include, Exclude: s.Exclude,
-		IncludeTotal: s.IncludeTotal, ExcludeTotal: s.ExcludeTotal, Tier: tier}, nil
+		Paths: s.Paths, Include: s.Include, Runner: s.Runner, Exclude: s.Exclude,
+		IncludeTotal: s.IncludeTotal, RunnerTotal: s.RunnerTotal, ExcludeTotal: s.ExcludeTotal, Tier: tier}, nil
 }
 
 // bootstrapPromotedPayload is the payload of bootstrap-promoted:<repository id>:P<n>-R1.
@@ -135,19 +138,22 @@ func cutBytes(s string, limit int) string {
 
 // boundedText returns at most maxSummaryRun entries of list, each cut to maxSummaryText bytes; never nil, so the
 // payload holds an array.
-func boundedText(list []string) []string {
+func boundedText(list []string) []string { return boundedTextTo(list, maxSummaryText) }
+
+// boundedTextTo is boundedText with each entry cut to limit bytes.
+func boundedTextTo(list []string, limit int) []string {
 	bounded := make([]string, 0, min(len(list), maxSummaryRun))
 	for _, entry := range list[:min(len(list), maxSummaryRun)] {
-		bounded = append(bounded, cutBytes(entry, maxSummaryText))
+		bounded = append(bounded, cutBytes(entry, limit))
 	}
 	return bounded
 }
 
 // newSummaryMessage builds the bootstrap-summary message of the proposal in inputs, bounding its repository text.
 func newSummaryMessage(target commentTarget, inputs bootstrapSummaryInputs) (governance.OutboxMessage, error) {
-	inputs.IncludeTotal, inputs.ExcludeTotal = len(inputs.Include), len(inputs.Exclude) // what the owner is told is left out
+	inputs.IncludeTotal, inputs.RunnerTotal, inputs.ExcludeTotal = len(inputs.Include), len(inputs.Runner), len(inputs.Exclude) // what the owner is told is left out
 	inputs.Branch = cutBytes(inputs.Branch, maxSummaryText)
-	inputs.Paths, inputs.Include, inputs.Exclude = boundedText(inputs.Paths), boundedText(inputs.Include), boundedText(inputs.Exclude)
+	inputs.Paths, inputs.Include, inputs.Runner, inputs.Exclude = boundedText(inputs.Paths), boundedText(inputs.Include), boundedTextTo(inputs.Runner, maxRunnerText), boundedText(inputs.Exclude)
 	payload, err := json.Marshal(bootstrapSummaryPayload{commentTarget: target, Summary: inputs})
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the bootstrap summary: %w", err)
@@ -191,6 +197,9 @@ func inventoryInputs(inputs bootstrapSummaryInputs, inv inventory.Inventory) boo
 	}
 	for _, rule := range inv.Scope().Declaration().Include() {
 		inputs.Include = append(inputs.Include, rule.String())
+	}
+	for _, rule := range inv.Scope().Declaration().Runner() {
+		inputs.Runner = append(inputs.Runner, rule.String())
 	}
 	for _, rule := range inv.Scope().Declaration().Exclude() {
 		inputs.Exclude = append(inputs.Exclude, rule.String())

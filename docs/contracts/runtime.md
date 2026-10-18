@@ -435,9 +435,19 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - `declaration-too-large`: the suggested declaration is over 8192 bytes.
 
   A canonical that fails its integrity check gets no reply: the command is retried, then recorded `failed`, like any other failure.
-- Otherwise it records **`suggested`**, and its ack replies to the command. Before V1 its reason is `declaration-missing`: the suggested declaration for that PR, built from the head tree or else the default branch. The ack adds `declared`, true when a `.suiteward.yml` already exists on the default branch or in the head, and the text says so. After V1:
-  - reason `scope-notice`: the scope notice for the head's uncovered paths, not filtered by the base. The ack fields are `paths`, `pathsTotal`, `declaration`, `cut`, `mixed` and `submodules`. No `scope-review` is written.
-  - reason `nothing-uncovered`: a short ack saying that every test-like path of the head is in the scope.
+- Otherwise it records **`suggested`**, and its ack replies to the command. The reply compares the head with a **base declaration**:
+  - **after V1**, the canonical declaration;
+  - **before V1**, the head's own `.suiteward.yml` if it has one, else the default branch's. An invalid head file is refused as `invalid-source`. This grants nothing: before V1 only `propose` binds.
+  - **Before V1 with no declaration anywhere**, there is nothing to compare, and the reason is `declaration-missing`: the suggested declaration for that PR, built from the head tree or else the default branch.
+
+  With a base, the reason is one of:
+  - **`scope-notice`:** a reply with the head's test-like paths that the base does not cover. These are not filtered by the PR's base commit, and the base's excludes are respected. The ack fields are `paths`, `pathsTotal`, `declaration` (the base bytes plus the new patterns, from `scope.AddPatterns`), `cut`, `mixed` and `submodules`.
+    - The text names the base: "this pull request's `.suiteward.yml`", "the default branch's `.suiteward.yml`" or "the current contract". It shows the missing patterns and the updated file.
+    - The text gives the next step as a copyable command. Before V1 that is `/suiteward propose`, once the change is committed. After V1, the owner approves the new revision SuiteWard posts.
+    - The command also writes a **`scope-review`** under the same rules as the checks job: the PR's diff shows `.suiteward.yml` in block style with a list item line inside a hunk, the lines are inserted into the head's file, and patterns already listed are skipped. The key is the same `scope-review:<repository id>:<pull>:<set digest>`, so a notice and a command for the same set post one review.
+  - **`nothing-uncovered`:** a short ack saying that the base covers every test-like path of the head.
+
+  The `declared` ack field is no longer written. It still decodes in older messages.
 - Neither disposition is counted by `LatestOwnerCommand`. A `suggest` on a project with no Suite records `suggested` with the no-suite acknowledgment.
 
 **Links and submodules** ([D-SCOPE](../plan/decisions.md#d-scope-declaration-and-source-inventory-semantics), amended 2026-10-17). `inventory`'s manifest decides a non-file entry as follows:

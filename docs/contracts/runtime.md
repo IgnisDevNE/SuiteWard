@@ -487,6 +487,12 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - **Every other reason keeps precedence:** `invalid-source`, `integrity-failed`, `not-current` and the rest.
 - **The summary** lists the runner files, at most 20, and gives the two ways out: protect them by committing the suggested declaration and approving it, or exclude them by adding the paths to `exclude` and approving it. It never claims tests ran.
 - **The scope notice** for the same head is unchanged, and still carries the suggested declaration.
+- **Two one-click choices** (owner, 2026-10-18). Each choice is a declaration to commit and approve:
+  - **protect:** the base plus the runner family patterns;
+  - **ignore:** the base plus the paths themselves in `exclude`, with the list created when it is missing.
+  - **When the PR's diff shows `.suiteward.yml`** in block style, with lines a suggestion can anchor to, SuiteWard posts both as `scope-review` suggestions. Each one has its own marker suffix, `:protect` or `:ignore`.
+  - **When it does not**, the `runner-uncovered` comment gives both full declarations to copy, with the edit link.
+  - **The comment** is one `github_comment` per head set, key `runner-uncovered:<repository id>:<pull>:<review digest>`.
 - **Resolution** is by the usual flow: the next head's assessment sees the changed scope.
 
 **Outbox `github_comment`, key `invalid-source:<repository id>:<pull>:<problem digest>` (new, 2026-10-18, live run 5).**

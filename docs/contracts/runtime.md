@@ -494,6 +494,10 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - **When it does not**, the `runner-uncovered` comment gives both full declarations to copy, with the edit link.
   - **The comment** is one `github_comment` per head set, key `runner-uncovered:<repository id>:<pull>:<review digest>`.
 - **Resolution** is by the usual flow: the next head's assessment sees the changed scope.
+- **Which scope decides "covered".** It is the head's own declaration. This is sound because a head can be `success` only when it is `unchanged` (its declaration bytes equal the canonical's) or `ready` (the owner approved that exact revision, its declaration included). An approved reduction that drops a runner pattern therefore blocks, which fails closed.
+- **What counts as a runner file.** A runner file is a regular file or a symbolic link whose name is a runner-family name. A link counts too, so `conftest.py -> other.py` cannot slip past.
+- **The ignore choice** excludes only the file itself: a path with no slash is written anchored, as `/conftest.py`.
+- **The copyable declarations** start from the canonical. For a head whose own approved declaration differs from the canonical, the review suggestions apply to the head's file, while pasting a copy block would revert those edits. The comment says so.
 
 **Outbox `github_comment`, key `invalid-source:<repository id>:<pull>:<problem digest>` (new, 2026-10-18, live run 5).**
 - **When it is written.** When the checks job publishes `failure` with reason `invalid-source` for an open, non-fork PR, it also writes one comment that explains the problem.

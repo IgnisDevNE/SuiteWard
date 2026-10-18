@@ -743,7 +743,11 @@ type revisionPayload struct {
 	ModifiedTotal int      `json:"modifiedTotal"`
 	RemovedTotal  int      `json:"removedTotal"`
 	Reduced       bool     `json:"reduced"`
-	Tier          string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
+	// ReducedRules, ReducedPaths and ReducedPathsTotal detail a reduction, bounded like the lists above; only with Reduced.
+	ReducedRules      []string `json:"reducedRules,omitempty"`
+	ReducedPaths      []string `json:"reducedPaths,omitempty"`
+	ReducedPathsTotal int      `json:"reducedPathsTotal,omitempty"`
+	Tier              string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
 }
 
 // revision maps the payload to the values the renderer takes. The renderer checks the rest and panics on what cannot be stored.
@@ -757,11 +761,15 @@ func (p revisionPayload) revision() (commandtext.Revision, error) {
 	case owner.TierCoLocated:
 		tier = commandtext.CoLocated
 	}
-	if p.validate() != nil || !validReference || !validCanonical || tier == 0 || min(p.AddedTotal, p.ModifiedTotal, p.RemovedTotal) < 0 {
+	if p.validate() != nil || !validReference || !validCanonical || tier == 0 || min(p.AddedTotal, p.ModifiedTotal, p.RemovedTotal, p.ReducedPathsTotal) < 0 {
 		return commandtext.Revision{}, errors.New("the reference, the base version, a total or the tier is invalid")
 	}
+	if !p.Reduced && (len(p.ReducedRules) > 0 || len(p.ReducedPaths) > 0 || p.ReducedPathsTotal != 0) {
+		return commandtext.Revision{}, errors.New("reduction detail on a revision that does not reduce the scope")
+	}
 	return commandtext.Revision{Proposal: proposal, Revision: revision, Previous: p.Previous, Canonical: canonical, Added: p.Added, Modified: p.Modified, Removed: p.Removed,
-		AddedTotal: p.AddedTotal, ModifiedTotal: p.ModifiedTotal, RemovedTotal: p.RemovedTotal, Reduced: p.Reduced, Tier: tier}, nil
+		AddedTotal: p.AddedTotal, ModifiedTotal: p.ModifiedTotal, RemovedTotal: p.RemovedTotal, Reduced: p.Reduced, Tier: tier,
+		ReducedRules: p.ReducedRules, ReducedPaths: p.ReducedPaths, ReducedPathsTotal: p.ReducedPathsTotal}, nil
 }
 
 // text renders the comment of the payload stored under key, without quoting the payload in an error.
@@ -783,6 +791,7 @@ func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, 
 	p := revisionPayload{commentTarget: target, Reference: referenceText(notice.Reference), Canonical: string(notice.Canonical),
 		Added: boundedText(notice.Added), Modified: boundedText(notice.Modified), Removed: boundedText(notice.Removed),
 		AddedTotal: len(notice.Added), ModifiedTotal: len(notice.Modified), RemovedTotal: len(notice.Removed), Reduced: notice.Reduced, Tier: tier}
+	p.ReducedRules, p.ReducedPaths, p.ReducedPathsTotal = boundedText(notice.ReducedRules), boundedText(notice.ReducedPaths), len(notice.ReducedPaths)
 	if notice.Previous != nil {
 		p.Previous = referenceText(*notice.Previous)
 	}

@@ -128,7 +128,8 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 		reference := revised.Current
 		if revised.Committed {
 			notice := RevisionNotice{Reference: reference, Previous: previous, Canonical: version, Added: classification.Added, Modified: classification.Modified,
-				Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction}
+				Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction,
+				ReducedRules: classification.ReducedRules, ReducedPaths: classification.ReducedPaths}
 			message, send, err := request.Revision(notice)
 			if err != nil {
 				return fmt.Errorf("build the revision comment: %w", err)

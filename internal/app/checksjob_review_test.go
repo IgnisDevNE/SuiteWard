@@ -117,9 +117,10 @@ func TestChecksStripTheLineBreakOfAWindowsFileFromTheAnchor(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
 
-	w.scopePull(cjHead2, reviewFiles(strings.ReplaceAll(reviewDecl, "\n", "\r\n"), cjUtilTst), bootFiles("v1"))
+	windows := strings.ReplaceAll(reviewDecl, "\n", "\r\n")
+	w.scopePull(cjHead2, reviewFiles(windows, cjUtilTst), bootFiles("v1"))
 
-	w.wantReview(reviewDecl, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
+	w.wantReview(windows, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 }
 
 func TestChecksWriteAScopeNoticeButNoReviewWhenTheDiffGivesNoLineToSuggestOn(t *testing.T) {

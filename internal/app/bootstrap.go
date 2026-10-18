@@ -136,6 +136,22 @@ func cutBytes(s string, limit int) string {
 	return s[:cut] + cutMarker
 }
 
+// maxOutboxPayload is what a message of the comment kinds that carry repository text may marshal to: the outbox takes 64 KiB, and
+// JSON writes <, > and & as six bytes, so text that is long in escapes could fill it. A payload over it cannot be rendered.
+const maxOutboxPayload = 60 << 10
+
+// marshalPayload encodes a payload, and refuses one over maxOutboxPayload.
+func marshalPayload(payload any) ([]byte, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxOutboxPayload {
+		return nil, fmt.Errorf("the payload is %d bytes, over %d", len(raw), maxOutboxPayload)
+	}
+	return raw, nil
+}
+
 // boundedText returns at most maxSummaryRun entries of list, each cut to maxSummaryText bytes; never nil, so the
 // payload holds an array.
 func boundedText(list []string) []string { return boundedTextTo(list, maxSummaryText) }

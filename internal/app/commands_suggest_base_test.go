@@ -325,7 +325,7 @@ func TestSuggestAfterTheFirstContractAddsNoSecondReviewForASetTheChecksJobReview
 func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 	t.Run("a failure that will repeat drops only the review", func(t *testing.T) {
 		w := newCjWorld(t)
-		w.trees(bootFiles("v1"), reviewFiles(reviewDecl, cjUtilTst))
+		w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewDecl, cjUtilTst))
 		reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
 		reader.err = &rest.StatusError{Status: 500, Body: bootSecret}
 		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
@@ -343,7 +343,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 	})
 	t.Run("a rate limit waits for the next run", func(t *testing.T) {
 		w := newCjWorld(t)
-		w.trees(bootFiles("v1"), reviewFiles(reviewDecl, cjUtilTst))
+		w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewDecl, cjUtilTst))
 		reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
 		reader.err = &rest.RateLimitedError{Status: 403}
 		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
@@ -407,14 +407,14 @@ func TestCommentPublisherRefusesASuggestReplyWithABaseThatDoesNotFit(t *testing.
 		return payload
 	}
 	for name, extra := range map[string]map[string]any{
-		"an unknown base":                   notice("base", "canonical"),
-		"new patterns without a base":       notice("base", nil),
+		"an unknown base":                      notice("base", "canonical"),
+		"new patterns without a base":          notice("base", nil),
 		"an unknown base on nothing uncovered": {"disposition": "suggested", "reason": "nothing-uncovered", "base": "canonical"},
-		"a base on a missing declaration":   {"disposition": "suggested", "reason": "declaration-missing", "branch": "feature", "base": "pull"},
-		"new patterns on nothing uncovered": {"disposition": "suggested", "reason": "nothing-uncovered", "addInclude": []string{"*_test.go"}},
-		"21 new patterns":                   notice("addInclude", strings.Split(strings.Repeat("x,", 21), ",")[:21]),
-		"a base on a refusal":               {"disposition": "suggest-refused", "reason": "invalid-source", "base": "pull"},
-		"a declared flag with a base":       notice("declared", true),
+		"a base on a missing declaration":      {"disposition": "suggested", "reason": "declaration-missing", "branch": "feature", "base": "pull"},
+		"new patterns on nothing uncovered":    {"disposition": "suggested", "reason": "nothing-uncovered", "addInclude": []string{"*_test.go"}},
+		"21 new patterns":                      notice("addInclude", strings.Split(strings.Repeat("x,", 21), ",")[:21]),
+		"a base on a refusal":                  {"disposition": "suggest-refused", "reason": "invalid-source", "base": "pull"},
+		"a declared flag with a base":          notice("declared", true),
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCmtWorld(t)

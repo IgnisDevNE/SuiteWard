@@ -125,8 +125,12 @@ func TestNothingUncoveredNamesTheBaseWhenThereIsOne(t *testing.T) {
 	if body := ack(0); !strings.Contains(body, "is in the scope already") {
 		t.Errorf("without a base the words are the old ones:\n%s", body)
 	}
-	mustPanic(t, func() { commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.NothingUncovered, Owner: owner, Source: source, Base: commandtext.BaseDefaultBranch + 1}) })
-	mustPanic(t, func() { commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Skipped, Owner: owner, Source: source, Base: commandtext.BasePull}) })
+	mustPanic(t, func() {
+		commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.NothingUncovered, Owner: owner, Source: source, Base: commandtext.BaseDefaultBranch + 1})
+	})
+	mustPanic(t, func() {
+		commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Skipped, Owner: owner, Source: source, Base: commandtext.BasePull})
+	})
 }
 
 // Without a base the notice is the checks job's, which says nothing of a command.

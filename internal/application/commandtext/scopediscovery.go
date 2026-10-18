@@ -116,18 +116,21 @@ func ScopeNoticeComment(n ScopeNotice) string {
 	return replyTo(paragraphs(parts...), n.Source)
 }
 
+// baseNames are how a reply names the base the head was compared with, and how it names that base's file.
+func baseNames(base ScopeBase) (subject, file string) {
+	switch base {
+	case BasePull:
+		return "this pull request's `.suiteward.yml`", "this pull request's `.suiteward.yml`"
+	case BaseDefaultBranch:
+		return "the default branch's `.suiteward.yml`", "the default branch's `.suiteward.yml`"
+	}
+	return "the current contract", "the current canonical `.suiteward.yml`"
+}
+
 // scopeSuggestReply renders the notice as the reply of /suiteward suggest: it names the base the head was compared with, shows
 // the patterns that base lacks and the declaration with them, and ends with the next step. declaration ends with a newline.
 func scopeSuggestReply(n ScopeNotice, declaration string) string {
-	subject, file := "the current contract", "the current canonical `.suiteward.yml`"
-	switch n.Base {
-	case BasePull:
-		subject = "this pull request's `.suiteward.yml`"
-		file = subject
-	case BaseDefaultBranch:
-		subject = "the default branch's `.suiteward.yml`"
-		file = subject
-	}
+	subject, file := baseNames(n.Base)
 	parts := []string{
 		"`/suiteward suggest`: compared with " + subject + ", the head of this pull request has test-like files that are not covered. Nothing changed.",
 		listingAndMore("Test-like files in this pull request's head that "+subject+" does not cover", n.Paths, n.PathsTotal),
@@ -148,27 +151,24 @@ func scopeSuggestReply(n ScopeNotice, declaration string) string {
 	if len(n.Submodules) > 0 {
 		parts = append(parts, submodulesWarning(n.Submodules))
 	}
-	if n.Base == BaseDefaultBranch { // the file is not on the branch, so there is nothing to edit, and a link that carries the declaration could outgrow what browsers accept
-		parts = append(parts, "`.suiteward.yml` is not on this pull request's branch yet. [Open GitHub's page for a new file there]("+newFileLink(n.Repo, n.Branch)+") and paste the declaration. "+
-			"SuiteWard never commits it for you: the commit is yours.")
-	} else {
+	if n.Base != BaseDefaultBranch { // that file is neither on this pull request's branch nor in its diff: no link to edit it here, no review on it
 		parts = append(parts, "To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it]("+editLink(n.Repo, n.Branch)+") and paste the declaration. "+
-			"SuiteWard never commits it for you: the commit is yours.")
+			"SuiteWard never commits it for you: the commit is yours.",
+			"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts these lines as a review comment, and GitHub's **Commit suggestion** button applies them in one click.")
 	}
-	parts = append(parts, "When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts these lines as a review comment, and GitHub's **Commit suggestion** button applies them in one click.")
 	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
-	if n.Base == BaseContract {
+	switch n.Base {
+	case BaseContract:
 		parts = append(parts, "Committing it creates a protected change: approve the new revision SuiteWard posts, like any other change to the protected files. Nothing is protected until that change is approved and promoted.")
-	} else {
+	case BasePull:
 		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
 			"Once the file is committed on this branch, comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
+	case BaseDefaultBranch:
+		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
+			"The first contract is proposed from the default branch's `.suiteward.yml`, so put this declaration on the default branch first: commit or merge it there. SuiteWard never commits it for you: the commit is yours. "+
+				"Then comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	}
 	return replyTo(paragraphs(parts...), n.Source)
-}
-
-// newFileLink is GitHub's page for a new .suiteward.yml on a branch, without content.
-func newFileLink(repo, branch string) string {
-	return "https://github.com/" + repo + "/new/" + pathEscape(branch) + "?filename=.suiteward.yml"
 }
 
 // editLink is GitHub's editor for .suiteward.yml on a branch; the branch is path-escaped segment by segment.

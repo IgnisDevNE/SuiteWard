@@ -191,9 +191,14 @@ func (a ackPayload) scopeNotice() bool {
 	return a.Disposition == string(commands.Suggested) && a.Reason == reasonScopeNotice
 }
 
-// hasNotice is whether the payload holds any field that only a scope notice uses.
+// nothingUncovered is whether the payload is the answer of a suggest that found every test-like path covered.
+func (a ackPayload) nothingUncovered() bool {
+	return a.Disposition == string(commands.Suggested) && a.Reason == reasonNothingUncovered
+}
+
+// hasNotice is whether the payload holds any field that only a scope notice uses. Base is not one: nothing-uncovered names it too.
 func (a ackPayload) hasNotice() bool {
-	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != "" || a.Base != "" || len(a.AddInclude) != 0 || len(a.AddRunner) != 0
+	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != "" || len(a.AddInclude) != 0 || len(a.AddRunner) != 0
 }
 
 // notice is what the renderer takes for a scope-notice payload.
@@ -221,7 +226,7 @@ func (a ackPayload) validate() error {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
-		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared {
+		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared || a.Base != "" {
 			return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
 		}
 		return nil
@@ -242,15 +247,18 @@ func (a ackPayload) validate() error {
 			return errors.New("the reference is not P<n>-R<m>")
 		}
 	}
+	if _, known := scopeBases[a.Base]; !known && a.Base != "" {
+		return errors.New("the base is unknown")
+	}
 	switch {
 	case a.scopeNotice():
 		return a.validateNotice()
 	case !a.declarationMissing():
-		if a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared {
+		if a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered()) {
 			return errors.New("the branch, the suggestion and the notice fit only a missing declaration or a scope notice")
 		}
 		return nil
-	case a.hasNotice():
+	case a.hasNotice() || a.Base != "":
 		return errors.New("a missing declaration holds no scope notice")
 	case a.Declared && a.Disposition != string(commands.Suggested):
 		return errors.New("only a suggest states that a declaration exists")
@@ -274,9 +282,6 @@ func (a ackPayload) validateNotice() error {
 		return errors.New("a scope notice holds no suggestion, no reference and no declared flag")
 	case a.PathsTotal < len(a.Paths):
 		return errors.New("the total is below the listed paths")
-	}
-	if _, known := scopeBases[a.Base]; !known && a.Base != "" {
-		return errors.New("the base is unknown")
 	}
 	for _, text := range slices.Concat(a.Paths, a.Mixed, a.Submodules, a.AddInclude, a.AddRunner) {
 		if len(text) > maxSummaryText {
@@ -339,11 +344,16 @@ func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch, 
 		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner)})
 }
 
+// newNothingUncoveredAck builds the answer of a suggest that found the base (pull, default-branch or contract) to cover every test-like path.
+func newNothingUncoveredAck(target commentTarget, comment int64, ownerLogin, base string) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonNothingUncovered, Base: base})
+}
+
 func newAck(p ackPayload) (governance.OutboxMessage, error) {
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("acknowledgment: %w", err)
 	}
-	payload, err := json.Marshal(p)
+	payload, err := marshalPayload(p)
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the acknowledgment: %w", err)
 	}
@@ -607,7 +617,7 @@ func (p *commentPublisher) receipt(ctx context.Context, key string, a ackPayload
 // rejectedAckOf maps a validated rejected payload to the acknowledgment it states.
 func rejectedAckOf(a ackPayload) commandtext.Ack {
 	d := commands.Disposition(a.Disposition)
-	ack := commandtext.Ack{Outcome: rejectedOutcomes[d], Owner: a.Owner, Source: a.Comment}
+	ack := commandtext.Ack{Outcome: rejectedOutcomes[d], Owner: a.Owner, Source: a.Comment, Base: scopeBases[a.Base]}
 	if d == commands.UnknownProposal { // the text of UnknownRevision is true for a proposal that does not exist
 		ack.Rejection = commandtext.UnknownRevision
 	}

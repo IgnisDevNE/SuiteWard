@@ -96,7 +96,7 @@ func newScopeNoticeMessage(target commentTarget, head, branch string, paths []st
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope notice: %w", err)
 	}
-	payload, err := json.Marshal(p)
+	payload, err := marshalPayload(p)
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the scope notice: %w", err)
 	}
@@ -166,7 +166,7 @@ func newScopeReviewMessage(target commentTarget, head, digest string, suggestion
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope review: %w", err)
 	}
-	payload, err := json.Marshal(p)
+	payload, err := marshalPayload(p)
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the scope review: %w", err)
 	}
@@ -260,17 +260,36 @@ type headScope struct {
 
 // discoverHead finds the uncovered test-like paths of tree, the head of a pull request, under the canonical of project.
 // The head's own declaration, when it is valid, only silences: a path it covers is not reported, though covering it still
-// needs the owner's approval. The head's file is read only when something is uncovered.
+// needs the owner's approval. The head's file is read only when something is uncovered. Only the checks job silences: the
+// suggest command compares strictly with the canonical, through discoverUnder.
 func discoverHead(ctx context.Context, suites governance.UnitOfWork, contents governance.ContentReader, project contract.ProjectID, tree inventory.Tree) (headScope, error) {
 	raw, governing, err := canonicalDeclaration(ctx, suites, contents, project)
 	if err != nil {
 		return headScope{}, err
 	}
-	return discoverUnder(ctx, tree, raw, governing)
+	found, err := discoverUnder(ctx, tree, raw, governing)
+	if err != nil || len(found.Paths) == 0 || !hasDeclaration(found.entries) {
+		return found, err
+	}
+	own, err := tree.Read(ctx, scope.DeclarationPath)
+	if err != nil {
+		return headScope{}, err
+	}
+	declaration, err := scope.ParseDeclaration(own)
+	switch {
+	case errors.Is(err, scope.ErrInvalidDeclaration): // the governing scope stays in force
+	case err != nil:
+		return headScope{}, err
+	default:
+		if found.Paths, err = withoutCovered(found.Paths, scope.NewScope(declaration)); err != nil {
+			return headScope{}, err
+		}
+	}
+	return found, nil
 }
 
-// discoverUnder is discoverHead under the declaration raw, which declares governing. A command before the first contract passes
-// the head's own file, which then silences nothing more than it already covers.
+// discoverUnder finds the test-like paths of tree, the head of a pull request, that the declaration raw, which declares governing,
+// does not cover, with the mixed files and the submodules of the head. It consults no other declaration.
 func discoverUnder(ctx context.Context, tree inventory.Tree, raw []byte, governing scope.Scope) (headScope, error) {
 	entries, err := tree.Entries(ctx)
 	if err != nil {
@@ -279,22 +298,6 @@ func discoverUnder(ctx context.Context, tree inventory.Tree, raw []byte, governi
 	paths, err := inventory.Uncovered(entries, governing)
 	if err != nil {
 		return headScope{}, fmt.Errorf("find the uncovered paths: %w", err)
-	}
-	if len(paths) > 0 && hasDeclaration(entries) {
-		own, err := tree.Read(ctx, scope.DeclarationPath)
-		if err != nil {
-			return headScope{}, err
-		}
-		declaration, err := scope.ParseDeclaration(own)
-		switch {
-		case errors.Is(err, scope.ErrInvalidDeclaration): // the governing scope stays in force
-		case err != nil:
-			return headScope{}, err
-		default:
-			if paths, err = withoutCovered(paths, scope.NewScope(declaration)); err != nil {
-				return headScope{}, err
-			}
-		}
 	}
 	suggested := inventory.Suggest(entries)
 	return headScope{entries: entries, Paths: paths, Mixed: suggested.Mixed, Submodules: suggested.Submodules, base: raw}, nil

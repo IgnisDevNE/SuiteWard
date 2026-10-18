@@ -287,3 +287,13 @@ func TestMergeCommentKeepsItsExistingTexts(t *testing.T) {
 		}
 	}
 }
+
+// A submodule is never invalid and a symlink only when the scope reaches it and its target is no regular file of the tree
+// (docs/contracts/runtime.md, "Links and submodules"), so the text says no more.
+func TestMergeCommentForAnInvalidSourceStatesTheAmendedLinkRule(t *testing.T) {
+	text := mergeText(t, blocked("invalid-source"))
+
+	if strings.Contains(text, "submodule") || !strings.Contains(text, "a symlink that the protected scope reaches and whose target is not a regular file of the tree") {
+		t.Errorf("the comment mentions a submodule or lacks the amended link rule:\n%s", text)
+	}
+}

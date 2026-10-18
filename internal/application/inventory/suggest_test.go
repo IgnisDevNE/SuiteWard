@@ -349,7 +349,19 @@ func TestSuggestCoversSuiteWardsOwnTests(t *testing.T) {
 		t.Fatalf("checked %d paths, the fixture lost its tests", checked)
 	}
 	// Expected misses, by design: the path-only detector knows no convention for PowerShell scripts or linter configuration.
-	t.Logf("expected misses, not asserted: scripts/*.ps1, .golangci.yml; suggestion: %v %v", got.Include, got.Runner)
+	// This pins the documented limit, so it cannot drift silently; when a rule starts covering them, update the documentation too.
+	missed := 0
+	for _, entry := range entries {
+		if (strings.HasPrefix(entry.Path, "scripts/") && strings.HasSuffix(entry.Path, ".ps1")) || entry.Path == ".golangci.yml" {
+			missed++
+			if ok, err := covering.Covers(entry.Path); err != nil || ok {
+				t.Errorf("Covers(%q) = %v, %v; want the documented miss", entry.Path, ok, err)
+			}
+		}
+	}
+	if missed < 2 {
+		t.Fatalf("found %d expected misses in the fixture, want scripts/*.ps1 and .golangci.yml", missed)
+	}
 }
 
 // TestUncoveredAgreesWithSuggest: a scope made of the suggestion leaves no test-like path uncovered.
@@ -392,14 +404,24 @@ func TestUncovered(t *testing.T) {
 		want        []string
 	}{
 		{"empty input", "", nil, none},
-		{"only test-like paths, sorted", "", regulars("main.go", "z/b_test.go", "a/testdata/x.json", "README.md", "jest.config.js", "package.json", "a/c.spec.ts"),
-			[]string{"a/c.spec.ts", "a/testdata/x.json", "z/b_test.go"}},
+		{"test-like and runner paths, sorted", "", regulars("main.go", "z/b_test.go", "a/testdata/x.json", "README.md", "jest.config.js", "package.json", "a/c.spec.ts"),
+			[]string{"a/c.spec.ts", "a/testdata/x.json", "jest.config.js", "z/b_test.go"}},
 		{"covered paths are left out", "version: 1\ninclude: ['**/*_test.go']\nrunner: [jest.config.*]\n", regulars("a_test.go", "pkg/b_test.go", "c.test.ts", "jest.config.js"),
 			[]string{"c.test.ts"}},
 		{"the defaults are covered", "", regulars(".github/workflows/x_test.go", "x/.github/workflows/y_test.go"), []string{"x/.github/workflows/y_test.go"}},
 		{"an excluded path is never reported", "version: 1\ninclude: [docs/]\nexclude: [gen/, '*.generated_test.go']\n",
 			regulars("gen/a_test.go", "pkg/x.generated_test.go", "pkg/y_test.go", "docs/z_test.go"), []string{"pkg/y_test.go"}},
 		{"vendored paths and non-files are never reported", "", append(regulars("node_modules/a/x.test.js", "vendor/y_test.go", ".venv/z/test_a.py"), symlink("a_test.go"), submodule("testdata/s")), none},
+		{"a new root conftest.py outside the scope", "version: 1\ninclude: ['**/test_*.py']\n", regulars("conftest.py", "tests/test_a.py", "pkg/pytest.toml"), []string{"conftest.py", "pkg/pytest.toml"}},
+		{"every runner group is reported", "", regulars(
+			"pytest.ini", "a/.pytest.toml", "jest.config.ts", "vitest.config.ts", "vitest.workspace.ts", ".mocharc.json", "karma.conf.js", "playwright.config.ts",
+			"cypress.config.ts", ".coveragerc", ".nycrc.json", ".c8rc.json", "phpunit.xml", "phpunit.xml.dist", "phpunit.dist.xml", ".rspec", "spec_helper.rb",
+			"rails_helper.rb", "test_helper.exs", "dart_test.yaml", "codecov.yml", ".codecov.yml", "package.json", "tox.ini"),
+			[]string{
+				".c8rc.json", ".codecov.yml", ".coveragerc", ".mocharc.json", ".nycrc.json", ".rspec", "a/.pytest.toml", "codecov.yml", "cypress.config.ts", "dart_test.yaml",
+				"jest.config.ts", "karma.conf.js", "phpunit.dist.xml", "phpunit.xml", "phpunit.xml.dist", "playwright.config.ts", "pytest.ini", "rails_helper.rb",
+				"spec_helper.rb", "test_helper.exs", "vitest.config.ts", "vitest.workspace.ts"}},
+		{"an excluded or vendored runner file is never reported", "version: 1\nexclude: [legacy/]\n", regulars("legacy/conftest.py", "node_modules/x/jest.config.js", ".venv/conftest.py", "conftest.py"), []string{"conftest.py"}},
 		{"a nested tests directory needs a test-named file", "", regulars("pkg/tests/data.txt", "tests/data.txt", "pkg/tests/a_test.go"), []string{"pkg/tests/a_test.go", "tests/data.txt"}},
 	}
 	for _, tt := range tests {

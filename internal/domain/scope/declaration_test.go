@@ -343,3 +343,27 @@ func TestARunnerPatternThatMatchesNoFileIsValid(t *testing.T) {
 		}
 	}
 }
+
+// Live run 4: conftest.py went in unquoted among double-quoted items. A list whose items all share one quoting style gets its new items in it.
+func TestAddPatternsFollowsTheQuotingOfTheListsItems(t *testing.T) {
+	tests := []struct {
+		name, items, want string
+	}{
+		{"double quotes", "  - \"a\"\n  - \"b\"\n", "  - \"a\"\n  - \"b\"\n  - \"conftest.py\"\n  - \"*_test.go\"\n"},
+		{"single quotes", "  - 'a'\n  - 'b'\n", "  - 'a'\n  - 'b'\n  - 'conftest.py'\n  - '*_test.go'\n"},
+		{"plain", "  - a\n  - b\n", "  - a\n  - b\n  - conftest.py\n  - '*_test.go'\n"}, // yaml.v3 itself quotes a leading star
+		{"mixed", "  - \"a\"\n  - b\n", "  - \"a\"\n  - b\n  - conftest.py\n  - '*_test.go'\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := scope.AddPatterns([]byte("version: 1\nrunner:\n"+tt.items), nil, []string{"conftest.py", "*_test.go"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "version: 1\nrunner:\n" + tt.want; string(got) != want {
+				t.Fatalf("AddPatterns =\n%s\nwant\n%s", got, want)
+			}
+			mustParse(t, got)
+		})
+	}
+}

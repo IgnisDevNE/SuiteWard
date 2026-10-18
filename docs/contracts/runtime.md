@@ -430,8 +430,10 @@ The order is deterministic: directory patterns first, then file patterns, each g
 **Command `/suiteward suggest`.** It is owner only and takes no code. The parser accepts the verb without argument. An extra token is `ExtraText`, as for `propose`.
 - **`suggest-refused`** is recorded with a short ack that names the reason and quotes no repository text. It is never retried. The reasons are:
   - `fork` or `not-open`, as for `propose`;
-  - `invalid-source`: the tree is invalid or truncated, or the canonical has no declaration;
-  - `declaration-too-large`: the declaration is over 8192 bytes, or the notice cannot be rendered.
+  - `invalid-source`: the tree is invalid or truncated, the canonical has no declaration, or the reply cannot be rendered (an unusable branch name, for example);
+  - `declaration-too-large`: the suggested declaration is over 8192 bytes.
+
+  A canonical that fails its integrity check gets no reply: the command is retried, then recorded `failed`, like any other failure.
 - Otherwise it records **`suggested`**, and its ack replies to the command. Before V1 its reason is `declaration-missing`: the suggested declaration for that PR, built from the head tree or else the default branch. The ack adds `declared`, true when a `.suiteward.yml` already exists on the default branch or in the head, and the text says so. After V1:
   - reason `scope-notice`: the scope notice for the head's uncovered paths, not filtered by the base. The ack fields are `paths`, `pathsTotal`, `declaration`, `cut` and `mixed`. No `scope-review` is written.
   - reason `nothing-uncovered`: a short ack saying that every test-like path of the head is in the scope.

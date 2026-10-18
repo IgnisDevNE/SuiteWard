@@ -46,9 +46,11 @@ const (
 	ProposeRefused   Disposition = "propose-refused"   // owner-authored /suiteward propose that was refused; no operation id
 	Skipped          Disposition = "skipped"           // owner-authored /suiteward skip with a good code: the PR may merge before the first contract; no operation id
 	SkipRefused      Disposition = "skip-refused"      // owner-authored /suiteward skip that was refused; no operation id
+	Suggested        Disposition = "suggested"         // owner-authored /suiteward suggest that was answered (or could not be, for a fixed reason); no operation id, never a command for the check
+	SuggestRefused   Disposition = "suggest-refused"   // owner-authored /suiteward suggest on a fork or a closed pull request; no operation id, never a command for the check
 )
 
-var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused}
+var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused}
 
 // Dispositions returns every disposition.
 func Dispositions() []Disposition { return slices.Clone(dispositions) }

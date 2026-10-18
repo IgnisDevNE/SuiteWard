@@ -165,7 +165,7 @@ func TestSuggestAfterTheFirstContractSaysWhenNothingIsUncovered(t *testing.T) {
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
 
-	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "nothing-uncovered"})
+	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "nothing-uncovered", "base": "contract"})
 }
 
 func TestSuggestIsRefusedForAForkAndAClosedPullRequestBeforeAnyTreeIsRead(t *testing.T) {

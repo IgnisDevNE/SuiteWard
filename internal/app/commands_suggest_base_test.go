@@ -12,12 +12,13 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // /suiteward suggest compares the head with a base declaration (docs/contracts/runtime.md, "Scope discovery (M1.9)", Command
-// /suiteward suggest): the head's own .suiteward.yml, else the default branch's, before the first contract, and the canonical
-// after it. The reply shows the difference, and a scope-review offers it as a Commit suggestion when the pull request already
+// /suiteward suggest): before the first contract the default branch's .suiteward.yml, else the head's own, as a propose picks its
+// source, and strictly the canonical after it. The reply shows the difference, and a scope-review offers it as a Commit suggestion when the pull request already
 // edits the file.
 
 // cjFiles is the reader of a commands world with the pull request's changed files under test control.
@@ -97,9 +98,9 @@ func addPatterns(t *testing.T, raw string, include, runner []string) string {
 
 var suggestInclude = suggestion("include", 3, "  - /tests/**", "*_test.go")
 
-func TestSuggestBeforeTheFirstContractComparesTheHeadWithItsOwnDeclaration(t *testing.T) {
+func TestSuggestBeforeTheFirstContractComparesTheHeadWithItsOwnDeclarationWhenTheDefaultBranchHasNone(t *testing.T) {
 	w := newCjWorld(t)
-	w.trees(bootFiles("v1"), reviewFiles(reviewDecl, cjUtilTst))
+	w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewDecl, cjUtilTst))
 	reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
 	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 	w.mustRun()
@@ -108,8 +109,8 @@ func TestSuggestBeforeTheFirstContractComparesTheHeadWithItsOwnDeclaration(t *te
 		"declaration": addPatterns(t, reviewDecl, []string{"*_test.go"}, nil), "addInclude": []string{"*_test.go"}})
 	w.requireReview(cjID1, cjHead, []string{cjUtilTst}, suggestInclude)
 	w.requireNoNoticeKey()
-	if reader.calls != 1 || w.reader.calls["head"] != 0 {
-		t.Fatalf("%d reads of the changed files and %d of the default branch; want 1 and 0: the head's file is the base", reader.calls, w.reader.calls["head"])
+	if reader.calls != 1 || w.reader.calls["head"] != 1 {
+		t.Fatalf("%d reads of the changed files and %d of the default branch; want 1 and 1: the default branch is read first, and has no file", reader.calls, w.reader.calls["head"])
 	}
 	if len(w.owners.consumed) != 0 {
 		t.Fatalf("consumed %v; a suggestion uses no code", w.owners.consumed)
@@ -119,7 +120,7 @@ func TestSuggestBeforeTheFirstContractComparesTheHeadWithItsOwnDeclaration(t *te
 
 func TestSuggestBeforeTheFirstContractListsTheMissingRunnerPatternsToo(t *testing.T) {
 	w := newCjWorld(t)
-	w.trees(bootFiles("v1"), reviewFiles(reviewBoth, cjUtilTst, "conftest.py"))
+	w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewBoth, cjUtilTst, "conftest.py"))
 	w.pullFiles(changed("@@ -1,5 +1,5 @@"))
 	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 	w.mustRun()
@@ -143,7 +144,7 @@ func TestSuggestWritesNoReviewWhenThePullRequestGivesNoLineToSuggestOn(t *testin
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
-			w.trees(bootFiles("v1"), reviewFiles(tc.decl, cjUtilTst))
+			w.trees(map[string]string{"README.md": "x"}, reviewFiles(tc.decl, cjUtilTst))
 			w.pullFiles(tc.files)
 			w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 			w.mustRun()
@@ -175,9 +176,10 @@ func TestSuggestBeforeTheFirstContractSaysNothingIsUncoveredWhenTheBaseCoversThe
 	for _, tc := range []struct {
 		name       string
 		main, head map[string]string
+		base       string
 	}{
-		{"the head's own declaration", bootFiles("v1"), bootFiles("v2")},
-		{"the default branch's declaration", bootFiles("v1"), map[string]string{"tests/a_test.go": "x", "src/main.go": "y"}},
+		{"the head's own declaration", map[string]string{"README.md": "x"}, bootFiles("v2"), "pull"},
+		{"the default branch's declaration", bootFiles("v1"), map[string]string{"tests/a_test.go": "x", "src/main.go": "y"}, "default-branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -186,12 +188,40 @@ func TestSuggestBeforeTheFirstContractSaysNothingIsUncoveredWhenTheBaseCoversThe
 			w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 			w.mustRun()
 
-			w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "nothing-uncovered"})
+			w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "nothing-uncovered", "base": tc.base})
 			if keys := w.scopeMessagesKeys("scope-"); len(keys) != 0 || reader.calls != 0 {
 				t.Fatalf("scope messages %v and %d reads of the changed files; want none", keys, reader.calls)
 			}
 		})
 	}
+}
+
+// A propose proposes the default branch's file when it has one, and so a suggest compares with it first: the head's own file, valid
+// or not, is not the base then.
+func TestSuggestBeforeTheFirstContractPrefersTheDefaultBranchsDeclarationToTheHeads(t *testing.T) {
+	t.Run("a head file that covers more", func(t *testing.T) {
+		w := newCjWorld(t)
+		w.trees(bootFiles("v1"), reviewFiles("version: 1\ninclude:\n  - /tests/**\n  - \"*_test.go\"\n", cjUtilTst)) // the head's file covers the new test, the default branch's does not
+		reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
+		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
+		w.mustRun()
+
+		w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "default-branch", "paths": []string{cjUtilTst}, "pathsTotal": 1,
+			"declaration": addPatterns(t, cjDecl, []string{"*_test.go"}, nil), "addInclude": []string{"*_test.go"}})
+		// The review edits the head's file, which is not the base here: none is offered.
+		if keys := w.scopeMessagesKeys("scope-"); len(keys) != 0 || reader.calls != 0 {
+			t.Fatalf("scope messages %v and %d reads of the changed files; want none", keys, reader.calls)
+		}
+	})
+	t.Run("a head file that is invalid", func(t *testing.T) {
+		w := newCjWorld(t)
+		w.trees(bootFiles("v1"), reviewFiles("version: 2\n"))
+		w.pullFiles(nil)
+		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
+		w.mustRun()
+
+		w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "nothing-uncovered", "base": "default-branch"})
+	})
 }
 
 func TestSuggestBeforeTheFirstContractRefusesAnInvalidDeclarationAsInvalidSource(t *testing.T) {
@@ -200,9 +230,9 @@ func TestSuggestBeforeTheFirstContractRefusesAnInvalidDeclarationAsInvalidSource
 		name       string
 		main, head map[string]string
 	}{
-		{"the head's declaration is invalid", bootFiles("v1"), reviewFiles(invalid, cjUtilTst)},
-		{"the head's declaration is invalid although the default branch's is valid", bootFiles("v1"), reviewFiles(invalid)},
+		{"the head's declaration is invalid and the default branch has none", map[string]string{"README.md": "x"}, reviewFiles(invalid, cjUtilTst)},
 		{"the default branch's declaration is invalid and the head has none", withDeclaration(bootFiles("v1"), invalid), map[string]string{cjUtilTst: "x"}},
+		{"the default branch's declaration is invalid although the head's is valid", withDeclaration(bootFiles("v1"), invalid), reviewFiles(reviewDecl, cjUtilTst)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -238,6 +268,24 @@ func TestSuggestAfterTheFirstContractNeverStartsTheDeclarationFromTheHeadsFile(t
 	w.requireNoNoticeKey()
 	if len(w.owners.consumed) != 0 {
 		t.Fatalf("consumed %v; a suggestion uses no code", w.owners.consumed)
+	}
+}
+
+// After the first contract the base is the canonical and nothing else: a path that only the head's own file covers is still reported,
+// where the checks job's notice leaves it out because the owner's approval of that very file is what is pending.
+func TestSuggestAfterTheFirstContractReportsAPathOnlyTheHeadsFileCovers(t *testing.T) {
+	headDecl := "version: 1\ninclude:\n  - /tests/**\n  - \"*_test.go\"\n"
+	w := newCjWorld(t)
+	w.seedDeclared(cjID2, cjDecl, reviewFiles(headDecl, cjUtilTst))
+	w.pullFiles(changed("@@ -1,4 +1,4 @@"))
+	w.syncAll(nil, cjSuggest(500, cjAt(10)))
+	w.mustRun()
+
+	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract", "paths": []string{cjUtilTst}, "pathsTotal": 1,
+		"declaration": addPatterns(t, cjDecl, []string{"*_test.go"}, nil), "addInclude": []string{"*_test.go"}})
+	// The head's list already holds the pattern, so there is nothing to suggest on its line.
+	if keys := w.scopeMessagesKeys("scope-"); len(keys) != 0 {
+		t.Fatalf("scope messages %v; want none", keys)
 	}
 }
 
@@ -318,7 +366,7 @@ func TestCommentPublisherRendersTheSuggestReplyWithABase(t *testing.T) {
 		other []string
 	}{
 		{"this pull request's file", "pull", []string{"this pull request's `.suiteward.yml` does not cover", "```\n/suiteward propose\n```", "Commit suggestion", "/edit/feature/x/.suiteward.yml"}, []string{"the default branch's", "the current contract"}},
-		{"the default branch's file", "default-branch", []string{"the default branch's `.suiteward.yml` does not cover", "```\n/suiteward propose\n```", "/new/feature/x?filename=.suiteward.yml"}, []string{"this pull request's `.suiteward.yml`", "the current contract"}},
+		{"the default branch's file", "default-branch", []string{"the default branch's `.suiteward.yml` does not cover", "default branch first", "```\n/suiteward propose\n```"}, []string{"this pull request's `.suiteward.yml`", "the current contract", "Commit suggestion", "/new/", "/edit/"}},
 		{"the canonical", "contract", []string{"the current contract does not cover", "approve the new revision SuiteWard posts", "Commit suggestion"}, []string{"/suiteward propose", "the default branch's"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -361,7 +409,7 @@ func TestCommentPublisherRefusesASuggestReplyWithABaseThatDoesNotFit(t *testing.
 	for name, extra := range map[string]map[string]any{
 		"an unknown base":                   notice("base", "canonical"),
 		"new patterns without a base":       notice("base", nil),
-		"a base on nothing uncovered":       {"disposition": "suggested", "reason": "nothing-uncovered", "base": "pull"},
+		"an unknown base on nothing uncovered": {"disposition": "suggested", "reason": "nothing-uncovered", "base": "canonical"},
 		"a base on a missing declaration":   {"disposition": "suggested", "reason": "declaration-missing", "branch": "feature", "base": "pull"},
 		"new patterns on nothing uncovered": {"disposition": "suggested", "reason": "nothing-uncovered", "addInclude": []string{"*_test.go"}},
 		"21 new patterns":                   notice("addInclude", strings.Split(strings.Repeat("x,", 21), ",")[:21]),
@@ -378,5 +426,63 @@ func TestCommentPublisherRefusesASuggestReplyWithABaseThatDoesNotFit(t *testing.
 				t.Fatal("a comment was posted")
 			}
 		})
+	}
+}
+
+// The outbox takes at most 64 KiB of payload, and JSON writes <, > and & as six bytes: a payload that would not fit is not renderable. A
+// suggestion that cannot be rendered is refused, and the checks job skips its notice, instead of failing the same write on every run.
+func escapedWorstCase(unit string) (paths, mixed, submodules []string, declaration []byte) {
+	long := make([]string, 20)
+	for i := range long {
+		long[i] = strings.Repeat(unit, 150/len(unit))
+	}
+	return long, long, long, []byte("version: 1\n# " + strings.Repeat(unit, 8000/len(unit)) + "\n")
+}
+
+func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
+	for _, unit := range []string{"<", "\x01"} {
+		paths, mixed, submodules, declaration := escapedWorstCase(unit)
+		if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", paths, declaration, inventory.Suggestion{}, mixed, submodules); err == nil {
+			t.Errorf("unit %q: the acknowledgment is accepted", unit)
+		}
+		if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err == nil {
+			t.Errorf("unit %q: the scope notice is accepted", unit)
+		}
+	}
+	// What fits is still written: plain text of the same sizes, and the largest review.
+	paths, mixed, submodules, declaration := escapedWorstCase("a")
+	if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", paths, declaration, inventory.Suggestion{Include: paths}, mixed, submodules); err != nil {
+		t.Errorf("the acknowledgment of plain text: %v", err)
+	}
+	if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err != nil {
+		t.Errorf("the scope notice of plain text: %v", err)
+	}
+	var suggestions []scopeSuggestion
+	for _, list := range []string{"include", "runner"} {
+		patterns := make([]string, 20)
+		for i := range patterns {
+			patterns[i] = strings.Repeat("a", 99) + fmt.Sprint(i%10)
+		}
+		suggestions = append(suggestions, scopeSuggestion{List: list, Line: 3, Anchor: "  - " + strings.Repeat("a", 900), Patterns: patterns})
+	}
+	if _, err := newScopeReviewMessage(cmtTarget(), cmtScopeHead, scopeDigest("x"), suggestions); err != nil {
+		t.Errorf("the largest review: %v", err)
+	}
+}
+
+func TestSuggestRefusesAnAnswerTheOutboxCouldNotTake(t *testing.T) {
+	var tests []string
+	for i := range 20 {
+		tests = append(tests, fmt.Sprintf("<%02d%s/x_test.go", i, strings.Repeat("<", 120)))
+	}
+	_, _, _, declaration := escapedWorstCase("<")
+	w := newCjWorld(t)
+	w.seedDeclared(cjID2, "version: 1\ninclude: [/tests/**]\n"+strings.TrimPrefix(string(declaration), "version: 1\n"), withFiles(bootFiles("v1"), tests...))
+	w.syncAll(nil, cjSuggest(500, cjAt(10)))
+	w.mustRun()
+
+	w.requireAckPayload(cjID2, 500, commands.SuggestRefused, map[string]any{"reason": "invalid-source"})
+	if !strings.Contains(w.logs.String(), "github suggest refused") {
+		t.Fatalf("no log line says the suggestion was refused\nlogs: %s", w.logs)
 	}
 }

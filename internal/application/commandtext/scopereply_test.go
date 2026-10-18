@@ -74,20 +74,34 @@ func TestScopeReplyEndsWithTheNextStep(t *testing.T) {
 	}
 }
 
-func TestScopeReplyMentionsTheOneClickCommitSuggestion(t *testing.T) {
-	for _, base := range []commandtext.ScopeBase{commandtext.BasePull, commandtext.BaseDefaultBranch, commandtext.BaseContract} {
+func TestScopeReplyMentionsTheOneClickCommitSuggestionWhenTheHeadsFileIsTheBase(t *testing.T) {
+	for _, base := range []commandtext.ScopeBase{commandtext.BasePull, commandtext.BaseContract} {
 		if body := noticeText(t, reply(base)); !strings.Contains(body, "Commit suggestion") {
 			t.Errorf("base %d: the body does not mention GitHub's Commit suggestion:\n%s", base, body)
 		}
 	}
+	// The default branch's file is not in this pull request's diff: nothing is suggested there.
+	if body := noticeText(t, reply(commandtext.BaseDefaultBranch)); strings.Contains(body, "Commit suggestion") || strings.Contains(body, "review comment") {
+		t.Errorf("the body offers a review suggestion for the default branch's file:\n%s", body)
+	}
 }
 
-// The default branch's file is not on the pull request's branch, so its editor link would be a 404, and the declaration may be too
-// large for a link that carries it: the link opens GitHub's new-file page for .suiteward.yml, to paste into.
-func TestScopeReplyForTheDefaultBranchOpensTheNewFilePageWithoutTheDeclaration(t *testing.T) {
-	raw, u := editorLink(t, noticeText(t, reply(commandtext.BaseDefaultBranch)))
-	if u.Host != "github.com" || u.Path != "/octo-org/widgets/new/feature/add-tests" || u.Query().Get("filename") != ".suiteward.yml" || u.Query().Has("value") {
-		t.Errorf("the link is %q, want the new-file page of .suiteward.yml on the branch, without a value", raw)
+// The first contract is proposed from the default branch's file, so the change has to reach that branch first. The branch is not
+// in the payload, so there is no link to it: the file is shown to copy.
+func TestScopeReplyForTheDefaultBranchSaysTheChangeMustReachTheDefaultBranchFirst(t *testing.T) {
+	body := noticeText(t, reply(commandtext.BaseDefaultBranch))
+	for _, w := range []string{"default branch first", "commit or merge", "```\n/suiteward propose\n```"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	for _, w := range []string{"new file", "this pull request's branch", "editor"} {
+		if strings.Contains(body, w) {
+			t.Errorf("body says %q, which is not where the change goes:\n%s", w, body)
+		}
+	}
+	if links := linkPattern.FindAllString(body, -1); len(links) != 0 {
+		t.Errorf("the body links %v; want no link", links)
 	}
 	for _, base := range []commandtext.ScopeBase{commandtext.BasePull, commandtext.BaseContract} {
 		raw, u := editorLink(t, noticeText(t, reply(base)))
@@ -95,6 +109,24 @@ func TestScopeReplyForTheDefaultBranchOpensTheNewFilePageWithoutTheDeclaration(t
 			t.Errorf("base %d: the link is %q, want the editor of .suiteward.yml on the branch", base, raw)
 		}
 	}
+}
+
+func TestNothingUncoveredNamesTheBaseWhenThereIsOne(t *testing.T) {
+	ack := func(base commandtext.ScopeBase) string {
+		return render(t, func() string {
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.NothingUncovered, Owner: owner, Source: source, Base: base})
+		})
+	}
+	for base, subject := range map[commandtext.ScopeBase]string{commandtext.BasePull: "this pull request's `.suiteward.yml`", commandtext.BaseDefaultBranch: "the default branch's `.suiteward.yml`", commandtext.BaseContract: "the current contract"} {
+		if body := ack(base); !strings.Contains(body, "covered by "+subject) || strings.Contains(body, "in the scope already") {
+			t.Errorf("base %d: the body does not name %q:\n%s", base, subject, body)
+		}
+	}
+	if body := ack(0); !strings.Contains(body, "is in the scope already") {
+		t.Errorf("without a base the words are the old ones:\n%s", body)
+	}
+	mustPanic(t, func() { commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.NothingUncovered, Owner: owner, Source: source, Base: commandtext.BaseDefaultBranch + 1}) })
+	mustPanic(t, func() { commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Skipped, Owner: owner, Source: source, Base: commandtext.BasePull}) })
 }
 
 // Without a base the notice is the checks job's, which says nothing of a command.

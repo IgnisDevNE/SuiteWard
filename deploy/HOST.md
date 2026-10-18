@@ -462,7 +462,7 @@ The same scenario, one target at a time, as in 6b.5: stop the host's watching, s
 
 - **No check on a head:** read `github[].checks` in `/status`, the outbox (`outbox.failed`) and the synchronization's `lastSuccess`; the check waits behind them.
 - **A check stays `in_progress` after you approved:** the command may not be processed yet (allow 1 to 2 minutes), or the approval was for another revision than the one in the check. A rejected code shows `failure`, "Owner command rejected" (read the acknowledgment).
-- **`failure`, "Invalid contract source":** `.suiteward.yml` is invalid, or a symlink or submodule is in scope.
+- **`failure`, "Invalid contract source":** `.suiteward.yml` is invalid, or a symbolic link that the scope can reach points to a directory, outside the repository or to nothing (D-SCOPE, amended in M1.9; submodules are outside the scope).
 - **`in_progress`, "Source unavailable":** GitHub truncated the tree.
 - **Conflicting checks, or two acknowledgments for one command:** two instances watch the repository. Stop one (6b.1).
 

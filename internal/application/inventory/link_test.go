@@ -172,6 +172,7 @@ func TestBuildLeavesSubmodulesOutOfScope(t *testing.T) {
 	}
 }
 
+// A suggested runner pattern may match no file (D-SCOPE-DISCOVERY); the integrity check builds on this inventory.
 func TestBuildAcceptsARunnerPatternThatMatchesNoFile(t *testing.T) {
 	tree := newTree(t, regular(declaration, "version: 1\nrunner: [pytest.toml, jest.config.*]\n"), regular("src/main.go", "m"))
 

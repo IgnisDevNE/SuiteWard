@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strconv"
@@ -95,7 +96,7 @@ func newScopeNoticeMessage(target commentTarget, head, branch string, paths []st
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope notice: %w", err)
 	}
-	payload, err := json.Marshal(p)
+	payload, err := marshalPayload(p)
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the scope notice: %w", err)
 	}
@@ -165,7 +166,7 @@ func newScopeReviewMessage(target commentTarget, head, digest string, suggestion
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope review: %w", err)
 	}
-	payload, err := json.Marshal(p)
+	payload, err := marshalPayload(p)
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the scope review: %w", err)
 	}
@@ -243,8 +244,9 @@ func canonicalDeclaration(ctx context.Context, suites governance.UnitOfWork, con
 	return raw, scope.NewScope(declaration), nil
 }
 
-// headScope is what scope discovery finds in the head of a pull request under the canonical contract. The checks job uses
-// it for the scope notice, and the suggest command of the commands job can use it for the same answer.
+// headScope is what scope discovery finds in the head of a pull request under a base declaration: the canonical's, for the
+// checks job's scope notice, and before the first contract the suggest command's own pick (the head's file or the default
+// branch's).
 type headScope struct {
 	entries []inventory.Entry
 	// Paths are the test-like paths that neither the governing scope nor the head's own valid declaration covers, sorted.
@@ -253,17 +255,42 @@ type headScope struct {
 	Mixed []string
 	// Submodules are the submodules of the head (at most 20) that the patterns Suggest builds from the head reach: their contents are outside the scope.
 	Submodules []string
-	canonical  []byte // the canonical's declaration, which a suggested declaration starts from
+	base       []byte // the base declaration, which a suggested declaration starts from: never the head's file after the first contract
 }
 
 // discoverHead finds the uncovered test-like paths of tree, the head of a pull request, under the canonical of project.
 // The head's own declaration, when it is valid, only silences: a path it covers is not reported, though covering it still
-// needs the owner's approval. The head's file is read only when something is uncovered.
+// needs the owner's approval. The head's file is read only when something is uncovered. Only the checks job silences: the
+// suggest command compares strictly with the canonical, through discoverUnder.
 func discoverHead(ctx context.Context, suites governance.UnitOfWork, contents governance.ContentReader, project contract.ProjectID, tree inventory.Tree) (headScope, error) {
 	raw, governing, err := canonicalDeclaration(ctx, suites, contents, project)
 	if err != nil {
 		return headScope{}, err
 	}
+	found, err := discoverUnder(ctx, tree, raw, governing)
+	if err != nil || len(found.Paths) == 0 || !hasDeclaration(found.entries) {
+		return found, err
+	}
+	own, err := tree.Read(ctx, scope.DeclarationPath)
+	if err != nil {
+		return headScope{}, err
+	}
+	declaration, err := scope.ParseDeclaration(own)
+	switch {
+	case errors.Is(err, scope.ErrInvalidDeclaration): // the governing scope stays in force
+	case err != nil:
+		return headScope{}, err
+	default:
+		if found.Paths, err = withoutCovered(found.Paths, scope.NewScope(declaration)); err != nil {
+			return headScope{}, err
+		}
+	}
+	return found, nil
+}
+
+// discoverUnder finds the test-like paths of tree, the head of a pull request, that the declaration raw, which declares governing,
+// does not cover, with the mixed files and the submodules of the head. It consults no other declaration.
+func discoverUnder(ctx context.Context, tree inventory.Tree, raw []byte, governing scope.Scope) (headScope, error) {
 	entries, err := tree.Entries(ctx)
 	if err != nil {
 		return headScope{}, err
@@ -272,24 +299,8 @@ func discoverHead(ctx context.Context, suites governance.UnitOfWork, contents go
 	if err != nil {
 		return headScope{}, fmt.Errorf("find the uncovered paths: %w", err)
 	}
-	if len(paths) > 0 && hasDeclaration(entries) {
-		own, err := tree.Read(ctx, scope.DeclarationPath)
-		if err != nil {
-			return headScope{}, err
-		}
-		declaration, err := scope.ParseDeclaration(own)
-		switch {
-		case errors.Is(err, scope.ErrInvalidDeclaration): // the governing scope stays in force
-		case err != nil:
-			return headScope{}, err
-		default:
-			if paths, err = withoutCovered(paths, scope.NewScope(declaration)); err != nil {
-				return headScope{}, err
-			}
-		}
-	}
 	suggested := inventory.Suggest(entries)
-	return headScope{entries: entries, Paths: paths, Mixed: suggested.Mixed, Submodules: suggested.Submodules, canonical: raw}, nil
+	return headScope{entries: entries, Paths: paths, Mixed: suggested.Mixed, Submodules: suggested.Submodules, base: raw}, nil
 }
 
 // withoutCovered returns the paths that s does not cover, in order.
@@ -307,15 +318,15 @@ func withoutCovered(paths []string, s scope.Scope) ([]string, error) {
 	return kept, nil
 }
 
-// declaration returns the canonical declaration with the new patterns for paths added, and the suggestion those patterns
-// come from. It never starts from the head's file.
+// declaration returns the base declaration with the new patterns for paths added, and the suggestion those patterns
+// come from. After the first contract the base is the canonical's, never the head's file.
 func (h headScope) declaration(paths []string) (inventory.Suggestion, []byte, error) {
 	entries := make([]inventory.Entry, len(paths))
 	for i, path := range paths {
 		entries[i] = inventory.Entry{Path: path, Kind: inventory.File}
 	}
 	suggestion := inventory.Suggest(entries)
-	declaration, err := scope.AddPatterns(h.canonical, suggestion.Include, suggestion.Runner)
+	declaration, err := scope.AddPatterns(h.base, suggestion.Include, suggestion.Runner)
 	return suggestion, declaration, err
 }
 
@@ -395,11 +406,16 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
 	}
-	reviews, err := j.scopeReview(ctx, p, pull, head, found, suggestion, setDigest(added))
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github checks scope review", target, pull.HeadSHA, head, found, suggestion, setDigest(added))
 	if err != nil {
 		return err
 	}
-	return j.outboxOnce(ctx, project, append([]governance.OutboxMessage{notice}, reviews...))
+	return outboxOnce(ctx, j.suites, project, append([]governance.OutboxMessage{notice}, reviews...))
+}
+
+// pullFileReader is the part of the GitHub reader that lists the files a pull request changes.
+type pullFileReader interface {
+	PullFiles(ctx context.Context, repo string, number int) ([]github.PullFile, error)
 }
 
 // scopeReview builds the review suggestions that go with a notice, as at most one message: for each list of the head's
@@ -407,7 +423,8 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 // (GitHub accepts a review comment only on such a line). This is the only place that starts from the head's file. A list in flow
 // style, a head whose file is invalid or missing from the diff, and a list with no new pattern or no item in a hunk give none.
 // A failed read of the pull request's files costs only the review, unless it says to wait.
-func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, head *githubTree, found headScope, s inventory.Suggestion, digest string) ([]governance.OutboxMessage, error) {
+// The checks job and the suggest command share it, each with its own prefix for the log lines.
+func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger, logPrefix string, target commentTarget, headSHA string, head *githubTree, found headScope, s inventory.Suggestion, digest string) ([]governance.OutboxMessage, error) {
 	if !hasDeclaration(found.entries) {
 		return nil, nil
 	}
@@ -426,21 +443,21 @@ func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull
 		return nil, fmt.Errorf("read the head's %s as YAML: %w", scope.DeclarationPath, err)
 	}
 	top := root.Content[0] // ParseDeclaration accepted own: one document holding a mapping
-	files, err := j.reader.PullFiles(ctx, p.Repo, pull.Number)
+	changed, err := files.PullFiles(ctx, target.Repo, target.Pull)
 	if err != nil {
 		if kind := readFailure(err).Kind; kind == githubsync.FailureRateLimited || kind == githubsync.FailureBudgetExhausted {
 			return nil, githubRead(err)
 		}
-		logReadFailure(ctx, j.logger, "github checks scope review skipped: the files of the pull request cannot be read", p.Repo, err)
+		logReadFailure(ctx, logger, logPrefix+" skipped: the files of the pull request cannot be read", target.Repo, err)
 		return nil, nil
 	}
-	i := slices.IndexFunc(files, func(f github.PullFile) bool { return f.Path == scope.DeclarationPath })
+	i := slices.IndexFunc(changed, func(f github.PullFile) bool { return f.Path == scope.DeclarationPath })
 	if i < 0 {
 		return nil, nil
 	}
-	hunks, err := files[i].NewLineRanges()
+	hunks, err := changed[i].NewLineRanges()
 	if err != nil {
-		j.logger.WarnContext(ctx, "github checks scope review skipped: the diff of the declaration cannot be read", "repo", p.Repo, "pull", pull.Number)
+		logger.WarnContext(ctx, logPrefix+" skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull)
 		return nil, nil
 	}
 	var suggestions []scopeSuggestion
@@ -455,9 +472,9 @@ func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull
 	if len(suggestions) == 0 {
 		return nil, nil
 	}
-	message, err := newScopeReviewMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}, pull.HeadSHA, digest, suggestions)
+	message, err := newScopeReviewMessage(target, headSHA, digest, suggestions)
 	if err != nil {
-		j.logger.WarnContext(ctx, "github checks scope review skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
+		logger.WarnContext(ctx, logPrefix+" skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
 		return nil, nil
 	}
 	return []governance.OutboxMessage{message}, nil
@@ -523,9 +540,12 @@ func (j *checksJob) absentFromBase(ctx context.Context, repo, baseSHA string, pa
 }
 
 // outboxOnce writes the messages in one unit of work, unless the key of the first exists: a repeated decision writes nothing.
-// The first is the notice, written before the messages that depend on it, so its conflict undoes nothing else.
-func (j *checksJob) outboxOnce(ctx context.Context, project contract.ProjectID, messages []governance.OutboxMessage) error {
-	err := j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+// The first is the notice, written before the messages that depend on it, so its conflict undoes nothing else. No message is no write.
+func outboxOnce(ctx context.Context, suites governance.UnitOfWork, project contract.ProjectID, messages []governance.OutboxMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	err := suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
 		for _, message := range messages {
 			if err := tx.Outbox(ctx, message); err != nil {
 				return err

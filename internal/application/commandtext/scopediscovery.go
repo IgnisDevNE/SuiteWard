@@ -15,6 +15,16 @@ const MaxDeclaration = 8192
 // cutWarning is the line that SuggestDeclaration shows for a list cut at the limit, word for word.
 const cutWarning = "This list was cut at the limit of 20 patterns, so test-like paths may be missing from it. Please review it and add what is missing."
 
+// ScopeBase says what the reply of /suiteward suggest compared the head with. The zero value is no base: the notice the
+// checks job writes, which is not a reply to a command.
+type ScopeBase int
+
+const (
+	BasePull          ScopeBase = iota + 1 // the head's own .suiteward.yml, before the first contract
+	BaseContract                           // the canonical declaration, after the first contract
+	BaseDefaultBranch                      // the default branch's .suiteward.yml, before the first contract, when the head has none
+)
+
 // ScopeNotice is what the scope-notice comment states. Repo (owner/name) and Branch (the pull request's head ref) build
 // the editor link. Paths holds at most 20 of the PathsTotal test-like paths that the current contract does not protect,
 // each already cut by the caller; a total below the list is taken as its length. Declaration is the full declaration to
@@ -30,6 +40,11 @@ type ScopeNotice struct {
 	Mixed       []string
 	Submodules  []string
 	Cut         bool // the limit of 20 patterns cut the new patterns, so the declaration may lack some
+	// Base, with a Source, makes the notice the reply of /suiteward suggest: it names the base, lists AddInclude and AddRunner
+	// (the patterns the base lacks, at most 20 together) and ends with the next step. Without a base both lists stay empty.
+	Base       ScopeBase
+	AddInclude []string
+	AddRunner  []string
 }
 
 // ValidateScopeNotice reports why ScopeNoticeComment would panic on n, as an error: a caller that stores the notice
@@ -50,6 +65,14 @@ func ValidateScopeNotice(n ScopeNotice) error {
 		return fmt.Errorf("commandtext: %d submodules, at most %d", len(n.Submodules), maxListed)
 	case len(n.Declaration) == 0 || len(n.Declaration) > MaxDeclaration || !utf8.Valid(n.Declaration):
 		return fmt.Errorf("commandtext: a declaration of %d bytes is empty, over %d bytes or not UTF-8", len(n.Declaration), MaxDeclaration)
+	case n.Base < 0 || n.Base > BaseDefaultBranch:
+		return fmt.Errorf("commandtext: base %d is unknown", n.Base)
+	case n.Base != 0 && n.Source == 0:
+		return errors.New("commandtext: a base states the reply to a command")
+	case n.Base == 0 && len(n.AddInclude)+len(n.AddRunner) > 0:
+		return errors.New("commandtext: new patterns are listed only with a base")
+	case len(n.AddInclude)+len(n.AddRunner) > maxListed:
+		return fmt.Errorf("commandtext: %d new patterns, at most %d", len(n.AddInclude)+len(n.AddRunner), maxListed)
 	}
 	return nil
 }
@@ -66,6 +89,9 @@ func ScopeNoticeComment(n ScopeNotice) string {
 	declaration := string(n.Declaration)
 	if !strings.HasSuffix(declaration, "\n") {
 		declaration += "\n"
+	}
+	if n.Base != 0 {
+		return scopeSuggestReply(n, declaration)
 	}
 	parts := []string{
 		"**SuiteWard scope notice**",
@@ -87,6 +113,61 @@ func ScopeNoticeComment(n ScopeNotice) string {
 		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.",
 		"This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.",
 	)
+	return replyTo(paragraphs(parts...), n.Source)
+}
+
+// baseNames are how a reply names the base the head was compared with, and how it names that base's file.
+func baseNames(base ScopeBase) (subject, file string) {
+	switch base {
+	case BasePull:
+		return "this pull request's `.suiteward.yml`", "this pull request's `.suiteward.yml`"
+	case BaseDefaultBranch:
+		return "the default branch's `.suiteward.yml`", "the default branch's `.suiteward.yml`"
+	}
+	return "the current contract", "the current canonical `.suiteward.yml`"
+}
+
+// scopeSuggestReply renders the notice as the reply of /suiteward suggest: it names the base the head was compared with, shows
+// the patterns that base lacks and the declaration with them, and ends with the next step. declaration ends with a newline.
+func scopeSuggestReply(n ScopeNotice, declaration string) string {
+	subject, file := baseNames(n.Base)
+	parts := []string{
+		"`/suiteward suggest`: compared with " + subject + ", the head of this pull request has test-like files that are not covered. Nothing changed.",
+		listingAndMore("Test-like files in this pull request's head that "+subject+" does not cover", n.Paths, n.PathsTotal),
+	}
+	if len(n.AddInclude) > 0 {
+		parts = append(parts, "Patterns missing from the `include` list:\n\n"+fencedLines(n.AddInclude))
+	}
+	if len(n.AddRunner) > 0 {
+		parts = append(parts, "Patterns missing from the `runner` list:\n\n"+fencedLines(n.AddRunner))
+	}
+	parts = append(parts, "SuiteWard suggests this declaration, "+file+" with the missing patterns added. Review it and change it as needed:\n\n"+fenced(declaration))
+	if n.Cut {
+		parts = append(parts, cutWarning)
+	}
+	if len(n.Mixed) > 0 {
+		parts = append(parts, mixedWarning(n.Mixed))
+	}
+	if len(n.Submodules) > 0 {
+		parts = append(parts, submodulesWarning(n.Submodules))
+	}
+	if n.Base != BaseDefaultBranch { // that file is neither on this pull request's branch nor in its diff: no link to edit it here, no review on it
+		parts = append(parts, "To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it]("+editLink(n.Repo, n.Branch)+") and paste the declaration. "+
+			"SuiteWard never commits it for you: the commit is yours.",
+			"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts these lines as a review comment, and GitHub's **Commit suggestion** button applies them in one click.")
+	}
+	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
+	switch n.Base {
+	case BaseContract:
+		parts = append(parts, "Committing it creates a protected change: approve the new revision SuiteWard posts, like any other change to the protected files. Nothing is protected until that change is approved and promoted.")
+	case BasePull:
+		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
+			"Once the file is committed on this branch, comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
+	case BaseDefaultBranch:
+		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
+			"The first contract is proposed from the default branch's `.suiteward.yml`, so put this declaration on the default branch first: commit or merge it there. SuiteWard never commits it for you: the commit is yours. "+
+				"Then comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
+	}
 	return replyTo(paragraphs(parts...), n.Source)
 }
 

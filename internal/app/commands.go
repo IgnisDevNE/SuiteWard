@@ -59,6 +59,7 @@ type commandsJob struct {
 type commandsReader interface {
 	BranchHead(ctx context.Context, repo, branch string) (string, error)
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
+	pullFileReader // the scope review of a suggest
 }
 
 // commandFailure counts the consecutive failed attempts of one candidate.
@@ -626,12 +627,21 @@ var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 // errDeclarationTooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration).
 var errDeclarationTooLarge = errors.New("the suggested declaration is too large")
 
+// The codes of the base of a suggest (ackPayload.Base): what the head was compared with.
+const (
+	basePull          = "pull"           // the head's own .suiteward.yml, before the first contract
+	baseDefaultBranch = "default-branch" // the default branch's, before the first contract, when the head has none
+	baseContract      = "contract"       // the canonical's, after the first contract
+)
+
 // suggest decides a /suiteward suggest (docs/contracts/runtime.md, "Scope discovery (M1.9)"). It is owner only and takes no code, so it reads
-// no step and grants nothing: a fork or a closed pull request is refused, and otherwise the acknowledgment is the suggested declaration.
-// Before the first contract that is the suggestion of a propose that finds no declaration, built from the head's tree, in the words of a suggest; afterwards it is the scope
-// notice of the head, with its whole uncovered set. A GitHub or store failure is an error of this candidate, like a propose. A source that
-// cannot be answered from is recorded as suggest-refused with a fixed reason and never retried: invalid-source (an invalid tree, a canonical
-// without a declaration, a notice that cannot be rendered) or declaration-too-large. Neither disposition is a command for the check.
+// no step and grants nothing: a fork or a closed pull request is refused, and otherwise the acknowledgment compares the head with a base declaration
+// (the canonical's after the first contract, before it the head's own file or else the default branch's) and shows only the difference. Before the
+// first contract with no declaration anywhere it is the suggestion of a propose that finds none, in the words of a suggest. A scope review, when the pull
+// request's diff gives a line for it, is written before the acknowledgment: the ledger takes one message, and a recorded command is never retried. A GitHub or store
+// failure is an error of this candidate, like a propose. A source that cannot be answered from is recorded as suggest-refused with a fixed reason and
+// never retried: invalid-source (an invalid tree or declaration, a canonical without a declaration, a notice that cannot be rendered) or
+// declaration-too-large. Neither disposition is a command for the check.
 func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
 	m, login := c.Comment, enrollment.Owner.Login
 	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
@@ -664,7 +674,7 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	case !view.pull.NotOpenSince.IsZero():
 		return refuse(reasonNotOpen)
 	}
-	ack, err := j.suggestion(ctx, target, c, login, view)
+	ack, reviews, err := j.suggestion(ctx, target, c, login, view)
 	switch {
 	case errors.Is(err, errDeclarationTooLarge):
 		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
@@ -678,68 +688,103 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	case err != nil:
 		return &opaque{what: "build the suggestion", cause: err}
 	}
+	if err := outboxOnce(ctx, j.suites, owner.ProjectID(c.RepositoryID), reviews); err != nil {
+		return &opaque{what: "write the scope review", cause: err}
+	}
 	return j.record(ctx, c, commands.Suggested, "", &ack)
 }
 
-// suggestion builds the acknowledgment of a suggest on an open pull request of the repository.
-func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c commands.Candidate, login string, view bootstrapView) (governance.OutboxMessage, error) {
+// suggestion builds the acknowledgment of a suggest on an open pull request of the repository, and the scope review that goes with it.
+// After the first contract the base is the canonical's declaration and nothing else. Before it the base is picked as a propose picks its
+// source: the default branch's .suiteward.yml when it has one, else the head's own. This grants nothing: only a propose binds.
+func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c commands.Candidate, login string, view bootstrapView) (governance.OutboxMessage, []governance.OutboxMessage, error) {
+	head, headEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
+	if err != nil {
+		return governance.OutboxMessage{}, nil, err
+	}
 	if view.canonical {
-		return j.scopeSuggestion(ctx, target, c, login, view.pull)
-	}
-	// Built from the head's tree, or from the default branch's when the head gives no pattern, whether or not a declaration exists. The
-	// default branch is read too, unless the head already holds a declaration, to say whether the owner has one to compare.
-	_, headEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
-	if err != nil {
-		return governance.OutboxMessage{}, err
-	}
-	suggestion, declared := inventory.Suggest(headEntries), hasDeclaration(headEntries)
-	if !declared || len(suggestion.Include)+len(suggestion.Runner) == 0 {
-		branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
-		if !ok {
-			return governance.OutboxMessage{}, errors.New("the suite does not target a branch")
-		}
-		head, err := j.reader.BranchHead(ctx, c.Repo, branch)
+		raw, governing, err := canonicalDeclaration(ctx, j.suites, j.contents, owner.ProjectID(c.RepositoryID))
 		if err != nil {
-			return governance.OutboxMessage{}, &opaque{what: "read the default branch head", cause: githubRead(err)}
+			return governance.OutboxMessage{}, nil, err
 		}
-		_, mainEntries, err := j.tree(ctx, c.Repo, head)
-		if err != nil {
-			return governance.OutboxMessage{}, err
-		}
-		declared = declared || hasDeclaration(mainEntries)
-		if len(suggestion.Include)+len(suggestion.Runner) == 0 {
-			suggestion = inventory.Suggest(mainEntries)
-		}
+		return j.compare(ctx, target, c, login, view, head, baseContract, raw, governing)
 	}
-	ack, err := newSuggestedDeclarationAck(target, c.Comment.CommentID, login, view.pull.HeadRef, suggestion, declared)
+	main, mainEntries, err := j.defaultBranchTree(ctx, c, view)
 	if err != nil {
-		return governance.OutboxMessage{}, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
+		return governance.OutboxMessage{}, nil, err
 	}
-	return ack, nil
+	var base string
+	var source *githubTree
+	switch {
+	case hasDeclaration(mainEntries):
+		base, source = baseDefaultBranch, main
+	case hasDeclaration(headEntries):
+		base, source = basePull, head
+	default: // nothing to compare with: the suggestion of a propose that finds no declaration
+		ack, err := declarationMissing(target, c, login, view.pull.HeadRef, headEntries, mainEntries)
+		return ack, nil, err
+	}
+	raw, err := source.Read(ctx, scope.DeclarationPath)
+	if err != nil {
+		return governance.OutboxMessage{}, nil, err
+	}
+	declaration, err := scope.ParseDeclaration(raw) // an invalid file is invalid-source
+	if err != nil {
+		return governance.OutboxMessage{}, nil, err
+	}
+	return j.compare(ctx, target, c, login, view, head, base, raw, scope.NewScope(declaration))
 }
 
-// scopeSuggestion is the answer after the first contract: the test-like paths of the head that the canonical does not protect, all of
-// them and not only those the pull request adds, with the canonical declaration widened to cover them.
-func (j *commandsJob) scopeSuggestion(ctx context.Context, target commentTarget, c commands.Candidate, login string, pull githubsync.PullState) (governance.OutboxMessage, error) {
-	read, err := j.reader.Tree(ctx, c.Repo, pull.HeadSHA)
+// compare answers a suggest by the test-like paths of the head that the base declaration raw, which declares governing, does not cover.
+// The review edits the head's file, so it goes only with a base that is that file or the canonical, never with the default branch's.
+func (j *commandsJob) compare(ctx context.Context, target commentTarget, c commands.Candidate, login string, view bootstrapView, head *githubTree, base string, raw []byte, governing scope.Scope) (governance.OutboxMessage, []governance.OutboxMessage, error) {
+	found, err := discoverUnder(ctx, head, raw, governing)
 	if err != nil {
-		return governance.OutboxMessage{}, &opaque{what: "read a tree", cause: githubRead(err)}
-	}
-	found, err := discoverHead(ctx, j.suites, j.contents, owner.ProjectID(c.RepositoryID), &githubTree{tree: read, files: map[string][]byte{}})
-	if err != nil {
-		return governance.OutboxMessage{}, err
+		return governance.OutboxMessage{}, nil, err
 	}
 	if len(found.Paths) == 0 {
-		return newBootstrapAck(target, c.Comment.CommentID, login, commands.Suggested, reasonNothingUncovered, "")
+		ack, err := newNothingUncoveredAck(target, c.Comment.CommentID, login, base)
+		return ack, nil, err
 	}
-	suggestion, declaration, err := found.declaration(found.Paths)
+	suggested, declaration, err := found.declaration(found.Paths)
 	if err != nil {
-		return governance.OutboxMessage{}, err
+		return governance.OutboxMessage{}, nil, err
 	}
 	if len(declaration) > commandtext.MaxDeclaration {
-		return governance.OutboxMessage{}, errDeclarationTooLarge
+		return governance.OutboxMessage{}, nil, errDeclarationTooLarge
 	}
-	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, pull.HeadRef, found.Paths, declaration, found.Mixed, found.Submodules, suggestion.Cut)
+	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, view.pull.HeadRef, base, found.Paths, declaration, suggested, found.Mixed, found.Submodules)
+	if err != nil {
+		return governance.OutboxMessage{}, nil, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
+	}
+	if base == baseDefaultBranch {
+		return ack, nil, nil
+	}
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested, setDigest(found.Paths))
+	return ack, reviews, err
+}
+
+// defaultBranchTree reads the tree of the head of the Suite's target branch, the default branch.
+func (j *commandsJob) defaultBranchTree(ctx context.Context, c commands.Candidate, view bootstrapView) (*githubTree, []inventory.Entry, error) {
+	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
+	if !ok {
+		return nil, nil, errors.New("the suite does not target a branch")
+	}
+	sha, err := j.reader.BranchHead(ctx, c.Repo, branch)
+	if err != nil {
+		return nil, nil, &opaque{what: "read the default branch head", cause: githubRead(err)}
+	}
+	return j.tree(ctx, c.Repo, sha)
+}
+
+// declarationMissing is the answer of a suggest before the first contract when no declaration exists to compare with: the suggestion of
+// a propose that finds none, built from the head's tree or else the default branch's.
+func declarationMissing(target commentTarget, c commands.Candidate, login, branch string, headEntries, mainEntries []inventory.Entry) (governance.OutboxMessage, error) {
+	suggested := inventory.Suggest(headEntries)
+	if len(suggested.Include)+len(suggested.Runner) == 0 {
+		suggested = inventory.Suggest(mainEntries)
+	}
+	ack, err := newDeclarationMissingAck(target, c.Comment.CommentID, login, branch, suggested, commands.Suggested)
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
 	}

@@ -88,6 +88,8 @@ type Ack struct {
 	Owner     string
 	Source    int64
 	Eligible  bool
+	// Base, only for NothingUncovered, names what the head was compared with; none is the words written before M1.9-E5.
+	Base ScopeBase
 	// Refusal is set exactly for ProposeRefused and SkipRefused.
 	Refusal Refusal
 }
@@ -234,7 +236,12 @@ func acknowledgment(a Ack) string {
 	case SuggestRefused:
 		return suggestRefusal(a.Refusal)
 	case NothingUncovered:
-		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is in the scope already, so there is nothing to suggest. Nothing changed.\n" +
+		covered := "in the scope already"
+		if a.Base != 0 {
+			subject, _ := baseNames(a.Base)
+			covered = "covered by " + subject + " already"
+		}
+		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is " + covered + ", so there is nothing to suggest. Nothing changed.\n" +
 			"This answer is not an approval, and SuiteWard does not run tests.")
 	case EditedFirst:
 		return paragraphs("Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.\n" +
@@ -269,6 +276,8 @@ func checkAck(a Ack) {
 		panic(fmt.Sprintf("commandtext: malformed reason %d does not fit outcome %d", a.Malformed, a.Outcome))
 	case (a.Outcome == BootstrapPromoted) != (a.Version != 0):
 		panic(fmt.Sprintf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome))
+	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered):
+		panic(fmt.Sprintf("commandtext: base %d does not fit outcome %d", a.Base, a.Outcome))
 	case !refusalFits(a.Outcome, a.Refusal):
 		panic(fmt.Sprintf("commandtext: refusal %d does not fit outcome %d", a.Refusal, a.Outcome))
 	case a.Outcome == BootstrapPromoted:

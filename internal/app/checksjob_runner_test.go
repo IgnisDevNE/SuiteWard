@@ -16,6 +16,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
@@ -53,7 +54,7 @@ func runnerDeclarations(t *testing.T, base string, paths ...string) (protect, ig
 	if err != nil {
 		t.Fatal(err)
 	}
-	i, err := scope.AddExcludes([]byte(base), paths)
+	i, err := scope.AddExcludes([]byte(base), anchored(paths))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +180,7 @@ func TestChecksKeepApprovalMissingFirstAndBlockOnlyAfterTheApprovalOfTheSameHead
 // approved (ready) can be success, so an exclude the owner has not approved never lets a runner file through.
 func TestChecksNeverLetTheHeadsOwnDeclarationApproveItsRunnerFile(t *testing.T) {
 	protecting := withDeclaration(withFiles(bootFiles("v1"), cjJest), "version: 1\ninclude: [/tests/**]\nrunner: [jest.config.*]\n")
-	ignoring := withDeclaration(withFiles(bootFiles("v1"), cjJest), "version: 1\ninclude: [/tests/**]\nexclude: [jest.config.js]\n")
+	ignoring := withDeclaration(withFiles(bootFiles("v1"), cjJest), "version: 1\ninclude: [/tests/**]\nexclude: [/jest.config.js]\n")
 	for name, files := range map[string]map[string]string{"protecting it": protecting, "ignoring it": ignoring} {
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)
@@ -363,7 +364,7 @@ func TestChecksDecideAgainAfterARestartWithoutAnotherComment(t *testing.T) {
 func TestChecksResolveARunnerBlockWhenTheNextHeadProtectsOrIgnoresTheFile(t *testing.T) {
 	for name, tc := range map[string]struct{ declaration, change string }{
 		"protect": {"version: 1\ninclude: [/tests/**]\nrunner: [jest.config.*]\n", "protected-change"},
-		"ignore":  {"version: 1\ninclude: [/tests/**]\nexclude: [jest.config.js]\n", "scope-reduction"},
+		"ignore":  {"version: 1\ninclude: [/tests/**]\nexclude: [/jest.config.js]\n", "scope-reduction"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)
@@ -463,7 +464,7 @@ func TestChecksSuggestBothChoicesThatCreateTheirListAfterTheLastItemInTheDiff(t 
 
 	got := w.wantRunnerReview(reviewDecl, []string{cjJest},
 		scopeSuggestion{List: "protect", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"jest.config.*"}, NewList: "runner"},
-		scopeSuggestion{List: "ignore", Line: 3, Anchor: "  - /tests/**", Patterns: []string{cjJest}, NewList: "exclude"})
+		scopeSuggestion{List: "ignore", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"/" + cjJest}, NewList: "exclude"})
 	protect, ignore := runnerDeclarations(t, cjDecl, cjJest)
 	for i, want := range []string{protect, ignore} {
 		applied, err := scope.ParseDeclaration([]byte(apply(t, reviewDecl, got[i])))
@@ -498,11 +499,11 @@ func TestChecksSuggestBothChoicesOnTheItemsOfTheListsThatExist(t *testing.T) {
 
 	got := w.wantRunnerReview(declaration, []string{cjJest},
 		scopeSuggestion{List: "protect", Line: 5, Anchor: "  - pytest.toml", Patterns: []string{"jest.config.*"}},
-		scopeSuggestion{List: "ignore", Line: 7, Anchor: "  - gen/", Patterns: []string{cjJest}})
+		scopeSuggestion{List: "ignore", Line: 7, Anchor: "  - gen/", Patterns: []string{"/" + cjJest}})
 	if applied := apply(t, declaration, got[0]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\n  - \"jest.config.*\"\nexclude:\n  - gen/\n" {
 		t.Errorf("protect applied gives %q", applied)
 	}
-	if applied := apply(t, declaration, got[1]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\nexclude:\n  - gen/\n  - \"jest.config.js\"\n" {
+	if applied := apply(t, declaration, got[1]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\nexclude:\n  - gen/\n  - \"/jest.config.js\"\n" {
 		t.Errorf("ignore applied gives %q", applied)
 	}
 	for _, s := range got {
@@ -622,4 +623,86 @@ func TestChecksLogWhyTheRunnerCommentIsSkippedAndKeepTheBlock(t *testing.T) {
 		w.wantRunnerKeys()
 		w.logged("runner-uncovered comment skipped")
 	})
+}
+
+// anchored is the exclude pattern that names exactly one path: a name without a slash would match at every depth, so it gets a leading slash.
+func anchored(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = p
+		if !strings.Contains(p, "/") {
+			out[i] = "/" + p
+		}
+	}
+	return out
+}
+
+// Ignoring a root file excludes that file only: approved, the declaration neither lifts the protection of a runner file that the include list
+// covers nor lets a later nested one of the same name through.
+func TestChecksIgnoreOnlyTheFileThatWasAskedAbout(t *testing.T) {
+	w := newCJWorld(t, true)
+
+	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), "conftest.py"), added("conftest.py")...)
+
+	w.want(5, checks.InProgress, "runner-uncovered", 1)
+	var payload struct {
+		Ignore string `json:"ignore"`
+	}
+	if err := json.Unmarshal(w.scopeMessages("runner-uncovered:")[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	declaration, err := scope.ParseDeclaration([]byte(payload.Ignore))
+	if err != nil {
+		t.Fatalf("ignore declaration %q: %v", payload.Ignore, err)
+	}
+	entries := []inventory.Entry{{Path: "conftest.py", Kind: inventory.File}, {Path: "tests/conftest.py", Kind: inventory.File}, {Path: "src/x/conftest.py", Kind: inventory.File}}
+	uncovered, err := inventory.UncoveredRunners(entries, scope.NewScope(declaration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(uncovered, []string{"src/x/conftest.py"}) {
+		t.Fatalf("under the ignore declaration %q the uncovered runner files are %v, want only the nested one outside the include list", payload.Ignore, uncovered)
+	}
+	protected, err := scope.NewScope(declaration).Covers("tests/conftest.py")
+	if err != nil || !protected {
+		t.Fatalf("tests/conftest.py is covered = %v (%v) under the ignore declaration, want it still protected", protected, err)
+	}
+}
+
+// A link named like a runner file is one: a link the scope covers is invalid already, so this is the uncovered case.
+func TestChecksBlockALinkNamedLikeARunnerFile(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.reader.files = map[int][]github.PullFile{5: added("conftest.py")}
+	w.bases = map[int]string{5: cjBase}
+	w.tree(cjBase, bootFiles("v1"))
+	w.reader.repos[bootRepo].trees[cjHead2] = linkedTree{&bootTree{files: withFiles(bootFiles("v1"), "evil.py")}, map[string]string{"conftest.py": "evil.py"}}
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+	w.mustCheck()
+
+	w.want(5, checks.InProgress, "runner-uncovered", 1)
+	if payload := w.runnerPayload(0); !reflect.DeepEqual(payload["paths"], []any{"conftest.py"}) {
+		t.Fatalf("payload %v, want the link as the runner file", payload)
+	}
+}
+
+// A choice that does not fit a suggestion is dropped with a reason that quotes nothing, and the other choice is kept.
+func TestChecksLogTheChoiceThatCannotBeSuggested(t *testing.T) {
+	w := newCJWorld(t, true)
+	const quoted = `q"x/conftest.py` // a quote cannot be written in a double-quoted suggestion item
+
+	w.reader.files = map[int][]github.PullFile{5: append(added(quoted), github.PullFile{Path: ".suiteward.yml", Status: "modified", Patch: "@@ -1,3 +1,3 @@\n context\n-old\n+new"})}
+	w.scopePull(cjHead2, reviewFiles(reviewDecl, quoted), bootFiles("v1"))
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+	w.mustCheck()
+
+	w.want(5, checks.InProgress, "runner-uncovered", 2)
+	got := w.runnerReviewOf(runnerReviewKey(reviewDecl, quoted))
+	if len(got) != 1 || got[0].List != "protect" {
+		t.Fatalf("suggestions %+v, want only protect", got)
+	}
+	line := w.logged("runner-uncovered choice skipped")
+	if line["choice"] != "ignore" || strings.Contains(w.logs.String(), quoted) {
+		t.Fatalf("log line %v, want the choice named and the path not quoted", line)
+	}
 }

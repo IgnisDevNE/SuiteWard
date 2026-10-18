@@ -23,7 +23,7 @@ func TestUncoveredRunnersKeepsOnlyRunnerNamedFilesTheScopeLeavesOut(t *testing.T
 		{"a covered runner file is left out", "version: 1\nrunner: [jest.config.*]\n", regulars("jest.config.js", "conftest.py"), []string{"conftest.py"}},
 		{"an excluded runner file is left out", "version: 1\nexclude: [legacy/, conftest.py]\n", regulars("legacy/jest.config.js", "conftest.py", "pytest.ini"), []string{"pytest.ini"}},
 		{"a vendored runner file is left out", "", regulars("node_modules/x/jest.config.js", ".venv/conftest.py", "vendor/phpunit.xml"), none},
-		{"a link or a submodule of a runner name is left out", "", append(regulars("pytest.ini"), symlink("jest.config.js"), submodule("karma.conf.js")), []string{"pytest.ini"}},
+		{"a link is a runner file like a file, a submodule is not", "", append(regulars("pytest.ini"), symlink("jest.config.js"), submodule("karma.conf.js")), []string{"jest.config.js", "pytest.ini"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

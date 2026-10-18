@@ -201,12 +201,7 @@ func Uncovered(entries []Entry, s scope.Scope) ([]string, error) {
 		if covered {
 			continue
 		}
-		excluded := false
-		for _, exclude := range s.Declaration().Exclude() {
-			if excluded, err = exclude.Match(entry.Path); err != nil || excluded {
-				break
-			}
-		}
+		excluded, err := excludes(s, entry.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -218,14 +213,24 @@ func Uncovered(entries []Entry, s scope.Scope) ([]string, error) {
 	return uncovered, nil
 }
 
+// excludes reports whether an exclude of s matches path.
+func excludes(s scope.Scope, path string) (bool, error) {
+	for _, exclude := range s.Declaration().Exclude() {
+		if matched, err := exclude.Match(path); err != nil || matched {
+			return matched, err
+		}
+	}
+	return false, nil
+}
+
 // MissingRunner returns the runner patterns Suggest offers for entries that s neither lists nor covers, in Suggest's order. A runner
 // name matches no file until someone adds one, so it can be missing while Uncovered finds nothing. A pattern is not missing when s
-// lists the same string in its include or runner list, or, for a name with no glob character, when s covers that name as a root path
-// or an exclude of s removes it (an exclusion is the owner's choice). A glob pattern is missing unless the same string is listed.
+// lists the same string in its include, runner or exclude list (an exclusion is the owner's choice), or, for a name with no glob character,
+// when s covers that name as a root path or an exclude of s matches it. Any other glob pattern is missing.
 func MissingRunner(entries []Entry, s scope.Scope) ([]string, error) {
 	d := s.Declaration()
 	listed := map[string]bool{}
-	for _, p := range slices.Concat(d.Include(), d.Runner()) {
+	for _, p := range slices.Concat(d.Include(), d.Runner(), d.Exclude()) {
 		listed[p.String()] = true
 	}
 	missing := []string{}
@@ -238,12 +243,7 @@ func MissingRunner(entries []Entry, s scope.Scope) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			excluded := false
-			for _, exclude := range d.Exclude() {
-				if excluded, err = exclude.Match(pattern); err != nil || excluded {
-					break
-				}
-			}
+			excluded, err := excludes(s, pattern)
 			if err != nil {
 				return nil, err
 			}

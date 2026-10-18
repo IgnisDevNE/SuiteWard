@@ -143,11 +143,7 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 		return nil
 	}
 	messages := []governance.OutboxMessage{comment}
-	if review, err := j.runnerReview(ctx, target, pull.HeadSHA, set, ignore != nil); err != nil {
-		return err
-	} else if review != nil {
-		messages = append(messages, *review)
-	}
+	messages = append(messages, j.runnerReview(ctx, target, pull.HeadSHA, set, ignore != nil)...)
 	return outboxOnce(ctx, j.suites, owner.ProjectID(p.RepositoryID), messages)
 }
 
@@ -177,36 +173,37 @@ func excludable(paths []string) bool {
 	})
 }
 
-// runnerReview builds the review of the choices as at most one message. Its key digests a salt with the set and the head's file, so it never
+// runnerReview builds the review of the choices: one message, or none (an empty list). Its key digests a salt with the set and the head's file, so it never
 // collides with the review of the scope notice for the same set, whose comment would be lost with it.
-func (j *checksJob) runnerReview(ctx context.Context, target commentTarget, head string, set *runnerSet, ignorable bool) (*governance.OutboxMessage, error) {
+func (j *checksJob) runnerReview(ctx context.Context, target commentTarget, head string, set *runnerSet, ignorable bool) []governance.OutboxMessage {
 	var ignore []string
 	if ignorable {
 		ignore = excludePatterns(set.paths)
 	}
-	suggestions, err := runnerSuggestions(set, inventory.RunnerPatterns(set.paths), ignore)
+	suggestions, err := j.runnerSuggestions(ctx, target, set, inventory.RunnerPatterns(set.paths), ignore)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks runner-uncovered review skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull)
-		return nil, nil
+		return []governance.OutboxMessage{}
 	}
 	if len(suggestions) == 0 {
-		return nil, nil
+		return []governance.OutboxMessage{}
 	}
 	message, err := newScopeReviewMessage(target, head, reviewDigest("runner-uncovered:"+setDigest(set.paths), set.declared), suggestions)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks runner-uncovered review skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
-		return nil, nil
+		return []governance.OutboxMessage{}
 	}
-	return &message, nil
+	return []governance.OutboxMessage{message}
 }
 
 // runnerSuggestions builds the suggestion of each choice that has a place in the head's file: the patterns go after the last item of the
 // choice's list when that item is one line inside a hunk of the pull request's diff, which is the only place that starts from the head's file.
 // A choice whose list is missing creates it after the last item of a block-style list whose last item is such a line (a suggestion replaces lines
 // of the diff only, and a new key after a list's last item is valid YAML). A choice with no such line, or one that does not render, has none.
-func runnerSuggestions(set *runnerSet, protect, ignore []string) ([]scopeSuggestion, error) {
+func (j *checksJob) runnerSuggestions(ctx context.Context, target commentTarget, set *runnerSet, protect, ignore []string) ([]scopeSuggestion, error) {
+	suggestions := []scopeSuggestion{}
 	if set.diff == nil || len(set.declared) == 0 {
-		return nil, nil
+		return suggestions, nil
 	}
 	hunks, err := set.diff.NewLineRanges()
 	if err != nil {
@@ -218,7 +215,6 @@ func runnerSuggestions(set *runnerSet, protect, ignore []string) ([]scopeSuggest
 	}
 	top := root.Content[0] // the declaration parsed: one document holding a mapping
 	lines := strings.Split(string(set.declared), "\n")
-	var suggestions []scopeSuggestion
 	for _, choice := range []struct {
 		name, key string
 		patterns  []string
@@ -231,9 +227,14 @@ func runnerSuggestions(set *runnerSet, protect, ignore []string) ([]scopeSuggest
 			s, ok = newListSuggestion(top, lines, choice.key, choice.patterns, hunks)
 		}
 		s.List = choice.name
-		if ok && s.validate() == nil {
-			suggestions = append(suggestions, s)
+		if !ok {
+			continue
 		}
+		if err := s.validate(); err != nil { // its text is fixed: it quotes neither the anchor line nor a path
+			j.logger.WarnContext(ctx, "github checks runner-uncovered choice skipped: it does not fit a suggestion", "repo", target.Repo, "pull", target.Pull, "choice", choice.name, "reason", err.Error())
+			continue
+		}
+		suggestions = append(suggestions, s)
 	}
 	return suggestions, nil
 }

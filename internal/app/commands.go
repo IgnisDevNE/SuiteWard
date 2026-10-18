@@ -623,7 +623,7 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 // refuses): a fact about the source, so it is never retried.
 var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 
-// errDeclarationTooLarge marks a suggested declaration over the size a notice holds (maxScopeDeclaration).
+// errDeclarationTooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration).
 var errDeclarationTooLarge = errors.New("the suggested declaration is too large")
 
 // suggest decides a /suiteward suggest (docs/contracts/runtime.md, "Scope discovery (M1.9)"). It is owner only and takes no code, so it reads
@@ -736,7 +736,7 @@ func (j *commandsJob) scopeSuggestion(ctx context.Context, target commentTarget,
 	if err != nil {
 		return governance.OutboxMessage{}, err
 	}
-	if len(declaration) > maxScopeDeclaration {
+	if len(declaration) > commandtext.MaxDeclaration {
 		return governance.OutboxMessage{}, errDeclarationTooLarge
 	}
 	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, pull.HeadRef, found.Paths, declaration, found.Mixed, suggestion.Cut)

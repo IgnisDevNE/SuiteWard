@@ -750,7 +750,7 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 		parts = append(parts, fmt.Sprintf("Left out of this suggestion because they are too long or contain unusual characters: %d.", left))
 	}
 	if a.Cut {
-		parts = append(parts, "This list was cut at the limit of 20 patterns, so test-like paths may be missing from it. Please review it and add what is missing.")
+		parts = append(parts, cutWarning)
 	}
 	if len(a.Mixed) > 0 {
 		parts = append(parts, mixedWarning(a.Mixed))

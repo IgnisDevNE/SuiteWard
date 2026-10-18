@@ -32,8 +32,6 @@ import (
 const (
 	scopeNoticeKey = "scope-notice" // scope-notice:<repository id>:<pull>:<set digest>
 	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<set digest>, with the notice of that digest
-	// maxScopeDeclaration is commandtext's bound on the declaration a notice shows.
-	maxScopeDeclaration = 8192
 )
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -237,26 +235,14 @@ func canonicalDeclaration(ctx context.Context, suites governance.UnitOfWork, con
 	if err != nil {
 		return nil, scope.Scope{}, err
 	}
-	protected := canonical.Contract()
-	for _, entry := range protected.Manifest().Entries() {
-		if entry.Path != scope.DeclarationPath {
-			continue
-		}
-		raw, err := contents.Read(ctx, entry.Content)
-		if err != nil {
-			return nil, scope.Scope{}, fmt.Errorf("read the canonical %s: %w", scope.DeclarationPath, err)
-		}
-		declaration, err := scope.ParseDeclaration(raw)
-		if err != nil { // stored state, not the owner's source under review
-			return nil, scope.Scope{}, fmt.Errorf("%w: the canonical %s does not parse: %v", governance.ErrInvalidState, scope.DeclarationPath, err)
-		}
-		governing := scope.NewScope(declaration)
-		if governing.Digest() != protected.ScopeDigest() {
-			return nil, scope.Scope{}, fmt.Errorf("%w: the canonical's declaration does not hash to its approved scope", governance.ErrInvalidState)
-		}
-		return raw, governing, nil
+	raw, declaration, err := governance.CanonicalDeclaration(ctx, contents, canonical)
+	switch {
+	case errors.Is(err, governance.ErrNoCanonicalDeclaration):
+		return nil, scope.Scope{}, errNoCanonicalDeclaration
+	case err != nil:
+		return nil, scope.Scope{}, err
 	}
-	return nil, scope.Scope{}, errNoCanonicalDeclaration
+	return raw, scope.NewScope(declaration), nil
 }
 
 // headScope is what scope discovery finds in the head of a pull request under the canonical contract. The checks job uses
@@ -398,7 +384,7 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil {
 		return err
 	}
-	if len(declaration) > maxScopeDeclaration {
+	if len(declaration) > commandtext.MaxDeclaration {
 		j.logger.InfoContext(ctx, "github checks scope notice skipped: the declaration is over the limit", "repo", p.Repo, "pull", pull.Number)
 		return nil
 	}

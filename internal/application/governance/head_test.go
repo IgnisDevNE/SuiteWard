@@ -77,7 +77,7 @@ func newHeadEnvOn(t *testing.T, baseline inventory.Tree, extra ...candidate) *he
 	e.reader = &fakeReader{writer: e.writer}
 	result := e.propose(e.writer, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P1", RevisionID: "R1"},
-		Carrier:   bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n"),
+		Carrier:   bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: baseline,
 	})
 	e.approveRef(result.Revise.Current, bootstrapCarrier)
 	e.recordAssessment(result.Revise.Current, "pinned", contract.IntegrityPassed)
@@ -522,7 +522,7 @@ func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
 		}
 	})
 	t.Run("no entry", func(t *testing.T) {
-		e := newHeadEnvOn(t, newFakeTree(regularFile("src/main.go", "package main\n")))
+		e := newHeadEnvOn(t, newFakeTree(regularFile(".github/workflows/ci.yml", "on: push\n")))
 		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
 		if !errors.Is(err, governance.ErrNoCanonicalDeclaration) || raw != nil || d.Present() {
 			t.Fatalf("raw = %q, present = %v, error = %v; want no bytes, no declaration and ErrNoCanonicalDeclaration", raw, d.Present(), err)

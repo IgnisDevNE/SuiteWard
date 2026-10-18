@@ -565,6 +565,7 @@ func TestBootstrapNoticeSaysHowToStartOrSkip(t *testing.T) {
 		"SuiteWard has no canonical contract yet.", "`/suiteward propose`", "pull request that should carry the first contract",
 		"`/suiteward skip <code>`", "before the first contract", "authenticator app",
 		"of the default branch when it has a `.suiteward.yml`, otherwise those of that pull request",
+		"`/suiteward suggest`", "grants nothing",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("notice lacks %q:\n%s", w, body)

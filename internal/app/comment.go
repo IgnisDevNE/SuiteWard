@@ -74,6 +74,7 @@ type ackPayload struct {
 	Suggestion  []string             `json:"suggestion,omitempty"`  // declaration-missing: the include patterns inventory.Suggest found
 	Runner      []string             `json:"runner,omitempty"`      // and the runner patterns,
 	Mixed       []string             `json:"mixed,omitempty"`       // the mixed files, shown and never suggested (also in a scope-notice),
+	Submodules  []string             `json:"submodules,omitempty"`  // the submodules a suggested pattern reaches, whose contents are not protected (also in a scope-notice),
 	Cut         bool                 `json:"cut,omitempty"`         // and whether the limit of 20 patterns cut the lists (also in a scope-notice)
 	Paths       []string             `json:"paths,omitempty"`       // scope-notice: at most 20 uncovered test-like paths of the head, each cut to 150 bytes,
 	PathsTotal  int                  `json:"pathsTotal,omitempty"`  // how many there are,
@@ -191,17 +192,17 @@ func (a ackPayload) hasNotice() bool {
 
 // notice is what the renderer takes for a scope-notice payload.
 func (a ackPayload) notice() commandtext.ScopeNotice {
-	return commandtext.ScopeNotice{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Paths: a.Paths, PathsTotal: a.PathsTotal, Declaration: []byte(a.Declaration), Mixed: a.Mixed, Cut: a.Cut}
+	return commandtext.ScopeNotice{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Paths: a.Paths, PathsTotal: a.PathsTotal, Declaration: []byte(a.Declaration), Mixed: a.Mixed, Submodules: a.Submodules, Cut: a.Cut}
 }
 
 // suggested is whether the payload holds any of the lists of a suggestion.
 func (a ackPayload) suggested() bool {
-	return len(a.Suggestion) != 0 || len(a.Runner) != 0 || len(a.Mixed) != 0 || a.Cut
+	return len(a.Suggestion) != 0 || len(a.Runner) != 0 || len(a.Mixed) != 0 || len(a.Submodules) != 0 || a.Cut
 }
 
 // suggestion is what the renderer takes for a declaration-missing payload.
 func (a ackPayload) suggestion() commandtext.DeclarationSuggestion {
-	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Cut: a.Cut, Suggest: a.Disposition == string(commands.Suggested), Declared: a.Declared}
+	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Submodules: a.Submodules, Cut: a.Cut, Suggest: a.Disposition == string(commands.Suggested), Declared: a.Declared}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -251,9 +252,9 @@ func (a ackPayload) validate() error {
 	if commandtext.ValidateSuggestion(a.suggestion()) != nil {
 		return errors.New("the branch, the repository or the suggestion cannot be rendered")
 	}
-	for _, text := range slices.Concat(a.Suggestion, a.Runner, a.Mixed) {
+	for _, text := range slices.Concat(a.Suggestion, a.Runner, a.Mixed, a.Submodules) {
 		if len(text) > maxSummaryText {
-			return errors.New("a suggested pattern or a mixed path is too long")
+			return errors.New("a suggested pattern, a mixed path or a submodule is too long")
 		}
 	}
 	return nil
@@ -267,7 +268,7 @@ func (a ackPayload) validateNotice() error {
 	case a.PathsTotal < len(a.Paths):
 		return errors.New("the total is below the listed paths")
 	}
-	for _, text := range slices.Concat(a.Paths, a.Mixed) {
+	for _, text := range slices.Concat(a.Paths, a.Mixed, a.Submodules) {
 		if len(text) > maxSummaryText {
 			return errors.New("a path is too long")
 		}
@@ -323,15 +324,15 @@ func declarationMissingPayload(target commentTarget, comment int64, ownerLogin, 
 		return bounded
 	}
 	return ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch,
-		Suggestion: cut(suggested.Include), Runner: cut(suggested.Runner), Mixed: cut(suggested.Mixed), Cut: suggested.Cut}
+		Suggestion: cut(suggested.Include), Runner: cut(suggested.Runner), Mixed: cut(suggested.Mixed), Submodules: cut(suggested.Submodules), Cut: suggested.Cut}
 }
 
 // newScopeNoticeAck builds the answer of a suggest after the first contract: the scope notice of the head, as an acknowledgment so that
 // it replies to the command and never takes the key of the notice the checks job writes. paths are the whole uncovered set, bounded as the
 // notice bounds them; the error says the notice cannot be rendered.
-func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch string, paths []string, declaration []byte, mixed []string, cut bool) (governance.OutboxMessage, error) {
+func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch string, paths []string, declaration []byte, mixed, submodules []string, cut bool) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
-		Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Cut: cut})
+		Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: cut})
 }
 
 func newAck(p ackPayload) (governance.OutboxMessage, error) {

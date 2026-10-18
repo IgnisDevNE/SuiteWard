@@ -28,6 +28,11 @@ func missingWith(include, runner, mixed []string, cut bool) commandtext.Declarat
 	return a
 }
 
+func withSubmodules(a commandtext.DeclarationSuggestion, submodules []string) commandtext.DeclarationSuggestion {
+	a.Submodules = submodules
+	return a
+}
+
 func suggestionText(t *testing.T, a commandtext.DeclarationSuggestion) string {
 	t.Helper()
 	return render(t, func() string { return commandtext.SuggestDeclaration(a) })
@@ -134,6 +139,43 @@ func TestSuggestDeclarationWarnsAboutMixedFilesInTheTextOnly(t *testing.T) {
 	}
 }
 
+// Submodules fall outside the scope: a reply that suggests patterns they may match says so, listed inside a fence.
+func TestSuggestDeclarationWarnsThatSubmoduleContentsAreNotProtected(t *testing.T) {
+	a := missingWith([]string{"tests/**"}, nil, nil, false)
+	a.Submodules = []string{"ext/lib", "we\nird/mod", "tick`/mod", "arrow/-->mod"}
+	body := suggestionText(t, a)
+	for _, w := range []string{"submodules", "not protected", "never reads a submodule", "```\next/lib\n" + `"we\nird/mod"` + "\ntick`/mod\narrow/-->mod\n```"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	if strings.Contains(body, "we\nird") {
+		t.Errorf("a control character reaches the body:\n%s", body)
+	}
+	if got, want := linkedDeclaration(t, body, "feature/add-tests"), "version: 1\ninclude:\n  - \"tests/**\"\n"; got != want {
+		t.Errorf("a submodule reached the link: %q", got)
+	}
+	if strings.Count(body, "ext/lib") != 1 {
+		t.Errorf("a submodule is in the declaration or listed twice:\n%s", body)
+	}
+}
+
+// A path that holds a run of backticks or a comment end stays inside a fence that it cannot close.
+func TestSuggestDeclarationFencesASubmoduleThatHoldsBackticksOrACommentEnd(t *testing.T) {
+	a := missingWith([]string{"tests/**"}, nil, nil, false)
+	a.Submodules = []string{"a```b/-->x"}
+	body := suggestionText(t, a)
+	if want := "````\na```b/-->x\n````"; !strings.Contains(body, want) {
+		t.Errorf("body lacks %q:\n%s", want, body)
+	}
+}
+
+func TestSuggestDeclarationWithoutSubmodulesSaysNothingOfThem(t *testing.T) {
+	if got := suggestionText(t, missingWith([]string{"tests/**"}, nil, []string{"package.json"}, false)); strings.Contains(got, "ubmodule") {
+		t.Errorf("no submodule, yet the warning is there:\n%s", got)
+	}
+}
+
 func TestSuggestDeclarationLimitsTheListsTogether(t *testing.T) {
 	many := func(prefix string, n int) []string {
 		var items []string
@@ -146,6 +188,7 @@ func TestSuggestDeclarationLimitsTheListsTogether(t *testing.T) {
 		"include 11 and runner 10": missingWith(many("i", 11), many("r", 10), nil, false),
 		"runner alone 21":          missingWith(nil, many("r", 21), nil, false),
 		"21 mixed files":           missingWith([]string{"tests/**"}, nil, many("m", 21), false),
+		"21 submodules":            withSubmodules(missingWith([]string{"tests/**"}, nil, nil, false), many("s", 21)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			mustPanic(t, func() { commandtext.SuggestDeclaration(a) })
@@ -159,6 +202,7 @@ func TestSuggestDeclarationLimitsTheListsTogether(t *testing.T) {
 		"20 and none":    missingWith(many("i", 20), nil, nil, false),
 		"none and 20":    missingWith(nil, many("r", 20), nil, false),
 		"nothing at all": missingWith(nil, nil, nil, false),
+		"20 submodules":  withSubmodules(missingWith([]string{"tests/**"}, nil, nil, false), many("s", 20)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := commandtext.ValidateSuggestion(a); err != nil {
@@ -172,7 +216,7 @@ func TestSuggestDeclarationLimitsTheListsTogether(t *testing.T) {
 }
 
 // The largest suggestion: 20 patterns of 100 bytes in any split, the longest branch and repository, and 20 mixed files
-// of any length. The link stays at 8000 bytes, as in M1.7b, and the body far below GitHub's limit.
+// and 20 submodules of any length. The link stays at 8000 bytes, as in M1.7b, and the body far below GitHub's limit.
 func TestSuggestDeclarationWithRunnerStaysInsideALinkAndAComment(t *testing.T) {
 	for name, unit := range map[string]string{"plain": "a", "3-byte": "\u20ac", "backtick": "`", "space": " ", "percent": "%"} {
 		for _, runners := range []int{0, 1, 10, 19, 20} {
@@ -181,7 +225,7 @@ func TestSuggestDeclarationWithRunnerStaysInsideALinkAndAComment(t *testing.T) {
 					p := strings.Repeat(unit, 99/len(unit))
 					return p + strings.Repeat("x", 100-len(p)-1) + string(rune('a'+i))
 				}
-				var include, runner, mixed []string
+				var include, runner, mixed, submodules []string
 				for i := range 20 {
 					if i < runners {
 						runner = append(runner, pattern(i))
@@ -189,10 +233,14 @@ func TestSuggestDeclarationWithRunnerStaysInsideALinkAndAComment(t *testing.T) {
 						include = append(include, pattern(i))
 					}
 					mixed = append(mixed, strings.Repeat("\u20ac`\n", 400)+string(rune('a'+i)))
+					submodules = append(submodules, strings.Repeat("\u20ac`\n", 400)+string(rune('a'+i)))
 				}
 				// Without mixed files the body keeps the bound of M1.7b, a quarter of the limit; with them, half.
 				for bound, withMixed := range map[int][]string{maxComment / 4: nil, maxComment / 2: mixed} {
 					a := missingWith(include, runner, withMixed, true)
+					if withMixed != nil {
+						a.Submodules = submodules
+					}
 					a.Repo = "a" + strings.Repeat("b", 38) + "/" + strings.Repeat("c", 100)
 					a.Branch = strings.Repeat("\u20ac", 85)
 					body := suggestionText(t, a)
@@ -301,6 +349,62 @@ func TestScopeNoticeShowsRepositoryTextOnlyInsideCode(t *testing.T) {
 	}
 }
 
+func TestScopeNoticeWarnsThatSubmoduleContentsAreNotProtected(t *testing.T) {
+	n := notice()
+	n.Mixed = []string{"package.json"}
+	n.Submodules = []string{"ext/lib", "we\nird/mod", "tick`/mod", "arrow/-->mod"}
+	body := noticeText(t, n)
+	for _, w := range []string{"submodules", "not protected", "never reads a submodule", "```\next/lib\n" + `"we\nird/mod"` + "\ntick`/mod\narrow/-->mod\n```"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	if strings.Contains(body, "we\nird") {
+		t.Errorf("a control character reaches the body:\n%s", body)
+	}
+	mixed, warning, editor := strings.Index(body, "may hold test settings"), strings.Index(body, "never reads a submodule"), strings.Index(body, "open GitHub's editor")
+	if mixed < 0 || warning < mixed || editor < warning {
+		t.Errorf("the submodule warning is not between the mixed-file warning and the editor link:\n%s", body)
+	}
+	n.Submodules = []string{"a```b/-->x"}
+	if want := "````\na```b/-->x\n````"; !strings.Contains(noticeText(t, n), want) {
+		t.Errorf("a submodule path does not stay inside its fence")
+	}
+}
+
+// Without submodules the notice is what it was before M1.9-E3, byte for byte.
+func TestScopeNoticeWithoutSubmodulesIsUnchanged(t *testing.T) {
+	const want = "**SuiteWard scope notice**\n\n" +
+		"Test-like files in this pull request's head that the current contract does not protect:\n\n```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```\n\n" +
+		"These files are not protected by the current contract: SuiteWard assesses only the protected files, so a change to them needs no approval.\n\n" +
+		"SuiteWard suggests this declaration, the current canonical `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"*_test.go\"\n  - \"**/testdata/**\"\n```\n\n" +
+		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/octo-org/widgets/edit/feature/add-tests/.suiteward.yml) and paste the declaration. SuiteWard never commits it for you: the commit is yours.\n\n" +
+		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.\n\n" +
+		"This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.\n"
+	if got := noticeText(t, notice()); got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+// The reply to a command differs from the unprompted notice only by its closing link, and the suggest reply is as it was.
+func TestRepliesToASuggestWithoutSubmodulesAreUnchanged(t *testing.T) {
+	n := notice()
+	plain := noticeText(t, n)
+	n.Source = source
+	if got, want := noticeText(t, n), strings.TrimSuffix(plain, "\n")+"\n\nIn reply to [your command](#issuecomment-2345678901).\n"; got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	const want = "`/suiteward suggest`: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, so no files are protected yet. Nothing changed.\n\n" +
+		"SuiteWard suggests this declaration for this pull request, built from the test-like paths of this repository. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"tests/**\"\n```\n\n" +
+		"To add it on this pull request's branch, [open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=version%3A%201%0Ainclude%3A%0A%20%20-%20%22tests%2F%2A%2A%22%0A). SuiteWard never commits it for you: the commit is yours.\n\n" +
+		"After the file is on this branch, comment `/suiteward propose` to start the first contract.\n\nIn reply to [your command](#issuecomment-2345678901).\n"
+	a := missingWith([]string{"tests/**"}, nil, nil, false)
+	a.Suggest = true
+	if got := suggestionText(t, a); got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
 func TestScopeNoticeEndsTheDeclarationWithANewlineBeforeTheFence(t *testing.T) {
 	n := notice()
 	n.Declaration = []byte("version: 1\ninclude:\n  - \"x\"")
@@ -341,6 +445,7 @@ func scopeNoticeCases() map[string]func(*commandtext.ScopeNotice) {
 		"no paths":                        func(n *commandtext.ScopeNotice) { n.Paths, n.PathsTotal = nil, 0 },
 		"21 paths":                        func(n *commandtext.ScopeNotice) { n.Paths = slices.Repeat([]string{"x_test.go"}, 21) },
 		"21 mixed files":                  func(n *commandtext.ScopeNotice) { n.Mixed = slices.Repeat([]string{"package.json"}, 21) },
+		"21 submodules":                   func(n *commandtext.ScopeNotice) { n.Submodules = slices.Repeat([]string{"ext/lib"}, 21) },
 		"no declaration":                  func(n *commandtext.ScopeNotice) { n.Declaration = nil },
 		"a declaration that is not UTF-8": func(n *commandtext.ScopeNotice) { n.Declaration = []byte("version: 1\n\xff") },
 		"a declaration of 8193 bytes":     func(n *commandtext.ScopeNotice) { n.Declaration = []byte(strings.Repeat("#", 8193)) },
@@ -360,7 +465,7 @@ func TestScopeNoticeIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	// The largest allowed notice.
 	n := notice()
-	n.Paths, n.Mixed, n.Declaration = slices.Repeat([]string{"x_test.go"}, 20), slices.Repeat([]string{"package.json"}, 20), []byte(strings.Repeat("#", 8192))
+	n.Paths, n.Mixed, n.Submodules, n.Declaration = slices.Repeat([]string{"x_test.go"}, 20), slices.Repeat([]string{"package.json"}, 20), slices.Repeat([]string{"ext/lib"}, 20), []byte(strings.Repeat("#", 8192))
 	n.Repo, n.Branch = "a"+strings.Repeat("b", 38)+"/"+strings.Repeat("c", 100), strings.Repeat("b", 255)
 	if err := commandtext.ValidateScopeNotice(n); err != nil {
 		t.Errorf("the largest notice is refused: %v", err)
@@ -391,7 +496,7 @@ func TestScopeNoticeFitsInAComment(t *testing.T) {
 				n.Declaration = []byte(strings.Repeat("`", 8192)) // one backtick run: the fence grows with it
 			}
 			for _, size := range []int{150, 4096} {
-				n.Paths, n.Mixed = long(size), long(size)
+				n.Paths, n.Mixed, n.Submodules = long(size), long(size), long(size)
 				body := noticeText(t, n)
 				if body == "" || len(body) >= maxComment*3/4 || !utf8.ValidString(body) {
 					t.Errorf("entries of %d bytes: body has %d bytes or is not UTF-8, want 0 < n < %d", size, len(body), maxComment*3/4)

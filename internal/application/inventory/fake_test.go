@@ -19,10 +19,11 @@ type file struct {
 
 func regular(path, content string) file { return file{path, inventory.File, content} }
 func symlink(path string) file          { return file{path, inventory.Symlink, ""} }
+func link(path, target string) file     { return file{path, inventory.Symlink, target} }
 func submodule(path string) file        { return file{path, inventory.Submodule, ""} }
 
-// fakeTree is an in-memory pinned source tree. A Read of a path in
-// unreadable, or of a path that is not a File entry, fails the test.
+// fakeTree is an in-memory pinned source tree; the content of a Symlink is its target. A Read of a path in
+// unreadable, or of a path that is neither a File nor a Symlink entry, fails the test.
 type fakeTree struct {
 	t          *testing.T
 	files      []file
@@ -66,10 +67,10 @@ func (f *fakeTree) Read(_ context.Context, path string) ([]byte, error) {
 		return nil, f.readErr
 	}
 	for _, file := range f.files {
-		if file.path == path && file.kind == inventory.File {
+		if file.path == path && (file.kind == inventory.File || file.kind == inventory.Symlink) {
 			return []byte(file.content), nil
 		}
 	}
-	f.t.Errorf("read of %q, which is not a file of the tree", path)
+	f.t.Errorf("read of %q, which is neither a file nor a link of the tree", path)
 	return nil, fmt.Errorf("no file %q", path)
 }

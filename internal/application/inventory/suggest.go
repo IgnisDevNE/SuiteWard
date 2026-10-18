@@ -17,6 +17,8 @@ type Suggestion struct {
 	Include []string
 	Runner  []string
 	Mixed   []string
+	// Submodules are the non-vendored submodules that an Include or Runner pattern reaches; their content is not protected.
+	Submodules []string
 	// Cut is true when maxSuggestions dropped some include or runner patterns.
 	Cut bool
 }

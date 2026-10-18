@@ -124,14 +124,14 @@ func TestBuild(t *testing.T) {
 			err:   inventory.ErrUnsafeEntry,
 		},
 		{
-			name:  "submodule that is a parent of an anchored include",
+			name:  "submodule that is a parent of an anchored include is outside the scope",
 			files: []file{regular(declaration, "version: 1\ninclude: [/vendor/tests/**]\n"), submodule("vendor")},
-			err:   inventory.ErrUnsafeEntry,
+			want:  []string{declaration},
 		},
 		{
-			name:  "any submodule when an unanchored include exists",
+			name:  "any submodule when an unanchored include exists is outside the scope",
 			files: []file{regular(declaration, "version: 1\ninclude: ['*_test.go']\n"), submodule("third_party/lib")},
-			err:   inventory.ErrUnsafeEntry,
+			want:  []string{declaration},
 		},
 		{
 			name:  "any symlink when an unanchored runner entry exists",

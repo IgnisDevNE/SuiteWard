@@ -49,47 +49,47 @@ var suggestCases = []struct {
 	files []file
 	want  inventory.Suggestion
 }{
-	{"empty input", nil, inventory.Suggestion{Include: none, Runner: none, Mixed: none}},
+	{"empty input", nil, inventory.Suggestion{Submodules: none, Include: none, Runner: none, Mixed: none}},
 	{"a Jest monorepo", regulars("packages/a/src/x.test.ts", "packages/a/__tests__/y.js", "packages/a/jest.config.js"),
-		inventory.Suggestion{Include: []string{"__tests__/", "*.test.*"}, Runner: []string{"jest.config.*"}, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: []string{"__tests__/", "*.test.*"}, Runner: []string{"jest.config.*"}, Mixed: none}},
 	{"a Django app", regulars("app/tests.py"),
-		inventory.Suggestion{Include: []string{"tests.py"}, Runner: pytestGroup, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: []string{"tests.py"}, Runner: pytestGroup, Mixed: none}},
 	{"a Maven module", regulars("module/src/test/java/FooTest.java", "module/src/test/resources/f.json"),
-		inventory.Suggestion{Include: []string{"**/src/test/", "*Test.java"}, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: []string{"**/src/test/", "*Test.java"}, Runner: none, Mixed: none}},
 	{"a Rails app", regulars("spec/models/user_spec.rb", ".rspec"),
-		inventory.Suggestion{Include: []string{"/spec/", "*_spec.rb"}, Runner: []string{".rspec", "rails_helper.rb", "spec_helper.rb"}, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: []string{"/spec/", "*_spec.rb"}, Runner: []string{".rspec", "rails_helper.rb", "spec_helper.rb"}, Mixed: none}},
 	{"a Python repo without config gets the whole pytest group", regulars("pkg/test_a.py", "pkg/b_test.py"),
-		inventory.Suggestion{Include: []string{"*_test.py", "test_*.py"}, Runner: pytestGroup, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: []string{"*_test.py", "test_*.py"}, Runner: pytestGroup, Mixed: none}},
 	{"a Python test in a vendored directory does not trigger pytest", regulars(".venv/lib/test_a.py", "a/venv/b_test.py"),
-		inventory.Suggestion{Include: none, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: none, Runner: none, Mixed: none}},
 	{"one pytest member brings the whole group", regulars("src/conftest.py"),
-		inventory.Suggestion{Include: none, Runner: pytestGroup, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: none, Runner: pytestGroup, Mixed: none}},
 	{"one RSpec member brings the whole group", regulars(".rspec"),
-		inventory.Suggestion{Include: none, Runner: []string{".rspec", "rails_helper.rb", "spec_helper.rb"}, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: none, Runner: []string{".rspec", "rails_helper.rb", "spec_helper.rb"}, Mixed: none}},
 	{"the other runner groups", regulars("a/vitest.workspace.ts", "b/.mocharc.json", "karma.conf.js", "playwright.config.ts", "cypress.config.ts",
 		".nycrc.json", "phpunit.xml.dist", "test_helper.exs", "dart_test.yaml", ".codecov.yml"),
-		inventory.Suggestion{Include: none, Mixed: none, Runner: []string{
+		inventory.Suggestion{Submodules: none, Include: none, Mixed: none, Runner: []string{
 			".c8rc*", ".codecov.yml", ".coveragerc", ".mocharc.*", ".nycrc*", "codecov.yml", "cypress.config.*", "dart_test.yaml", "karma.conf.*",
 			"phpunit.dist.xml", "phpunit.xml", "phpunit.xml.dist", "playwright.config.*", "test_helper.*", "vitest.config.*", "vitest.workspace.*"}}},
 	{"vendored paths are ignored everywhere", regulars(
 		"node_modules/x/x.test.js", "a/node_modules/b/__tests__/c.js", "vendor/x_test.go", "bower_components/y/z.spec.js", "jspm_packages/a_test.go",
 		".tox/a/test_b.py", "__pycache__/a.test.py", ".git/hooks/x_test.go", "node_modules/jest/package.json", "node_modules/a/jest.config.js"),
-		inventory.Suggestion{Include: none, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: none, Runner: none, Mixed: none}},
 	{"a nested tests directory counts only for a test-named file", regulars("pkg/tests/a.txt", "pkg/test/b.txt", "pkg/spec/c.txt", "tests"),
-		inventory.Suggestion{Include: none, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: none, Runner: none, Mixed: none}},
 	{"a nested tests directory holding a test-named file", regulars("pkg/tests/a_test.go", "pkg/test/b.test.ts", "pkg/spec/c_spec.rb"),
-		inventory.Suggestion{Include: []string{"spec/", "test/", "tests/", "*.test.*", "*_spec.rb", "*_test.go"}, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: []string{"spec/", "test/", "tests/", "*.test.*", "*_spec.rb", "*_test.go"}, Runner: none, Mixed: none}},
 	{"a top-level tests directory with any file", regulars("tests/a.txt", "test/b/c.txt", "spec/d"),
-		inventory.Suggestion{Include: []string{"/spec/", "/test/", "/tests/"}, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: []string{"/spec/", "/test/", "/tests/"}, Runner: none, Mixed: none}},
 	{"directories, symlinks and submodules are ignored", []file{symlink("a_test.go"), submodule("testdata/x"), symlink("jest.config.js"), submodule("package.json")},
-		inventory.Suggestion{Include: none, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: none, Runner: none, Mixed: none}},
 	{"mixed files are listed, sorted, and never suggested", regulars(
 		"package.json", "a/pyproject.toml", "x/y.csproj", "Cargo.toml", "node_modules/z/package.json", "tox.ini", "setup.cfg", "CMakeLists.txt", "go.mod"),
-		inventory.Suggestion{Include: none, Runner: none, Mixed: []string{
+		inventory.Suggestion{Submodules: none, Include: none, Runner: none, Mixed: []string{
 			"CMakeLists.txt", "Cargo.toml", "a/pyproject.toml", "package.json", "setup.cfg", "tox.ini", "x/y.csproj"}}},
 	{"names that look like a convention but are not", regulars(
 		"a/Foo.java", "src/testx/a.txt", "a/src/b/test/c.txt", "a/contests.py", "a/test_a.go", "a/testing.py", "a/XTest.rb", "x/attest.go", "b/cypress.json"),
-		inventory.Suggestion{Include: none, Runner: none, Mixed: none}},
+		inventory.Suggestion{Submodules: none, Include: none, Runner: none, Mixed: none}},
 }
 
 func TestSuggest(t *testing.T) {
@@ -137,7 +137,7 @@ func TestSuggestCapsIncludeAndRunnerTogether(t *testing.T) {
 	}))
 	t.Run("directories, then files, then the cut", func(t *testing.T) {
 		got := inventory.Suggest(entriesOf(allIncludeSources()...))
-		want := inventory.Suggestion{Include: slices.Concat(directories, files)[:20], Runner: none, Mixed: none, Cut: true}
+		want := inventory.Suggestion{Submodules: none, Include: slices.Concat(directories, files)[:20], Runner: none, Mixed: none, Cut: true}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("Suggest = %#v, want %#v", got, want)
 		}
@@ -336,5 +336,43 @@ func TestUncoveredRejectsAnInvalidPath(t *testing.T) {
 	_, err := inventory.Uncovered(entriesOf(regular("../x_test.go", "")), scopeFrom(t, ""))
 	if !errors.Is(err, artifact.ErrInvalidPath) {
 		t.Fatalf("Uncovered error = %v, want ErrInvalidPath", err)
+	}
+}
+
+func TestSuggestReportsTheSubmodulesItsPatternsReach(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []file
+		want  []string
+	}{
+		{"an unanchored pattern reaches every submodule, sorted", append(regulars("a_test.go"), submodule("z/lib"), submodule("third_party/a")), []string{"third_party/a", "z/lib"}},
+		{"a runner pattern reaches them too", append(regulars("jest.config.js"), submodule("lib")), []string{"lib"}},
+		{"vendored submodules are left out", append(regulars("a_test.go"), submodule("vendor/lib"), submodule("a/node_modules/x"), submodule(".git/modules")), none},
+		{"no pattern, no submodule to warn about", []file{submodule("lib")}, none},
+		{"an anchored pattern reaches only the submodules under it", append(regulars("tests/a.txt"), submodule("lib/tests"), submodule("tests/sub")), []string{"tests/sub"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inventory.Suggest(entriesOf(tt.files...))
+			if !reflect.DeepEqual(got.Submodules, tt.want) {
+				t.Fatalf("Submodules = %#v, want %#v (suggestion %#v)", got.Submodules, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestSuggestLimitsTheSubmodulesToTwenty(t *testing.T) {
+	files := regulars("a_test.go")
+	var want []string
+	for i := 0; i < 25; i++ {
+		name := fmt.Sprintf("m%02d", i)
+		files = append(files, submodule(name))
+		if i < 20 {
+			want = append(want, name)
+		}
+	}
+	got := inventory.Suggest(entriesOf(files...))
+	if !reflect.DeepEqual(got.Submodules, want) || got.Cut {
+		t.Fatalf("Suggest = %#v, want the first 20 submodules and no cut", got)
 	}
 }

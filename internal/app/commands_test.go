@@ -413,6 +413,8 @@ func TestCommandsJobRecordsEveryDisposition(t *testing.T) {
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.BeforeEnrollment) }, 0},
 		{"a command of another account", cjComment{pull: cjPull, id: 500, author: cjOtherID, created: created, updated: created, body: cjCommand("approve", "P1-R2", created, 0)},
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.IgnoredAuthor) }, 0},
+		{"a mixed case command of another account", cjComment{pull: cjPull, id: 500, author: cjOtherID, created: created, updated: created, body: "/SuiteWard Suggest"},
+			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.IgnoredAuthor) }, 0},
 		{"a malformed command of another account", cjComment{pull: cjPull, id: 500, author: cjOtherID, created: created, updated: created, body: "/suiteward approve"},
 			func(w *cjWorld, id int64) { w.requireSilent(cjID1, id, commands.IgnoredAuthor) }, 0},
 		{"an owner command edited before it was first observed", cjComment{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: edited, body: cjCommand("approve", "P1-R2", created, 0)},

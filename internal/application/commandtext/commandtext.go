@@ -86,7 +86,10 @@ type Parsed struct {
 	Reason  Reason
 }
 
-const maxID = 999999999
+const (
+	maxID  = 999999999
+	prefix = "/suiteward"
+)
 
 // Parse reads the command line of a comment body (D-COMMANDS): the first line
 // outside fenced code blocks whose text, trimmed of spaces and tabs, starts
@@ -94,7 +97,8 @@ const maxID = 999999999
 // lines are ignored. A fence opens on a line whose trimmed text starts with
 // three or more backticks or tildes and closes on a line holding only at least
 // as many of the same character; an unclosed fence runs to the end of the
-// body. Matching is case-sensitive and only spaces and tabs separate tokens.
+// body. The prefix and the verb match without regard to ASCII case, the reference keeps its P<n>-R<m> form, and only
+// spaces and tabs separate tokens.
 func Parse(body string) Parsed {
 	var fence string
 	for line := range strings.SplitSeq(body, "\n") {
@@ -109,9 +113,11 @@ func Parse(body string) Parsed {
 			fence = f
 			continue
 		}
-		rest, ok := strings.CutPrefix(text, "/suiteward")
-		if ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
-			return parseLine(rest)
+		if len(text) >= len(prefix) && asciiLower(text[:len(prefix)]) == prefix {
+			rest := text[len(prefix):]
+			if rest == "" || rest[0] == ' ' || rest[0] == '\t' {
+				return parseLine(rest)
+			}
 		}
 	}
 	return Parsed{Kind: KindNotCommand}
@@ -135,21 +141,21 @@ func parseLine(rest string) Parsed {
 	switch {
 	case len(tokens) == 0:
 		return bad(UnknownVerb)
-	case tokens[0] == "approve":
+	case asciiLower(tokens[0]) == "approve":
 		verb = Approve
-	case tokens[0] == "revoke":
+	case asciiLower(tokens[0]) == "revoke":
 		verb = Revoke
-	case tokens[0] == "propose":
+	case asciiLower(tokens[0]) == "propose":
 		if len(tokens) > 1 {
 			return bad(ExtraText)
 		}
 		return Parsed{Kind: KindCommand, Command: Command{Verb: Propose}}
-	case tokens[0] == "suggest":
+	case asciiLower(tokens[0]) == "suggest":
 		if len(tokens) > 1 {
 			return bad(ExtraText)
 		}
 		return Parsed{Kind: KindCommand, Command: Command{Verb: Suggest}}
-	case tokens[0] == "skip":
+	case asciiLower(tokens[0]) == "skip":
 		return parseSkip(tokens[1:])
 	default:
 		return bad(UnknownVerb)
@@ -231,4 +237,15 @@ func checkID(name string, id int) {
 	if id < 1 || id > maxID {
 		panic(fmt.Sprintf("commandtext: %s id %d is outside 1..%d", name, id, maxID))
 	}
+}
+
+// asciiLower lowers A-Z only, so no other Unicode character (the long s, the Kelvin sign) folds into a letter of the
+// prefix or a verb.
+func asciiLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if 'A' <= r && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, s)
 }

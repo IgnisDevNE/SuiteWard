@@ -32,7 +32,7 @@ func TestParseProposeAndSkip(t *testing.T) {
 		{"propose with a word after it", "/suiteward propose now", malformed(commandtext.ExtraText)},
 		{"propose with a reference", "/suiteward propose P1-R1", malformed(commandtext.ExtraText)},
 		{"propose with a code", "/suiteward propose 123456", malformed(commandtext.ExtraText)},
-		{"propose is case-sensitive", "/suiteward Propose", malformed(commandtext.UnknownVerb)},
+		{"propose is case-insensitive", "/suiteward Propose", propose},
 		{"proposed is another verb", "/suiteward proposed", malformed(commandtext.UnknownVerb)},
 		{"suggest", "/suiteward suggest", suggest},
 		{"suggest with spaces, tabs and CRLF", " \t/suiteward \t suggest \t\r\nthanks\r\n", suggest},
@@ -41,7 +41,7 @@ func TestParseProposeAndSkip(t *testing.T) {
 		{"suggest with a word after it", "/suiteward suggest now", malformed(commandtext.ExtraText)},
 		{"suggest with a code", "/suiteward suggest 123456", malformed(commandtext.ExtraText)},
 		{"suggest with a reference", "/suiteward suggest P1-R1", malformed(commandtext.ExtraText)},
-		{"suggest is case-sensitive", "/suiteward Suggest", malformed(commandtext.UnknownVerb)},
+		{"suggest is case-insensitive", "/suiteward Suggest", suggest},
 		{"suggestion is another verb", "/suiteward suggestion", malformed(commandtext.UnknownVerb)},
 
 		{"skip", "/suiteward skip 123456", skip("123456")},
@@ -54,7 +54,7 @@ func TestParseProposeAndSkip(t *testing.T) {
 		{"skip takes no reference", "/suiteward skip P1-R1 123456", malformed(commandtext.BadCode)},
 		{"skip with text after the code", "/suiteward skip 123456 now", malformed(commandtext.ExtraText)},
 		{"skip with a second code", "/suiteward skip 123456 123456", malformed(commandtext.ExtraText)},
-		{"skip is case-sensitive", "/suiteward Skip 123456", malformed(commandtext.UnknownVerb)},
+		{"skip is case-insensitive", "/suiteward Skip 123456", skip("123456")},
 
 		// approve and revoke are unchanged.
 		{"approve without a code", "/suiteward approve P1-R1", malformed(commandtext.MissingCode)},

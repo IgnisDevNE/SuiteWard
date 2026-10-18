@@ -62,7 +62,7 @@ func ScopeNoticeComment(n ScopeNotice) string {
 	}
 	parts := []string{
 		"**SuiteWard scope notice**",
-		listingAndMore("Test-like files that this pull request adds and the current contract does not protect", n.Paths, n.PathsTotal),
+		listingAndMore("Test-like files in this pull request's head that the current contract does not protect", n.Paths, n.PathsTotal),
 		"These files are not protected by the current contract: SuiteWard assesses only the protected files, so a change to them needs no approval.",
 		"SuiteWard suggests this declaration, the current canonical `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n" + fenced(declaration),
 	}

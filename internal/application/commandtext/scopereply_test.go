@@ -58,22 +58,19 @@ func TestScopeReplyListsOnlyTheListsThatHaveNewPatterns(t *testing.T) {
 	}
 }
 
+// The next step is the last thing the owner reads, before the line that links the command.
 func TestScopeReplyEndsWithTheNextStep(t *testing.T) {
+	const link = "\nIn reply to [your command](#issuecomment-2345678901).\n"
 	for _, base := range []commandtext.ScopeBase{commandtext.BasePull, commandtext.BaseDefaultBranch} {
-		body := noticeText(t, reply(base))
-		// A command to copy, on a line of its own, before the closing sentences: SuiteWard starts the first contract only on request.
-		if !strings.Contains(body, "```\n/suiteward propose\n```") {
-			t.Errorf("base %d: the body does not offer /suiteward propose as a copyable command:\n%s", base, body)
-		}
-		for _, w := range []string{"Nothing is protected until"} {
-			if !strings.Contains(body, w) {
-				t.Errorf("base %d: body lacks %q:\n%s", base, w, body)
-			}
+		body, found := strings.CutSuffix(noticeText(t, reply(base)), link)
+		// A command to copy, on a line of its own: SuiteWard starts the first contract only on request.
+		if !found || !strings.HasSuffix(body, "```\n/suiteward propose\n```\n") || !strings.Contains(body, "Nothing is protected until") {
+			t.Errorf("base %d: the body does not end with /suiteward propose as a copyable command, after saying that nothing is protected yet:\n%s", base, body)
 		}
 	}
-	body := noticeText(t, reply(commandtext.BaseContract))
-	if strings.Contains(body, "/suiteward propose") || !strings.Contains(body, "approve the new revision SuiteWard posts") {
-		t.Errorf("after the first contract the next step is to approve the new revision, not to propose:\n%s", body)
+	body, found := strings.CutSuffix(noticeText(t, reply(commandtext.BaseContract)), link)
+	if !found || strings.Contains(body, "/suiteward propose") || !strings.HasSuffix(body, "approve the new revision SuiteWard posts, like any other change to the protected files. Nothing is protected until that change is approved and promoted.\n") {
+		t.Errorf("after the first contract the body ends with approving the new revision, not with a propose:\n%s", body)
 	}
 }
 

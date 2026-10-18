@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
@@ -596,12 +597,12 @@ func (f PullFile) NewLineRanges() ([]LineRange, error) {
 		if m == nil {
 			return nil, fmt.Errorf("%w: malformed hunk header in the patch of %s", ErrInvalidResponse, f.Path)
 		}
-		start, errStart := strconv.Atoi(m[1])
-		count, errCount := 1, error(nil)
-		if m[2] != "" {
-			count, errCount = strconv.Atoi(m[2])
+		start, err := strconv.Atoi(m[1])
+		count := 1
+		if err == nil && m[2] != "" {
+			count, err = strconv.Atoi(m[2])
 		}
-		if err := errors.Join(errStart, errCount); err != nil {
+		if err != nil || (count > 0 && count-1 > math.MaxInt-start) {
 			return nil, fmt.Errorf("%w: hunk header numbers of the patch of %s are out of range", ErrInvalidResponse, f.Path)
 		}
 		if count > 0 {

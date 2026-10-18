@@ -34,9 +34,11 @@ const (
 	SkipRefused
 	// NothingUncovered answers /suiteward suggest after the first contract when every test-like path is in the scope.
 	NothingUncovered
+	// SuggestRefused carries a Refusal: Fork, NotOpen, InvalidSource or DeclarationTooLarge.
+	SuggestRefused
 )
 
-// Refusal is the reason of a ProposeRefused or SkipRefused outcome.
+// Refusal is the reason of a ProposeRefused, SkipRefused or SuggestRefused outcome.
 type Refusal uint8
 
 const (
@@ -47,6 +49,7 @@ const (
 	InvalidSource
 	NotOpen
 	BaseNotTarget
+	DeclarationTooLarge // only for SuggestRefused
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -195,7 +198,7 @@ func acknowledgment(a Ack) string {
 		return paragraphs("Command for " + ref + " rejected by policy: " + reason + ". Nothing changed.\n" + requirement + "\n" + next)
 	case MalformedCommand:
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
-			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose` or `/suiteward skip <code>`, " +
+			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>` or `/suiteward suggest`, " +
 			"with a current code from your authenticator app where the command takes one.")
 	case InvalidCode:
 		return paragraphs("The confirmation code" + of + " was not accepted; nothing changed.\n" +
@@ -224,6 +227,8 @@ func acknowledgment(a Ack) string {
 			"To start the first contract instead, comment `/suiteward propose` on the pull request that should carry it.")
 	case SkipRefused:
 		return skipRefusal(a.Refusal)
+	case SuggestRefused:
+		return suggestRefusal(a.Refusal)
 	case NothingUncovered:
 		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is in the scope already, so there is nothing to suggest. Nothing changed.\n" +
 			"This answer is not an approval, and SuiteWard does not run tests.")
@@ -271,7 +276,7 @@ func checkAck(a Ack) {
 // does not fit: a skip has none, so only the code outcomes and NoSuite may come without one.
 func referenceOf(a Ack) string {
 	switch a.Outcome {
-	case MalformedCommand, EditedFirst, ProposeRefused, ProposeFailed, Skipped, SkipRefused, NothingUncovered:
+	case MalformedCommand, EditedFirst, ProposeRefused, ProposeFailed, Skipped, SkipRefused, SuggestRefused, NothingUncovered:
 		if a.Proposal != 0 || a.Revision != 0 {
 			panic(fmt.Sprintf("commandtext: outcome %d carries a reference", a.Outcome))
 		}
@@ -291,6 +296,8 @@ func refusalFits(outcome Outcome, refusal Refusal) bool {
 		return refusal == CanonicalPresent || refusal == Fork || refusal == NotOpen || refusal == BaseNotTarget || refusal == EmptyInventory || refusal == InvalidSource
 	case SkipRefused:
 		return refusal == CanonicalPresent || refusal == Fork || refusal == Carrier
+	case SuggestRefused:
+		return refusal == Fork || refusal == NotOpen || refusal == InvalidSource || refusal == DeclarationTooLarge
 	}
 	return refusal == 0
 }
@@ -320,7 +327,7 @@ func rejectionText(r Rejection, ref, who string) (reason, next string) {
 func malformedText(r Reason) string {
 	switch r {
 	case UnknownVerb:
-		return "the action must be `approve`, `revoke`, `propose` or `skip`"
+		return "the action must be `approve`, `revoke`, `propose`, `skip` or `suggest`"
 	case MissingReference:
 		return "the proposal reference is missing"
 	case BadReference:
@@ -629,6 +636,24 @@ func refused(command, reason, next string) string {
 	return paragraphs("`" + command + "` was not processed: " + reason + ". Nothing changed.\n" + next)
 }
 
+func suggestRefusal(r Refusal) string {
+	const suggest = "/suiteward suggest"
+	switch r {
+	case Fork:
+		return refused(suggest, "this pull request comes from a fork, and pull requests from forks are not supported yet",
+			"Open the pull request from a branch of this repository, then comment `/suiteward suggest` there.")
+	case NotOpen:
+		return refused(suggest, "this pull request is no longer open", "Comment `/suiteward suggest` on an open pull request.")
+	case InvalidSource:
+		return refused(suggest, "SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
+			"Fix the files or the declaration, then comment `/suiteward suggest` again.")
+	case DeclarationTooLarge:
+		return refused(suggest, "the suggested declaration would be too large for a comment",
+			"Review the test-like paths of this pull request and add the missing patterns to `.suiteward.yml` yourself.")
+	}
+	panic(fmt.Sprintf("commandtext: unknown suggest refusal %d", r))
+}
+
 func skipRefusal(r Refusal) string {
 	const skip = "/suiteward skip"
 	switch r {
@@ -688,6 +713,10 @@ type DeclarationSuggestion struct {
 	Runner   []string
 	Mixed    []string
 	Cut      bool
+	// Suggest renders the reply of /suiteward suggest in its own words, not the refusal of a propose; Declared, only with
+	// Suggest, says that the default branch or the head already holds a .suiteward.yml.
+	Suggest  bool
+	Declared bool
 }
 
 // SuggestDeclaration renders the refusal of a propose when neither the default branch nor the pull request holds
@@ -702,16 +731,21 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 	usable, runner := suggestableOnly(a.Patterns), suggestableOnly(a.Runner)
 	left := len(a.Patterns) + len(a.Runner) - len(usable) - len(runner)
 	intro := "SuiteWard suggests this declaration, built from the test-like paths of this repository. Review it and change it as needed:"
+	if a.Suggest {
+		intro = "SuiteWard suggests this declaration for this pull request, built from the test-like paths of this repository. Review it and change it as needed:"
+	}
 	if len(usable)+len(runner) == 0 {
 		usable = []string{"path/to/tests/**"}
 		intro = "SuiteWard found no test-like path to suggest, so this is a minimal file. Replace the placeholder with patterns that match your tests:"
 	}
 	declaration := "version: 1\n" + yamlList("include", usable) + yamlList("runner", runner)
-	parts := []string{
-		"`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, " +
-			"so it cannot tell which files to protect and proposed nothing. Nothing changed.",
-		intro + "\n\n" + fenced(declaration),
+	first := "`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, " +
+		"so it cannot tell which files to protect and proposed nothing. Nothing changed."
+	last := "After the file is on this branch, comment `/suiteward propose` again."
+	if a.Suggest {
+		first, last = suggestReplyTexts(a.Declared)
 	}
+	parts := []string{first, intro + "\n\n" + fenced(declaration)}
 	if left > 0 {
 		parts = append(parts, fmt.Sprintf("Left out of this suggestion because they are too long or contain unusual characters: %d.", left))
 	}
@@ -726,8 +760,19 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 		strings.ReplaceAll(url.QueryEscape(declaration), "+", "%20")
 	return replyTo(paragraphs(append(parts,
 		"To add it on this pull request's branch, [open GitHub's editor with this file filled in]("+link+"). SuiteWard never commits it for you: the commit is yours.",
-		"After the file is on this branch, comment `/suiteward propose` again.",
+		last,
 	)...), a.Source)
+}
+
+// suggestReplyTexts are the first and the last paragraph of the reply of a suggest before the first contract, which differ
+// from a propose's: nothing was refused, and a declaration may already exist.
+func suggestReplyTexts(declared bool) (first, last string) {
+	if declared {
+		return "`/suiteward suggest`: this repository already has a `.suiteward.yml`, on the default branch or in the head of this pull request. Compare it with this suggestion. Nothing changed.",
+			"Nothing changes until you commit a declaration and approve the change."
+	}
+	return "`/suiteward suggest`: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, so no files are protected yet. Nothing changed.",
+		"After the file is on this branch, comment `/suiteward propose` to start the first contract."
 }
 
 // suggestableOnly keeps the patterns that can be suggested, in order.
@@ -773,6 +818,9 @@ func ValidateSuggestion(a DeclarationSuggestion) error {
 	}
 	if len(a.Mixed) > maxListed {
 		return fmt.Errorf("commandtext: %d mixed files, at most %d", len(a.Mixed), maxListed)
+	}
+	if a.Declared && !a.Suggest {
+		return fmt.Errorf("commandtext: a declaration that exists is stated only in the reply of a suggest")
 	}
 	return nil
 }

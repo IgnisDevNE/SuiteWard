@@ -739,7 +739,7 @@ func (j *commandsJob) scopeSuggestion(ctx context.Context, target commentTarget,
 	if len(declaration) > commandtext.MaxDeclaration {
 		return governance.OutboxMessage{}, errDeclarationTooLarge
 	}
-	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, pull.HeadRef, found.Paths, declaration, found.Mixed, suggestion.Cut)
+	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, pull.HeadRef, found.Paths, declaration, found.Mixed, found.Submodules, suggestion.Cut)
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
 	}

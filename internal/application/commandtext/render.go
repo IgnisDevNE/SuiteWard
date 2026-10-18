@@ -444,12 +444,24 @@ func fenced(block string) string {
 // mixedWarning says that files may hold test settings among other content and are not suggested. They are listed only
 // in text: a mixed file never goes into a declaration.
 func mixedWarning(mixed []string) string {
-	shown := make([]string, len(mixed))
-	for i, f := range mixed {
-		shown[i] = display(f)
-	}
 	return "These files may hold test settings among other content, so SuiteWard does not suggest them: protecting one would put every change to it, " +
-		"even a dependency update, behind an approval. Decide for yourself:\n\n" + fenced(strings.Join(shown, "\n")+"\n")
+		"even a dependency update, behind an approval. Decide for yourself:\n\n" + fencedLines(mixed)
+}
+
+// submodulesWarning says that the submodules a suggested pattern reaches are outside the scope: what is inside them is not
+// protected, because SuiteWard never reads a submodule.
+func submodulesWarning(submodules []string) string {
+	return "A suggested pattern reaches these submodules, but their contents are not protected: SuiteWard never reads a submodule, " +
+		"so a change inside one needs no approval:\n\n" + fencedLines(submodules)
+}
+
+// fencedLines shows the items, one display line each, in a fence that backticks inside them cannot close.
+func fencedLines(items []string) string {
+	shown := make([]string, len(items))
+	for i, item := range items {
+		shown[i] = display(item)
+	}
+	return fenced(strings.Join(shown, "\n") + "\n")
 }
 
 // maxListed bounds the entries of each listing; maxShown bounds the bytes of
@@ -703,16 +715,18 @@ const maxPattern = 100
 // DeclarationSuggestion is what the refusal of a propose for a missing declaration states: Repo (owner/name), Branch
 // (the pull request's head ref), Patterns (include patterns, possibly none), Runner (runner patterns) and Source, the id
 // of the command comment, which the body links. Patterns and Runner together hold at most 20, which is the limit that
-// Cut says dropped some; Mixed (at most 20 files) is shown in the text only, never in the declaration or the link. It is
-// not an Ack because it holds a slice, and an Ack stays comparable.
+// Cut says dropped some; Mixed (at most 20 files) is shown in the text only, never in the declaration or the link, and so
+// is Submodules (at most 20), the submodules whose contents the patterns do not protect. It is not an Ack because it holds
+// a slice, and an Ack stays comparable.
 type DeclarationSuggestion struct {
-	Source   int64
-	Repo     string
-	Branch   string
-	Patterns []string
-	Runner   []string
-	Mixed    []string
-	Cut      bool
+	Source     int64
+	Repo       string
+	Branch     string
+	Patterns   []string
+	Runner     []string
+	Mixed      []string
+	Submodules []string
+	Cut        bool
 	// Suggest renders the reply of /suiteward suggest in its own words, not the refusal of a propose; Declared, only with
 	// Suggest, says that the default branch or the head already holds a .suiteward.yml.
 	Suggest  bool
@@ -754,6 +768,9 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 	}
 	if len(a.Mixed) > 0 {
 		parts = append(parts, mixedWarning(a.Mixed))
+	}
+	if len(a.Submodules) > 0 {
+		parts = append(parts, submodulesWarning(a.Submodules))
 	}
 	// QueryEscape writes a space as +, which the editor may keep; %20 is read the same everywhere.
 	link := "https://github.com/" + a.Repo + "/new/" + pathEscape(a.Branch) + "?filename=.suiteward.yml&value=" +
@@ -818,6 +835,9 @@ func ValidateSuggestion(a DeclarationSuggestion) error {
 	}
 	if len(a.Mixed) > maxListed {
 		return fmt.Errorf("commandtext: %d mixed files, at most %d", len(a.Mixed), maxListed)
+	}
+	if len(a.Submodules) > maxListed {
+		return fmt.Errorf("commandtext: %d submodules, at most %d", len(a.Submodules), maxListed)
 	}
 	if a.Declared && !a.Suggest {
 		return fmt.Errorf("commandtext: a declaration that exists is stated only in the reply of a suggest")

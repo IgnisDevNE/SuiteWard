@@ -112,7 +112,7 @@ func TestScopeNoticeAckBoundsItsRepositoryText(t *testing.T) {
 	for range 25 {
 		paths = append(paths, long)
 	}
-	message, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", paths, []byte(suggestDeclaration), []string{long}, true)
+	message, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", paths, []byte(suggestDeclaration), []string{long}, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

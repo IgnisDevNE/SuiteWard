@@ -46,11 +46,12 @@ type scopeNoticePayload struct {
 	PathsTotal  int      `json:"pathsTotal"`
 	Declaration string   `json:"declaration"` // the canonical declaration with the new patterns added, at most 8192 bytes
 	Mixed       []string `json:"mixed,omitempty"`
-	Cut         bool     `json:"cut,omitempty"` // the limit of 20 patterns cut the declaration's new patterns
+	Submodules  []string `json:"submodules,omitempty"` // the submodules a suggested pattern reaches, whose contents are not protected
+	Cut         bool     `json:"cut,omitempty"`        // the limit of 20 patterns cut the declaration's new patterns
 }
 
 func (p scopeNoticePayload) notice() commandtext.ScopeNotice {
-	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed, Cut: p.Cut}
+	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed, Submodules: p.Submodules, Cut: p.Cut}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -64,7 +65,7 @@ func (p scopeNoticePayload) validate() error {
 	case p.PathsTotal < len(p.Paths):
 		return errors.New("the total is below the listed paths")
 	}
-	for _, text := range slices.Concat(p.Paths, p.Mixed) {
+	for _, text := range slices.Concat(p.Paths, p.Mixed, p.Submodules) {
 		if len(text) > maxSummaryText {
 			return errors.New("a path is too long")
 		}
@@ -89,8 +90,8 @@ func setDigest(paths []string) string {
 
 // newScopeNoticeMessage builds the notice of the added uncovered paths, bounding the repository text it carries. A payload
 // the publisher could not render is an error, so nobody writes a message that nobody can post.
-func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed []string, cut bool) (governance.OutboxMessage, error) {
-	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Cut: cut}
+func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed, submodules []string, cut bool) (governance.OutboxMessage, error) {
+	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: cut}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope notice: %w", err)
 	}
@@ -249,8 +250,10 @@ type headScope struct {
 	// Paths are the test-like paths that neither the governing scope nor the head's own valid declaration covers, sorted.
 	Paths []string
 	// Mixed are the mixed files of the head (at most 20), which may hold test settings and are never suggested.
-	Mixed     []string
-	canonical []byte // the canonical's declaration, which a suggested declaration starts from
+	Mixed []string
+	// Submodules are the submodules of the head (at most 20) that the patterns Suggest builds from the head reach: their contents are outside the scope.
+	Submodules []string
+	canonical  []byte // the canonical's declaration, which a suggested declaration starts from
 }
 
 // discoverHead finds the uncovered test-like paths of tree, the head of a pull request, under the canonical of project.
@@ -285,7 +288,8 @@ func discoverHead(ctx context.Context, suites governance.UnitOfWork, contents go
 			}
 		}
 	}
-	return headScope{entries: entries, Paths: paths, Mixed: inventory.Suggest(entries).Mixed, canonical: raw}, nil
+	suggested := inventory.Suggest(entries)
+	return headScope{entries: entries, Paths: paths, Mixed: suggested.Mixed, Submodules: suggested.Submodules, canonical: raw}, nil
 }
 
 // withoutCovered returns the paths that s does not cover, in order.
@@ -386,7 +390,7 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 		return nil
 	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
-	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed, suggestion.Cut)
+	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed, found.Submodules, suggestion.Cut)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil

@@ -378,7 +378,7 @@ func TestScopeNoticeWithoutSubmodulesIsUnchanged(t *testing.T) {
 		"Test-like files in this pull request's head that the current contract does not protect:\n\n```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```\n\n" +
 		"These files are not protected by the current contract: SuiteWard assesses only the protected files, so a change to them needs no approval.\n\n" +
 		"SuiteWard suggests this declaration, the current canonical `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"*_test.go\"\n  - \"**/testdata/**\"\n```\n\n" +
-		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/octo-org/widgets/edit/fix/a%23b%25d/%C3%BCn%C3%AF/.suiteward.yml) and paste the declaration. SuiteWard never commits it for you: the commit is yours.\n\n" +
+		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/octo-org/widgets/edit/feature/add-tests/.suiteward.yml) and paste the declaration. SuiteWard never commits it for you: the commit is yours.\n\n" +
 		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.\n\n" +
 		"This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.\n"
 	if got := noticeText(t, notice()); got != want {

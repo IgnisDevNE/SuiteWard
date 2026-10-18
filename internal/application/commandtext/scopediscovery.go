@@ -18,8 +18,8 @@ const cutWarning = "This list was cut at the limit of 20 patterns, so test-like 
 // ScopeNotice is what the scope-notice comment states. Repo (owner/name) and Branch (the pull request's head ref) build
 // the editor link. Paths holds at most 20 of the PathsTotal test-like paths that the current contract does not protect,
 // each already cut by the caller; a total below the list is taken as its length. Declaration is the full declaration to
-// commit and Mixed (at most 20) the mixed files found. Source is the id of the command comment that asked for the
-// notice, zero when a job writes it unprompted.
+// commit, Mixed (at most 20) the mixed files found and Submodules (at most 20) the submodules whose contents the patterns
+// do not protect. Source is the id of the command comment that asked for the notice, zero when a job writes it unprompted.
 type ScopeNotice struct {
 	Source      int64
 	Repo        string
@@ -28,6 +28,7 @@ type ScopeNotice struct {
 	PathsTotal  int
 	Declaration []byte
 	Mixed       []string
+	Submodules  []string
 	Cut         bool // the limit of 20 patterns cut the new patterns, so the declaration may lack some
 }
 
@@ -45,6 +46,8 @@ func ValidateScopeNotice(n ScopeNotice) error {
 		return fmt.Errorf("commandtext: %d paths in a notice, want 1 to %d", len(n.Paths), maxListed)
 	case len(n.Mixed) > maxListed:
 		return fmt.Errorf("commandtext: %d mixed files, at most %d", len(n.Mixed), maxListed)
+	case len(n.Submodules) > maxListed:
+		return fmt.Errorf("commandtext: %d submodules, at most %d", len(n.Submodules), maxListed)
 	case len(n.Declaration) == 0 || len(n.Declaration) > MaxDeclaration || !utf8.Valid(n.Declaration):
 		return fmt.Errorf("commandtext: a declaration of %d bytes is empty, over %d bytes or not UTF-8", len(n.Declaration), MaxDeclaration)
 	}
@@ -75,6 +78,9 @@ func ScopeNoticeComment(n ScopeNotice) string {
 	}
 	if len(n.Mixed) > 0 {
 		parts = append(parts, mixedWarning(n.Mixed))
+	}
+	if len(n.Submodules) > 0 {
+		parts = append(parts, submodulesWarning(n.Submodules))
 	}
 	parts = append(parts,
 		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it]("+editLink(n.Repo, n.Branch)+") and paste the declaration. SuiteWard never commits it for you: the commit is yours.",

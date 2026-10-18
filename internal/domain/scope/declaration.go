@@ -156,3 +156,8 @@ func (d Declaration) Exclude() []Pattern {
 func (d Declaration) Runner() []Pattern {
 	return slices.Clone(d.runner)
 }
+
+// AddPatterns returns raw with include and runner appended to their lists.
+func AddPatterns(raw []byte, include, runner []string) ([]byte, error) {
+	return nil, errors.New("not implemented")
+}

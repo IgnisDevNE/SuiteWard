@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"errors"
 	"maps"
 	"path"
 	"slices"
@@ -56,4 +57,22 @@ func suggest(found map[string]bool, pattern, source string) {
 	if ok, err := p.Match(source); err == nil && ok {
 		found[pattern] = true
 	}
+}
+
+// Suggestion is a suggested declaration from file paths only.
+type Suggestion struct {
+	Include []string
+	Runner  []string
+	Mixed   []string
+	Cut     bool
+}
+
+// Suggest replaces SuggestScope.
+func Suggest(entries []Entry) Suggestion {
+	return Suggestion{}
+}
+
+// Uncovered returns the test-like file paths of entries that s does not cover, sorted.
+func Uncovered(entries []Entry, s scope.Scope) ([]string, error) {
+	return nil, errors.New("not implemented")
 }

@@ -1163,7 +1163,12 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
   - the shared limit and `cut`;
   - the order;
   - SuiteWard's own paths, a fixture: every `*_test.go`, all `testdata/` and `codecov.yml` covered, with `cut` false.
-- `Uncovered`: covered paths are excluded, and only test-like ones are returned.
+- `Uncovered`:
+  - it returns only test-like paths;
+  - it leaves out covered paths;
+  - it leaves out a test-like path matched by an `exclude`;
+  - it uses the same classifier as `Suggest`.
+- A declaration whose runner pattern matches no file still parses, and `Covers` and the integrity check accept it.
 - `AddPatterns`, by round trip: the output parses, keeps every original pattern, and adds exactly the requested new ones.
 - `suggested` and `suggest-refused` are ignored by `LatestOwnerCommand`: after a rejected `approve`, a `suggest` keeps `owner-command-rejected`.
 - Payloads: an ack or revision payload of the `v0.1.0` shape still decodes.

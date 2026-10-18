@@ -94,6 +94,9 @@ Accepted 2026-10-17 (owner, M1.9 planning, after the C2 finding in [M1.8](phases
   - It is not a command for the check: it never clears `owner-command-rejected`.
 - **Where a suggested declaration starts from.** The notice and `suggest` start from the **canonical** declaration bytes, never from the PR head's file, and only add patterns. A PR that narrowed the scope therefore never comes back as a suggestion.
   - **The one exception is the review suggestion.** It inserts the new lines into the PR head's own `.suiteward.yml`, on a list line inside a diff hunk, because GitHub accepts review comments only on such lines. This grants nothing either: a narrowing in the head is still listed as a reduction and still needs approval. When no list line falls inside a hunk, there is no review suggestion.
+  - **The head's own scope only silences.** A test path that the PR's valid `.suiteward.yml` already covers is not reported. That only suppresses an advisory; the widening still needs approval.
+- **Exclusions are respected.** A test-like path that matches an `exclude` of the governing scope is never reported, because adding patterns cannot undo an exclusion.
+- **One notice per set.** The notice is keyed by the set of added uncovered paths, so later pushes that add nothing new do not repeat it.
   - Rewriting the YAML can drop the owner's comments. Comments are part of the approved bytes, so the owner sees that change and approves it.
 - **Widening is a protected change.** Any edit to `.suiteward.yml` creates a revision that needs approval, comments included. An agent widens the scope with such a PR; it never posts `suggest`.
 - **A reduction is detailed.** The revision comment lists the rules and paths a reduction removes.

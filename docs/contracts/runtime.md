@@ -391,11 +391,16 @@ The order is deterministic: directory patterns first, then file patterns, each g
 
 **Revision comment.** The `revision:` payload adds `reducedRules` (at most 20) and `reducedPaths` (at most 20, each cut to 150 bytes), plus `reducedPathsTotal`, all optional. When `reduced` is set, the text lists the rules and paths that the reduction removes, inside code fences.
 
-**Outbox `github_comment`, key `scope-notice:<repository id>:<pull>:<head sha>` (new).**
-- **When it is written.** For an open, non-fork PR whose Suite has a canonical, the checks job looks for test-like paths in the head tree, using `inventory.Uncovered(entries, governing scope)`.
-  - When there are none, nothing more is read.
-  - When there are some, it reads the tree of the PR's base commit and keeps the paths absent from it, which are the ones this PR adds.
-  - When any remain, it writes one message per head.
+**Test-like and uncovered.** `Suggest` and `Uncovered` share one classifier, so they always agree on what counts as test-like. `Uncovered(entries, s)` returns the test-like file paths that `s` does not cover. It never returns a path that matches an `exclude` of `s`, because an exclusion is the owner's choice and adding patterns cannot undo it. The **new patterns** for a set of uncovered paths are `Suggest` applied to those entries: its include list and its runner list.
+
+**Outbox `github_comment`, key `scope-notice:<repository id>:<pull>:<set digest>` (new).**
+- **When it is written.** For an open, non-fork PR whose Suite has a canonical, the checks job follows these steps.
+  1. It takes the uncovered paths of the head tree: `Uncovered` under the governing scope, minus the paths covered by the head's own scope when its `.suiteward.yml` is valid. A PR that already widens the scope to cover them gets no notice; that widening still needs approval.
+  2. When there are none, it reads nothing more.
+  3. When there are some, it reads the tree of the PR's base commit and keeps the paths absent from it, which are the ones this PR adds.
+  4. When any remain, it computes `set digest`, the SHA-256 hex digest of the sorted paths joined by newlines. If a message with that key already exists, it stops. The existing-key check comes before the base-tree read whenever the set is already known. Otherwise it writes the message.
+
+  The result is one notice per distinct set of added uncovered paths, not one per push.
 - **Payload:**
   - `repositoryId`, `repo`, `pull`, `head`, `branch`;
   - `paths`: at most 20, each cut to 150 bytes, plus `pathsTotal`;
@@ -408,9 +413,14 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - it never changes the check and never claims tests ran.
 - `splitKey` accepts the kind with its four parts.
 
-**Outbox `github_comment`, key `scope-review:<repository id>:<pull>:<head sha>` (new).**
-- **When it is written.** Only together with a `scope-notice`, and only when `Reader.PullFiles` shows `.suiteward.yml` among the PR's changed files with a hunk that contains a line of the `include:` or `runner:` list.
-- **What it posts.** A review comment (`POST /repos/{repo}/pulls/{pull}/comments`, `commit_id` = head, `path` = `.suiteward.yml`, `side` = `RIGHT`) on that line. The body is a `suggestion` block holding that line followed by the new patterns at the same indentation.
+**Outbox `github_comment`, key `scope-review:<repository id>:<pull>:<set digest>` (new).**
+- **When it is written.** Only together with a `scope-notice`. `Reader.PullFiles` must show `.suiteward.yml` among the PR's changed files, the head's file must be a valid declaration in block style, and a hunk must contain an item line of the `include:` list, the `runner:` list, or both.
+- **What it posts.** One review comment (`POST /repos/{repo}/pulls/{pull}/comments`, `commit_id` = head, `path` = `.suiteward.yml`, `side` = `RIGHT`) per list that has such a line, on that line.
+  - The body is a `suggestion` block holding that line followed by the list's new patterns, at the same indentation.
+  - It leaves out the patterns that the head's file already lists, so the result never holds a duplicate.
+  - It posts nothing for a list whose new patterns are all present.
+  - Patterns of a list with no line inside a hunk stay only in the notice's copyable block.
+  - A flow-style list (`include: [a, b]`) gets no review suggestion.
 - **Where the lines come from.** This is the only place that starts from the PR head's file ([D-SCOPE-DISCOVERY](../plan/decisions.md#d-scope-discovery-suggesting-and-widening-the-scope)).
 - **Dedup** uses `Writer.ReviewCommentsByAuthor` and the marker.
 - **A 422** from GitHub (the line is no longer in the diff) completes the message without retry, and the job logs the `kind` and `status` of the failure.

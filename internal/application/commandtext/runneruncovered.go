@@ -56,7 +56,7 @@ func RunnerUncoveredComment(n RunnerUncovered) string {
 	}
 	if len(n.Ignore) > 0 {
 		parts = append(parts, "**Ignore the files.** This declaration is the current canonical `.suiteward.yml` with the paths of these files added to `exclude`. "+
-			"Excluding a path removes it from the protected scope, a reduction that the owner approves too, and a name without a slash is excluded at every depth:\n\n"+fenced(withNewline(n.Ignore)))
+			"Excluding a path removes it from the protected scope, a reduction that the owner approves too, and each pattern names exactly one file:\n\n"+fenced(withNewline(n.Ignore)))
 	} else {
 		parts = append(parts, "SuiteWard cannot offer to ignore these files: a path with a character that `exclude` reads as a pattern cannot be named there exactly. Protect them, or write the `exclude` entries yourself.")
 	}

@@ -129,7 +129,7 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 	}
 	var ignore []byte
 	if excludable(set.paths) {
-		if ignore, err = scope.AddExcludes(base, set.paths); err != nil {
+		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil {
 			return &opaque{what: "add the excludes", cause: err}
 		}
 	}
@@ -151,11 +151,24 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 	return outboxOnce(ctx, j.suites, owner.ProjectID(p.RepositoryID), messages)
 }
 
-// excludable reports whether every path can be written in an exclude list as itself: a path that contains a pattern character does not match
+// excludePatterns returns the exclude patterns that name exactly the files at paths: a name without a slash would match at every depth, so it gets a
+// leading slash; a path with a slash is anchored already.
+func excludePatterns(paths []string) []string {
+	patterns := make([]string, len(paths))
+	for i, path := range paths {
+		patterns[i] = path
+		if !strings.Contains(path, "/") {
+			patterns[i] = "/" + path
+		}
+	}
+	return patterns
+}
+
+// excludable reports whether every path can be excluded by its own pattern: a path that contains a pattern character does not match
 // the pattern it spells, so excluding it would never resolve the block.
 func excludable(paths []string) bool {
 	return !slices.ContainsFunc(paths, func(path string) bool {
-		pattern, err := scope.ParsePattern(path)
+		pattern, err := scope.ParsePattern(excludePatterns([]string{path})[0])
 		if err != nil {
 			return true
 		}
@@ -169,7 +182,7 @@ func excludable(paths []string) bool {
 func (j *checksJob) runnerReview(ctx context.Context, target commentTarget, head string, set *runnerSet, ignorable bool) (*governance.OutboxMessage, error) {
 	var ignore []string
 	if ignorable {
-		ignore = set.paths
+		ignore = excludePatterns(set.paths)
 	}
 	suggestions, err := runnerSuggestions(set, inventory.RunnerPatterns(set.paths), ignore)
 	if err != nil {

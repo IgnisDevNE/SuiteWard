@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
@@ -21,7 +23,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
-	"go.yaml.in/yaml/v3"
 )
 
 // Scope discovery after V1 (docs/contracts/runtime.md, "Scope discovery (M1.9)"; D-SCOPE-DISCOVERY): the checks job tells the

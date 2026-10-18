@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"regexp"
 	"slices"
@@ -331,6 +332,7 @@ type commentPublisher struct {
 	instance *lazy[string] // commands.Store.Instance, read once
 	owners   ownerSource
 	suites   governance.UnitOfWork
+	logger   *slog.Logger
 }
 
 func keyError(kind, key, what string) error { return fmt.Errorf("%s %s: %s", kind, key, what) }

@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +59,13 @@ type cmtPosted struct {
 	body   string
 }
 
+// cmtReviewPosted is one review comment posted on the diff.
+type cmtReviewPosted struct {
+	repo, commit, path  string
+	number, start, line int
+	body                string
+}
+
 // fakeCommentWriter keeps the comments of one pull request. A posted comment becomes one of the bot's, so a
 // second delivery finds it the way GitHub would show it.
 type fakeCommentWriter struct {
@@ -66,6 +75,12 @@ type fakeCommentWriter struct {
 	listed   []int64 // the author id of every readback
 	listErr  error
 	postErr  error
+
+	reviews        []github.Comment  // the review comments of the pull request, the bot's included once posted
+	reviewPosted   []cmtReviewPosted // every review comment posted
+	reviewListed   []int64           // the author id of every review readback
+	reviewListErr  error
+	reviewPostErrs []error // consumed one per post: nil posts the comment, anything else is its answer
 }
 
 func (f *fakeCommentWriter) PostComment(_ context.Context, repo string, number int, body string) (int64, error) {
@@ -89,6 +104,38 @@ func (f *fakeCommentWriter) CommentsByAuthor(_ context.Context, _ string, _ int,
 	}
 	var mine []github.Comment
 	for _, c := range f.comments {
+		if c.AuthorID == authorID {
+			mine = append(mine, c)
+		}
+	}
+	return mine, nil
+}
+
+func (f *fakeCommentWriter) PostReviewComment(_ context.Context, repo string, number int, commitSHA, path string, startLine, line int, body string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.reviewPostErrs) > 0 {
+		err := f.reviewPostErrs[0]
+		f.reviewPostErrs = f.reviewPostErrs[1:]
+		if err != nil {
+			return 0, err
+		}
+	}
+	f.reviewPosted = append(f.reviewPosted, cmtReviewPosted{repo: repo, commit: commitSHA, path: path, number: number, start: startLine, line: line, body: body})
+	id := int64(2000 + len(f.reviews))
+	f.reviews = append(f.reviews, github.Comment{ID: id, AuthorID: cmtBotID, Body: body})
+	return id, nil
+}
+
+func (f *fakeCommentWriter) ReviewCommentsByAuthor(_ context.Context, _ string, _ int, authorID int64) ([]github.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reviewListed = append(f.reviewListed, authorID)
+	if f.reviewListErr != nil {
+		return nil, f.reviewListErr
+	}
+	var mine []github.Comment
+	for _, c := range f.reviews {
 		if c.AuthorID == authorID {
 			mine = append(mine, c)
 		}
@@ -120,6 +167,7 @@ type cmtWorld struct {
 	comments  map[contract.OperationID]int64 // the comment that carried each processed command
 	botCalls  atomic.Int32
 	instCalls atomic.Int32
+	logs      bytes.Buffer
 }
 
 func newCmtWorld(t *testing.T) *cmtWorld {
@@ -144,6 +192,7 @@ func newCmtWorld(t *testing.T) *cmtWorld {
 		}),
 		owners: w.owners,
 		suites: w.mem,
+		logger: slog.New(slog.NewJSONHandler(&w.logs, nil)),
 	}
 	return w
 }

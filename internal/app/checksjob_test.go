@@ -43,7 +43,15 @@ const (
 // cjCountingReader answers the job's tree reads from the boot repositories and counts them per commit.
 type cjCountingReader struct {
 	*fakeBootReader
-	reads map[string]int
+	reads     map[string]int
+	files     map[int][]github.PullFile // the files each pull request changes
+	filesErr  error                     // every PullFiles fails with it
+	fileReads int
+}
+
+func (r *cjCountingReader) PullFiles(_ context.Context, _ string, number int) ([]github.PullFile, error) {
+	r.fileReads++
+	return r.files[number], r.filesErr
 }
 
 func (r *cjCountingReader) Tree(ctx context.Context, repo, sha string) (inventory.Tree, error) {

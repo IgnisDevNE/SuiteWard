@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
@@ -193,4 +194,152 @@ func patternStrings(patterns []scope.Pattern) []string {
 		result = append(result, p.String())
 	}
 	return result
+}
+
+// repoDeclaration is this repository's own .suiteward.yml at 8346ee8, which mixes bare and double-quoted items.
+const repoDeclaration = `version: 1
+include:
+  - "**/*_test.go"
+  - "**/testdata/**"
+  - scripts/test-*.ps1
+runner:
+  - scripts/ci.ps1
+  - /codecov.yml
+`
+
+func mustParse(t *testing.T, raw []byte) scope.Declaration {
+	t.Helper()
+	d, err := scope.ParseDeclaration(raw)
+	if err != nil {
+		t.Fatalf("ParseDeclaration(%q) error = %v", raw, err)
+	}
+	return d
+}
+
+func TestAddPatternsKeepsTheOwnersFileAndAppends(t *testing.T) {
+	got, err := scope.AddPatterns([]byte(repoDeclaration), []string{"*.spec.*", "scripts/test-*.ps1"}, []string{"jest.config.*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `version: 1
+include:
+  - "**/*_test.go"
+  - "**/testdata/**"
+  - scripts/test-*.ps1
+  - '*.spec.*'
+runner:
+  - scripts/ci.ps1
+  - /codecov.yml
+  - jest.config.*
+`
+	if string(got) != want {
+		t.Fatalf("AddPatterns =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestAddPatternsCreatesMissingListsInBlockStyle(t *testing.T) {
+	got, err := scope.AddPatterns([]byte("version: 1\n"), []string{"*_test.go", "testdata/"}, []string{"conftest.py"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "version: 1\ninclude:\n  - '*_test.go'\n  - testdata/\nrunner:\n  - conftest.py\n"
+	if string(got) != want {
+		t.Fatalf("AddPatterns = %q, want %q", got, want)
+	}
+	if got, err := scope.AddPatterns([]byte("version: 1\nexclude: [gen/]\n"), nil, []string{"a"}); err != nil || bytes.Contains(got, []byte("include")) {
+		t.Fatalf("AddPatterns created an empty list: %q, %v", got, err)
+	}
+}
+
+func TestAddPatternsKeepsComments(t *testing.T) {
+	raw := "# Owner notes.\nversion: 1\ninclude:\n  - src/**   # keep this\n  # before docs\n  - docs/\nexclude:\n  - gen/\nrunner:\n  - a.sh\n# the end\n"
+	got, err := scope.AddPatterns([]byte(raw), []string{"x_test.go"}, []string{"b.sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, comment := range []string{"# Owner notes.", "# keep this", "# before docs", "# the end"} {
+		if !bytes.Contains(got, []byte(comment)) {
+			t.Errorf("AddPatterns dropped %q:\n%s", comment, got)
+		}
+	}
+}
+
+func TestAddPatternsWithNothingNewReturnsTheBytesUnchanged(t *testing.T) {
+	raw := []byte("version:   1\n# comment\ninclude: [a,   b]\n")
+	for name, args := range map[string][2][]string{
+		"no patterns": {nil, nil}, "all present": {{"b", "a"}, nil}, "duplicates of a present one": {{"a", "a"}, {}},
+	} {
+		got, err := scope.AddPatterns(raw, args[0], args[1])
+		if err != nil || !bytes.Equal(got, raw) {
+			t.Errorf("%s: AddPatterns = %q, %v; want the input", name, got, err)
+		}
+	}
+}
+
+func TestAddPatternsRoundTrip(t *testing.T) {
+	tests := []struct {
+		name            string
+		raw             string
+		include, runner []string
+		wantInclude     []string
+		wantRunner      []string
+	}{
+		{"flow style lists stay valid", "version: 1\ninclude: [a]\nrunner: []\n", []string{"b"}, []string{"c"}, []string{"a", "b"}, []string{"c"}},
+		{"a pattern already present is skipped, a repeated one is added once", "version: 1\ninclude:\n  - a\n", []string{"a", "x", "x", "y"}, nil, []string{"a", "x", "y"}, []string{}},
+		{"a pattern may be in both lists", "version: 1\ninclude: [a]\n", nil, []string{"a"}, []string{"a"}, []string{"a"}},
+		{"patterns that need quoting", "version: 1\n", []string{
+			"*_test.go", "**/src/test/", "[ab]x", "a #b", "&x", "@x", "%x", "#x", "x: y", "true", "123", "~", "null", "- x", "a, b", "{x}", "'q'", `"dq"`, "? x", "|x", ">x",
+		}, nil, []string{
+			"*_test.go", "**/src/test/", "[ab]x", "a #b", "&x", "@x", "%x", "#x", "x: y", "true", "123", "~", "null", "- x", "a, b", "{x}", "'q'", `"dq"`, "? x", "|x", ">x",
+		}, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := mustParse(t, []byte(tt.raw))
+			got, err := scope.AddPatterns([]byte(tt.raw), tt.include, tt.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := mustParse(t, got)
+			if got := patternStrings(d.Include()); !reflect.DeepEqual(got, tt.wantInclude) {
+				t.Errorf("Include() = %q, want %q", got, tt.wantInclude)
+			}
+			if got := patternStrings(d.Runner()); !reflect.DeepEqual(got, tt.wantRunner) {
+				t.Errorf("Runner() = %q, want %q", got, tt.wantRunner)
+			}
+			if !reflect.DeepEqual(patternStrings(d.Exclude()), patternStrings(original.Exclude())) {
+				t.Errorf("Exclude() changed to %q", patternStrings(d.Exclude()))
+			}
+			if !strings.HasPrefix(strings.Join(patternStrings(d.Include()), "\n"), strings.Join(patternStrings(original.Include()), "\n")) {
+				t.Errorf("Include() reordered the original patterns: %q", patternStrings(d.Include()))
+			}
+		})
+	}
+}
+
+func TestAddPatternsRejectsInvalidInput(t *testing.T) {
+	for name, raw := range map[string]string{"empty": "", "wrong version": "version: 2\n", "no version": "include: [a]\n", "a duplicate": "version: 1\ninclude: [a, a]\n"} {
+		if got, err := scope.AddPatterns([]byte(raw), []string{"x"}, nil); !errors.Is(err, scope.ErrInvalidDeclaration) || got != nil {
+			t.Errorf("%s: AddPatterns = %q, %v; want ErrInvalidDeclaration", name, got, err)
+		}
+	}
+	for _, pattern := range []string{"!x", "../x", `a\b`, "", " ", "a/**b"} {
+		if got, err := scope.AddPatterns([]byte("version: 1\n"), []string{pattern}, nil); !errors.Is(err, scope.ErrInvalidPattern) || got != nil {
+			t.Errorf("include %q: AddPatterns = %q, %v; want ErrInvalidPattern", pattern, got, err)
+		}
+		if got, err := scope.AddPatterns([]byte("version: 1\n"), nil, []string{pattern}); !errors.Is(err, scope.ErrInvalidPattern) || got != nil {
+			t.Errorf("runner %q: AddPatterns = %q, %v; want ErrInvalidPattern", pattern, got, err)
+		}
+	}
+}
+
+// A runner pattern may name a file that does not exist yet (pytest.toml before pytest.ini): it must parse and cover.
+func TestARunnerPatternThatMatchesNoFileIsValid(t *testing.T) {
+	d := mustParse(t, []byte("version: 1\nrunner:\n  - pytest.toml\n  - conftest.py\n"))
+	s := scope.NewScope(d)
+	for path, want := range map[string]bool{"main.go": false, "src/tests/conftest.py": true, "pytest.toml": true, "a/pytest.ini": false} {
+		if got, err := s.Covers(path); err != nil || got != want {
+			t.Errorf("Covers(%q) = %v, %v; want %v", path, got, err, want)
+		}
+	}
 }

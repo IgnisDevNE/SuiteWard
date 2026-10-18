@@ -65,16 +65,19 @@ type ackPayload struct {
 	Project     contract.ProjectID   `json:"project,omitempty"`     // processed: the project of the Suite
 	Suite       contract.SuiteID     `json:"suite,omitempty"`       // processed: the Suite whose receipt is read
 	Operation   contract.OperationID `json:"operation,omitempty"`   // processed: the operation of the consent receipt
-	Disposition string               `json:"disposition,omitempty"` // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused or failed
+	Disposition string               `json:"disposition,omitempty"` // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
 	Comment     int64                `json:"comment"`               // the id of the command comment
 	Owner       string               `json:"owner"`                 // the owner's GitHub login at processing time
-	Reason      string               `json:"reason,omitempty"`      // malformed: the reason code; propose-refused and skip-refused: the refusal
+	Reason      string               `json:"reason,omitempty"`      // malformed: the reason code; propose-refused, skip-refused and suggest-refused: the refusal; suggested: declaration-missing, scope-notice or nothing-uncovered
 	Reference   string               `json:"reference,omitempty"`   // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
-	Branch      string               `json:"branch,omitempty"`      // propose-refused for declaration-missing: the pull request's head ref
-	Suggestion  []string             `json:"suggestion,omitempty"`  // and the include patterns inventory.Suggest found
+	Branch      string               `json:"branch,omitempty"`      // declaration-missing and scope-notice: the pull request's head ref
+	Suggestion  []string             `json:"suggestion,omitempty"`  // declaration-missing: the include patterns inventory.Suggest found
 	Runner      []string             `json:"runner,omitempty"`      // and the runner patterns,
-	Mixed       []string             `json:"mixed,omitempty"`       // the mixed files, shown and never suggested,
-	Cut         bool                 `json:"cut,omitempty"`         // and whether the limit of 20 patterns cut the lists
+	Mixed       []string             `json:"mixed,omitempty"`       // the mixed files, shown and never suggested (also in a scope-notice),
+	Cut         bool                 `json:"cut,omitempty"`         // and whether the limit of 20 patterns cut the lists (also in a scope-notice)
+	Paths       []string             `json:"paths,omitempty"`       // scope-notice: at most 20 uncovered test-like paths of the head, each cut to 150 bytes,
+	PathsTotal  int                  `json:"pathsTotal,omitempty"`  // how many there are,
+	Declaration string               `json:"declaration,omitempty"` // and the canonical declaration with the new patterns added, at most 8192 bytes
 }
 
 // The codes of the malformed reasons in a payload.
@@ -114,11 +117,15 @@ const (
 	refusalInvalidSource     = "invalid-source" // named like the bootstrap job's status code
 	reasonCarrier            = "carrier"
 	reasonDeclarationMissing = "declaration-missing" // rendered by commandtext.SuggestDeclaration, which is not an Ack
+	reasonScopeNotice        = "scope-notice"        // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
+	reasonNothingUncovered   = "nothing-uncovered"   // a suggested reply that every test-like path of the head is in the scope
 )
 
 var (
 	proposeRefusals = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, reasonBaseNotTarget: commandtext.BaseNotTarget, reasonEmptyInventory: commandtext.EmptyInventory, refusalInvalidSource: commandtext.InvalidSource}
 	skipRefusals    = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonCarrier: commandtext.Carrier}
+	// suggestRefusals are the reasons of suggest-refused, worded as the propose refusals of the same name.
+	suggestRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen}
 )
 
 // rejectedOutcomes maps the dispositions that get an acknowledgment without a receipt.
@@ -127,6 +134,8 @@ var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.NoSuite: commandtext.NoSuite, commands.EditedFirst: commandtext.EditedFirst, commands.UnknownProposal: commandtext.Rejected,
 	commands.Proposed: commandtext.AlreadyProposed, commands.ProposeRefused: commandtext.ProposeRefused, commands.Skipped: commandtext.Skipped,
 	commands.SkipRefused: commandtext.SkipRefused, commands.Failed: commandtext.ProposeFailed, // a failed command is acknowledged only when it was a propose
+	// A suggest that finds a declaration to suggest is rendered by its own texts, so Suggested here is the one that finds nothing to add.
+	commands.Suggested: commandtext.NothingUncovered, commands.SuggestRefused: commandtext.ProposeRefused,
 }
 
 // referenceRule says whether the acknowledgment of d names a reference: always, never, or only when the command had one
@@ -153,13 +162,34 @@ func reasonFits(d commands.Disposition, reason string) bool {
 	case commands.SkipRefused:
 		_, known := skipRefusals[reason]
 		return known
+	case commands.SuggestRefused:
+		_, known := suggestRefusals[reason]
+		return known
+	case commands.Suggested:
+		return reason == reasonDeclarationMissing || reason == reasonScopeNotice || reason == reasonNothingUncovered
 	}
 	return reason == ""
 }
 
-// declarationMissing is whether the payload is the refusal of a propose for want of a .suiteward.yml.
+// declarationMissing is whether the payload is the reply for want of a .suiteward.yml: the refusal of a propose, or the answer of a
+// suggest before the first contract.
 func (a ackPayload) declarationMissing() bool {
-	return a.Disposition == string(commands.ProposeRefused) && a.Reason == reasonDeclarationMissing
+	return (a.Disposition == string(commands.ProposeRefused) || a.Disposition == string(commands.Suggested)) && a.Reason == reasonDeclarationMissing
+}
+
+// scopeNotice is whether the payload is the answer of a suggest after the first contract: the scope notice of the head.
+func (a ackPayload) scopeNotice() bool {
+	return a.Disposition == string(commands.Suggested) && a.Reason == reasonScopeNotice
+}
+
+// hasNotice is whether the payload holds any field that only a scope notice uses.
+func (a ackPayload) hasNotice() bool {
+	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != ""
+}
+
+// notice is what the renderer takes for a scope-notice payload.
+func (a ackPayload) notice() commandtext.ScopeNotice {
+	return commandtext.ScopeNotice{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Paths: a.Paths, PathsTotal: a.PathsTotal, Declaration: []byte(a.Declaration), Mixed: a.Mixed, Cut: a.Cut}
 }
 
 // suggested is whether the payload holds any of the lists of a suggestion.
@@ -181,7 +211,7 @@ func (a ackPayload) validate() error {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
-		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() {
+		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() || a.hasNotice() {
 			return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
 		}
 		return nil
@@ -202,11 +232,16 @@ func (a ackPayload) validate() error {
 			return errors.New("the reference is not P<n>-R<m>")
 		}
 	}
-	if !a.declarationMissing() {
-		if a.Branch != "" || a.suggested() {
-			return errors.New("the branch and the suggestion fit only a missing declaration")
+	switch {
+	case a.scopeNotice():
+		return a.validateNotice()
+	case !a.declarationMissing():
+		if a.Branch != "" || a.suggested() || a.hasNotice() {
+			return errors.New("the branch, the suggestion and the notice fit only a missing declaration or a scope notice")
 		}
 		return nil
+	case a.hasNotice():
+		return errors.New("a missing declaration holds no scope notice")
 	}
 	// SuggestDeclaration panics on what it refuses, which would loop the outbox job: refuse it here.
 	if commandtext.ValidateSuggestion(a.suggestion()) != nil {
@@ -216,6 +251,25 @@ func (a ackPayload) validate() error {
 		if len(text) > maxSummaryText {
 			return errors.New("a suggested pattern or a mixed path is too long")
 		}
+	}
+	return nil
+}
+
+// validateNotice reports why a scope-notice payload cannot be rendered, without quoting it.
+func (a ackPayload) validateNotice() error {
+	switch {
+	case len(a.Suggestion) != 0 || len(a.Runner) != 0 || a.Reference != "":
+		return errors.New("a scope notice holds no suggestion and no reference")
+	case a.PathsTotal < len(a.Paths):
+		return errors.New("the total is below the listed paths")
+	}
+	for _, text := range slices.Concat(a.Paths, a.Mixed) {
+		if len(text) > maxSummaryText {
+			return errors.New("a path is too long")
+		}
+	}
+	if commandtext.ValidateScopeNotice(a.notice()) != nil { // its text quotes the repository and the branch, so only a fixed reason is kept
+		return errors.New("the repository, the branch, the paths or the declaration do not fit the notice")
 	}
 	return nil
 }
@@ -244,7 +298,7 @@ func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, dis
 // request's head ref and suggested the patterns and the mixed files found. Each is cut to the payload bound, which only
 // keeps the payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts
 // those it left out, so a cut pattern is never suggested.
-func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggested inventory.Suggestion) (governance.OutboxMessage, error) {
+func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggested inventory.Suggestion, disposition commands.Disposition) (governance.OutboxMessage, error) {
 	cut := func(list []string) []string {
 		var bounded []string // nil without entries: the payload then omits the list
 		for _, entry := range list {
@@ -252,8 +306,16 @@ func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, b
 		}
 		return bounded
 	}
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch,
+	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch,
 		Suggestion: cut(suggested.Include), Runner: cut(suggested.Runner), Mixed: cut(suggested.Mixed), Cut: suggested.Cut})
+}
+
+// newScopeNoticeAck builds the answer of a suggest after the first contract: the scope notice of the head, as an acknowledgment so that
+// it replies to the command and never takes the key of the notice the checks job writes. paths are the whole uncovered set, bounded as the
+// notice bounds them; the error says the notice cannot be rendered.
+func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch string, paths []string, declaration []byte, mixed []string, cut bool) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
+		Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Cut: cut})
 }
 
 func newAck(p ackPayload) (governance.OutboxMessage, error) {
@@ -480,6 +542,9 @@ func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string,
 	} else if a.declarationMissing() {
 		text, err := render(githubCommentKind, key, func() string { return commandtext.SuggestDeclaration(a.suggestion()) })
 		return a.commentTarget, text, err
+	} else if a.scopeNotice() {
+		text, err := render(githubCommentKind, key, func() string { return commandtext.ScopeNoticeComment(a.notice()) })
+		return a.commentTarget, text, err
 	} else {
 		ack = rejectedAckOf(a)
 	}
@@ -531,6 +596,8 @@ func rejectedAckOf(a ackPayload) commandtext.Ack {
 		ack.Refusal = proposeRefusals[a.Reason]
 	case commands.SkipRefused:
 		ack.Refusal = skipRefusals[a.Reason]
+	case commands.SuggestRefused:
+		ack.Refusal = suggestRefusals[a.Reason]
 	}
 	if a.Reference != "" {
 		ack.Proposal, ack.Revision, _ = parseReference(a.Reference)

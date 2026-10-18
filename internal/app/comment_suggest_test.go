@@ -133,8 +133,8 @@ func TestDeclarationMissingAckTakesTheDispositionOfItsCommand(t *testing.T) {
 		}
 		var payload ackPayload
 		if err := json.Unmarshal(message.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
+			t.Fatal(err)
+		}
 		if payload.Disposition != d || payload.Reason != "declaration-missing" {
 			t.Fatalf("payload %+v; want %s for a missing declaration", payload, d)
 		}

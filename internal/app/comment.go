@@ -457,8 +457,8 @@ func githubFailure(kind, key, step string, err error) error {
 }
 
 // keyParts is the number of ':' separated parts of the keys of each github_comment kind: three, but four for the scope notice, the scope
-// review and the invalid-source comment, whose tail is <pull>:<digest>.
-var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4, invalidSourceKey: 4}
+// review, the invalid-source comment and the runner-uncovered comment, whose tail is <pull>:<digest>.
+var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4, invalidSourceKey: 4, runnerUncoveredKey: 4}
 
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
@@ -534,6 +534,8 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 		target, text, err = p.scopeNotice(key, tail, payload)
 	case invalidSourceKey:
 		target, text, err = p.invalidSource(key, tail, payload)
+	case runnerUncoveredKey:
+		target, text, err = p.runnerUncovered(key, tail, payload)
 	}
 	if err != nil {
 		return err

@@ -200,7 +200,8 @@ func TestChecksNeverLetTheHeadsOwnDeclarationApproveItsRunnerFile(t *testing.T) 
 func TestChecksDoNotBlockARunnerFileTheBaseAlreadyHoldsAndThePullRequestLeavesAlone(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py"), added("README.md")...)
+	w.reader.files = map[int][]github.PullFile{5: added("README.md")}
+	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py"), withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py")) // the base holds both files already
 
 	w.want(5, checks.Success, "unchanged", 1)
 	w.wantRunnerKeys()
@@ -214,10 +215,9 @@ func TestChecksReadNoFilesOfThePullRequestWhenNoRunnerFileIsUncovered(t *testing
 		files map[string]string
 		reads int // the reads of the diff the case allows
 	}{
-		"no runner file":     {bootFiles("v1"), 0},
-		"a vendored one":     {withFiles(bootFiles("v1"), "node_modules/x/jest.config.js"), 0},
-		"a protected runner": {withFiles(bootFiles("v1"), "tests/conftest.py"), 0},
-		"a test file only":   {withFiles(bootFiles("v1"), "test_x.py", cjUtilTst), 1}, // the notice of the test files reads the diff for its own review
+		"no runner file":   {bootFiles("v1"), 0},
+		"a vendored one":   {withFiles(bootFiles("v1"), "node_modules/x/jest.config.js"), 0},
+		"a test file only": {withFiles(bootFiles("v1"), "test_x.py", cjUtilTst), 1}, // the notice of the test files reads the diff for its own review
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)
@@ -558,7 +558,7 @@ func TestChecksWriteTheRunnerCommentButNoReviewWhenTheDiffGivesNoLineToSuggestOn
 		hunk        string
 	}{
 		"no list line inside a hunk": {reviewDecl, "@@ -1,2 +1,2 @@"},
-		"lists in flow style":        {"version: 1\ninclude: [/tests/**]\n", "@@ -1,2 +1,2 @@"},
+		"lists in flow style":        {"version: 1\ninclude: [/tests/**, /e2e/**]\n", "@@ -1,2 +1,2 @@"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)

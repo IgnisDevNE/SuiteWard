@@ -263,6 +263,7 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 | success, `bootstrap-skipped` | Skipped by the owner before the first contract. Nothing was assessed. |
 | in_progress, `approval-missing` | Approve the current revision with the command in the comment. |
 | in_progress, `bootstrap-awaiting` | There is no contract yet. Post `propose` or `skip` (section 8). |
+| in_progress, `runner-uncovered` | The pull request adds or changes a test runner file (for example `conftest.py` or `jest.config.js`) that the contract does not cover. Such a file can change how the protected tests run, so the check waits for your decision. SuiteWard's comment offers two ways out, each one click when the pull request's diff shows `.suiteward.yml`: protect the file (add its pattern) or ignore it (add the path to `exclude`). Then approve the new revision. |
 | in_progress, `not-current` | This pull request's revision is no longer the current one. Use the newest revision comment. |
 | in_progress, `source-unavailable` | GitHub cannot list the whole tree of this revision, so SuiteWard cannot read it. This happens with very large monorepos, which cannot be protected in this release. |
 | in_progress, `fork-unsupported` | Pull requests from forks are not supported. |

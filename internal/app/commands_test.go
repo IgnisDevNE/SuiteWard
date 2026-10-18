@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands/commandstest"
@@ -768,6 +769,47 @@ func TestCommandsJobStopsWhenTheBotAccountIsUnknown(t *testing.T) {
 	w.botErr = nil
 	w.mustRun()
 	w.requireProcessed(cjID1, 500)
+}
+
+// botStopEntry is the one Warn line of a run that stopped on the bot account.
+func (w *cjWorld) botStopEntry() map[string]any {
+	w.t.Helper()
+	for _, entry := range w.logEntries() {
+		if strings.Contains(fmt.Sprint(entry["msg"]), "the bot account could not be resolved") {
+			return entry
+		}
+	}
+	w.t.Fatalf("no log line says the bot account could not be resolved; logs: %s", w.logs)
+	return nil
+}
+
+func TestCommandsJobLogsWhyTheBotAccountCouldNotBeResolved(t *testing.T) {
+	const secret = "GITHUB-SENT-THIS"
+	for name, test := range map[string]struct {
+		err    error
+		kind   string
+		status float64
+	}{
+		// BotIdentity wraps appauth's error of GET /app answered 401 to the App JWT (a revoked key).
+		"refused app jwt": {fmt.Errorf("bot identity: %w", &appauth.StatusError{Endpoint: "app", Status: 401}), "unauthorized", 401},
+		"transport":       {fmt.Errorf("bot identity: appauth: request app: %w", errors.New("dial tcp: "+secret)), "transport", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCjWorld(t)
+			w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P1-R2", 0)})
+			w.botErr = test.err
+			if err := w.run(); err != nil {
+				t.Fatalf("run: %v; an unresolved bot account stops the run, it does not fail the job", err)
+			}
+			entry := w.botStopEntry()
+			if entry["kind"] != test.kind || entry["status"] != test.status {
+				t.Fatalf("log entry = %v; want kind %q and status %v", entry, test.kind, test.status)
+			}
+			if strings.Contains(w.logs.String(), secret) {
+				t.Fatalf("the log carries text the failure held; logs: %s", w.logs)
+			}
+		})
+	}
 }
 
 func TestCommandsJobStopsAtAFailingCandidateAndRecordsItAsFailedAfterFiveAttempts(t *testing.T) {

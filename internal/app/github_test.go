@@ -40,6 +40,7 @@ func TestReadErrorsAreClassifiedWithoutTheTextGitHubSent(t *testing.T) {
 		"unprocessable":    {&rest.StatusError{Status: 422, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureUnprocessable, Status: 422}},
 		"other status":     {&rest.StatusError{Status: 502, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 502}},
 		"token request":    {&appauth.StatusError{Status: 401}, githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
+		"app jwt refused":  {&appauth.StatusError{Endpoint: "app", Status: 401}, githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
 		"token not found":  {&appauth.StatusError{Status: 404}, githubsync.ReadError{Kind: githubsync.FailureNotFound, Status: 404}},
 		"token server":     {&appauth.StatusError{Status: 503}, githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 503}},
 		"unknown":          {errors.New("something no adapter names, with " + secret), githubsync.ReadError{Kind: githubsync.FailureTransport}},

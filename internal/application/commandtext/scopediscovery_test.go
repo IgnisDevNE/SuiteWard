@@ -386,6 +386,25 @@ func TestScopeNoticeWithoutSubmodulesIsUnchanged(t *testing.T) {
 	}
 }
 
+// The reply to a command differs from the unprompted notice only by its closing link, and the suggest reply is as it was.
+func TestRepliesToASuggestWithoutSubmodulesAreUnchanged(t *testing.T) {
+	n := notice()
+	plain := noticeText(t, n)
+	n.Source = source
+	if got, want := noticeText(t, n), strings.TrimSuffix(plain, "\n")+"\n\nIn reply to [your command](#issuecomment-2345678901).\n"; got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	const want = "`/suiteward suggest`: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, so no files are protected yet. Nothing changed.\n\n" +
+		"SuiteWard suggests this declaration for this pull request, built from the test-like paths of this repository. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"tests/**\"\n```\n\n" +
+		"To add it on this pull request's branch, [open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=version%3A%201%0Ainclude%3A%0A%20%20-%20%22tests%2F%2A%2A%22%0A). SuiteWard never commits it for you: the commit is yours.\n\n" +
+		"After the file is on this branch, comment `/suiteward propose` to start the first contract.\n\nIn reply to [your command](#issuecomment-2345678901).\n"
+	a := missingWith([]string{"tests/**"}, nil, nil, false)
+	a.Suggest = true
+	if got := suggestionText(t, a); got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
 func TestScopeNoticeEndsTheDeclarationWithANewlineBeforeTheFence(t *testing.T) {
 	n := notice()
 	n.Declaration = []byte("version: 1\ninclude:\n  - \"x\"")

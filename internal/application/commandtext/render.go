@@ -514,6 +514,8 @@ type Revision struct {
 	Added, Modified, Removed                []string
 	AddedTotal, ModifiedTotal, RemovedTotal int
 	Reduced                                 bool
+	ReducedRules, ReducedPaths              []string
+	ReducedPathsTotal                       int
 	Tier                                    Tier
 }
 
@@ -638,6 +640,9 @@ type DeclarationSuggestion struct {
 	Repo     string
 	Branch   string
 	Patterns []string
+	Runner   []string
+	Mixed    []string
+	Cut      bool
 }
 
 // SuggestDeclaration renders the refusal of a propose when neither the default branch nor the pull request holds

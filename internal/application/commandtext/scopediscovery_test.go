@@ -591,3 +591,11 @@ func TestRevisionCommentWithReductionDetailFitsInAComment(t *testing.T) {
 		})
 	}
 }
+
+// A notice of `/suiteward suggest` covers the whole head, not only what the pull request added.
+func TestScopeNoticeDoesNotClaimThatThePullRequestAddedTheFiles(t *testing.T) {
+	body := noticeText(t, notice())
+	if !strings.Contains(body, "in this pull request's head that the current contract does not protect") || strings.Contains(body, "adds") {
+		t.Errorf("the title claims more than the head holds:\n%s", body)
+	}
+}

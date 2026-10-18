@@ -146,11 +146,16 @@ func TestChecksWriteNoScopeReviewWithoutANewScopeNotice(t *testing.T) {
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
 	w.scopePull(cjHead2, reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 	w.wantReview([]string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
+	fileReads := w.reader.fileReads
 
 	// Another head with the same added path: the notice exists, so there is nothing new to suggest on.
 	w.tree(cjHead3, reviewFiles(reviewDecl, cjUtilTst, "src/more.go"))
 	w.sync(map[int]string{4: bootHead, 5: cjHead3})
 	w.mustCheck()
+
+	if w.reader.fileReads != fileReads {
+		t.Fatalf("the files of the pull request were read %d times, want %d: the set was already decided", w.reader.fileReads, fileReads)
+	}
 
 	if keys := w.scopeKeys("scope-"); len(keys) != 2 {
 		t.Fatalf("scope messages %v, want only the first notice and its review", keys)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
@@ -246,6 +247,9 @@ func TestChecksWriteOneScopeNoticePerSetOfAddedPaths(t *testing.T) {
 	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{first}) {
 		t.Fatalf("notices %v after a push that adds nothing new, want only %s", keys, first)
 	}
+	if reads := w.reader.reads[cjBase]; reads != 1 {
+		t.Fatalf("the base tree was read %d times, want once: the notice of that set was already written, so the next head needs no base read", reads)
+	}
 
 	// Another path makes another set.
 	w.tree(cjHead4, withFiles(bootFiles("v1"), cjUtilTst, "pkg/other_test.go"))
@@ -279,6 +283,22 @@ func TestChecksReadTheBaseTreeOnceForEveryHeadAndNeverForATickThatChangesNothing
 	w.mustCheck()
 	if w.reader.reads[cjBase] != base {
 		t.Fatalf("the base tree was read %d times after another pull request moved the Suite, want still %d", w.reader.reads[cjBase], base)
+	}
+}
+
+// A base commit that cannot be read is a fact about the commit, not a failed read: the decision is made once, not every run.
+func TestChecksDecideOnceForABaseCommitThatCanNeverBeRead(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.reader.repo(bootRepo).treeErr[cjBase] = fmt.Errorf("%w: not a commit SHA", github.ErrInvalidArgument)
+
+	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+
+	w.wantNoScopeMessages()
+	head, base := w.reader.reads[cjHead2], w.reader.reads[cjBase]
+	w.mustCheck()
+	w.mustCheck()
+	if w.reader.reads[cjHead2] != head || w.reader.reads[cjBase] != base {
+		t.Fatalf("reads of the head and the base went from %d and %d to %d and %d: the decision was not remembered", head, base, w.reader.reads[cjHead2], w.reader.reads[cjBase])
 	}
 }
 

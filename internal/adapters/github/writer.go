@@ -13,7 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 )
 
-// Writer posts conversation comments. Its client's token map is
+// Writer posts conversation and review comments. Its client's token map is
 // {metadata: read, pull_requests: write}; the composition supplies it.
 type Writer struct {
 	client *rest.Client
@@ -66,10 +66,74 @@ func (w *Writer) PostComment(ctx context.Context, repo string, number int, body 
 // by the account authorID, sorted by ID. The publisher looks for its marker in
 // their bodies before posting.
 func (w *Writer) CommentsByAuthor(ctx context.Context, repo string, number int, authorID int64) ([]Comment, error) {
+	return w.commentsByAuthor(ctx, repo, number, "issues", authorID)
+}
+
+// ReviewCommentsByAuthor is CommentsByAuthor for the review comments, those on
+// the diff, of pull request number of repo. The scope notice looks for its
+// suggestion in their bodies before posting.
+func (w *Writer) ReviewCommentsByAuthor(ctx context.Context, repo string, number int, authorID int64) ([]Comment, error) {
+	return w.commentsByAuthor(ctx, repo, number, "pulls", authorID)
+}
+
+// PostReviewComment posts body as a review comment on line of path at commitSHA
+// in pull request number of repo, spanning startLine to line when startLine is
+// before line, and returns the new comment's id. GitHub answers 422 when the
+// lines are not in the diff of commitSHA; the error then matches rest.ErrUnprocessable.
+func (w *Writer) PostReviewComment(ctx context.Context, repo string, number int, commitSHA, path string, startLine, line int, body string) (int64, error) {
+	if err := checkRepo(repo); err != nil {
+		return 0, err
+	}
+	switch {
+	case number <= 0:
+		return 0, fmt.Errorf("%w: pull request number %d", ErrInvalidArgument, number)
+	case !hexSHA.MatchString(commitSHA):
+		return 0, fmt.Errorf("%w: commit SHA %q is not 40 lower-case hex digits", ErrInvalidArgument, commitSHA)
+	case path == "":
+		return 0, fmt.Errorf("%w: empty review comment path", ErrInvalidArgument)
+	case line <= 0:
+		return 0, fmt.Errorf("%w: review comment line %d", ErrInvalidArgument, line)
+	case body == "":
+		return 0, fmt.Errorf("%w: empty comment body", ErrInvalidArgument)
+	}
+	comment := struct {
+		Body      string `json:"body"`
+		CommitID  string `json:"commit_id"`
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line,omitempty"`
+		StartSide string `json:"start_side,omitempty"`
+		Line      int    `json:"line"`
+		Side      string `json:"side"`
+	}{Body: body, CommitID: commitSHA, Path: path, Line: line, Side: "RIGHT"}
+	if startLine > 0 && startLine < line {
+		comment.StartLine, comment.StartSide = startLine, "RIGHT"
+	}
+	payload, err := json.Marshal(comment)
+	if err != nil {
+		return 0, fmt.Errorf("encode review comment of pull request %d of %s: %w", number, repo, err)
+	}
+	apiPath := fmt.Sprintf("/repos/%s/pulls/%d/comments", repo, number)
+	resp, err := w.client.Post(ctx, apiPath, payload)
+	if err != nil {
+		return 0, fmt.Errorf("post review comment on pull request %d of %s: %w", number, repo, err)
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := decode(apiPath, resp.Body, &created); err != nil {
+		return 0, err
+	}
+	if created.ID <= 0 {
+		return 0, fmt.Errorf("%w: the answer to %s has no comment id", ErrInvalidResponse, apiPath)
+	}
+	return created.ID, nil
+}
+
+func (w *Writer) commentsByAuthor(ctx context.Context, repo string, number int, collection string, authorID int64) ([]Comment, error) {
 	if authorID <= 0 {
 		return nil, fmt.Errorf("%w: author id %d", ErrInvalidArgument, authorID)
 	}
-	all, _, err := pullComments(ctx, w.client, repo, number, time.Time{})
+	all, _, err := pullComments(ctx, w.client, repo, number, collection, time.Time{})
 	if err != nil {
 		return nil, err
 	}

@@ -156,12 +156,13 @@ func scopeSuggestReply(n ScopeNotice, declaration string) string {
 			"SuiteWard never commits it for you: the commit is yours.")
 	}
 	parts = append(parts, "When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts these lines as a review comment, and GitHub's **Commit suggestion** button applies them in one click.")
+	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
 	if n.Base == BaseContract {
 		parts = append(parts, "Committing it creates a protected change: approve the new revision SuiteWard posts, like any other change to the protected files. Nothing is protected until that change is approved and promoted.")
 	} else {
-		parts = append(parts, "Once the file is committed on this branch, comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"), "Nothing is protected until the first contract is approved and promoted.")
+		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
+			"Once the file is committed on this branch, comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	}
-	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
 	return replyTo(paragraphs(parts...), n.Source)
 }
 

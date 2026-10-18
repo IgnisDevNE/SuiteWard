@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -65,13 +66,19 @@ type headEnv struct {
 // newHeadEnv seeds extra proposals next to the one that can move the canonical.
 func newHeadEnv(t *testing.T, extra ...candidate) *headEnv {
 	t.Helper()
+	return newHeadEnvOn(t, headTree("v1", "package main\n"), extra...)
+}
+
+// newHeadEnvOn is newHeadEnv with the baseline of the first canonical taken from baseline.
+func newHeadEnvOn(t *testing.T, baseline inventory.Tree, extra ...candidate) *headEnv {
+	t.Helper()
 	// A real inventory, so that once promoted its declaration is readable and hashes to its scope.
 	other := newCandidate(t, "px", "version-1", must(must(inventory.Build(context.Background(), headTree("other", "package main\n"))).Contract()))
 	e := &headEnv{world: newWorld(t, append([]candidate{other}, extra...)...), writer: newFakeWriter(), other: other}
 	e.reader = &fakeReader{writer: e.writer}
 	result := e.propose(e.writer, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P1", RevisionID: "R1"},
-		Carrier:   bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: headTree("v1", "package main\n"),
+		Carrier:   bootstrapCarrier, Origin: "pinned", OriginKind: contract.OriginBranch, Tree: baseline,
 	})
 	e.approveRef(result.Revise.Current, bootstrapCarrier)
 	e.recordAssessment(result.Revise.Current, "pinned", contract.IntegrityPassed)
@@ -503,5 +510,37 @@ func TestScopeReductionGetsAProposalLikeAProtectedChange(t *testing.T) {
 	e.requireChange(result, inventory.ScopeReduction, "P2-R1", false, contract.PromotionReasonApprovalMissing)
 	if assessment, found := e.assessment(*result.Reference, "head-a"); !found || !assessment.Passed() {
 		t.Fatalf("assessment at the head = %+v (found %v), want a passed one", assessment, found)
+	}
+}
+
+func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
+	ctx := context.Background()
+	t.Run("valid", func(t *testing.T) {
+		e := newHeadEnv(t)
+		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
+		if err != nil || string(raw) != declaration || !d.Present() {
+			t.Fatalf("raw = %q, present = %v, error = %v; want the stored declaration", raw, d.Present(), err)
+		}
+	})
+	t.Run("no entry", func(t *testing.T) {
+		e := newHeadEnvOn(t, newFakeTree(regularFile(".github/workflows/ci.yml", "on: push\n")))
+		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
+		if !errors.Is(err, governance.ErrNoCanonicalDeclaration) || raw != nil || d.Present() {
+			t.Fatalf("raw = %q, present = %v, error = %v; want no bytes, no declaration and ErrNoCanonicalDeclaration", raw, d.Present(), err)
+		}
+	})
+	stored := artifact.Hash([]byte(declaration))
+	for name, c := range map[string]struct{ replacement, message string }{
+		"parse failure":   {"include: [", "does not parse"},
+		"digest mismatch": {"version: 1\ninclude: [/other/**]\n", "does not hash"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newHeadEnv(t)
+			e.reader.replace = map[artifact.Digest]string{stored: c.replacement}
+			_, _, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
+			if !errors.Is(err, governance.ErrInvalidState) || !strings.Contains(err.Error(), c.message) {
+				t.Fatalf("error = %v, want ErrInvalidState saying %q", err, c.message)
+			}
+		})
 	}
 }

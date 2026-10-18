@@ -8,9 +8,9 @@ import (
 	"unicode/utf8"
 )
 
-// maxDeclaration bounds the declaration bytes a notice shows. Fenced against a run of backticks the block can take
+// MaxDeclaration bounds the declaration bytes a notice shows. Fenced against a run of backticks the block can take
 // three times its size, which with the other lists keeps the notice below three quarters of GitHub's comment limit.
-const maxDeclaration = 8192
+const MaxDeclaration = 8192
 
 // cutWarning is the line that SuggestDeclaration shows for a list cut at the limit, word for word.
 const cutWarning = "This list was cut at the limit of 20 patterns, so test-like paths may be missing from it. Please review it and add what is missing."
@@ -45,8 +45,8 @@ func ValidateScopeNotice(n ScopeNotice) error {
 		return fmt.Errorf("commandtext: %d paths in a notice, want 1 to %d", len(n.Paths), maxListed)
 	case len(n.Mixed) > maxListed:
 		return fmt.Errorf("commandtext: %d mixed files, at most %d", len(n.Mixed), maxListed)
-	case len(n.Declaration) == 0 || len(n.Declaration) > maxDeclaration || !utf8.Valid(n.Declaration):
-		return fmt.Errorf("commandtext: a declaration of %d bytes is empty, over %d bytes or not UTF-8", len(n.Declaration), maxDeclaration)
+	case len(n.Declaration) == 0 || len(n.Declaration) > MaxDeclaration || !utf8.Valid(n.Declaration):
+		return fmt.Errorf("commandtext: a declaration of %d bytes is empty, over %d bytes or not UTF-8", len(n.Declaration), MaxDeclaration)
 	}
 	return nil
 }

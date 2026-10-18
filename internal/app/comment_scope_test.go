@@ -105,12 +105,12 @@ func TestCommentPublisherRefusesAScopeNoticeThatDoesNotMatchItsKeyOrCannotBeRend
 	}
 }
 
-// The limit of the notice's declaration is commandtext's, 8192 bytes: the job's own constant must not be above it.
+// The limit of the notice's declaration is commandtext's own (commandtext.MaxDeclaration): a declaration at it must render.
 func TestCommentPublisherRendersAScopeNoticeWhoseDeclarationIsAtTheLimit(t *testing.T) {
 	const head = "version: 1\n#"
-	declaration := head + strings.Repeat("x", maxScopeDeclaration-len(head)-1) + "\n"
-	if len(declaration) != maxScopeDeclaration {
-		t.Fatalf("the test declaration has %d bytes, want %d", len(declaration), maxScopeDeclaration)
+	declaration := head + strings.Repeat("x", commandtext.MaxDeclaration-len(head)-1) + "\n"
+	if len(declaration) != commandtext.MaxDeclaration {
+		t.Fatalf("the test declaration has %d bytes, want %d", len(declaration), commandtext.MaxDeclaration)
 	}
 	w := newCmtWorld(t)
 

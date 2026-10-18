@@ -221,30 +221,55 @@ func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request H
 	return revised, previous, nil
 }
 
-// governingOf rebuilds the governing scope and exact inventory of the canonical. The scope comes from the
-// canonical's own .suiteward.yml bytes, read back from the content store, and must hash to the digest the
-// canonical was approved with.
-func governingOf(ctx context.Context, reader ContentReader, canonical contract.CanonicalSnapshot) (inventory.Governing, error) {
+// ErrNoCanonicalDeclaration reports that the canonical holds no .suiteward.yml.
+var ErrNoCanonicalDeclaration = errors.New("the canonical has no declaration")
+
+// CanonicalDeclaration returns the bytes of the canonical's own .suiteward.yml and the declaration they parse to. The bytes
+// are read back from the content store and must hash to the scope digest the canonical was approved with; a parse failure or
+// a mismatch is ErrInvalidState, since the canonical is stored state, not the owner's source under review. A canonical
+// without the file yields scope.NoDeclaration and ErrNoCanonicalDeclaration, unverified: its caller decides what that means.
+func CanonicalDeclaration(ctx context.Context, reader ContentReader, canonical contract.CanonicalSnapshot) ([]byte, scope.Declaration, error) {
 	protected := canonical.Contract()
-	declaration := scope.NoDeclaration()
 	for _, entry := range protected.Manifest().Entries() {
 		if entry.Path != scope.DeclarationPath {
 			continue
 		}
 		raw, err := reader.Read(ctx, entry.Content)
 		if err != nil {
-			return inventory.Governing{}, fmt.Errorf("read the canonical %s: %w", scope.DeclarationPath, err)
+			return nil, scope.Declaration{}, fmt.Errorf("read the canonical %s: %w", scope.DeclarationPath, err)
 		}
-		if declaration, err = scope.ParseDeclaration(raw); err != nil {
-			// Not wrapped: the canonical's declaration is stored state, not the owner's source under review.
-			return inventory.Governing{}, fmt.Errorf("%w: the canonical %s does not parse: %v", ErrInvalidState, scope.DeclarationPath, err)
+		declaration, err := scope.ParseDeclaration(raw)
+		if err != nil {
+			return nil, scope.Declaration{}, fmt.Errorf("%w: the canonical %s does not parse: %v", ErrInvalidState, scope.DeclarationPath, err)
 		}
+		if err := checkApprovedScope(declaration, protected); err != nil {
+			return nil, scope.Declaration{}, err
+		}
+		return raw, declaration, nil
 	}
-	governing := scope.NewScope(declaration)
-	if governing.Digest() != protected.ScopeDigest() {
-		return inventory.Governing{}, fmt.Errorf("%w: the canonical's declaration does not hash to its approved scope", ErrInvalidState)
+	return nil, scope.NoDeclaration(), ErrNoCanonicalDeclaration
+}
+
+// checkApprovedScope verifies that declaration hashes to the scope digest protected was approved with.
+func checkApprovedScope(declaration scope.Declaration, protected contract.ProtectedContract) error {
+	if scope.NewScope(declaration).Digest() != protected.ScopeDigest() {
+		return fmt.Errorf("%w: the canonical's declaration does not hash to its approved scope", ErrInvalidState)
 	}
-	return inventory.Governing{Scope: governing, Manifest: protected.Manifest()}, nil
+	return nil
+}
+
+// governingOf rebuilds the governing scope and exact inventory of the canonical from its own .suiteward.yml. A canonical
+// without the file is governed by scope.NoDeclaration, which must hash to its approved scope.
+func governingOf(ctx context.Context, reader ContentReader, canonical contract.CanonicalSnapshot) (inventory.Governing, error) {
+	protected := canonical.Contract()
+	_, declaration, err := CanonicalDeclaration(ctx, reader, canonical)
+	if errors.Is(err, ErrNoCanonicalDeclaration) {
+		err = checkApprovedScope(declaration, protected)
+	}
+	if err != nil {
+		return inventory.Governing{}, err
+	}
+	return inventory.Governing{Scope: scope.NewScope(declaration), Manifest: protected.Manifest()}, nil
 }
 
 // HeadEvidence is the integrity evidence of the service about source: Passed when the protected inventory

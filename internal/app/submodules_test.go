@@ -153,7 +153,7 @@ func TestAcknowledgmentsBoundTheirSubmodules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	noticeAck, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", []string{"a_test.go"}, []byte(suggestDeclaration), nil, []string{long}, false)
+	noticeAck, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", []string{"a_test.go"}, []byte(suggestDeclaration), inventory.Suggestion{}, nil, []string{long})
 	if err != nil {
 		t.Fatal(err)
 	}

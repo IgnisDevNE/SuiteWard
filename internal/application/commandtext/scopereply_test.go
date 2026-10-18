@@ -119,14 +119,16 @@ func TestScopeNoticeWithoutABaseKeepsItsWords(t *testing.T) {
 
 func TestScopeReplyIsRefusedOnAnImpossibleState(t *testing.T) {
 	for name, change := range map[string]func(*commandtext.ScopeNotice){
-		"an unknown base":                       func(n *commandtext.ScopeNotice) { n.Base = commandtext.BaseDefaultBranch + 1 },
-		"a negative base":                       func(n *commandtext.ScopeNotice) { n.Base = -1 },
-		"a base without a command":              func(n *commandtext.ScopeNotice) { n.Source = 0 },
-		"21 new patterns":                       func(n *commandtext.ScopeNotice) { n.AddInclude = slices.Repeat([]string{"x"}, 21) },
-		"21 new patterns in both lists":         func(n *commandtext.ScopeNotice) { n.AddInclude, n.AddRunner = slices.Repeat([]string{"x"}, 11), slices.Repeat([]string{"y"}, 10) },
-		"new patterns without a base":           func(n *commandtext.ScopeNotice) { n.Base = 0 },
-		"a new include pattern without a base":  func(n *commandtext.ScopeNotice) { n.Base, n.AddRunner = 0, nil },
-		"a new runner pattern without a base":   func(n *commandtext.ScopeNotice) { n.Base, n.AddInclude = 0, nil },
+		"an unknown base":          func(n *commandtext.ScopeNotice) { n.Base = commandtext.BaseDefaultBranch + 1 },
+		"a negative base":          func(n *commandtext.ScopeNotice) { n.Base = -1 },
+		"a base without a command": func(n *commandtext.ScopeNotice) { n.Source = 0 },
+		"21 new patterns":          func(n *commandtext.ScopeNotice) { n.AddInclude = slices.Repeat([]string{"x"}, 21) },
+		"21 new patterns in both lists": func(n *commandtext.ScopeNotice) {
+			n.AddInclude, n.AddRunner = slices.Repeat([]string{"x"}, 11), slices.Repeat([]string{"y"}, 10)
+		},
+		"new patterns without a base":          func(n *commandtext.ScopeNotice) { n.Base = 0 },
+		"a new include pattern without a base": func(n *commandtext.ScopeNotice) { n.Base, n.AddRunner = 0, nil },
+		"a new runner pattern without a base":  func(n *commandtext.ScopeNotice) { n.Base, n.AddInclude = 0, nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			n := reply(commandtext.BasePull)

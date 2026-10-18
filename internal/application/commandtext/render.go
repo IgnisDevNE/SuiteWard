@@ -628,6 +628,7 @@ func BootstrapNotice() string {
 		"SuiteWard has no canonical contract yet. This pull request is not assessed against a contract.",
 		"To start the first contract, the owner comments `/suiteward propose` on the pull request that should carry the first contract. "+
 			"SuiteWard then proposes the protected files of the default branch when it has a `.suiteward.yml`, otherwise those of that pull request, for the owner's approval.",
+		"To see a suggested `.suiteward.yml` for this pull request first, the owner comments `/suiteward suggest`. It grants nothing and needs no code.",
 		"To let this pull request merge before the first contract, the owner comments `/suiteward skip <code>` with a current code from the authenticator app. "+
 			"Nothing is assessed then.",
 	)

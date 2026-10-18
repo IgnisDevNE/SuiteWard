@@ -478,6 +478,23 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **A symlink.** It is checked only if the scope covers it or may cover a path below it. Then its target is resolved in the same tree. The target is the link's blob, taken relative to the link's directory, and at most 8 links are followed. The target is resolved one component at a time, never by cleaning the text: `.` and empty components are skipped; `..` steps back one component, and stepping past the root leaves the target unresolved; every other component before the last must be a real directory of the tree, not a link, file or submodule. Intermediate links are not followed. If the target is a regular file, the link is unsafe only if the scope covers the link's path. Any other target (a directory, outside the repository, dangling, or a loop) keeps today's rule: unsafe.
 - **A submodule.** It is never unsafe and never read. `Suggest` returns the submodules that its patterns would reach as `Submodules` (at most 20). Every reply that suggests a declaration warns that their contents are not protected.
 
+**Outbox `github_comment`, key `invalid-source:<repository id>:<pull>:<problem digest>` (new, 2026-10-18, live run 5).**
+- **When it is written.** When the checks job publishes `failure` with reason `invalid-source` for an open, non-fork PR, it also writes one comment that explains the problem.
+- **The problem** has three kinds:
+  - **`declaration`:** the head's `.suiteward.yml` is not a valid declaration;
+  - **`link`:** a symbolic link the scope covers or may cover below, whose target is not a regular file of the tree; the payload adds `path`, the link's path cut to 150 bytes;
+  - **`truncated`:** GitHub truncated the tree.
+- **The key.** The problem digest is the SHA-256 of the kind and the path. A later push with the same problem posts nothing; a different problem posts a new comment.
+- **The text:**
+  - it names the problem and gives the next step:
+    - fix the declaration;
+    - remove the link, point it to a file, or narrow the pattern that reaches it;
+    - the repository is too large for this release.
+  - the path goes inside a fence, escaped;
+  - it never quotes file content;
+  - it says the canonical contract stays in force and the check stays `failure` until the next push fixes it.
+- **The check summary** for `invalid-source` no longer mentions submodules, which are outside the scope since the D-SCOPE amendment.
+
 **Bot identity.** When the bot account cannot be resolved, the commands job logs the failure's `kind` and `status` (`readFailure`), never GitHub's text. This also covers a refused App JWT on `GET /app`.
 
 ### Protection verification job (M1.5)

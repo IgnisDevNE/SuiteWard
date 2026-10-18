@@ -21,6 +21,7 @@ func TestMissingRunnerNeedsNoFileOfThatName(t *testing.T) {
 		"an excluded name":           {pytest, "version: 1\nrunner: [pytest.*, .pytest.*]\nexclude: [conftest.py]\n", none},
 		"a listed glob":              {entriesOf(regulars("jest.config.ts")...), "version: 1\nrunner: [jest.config.*]\n", none},
 		"a glob only another covers": {entriesOf(regulars("jest.config.ts")...), "version: 1\nrunner: [jest.*]\n", []string{"jest.config.*"}},
+		"an excluded glob":           {entriesOf(regulars("jest.config.ts")...), "version: 1\nexclude: [jest.config.*]\n", none},
 		"no runner file":             {entriesOf(regulars("src/main.go")...), "version: 1\n", none},
 	} {
 		got, err := inventory.MissingRunner(tc.entries, scopeOf(t, tc.declaration))

@@ -37,6 +37,7 @@ func TestSuggestReportsARunnerNameTheBaseLacksEvenWhenNoFileIsUncovered(t *testi
 // A glob runner pattern is missing unless the same string is listed: another pattern that happens to match it is no promise about the next name.
 func TestSuggestTreatsARunnerNameAsMissingOnlyWhenTheBaseNeitherListsNorCoversIt(t *testing.T) {
 	const (
+		excludedGlob = "version: 1\nexclude:\n  - jest.config.*\n"
 		listedGlob   = "version: 1\nrunner:\n  - jest.config.*\n"
 		coveringGlob = "version: 1\nrunner:\n  - jest.*\n"
 	)
@@ -50,6 +51,7 @@ func TestSuggestTreatsARunnerNameAsMissingOnlyWhenTheBaseNeitherListsNorCoversIt
 		{"an include pattern covers the names", pythonHead("version: 1\ninclude:\n  - \"test_*.py\"\n  - pytest.*\n  - .pytest.*\n  - conftest.py\n"), "version: 1\ninclude:\n  - \"test_*.py\"\n  - pytest.*\n  - .pytest.*\n  - conftest.py\n", nil},
 		{"a glob runner pattern is listed", map[string]string{"jest.config.ts": "x\n", ".suiteward.yml": listedGlob}, listedGlob, nil},
 		{"a glob runner pattern is only matched by another", map[string]string{"jest.config.ts": "x\n", ".suiteward.yml": coveringGlob}, coveringGlob, []string{"jest.config.*"}},
+		{"an exclude lists the glob", map[string]string{"jest.config.ts": "x\n", ".suiteward.yml": excludedGlob}, excludedGlob, nil},
 		{"an exclude removes the name", pythonHead(pytestMinusConftest + "exclude:\n  - conftest.py\n"), pytestMinusConftest + "exclude:\n  - conftest.py\n", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

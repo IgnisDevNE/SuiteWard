@@ -55,7 +55,7 @@ type commandsJob struct {
 	warned   map[string]bool // enrolled repositories already reported as not configured
 }
 
-// commandsReader is the part of the GitHub reader that /suiteward propose uses.
+// commandsReader is the part of the GitHub reader that /suiteward propose and /suiteward suggest use.
 type commandsReader interface {
 	BranchHead(ctx context.Context, repo, branch string) (string, error)
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
@@ -627,19 +627,21 @@ var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 // no step and grants nothing: a fork or a closed pull request is refused, and otherwise the acknowledgment is the suggested declaration.
 // Before the first contract that is the reply of a propose that finds no declaration, built from the head's tree; afterwards it is the scope
 // notice of the head, with its whole uncovered set. A GitHub or store failure is an error of this candidate, like a propose. A source that
-// cannot be answered from (an invalid tree, a canonical without a declaration, a notice that cannot be rendered) is recorded as refused,
+// cannot be answered from (an invalid tree, a canonical without a declaration, a notice that cannot be rendered) is recorded as suggested,
 // without an answer, and never retried.
 func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
 	m, login := c.Comment, enrollment.Owner.Login
 	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
 	view, err := j.bootstrapView(ctx, c)
 	switch {
-	case errors.Is(err, governance.ErrNotFound): // as a propose: the bootstrap has not created the Suite yet
+	case errors.Is(err, governance.ErrNotFound):
+		// The owner is told, as for a propose, that the bootstrap is pending. The entry is Suggested, not NoSuite: NoSuite counts as the
+		// owner's latest command and could replace a rejected approve of the check.
 		ack, err := newRejectedAck(target, m.CommentID, login, commands.NoSuite, 0, "")
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
-		return j.record(ctx, c, commands.NoSuite, "", &ack)
+		return j.record(ctx, c, commands.Suggested, "", &ack)
 	case err != nil:
 		return &opaque{what: "read the suite", cause: err}
 	}
@@ -664,7 +666,7 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	switch {
 	case invalidSource(err) || errors.Is(err, errNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
 		j.logger.InfoContext(ctx, "github suggest skipped: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
-		return j.record(ctx, c, commands.SuggestRefused, "", nil)
+		return j.record(ctx, c, commands.Suggested, "", nil)
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github suggest read failed", c.Repo, err)
 		return &opaque{what: "read for the suggestion", cause: err}

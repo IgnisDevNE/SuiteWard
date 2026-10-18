@@ -294,7 +294,7 @@ func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, dis
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reason, Reference: reference})
 }
 
-// newDeclarationMissingAck builds the refusal of a propose when no tree holds a .suiteward.yml: branch is the pull
+// newDeclarationMissingAck builds the reply of a propose (disposition ProposeRefused) or of a suggest before the first contract (Suggested) when no declaration is to be proposed: branch is the pull
 // request's head ref and suggested the patterns and the mixed files found. Each is cut to the payload bound, which only
 // keeps the payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts
 // those it left out, so a cut pattern is never suggested.

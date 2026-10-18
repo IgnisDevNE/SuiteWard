@@ -277,7 +277,7 @@ func checkAck(a Ack) {
 		panic(fmt.Sprintf("commandtext: malformed reason %d does not fit outcome %d", a.Malformed, a.Outcome))
 	case (a.Outcome == BootstrapPromoted) != (a.Version != 0):
 		panic(fmt.Sprintf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome))
-	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && !(a.Outcome == SuggestRefused && a.Refusal == InvalidSource)):
+	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && (a.Outcome != SuggestRefused || a.Refusal != InvalidSource)):
 		panic(fmt.Sprintf("commandtext: base %d does not fit outcome %d", a.Base, a.Outcome))
 	case !refusalFits(a.Outcome, a.Refusal):
 		panic(fmt.Sprintf("commandtext: refusal %d does not fit outcome %d", a.Refusal, a.Outcome))

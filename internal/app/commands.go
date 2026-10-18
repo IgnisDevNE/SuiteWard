@@ -555,7 +555,7 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return err
 	}
 	if !found {
-		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion)
+		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, inventory.Suggestion{Include: suggestion})
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}

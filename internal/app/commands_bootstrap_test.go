@@ -238,14 +238,25 @@ func TestProposeFromThePullRequestWhenOnlyItHoldsTheDeclaration(t *testing.T) {
 }
 
 func TestProposeRefusesAndSuggestsWhenNoTreeHoldsADeclaration(t *testing.T) {
+	runnerFiles := map[string]string{"jest.config.js": "x", "vitest.config.js": "x", ".mocharc.js": "x", "karma.conf.js": "x", "playwright.config.ts": "x", "cypress.config.ts": "x",
+		".coveragerc": "x", "phpunit.xml": "x", ".rspec": "x", "test_helper.rb": "x", "dart_test.yaml": "x", "codecov.yml": "x", "conftest.py": "x"}
 	for _, tc := range []struct {
 		name       string
 		main, head map[string]string
-		suggestion []string
+		extra      map[string]any // the fields of the payload beyond the reason and the branch
 	}{
-		{"from the test-like paths of the pull request head", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"tests/a_test.go": "x", "src/main.go": "y"}, []string{"tests/**", "tests/*_test.*"}},
-		{"from the default branch when the pull request gives none", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"src/main.go": "y"}, []string{"spec/**"}},
+		{"from the test-like paths of the pull request head", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"tests/a_test.go": "x", "src/main.go": "y"},
+			map[string]any{"suggestion": []string{"/tests/", "*_test.go"}}},
+		{"from the default branch when the pull request gives none", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"src/main.go": "y"},
+			map[string]any{"suggestion": []string{"/spec/", "*_spec.rb"}}},
 		{"empty when no path is test-like", map[string]string{"README.md": "x"}, map[string]string{"src/main.go": "y"}, nil},
+		{"with the runner files and the mixed files found", nil, map[string]string{"conftest.py": "x", "package.json": "{}"},
+			map[string]any{"runner": []string{"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "conftest.py"}, "mixed": []string{"package.json"}}},
+		{"the mixed files come with the tree that gives the patterns", map[string]string{"spec/a_spec.rb": "x"}, map[string]string{"package.json": "{}"},
+			map[string]any{"suggestion": []string{"/spec/", "*_spec.rb"}}}, // the default branch gives the patterns, and its own mixed files: none
+		{"cut at the limit", nil, runnerFiles, map[string]any{"cut": true, "runner": []string{".c8rc*", ".codecov.yml", ".coveragerc", ".mocharc.*", ".nycrc*", ".pytest.ini", ".pytest.toml", ".rspec", "codecov.yml",
+			"conftest.py", "cypress.config.*", "dart_test.yaml", "jest.config.*", "karma.conf.*", "phpunit.dist.xml", "phpunit.xml", "phpunit.xml.dist", "playwright.config.*",
+			"pytest.ini", "pytest.toml"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -254,8 +265,8 @@ func TestProposeRefusesAndSuggestsWhenNoTreeHoldsADeclaration(t *testing.T) {
 			w.mustRun()
 
 			extra := map[string]any{"reason": "declaration-missing", "branch": cjBranch}
-			if tc.suggestion != nil {
-				extra["suggestion"] = tc.suggestion
+			for key, value := range tc.extra {
+				extra[key] = value
 			}
 			w.requireAckPayload(cjID1, 500, commands.ProposeRefused, extra)
 			w.requireNoProposal("P2")
@@ -607,6 +618,78 @@ func TestCommentPublisherRendersTheBootstrapAcknowledgments(t *testing.T) {
 			}
 			w.wantPost(key, tc.text())
 		})
+	}
+}
+
+func TestCommentPublisherRendersTheRunnerMixedAndCutOfADeclarationMissingPayload(t *testing.T) {
+	w := newCmtWorld(t)
+	key := fmt.Sprintf("ack:%d:%d", cmtRepoID, cmtComment)
+	extra := map[string]any{"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature", "suggestion": []string{"/tests/"}, "runner": []string{"conftest.py"},
+		"mixed": []string{"package.json"}, "cut": true}
+
+	if err := w.pub.publish(t.Context(), key, cmtAckPayload(extra)); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	w.wantPost(key, commandtext.SuggestDeclaration(commandtext.DeclarationSuggestion{Source: cmtComment, Repo: cmtRepo, Branch: "feature", Patterns: []string{"/tests/"},
+		Runner: []string{"conftest.py"}, Mixed: []string{"package.json"}, Cut: true}))
+}
+
+// A payload written under v0.1.0 has no runner, mixed or cut: it still decodes and renders as it did.
+func TestCommentPublisherRendersADeclarationMissingPayloadOfV010(t *testing.T) {
+	w := newCmtWorld(t)
+	key := fmt.Sprintf("ack:%d:%d", cmtRepoID, cmtComment)
+	payload := json.RawMessage(`{"repositoryId":1001,"repo":"acme/widgets","pull":7,"disposition":"propose-refused","comment":555,"owner":"octo-owner",` +
+		`"reason":"declaration-missing","branch":"feature/x","suggestion":["tests/**"]}`)
+
+	if err := w.pub.publish(t.Context(), key, payload); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	w.wantPost(key, commandtext.SuggestDeclaration(commandtext.DeclarationSuggestion{Source: cmtComment, Repo: cmtRepo, Branch: "feature/x", Patterns: []string{"tests/**"}}))
+}
+
+func TestCommentPublisherRefusesRunnerMixedAndCutOutsideADeclarationMissingPayload(t *testing.T) {
+	forty := strings.Split(strings.Repeat("a/**,", 21), ",")[:21]
+	for name, extra := range map[string]map[string]any{
+		"a runner on a fork refusal":              {"disposition": "propose-refused", "reason": "fork", "runner": []string{"conftest.py"}},
+		"mixed files on a skip":                   {"disposition": "skipped", "mixed": []string{"package.json"}},
+		"cut on a processed acknowledgment":       {"project": string(owner.ProjectID(cmtRepoID)), "suite": "default", "operation": "op-1", "cut": true},
+		"more than 20 patterns with the runner":   {"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature", "suggestion": forty[:10], "runner": forty[:11]},
+		"more than 20 mixed files":                {"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature", "mixed": forty},
+		"a runner pattern over the payload bound": {"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature", "runner": []string{strings.Repeat("r", 151)}},
+		"a mixed path over the payload bound":     {"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature", "mixed": []string{strings.Repeat("m", 151)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			err := w.pub.publish(t.Context(), fmt.Sprintf("ack:%d:%d", cmtRepoID, cmtComment), cmtAckPayload(extra))
+			if err == nil || !strings.Contains(err.Error(), "does not match its key") {
+				t.Fatalf("publish = %v; want a validation error, not a render failure", err)
+			}
+			if len(w.writer.posts()) != 0 {
+				t.Fatal("a comment was posted")
+			}
+		})
+	}
+}
+
+func TestDeclarationMissingAckBoundsItsRepositoryText(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	message, err := newDeclarationMissingAck(cmtTarget(), cmtComment, cmtOwner, "feature", inventory.Suggestion{Include: []string{long}, Runner: []string{long}, Mixed: []string{long}, Cut: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload ackPayload
+	if err := json.Unmarshal(message.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, list := range [][]string{payload.Suggestion, payload.Runner, payload.Mixed} {
+		if len(list) != 1 || len(list[0]) > maxSummaryText {
+			t.Fatalf("list %q, want one entry cut to %d bytes", list, maxSummaryText)
+		}
+	}
+	if !payload.Cut {
+		t.Fatal("cut was lost")
 	}
 }
 

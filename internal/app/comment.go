@@ -17,6 +17,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -69,6 +70,9 @@ type ackPayload struct {
 	Reference   string               `json:"reference,omitempty"`   // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
 	Branch      string               `json:"branch,omitempty"`      // propose-refused for declaration-missing: the pull request's head ref
 	Suggestion  []string             `json:"suggestion,omitempty"`  // and the include patterns SuggestScope found
+	Runner      []string             `json:"runner,omitempty"`      // and the runner patterns,
+	Mixed       []string             `json:"mixed,omitempty"`       // the mixed files, shown and never suggested,
+	Cut         bool                 `json:"cut,omitempty"`         // and whether the limit of 20 patterns cut the lists
 }
 
 // The codes of the malformed reasons in a payload.
@@ -233,9 +237,9 @@ func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, dis
 // request's head ref and suggestion the include patterns found. Each is cut to the payload bound, which only keeps the
 // payload small: the renderer leaves out any pattern over its own, lower limit (a cut one included) and counts those it
 // left out, so a cut pattern is never suggested.
-func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggestion []string) (governance.OutboxMessage, error) {
-	cut := make([]string, 0, len(suggestion))
-	for _, pattern := range suggestion {
+func newDeclarationMissingAck(target commentTarget, comment int64, ownerLogin, branch string, suggested inventory.Suggestion) (governance.OutboxMessage, error) {
+	cut := make([]string, 0, len(suggested.Include))
+	for _, pattern := range suggested.Include {
 		cut = append(cut, cutBytes(pattern, maxSummaryText))
 	}
 	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: reasonDeclarationMissing, Branch: branch, Suggestion: cut})

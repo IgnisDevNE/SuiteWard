@@ -4,15 +4,15 @@
 // package.
 //
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
-// (with its Command: Verb Approve, Revoke, Propose or Skip, Proposal, Revision and Code; Propose has neither
-// reference nor code, Skip only a code) or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
+// (with its Command: Verb Approve, Revoke, Propose, Skip or Suggest, Proposal, Revision and Code; Propose and Suggest have
+// neither reference nor code, Skip only a code) or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
 // MissingCode, BadCode or ExtraText). Reference formats P<n>-R<m>.
 //
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
 // InvalidCode, ReplayedCode, NoSuite, EditedFirst, BootstrapPromoted,
 // RevokedAfterPromotion, ApprovedAfterPromotion, ProposeRefused or SkipRefused with a Refusal, AlreadyProposed,
-// ProposeFailed or Skipped), BootstrapSummary renders
+// ProposeFailed, Skipped or NothingUncovered), BootstrapSummary renders
 // a Summary (from the default branch or from a pull request; at most 20 entries per listing, each shortened to 300 bytes),
 // RevisionComment renders a Revision the same way (with the rules and paths a reduction removes), and BootstrapNotice and
 // BootstrapCancelled render the comments of a pull request before the first contract. SuggestDeclaration renders a
@@ -52,6 +52,8 @@ const (
 	// Propose takes no reference and no code; Skip takes only a code.
 	Propose
 	Skip
+	// Suggest takes neither reference nor code.
+	Suggest
 )
 
 // Reason says why a command line is malformed.
@@ -142,6 +144,11 @@ func parseLine(rest string) Parsed {
 			return bad(ExtraText)
 		}
 		return Parsed{Kind: KindCommand, Command: Command{Verb: Propose}}
+	case tokens[0] == "suggest":
+		if len(tokens) > 1 {
+			return bad(ExtraText)
+		}
+		return Parsed{Kind: KindCommand, Command: Command{Verb: Suggest}}
 	case tokens[0] == "skip":
 		return parseSkip(tokens[1:])
 	default:

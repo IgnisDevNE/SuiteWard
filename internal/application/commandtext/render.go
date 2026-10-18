@@ -32,6 +32,8 @@ const (
 	ProposeFailed
 	Skipped
 	SkipRefused
+	// NothingUncovered answers /suiteward suggest after the first contract when every test-like path is in the scope.
+	NothingUncovered
 )
 
 // Refusal is the reason of a ProposeRefused or SkipRefused outcome.
@@ -222,6 +224,9 @@ func acknowledgment(a Ack) string {
 			"To start the first contract instead, comment `/suiteward propose` on the pull request that should carry it.")
 	case SkipRefused:
 		return skipRefusal(a.Refusal)
+	case NothingUncovered:
+		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is in the scope already, so there is nothing to suggest. Nothing changed.\n" +
+			"This answer is not an approval, and SuiteWard does not run tests.")
 	case EditedFirst:
 		return paragraphs("Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.\n" +
 			"Post the command as a new comment with a current code. Edits to a command comment are never processed.")
@@ -266,7 +271,7 @@ func checkAck(a Ack) {
 // does not fit: a skip has none, so only the code outcomes and NoSuite may come without one.
 func referenceOf(a Ack) string {
 	switch a.Outcome {
-	case MalformedCommand, EditedFirst, ProposeRefused, ProposeFailed, Skipped, SkipRefused:
+	case MalformedCommand, EditedFirst, ProposeRefused, ProposeFailed, Skipped, SkipRefused, NothingUncovered:
 		if a.Proposal != 0 || a.Revision != 0 {
 			panic(fmt.Sprintf("commandtext: outcome %d carries a reference", a.Outcome))
 		}

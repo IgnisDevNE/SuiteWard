@@ -46,8 +46,8 @@ const (
 	ProposeRefused   Disposition = "propose-refused"   // owner-authored /suiteward propose that was refused; no operation id
 	Skipped          Disposition = "skipped"           // owner-authored /suiteward skip with a good code: the PR may merge before the first contract; no operation id
 	SkipRefused      Disposition = "skip-refused"      // owner-authored /suiteward skip that was refused; no operation id
-	Suggested        Disposition = "suggested"         // owner-authored /suiteward suggest that was answered, or could not be (a source it cannot read, no Suite yet); no operation id, never a command for the check
-	SuggestRefused   Disposition = "suggest-refused"   // owner-authored /suiteward suggest on a fork or a closed pull request, with an acknowledgment; no operation id, never a command for the check
+	Suggested        Disposition = "suggested"         // owner-authored /suiteward suggest that was answered, or that found no Suite yet (the acknowledgment says the bootstrap is pending); no operation id, never a command for the check
+	SuggestRefused   Disposition = "suggest-refused"   // owner-authored /suiteward suggest on a fork or a closed pull request, or from a source it cannot answer from; always acknowledged; no operation id, never a command for the check
 )
 
 var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused}

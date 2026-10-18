@@ -623,12 +623,15 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 // refuses): a fact about the source, so it is never retried.
 var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 
+// errDeclarationTooLarge marks a suggested declaration over the size a notice holds (maxScopeDeclaration).
+var errDeclarationTooLarge = errors.New("the suggested declaration is too large")
+
 // suggest decides a /suiteward suggest (docs/contracts/runtime.md, "Scope discovery (M1.9)"). It is owner only and takes no code, so it reads
 // no step and grants nothing: a fork or a closed pull request is refused, and otherwise the acknowledgment is the suggested declaration.
-// Before the first contract that is the reply of a propose that finds no declaration, built from the head's tree; afterwards it is the scope
+// Before the first contract that is the suggestion of a propose that finds no declaration, built from the head's tree, in the words of a suggest; afterwards it is the scope
 // notice of the head, with its whole uncovered set. A GitHub or store failure is an error of this candidate, like a propose. A source that
-// cannot be answered from (an invalid tree, a canonical without a declaration, a notice that cannot be rendered) is recorded as suggested,
-// without an answer, and never retried.
+// cannot be answered from is recorded as suggest-refused with a fixed reason and never retried: invalid-source (an invalid tree, a canonical
+// without a declaration, a notice that cannot be rendered) or declaration-too-large. Neither disposition is a command for the check.
 func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
 	m, login := c.Comment, enrollment.Owner.Login
 	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
@@ -648,25 +651,27 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	if view.pull, err = j.observedPull(ctx, c); err != nil {
 		return err
 	}
-	var refusal string
-	switch {
-	case isFork(view.pull.HeadRepo, c.Repo):
-		refusal = reasonFork
-	case !view.pull.NotOpenSince.IsZero():
-		refusal = reasonNotOpen
-	}
-	if refusal != "" {
-		ack, err := newBootstrapAck(target, m.CommentID, login, commands.SuggestRefused, refusal, "")
+	refuse := func(reason string) error {
+		ack, err := newBootstrapAck(target, m.CommentID, login, commands.SuggestRefused, reason, "")
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
 		return j.record(ctx, c, commands.SuggestRefused, "", &ack)
 	}
+	switch {
+	case isFork(view.pull.HeadRepo, c.Repo):
+		return refuse(reasonFork)
+	case !view.pull.NotOpenSince.IsZero():
+		return refuse(reasonNotOpen)
+	}
 	ack, err := j.suggestion(ctx, target, c, login, view)
 	switch {
+	case errors.Is(err, errDeclarationTooLarge):
+		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
+		return refuse(reasonDeclarationTooLarge)
 	case invalidSource(err) || errors.Is(err, errNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
-		j.logger.InfoContext(ctx, "github suggest skipped: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
-		return j.record(ctx, c, commands.Suggested, "", nil)
+		j.logger.InfoContext(ctx, "github suggest refused: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
+		return refuse(refusalInvalidSource)
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github suggest read failed", c.Repo, err)
 		return &opaque{what: "read for the suggestion", cause: err}
@@ -681,13 +686,14 @@ func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c co
 	if view.canonical {
 		return j.scopeSuggestion(ctx, target, c, login, view.pull)
 	}
-	// Built from the head's tree, or from the default branch's when the head gives no pattern, whether or not a declaration exists.
+	// Built from the head's tree, or from the default branch's when the head gives no pattern, whether or not a declaration exists. The
+	// default branch is read too, unless the head already holds a declaration, to say whether the owner has one to compare.
 	_, headEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
 	if err != nil {
 		return governance.OutboxMessage{}, err
 	}
-	suggestion := inventory.Suggest(headEntries)
-	if len(suggestion.Include)+len(suggestion.Runner) == 0 {
+	suggestion, declared := inventory.Suggest(headEntries), hasDeclaration(headEntries)
+	if !declared || len(suggestion.Include)+len(suggestion.Runner) == 0 {
 		branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
 		if !ok {
 			return governance.OutboxMessage{}, errors.New("the suite does not target a branch")
@@ -700,9 +706,16 @@ func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c co
 		if err != nil {
 			return governance.OutboxMessage{}, err
 		}
-		suggestion = inventory.Suggest(mainEntries)
+		declared = declared || hasDeclaration(mainEntries)
+		if len(suggestion.Include)+len(suggestion.Runner) == 0 {
+			suggestion = inventory.Suggest(mainEntries)
+		}
 	}
-	return newDeclarationMissingAck(target, c.Comment.CommentID, login, view.pull.HeadRef, suggestion, commands.Suggested)
+	ack, err := newSuggestedDeclarationAck(target, c.Comment.CommentID, login, view.pull.HeadRef, suggestion, declared)
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
+	}
+	return ack, nil
 }
 
 // scopeSuggestion is the answer after the first contract: the test-like paths of the head that the canonical does not protect, all of
@@ -722,6 +735,9 @@ func (j *commandsJob) scopeSuggestion(ctx context.Context, target commentTarget,
 	suggestion, declaration, err := found.declaration(found.Paths)
 	if err != nil {
 		return governance.OutboxMessage{}, err
+	}
+	if len(declaration) > maxScopeDeclaration {
+		return governance.OutboxMessage{}, errDeclarationTooLarge
 	}
 	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, pull.HeadRef, found.Paths, declaration, found.Mixed, suggestion.Cut)
 	if err != nil {

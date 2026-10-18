@@ -319,8 +319,8 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			w.mustRun()
 
 			w.requireAckPayload(repository, 500, commands.SuggestRefused, map[string]any{"reason": tc.reason})
-			if !strings.Contains(w.logs.String(), "github suggest skipped") {
-				t.Fatalf("no log line says the suggestion was skipped\nlogs: %s", w.logs)
+			if !strings.Contains(w.logs.String(), "github suggest refused") {
+				t.Fatalf("no log line says the suggestion was refused\nlogs: %s", w.logs)
 			}
 			w.requireNothingLeaked()
 		})

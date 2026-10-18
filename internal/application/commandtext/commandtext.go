@@ -4,20 +4,20 @@
 // package.
 //
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
-// (with its Command: Verb Approve, Revoke, Propose or Skip, Proposal, Revision and Code; Propose has neither
-// reference nor code, Skip only a code) or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
+// (with its Command: Verb Approve, Revoke, Propose, Skip or Suggest, Proposal, Revision and Code; Propose and Suggest have
+// neither reference nor code, Skip only a code) or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
 // MissingCode, BadCode or ExtraText). Reference formats P<n>-R<m>.
 //
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
 // InvalidCode, ReplayedCode, NoSuite, EditedFirst, BootstrapPromoted,
-// RevokedAfterPromotion, ApprovedAfterPromotion, ProposeRefused or SkipRefused with a Refusal, AlreadyProposed,
-// ProposeFailed or Skipped), BootstrapSummary renders
+// RevokedAfterPromotion, ApprovedAfterPromotion, ProposeRefused, SkipRefused or SuggestRefused with a Refusal, AlreadyProposed,
+// ProposeFailed, Skipped or NothingUncovered), BootstrapSummary renders
 // a Summary (from the default branch or from a pull request; at most 20 entries per listing, each shortened to 300 bytes),
 // RevisionComment renders a Revision the same way (with the rules and paths a reduction removes), and BootstrapNotice and
 // BootstrapCancelled render the comments of a pull request before the first contract. SuggestDeclaration renders a
 // DeclarationSuggestion (include and runner patterns, a cut notice and the mixed files it does not suggest) as the reply
-// to a propose without a declaration. After the first contract, ScopeNoticeComment renders a ScopeNotice, the test-like
+// to a propose without a declaration, or, with Suggest set, as the reply to /suiteward suggest. After the first contract, ScopeNoticeComment renders a ScopeNotice, the test-like
 // paths that the contract does not protect with the declaration to commit, and ScopeSuggestionBody renders the body of a
 // review comment that suggests new patterns for a list of .suiteward.yml. None takes any comment
 // text, so a body can never echo a comment or a code. None adds the marker: the
@@ -52,6 +52,8 @@ const (
 	// Propose takes no reference and no code; Skip takes only a code.
 	Propose
 	Skip
+	// Suggest takes neither reference nor code.
+	Suggest
 )
 
 // Reason says why a command line is malformed.
@@ -142,6 +144,11 @@ func parseLine(rest string) Parsed {
 			return bad(ExtraText)
 		}
 		return Parsed{Kind: KindCommand, Command: Command{Verb: Propose}}
+	case tokens[0] == "suggest":
+		if len(tokens) > 1 {
+			return bad(ExtraText)
+		}
+		return Parsed{Kind: KindCommand, Command: Command{Verb: Suggest}}
 	case tokens[0] == "skip":
 		return parseSkip(tokens[1:])
 	default:

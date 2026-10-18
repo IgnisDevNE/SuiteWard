@@ -15,6 +15,7 @@ import (
 
 func TestParseProposeAndSkip(t *testing.T) {
 	propose := commandtext.Parsed{Kind: commandtext.KindCommand, Command: commandtext.Command{Verb: commandtext.Propose}}
+	suggest := commandtext.Parsed{Kind: commandtext.KindCommand, Command: commandtext.Command{Verb: commandtext.Suggest}}
 	skip := func(code string) commandtext.Parsed {
 		return commandtext.Parsed{Kind: commandtext.KindCommand, Command: commandtext.Command{Verb: commandtext.Skip, Code: code}}
 	}
@@ -33,6 +34,15 @@ func TestParseProposeAndSkip(t *testing.T) {
 		{"propose with a code", "/suiteward propose 123456", malformed(commandtext.ExtraText)},
 		{"propose is case-sensitive", "/suiteward Propose", malformed(commandtext.UnknownVerb)},
 		{"proposed is another verb", "/suiteward proposed", malformed(commandtext.UnknownVerb)},
+		{"suggest", "/suiteward suggest", suggest},
+		{"suggest with spaces, tabs and CRLF", " \t/suiteward \t suggest \t\r\nthanks\r\n", suggest},
+		{"suggest on a later line", "Which tests?\n\n/suiteward suggest", suggest},
+		{"suggest only inside a fence", "```\n/suiteward suggest\n```", notCommand},
+		{"suggest with a word after it", "/suiteward suggest now", malformed(commandtext.ExtraText)},
+		{"suggest with a code", "/suiteward suggest 123456", malformed(commandtext.ExtraText)},
+		{"suggest with a reference", "/suiteward suggest P1-R1", malformed(commandtext.ExtraText)},
+		{"suggest is case-sensitive", "/suiteward Suggest", malformed(commandtext.UnknownVerb)},
+		{"suggestion is another verb", "/suiteward suggestion", malformed(commandtext.UnknownVerb)},
 
 		{"skip", "/suiteward skip 123456", skip("123456")},
 		{"skip with leading zeros", "/suiteward skip 000012", skip("000012")},
@@ -147,6 +157,36 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 			with(commandtext.Ack{Outcome: commandtext.SkipRefused, Refusal: commandtext.Carrier}),
 			[]string{"`/suiteward skip` was not processed: this pull request carries the first contract proposal", "Nothing changed.", "`/suiteward propose` on another pull request"},
 			nil,
+		},
+		{
+			"suggest refused: fork",
+			with(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.Fork}),
+			[]string{"`/suiteward suggest` was not processed: this pull request comes from a fork", "not supported yet", "Nothing changed.", "comment `/suiteward suggest` there"},
+			[]string{"`/suiteward propose`"},
+		},
+		{
+			"suggest refused: not open",
+			with(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.NotOpen}),
+			[]string{"`/suiteward suggest` was not processed: this pull request is no longer open", "Nothing changed.", "Comment `/suiteward suggest` on an open pull request"},
+			[]string{"`/suiteward propose`"},
+		},
+		{
+			"suggest refused: invalid source",
+			with(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.InvalidSource}),
+			[]string{"`/suiteward suggest` was not processed: SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration", "Nothing changed.", "comment `/suiteward suggest` again"},
+			[]string{"`/suiteward propose`"},
+		},
+		{
+			"suggest refused: declaration too large",
+			with(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.DeclarationTooLarge}),
+			[]string{"`/suiteward suggest` was not processed: the suggested declaration would be too large for a comment", "Nothing changed.", "add the missing patterns to `.suiteward.yml` yourself"},
+			[]string{"`/suiteward propose`"},
+		},
+		{
+			"nothing uncovered",
+			with(commandtext.Ack{Outcome: commandtext.NothingUncovered}),
+			[]string{"every test-like path in this pull request's head is in the scope already", "nothing to suggest", "Nothing changed.", "not an approval", "does not run tests"},
+			[]string{" for P", "P0"},
 		},
 		{
 			// A skip has no reference, so the code outcomes and NoSuite do not name one either.
@@ -417,6 +457,17 @@ func TestAcknowledgeProposeAndSkipPanicsOnImpossibleState(t *testing.T) {
 		"a replayed code with a reference out of range":  {Outcome: commandtext.ReplayedCode, Proposal: 1, Revision: 1000000000, Source: source, Owner: owner},
 		"no suite with half a reference":                 {Outcome: commandtext.NoSuite, Revision: 1, Source: source, Owner: owner},
 		"approved without a reference":                   {Outcome: commandtext.Approved, Source: source, Owner: owner},
+		"a reference on nothing uncovered":               {Outcome: commandtext.NothingUncovered, Proposal: 1, Revision: 1, Source: source, Owner: owner},
+		"a refusal on nothing uncovered":                 refused(commandtext.NothingUncovered, commandtext.Fork),
+		"eligibility on nothing uncovered":               {Outcome: commandtext.NothingUncovered, Source: source, Owner: owner, Eligible: true},
+		"no source command on nothing uncovered":         {Outcome: commandtext.NothingUncovered, Owner: owner},
+		"suggest refused without a reason":               refused(commandtext.SuggestRefused, 0),
+		"suggest refused for a canonical":                refused(commandtext.SuggestRefused, commandtext.CanonicalPresent),
+		"suggest refused for a base that is not target":  refused(commandtext.SuggestRefused, commandtext.BaseNotTarget),
+		"suggest refused for a carrier":                  refused(commandtext.SuggestRefused, commandtext.Carrier),
+		"a reference on a suggest refusal":               {Outcome: commandtext.SuggestRefused, Refusal: commandtext.Fork, Proposal: 1, Revision: 1, Source: source, Owner: owner},
+		"declaration too large on a propose refusal":     refused(commandtext.ProposeRefused, commandtext.DeclarationTooLarge),
+		"declaration too large on a skip refusal":        refused(commandtext.SkipRefused, commandtext.DeclarationTooLarge),
 	}
 	for name, ack := range cases {
 		t.Run(name, func(t *testing.T) {

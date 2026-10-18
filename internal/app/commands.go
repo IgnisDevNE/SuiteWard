@@ -36,25 +36,26 @@ var errLedger = errors.New("command ledger failed")
 // D-COMMANDS, once every enrolled repository has synchronized past them (docs/contracts/runtime.md, "Command and
 // bootstrap jobs (M1.6a)"). Every step is safe to repeat after a crash.
 type commandsJob struct {
-	ledger  commands.Store
-	owners  owner.Store
-	suites  governance.UnitOfWork
-	syncs   repositoryReader // the observation store: each repository's last successful cycle
-	repos   []string         // the configured repositories (GITHUB_REPOSITORIES)
-	bot     *botAccount
-	reader  commandsReader           // the default branch head and the trees that /suiteward propose reads
-	content governance.ContentWriter // where a proposed baseline's files are stored
-	pulls   pullLister               // the observed pull requests: a command's head and head repository
-	tier    string                   // the configured INSTALLATION_TIER
-	logger  *slog.Logger
-	now     func() time.Time
+	ledger   commands.Store
+	owners   owner.Store
+	suites   governance.UnitOfWork
+	syncs    repositoryReader // the observation store: each repository's last successful cycle
+	repos    []string         // the configured repositories (GITHUB_REPOSITORIES)
+	bot      *botAccount
+	reader   commandsReader           // the default branch head and the trees that /suiteward propose reads
+	content  governance.ContentWriter // where a proposed baseline's files are stored
+	contents governance.ContentReader // where /suiteward suggest reads the canonical's declaration after the first contract
+	pulls    pullLister               // the observed pull requests: a command's head and head repository
+	tier     string                   // the configured INSTALLATION_TIER
+	logger   *slog.Logger
+	now      func() time.Time
 
 	failing  commandFailure  // the candidate that failed last, in this process; runs never overlap
 	recorded bool            // the current run recorded a ledger entry
 	warned   map[string]bool // enrolled repositories already reported as not configured
 }
 
-// commandsReader is the part of the GitHub reader that /suiteward propose uses.
+// commandsReader is the part of the GitHub reader that /suiteward propose and /suiteward suggest use.
 type commandsReader interface {
 	BranchHead(ctx context.Context, repo, branch string) (string, error)
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
@@ -211,6 +212,9 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	command := parsed.Command
 	if command.Verb == commandtext.Propose { // no code, no reference
 		return j.propose(ctx, enrollment, c)
+	}
+	if command.Verb == commandtext.Suggest { // no code, no reference: it reads no step and grants nothing
+		return j.suggest(ctx, enrollment, c)
 	}
 	var reference string // a skip names no proposal
 	if command.Verb != commandtext.Skip {
@@ -555,7 +559,7 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return err
 	}
 	if !found {
-		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion)
+		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion, commands.ProposeRefused)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
@@ -613,4 +617,131 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	}
 	j.logger.InfoContext(ctx, "github baseline proposed", "repo", c.Repo, "proposal", number, "pull", c.PullNumber, "source", inputs.Source)
 	return j.record(ctx, c, commands.Proposed, "", nil)
+}
+
+// errAnswerNotRenderable marks a suggestion whose acknowledgment cannot be rendered (a declaration over the limit, a branch the renderer
+// refuses): a fact about the source, so it is never retried.
+var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
+
+// errDeclarationTooLarge marks a suggested declaration over the size a notice holds (maxScopeDeclaration).
+var errDeclarationTooLarge = errors.New("the suggested declaration is too large")
+
+// suggest decides a /suiteward suggest (docs/contracts/runtime.md, "Scope discovery (M1.9)"). It is owner only and takes no code, so it reads
+// no step and grants nothing: a fork or a closed pull request is refused, and otherwise the acknowledgment is the suggested declaration.
+// Before the first contract that is the suggestion of a propose that finds no declaration, built from the head's tree, in the words of a suggest; afterwards it is the scope
+// notice of the head, with its whole uncovered set. A GitHub or store failure is an error of this candidate, like a propose. A source that
+// cannot be answered from is recorded as suggest-refused with a fixed reason and never retried: invalid-source (an invalid tree, a canonical
+// without a declaration, a notice that cannot be rendered) or declaration-too-large. Neither disposition is a command for the check.
+func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
+	m, login := c.Comment, enrollment.Owner.Login
+	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
+	view, err := j.bootstrapView(ctx, c)
+	switch {
+	case errors.Is(err, governance.ErrNotFound):
+		// The owner is told, as for a propose, that the bootstrap is pending. The entry is Suggested, not NoSuite: NoSuite counts as the
+		// owner's latest command and could replace a rejected approve of the check.
+		ack, err := newRejectedAck(target, m.CommentID, login, commands.NoSuite, 0, "")
+		if err != nil {
+			return &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return j.record(ctx, c, commands.Suggested, "", &ack)
+	case err != nil:
+		return &opaque{what: "read the suite", cause: err}
+	}
+	if view.pull, err = j.observedPull(ctx, c); err != nil {
+		return err
+	}
+	refuse := func(reason string) error {
+		ack, err := newBootstrapAck(target, m.CommentID, login, commands.SuggestRefused, reason, "")
+		if err != nil {
+			return &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return j.record(ctx, c, commands.SuggestRefused, "", &ack)
+	}
+	switch {
+	case isFork(view.pull.HeadRepo, c.Repo):
+		return refuse(reasonFork)
+	case !view.pull.NotOpenSince.IsZero():
+		return refuse(reasonNotOpen)
+	}
+	ack, err := j.suggestion(ctx, target, c, login, view)
+	switch {
+	case errors.Is(err, errDeclarationTooLarge):
+		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
+		return refuse(reasonDeclarationTooLarge)
+	case invalidSource(err) || errors.Is(err, errNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
+		j.logger.InfoContext(ctx, "github suggest refused: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
+		return refuse(refusalInvalidSource)
+	case errors.Is(err, errGitHubRead):
+		logReadFailure(ctx, j.logger, "github suggest read failed", c.Repo, err)
+		return &opaque{what: "read for the suggestion", cause: err}
+	case err != nil:
+		return &opaque{what: "build the suggestion", cause: err}
+	}
+	return j.record(ctx, c, commands.Suggested, "", &ack)
+}
+
+// suggestion builds the acknowledgment of a suggest on an open pull request of the repository.
+func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c commands.Candidate, login string, view bootstrapView) (governance.OutboxMessage, error) {
+	if view.canonical {
+		return j.scopeSuggestion(ctx, target, c, login, view.pull)
+	}
+	// Built from the head's tree, or from the default branch's when the head gives no pattern, whether or not a declaration exists. The
+	// default branch is read too, unless the head already holds a declaration, to say whether the owner has one to compare.
+	_, headEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
+	if err != nil {
+		return governance.OutboxMessage{}, err
+	}
+	suggestion, declared := inventory.Suggest(headEntries), hasDeclaration(headEntries)
+	if !declared || len(suggestion.Include)+len(suggestion.Runner) == 0 {
+		branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
+		if !ok {
+			return governance.OutboxMessage{}, errors.New("the suite does not target a branch")
+		}
+		head, err := j.reader.BranchHead(ctx, c.Repo, branch)
+		if err != nil {
+			return governance.OutboxMessage{}, &opaque{what: "read the default branch head", cause: githubRead(err)}
+		}
+		_, mainEntries, err := j.tree(ctx, c.Repo, head)
+		if err != nil {
+			return governance.OutboxMessage{}, err
+		}
+		declared = declared || hasDeclaration(mainEntries)
+		if len(suggestion.Include)+len(suggestion.Runner) == 0 {
+			suggestion = inventory.Suggest(mainEntries)
+		}
+	}
+	ack, err := newSuggestedDeclarationAck(target, c.Comment.CommentID, login, view.pull.HeadRef, suggestion, declared)
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
+	}
+	return ack, nil
+}
+
+// scopeSuggestion is the answer after the first contract: the test-like paths of the head that the canonical does not protect, all of
+// them and not only those the pull request adds, with the canonical declaration widened to cover them.
+func (j *commandsJob) scopeSuggestion(ctx context.Context, target commentTarget, c commands.Candidate, login string, pull githubsync.PullState) (governance.OutboxMessage, error) {
+	read, err := j.reader.Tree(ctx, c.Repo, pull.HeadSHA)
+	if err != nil {
+		return governance.OutboxMessage{}, &opaque{what: "read a tree", cause: githubRead(err)}
+	}
+	found, err := discoverHead(ctx, j.suites, j.contents, owner.ProjectID(c.RepositoryID), &githubTree{tree: read, files: map[string][]byte{}})
+	if err != nil {
+		return governance.OutboxMessage{}, err
+	}
+	if len(found.Paths) == 0 {
+		return newBootstrapAck(target, c.Comment.CommentID, login, commands.Suggested, reasonNothingUncovered, "")
+	}
+	suggestion, declaration, err := found.declaration(found.Paths)
+	if err != nil {
+		return governance.OutboxMessage{}, err
+	}
+	if len(declaration) > maxScopeDeclaration {
+		return governance.OutboxMessage{}, errDeclarationTooLarge
+	}
+	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, pull.HeadRef, found.Paths, declaration, found.Mixed, suggestion.Cut)
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
+	}
+	return ack, nil
 }

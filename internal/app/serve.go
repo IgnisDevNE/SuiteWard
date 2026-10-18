@@ -102,7 +102,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		problems := &bootstrapProblems{}
 		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, problems: problems, logger: logger, now: time.Now}
 		riverConfig.Bootstrap = bootstrap.run
-		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
+		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, contents: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
 		riverConfig.Commands = commandJob.run
 		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store, logger: logger}
 		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger}

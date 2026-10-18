@@ -364,7 +364,7 @@ func TestSuggestCoversSuiteWardsOwnTests(t *testing.T) {
 	}
 }
 
-// TestUncoveredAgreesWithSuggest: a scope made of the suggestion leaves no test-like path uncovered.
+// TestUncoveredAgreesWithSuggest: a scope made of the suggestion leaves no test-like or runner path uncovered.
 func TestUncoveredAgreesWithSuggest(t *testing.T) {
 	fixtures := map[string][]inventory.Entry{"SuiteWard": suiteWardPaths(t)}
 	for _, tt := range suggestCases {

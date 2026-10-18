@@ -107,33 +107,38 @@ func splitFile(p string) (dirs []string, name string, ok bool) {
 	return dirs, name, !slices.ContainsFunc(dirs, func(d string) bool { return slices.Contains(vendoredDirectories, d) })
 }
 
-// testPatterns returns the include patterns that file path implies; none means it is not test-like.
-// Suggest and Uncovered share it, so they always agree on what counts as a test.
-func testPatterns(p string) []string {
+// classify returns the include patterns and the runner patterns that file path implies; none of either means it is not
+// test-like. The runner patterns are the whole group of a runner file found, and a Python test file brings the pytest
+// group. Suggest and Uncovered share it, so they always agree on what counts as a test.
+func classify(p string) (include, runner []string) {
 	dirs, name, ok := splitFile(p)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	var patterns []string
 	for _, glob := range conventionFileGlobs {
 		if nameMatches([]string{glob}, name) {
-			patterns = append(patterns, glob)
+			include = append(include, glob)
 		}
 	}
-	testNamed := len(patterns) > 0
+	testNamed := len(include) > 0
 	for i, dir := range dirs {
 		switch {
 		case slices.Contains(conventionDirectories, dir):
-			patterns = append(patterns, dir+"/")
+			include = append(include, dir+"/")
 		case slices.Contains(ambiguousDirectories, dir) && i == 0:
-			patterns = append(patterns, "/"+dir+"/")
+			include = append(include, "/"+dir+"/")
 		case slices.Contains(ambiguousDirectories, dir) && i == len(dirs)-1 && testNamed:
-			patterns = append(patterns, dir+"/")
+			include = append(include, dir+"/")
 		case dir == "src" && i+1 < len(dirs) && (dirs[i+1] == "test" || dirs[i+1] == "it"):
-			patterns = append(patterns, "**/src/"+dirs[i+1]+"/") // the interior slash anchors a bare "src/test/"
+			include = append(include, "**/src/"+dirs[i+1]+"/") // the interior slash anchors a bare "src/test/"
 		}
 	}
-	return patterns
+	for i, group := range runnerGroups {
+		if nameMatches(group, name) || (i == 0 && nameMatches(pythonTestGlobs, name)) {
+			runner = append(runner, group...)
+		}
+	}
+	return include, runner
 }
 
 // Suggest proposes a declaration from the paths of the File entries of a tree (D-SCOPE-DISCOVERY): include patterns for
@@ -141,8 +146,7 @@ func testPatterns(p string) []string {
 // files that may hold test settings. The lists are never nil. Include is the directory patterns then the file patterns,
 // each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut is set.
 func Suggest(entries []Entry) Suggestion {
-	directories, files := map[string]bool{}, map[string]bool{}
-	foundGroups := make([]bool, len(runnerGroups))
+	directories, files, runner := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	var mixed []string
 	for _, entry := range entries {
 		if entry.Kind != File {
@@ -152,27 +156,19 @@ func Suggest(entries []Entry) Suggestion {
 		if !ok {
 			continue
 		}
-		for _, pattern := range testPatterns(entry.Path) {
+		include, runnerPatterns := classify(entry.Path)
+		for _, pattern := range include {
 			if strings.HasSuffix(pattern, "/") {
 				directories[pattern] = true
 			} else {
 				files[pattern] = true
 			}
 		}
-		for i, group := range runnerGroups {
-			foundGroups[i] = foundGroups[i] || nameMatches(group, name)
+		for _, pattern := range runnerPatterns {
+			runner[pattern] = true
 		}
-		foundGroups[0] = foundGroups[0] || nameMatches(pythonTestGlobs, name)
 		if slices.Contains(mixedNames, name) || strings.HasSuffix(name, ".csproj") {
 			mixed = append(mixed, entry.Path)
-		}
-	}
-	runner := map[string]bool{}
-	for i, group := range runnerGroups {
-		if foundGroups[i] {
-			for _, pattern := range group {
-				runner[pattern] = true
-			}
 		}
 	}
 
@@ -188,12 +184,15 @@ func Suggest(entries []Entry) Suggestion {
 	}
 }
 
-// Uncovered returns the sorted test-like file paths of entries that s does not cover. A path that an exclude of s
+// Uncovered returns the sorted test-like and runner file paths of entries that s does not cover. A path that an exclude of s
 // matches is never returned: an exclusion is the owner's choice, and adding patterns cannot undo it.
 func Uncovered(entries []Entry, s scope.Scope) ([]string, error) {
 	uncovered := []string{}
 	for _, entry := range entries {
-		if entry.Kind != File || len(testPatterns(entry.Path)) == 0 {
+		if entry.Kind != File {
+			continue
+		}
+		if include, runner := classify(entry.Path); len(include)+len(runner) == 0 {
 			continue
 		}
 		covered, err := s.Covers(entry.Path)

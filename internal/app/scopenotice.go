@@ -32,7 +32,7 @@ import (
 
 const (
 	scopeNoticeKey = "scope-notice" // scope-notice:<repository id>:<pull>:<set digest>
-	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<set digest>, with the notice of that digest
+	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<review digest>: the set and the head's file in one digest
 )
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -130,8 +130,8 @@ func (s scopeSuggestion) indent() string {
 	return s.Anchor[:len(s.Anchor)-len(strings.TrimLeft(s.Anchor, " "))]
 }
 
-// scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<set digest>: one or two suggestions, the include
-// list's and the runner list's, for the head the notice of the same digest was written for.
+// scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<review digest>: one or two suggestions, the include
+// list's and the runner list's, for one version of the head's file.
 type scopeReviewPayload struct {
 	commentTarget
 	Head        string            `json:"head"`
@@ -159,8 +159,15 @@ func (p scopeReviewPayload) validate() error {
 	return nil
 }
 
-// newScopeReviewMessage builds the review of the suggestions for a notice of the digest of paths. A payload the publisher
-// could not render is an error.
+// reviewDigest is the SHA-256 hex digest of the set digest, a newline and the head's .suiteward.yml. A review is anchored to one
+// version of that file: a later suggest after the file changed is a fresh review, a repeat on the same file is not.
+func reviewDigest(set string, file []byte) string {
+	sum := sha256.Sum256(append([]byte(set+"\n"), file...))
+	return hex.EncodeToString(sum[:])
+}
+
+// newScopeReviewMessage builds the review of the suggestions of the review digest. A payload the publisher could not render is
+// an error.
 func newScopeReviewMessage(target commentTarget, head, digest string, suggestions []scopeSuggestion) (governance.OutboxMessage, error) {
 	p := scopeReviewPayload{commentTarget: target, Head: head, Suggestions: suggestions}
 	if err := p.validate(); err != nil {
@@ -429,7 +436,7 @@ type pullFileReader interface {
 	PullFiles(ctx context.Context, repo string, number int) ([]github.PullFile, error)
 }
 
-// scopeReview builds the review suggestions that go with a notice, as at most one message: for each list of the head's
+// scopeReview builds the review suggestions that go with a notice, as at most one message, keyed by the set digest and the head's file: for each list of the head's
 // .suiteward.yml, the new patterns that the head's list lacks, after a list item inside a hunk of the pull request's diff
 // (GitHub accepts a review comment only on such a line). This is the only place that starts from the head's file. A list in flow
 // style, a head whose file is invalid or missing from the diff, and a list with no new pattern or no item in a hunk give none.
@@ -483,7 +490,7 @@ func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger,
 	if len(suggestions) == 0 {
 		return nil, nil
 	}
-	message, err := newScopeReviewMessage(target, headSHA, digest, suggestions)
+	message, err := newScopeReviewMessage(target, headSHA, reviewDigest(digest, own), suggestions)
 	if err != nil {
 		logger.WarnContext(ctx, logPrefix+" skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
 		return nil, nil

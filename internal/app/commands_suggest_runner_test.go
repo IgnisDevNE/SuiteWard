@@ -29,7 +29,7 @@ func TestSuggestReportsARunnerNameTheBaseLacksEvenWhenNoFileIsUncovered(t *testi
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull",
 		"declaration": addPatterns(t, pytestMinusConftest, nil, []string{"conftest.py"}), "addRunner": []string{"conftest.py"}})
-	w.requireReview(cjID1, cjHead, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	w.requireReview(cjID1, cjHead, pytestMinusConftest, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
 	w.requireNoNoticeKey()
 }
 
@@ -80,7 +80,7 @@ func TestSuggestAfterTheFirstContractReportsARunnerNameTheCanonicalLacks(t *test
 
 	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract",
 		"declaration": addPatterns(t, pytestMinusConftest, nil, []string{"conftest.py"}), "addRunner": []string{"conftest.py"}})
-	w.requireReview(cjID2, cjHead, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	w.requireReview(cjID2, cjHead, pytestMinusConftest, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
 }
 
 // A review of one set of paths is not the review of the same paths plus a runner name, so a name the paths do not explain is part of the key.
@@ -94,8 +94,8 @@ func TestSuggestKeysTheReviewOfRunnerNamesApartFromTheReviewOfThePathsAlone(t *t
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": addPatterns(t, decl, []string{"*_test.go"}, []string{"conftest.py"}), "addInclude": []string{"*_test.go"}, "addRunner": []string{"conftest.py"}})
-	if keys := w.scopeMessagesKeys("scope-review:"); len(keys) != 1 || keys[0] == reviewKey(cjUtilTst) {
-		t.Fatalf("review keys %v; want one that is not the key of the paths alone, %s", keys, reviewKey(cjUtilTst))
+	if keys := w.scopeMessagesKeys("scope-review:"); len(keys) != 1 || keys[0] == reviewKey(decl, cjUtilTst) {
+		t.Fatalf("review keys %v; want one that is not the key of the paths alone, %s", keys, reviewKey(decl, cjUtilTst))
 	}
 }
 

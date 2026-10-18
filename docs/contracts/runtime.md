@@ -428,10 +428,13 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **A 422** from GitHub (the line is no longer in the diff) completes the message without retry, and the job logs the `kind` and `status` of the failure.
 
 **Command `/suiteward suggest`.** It is owner only and takes no code. The parser accepts the verb without argument. An extra token is `ExtraText`, as for `propose`.
-- On a fork or a closed PR, it records `suggest-refused` with the same reasons as `propose-refused` (`fork`, `not-open`).
-- Otherwise it records `suggested`. Its ack holds the following:
-  - **before V1:** the `declaration-missing` reply computed for that PR (head tree, or default branch);
-  - **after V1:** a `scope-notice` body for the head, or, when nothing is uncovered, a short ack saying that every test-like path of the head is in the scope.
+- **`suggest-refused`** is recorded with a short ack that names the reason and quotes no repository text. It is never retried. The reasons are:
+  - `fork` or `not-open`, as for `propose`;
+  - `invalid-source`: the tree is invalid or truncated, or the canonical has no declaration;
+  - `declaration-too-large`: the declaration is over 8192 bytes, or the notice cannot be rendered.
+- Otherwise it records **`suggested`**, and its ack replies to the command. Before V1, the ack holds the suggested declaration for that PR, built from the head tree or else the default branch; its own text says whether a `.suiteward.yml` already exists. After V1:
+  - reason `scope-notice`: the scope notice for the head's uncovered paths, not filtered by the base. The ack fields are `paths`, `pathsTotal`, `declaration`, `cut` and `mixed`. No `scope-review` is written.
+  - reason `nothing-uncovered`: a short ack saying that every test-like path of the head is in the scope.
 - Neither disposition is counted by `LatestOwnerCommand`.
 
 **Bot identity.** When the bot account cannot be resolved, the commands job logs the failure's `kind` and `status` (`readFailure`), never GitHub's text. This also covers a refused App JWT on `GET /app`.

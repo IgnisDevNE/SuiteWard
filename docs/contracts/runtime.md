@@ -462,7 +462,10 @@ The order is deterministic: directory patterns first, then file patterns, each g
 
       A runner name can match no file yet, so a missing runner name is reported even when no file is uncovered. The text explains that runner names matter before their files exist. The checks job's unsolicited notice keeps the first kind only: it reports what a pull request adds.
   - **`nothing-uncovered`:** a short ack that names the base and says that it covers every test-like path of the head. It is sent only when neither kind of missing pattern exists.
-  - **An invalid base file** is refused as `invalid-source`. The text names the file ("this pull request's `.suiteward.yml` is not a valid declaration") without quoting it.
+  - **An invalid base file** is refused as `invalid-source`. The ack carries `base` (`pull` or `default-branch`), and the text names the file ("this pull request's `.suiteward.yml` is not a valid declaration") without quoting it.
+  - **Excludes and the review key.**
+    - A runner name without glob characters that an `exclude` of the base removes is not reported. The exclusion is the owner's choice.
+    - The command's `scope-review` key digests the uncovered paths together with the missing runner names. It matches the checks job's key, and so posts one review between them, only when no runner name is missing.
 
   **Payload guard.** A suggest ack or a scope notice whose JSON payload would exceed 60 KiB is treated as not renderable, which can happen when a hostile repository has many escaped characters in its paths. A command is then refused as `invalid-source`. The checks job logs the notice as skipped and remembers the set.
 

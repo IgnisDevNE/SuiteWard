@@ -315,7 +315,7 @@ This replaces these parts of the section above: "Who writes what", the `github_b
    - The tree has `.suiteward.yml`: the source is that pinned commit, with origin kind `branch`.
    - Otherwise, read the PR head tree. If it has `.suiteward.yml`, the source is the PR head, with origin kind `pull`.
    - Otherwise, `propose-refused` with reason `declaration-missing`. The ack payload carries:
-     - `suggestion`: up to 20 include patterns, from the test-like paths of the PR head tree (or of the default branch when the PR has none). It is built by `inventory.SuggestScope`. The patterns are `tests/**`, `test/**`, `__tests__/**` and `spec/**` for a matching top-level directory, and the file's own directory plus a glob for `*_test.*`, `*.test.*`, `*.spec.*` and `test_*.py`.
+     - `suggestion`: up to 20 include patterns, from the test-like paths of the PR head tree (or of the default branch when the PR has none). Since M1.9 it is built by `inventory.Suggest` ([Scope discovery (M1.9)](#scope-discovery-m19)); the M1.7b rule of one pattern per directory is gone.
      - `branch`: the PR's head ref, for the link.
 
      When no test-like path is found, `suggestion` is empty. The text then gives a minimal `version: 1` with an `include:` placeholder to fill in, and the link carries that minimal file. The text shows the YAML and the link `https://github.com/<repo>/new/<path-escaped branch>?filename=.suiteward.yml&value=<URL-encoded YAML>` (verified 2026-10-16 on SuiteWardQ2: GitHub fills both the name and the content).
@@ -437,7 +437,11 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - Otherwise it records **`suggested`**, and its ack replies to the command. Before V1 its reason is `declaration-missing`: the suggested declaration for that PR, built from the head tree or else the default branch. The ack adds `declared`, true when a `.suiteward.yml` already exists on the default branch or in the head, and the text says so. After V1:
   - reason `scope-notice`: the scope notice for the head's uncovered paths, not filtered by the base. The ack fields are `paths`, `pathsTotal`, `declaration`, `cut` and `mixed`. No `scope-review` is written.
   - reason `nothing-uncovered`: a short ack saying that every test-like path of the head is in the scope.
-- Neither disposition is counted by `LatestOwnerCommand`.
+- Neither disposition is counted by `LatestOwnerCommand`. A `suggest` on a project with no Suite records `suggested` with the no-suite acknowledgment.
+
+**Links and submodules** ([D-SCOPE](../plan/decisions.md#d-scope-declaration-and-source-inventory-semantics), amended 2026-10-17). `inventory`'s manifest decides a non-file entry as follows:
+- **A symlink.** It is checked only if the scope covers it or may cover a path below it. Then its target (the blob, relative to the link's directory; at most 8 links followed) is resolved in the same tree. If the target is a regular file, the link is unsafe only if the scope covers the link's path. Any other target (a directory, outside the repository, dangling, or a loop) keeps today's rule: unsafe.
+- **A submodule.** It is never unsafe and never read. `Suggest` returns the submodules that its patterns would reach as `Submodules` (at most 20). Every reply that suggests a declaration warns that their contents are not protected.
 
 **Bot identity.** When the bot account cannot be resolved, the commands job logs the failure's `kind` and `status` (`readFailure`), never GitHub's text. This also covers a refused App JWT on `GET /app`.
 

@@ -59,6 +59,11 @@ Accepted 2026-10-05.
 
 - The declaration uses gitignore-style include and exclude rules, case-sensitive.
 - A symlink or submodule inside the scope makes the declaration invalid; the governing scope stays in force.
+  - **Amended 2026-10-17 (owner, M1.9 phase review).** Suggested patterns match at any depth, so this rule made every repository with a link or a submodule unprotectable. A typical case is `AGENTS.md -> CLAUDE.md`. The rule now depends on what the entry is:
+    - **A symlink whose target resolves, within the same tree, to a regular file** behaves as a file. It is unsafe only when the scope covers the link's own path. The target is the link's blob, resolved relative to the link's directory, following at most 8 links.
+    - **A symlink to a directory, to a path outside the repository, or to nothing** is unchanged: it is unsafe when the scope covers it or may cover a path below it.
+    - **A submodule** is outside the scope. Its content is not protected and is never read. The declaration stays valid, and the replies that suggest a declaration warn about every submodule that a pattern would have reached.
+    - The target is read only for a link that would otherwise be unsafe. It is resolved on the same tree that is being assessed, so it decides only whether that tree is safe and grants nothing.
 - Approval binds the raw declaration bytes plus the normalized rules.
 - A candidate omission cannot remove existing protection; reducing the scope requires approval like any other change (ADR 0013).
 
@@ -81,7 +86,9 @@ Accepted 2026-10-17 (owner, M1.9 planning, after the C2 finding in [M1.8](phases
   - **Test files.** Patterns follow the frameworks' own conventions and match at any depth (`*_test.go`, `test_*.py`, `*.spec.*`…). There is no longer one pattern per directory.
   - **Test directories.** `testdata/`, `__tests__/`, `__snapshots__/`, `__mocks__/`, `__fixtures__/` and `src/test/` count at any depth. `tests/`, `test/` and `spec/` count at the top level, or when they hold a test-named file.
   - **Runner files.** The runner list holds the files found by name, plus the higher-priority files that a runner reads first, even when they do not exist yet: pytest reads `pytest.toml` before `pytest.ini`. A suggested pattern may therefore match no file.
-  - **Vendored directories** never count: `node_modules`, `vendor`, `.venv`, `venv`, `.tox`, `__pycache__`, `bower_components`, `jspm_packages`.
+  - **Test directories, in full:** besides those above, `cypress/` and `src/it/` also count at any depth.
+  - **Runner families.** The runner list holds whole families: a file of a family brings in every member. For example, `pytest.ini` brings `conftest.py`, `.coveragerc` brings `.nycrc*` and `.c8rc*`, and `.rspec` brings `spec_helper.rb`.
+  - **Vendored directories** never count: `node_modules`, `vendor`, `.venv`, `venv`, `.tox`, `__pycache__`, `bower_components`, `jspm_packages`, `.git`.
   - **The limit** covers include and runner patterns together. When the limit cuts the list, the reply says so.
 - **Mixed files.** `package.json`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `Cargo.toml`, `*.csproj` and `CMakeLists.txt` can hold test settings among other content. The reply warns about the ones it finds and never suggests them, because protecting them would put every dependency update behind an approval.
 - **The scope notice.** After V1, a PR revision that adds test-like files outside the governing scope gets one comment.

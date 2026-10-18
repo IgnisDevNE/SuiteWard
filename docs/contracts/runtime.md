@@ -405,7 +405,8 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - `repositoryId`, `repo`, `pull`, `head`, `branch`;
   - `paths`: at most 20, each cut to 150 bytes, plus `pathsTotal`;
   - `declaration`: the canonical declaration bytes with the new patterns added by `scope.AddPatterns`. It is never built from the PR head's file. It is at most 8192 bytes (`maxDeclaration`, which bounds the comment). For a larger declaration the job writes no notice and logs that it skipped it;
-  - `mixed`.
+  - `mixed`;
+  - `cut` (optional): set when the new patterns were cut at the limit of 20, so the text says the declaration is partial and asks the owner to review it.
 - **The text:**
   - it lists the paths and says they are not protected by the current contract;
   - it gives the full `declaration` in a fenced block (GitHub shows a copy button) and the link `https://github.com/<repo>/edit/<path-escaped branch>/.suiteward.yml`;

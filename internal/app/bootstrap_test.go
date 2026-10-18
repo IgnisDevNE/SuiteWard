@@ -831,7 +831,7 @@ func TestBootstrapSummaryCountsTheRulesItDropsAndMarksWhatItCut(t *testing.T) {
 func worstCase(unit string) bootstrapSummaryInputs {
 	entry := strings.Repeat(unit, 500)
 	list := func() []string { return slices.Repeat([]string{entry}, 40) } // more than the 20 the payload keeps
-	return bootstrapSummaryInputs{Proposal: 999999999, Revision: 1, Origin: bootHead, Branch: entry, Protected: 100000, Paths: list(), Include: list(), Exclude: list(), Tier: owner.TierCoLocated}
+	return bootstrapSummaryInputs{Proposal: 999999999, Revision: 1, Origin: bootHead, Branch: entry, Protected: 100000, Paths: list(), Include: list(), Runner: list(), Exclude: list(), Tier: owner.TierCoLocated}
 }
 
 func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testing.T) {
@@ -861,7 +861,7 @@ func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testin
 			if err := json.Unmarshal(message.Payload, &decoded); err != nil {
 				t.Fatal(err)
 			}
-			if len(decoded.Summary.Paths) != 20 || len(decoded.Summary.Include) != 20 || len(decoded.Summary.Exclude) != 20 {
+			if len(decoded.Summary.Paths) != 20 || len(decoded.Summary.Include) != 20 || len(decoded.Summary.Runner) != 20 || len(decoded.Summary.Exclude) != 20 || decoded.Summary.RunnerTotal != 40 {
 				t.Fatalf("payload keeps %d paths, %d include and %d exclude rules, want 20 each", len(decoded.Summary.Paths), len(decoded.Summary.Include), len(decoded.Summary.Exclude))
 			}
 			if decoded.Summary.Branch == "" {
@@ -870,7 +870,7 @@ func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testin
 			if decoded.Summary.IncludeTotal != 40 || decoded.Summary.ExcludeTotal != 40 {
 				t.Fatalf("totals are %d and %d, want the 40 rules each list had", decoded.Summary.IncludeTotal, decoded.Summary.ExcludeTotal)
 			}
-			for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
+			for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Runner, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
 				if !strings.HasSuffix(entry, "…") {
 					t.Fatalf("a cut entry has no marker: %q", entry)
 				}

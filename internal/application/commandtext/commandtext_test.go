@@ -1007,3 +1007,76 @@ func TestBootstrapSummaryPanicsOnASourceThatDoesNotFit(t *testing.T) {
 		})
 	}
 }
+
+// A summary built without Runner is the shape from before M1.9-E4: it knows nothing of the runner rules, so it names none
+// (the golden test above keeps that text byte for byte). A non-nil Runner, even an empty one, is a declaration that was read.
+func TestBootstrapSummaryListsTheRunnerRulesBetweenIncludeAndExclude(t *testing.T) {
+	rules := func(n int) []string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = "run" + strconv.Itoa(i) + ".toml"
+		}
+		return items
+	}
+	s := summary(3, pathList(3), commandtext.Isolated)
+
+	s.Runner = []string{"pytest.ini", "conftest.py"}
+	body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if !strings.Contains(body, "Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\nScope runner rules:\n\n```\npytest.ini\nconftest.py\n```\n\nScope exclude rules:") {
+		t.Errorf("the runner rules do not sit between the include and exclude rules:\n%s", body)
+	}
+
+	s.Runner = []string{}
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if !strings.Contains(body, "Scope runner rules: none.") {
+		t.Errorf("an empty runner list is not stated as none:\n%s", body)
+	}
+
+	s.Runner, s.RunnerTotal = rules(20), 27
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if !strings.Contains(body, "Scope runner rules (20 listed; 7 more are not listed)") || !strings.Contains(body, "run19.toml") {
+		t.Errorf("the runner rules do not count the ones left out:\n%s", body)
+	}
+
+	s.Runner, s.RunnerTotal = rules(25), 0
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if strings.Contains(body, "run20.toml") || !strings.Contains(body, "Scope runner rules (20 listed; 5 more are not listed)") {
+		t.Errorf("the runner rules are not bounded to 20:\n%s", body)
+	}
+
+	s.Runner = nil
+	if body := render(t, func() string { return commandtext.BootstrapSummary(s) }); strings.Contains(body, "runner") {
+		t.Errorf("a summary without runner information names the runner rules:\n%s", body)
+	}
+}
+
+func TestBootstrapSummaryWithRunnerRulesKeepsTheRestOfTheText(t *testing.T) {
+	s := summary(1, pathList(1), commandtext.Isolated)
+	without := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	s.Runner = []string{"pytest.ini"}
+	with := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if want := strings.Replace(without, "Scope exclude rules:", "Scope runner rules:\n\n```\npytest.ini\n```\n\nScope exclude rules:", 1); with != want {
+		t.Errorf("the runner section is not the only change:\n%s", with)
+	}
+}
+
+func TestBootstrapSummaryWithRunnerRulesFitsInAComment(t *testing.T) {
+	for name, unit := range map[string]string{"plain": "a", "invalid UTF-8": "\xff", "backticks": "`", "bidi control": "\u202e", "newline": "\n", "3-byte printable": "\u20ac"} {
+		t.Run(name, func(t *testing.T) {
+			long := make([]string, 20)
+			for i := range long {
+				long[i] = strings.Repeat(unit, 4096/len(unit))
+			}
+			s := pullSummary(commandtext.CoLocated)
+			s.Protected, s.Paths, s.Include, s.Runner, s.Exclude = 1<<62, long, long, long, long
+			s.IncludeTotal, s.RunnerTotal, s.ExcludeTotal, s.Proposal, s.Revision = 1<<62, 1<<62, 1<<62, 999999999, 999999999
+			body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+			if body == "" || len(body) >= maxComment {
+				t.Errorf("body has %d bytes, want 0 < n < %d", len(body), maxComment)
+			}
+			if !utf8.ValidString(body) {
+				t.Error("body is not valid UTF-8")
+			}
+		})
+	}
+}

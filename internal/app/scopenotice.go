@@ -218,7 +218,7 @@ func (p *commentPublisher) publishReview(ctx context.Context, key string, reposi
 }
 
 // errNoCanonicalDeclaration says that the canonical holds no .suiteward.yml, so there is no declaration to widen.
-var errNoCanonicalDeclaration = errors.New("the canonical has no declaration")
+var errNoCanonicalDeclaration = governance.ErrNoCanonicalDeclaration
 
 // canonicalDeclaration returns the bytes of the canonical's own .suiteward.yml and the scope they declare. It reads the
 // canonical as AssessHead does and verifies the bytes against the scope digest the canonical was approved with.
@@ -236,10 +236,7 @@ func canonicalDeclaration(ctx context.Context, suites governance.UnitOfWork, con
 		return nil, scope.Scope{}, err
 	}
 	raw, declaration, err := governance.CanonicalDeclaration(ctx, contents, canonical)
-	switch {
-	case errors.Is(err, governance.ErrNoCanonicalDeclaration):
-		return nil, scope.Scope{}, errNoCanonicalDeclaration
-	case err != nil:
+	if err != nil {
 		return nil, scope.Scope{}, err
 	}
 	return raw, scope.NewScope(declaration), nil

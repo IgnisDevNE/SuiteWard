@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -529,12 +530,16 @@ func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
 		}
 	})
 	stored := artifact.Hash([]byte(declaration))
-	for name, replacement := range map[string]string{"parse failure": "include: [", "digest mismatch": "version: 1\ninclude: [/other/**]\n"} {
+	for name, c := range map[string]struct{ replacement, message string }{
+		"parse failure":   {"include: [", "does not parse"},
+		"digest mismatch": {"version: 1\ninclude: [/other/**]\n", "does not hash"},
+	} {
 		t.Run(name, func(t *testing.T) {
 			e := newHeadEnv(t)
-			e.reader.replace = map[artifact.Digest]string{stored: replacement}
-			if _, _, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical); !errors.Is(err, governance.ErrInvalidState) {
-				t.Fatalf("error = %v, want ErrInvalidState", err)
+			e.reader.replace = map[artifact.Digest]string{stored: c.replacement}
+			_, _, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
+			if !errors.Is(err, governance.ErrInvalidState) || !strings.Contains(err.Error(), c.message) {
+				t.Fatalf("error = %v, want ErrInvalidState saying %q", err, c.message)
 			}
 		})
 	}

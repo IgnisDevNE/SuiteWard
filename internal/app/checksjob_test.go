@@ -165,6 +165,11 @@ func (nopContents) Read(context.Context, artifact.Digest) ([]byte, error) {
 	return []byte("version: 1\ninclude: [/tests/**]\n"), nil
 }
 
+// PullFiles lists no changed file: the integration tests that share this reader never ask for a diff that matters.
+func (f *fakeBootReader) PullFiles(context.Context, string, int) ([]github.PullFile, error) {
+	return nil, nil
+}
+
 func (w *cjJobWorld) tree(sha string, files map[string]string) {
 	w.reader.repos[bootRepo].trees[sha] = &bootTree{files: files}
 }

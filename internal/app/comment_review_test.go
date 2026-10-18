@@ -28,12 +28,15 @@ func cmtReviewPayload(lists []map[string]any, change func(map[string]any)) json.
 	return cmtMust(json.Marshal(payload))
 }
 
+// cmtTrimmed is a rendered text without its closing line breaks: the publisher puts the marker after one blank line.
+func cmtTrimmed(text string) string { return strings.TrimRight(text, "\n") }
+
 func cmtIncludeBody() string {
-	return commandtext.ScopeSuggestionBody("  - /tests/**", "  ", []string{"*_test.go"}) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":include")
+	return cmtTrimmed(commandtext.ScopeSuggestionBody("  - /tests/**", "  ", []string{"*_test.go"})) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":include")
 }
 
 func cmtRunnerBody() string {
-	return commandtext.ScopeSuggestionBody("- conftest.py", "", []string{".pytest.ini", "pytest.ini"}) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":runner")
+	return cmtTrimmed(commandtext.ScopeSuggestionBody("- conftest.py", "", []string{".pytest.ini", "pytest.ini"})) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":runner")
 }
 
 func TestCommentPublisherPostsTheScopeReviewOnTheLineOfTheList(t *testing.T) {

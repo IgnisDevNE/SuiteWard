@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -20,6 +21,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
+	"go.yaml.in/yaml/v3"
 )
 
 // Scope discovery after V1 (docs/contracts/runtime.md, "Scope discovery (M1.9)"; D-SCOPE-DISCOVERY): the checks job tells the
@@ -28,6 +30,7 @@ import (
 
 const (
 	scopeNoticeKey = "scope-notice" // scope-notice:<repository id>:<pull>:<set digest>
+	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<set digest>, with the notice of that digest
 	// maxScopeDeclaration is commandtext's bound on the declaration a notice shows.
 	maxScopeDeclaration = 8192
 )
@@ -106,6 +109,109 @@ func (p *commentPublisher) scopeNotice(key, tail string, payload json.RawMessage
 	}
 	text, err := render(githubCommentKind, key, func() string { return commandtext.ScopeNoticeComment(n.notice()) })
 	return n.commentTarget, text, err
+}
+
+// scopeSuggestion is one review comment of a scope review: the new patterns of one list of the head's .suiteward.yml, with the
+// list item (line and text) they are suggested after. Its marker key is the message's key and ":" and List.
+type scopeSuggestion struct {
+	List     string   `json:"list"`     // include or runner
+	Line     int      `json:"line"`     // the line of the list item in the head's file
+	Anchor   string   `json:"anchor"`   // that line without its line break
+	Patterns []string `json:"patterns"` // the new patterns, none of which the head's list holds
+}
+
+// indent is the spaces before the item's dash.
+func (s scopeSuggestion) indent() string {
+	return s.Anchor[:len(s.Anchor)-len(strings.TrimLeft(s.Anchor, " "))]
+}
+
+// scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<set digest>: one or two suggestions, the include
+// list's and the runner list's, for the head the notice of the same digest was written for.
+type scopeReviewPayload struct {
+	commentTarget
+	Head        string            `json:"head"`
+	Suggestions []scopeSuggestion `json:"suggestions"`
+}
+
+// validate reports why the payload cannot be rendered, without quoting it.
+func (p scopeReviewPayload) validate() error {
+	if err := p.commentTarget.validate(); err != nil {
+		return err
+	}
+	if !headPattern.MatchString(p.Head) || len(p.Suggestions) < 1 || len(p.Suggestions) > 2 {
+		return errors.New("the head is not a commit SHA, or the number of suggestions is not one or two")
+	}
+	seen := map[string]bool{}
+	for _, s := range p.Suggestions {
+		if (s.List != "include" && s.List != "runner") || seen[s.List] || s.Line <= 0 {
+			return errors.New("a suggestion names an unknown or a repeated list, or a line that is not positive")
+		}
+		seen[s.List] = true
+		if err := commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// newScopeReviewMessage builds the review of the suggestions for a notice of the digest of paths. A payload the publisher
+// could not render is an error.
+func newScopeReviewMessage(target commentTarget, head, digest string, suggestions []scopeSuggestion) (governance.OutboxMessage, error) {
+	p := scopeReviewPayload{commentTarget: target, Head: head, Suggestions: suggestions}
+	if err := p.validate(); err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("scope review: %w", err)
+	}
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return governance.OutboxMessage{}, fmt.Errorf("encode the scope review: %w", err)
+	}
+	key := fmt.Sprintf("%s:%d:%d:%s", scopeReviewKey, target.RepositoryID, target.Pull, digest)
+	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
+}
+
+// publishReview posts each suggestion of the message as a review comment on its line of the head's .suiteward.yml, unless the
+// bot already posted it (the marker of the list is the idempotency key). GitHub answers 422 when the line is no longer in the
+// diff: that suggestion is dropped, logged by kind and status, and the message still completes.
+func (p *commentPublisher) publishReview(ctx context.Context, key string, repositoryID int64, tail string, payload json.RawMessage) error {
+	r, err := decodePayload[scopeReviewPayload](githubCommentKind, key, payload)
+	if err != nil {
+		return err
+	}
+	if r.validate() != nil || r.RepositoryID != repositoryID || !scopeTail(tail, r.Pull) {
+		return keyError(githubCommentKind, key, "the payload does not match its key")
+	}
+	instance, err := p.instance.get(ctx)
+	if err != nil {
+		return fmt.Errorf("github_comment %s: read the instance id: %w", key, err)
+	}
+	botID, err := p.bot.ID(ctx)
+	if err != nil {
+		return githubFailure(githubCommentKind, key, "resolve the bot account", err)
+	}
+	existing, err := p.writer.ReviewCommentsByAuthor(ctx, r.Repo, r.Pull, botID)
+	if err != nil {
+		return githubFailure(githubCommentKind, key, "list the review comments", err)
+	}
+	for _, s := range r.Suggestions {
+		marked := key + ":" + s.List
+		if slices.ContainsFunc(existing, func(c github.Comment) bool { return commandtext.HasMarker(c.Body, instance, marked) }) {
+			continue
+		}
+		text, err := render(githubCommentKind, key, func() string { return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns) })
+		if err != nil {
+			return err
+		}
+		body := strings.TrimRight(text, "\n") + "\n\n" + commandtext.Marker(instance, marked)
+		_, err = p.writer.PostReviewComment(ctx, r.Repo, r.Pull, r.Head, scope.DeclarationPath, s.Line, s.Line, body)
+		switch {
+		case errors.Is(err, rest.ErrUnprocessable):
+			failure := readFailure(err)
+			p.logger.WarnContext(ctx, "github_comment: a review suggestion is no longer on the diff", "key", key, "list", s.List, "kind", string(failure.Kind), "status", failure.Status)
+		case err != nil:
+			return githubFailure(githubCommentKind, key, "post the review comment", err)
+		}
+	}
+	return nil
 }
 
 // errNoCanonicalDeclaration says that the canonical holds no .suiteward.yml, so there is no declaration to widen.
@@ -264,7 +370,7 @@ func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil || len(added) == 0 {
 		return err
 	}
-	_, declaration, err := found.declaration(added)
+	suggestion, declaration, err := found.declaration(added)
 	if err != nil {
 		return err
 	}
@@ -278,8 +384,111 @@ func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number)
 		return nil
 	}
-	_, err = j.outboxOnce(ctx, project, notice)
-	return err
+	reviews, err := j.scopeReview(ctx, p, pull, head, found, suggestion, setDigest(added))
+	if err != nil {
+		return err
+	}
+	return j.outboxOnce(ctx, project, append([]governance.OutboxMessage{notice}, reviews...))
+}
+
+// scopeReview builds the review suggestions that go with a notice, as at most one message: for each list of the head's
+// .suiteward.yml, the new patterns that the head's list lacks, after a list item inside a hunk of the pull request's diff
+// (GitHub accepts a review comment only on such a line). This is the only place that starts from the head's file. A list in flow
+// style, a head whose file is invalid or missing from the diff, and a list with no new pattern or no item in a hunk give none.
+// A failed read of the pull request's files costs only the review, unless it says to wait.
+func (j *checksJob) scopeReview(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, head *githubTree, found headScope, s inventory.Suggestion, digest string) ([]governance.OutboxMessage, error) {
+	if !hasDeclaration(found.entries) {
+		return nil, nil
+	}
+	own, err := head.Read(ctx, scope.DeclarationPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := scope.ParseDeclaration(own); err != nil { // the file may be invalid: the notice still stands
+		return nil, nil
+	}
+	files, err := j.reader.PullFiles(ctx, p.Repo, pull.Number)
+	if err != nil {
+		if kind := readFailure(err).Kind; kind == githubsync.FailureRateLimited || kind == githubsync.FailureBudgetExhausted {
+			return nil, githubRead(err)
+		}
+		logReadFailure(ctx, j.logger, "github checks scope review skipped: the files of the pull request cannot be read", p.Repo, err)
+		return nil, nil
+	}
+	i := slices.IndexFunc(files, func(f github.PullFile) bool { return f.Path == scope.DeclarationPath })
+	if i < 0 {
+		return nil, nil
+	}
+	hunks, err := files[i].NewLineRanges()
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks scope review skipped: the diff of the declaration cannot be read", "repo", p.Repo, "pull", pull.Number)
+		return nil, nil
+	}
+	var suggestions []scopeSuggestion
+	for _, list := range []struct {
+		name     string
+		patterns []string
+	}{{"include", s.Include}, {"runner", s.Runner}} {
+		if suggested, ok := listSuggestion(own, list.name, list.patterns, hunks); ok {
+			suggestions = append(suggestions, suggested)
+		}
+	}
+	if len(suggestions) == 0 {
+		return nil, nil
+	}
+	message, err := newScopeReviewMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}, pull.HeadSHA, digest, suggestions)
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks scope review skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number)
+		return nil, nil
+	}
+	return []governance.OutboxMessage{message}, nil
+}
+
+// listSuggestion is the suggestion of patterns for the list called name in the declaration raw: the last item of the block-style
+// list that lies in a hunk is the anchor, and patterns the list already holds are left out. False when there is nothing to suggest.
+func listSuggestion(raw []byte, name string, patterns []string, hunks []github.LineRange) (scopeSuggestion, bool) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
+		return scopeSuggestion{}, false // the caller parsed raw as a declaration, so this does not happen
+	}
+	top := root.Content[0]
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		list := top.Content[i+1]
+		if top.Content[i].Value != name || list.Kind != yaml.SequenceNode || list.Style&yaml.FlowStyle != 0 {
+			continue
+		}
+		present := map[string]bool{}
+		for _, item := range list.Content {
+			present[item.Value] = true
+		}
+		fresh := slices.DeleteFunc(slices.Clone(patterns), func(pattern string) bool { return present[pattern] })
+		if len(fresh) == 0 {
+			return scopeSuggestion{}, false
+		}
+		lines := strings.Split(string(raw), "\n")
+		for k := len(list.Content) - 1; k >= 0; k-- {
+			item := list.Content[k]
+			if !slices.ContainsFunc(hunks, func(h github.LineRange) bool { return item.Line >= h.Start && item.Line <= h.End }) || item.Line > len(lines) {
+				continue
+			}
+			anchor := strings.TrimSuffix(lines[item.Line-1], "\r")
+			if singleLineItem(anchor, item) {
+				return scopeSuggestion{List: name, Line: item.Line, Anchor: anchor, Patterns: fresh}, true
+			}
+		}
+	}
+	return scopeSuggestion{}, false
+}
+
+// singleLineItem reports whether the line is a whole list item that holds item's value: a scalar that spans lines, or a block
+// scalar, would be cut in two by a suggestion after its first line.
+func singleLineItem(line string, item *yaml.Node) bool {
+	if item.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
+		return false
+	}
+	rest, ok := strings.CutPrefix(strings.TrimLeft(line, " "), "- ")
+	var value string
+	return ok && yaml.Unmarshal([]byte(rest), &value) == nil && value == item.Value
 }
 
 // absentFromBase returns the paths that the tree of the base commit does not hold: the ones the pull request adds.
@@ -299,14 +508,19 @@ func (j *checksJob) absentFromBase(ctx context.Context, repo, baseSHA string, pa
 	return slices.DeleteFunc(slices.Clone(paths), func(path string) bool { return inBase[path] }), nil
 }
 
-// outboxOnce writes message unless its key exists, and reports whether it wrote it.
-func (j *checksJob) outboxOnce(ctx context.Context, project contract.ProjectID, message governance.OutboxMessage) (bool, error) {
-	err := j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, message) })
-	if errors.Is(err, governance.ErrOperationConflict) {
-		return false, nil
+// outboxOnce writes the messages in one unit of work, unless the key of the first exists: a repeated decision writes nothing.
+// The first is the notice, written before the messages that depend on it, so its conflict undoes nothing else.
+func (j *checksJob) outboxOnce(ctx context.Context, project contract.ProjectID, messages []governance.OutboxMessage) error {
+	err := j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		for _, message := range messages {
+			if err := tx.Outbox(ctx, message); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
+		return fmt.Errorf("write the comment %s: %w", messages[0].Key, err)
 	}
-	if err != nil {
-		return false, fmt.Errorf("write the comment %s: %w", message.Key, err)
-	}
-	return true, nil
+	return nil
 }

@@ -319,6 +319,8 @@ func (b *botAccount) ID(ctx context.Context) (int64, error) { return b.get(ctx) 
 type commentWriter interface {
 	PostComment(ctx context.Context, repo string, number int, body string) (int64, error)
 	CommentsByAuthor(ctx context.Context, repo string, number int, authorID int64) ([]github.Comment, error)
+	ReviewCommentsByAuthor(ctx context.Context, repo string, number int, authorID int64) ([]github.Comment, error)
+	PostReviewComment(ctx context.Context, repo string, number int, commitSHA, path string, startLine, line int, body string) (int64, error)
 }
 
 type ownerSource interface {
@@ -350,7 +352,7 @@ func githubFailure(kind, key, step string, err error) error {
 
 // keyParts is the number of ':' separated parts of the keys of each github_comment kind: three, but four for the scope notice,
 // whose tail is <pull>:<set digest>.
-var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4}
+var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4}
 
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
@@ -398,6 +400,9 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	kind, repositoryID, tail, ok := splitKey(key)
 	if !ok {
 		return keyError(githubCommentKind, key, "not a github_comment key")
+	}
+	if kind == scopeReviewKey { // posts on the diff, so it has no issue comment to find or to write
+		return p.publishReview(ctx, key, repositoryID, tail, payload)
 	}
 	var (
 		target commentTarget

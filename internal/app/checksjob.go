@@ -47,6 +47,7 @@ var changeCodes = map[inventory.Change]string{inventory.Unchanged: "unchanged", 
 // checkReader is the part of the GitHub reader the check job uses.
 type checkReader interface {
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
+	PullFiles(ctx context.Context, repo string, number int) ([]github.PullFile, error)
 }
 
 // ownerCommands is the part of the command ledger the check job reads.

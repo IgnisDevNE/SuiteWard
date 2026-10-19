@@ -315,7 +315,7 @@ func closedBatch(closed []githubsync.ClosedPull, watermark pgtype.Timestamptz) (
 		if item.UpdatedAt.After(latest) {
 			latest = item.UpdatedAt
 		}
-		if watermark.Valid && !item.MergedAt.IsZero() && item.UpdatedAt.After(watermark.Time) {
+		if watermark.Valid && !item.MergedAt.IsZero() && !item.UpdatedAt.Before(watermark.Time) {
 			pull := item.ObservedPull
 			fresh = append(fresh, pullRow{Number: pull.Number, HeadSHA: pull.HeadSHA, HeadRef: pull.HeadRef, BaseRef: pull.BaseRef, BaseSHA: pull.BaseSHA, UpdatedAt: pull.UpdatedAt, HeadRepo: pull.HeadRepo})
 		}

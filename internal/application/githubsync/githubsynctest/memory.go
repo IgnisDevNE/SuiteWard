@@ -306,7 +306,7 @@ func (m *Memory) RecordClosed(ctx context.Context, repo string, closed []githubs
 		if item.UpdatedAt.After(latest) {
 			latest = item.UpdatedAt
 		}
-		if _, stored := r.pulls[item.Number]; r.hasWatermark && !stored && !item.MergedAt.IsZero() && item.UpdatedAt.After(r.watermark) {
+		if _, stored := r.pulls[item.Number]; r.hasWatermark && !stored && !item.MergedAt.IsZero() && !item.UpdatedAt.Before(r.watermark) {
 			r.pulls[item.Number] = githubsync.PullState{Number: item.Number, HeadSHA: item.HeadSHA, HeadRef: item.HeadRef, BaseRef: item.BaseRef, BaseSHA: item.BaseSHA,
 				UpdatedAt: item.UpdatedAt, FirstSeen: at, LastSeen: at, NotOpenSince: at, HeadRepo: item.HeadRepo}
 		}

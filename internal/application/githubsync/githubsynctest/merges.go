@@ -170,9 +170,11 @@ func gsClosedFirst(e *gsEnv) {
 	e.requireView(e.view(), before)
 	e.requireNumbers(e.awaiting())
 
-	// The first call set the watermark to the greatest updated_at, 30, so a merged item at it is not new.
+	// The first call set the watermark to the greatest updated_at, 30: a merged item below it is not new, one at it is.
 	e.closed(3, gsClosed(5, 20, 19), gsClosed(7, 30, 29))
-	e.requireView(e.view(), before)
+	want := before
+	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), gsInserted(7, 30, 3))
+	e.requireView(e.view(), want)
 }
 
 func gsClosedInserts(e *gsEnv) {
@@ -189,12 +191,8 @@ func gsClosedInserts(e *gsEnv) {
 		gsClosed(1, 45, 44), // an open pull is stored already: ignored
 		gsClosed(2, 46, 45), // an absent pull is stored already: ignored
 	)
-	inserted := func(number, updatedAt int) githubsync.PullState {
-		return githubsync.PullState{Number: number, HeadSHA: "closed-head", HeadRef: fmt.Sprintf("feature-%d", number), BaseRef: "main", BaseSHA: "base-sha", UpdatedAt: gsTime(updatedAt),
-			FirstSeen: gsTime(4), LastSeen: gsTime(4), NotOpenSince: gsTime(4), HeadRepo: "fork/widgets"}
-	}
 	want := before
-	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), inserted(7, 40), inserted(9, 30))
+	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), gsInserted(7, 40, 4), gsInserted(9, 30, 4))
 	e.requireView(e.view(), want)
 	e.requireNumbers(e.awaiting(), 2, 7, 9)
 	if got := e.merged(); len(got) != 0 {
@@ -347,4 +345,10 @@ func gsBlankHeadRepository(e *gsEnv) {
 		}
 		e.requireView(e.view(), before)
 	}
+}
+
+// gsInserted is the state of pull number as a closed listing at minute at inserts it: merged, absent since at.
+func gsInserted(number, updatedAt, at int) githubsync.PullState {
+	return githubsync.PullState{Number: number, HeadSHA: "closed-head", HeadRef: fmt.Sprintf("feature-%d", number), BaseRef: "main", BaseSHA: "base-sha", UpdatedAt: gsTime(updatedAt),
+		FirstSeen: gsTime(at), LastSeen: gsTime(at), NotOpenSince: gsTime(at), HeadRepo: "fork/widgets"}
 }

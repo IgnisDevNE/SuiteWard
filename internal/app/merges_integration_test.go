@@ -129,6 +129,30 @@ func (g *mergeGitHub) posted(number int) []string {
 	return append([]string(nil), g.comments[number]...)
 }
 
+// requireMergeComment requires pull to hold the revision comment of its change proposal and the outcome comment of its merge, which ends with the marker of key
+// and says every phrase of want.
+func requireMergeComment(t *testing.T, gh *mergeGitHub, instance string, pull int, key string, want ...string) {
+	t.Helper()
+	posted := gh.posted(pull)
+	if len(posted) != 2 { // the revision comment of its change proposal, and the outcome of its merge
+		t.Fatalf("pull %d: %d comments, want the revision comment and one outcome comment", pull, len(posted))
+	}
+	var outcome string
+	for _, body := range posted {
+		if commandtext.HasMarker(body, instance, key) {
+			outcome = body
+		}
+	}
+	if outcome == "" {
+		t.Fatalf("pull %d: no comment ends with the marker of %s: %v", pull, key, posted)
+	}
+	for _, phrase := range want {
+		if !strings.Contains(outcome, phrase) {
+			t.Fatalf("pull %d: the comment lacks %q:\n%s", pull, phrase, outcome)
+		}
+	}
+}
+
 // TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay runs the whole of M1.7 against the real stores and a GitHub
 // served over HTTP: the baseline is bootstrapped, two pull requests change tests/ and are approved through
 // ProcessConsent, GitHub reports both merged, the merges job decides them in merge order, and the relay and the
@@ -251,27 +275,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	for range 2 {
 		pass()
 	}
-	check := func(pull int, key string, want ...string) {
-		t.Helper()
-		posted := gh.posted(pull)
-		if len(posted) != 2 { // the revision comment of its change proposal, and the outcome of its merge
-			t.Fatalf("pull %d: %d comments, want the revision comment and one outcome comment", pull, len(posted))
-		}
-		var outcome string
-		for _, body := range posted {
-			if commandtext.HasMarker(body, instance, key) {
-				outcome = body
-			}
-		}
-		if outcome == "" {
-			t.Fatalf("pull %d: no comment ends with the marker of %s: %v", pull, key, posted)
-		}
-		for _, phrase := range want {
-			if !strings.Contains(outcome, phrase) {
-				t.Fatalf("pull %d: the comment lacks %q:\n%s", pull, phrase, outcome)
-			}
-		}
-	}
+	check := func(pull int, key string, want ...string) { requireMergeComment(t, gh, instance, pull, key, want...) }
 	check(6, "merge:1001:6", "V2", mgSHA6, "did not run the tests")
 	check(5, "merge:1001:5", "stays at V2", "canonical contract changed after")
 

@@ -104,7 +104,7 @@ func newScopeNoticeMessage(target commentTarget, head, branch string, paths []st
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) scopeNotice(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) scopeNotice(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	n, err := decodePayload[scopeNoticePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err

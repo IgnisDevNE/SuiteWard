@@ -36,9 +36,7 @@ const (
 	invalidSourceKey = "invalid-source" // invalid-source:<repository id>:<pull>:<problem digest>
 )
 
-var (
-	repoPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`) // as config accepts a repository (GitHub's caps): commandtext exports no repository check without a branch
-)
+var repoPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`) // as config accepts a repository (GitHub's caps): commandtext exports no repository check without a branch
 
 // validate reports why the target cannot name a pull request.
 func (t commentTarget) validate() error {
@@ -493,6 +491,15 @@ func render(kind, key string, fn func() string) (text string, err error) {
 	return fn(), nil
 }
 
+// commentHandlers render the body of each github_comment kind but the scope review, which posts on the diff: they decode and check the payload against the
+// key, and return the pull request and the text.
+var commentHandlers = map[string]func(p *commentPublisher, ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error){
+	ackKey: (*commentPublisher).acknowledgment, bootstrapSummaryKey: (*commentPublisher).summary, bootstrapPromotedKey: (*commentPublisher).promoted,
+	bootstrapNoticeKey: (*commentPublisher).notice, bootstrapCancelledKey: (*commentPublisher).cancelled, mergeKey: (*commentPublisher).merge,
+	revisionKey: (*commentPublisher).revision, scopeNoticeKey: (*commentPublisher).scopeNotice, invalidSourceKey: (*commentPublisher).invalidSource,
+	runnerUncoveredKey: (*commentPublisher).runnerUncovered,
+}
+
 // publish delivers one github_comment message: it renders the body from the payload and the facts it names, and
 // posts it unless the bot already commented it (the marker is the idempotency key, so at-least-once delivery
 // posts once).
@@ -504,33 +511,11 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	if kind == scopeReviewKey { // posts on the diff, so it has no issue comment to find or to write
 		return p.publishReview(ctx, key, repositoryID, tail, payload)
 	}
-	var (
-		target commentTarget
-		text   string
-		err    error
-	)
-	switch kind {
-	case ackKey:
-		target, text, err = p.acknowledgment(ctx, key, tail, payload)
-	case bootstrapSummaryKey:
-		target, text, err = p.summary(key, tail, payload)
-	case bootstrapPromotedKey:
-		target, text, err = p.promoted(ctx, key, tail, payload)
-	case bootstrapNoticeKey:
-		target, text, err = p.notice(key, tail, payload)
-	case bootstrapCancelledKey:
-		target, text, err = p.cancelled(key, tail, payload)
-	case mergeKey:
-		target, text, err = p.merge(key, tail, payload)
-	case revisionKey:
-		target, text, err = p.revision(key, tail, payload)
-	case scopeNoticeKey:
-		target, text, err = p.scopeNotice(key, tail, payload)
-	case invalidSourceKey:
-		target, text, err = p.invalidSource(key, tail, payload)
-	case runnerUncoveredKey:
-		target, text, err = p.runnerUncovered(key, tail, payload)
+	handler, known := commentHandlers[kind]
+	if !known {
+		return keyError(githubCommentKind, key, "the kind has no renderer")
 	}
+	target, text, err := handler(p, ctx, key, tail, payload)
 	if err != nil {
 		return err
 	}
@@ -695,7 +680,7 @@ func ackOf(receipt governance.ConsentReceipt, ownerLogin string, comment int64) 
 	return ack, nil
 }
 
-func (p *commentPublisher) summary(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) summary(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	s, err := decodePayload[bootstrapSummaryPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -734,7 +719,7 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 	return b.commentTarget, text, err
 }
 
-func (p *commentPublisher) notice(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) notice(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	n, err := decodePayload[bootstrapNoticePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -746,7 +731,7 @@ func (p *commentPublisher) notice(key, tail string, payload json.RawMessage) (co
 	return n.commentTarget, text, err
 }
 
-func (p *commentPublisher) cancelled(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) cancelled(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	c, err := decodePayload[bootstrapCancelledPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -855,7 +840,7 @@ func newMergeMessage(target commentTarget, outcome governance.MergeOutcome, tier
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, true, nil
 }
 
-func (p *commentPublisher) merge(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) merge(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	m, err := decodePayload[mergePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -957,7 +942,7 @@ func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, 
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) revision(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) revision(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	r, err := decodePayload[revisionPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -1049,7 +1034,7 @@ func newInvalidSourceMessage(target commentTarget, branch string, s sourceProble
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) invalidSource(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) invalidSource(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	s, err := decodePayload[invalidSourcePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err

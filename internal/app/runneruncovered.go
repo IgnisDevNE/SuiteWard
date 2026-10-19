@@ -160,17 +160,10 @@ func excludePatterns(paths []string) []string {
 	return patterns
 }
 
-// excludable reports whether every path can be excluded by its own pattern: a path that contains a pattern character does not match
-// the pattern it spells, so excluding it would never resolve the block.
+// excludable reports whether every path can be excluded by a pattern that names exactly that file: a path with a pattern character
+// ("*?[\", as acceptingDeclaration and Scope.ExcludesExactly test it) either never matches the pattern it spells or matches other files too.
 func excludable(paths []string) bool {
-	return !slices.ContainsFunc(paths, func(path string) bool {
-		pattern, err := scope.ParsePattern(excludePatterns([]string{path})[0])
-		if err != nil {
-			return true
-		}
-		matched, err := pattern.Match(path)
-		return err != nil || !matched
-	})
+	return !slices.ContainsFunc(paths, func(path string) bool { return strings.ContainsAny(path, `*?[\`) })
 }
 
 // runnerReview builds the review of the choices: one message, or none (an empty list). Its key digests a salt with the set and the head's file, so it never

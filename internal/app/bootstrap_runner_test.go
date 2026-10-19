@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -76,5 +77,43 @@ func TestBootstrapSummaryStatesNoRunnerRulesOnlyWhenTheDeclarationHasNone(t *tes
 		Include: pre.Include, Exclude: pre.Exclude, IncludeTotal: len(pre.Include), ExcludeTotal: len(pre.Exclude), Tier: commandtext.CoLocated})
 	if got := render(payload); got != want || strings.Contains(got, "runner") {
 		t.Fatalf("a payload without runner rules renders\n%s\nwant\n%s", got, want)
+	}
+}
+
+// The longest summary: every list entry at its limit made of text that JSON writes as six bytes a character, a repository name of the 140 characters GitHub allows.
+// It must stay 2 KiB under maxOutboxPayload, whatever the repository holds.
+func TestBootstrapSummaryFitsTheOutboxWhenEveryByteIsEscaped(t *testing.T) {
+	entries := func(size int) []string { return slices.Repeat([]string{strings.Repeat("<", size)}, maxSummaryRun) }
+	inputs := cmtSummaryInputs()
+	inputs.Branch, inputs.Paths, inputs.Include, inputs.Runner, inputs.Exclude = strings.Repeat("<", maxSummaryText), entries(maxSummaryText), entries(maxSummaryText), entries(maxRunnerText), entries(maxSummaryText)
+	target := commentTarget{RepositoryID: cmtRepoID, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: cmtPull}
+
+	message := cmtMust(newSummaryMessage(target, inputs))
+
+	if limit := maxOutboxPayload - 2<<10; len(message.Payload) > limit {
+		t.Fatalf("payload of %d bytes, over %d: less than 2 KiB under the limit of %d", len(message.Payload), limit, maxOutboxPayload)
+	}
+}
+
+// The same for the bootstrap summary, which carries the longest repository name and four lists at their limits.
+func TestBootstrapSummaryCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
+	const marker = len("<!-- suiteward:") + 32 + len(":bootstrap-summary:1001:P1-R1") + len(" -->")
+	for name, unit := range map[string]string{"plain": "a", "escaped by JSON": "<", "invalid UTF-8": "\xff", "backtick": "`", "bidi control": "\u202e", "newline": "\n", "control": "\x01", "3-byte": "\u20ac"} {
+		t.Run(name, func(t *testing.T) {
+			entries := func() []string { return slices.Repeat([]string{strings.Repeat(unit, 400)}, 25) }
+			inputs := cmtSummaryInputs()
+			inputs.Branch, inputs.Paths, inputs.Include, inputs.Runner, inputs.Exclude = strings.Repeat(unit, 400), entries(), entries(), entries(), entries()
+			inputs.Protected = 1000
+			target := commentTarget{RepositoryID: cmtRepoID, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: cmtPull}
+			message := cmtMust(newSummaryMessage(target, inputs))
+			var decoded bootstrapSummaryPayload
+			if err := json.Unmarshal(message.Payload, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			body := commandtext.BootstrapSummary(cmtMust(decoded.Summary.summary()))
+			if n := len(body) + marker; n >= 1<<16-4<<10 {
+				t.Fatalf("the comment is %d bytes with its marker, want under GitHub's 65536 characters with 4 KiB to spare", n)
+			}
+		})
 	}
 }

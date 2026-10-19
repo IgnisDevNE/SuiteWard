@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -369,4 +370,106 @@ func TestCommentPublisherRendersARevisionPayloadOfV010(t *testing.T) {
 
 	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: []string{"tests/new_test.go"},
 		Modified: []string{"tests/a_test.go"}, Removed: []string{}, AddedTotal: 1, ModifiedTotal: 1, Reduced: true, Tier: commandtext.Isolated}))
+}
+
+// The longest revision payload: five lists of 20 entries of 150 characters that JSON writes as six bytes each, 89 KiB, over what the outbox takes.
+// The revision must exist all the same, so the reduction detail, which is evidence for the owner and not the revision itself, is what gives way.
+func TestRevisionMessageDropsTheReductionDetailThatDoesNotFitTheOutbox(t *testing.T) {
+	list := func() []string { return slices.Repeat([]string{strings.Repeat("<", 150)}, 20) }
+	notice := cmtNotice()
+	notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
+	notice.ReducedRules, notice.ReducedPaths = list(), append(list(), "tests/more_test.go")
+
+	message := cmtRevisionMessage(t, notice, "isolated")
+
+	if len(message.Payload) > maxOutboxPayload {
+		t.Fatalf("payload of %d bytes, over %d", len(message.Payload), maxOutboxPayload)
+	}
+	if err := message.Validate(); err != nil {
+		t.Fatalf("the outbox refuses the message: %v", err)
+	}
+	var payload revisionPayload
+	if err := json.Unmarshal(message.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Reduced || !payload.ReducedOmitted || len(payload.ReducedRules) != 0 || len(payload.ReducedPaths) != 0 || payload.ReducedPathsTotal != 21 ||
+		len(payload.Added) != 20 || payload.AddedTotal != 20 {
+		t.Fatalf("payload %+v, want the reduction kept without its detail but with the count of paths, and the lists of files whole", payload)
+	}
+	w := newCmtWorld(t)
+	w.mustDeliver(message)
+	body := w.writer.posts()[0].body
+	for _, want := range []string{"**This revision reduces the protected scope.**", "omitted", "/suiteward approve P2-R2 <code>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comment lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// A revision that fits keeps every detail: nothing is dropped for being possible to drop.
+func TestRevisionMessageKeepsTheReductionDetailThatFits(t *testing.T) {
+	notice := cmtNotice()
+	notice.Reduced, notice.ReducedRules, notice.ReducedPaths = true, []string{"rule /a/**"}, []string{"tests/a_test.go"}
+
+	var payload revisionPayload
+	if err := json.Unmarshal(cmtRevisionMessage(t, notice, "isolated").Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ReducedOmitted || len(payload.ReducedRules) != 1 || len(payload.ReducedPaths) != 1 {
+		t.Fatalf("payload %+v, want the detail kept and not marked omitted", payload)
+	}
+}
+
+// GitHub takes a comment of 65536 characters. Whatever the repository's text is made of, the body of the longest revision a payload can hold, with
+// its marker, must fit, so the comment always posts.
+func TestRevisionCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
+	const marker = len("<!-- suiteward:") + 32 + len(":") + len(cmtRevisionKey) + len(" -->")
+	for name, unit := range map[string]string{"plain": "a", "escaped by JSON": "<", "invalid UTF-8": "\xff", "backtick": "`", "bidi control": "\u202e", "newline": "\n", "control": "\x01", "3-byte": "\u20ac"} {
+		t.Run(name, func(t *testing.T) {
+			list := func() []string { return slices.Repeat([]string{strings.Repeat(unit, 400)}, 25) }
+			notice := cmtNotice()
+			notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
+			notice.ReducedRules, notice.ReducedPaths = list(), list()
+			target := commentTarget{RepositoryID: cmtRepoID, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: cmtPull}
+			message, err := newRevisionMessage(target, notice, "co-located")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload revisionPayload
+			if err := json.Unmarshal(message.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			text, err := payload.text(message.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := len(text) + marker; n >= 1<<16-4<<10 {
+				t.Fatalf("the comment is %d bytes with its marker, want under GitHub's 65536 characters with 4 KiB to spare", n)
+			}
+		})
+	}
+}
+
+// A stored payload that says its reduction detail was left out, and still holds some, or that omits the detail of a change that reduces nothing,
+// cannot be rendered: the publisher refuses it without posting a comment.
+func TestCommentPublisherRefusesAnInconsistentOmittedReductionDetail(t *testing.T) {
+	const head = `{"repositoryId":1001,"repo":"acme/widgets","pull":7,"reference":"P2-R2","previous":"P2-R1","canonical":"V1","added":[],"modified":[],"removed":[],` +
+		`"addedTotal":0,"modifiedTotal":0,"removedTotal":0,"tier":"isolated"`
+	for name, payload := range map[string]string{
+		"omitted with rules":          head + `,"reduced":true,"reducedOmitted":true,"reducedRules":["rule /a/**"],"reducedPathsTotal":1}`,
+		"omitted with paths":          head + `,"reduced":true,"reducedOmitted":true,"reducedPaths":["tests/a_test.go"],"reducedPathsTotal":1}`,
+		"omitted without a reduction": head + `,"reduced":false,"reducedOmitted":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+
+			if err := w.pub.publish(t.Context(), cmtRevisionKey, json.RawMessage(payload)); err == nil {
+				t.Fatal("the publisher rendered an inconsistent payload")
+			}
+
+			if posts := w.writer.posts(); len(posts) != 0 {
+				t.Fatalf("posted %d comments, want none", len(posts))
+			}
+		})
+	}
 }

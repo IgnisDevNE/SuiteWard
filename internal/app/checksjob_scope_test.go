@@ -105,6 +105,27 @@ func TestChecksWriteOneScopeNoticeForANewTestFileOutsideTheScope(t *testing.T) {
 	w.want(5, checks.Success, "unchanged", 1)
 }
 
+// A head test-like path that is no valid path makes the check an invalid-source failure; the scope notice must treat that as a fact about the
+// commit: no failed step, nothing written, and no new attempt on the next runs.
+func TestChecksDecideOnceForAHeadTestPathThatIsNoValidPath(t *testing.T) {
+	for _, path := range []string{"te:sts/test_a.py", `te\sts/test_a.py`} {
+		t.Run(path, func(t *testing.T) {
+			w := newCJWorld(t, true)
+
+			w.scopePull(cjHead2, withFiles(bootFiles("v1"), path), bootFiles("v1"))
+
+			w.want(5, checks.Failure, "invalid-source", 1)
+			w.wantNoScopeMessages()
+			head := w.reader.reads[cjHead2]
+			w.mustCheck()
+			w.mustCheck()
+			if w.reader.reads[cjHead2] != head {
+				t.Fatalf("the head was read %d times, want %d: the decision was not remembered\nlogs: %s", w.reader.reads[cjHead2], head, w.logs)
+			}
+		})
+	}
+}
+
 func TestChecksScopeNoticeLeavesTheCheckAsItWas(t *testing.T) {
 	with := newCJWorld(t, true)
 	with.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))

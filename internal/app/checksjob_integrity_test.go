@@ -49,7 +49,7 @@ func TestChecksFailEveryOpenPullWhenTheCanonicalFailedItsIntegrityAndReadNoTree(
 func TestChecksReportTheIntegrityFailureOverARejectedOwnerCommand(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.protectedPull()
-	w.entry(5, 301, bootOwnerID, commands.Malformed, "")
+	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "")
 	w.verdict("V1", integrity.Failed)
 
 	w.mustCheck()
@@ -60,7 +60,7 @@ func TestChecksReportTheIntegrityFailureOverARejectedOwnerCommand(t *testing.T) 
 func TestChecksReportAForkOverARejectedOwnerCommand(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.protectedPull()
-	w.entry(5, 301, bootOwnerID, commands.Malformed, "")
+	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "")
 	w.headRepo = map[int]string{5: "fork/widgets"}
 	w.sync(map[int]string{4: bootHead, 5: cjHead2})
 

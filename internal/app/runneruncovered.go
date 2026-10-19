@@ -76,7 +76,7 @@ func (j *checksJob) findRunners(ctx context.Context, p owner.ProjectPolicy, pull
 		return nil, githubRead(err)
 	}
 	head := &githubTree{tree: read, files: map[string][]byte{}}
-	entries, err := head.Entries(ctx)
+	entries, err := inventory.ListEntries(ctx, head)
 	if err != nil {
 		return nil, err
 	}
@@ -124,13 +124,14 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 		return &opaque{what: "read the canonical declaration", cause: err}
 	}
 	protect, err := scope.AddPatterns(base, nil, inventory.RunnerPatterns(set.paths))
-	if err != nil {
-		return &opaque{what: "add the runner patterns", cause: err}
+	if err != nil { // unreachable with a valid canonical; kept so that a defect never fails the job: the comment is advice and the check says the same without it
+		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: the runner patterns cannot be added", "repo", p.Repo, "pull", pull.Number)
+		return nil
 	}
 	var ignore []byte
 	if excludable(set.paths) {
-		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil {
-			return &opaque{what: "add the excludes", cause: err}
+		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // unreachable with a valid canonical and excludable; kept so that a defect never fails the job (ignore is nil then)
+			j.logger.WarnContext(ctx, "github checks runner-uncovered ignore choice skipped: the excludes cannot be added", "repo", p.Repo, "pull", pull.Number)
 		}
 	}
 	if len(ignore) > commandtext.MaxDeclaration { // a choice that cannot be shown is left out; protecting stays
@@ -160,16 +161,13 @@ func excludePatterns(paths []string) []string {
 	return patterns
 }
 
-// excludable reports whether every path can be excluded by its own pattern: a path that contains a pattern character does not match
-// the pattern it spells, so excluding it would never resolve the block.
+// excludable reports whether every path can be excluded by a pattern that names exactly that file: a path with a pattern character
+// ("*?[\", as acceptingDeclaration and Scope.ExcludesExactly test it) either never matches the pattern it spells or matches other files too,
+// and one the pattern syntax refuses (such as a leading "!") cannot be added as an exclude at all.
 func excludable(paths []string) bool {
 	return !slices.ContainsFunc(paths, func(path string) bool {
-		pattern, err := scope.ParsePattern(excludePatterns([]string{path})[0])
-		if err != nil {
-			return true
-		}
-		matched, err := pattern.Match(path)
-		return err != nil || !matched
+		_, err := scope.ParsePattern(excludePatterns([]string{path})[0])
+		return err != nil || strings.ContainsAny(path, `*?[\`)
 	})
 }
 

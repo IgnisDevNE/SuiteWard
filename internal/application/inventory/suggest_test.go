@@ -332,6 +332,19 @@ func TestUncovered(t *testing.T) {
 	}
 }
 
+// No caller gets a bare ErrInvalidPath: an entry that is no path of the repository is a fact about the tree.
+func TestUncoveredNamesAnInvalidPathAnInvalidTree(t *testing.T) {
+	for _, path := range []string{"te:sts/test_a.py", `te\sts/test_a.py`} {
+		if _, err := inventory.Uncovered(entriesOf(regular(path, "")), scopeFrom(t, "")); !errors.Is(err, inventory.ErrInvalidTree) || !errors.Is(err, artifact.ErrInvalidPath) {
+			t.Errorf("Uncovered(%q) error = %v, want ErrInvalidTree and ErrInvalidPath", path, err)
+		}
+		runner := strings.ReplaceAll(path, "test_a", "conftest")
+		if _, err := inventory.UncoveredRunners(entriesOf(regular(runner, "")), scopeFrom(t, "")); !errors.Is(err, inventory.ErrInvalidTree) {
+			t.Errorf("UncoveredRunners(%q) error = %v, want ErrInvalidTree", runner, err)
+		}
+	}
+}
+
 func TestUncoveredRejectsAnInvalidPath(t *testing.T) {
 	_, err := inventory.Uncovered(entriesOf(regular("../x_test.go", "")), scopeFrom(t, ""))
 	if !errors.Is(err, artifact.ErrInvalidPath) {

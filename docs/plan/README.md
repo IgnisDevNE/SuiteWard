@@ -35,7 +35,7 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 | [M1.7b](phases/M1.7b.md) | Bootstrap from the first PR that carries tests (ADR 0010's other path): a proposal and readiness check on the PR, and V1 promoted from its merge commit; one comment per new change-proposal revision. Reworked after its first live run into an explicit bootstrap (`/suiteward propose` and `/suiteward skip`); verified on both targets and merged 2026-10-16 (PR #25). Results in the [phase page](phases/M1.7b.md#outcome). | M1.7 |
 | [M1.7c](phases/M1.7c.md) | Lower latency: the commands watermark in GitHub's clock, a 20 s paced poll, and wake-ups between jobs. Verified on both targets and merged 2026-10-17 (PR #27). Results in the [phase page](phases/M1.7c.md#outcome). | M1.7b |
 | [M1.8](phases/M1.8.md) | MVP acceptance: install guide, backup and re-bootstrap runbook, end-to-end run, dogfooding on SuiteWard. Merged 2026-10-17 (PRs #30–#33), released as `v0.1.0`. | M1.7c |
-| [M1.9](phases/M1.9.md) | Scope discovery: a suggestion that finds tests at any depth and runner files, a scope notice on PRs that add tests outside the scope, `/suiteward suggest`, the reduction detail, and the key-rotation guide. | M1.8 |
+| [M1.9](phases/M1.9.md) | Scope discovery: a suggestion that finds tests at any depth and runner files, a scope notice on PRs that add tests outside the scope, `/suiteward suggest`, the reduction detail, and the key-rotation guide. Merged 2026-10-19 (PR #34) with its release fixes; released as `v0.1.1` from the fixes' merge. Results in the [phase page](phases/M1.9.md#outcome). | M1.8 |
 | Security gate (owner request, 2026-10-19) | The last step before the final MVP release, after every other phase:<ul><li>a hardening session;</li><li>a heavy pentest of both tiers and of the managed-service shape (App key, permissions, TOTP flow, host, outbox, check forgery, workflows and tags);</li><li>a dedicated SecOps review between the owner and the orchestrator.</li></ul>Its findings decide what the release carries and what goes to M3. | All MVP phases |
 
 S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
@@ -60,3 +60,8 @@ Deferred by the R1 amendments, in no fixed order until the MVP is in use:
 - Encrypted backups, Release storage, contingency PRs and guided restore (ADRs 0019–0021).
 - M2: canonical execution. Research on the first execution profile and isolation (D-EXECUTION) may start at any time.
 - M3: hardening selected from observed threats.
+- Change report for protected files (owner, 2026-10-19), with no analysis by an agent:
+  - in the revision comment, `+N/−M` per protected file, the files with removed lines highlighted, and a link to each file's diff between the canonical commit and the head;
+  - a full report on the check's Details page, built from the bytes SuiteWard compared, with the removed and added lines;
+  - deterministic markers to look at, never verdicts: removed assertions, added skips, deleted test functions, changed runner files;
+  - an HTML report served by the managed service, behind its sign-in.

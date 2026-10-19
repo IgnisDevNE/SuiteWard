@@ -104,7 +104,7 @@ Accepted 2026-10-17 (owner, M1.9 planning, after the C2 finding in [M1.8](phases
 - **`/suiteward suggest`** (owner only, no code) asks for the same reply on any open PR.
   - Before V1, the reply is the bootstrap reply of a `propose` that finds no declaration.
   - After V1, the reply is the scope notice for the PR head.
-  - It is not a command for the check: it never clears `owner-command-rejected`.
+  - It is not a command for the check: it never clears `owner-command-rejected`, and a malformed or edited `suggest` never sets it (D-COMMANDS, "A wrong command has no effect").
 - **Where a suggested declaration starts from.** The notice and `suggest` start from the **canonical** declaration bytes, never from the PR head's file, and only add patterns. A PR that narrowed the scope therefore never comes back as a suggestion.
   - **The one exception is the review suggestion.** It inserts the new lines into the PR head's own `.suiteward.yml`, on a list line inside a diff hunk, because GitHub accepts review comments only on such lines. This grants nothing either: a narrowing in the head is still listed as a reduction and still needs approval. When no list line falls inside a hunk, there is no review suggestion.
   - **The head's own scope only silences.** A test path that the PR's valid `.suiteward.yml` already covers is not reported. That only suppresses an advisory; the widening still needs approval.
@@ -176,6 +176,11 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 - Only the enrolled owner's comments are commands.
 - A `/suiteward` comment from any other account is recorded in the command ledger and otherwise ignored: no acknowledgment, no state change, no check effect. This is the ADR 0011 amendment of 2026-10-13.
 - SuiteWard's own comments are recognized by the App bot's numeric account id and never parsed.
+
+**A wrong command has no effect** (owner, 2026-10-19, after the M1.9 review). The model is the usual one: a typo or an accidental Enter changes nothing.
+- A command that is not recognized, is malformed, or is rejected for any reason gets its acknowledgment, which says it was not accepted, and changes nothing else. The check of the pull request does not change, whatever the verb (`approve`, `revoke`, `propose`, `skip`, `suggest`).
+- **The one exception is a wrong confirmation code**: `invalid-code` or `replayed-code`, on any command that carries a code. Only that sets the check `failure` / `owner-command-rejected`, because a failed code is a security signal. A replay means someone reused a code from a public comment.
+- This supersedes the earlier rule, where every rejected disposition, or a processed command with a rejected consent result, set `owner-command-rejected`, and the carrier limit for shared rejections.
 
 **Command syntax**
 - `/suiteward approve <ref> <code>` and `/suiteward revoke <ref> <code>` (ADR 0027).
@@ -274,11 +279,11 @@ Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-git
 | --- | --- |
 | `success` | the head's protected inventory under the canonical scope equals the canonical (an implementation-only change), or the PR's current proposal revision is ready for integration (`CheckPromotionReadiness` answers ready: exact revision approved under the governing policy, against the current canonical, with a passed integrity assessment of this head) |
 | `in_progress` | approval missing (including a revision rebound after the canonical or the policy changed); the head cannot be read yet (a transient GitHub or tree failure); the repository has no canonical yet (bootstrap pending, including a default branch without protected files) |
-| `failure` | an invalid command authored by the owner on this PR; an invalid declaration or source (an invalid `.suiteward.yml`, a symlink or submodule in scope); a confirmed integrity failure |
+| `failure` | an invalid command authored by the owner on this PR (superseded 2026-10-19 by D-COMMANDS, "A wrong command has no effect": only a wrong or reused code); an invalid declaration or source (an invalid `.suiteward.yml`, a symlink or submodule in scope); a confirmed integrity failure |
 
 `neutral` and `skipped` are never published. Comments by other accounts never affect the check.
 
-*Owner-command failure.* It applies to the PR's current head when the owner's latest command on that PR was rejected (malformed, invalid code, replayed code, unknown proposal, edited before read, or a rejected consent result). It lasts until the next state change for that PR: a later processed command or a new head.
+*Owner-command failure.* It applies to the PR's current head when the owner's latest command on that PR was rejected (malformed, invalid code, replayed code, unknown proposal, edited before read, or a rejected consent result). It lasts until the next state change for that PR: a later processed command or a new head. (Superseded 2026-10-19 by D-COMMANDS, "A wrong command has no effect": only a wrong or reused code sets it.)
 
 *No enrolled owner.* Nothing is published; the missing required check already blocks merges, and `/status` says why.
 

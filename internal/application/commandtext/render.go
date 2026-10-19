@@ -602,7 +602,8 @@ const rollback = "a separately approved rollback (corrective) proposal: a new PR
 // supersedes (an earlier revision of the same proposal), empty for the first. Each list shows at most 20 entries
 // of the total; a total below the list is taken as its length. Reduced says that the revision reduces the
 // protected scope; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail what it removes and
-// are set only with Reduced.
+// are set only with Reduced. ReducedOmitted says that the detail did not fit the message and was left out: the comment states
+// that, and counts the paths from ReducedPathsTotal; it excludes ReducedRules and ReducedPaths.
 type Revision struct {
 	Proposal, Revision                      int
 	Previous                                string
@@ -612,6 +613,7 @@ type Revision struct {
 	Reduced                                 bool
 	ReducedRules, ReducedPaths              []string
 	ReducedPathsTotal                       int
+	ReducedOmitted                          bool
 	Tier                                    Tier
 }
 
@@ -631,6 +633,8 @@ func RevisionComment(r Revision) string {
 		panic(fmt.Sprintf("commandtext: %d reduced rules, %d reduced paths and a total of %d", len(r.ReducedRules), len(r.ReducedPaths), r.ReducedPathsTotal))
 	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
 		panic("commandtext: reduction detail on a revision that does not reduce the scope")
+	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
+		panic("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
 	}
 	var supersedes string
 	if r.Previous != "" {
@@ -648,6 +652,13 @@ func RevisionComment(r Revision) string {
 	}
 	if r.Reduced {
 		parts = append(parts, "**This revision reduces the protected scope.** Review it carefully before approving.")
+		if r.ReducedOmitted {
+			omitted := "The detail of this reduction was omitted because it did not fit in this comment. Compare `.suiteward.yml` with the canonical one before approving."
+			if r.ReducedPathsTotal > 0 {
+				omitted += fmt.Sprintf(" Paths no longer covered: %d.", r.ReducedPathsTotal)
+			}
+			parts = append(parts, omitted)
+		}
 		if len(r.ReducedRules) > 0 {
 			parts = append(parts, listing("Rules removed from the scope", r.ReducedRules, len(r.ReducedRules)))
 		}

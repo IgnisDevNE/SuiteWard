@@ -1,54 +1,155 @@
 # SuiteWard
 
-SuiteWard keeps the test contract of a software project under the control of a human. A repository may contain and propose tests, but it cannot redefine its own canonical test contract: that contract is versioned, immutable, and changed only by an approval from the project's verified owner.
+**A human-approved, tamper-evident test contract for repositories where AI agents write the code.**
+
+SuiteWard lets a repository hold and propose tests, but not redefine the tests that decide whether its own changes are acceptable. That set of files is a versioned, immutable contract, and only the project's verified owner can change it, by approving one exact revision with a one-time code.
 
 ## Why it exists
 
-When AI agents write both the code and the tests, the tests that decide whether a change is acceptable can be edited by the same agent that wrote the change: a failing test is deleted, an assertion is weakened, or the CI workflow that runs the tests is changed. GitHub offers CODEOWNERS, branch protection, and required reviews, which answer "who must review a change to these files". SuiteWard answers a narrower question: is the test contract that gates the code still the contract a human approved?
+When an AI agent writes both the code and the tests, the same agent can edit the tests that judge its change:
+- delete a failing test;
+- weaken an assertion;
+- skip a file;
+- change the runner configuration so a test no longer runs;
+- change the CI workflow.
 
-## How it works
+GitHub's CODEOWNERS, branch protection and required reviews answer "who must review a change to these files". SuiteWard answers a narrower question: **is the test contract that gates this code still the one a human approved?**
 
-The target experience lives in GitHub pull requests, comments, and checks, with a small setup surface and no required dashboard.
+## What it does
 
-- **A protected scope.** A `.suiteward.yml` declaration, reviewed in the pull request, lists the tests, test runner configuration, workflows, and scripts that form the contract. A candidate cannot shrink what is protected by editing its own declaration.
-- **Proposals and exact approval.** A change to the protected scope becomes a proposal. The owner approves one exact revision with `/suiteward approve <ref> <TOTP code>`. The code comes from the verified owner, so on an isolated installation an agent that controls a GitHub account still cannot approve its own change.
-- **A required check.** The `SuiteWard / Contract` check stays pending, and the repository's ruleset blocks the merge, until an eligible approval and an integrity assessment exist. An approval survives pushes that change only implementation; those trigger a fresh assessment instead of dismissing it.
-- **Promotion and history.** When the pull request is merged, SuiteWard validates the integrated contract and promotes it atomically as a new canonical version. Every version and its artifacts are kept and never rewritten; a correction goes through a corrective pull request.
-- **Labeled assurance.** Isolated installations, where the service and its secrets are out of the agent's reach, give full assurance. Co-located installations are supported and reported with reduced assurance.
+Everything happens in the pull request: comments, commands and one required check. There is no dashboard.
 
-The claim of the first milestone (M1) is a tamper-evident, human-approved test contract, not proof that the tests were faithfully executed. Canonical test execution, in a controlled environment instead of candidate-controlled runners, is M2. See the [project baseline](docs/project-baseline.md) and [ADR 0027](docs/decisions/0027-agent-human-trust-separation.md).
+- **A protected scope.** A `.suiteward.yml` file lists the tests and the runner files that form the contract. `.suiteward.yml` itself and `.github/workflows/**` are always protected.
+- **A proposal for every protected change.** When a pull request adds, changes or removes a protected file, or narrows the scope, SuiteWard posts a revision comment.
+  - The comment lists the files added, modified and removed.
+  - For a narrowed scope, it also lists the rules and paths that the narrowing drops.
+- **Approval of an exact revision.** The owner approves one revision with `/suiteward approve P<n>-R<m> <code>`.
+  - The code is a TOTP from the owner's authenticator app, and each code works once.
+  - A new push that changes protected files makes a new revision, which needs its own approval.
+  - A push that changes only implementation keeps the approval and triggers a fresh assessment.
+- **A required check.** `SuiteWard / Contract` blocks the merge, through the repository's ruleset, until the current revision is approved and assessed.
+- **Promotion on merge.** On merge, SuiteWard reads the merge commit's tree and compares it with the approved revision. If they match, it promotes a new canonical version (V1, V2…) in one atomic step. Versions are never rewritten, and SuiteWard checks the canonical's integrity every hour.
+- **Scope discovery.** SuiteWard helps keep the scope complete. It never widens it by itself.
+  - **First contract.** `/suiteward propose` suggests a declaration. The suggestion is built from file paths only, using the conventions of common frameworks (Go, pytest, Jest, Vitest, RSpec, Maven, Cargo and more) at any depth, plus runner files such as `conftest.py`, `jest.config.*` and `pytest.ini`.
+  - **New tests.** A pull request that adds test-like files outside the scope gets a notice, with the updated declaration to commit.
+  - **Runner files.** A pull request that adds or changes a runner file outside the scope keeps the check waiting until the owner protects or ignores it. A runner file can change how the protected tests run without touching any of them.
+  - **Edit links.** Every suggested change links to GitHub's editor. When the diff shows `.suiteward.yml`, SuiteWard also posts a review suggestion that GitHub's **Commit suggestion** button applies.
+  - **Mixed files.** Files that can hold test settings among other content, such as `package.json` and `pyproject.toml`, are named in a warning and never suggested.
+- **Evidence, not authority.** Comments and notices explain; they never approve or protect anything. A wrong or unrecognized command gets a reply and changes nothing. The exception is a wrong or reused confirmation code, which fails the check as a security signal.
+- **Labeled assurance.** An **isolated** installation, where SuiteWard, its App key, its database and the TOTP secret are out of the agent's reach, gives full assurance. A **co-located** one, next to the agent, is supported, and the check summary and the proposal, revision and merge comments say that its assurance is reduced.
+
+## A pull request, step by step
+
+1. **The first contract.** On a repository with no contract, the owner comments `/suiteward propose`.
+   - With no `.suiteward.yml`, SuiteWard replies with a suggested one and an editor link that opens with the file filled in.
+   - The owner commits it and posts `/suiteward propose` again.
+   - The owner approves with `/suiteward approve P1-R1 <code>` and merges, and V1 is promoted. `/suiteward skip <code>` merges a pull request without starting a contract.
+2. **A change to protected files.** An agent opens a pull request that changes a test. SuiteWard posts `SuiteWard contract change P2-R1` with the changed files, and the check waits.
+   - The owner reviews the diff of those files and asks the agent why they changed.
+   - If the change is right, the owner approves `P2-R1`, and the check turns green.
+3. **A test outside the scope.** The pull request also adds `spec/calc_spec.rb`, which the contract does not cover. SuiteWard posts a scope notice with the canonical declaration plus `*_spec.rb` and `/spec/`, ready to commit.
+4. **At any time.** `/suiteward suggest` compares the pull request's head with the contract and replies with what is missing. Before the first contract, it compares with the declaration that `propose` would use.
+
+### Commands
+
+| Command | Who | What it does |
+| --- | --- | --- |
+| `/suiteward propose` | Owner | Proposes the first contract from this pull request, or replies with a suggested declaration when there is none. |
+| `/suiteward skip <code>` | Owner | Lets this pull request merge before any contract exists. |
+| `/suiteward approve P<n>-R<m> <code>` | Owner | Approves that exact revision. |
+| `/suiteward revoke P<n>-R<m> <code>` | Owner | Withdraws an approval before the merge. |
+| `/suiteward suggest` | Owner | Replies with the test-like files and runner names the contract misses, and the updated declaration. It needs no code and grants nothing. |
+
+Commands from any other account are recorded and ignored. The prefix and the verb are case-insensitive.
+
+### The check
+
+| State | Meaning |
+| --- | --- |
+| success | No protected change; or the current revision is approved and assessed. A pull request the owner skipped before the first contract is also `success`, with nothing assessed. |
+| in_progress | An approval is missing, there is no contract yet, a runner file needs a decision, the revision is no longer current, the pull request comes from a fork, the tree is too large to read, or SuiteWard is still reading. |
+| failure | `.suiteward.yml` is invalid or a symbolic link hides what would be protected (`invalid-source`); the canonical failed its integrity check; or a confirmation code was wrong or reused (a valid `approve` or `revoke`, or a new push, clears it). |
+
+The full table, with every reason, is in the [install guide](docs/install.md).
+
+### `.suiteward.yml`
+
+```yaml
+version: 1
+include:            # the tests
+  - "**/*_test.go"
+  - "**/testdata/**"
+runner:             # files that change how the tests run
+  - /.golangci.yml
+  - scripts/ci.ps1
+exclude:            # paths left out on purpose (a reduction the owner approves)
+  - /docs/examples/
+```
+
+Patterns are gitignore-style. A pattern with no slash inside it matches at any depth. A symbolic link to a file of the repository is accepted unless the scope covers the link's own path; any other link that a pattern can reach makes the declaration invalid, unless an `exclude` names its exact path. Submodules are outside the scope and never read.
+
+## What it does not do
+
+- **It does not run the tests.** The claim is that the gating contract is the one a human approved, not that it was faithfully executed. Canonical execution in a controlled environment is the next milestone (M2).
+- **It does not read file contents to find tests.** A runner configured inside a mixed file (`pyproject.toml`, `package.json`) is reported, not protected.
+- **It does not support pull requests from forks.** Their check stays in progress, so the ruleset blocks them (fail closed).
+- **It cannot read very large monorepos** whose tree GitHub cannot list in one request.
+- **It has no webhooks.** It polls GitHub about every 20 seconds, and the App needs no inbound network access.
+- **It never writes to the repository.** The App reads contents and writes only checks and comments. Every commit is the owner's.
+
+## Install
+
+SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App that the owner creates. The [install guide](docs/install.md) covers both tiers:
+- **Isolated:** a Linux host under systemd, outbound only, with full assurance.
+- **Co-located:** Podman on the developer's Windows PC.
+
+The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
+
+- **In a hurry?** The [quickstart](docs/quickstart.md) is the short co-located path, in five steps.
+- **Installing with a coding agent?** Point it to [agent-install.md](docs/agent-install.md). It says what the agent may prepare, and which steps (the App key, TOTP enrollment, the ruleset, every `/suiteward` command) only you do.
 
 ## Status
 
-Delivered:
+- **The MVP is feature-complete for a single owner on GitHub,** and accepted on both tiers. SuiteWard governs its own tests: every pull request to this repository that changes a protected file needs the owner's approval.
+- **Releases:**
+  - `v0.1.0` is the first release.
+  - `v0.1.1` adds scope discovery (M1.9) and is in release.
+  - The final MVP release comes after a security gate: hardening, a heavy pentest of both tiers, and a SecOps review.
+- **After the MVP:**
+  - canonical test execution (M2);
+  - a managed service;
+  - encrypted backups and guided restore;
+  - a change report for protected files;
+  - reading runner settings inside configuration files.
 
-- **Domain (M0).** Artifact identities, immutable suite versions, governing-policy authorization, proposals, consent, and guarded promotion rules.
-- **Persistence (M1.01, R1).** PostgreSQL and filesystem adapters behind a normalized unit-of-work port, tested against a real database.
-- **GitHub walking skeleton (S1).** An end-to-end spike on both verification targets; the findings are in [s1-github](docs/spikes/s1-github.md).
-- **Runtime (M1.2).** `suiteward serve` and `suiteward probe`: configuration from the environment and secret files, migrations on start, River jobs enqueued in the same transaction as the governance write, a publication outbox with a relay, `/healthz`, `/readyz` and `/status`, graceful shutdown, and one container image built in CI, deployed and smoke-tested locally under Podman and on an isolated remote host.
-- **Scope and inventory (M1.3).** `.suiteward.yml` parsing with protected defaults, the exact protected inventory of a source tree, classification of a candidate as unchanged, protected change or scope reduction, proposal revisions, and the baseline proposal that feeds the existing-baseline bootstrap.
-- **GitHub integration and owner flows (M1.4 to M1.7c).** GitHub App authentication and pull request discovery without webhooks, owner enrollment with TOTP, the explicit bootstrap (`/suiteward propose` and `skip`), the `SuiteWard / Contract` check, approval of an exact revision, promotion on merge, canonical integrity checks, and command and check latency of tens of seconds.
-
-**MVP (M1.8), in acceptance.** SuiteWard is self-hosted, as a container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`), installed from the [install guide](docs/install.md), with a plain backup and restore runbook ([backup](docs/backup.md)). Acceptance runs a fresh install on both verification targets, and the first release candidate is `v0.1.0-rc.1`. There is no final release yet.
-
-Not implemented: canonical test execution (M2), a native binary, encrypted backups and guided restore, and a managed service. The roadmap is in the [delivery plan](docs/plan/README.md) and the open product gates are in the [decision register](docs/plan/decisions.md).
+  The roadmap is in the [delivery plan](docs/plan/README.md).
 
 ## Architecture
 
-One Go binary, `suiteward`, serves the API and runs the workers. The accepted stack is Go, Chi, PostgreSQL with pgx and sqlc, and River for jobs; canonical artifacts are content-addressed on a dedicated volume. The default GitHub integration is a GitHub App with outbound API access and no public webhooks. Five invariants hold throughout: canonical immutability, candidate non-authority, exact-revision approval, atomic promotion, and evidence kept distinct from authority.
+- **One Go binary,** `suiteward`, serves the API and runs the workers: Go, Chi, PostgreSQL with pgx and sqlc, and River for jobs.
+- **Artifacts and GitHub access:** canonical artifacts are content-addressed on a dedicated volume. GitHub is reached through a GitHub App, outbound only.
+- **Five invariants hold throughout:**
+  - canonical immutability;
+  - candidate non-authority;
+  - exact-revision approval;
+  - atomic promotion;
+  - evidence kept distinct from authority.
+- **Where to read more:** the [ADR index](docs/decisions/README.md) maps the decisions, and the [persistence](docs/contracts/persistence.md) and [runtime](docs/contracts/runtime.md) contracts fix the interfaces.
 
-The [ADR index](docs/decisions/README.md) maps the decisions; the [persistence](docs/contracts/persistence.md) and [runtime](docs/contracts/runtime.md) contracts fix the interfaces.
+## Develop
 
-## Run and develop
+Development targets Windows with PowerShell 7, with Windows and Linux CI and local PostgreSQL in Podman:
+- `./scripts/dev.ps1 setup` prepares a checkout.
+- `./scripts/dev.ps1 doctor` verifies it.
+- `./scripts/dev.ps1 check` runs the checks.
+- `./scripts/dev.ps1 persistence` runs the database tests.
 
-Run the service with `suiteward serve`, which needs `SUITEWARD_DATABASE_URL` (PostgreSQL) and `SUITEWARD_ARTIFACT_DIR` (an absolute path); every setting, endpoint, and exit code is in the [runtime contract](docs/contracts/runtime.md). The image is `ghcr.io/ignisdevne/suiteward`, and [deploy/](deploy/) holds the local Podman stack, the quadlets, and the host runbook. To install SuiteWard, follow the [install guide](docs/install.md); to back up, restore, or re-bootstrap an instance, follow the [backup runbook](docs/backup.md).
+See [local development](docs/local-development.md) and [CI and coverage](docs/ci-and-coverage.md).
 
-Development targets Windows, with Windows and Linux CI and local PostgreSQL in Podman. In PowerShell 7, prepare a checkout with `./scripts/dev.ps1 setup`, verify it with `./scripts/dev.ps1 doctor`, and run checks with `./scripts/dev.ps1 check`. Domain-only work needs no database or containers. See [local development](docs/local-development.md) for pinned tools, isolated worktree databases, and commands, and [CI and coverage](docs/ci-and-coverage.md) for the checks and the coverage policy.
+Work is test-first: for governance and adapter behavior, the failing test is committed before the implementation.
 
-## How it is built
-
-Development is test-first for authority, consent, promotion, idempotency, concurrency, and adapter behavior. An AI orchestrator plans and verifies the work, subagents (and optionally the Orbit prompt executor) implement it in isolated worktrees, an independent reviewer checks each task, and only the owner authorizes a merge into `main`. The rules are in [AGENTS.md](AGENTS.md) and [orchestration](docs/plan/orchestration.md); start with the [planning documentation](docs/README.md) and the [engineering plan](docs/engineering-plan.md).
+An AI orchestrator plans the work, subagents implement it in isolated worktrees, and an independent reviewer checks every task. Only the owner approves protected changes and merges into `main`. The rules are in [AGENTS.md](AGENTS.md) and [orchestration](docs/plan/orchestration.md).
 
 ## License
 
-SuiteWard is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`); see [LICENSE](LICENSE). The image carries it, and the license texts of every third-party module linked into the binary, under `/licenses` (`LICENSE` and `THIRD_PARTY_NOTICES`). See [ADR 0009](docs/decisions/0009-agpl-3.0-distribution.md).
+SuiteWard is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`); see [LICENSE](LICENSE). The image carries the license texts of every third-party module linked into the binary under `/licenses`. See [ADR 0009](docs/decisions/0009-agpl-3.0-distribution.md).

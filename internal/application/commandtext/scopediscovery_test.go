@@ -731,3 +731,34 @@ func TestScopeNoticeAndSuggestDeclarationWarnAboutACutAlike(t *testing.T) {
 		}
 	}
 }
+
+// A revision whose reduction detail did not fit the outbox still states the reduction, and says that the detail was left out.
+func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
+	r := revision(commandtext.Isolated)
+	r.Reduced, r.ReducedOmitted, r.ReducedPathsTotal = true, true, 52
+	body := revisionText(t, r)
+	for _, want := range []string{"**This revision reduces the protected scope.**", "omitted", "no longer covered: 52"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Rules removed") || strings.Contains(body, "no longer covers") {
+		t.Errorf("body lists detail that was omitted:\n%s", body)
+	}
+	r.ReducedPathsTotal = 0
+	if body := revisionText(t, r); !strings.Contains(body, "omitted") || strings.Contains(body, "paths") {
+		t.Errorf("without a count of paths the body must say omitted and name no paths:\n%s", body)
+	}
+	for name, mutate := range map[string]func(*commandtext.Revision){
+		"omitted without a reduction": func(r *commandtext.Revision) { r.Reduced = false },
+		"omitted with rules":          func(r *commandtext.Revision) { r.ReducedRules = []string{"x/**"} },
+		"omitted with paths":          func(r *commandtext.Revision) { r.ReducedPaths = []string{"x_test.go"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := revision(commandtext.Isolated)
+			r.Reduced, r.ReducedOmitted = true, true
+			mutate(&r)
+			mustPanic(t, func() { commandtext.RevisionComment(r) })
+		})
+	}
+}

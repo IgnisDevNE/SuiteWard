@@ -86,6 +86,8 @@ Accepted 2026-10-11 (owner, phase M1.3). The ADR 0013 amendment protects the wor
 
 Accepted 2026-10-17 (owner, M1.9 planning, after the C2 finding in [M1.8](phases/M1.8.md#c2-outcome-dogfooding-2026-10-17)). Discovery stays a suggestion (ADR 0013): only the owner's approval changes the contract.
 
+- **Every suggested change links to GitHub's editor** (owner, 2026-10-19). A comment that asks for a change to `.suiteward.yml` links to the editor for that file on the pull request's branch, or to GitHub's new-file page when the file does not exist yet. This holds even when the comment also carries a review suggestion or a copyable block. A change the web editor cannot make, such as removing a symbolic link, gets no link.
+
 - **Detection is path-only.** The suggestion is built from the file paths of a tree, with no file contents.
   - **Test files.** Patterns follow the frameworks' own conventions and match at any depth (`*_test.go`, `test_*.py`, `*.spec.*`…). There is no longer one pattern per directory.
   - **Test directories.** `testdata/`, `__tests__/`, `__snapshots__/`, `__mocks__/`, `__fixtures__/` and `src/test/` count at any depth. `tests/`, `test/` and `spec/` count at the top level, or when they hold a test-named file.

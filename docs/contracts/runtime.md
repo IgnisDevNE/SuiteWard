@@ -514,7 +514,8 @@ The order is deterministic: directory patterns first, then file patterns, each g
     - the repository is too large for this release.
   - the path goes inside a fence, escaped;
   - it quotes no file content except the head's own declaration of a `link` comment;
-  - it says the canonical contract stays in force and the check stays `failure` until the next push fixes it.
+  - it says the canonical contract stays in force and the check stays `failure` until the next push fixes it;
+  - it links to GitHub's editor for `.suiteward.yml` on the PR's branch, for fixing the declaration and for accepting a link (amended 2026-10-19, D-SCOPE-DISCOVERY). The payload adds `repo` and `branch` (optional), and a message queued without them renders without the link.
 - **The check summary** for `invalid-source` no longer mentions submodules, which are outside the scope since the D-SCOPE amendment.
 
 **Bot identity.** When the bot account cannot be resolved, the commands job logs the failure's `kind` and `status` (`readFailure`), never GitHub's text. This also covers a refused App JWT on `GET /app`.

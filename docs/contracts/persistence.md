@@ -715,7 +715,7 @@ type Store interface {
 ```
 
 - **Table `pr_checks`.** Primary key (repository_id, pull_number). The row is current state, updated in place; the publications themselves are the outbox rows. `generation` only grows; `state` is a CHECK on the three codes; `head_sha` is 40 lowercase hex.
-- **Owner commands.** `commands.Store` gains `LatestOwnerCommand(ctx, repositoryID int64, pull int, ownerID int64) (Entry, bool, error)`: the owner-authored ledger entry with the greatest comment id on that pull among the command dispositions (`malformed`, `invalid-code`, `replayed-code`, `unknown-proposal`, `edited-first`, `no-suite`, `processed`). `not-command`, `failed` and `before-enrollment` never count, so an ordinary comment never clears an owner-command `failure`.
+- **Owner commands.** `commands.Store` gains `LatestOwnerCommand(ctx, repositoryID int64, pull int, ownerID int64) (Entry, bool, error)`: the owner-authored ledger entry with the greatest comment id on that pull among the command dispositions (`malformed`, `invalid-code`, `replayed-code`, `unknown-proposal`, `edited-first`, `no-suite`, `processed`). `not-command`, `failed` and `before-enrollment` never count, so an ordinary comment never clears an owner-command `failure`. **Amended 2026-10-19** (D-COMMANDS, "A wrong command has no effect"): the signature gains `before int64`, an exclusive upper bound on the comment id (0 means none, negative is invalid), and the counted dispositions are only `invalid-code`, `replayed-code` and `processed`. The checks job walks back with `before` past a processed command whose consent result is rejected, so a wrong command neither sets nor clears the failure. No migration: 00019's header comment still names the old set.
 - **Conformance.**
   - Publish: the first record writes generation 1 and one message; an identical result writes none; a new head, state, reason or reference advances the generation by exactly one; concurrent publishes for one pull never write two messages for one generation; a failing message rolls the record back.
   - Publish with an identical result after the current message failed: generation advances by one with a new message.
@@ -1170,7 +1170,7 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
   - it uses the same classifier as `Suggest`.
 - A declaration whose runner pattern matches no file still parses, and `Covers` and the integrity check accept it.
 - `AddPatterns`, by round trip: the output parses, keeps every original pattern, and adds exactly the requested new ones.
-- `suggested` and `suggest-refused` are ignored by `LatestOwnerCommand`: after a rejected `approve`, a `suggest` keeps `owner-command-rejected`.
+- `suggested` and `suggest-refused` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
 - Payloads: an ack or revision payload of the `v0.1.0` shape still decodes.
 
 ## Cycle start (M1.7c; normative)

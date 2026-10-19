@@ -612,6 +612,7 @@ type Revision struct {
 	Reduced                                 bool
 	ReducedRules, ReducedPaths              []string
 	ReducedPathsTotal                       int
+	ReducedOmitted                          bool
 	Tier                                    Tier
 }
 

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -76,5 +77,18 @@ func TestBootstrapSummaryStatesNoRunnerRulesOnlyWhenTheDeclarationHasNone(t *tes
 		Include: pre.Include, Exclude: pre.Exclude, IncludeTotal: len(pre.Include), ExcludeTotal: len(pre.Exclude), Tier: commandtext.CoLocated})
 	if got := render(payload); got != want || strings.Contains(got, "runner") {
 		t.Fatalf("a payload without runner rules renders\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Every list at its limit with text that JSON writes as six bytes a character is the longest summary: it must still be a message the outbox takes.
+func TestBootstrapSummaryFitsTheOutboxWhenEveryByteIsEscaped(t *testing.T) {
+	list := func() []string { return slices.Repeat([]string{strings.Repeat("<", 400)}, 25) }
+	inputs := cmtSummaryInputs()
+	inputs.Branch, inputs.Paths, inputs.Include, inputs.Runner, inputs.Exclude = strings.Repeat("<", 400), list(), list(), list(), list()
+
+	message := cmtMust(newSummaryMessage(cmtTarget(), inputs))
+
+	if len(message.Payload) > maxOutboxPayload {
+		t.Fatalf("payload of %d bytes, over %d", len(message.Payload), maxOutboxPayload)
 	}
 }

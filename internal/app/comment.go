@@ -924,6 +924,7 @@ type revisionPayload struct {
 	ReducedRules      []string `json:"reducedRules,omitempty"`
 	ReducedPaths      []string `json:"reducedPaths,omitempty"`
 	ReducedPathsTotal int      `json:"reducedPathsTotal,omitempty"`
+	ReducedOmitted    bool     `json:"reducedOmitted,omitempty"`
 	Tier              string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
 }
 

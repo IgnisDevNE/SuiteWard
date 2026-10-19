@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -369,4 +370,52 @@ func TestCommentPublisherRendersARevisionPayloadOfV010(t *testing.T) {
 
 	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: []string{"tests/new_test.go"},
 		Modified: []string{"tests/a_test.go"}, Removed: []string{}, AddedTotal: 1, ModifiedTotal: 1, Reduced: true, Tier: commandtext.Isolated}))
+}
+
+// The longest revision payload: five lists of 20 entries of 150 characters that JSON writes as six bytes each, 89 KiB, over what the outbox takes.
+// The revision must exist all the same, so the reduction detail, which is evidence for the owner and not the revision itself, is what gives way.
+func TestRevisionMessageDropsTheReductionDetailThatDoesNotFitTheOutbox(t *testing.T) {
+	list := func() []string { return slices.Repeat([]string{strings.Repeat("<", 150)}, 20) }
+	notice := cmtNotice()
+	notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
+	notice.ReducedRules, notice.ReducedPaths = list(), append(list(), "tests/more_test.go")
+
+	message := cmtRevisionMessage(t, notice, "isolated")
+
+	if len(message.Payload) > maxOutboxPayload {
+		t.Fatalf("payload of %d bytes, over %d", len(message.Payload), maxOutboxPayload)
+	}
+	if err := message.Validate(); err != nil {
+		t.Fatalf("the outbox refuses the message: %v", err)
+	}
+	var payload revisionPayload
+	if err := json.Unmarshal(message.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Reduced || !payload.ReducedOmitted || len(payload.ReducedRules) != 0 || len(payload.ReducedPaths) != 0 || payload.ReducedPathsTotal != 21 ||
+		len(payload.Added) != 20 || payload.AddedTotal != 20 {
+		t.Fatalf("payload %+v, want the reduction kept without its detail but with the count of paths, and the lists of files whole", payload)
+	}
+	w := newCmtWorld(t)
+	w.mustDeliver(message)
+	body := w.writer.posts()[0].body
+	for _, want := range []string{"**This revision reduces the protected scope.**", "omitted", "/suiteward approve P2-R2 <code>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comment lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// A revision that fits keeps every detail: nothing is dropped for being possible to drop.
+func TestRevisionMessageKeepsTheReductionDetailThatFits(t *testing.T) {
+	notice := cmtNotice()
+	notice.Reduced, notice.ReducedRules, notice.ReducedPaths = true, []string{"rule /a/**"}, []string{"tests/a_test.go"}
+
+	var payload revisionPayload
+	if err := json.Unmarshal(cmtRevisionMessage(t, notice, "isolated").Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ReducedOmitted || len(payload.ReducedRules) != 1 || len(payload.ReducedPaths) != 1 {
+		t.Fatalf("payload %+v, want the detail kept and not marked omitted", payload)
+	}
 }

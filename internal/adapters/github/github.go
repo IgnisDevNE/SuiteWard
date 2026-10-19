@@ -343,14 +343,8 @@ func latest[T any, K comparable](items []T, key func(T) K) []T {
 	return slices.Collect(maps.Values(byKey))
 }
 
-// readPages reads pages 1, 2, … of a listing until one holds fewer than
-// pageSize items, or fails after maxPages; the result is never nil.
-func readPages[T any](ctx context.Context, client *rest.Client, path func(page int) string) ([]T, error) {
-	all, _, err := readDecoded[T](ctx, client, path)
-	return all, err
-}
-
-// readDecoded is readPages that also reports what the listing read.
+// readDecoded reads pages 1, 2, … of a listing until one holds fewer than pageSize items, or fails after maxPages; the result is
+// never nil. It also reports what the listing read.
 func readDecoded[T any](ctx context.Context, client *rest.Client, path func(page int) string) ([]T, ReadInfo, error) {
 	return readListing(ctx, client, path, func(p string, body []byte) ([]T, error) {
 		var items []T
@@ -361,14 +355,7 @@ func readDecoded[T any](ctx context.Context, client *rest.Client, path func(page
 	})
 }
 
-// readPagesOf is readPages for a listing whose items sit inside the answer;
-// items returns nil for an answer that is not a list.
-func readPagesOf[T any](ctx context.Context, client *rest.Client, path func(page int) string, items func(path string, body []byte) ([]T, error)) ([]T, error) {
-	all, _, err := readListing(ctx, client, path, items)
-	return all, err
-}
-
-// readListing is readPagesOf that also reports what the listing read.
+// readListing is readDecoded for a listing whose items sit inside the answer; items returns nil for an answer that is not a list.
 func readListing[T any](ctx context.Context, client *rest.Client, path func(page int) string, items func(path string, body []byte) ([]T, error)) ([]T, ReadInfo, error) {
 	all := []T{}
 	var info ReadInfo
@@ -559,7 +546,7 @@ func (r *Reader) PullFiles(ctx context.Context, repo string, number int) ([]Pull
 	if number <= 0 {
 		return nil, fmt.Errorf("%w: pull request number %d", ErrInvalidArgument, number)
 	}
-	raw, err := readPages[struct {
+	raw, _, err := readDecoded[struct {
 		Filename string `json:"filename"`
 		Status   string `json:"status"`
 		Patch    string `json:"patch"`

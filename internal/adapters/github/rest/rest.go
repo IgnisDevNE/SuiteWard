@@ -413,4 +413,3 @@ func (c *Client) retryTime(retryAfter []string, reset string) time.Time {
 	}
 	return time.Time{}
 }
-

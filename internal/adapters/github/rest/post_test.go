@@ -149,21 +149,7 @@ func TestPostMapsStatusesAndNeverKeepsText(t *testing.T) {
 			if err == nil {
 				t.Fatal("Post succeeded")
 			}
-			var limited *rest.RateLimitedError
-			var status *rest.StatusError
-			switch {
-			case c.wantLimited:
-				if !errors.As(err, &limited) || limited.Status != c.status {
-					t.Fatalf("err = %v, want *RateLimitedError with status %d", err, c.status)
-				}
-				if limited.Until.IsZero() {
-					t.Error("RateLimitedError.Until is zero")
-				}
-			case c.wantStatus != 0:
-				if !errors.As(err, &status) || status.Status != c.wantStatus {
-					t.Fatalf("err = %v, want *StatusError with status %d", err, c.wantStatus)
-				}
-			}
+			assertPostErrorType(t, err, c.status, c.wantLimited, c.wantStatus)
 			if c.sentinel != nil && !errors.Is(err, c.sentinel) {
 				t.Errorf("err = %v, want it to match %v", err, c.sentinel)
 			}
@@ -244,5 +230,25 @@ func TestPostTokenSourceErrorIsWrappedAndReleasesItsReservation(t *testing.T) {
 	failing.Store(false)
 	if _, err := client.Post(t.Context(), "/p", []byte(`{}`)); err != nil {
 		t.Errorf("Post after a failed attempt: %v", err)
+	}
+}
+
+// assertPostErrorType checks the type of a Post error: a rate limit with a time to wait until, or a status error (wantStatus 0: neither).
+func assertPostErrorType(t *testing.T, err error, status int, wantLimited bool, wantStatus int) {
+	t.Helper()
+	var limited *rest.RateLimitedError
+	var statusErr *rest.StatusError
+	switch {
+	case wantLimited:
+		if !errors.As(err, &limited) || limited.Status != status {
+			t.Fatalf("err = %v, want *RateLimitedError with status %d", err, status)
+		}
+		if limited.Until.IsZero() {
+			t.Error("RateLimitedError.Until is zero")
+		}
+	case wantStatus != 0:
+		if !errors.As(err, &statusErr) || statusErr.Status != wantStatus {
+			t.Fatalf("err = %v, want *StatusError with status %d", err, wantStatus)
+		}
 	}
 }

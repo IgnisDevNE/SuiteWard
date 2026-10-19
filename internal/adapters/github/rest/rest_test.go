@@ -481,7 +481,6 @@ func TestBudgetIsSharedByClients(t *testing.T) {
 func TestGetReturnsTypedErrors(t *testing.T) {
 	const skew = 2 * time.Minute
 	reset := t0.Add(30 * time.Minute)
-	sentinels := []error{rest.ErrUnauthorized, rest.ErrForbidden, rest.ErrNotFound, rest.ErrUnprocessable, rest.ErrRateLimited, rest.ErrBudgetExhausted}
 	cases := []struct {
 		name       string
 		status     int
@@ -527,23 +526,29 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 			if err == nil || hits.Load() != 1 {
 				t.Fatalf("err = %v after %d requests; want an error after one request", err, hits.Load())
 			}
-			for _, s := range sentinels {
-				if got := errors.Is(err, s); got != (s == tc.want) {
-					t.Errorf("errors.Is(err, %v) = %v", s, got)
-				}
-			}
-			if tc.want == rest.ErrRateLimited {
-				var rl *rest.RateLimitedError
-				if !errors.As(err, &rl) || rl.Status != tc.status || !rl.Until.Equal(tc.until) {
-					t.Fatalf("rate-limit error = %#v, want status %d until %v", err, tc.status, tc.until)
-				}
-				return
-			}
-			var se *rest.StatusError
-			if !errors.As(err, &se) || se.Status != tc.status {
-				t.Fatalf("status error = %#v, want status %d", err, tc.status)
-			}
+			assertTypedError(t, err, tc.status, tc.want, tc.until)
 		})
+	}
+}
+
+// assertTypedError checks that err matches only the sentinel want (nil: none) and carries status; a rate limit also carries until.
+func assertTypedError(t *testing.T, err error, status int, want error, until time.Time) {
+	t.Helper()
+	for _, s := range []error{rest.ErrUnauthorized, rest.ErrForbidden, rest.ErrNotFound, rest.ErrUnprocessable, rest.ErrRateLimited, rest.ErrBudgetExhausted} {
+		if got := errors.Is(err, s); got != (s == want) {
+			t.Errorf("errors.Is(err, %v) = %v", s, got)
+		}
+	}
+	if want == rest.ErrRateLimited {
+		var rl *rest.RateLimitedError
+		if !errors.As(err, &rl) || rl.Status != status || !rl.Until.Equal(until) {
+			t.Fatalf("rate-limit error = %#v, want status %d until %v", err, status, until)
+		}
+		return
+	}
+	var se *rest.StatusError
+	if !errors.As(err, &se) || se.Status != status {
+		t.Fatalf("status error = %#v, want status %d", err, status)
 	}
 }
 

@@ -1,6 +1,7 @@
 package commandtext
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -141,9 +142,10 @@ type Summary struct {
 }
 
 // Acknowledge renders the acknowledgment body of a processed command. It
-// states the outcome, the reference and the next action (ADR 0011).
+// states the outcome, the reference and the next action (ADR 0011). An Ack that
+// ValidateAck refuses panics.
 func Acknowledge(a Ack) string {
-	checkAck(a)
+	must(ValidateAck(a))
 	return replyTo(acknowledgment(a), a.Source)
 }
 
@@ -156,13 +158,29 @@ func replyTo(body string, source int64) string {
 	return body + "\nIn reply to [your command](#issuecomment-" + strconv.FormatInt(source, 10) + ").\n"
 }
 
+// acknowledgment sends the outcome to the group that renders it; ValidateAck has run, so an outcome that no group takes is an impossible state.
 func acknowledgment(a Ack) string {
-	ref, who := referenceOf(a), "@"+a.Owner
-	// " for P4-R2", or nothing for a command that has no reference (a skip).
-	of := ""
-	if ref != "" {
-		of = " for " + ref
+	switch a.Outcome {
+	case Approved, Revoked, NoActiveApproval, Rejected, RevokedAfterPromotion, ApprovedAfterPromotion:
+		return consentAck(a)
+	case InvalidCode, ReplayedCode, NoSuite, MalformedCommand, EditedFirst:
+		return commandAck(a)
+	case ProposeRefused, SkipRefused, SuggestRefused:
+		return refusal(a)
+	case AlreadyProposed, ProposeFailed, Skipped, NothingUncovered, BootstrapPromoted:
+		return bootstrapAck(a)
 	}
+	panic(fmt.Sprintf("commandtext: unknown outcome %d", a.Outcome))
+}
+
+// notInGroup is the end of a group that was handed an outcome it does not render.
+func notInGroup(o Outcome) string {
+	panic(fmt.Sprintf("commandtext: outcome %d is not in this group", o))
+}
+
+// consentAck renders the outcomes of an approval or a revocation, which state the approval requirement of the reference.
+func consentAck(a Ack) string {
+	ref, who := mustReference(a), "@"+a.Owner
 	// Only the approval requirement is stated: other requirements may still block promotion.
 	requirement := "The approval requirement for " + ref + " is not met."
 	if a.Eligible {
@@ -172,22 +190,22 @@ func acknowledgment(a Ack) string {
 	case Approved:
 		status := "The approval requirement for " + ref + " is not met yet."
 		if a.Eligible {
-			status = "The approval requirement for " + ref + " is met."
+			status = requirement
 		}
 		return paragraphs(
 			"Approval recorded for "+ref+" by "+who+".\n"+status,
 			"To withdraw this approval, comment:",
-			copyable("/suiteward revoke "+ref+" <code>"),
+			codeCommand("revoke", ref),
 		)
 	case Revoked:
-		status := "The approval requirement for " + ref + " is not met."
+		status := requirement
 		if a.Eligible {
 			status = "The approval requirement for " + ref + " is still met through other valid approval."
 		}
 		return paragraphs(
 			"Revocation recorded for "+ref+" by "+who+".\nYour approval no longer counts. "+status,
 			"To approve it again, comment:",
-			copyable("/suiteward approve "+ref+" <code>"),
+			codeCommand("approve", ref),
 		)
 	case RevokedAfterPromotion:
 		// Says nothing about an approval being withdrawn: the owner may have had none active.
@@ -207,16 +225,30 @@ func acknowledgment(a Ack) string {
 	case Rejected:
 		reason, next := rejectionText(a.Rejection, ref, who)
 		return paragraphs("Command for " + ref + " rejected by policy: " + reason + ". Nothing changed.\n" + requirement + "\n" + next)
-	case MalformedCommand:
-		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
-			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>` or `/suiteward suggest`, " +
-			"with a current code from your authenticator app where the command takes one.")
+	}
+	return notInGroup(a.Outcome)
+}
+
+// wrongCode finishes the first sentence of the acknowledgment of a wrong code: the command had no effect, but the check fails for
+// it (D-COMMANDS, "A wrong command has no effect"). code names the code the next command needs.
+func wrongCode(first, code string) string {
+	return first + " The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with " + code + ", or push."
+}
+
+// commandAck renders the outcomes of a command that could not be processed as one.
+func commandAck(a Ack) string {
+	ref := mustReference(a)
+	// " for P4-R2", or nothing for a command that has no reference (a skip).
+	of := ""
+	if ref != "" {
+		of = " for " + ref
+	}
+	switch a.Outcome {
 	case InvalidCode:
-		return paragraphs("The confirmation code" + of + " was not accepted; nothing changed.\n" +
-			"Comment the command again with a current code from your authenticator app.")
+		return paragraphs(wrongCode("The confirmation code"+of+" was not accepted, so the command had no effect.", "a current code"))
 	case ReplayedCode:
-		return paragraphs("The confirmation code" + of + " was already used; each code works only once, so nothing changed.\n" +
-			"Wait for your authenticator app to show a new code, then comment the command again.")
+		return paragraphs(wrongCode("The confirmation code"+of+" was already used, so the command had no effect; each code works only once.", "a new code") +
+			"\nWait for your authenticator app to show a new code first.")
 	case NoSuite:
 		subject := "Your command"
 		if ref != "" {
@@ -224,8 +256,21 @@ func acknowledgment(a Ack) string {
 		}
 		return paragraphs(subject + " was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.\n" +
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
-	case ProposeRefused:
-		return proposeRefusal(a)
+	case MalformedCommand:
+		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
+			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>` or `/suiteward suggest`, " +
+			"with a current code from your authenticator app where the command takes one.")
+	case EditedFirst:
+		return paragraphs("Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.\n" +
+			"Post the command as a new comment with a current code. Edits to a command comment are never processed.")
+	}
+	return notInGroup(a.Outcome)
+}
+
+// bootstrapAck renders the outcomes of the bootstrap that are neither a refusal nor a consent.
+func bootstrapAck(a Ack) string {
+	ref, who := mustReference(a), "@"+a.Owner
+	switch a.Outcome {
 	case AlreadyProposed:
 		return paragraphs("The baseline was already proposed as "+ref+". Nothing changed.",
 			"Review the bootstrap summary SuiteWard posted for "+ref+" on this pull request, and approve it as described there.")
@@ -236,10 +281,6 @@ func acknowledgment(a Ack) string {
 		return paragraphs("Skip recorded for this pull request by "+who+".\n"+
 			"This pull request may merge before the first contract: nothing was assessed. This is not a contract assessment, and no canonical contract exists yet.",
 			"To start the first contract instead, comment `/suiteward propose` on the pull request that should carry it.")
-	case SkipRefused:
-		return skipRefusal(a.Refusal)
-	case SuggestRefused:
-		return suggestRefusal(a)
 	case NothingUncovered:
 		covered := "in the scope already"
 		if a.Base != 0 {
@@ -248,100 +289,19 @@ func acknowledgment(a Ack) string {
 		}
 		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is " + covered + ", so there is nothing to suggest. Nothing changed.\n" +
 			"This answer is not an approval, and SuiteWard does not run tests.")
-	case EditedFirst:
-		return paragraphs("Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.\n" +
-			"Post the command as a new comment with a current code. Edits to a command comment are never processed.")
 	case BootstrapPromoted:
 		return paragraphs(fmt.Sprintf("Bootstrap complete: %s, approved by %s, is now canonical version V%d.\n", ref, who, a.Version) +
 			"SuiteWard recorded an integrity assessment of the approved files at the pinned origin commit; it did not run any tests.\n" +
 			"Later changes to the protected files need a new proposal and your approval.")
 	}
-	panic(fmt.Sprintf("commandtext: unknown outcome %d", a.Outcome))
+	return notInGroup(a.Outcome)
 }
 
-// The underscore admits Enterprise Managed User logins such as octocat_acme.
-var loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$`)
-
-// checkAck panics when the fields do not fit the outcome.
-func checkAck(a Ack) {
-	if !loginPattern.MatchString(a.Owner) {
-		panic(fmt.Sprintf("commandtext: owner login %q is not a GitHub login", a.Owner))
-	}
-	if (a.Outcome == BootstrapPromoted) != (a.Source == 0) || a.Source < 0 {
-		panic(fmt.Sprintf("commandtext: source comment %d does not fit outcome %d", a.Source, a.Outcome))
-	}
-	referenceOf(a) // called for its panic on a reference that does not fit the outcome
-	consent := a.Outcome == Approved || a.Outcome == Revoked || a.Outcome == NoActiveApproval || a.Outcome == Rejected
-	switch {
-	case !consent && a.Eligible:
-		panic(fmt.Sprintf("commandtext: outcome %d does not evaluate eligibility", a.Outcome))
-	case (a.Outcome == Rejected) != (a.Rejection != 0):
-		panic(fmt.Sprintf("commandtext: rejection %d does not fit outcome %d", a.Rejection, a.Outcome))
-	case (a.Outcome == MalformedCommand) != (a.Malformed != 0):
-		panic(fmt.Sprintf("commandtext: malformed reason %d does not fit outcome %d", a.Malformed, a.Outcome))
-	case (a.Outcome == BootstrapPromoted) != (a.Version != 0):
-		panic(fmt.Sprintf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome))
-	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && !namesFile(a) && !tooLargeAgainstDefault(a)) || (a.Outcome == ProposeRefused && a.Base == BaseContract):
-		panic(fmt.Sprintf("commandtext: base %d does not fit outcome %d", a.Base, a.Outcome))
-	case !refusalFits(a.Outcome, a.Refusal):
-		panic(fmt.Sprintf("commandtext: refusal %d does not fit outcome %d", a.Refusal, a.Outcome))
-	case (a.Repo != "" || a.Branch != "") && !editorFits(a):
-		panic(fmt.Sprintf("commandtext: an editor link does not fit outcome %d with refusal %d and base %d", a.Outcome, a.Refusal, a.Base))
-	case a.Repo != "" || a.Branch != "":
-		if err := checkRepoAndBranch(a.Repo, a.Branch); err != nil {
-			panic(err.Error())
-		}
-	case a.Outcome == BootstrapPromoted:
-		checkID("version", a.Version)
-	}
-}
-
-// editorFits reports whether a may carry an editor link: a refusal that names a file of a branch, or a suggest whose declaration is too large.
-func editorFits(a Ack) bool {
-	if a.Outcome == SuggestRefused && a.Refusal == DeclarationTooLarge {
-		return true // a Base, if any, is the default branch: checkAck refuses another
-	}
-	return namesFile(a) && (a.Base == BasePull || a.Base == BaseDefaultBranch)
-}
-
-// tooLargeAgainstDefault reports whether a is the refusal of a suggested declaration too large for the default branch's file, which is the one Base it names.
-func tooLargeAgainstDefault(a Ack) bool {
-	return a.Outcome == SuggestRefused && a.Refusal == DeclarationTooLarge && a.Base == BaseDefaultBranch
-}
-
-// namesFile reports whether a is the refusal of an invalid source of a suggest or a propose, which may name the file refused in Base.
-func namesFile(a Ack) bool {
-	return a.Refusal == InvalidSource && (a.Outcome == SuggestRefused || a.Outcome == ProposeRefused)
-}
-
-// referenceOf returns the reference an outcome names and "" for one that names none. It panics when the reference
-// does not fit: a skip has none, so only the code outcomes and NoSuite may come without one.
-func referenceOf(a Ack) string {
-	switch a.Outcome {
-	case MalformedCommand, EditedFirst, ProposeRefused, ProposeFailed, Skipped, SkipRefused, SuggestRefused, NothingUncovered:
-		if a.Proposal != 0 || a.Revision != 0 {
-			panic(fmt.Sprintf("commandtext: outcome %d carries a reference", a.Outcome))
-		}
-		return ""
-	case InvalidCode, ReplayedCode, NoSuite:
-		if a.Proposal == 0 && a.Revision == 0 {
-			return ""
-		}
-	}
-	return Reference(a.Proposal, a.Revision)
-}
-
-// refusalFits reports whether refusal is one of the reasons of outcome, or none for an outcome that has none.
-func refusalFits(outcome Outcome, refusal Refusal) bool {
-	switch outcome {
-	case ProposeRefused:
-		return refusal == CanonicalPresent || refusal == Fork || refusal == NotOpen || refusal == BaseNotTarget || refusal == EmptyInventory || refusal == InvalidSource
-	case SkipRefused:
-		return refusal == CanonicalPresent || refusal == Fork || refusal == Carrier
-	case SuggestRefused:
-		return refusal == Fork || refusal == NotOpen || refusal == InvalidSource || refusal == DeclarationTooLarge
-	}
-	return refusal == 0
+// mustReference is the reference ValidateAck accepted for a, "" for an outcome that names none.
+func mustReference(a Ack) string {
+	ref, err := referenceOf(a)
+	must(err)
+	return ref
 }
 
 func rejectionText(r Rejection, ref, who string) (reason, next string) {
@@ -403,7 +363,6 @@ func BootstrapSummary(s Summary) string {
 	if len(s.Paths) > maxListed || s.Protected < len(s.Paths) {
 		panic(fmt.Sprintf("commandtext: %d paths for %d protected files", len(s.Paths), s.Protected))
 	}
-	tier := tierName(s.Tier)
 	count := fmt.Sprintf("- Protected files: %d", s.Protected)
 	if unlisted := s.Protected - len(s.Paths); unlisted > 0 {
 		count += fmt.Sprintf(" (%d listed below; %d more are not listed)", len(s.Paths), unlisted)
@@ -422,7 +381,7 @@ func BootstrapSummary(s Summary) string {
 	parts := []string{
 		"**SuiteWard bootstrap proposal " + ref + "**",
 		intro,
-		origin + "\n" + count + "\n- Installation tier: `" + tier + "`",
+		origin + "\n" + count + "\n" + tierLine(s.Tier),
 	}
 	parts = append(parts, listing("Inventory", s.Paths, len(s.Paths)), listing("Scope include rules", s.Include, s.IncludeTotal))
 	if s.Runner != nil {
@@ -432,7 +391,7 @@ func BootstrapSummary(s Summary) string {
 	if s.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}
-	parts = append(parts, review, copyable("/suiteward approve "+ref+" <code>"), after)
+	parts = append(parts, review, codeCommand("approve", ref), after)
 	return paragraphs(parts...)
 }
 
@@ -451,6 +410,9 @@ func tierName(t Tier) string {
 	panic(fmt.Sprintf("commandtext: unknown tier %d", t))
 }
 
+// tierLine is the fact that states the installation tier.
+func tierLine(t Tier) string { return "- Installation tier: `" + tierName(t) + "`" }
+
 // listing shows at most maxListed items and says how many of the total it left
 // out; a total below the items is the number of items.
 func listing(title string, items []string, total int) string {
@@ -458,21 +420,15 @@ func listing(title string, items []string, total int) string {
 	if total == 0 {
 		return title + ": none."
 	}
-	if len(items) > maxListed {
-		items = items[:maxListed]
-	}
+	items = items[:min(len(items), maxListed)]
 	if unlisted := total - len(items); unlisted > 0 {
 		title += fmt.Sprintf(" (%d listed; %d more are not listed)", len(items), unlisted)
 	}
-	shown := make([]string, len(items))
-	for i, item := range items {
-		shown[i] = display(item)
-	}
-	return title + ":\n\n" + fenced(strings.Join(shown, "\n")+"\n")
+	return title + ":\n\n" + fencedLines(items)
 }
 
 // listingAndMore is listing for paths: the entries inside a fence, then "and N more" for the ones the total counts
-// beyond them. The items are at most maxListed; a total below them is their number.
+// beyond them. The items are at most maxListed (the validators cap them); a total below them is their number.
 func listingAndMore(title string, items []string, total int) string {
 	body := listing(title, items, len(items))
 	if unlisted := total - len(items); unlisted > 0 {
@@ -481,11 +437,13 @@ func listingAndMore(title string, items []string, total int) string {
 	return body
 }
 
-// fenced shows block, which ends with a newline, in a code fence that a run of backticks inside it cannot close.
-func fenced(block string) string {
-	fence := strings.Repeat("`", max(3, longestBacktickRun(block)+1))
-	return fence + "\n" + block + fence
+// fence shows block, which ends with a newline, in a code fence that a run of backticks inside it cannot close, with info after the opening fence.
+func fence(info, block string) string {
+	ticks := strings.Repeat("`", max(3, longestBacktickRun(block)+1))
+	return ticks + info + "\n" + block + ticks
 }
+
+func fenced(block string) string { return fence("", block) }
 
 // mixedWarning says that files may hold test settings among other content and are not suggested. They are listed only
 // in text: a mixed file never goes into a declaration.
@@ -523,7 +481,7 @@ const (
 // Go-quoted so newlines, bidi controls and invalid UTF-8 are visible. The cut
 // applies to the shown text, which is valid UTF-8, so it never splits a rune.
 func display(s string) string {
-	if !utf8.ValidString(s) || strings.IndexFunc(s, func(r rune) bool { return !strconv.IsGraphic(r) }) >= 0 {
+	if notGraphic(s) {
 		s = strconv.QuoteToGraphic(s)
 	}
 	if len(s) <= maxShown {
@@ -534,6 +492,21 @@ func display(s string) string {
 		cut--
 	}
 	return s[:cut] + "… [shortened]"
+}
+
+// notGraphic reports whether s is not UTF-8 or holds a rune that is not graphic: display quotes such a string.
+func notGraphic(s string) bool {
+	return !utf8.ValidString(s) || strings.IndexFunc(s, func(r rune) bool { return !strconv.IsGraphic(r) }) >= 0
+}
+
+// declarationLayout removes the layout of a declaration: a CRLF line ending (the form of a file written on Windows), a newline and a tab.
+// A carriage return that no line feed follows is not layout.
+var declarationLayout = strings.NewReplacer("\r\n", "", "\n", "", "\t", "")
+
+// verbatim reports whether a declaration can be shown in a fence as it is: UTF-8 whose only characters that are not graphic are line
+// endings (LF or CRLF) and tabs. A fence shows no escape, so a bidi control or a zero-width space in it would reach the owner's clipboard unseen.
+func verbatim(declaration []byte) bool {
+	return !notGraphic(declarationLayout.Replace(string(declaration)))
 }
 
 func codeSpan(s string) string {
@@ -561,6 +534,11 @@ func longestBacktickRun(s string) int {
 // <code> placeholder instead of reading it as an HTML tag.
 func copyable(command string) string {
 	return "```\n" + command + "\n```\n\nReplace `<code>` with a current code from your authenticator app."
+}
+
+// codeCommand shows the command verb ref <code> to copy.
+func codeCommand(verb, ref string) string {
+	return copyable("/suiteward " + verb + " " + ref + " <code>")
 }
 
 func paragraphs(parts ...string) string {
@@ -622,61 +600,75 @@ type Revision struct {
 // It never says that tests ran. The paths come from the repository, so they are shown only inside code, bounded
 // and with control characters escaped, like the bootstrap summary.
 func RevisionComment(r Revision) string {
+	must(validateRevision(r))
 	ref := Reference(r.Proposal, r.Revision)
-	checkID("canonical version", r.Canonical)
-	tier := tierName(r.Tier)
-	if r.AddedTotal < 0 || r.ModifiedTotal < 0 || r.RemovedTotal < 0 {
-		panic(fmt.Sprintf("commandtext: negative totals %d, %d and %d", r.AddedTotal, r.ModifiedTotal, r.RemovedTotal))
-	}
-	switch {
-	case r.ReducedPathsTotal < 0 || len(r.ReducedRules) > maxListed || len(r.ReducedPaths) > maxListed:
-		panic(fmt.Sprintf("commandtext: %d reduced rules, %d reduced paths and a total of %d", len(r.ReducedRules), len(r.ReducedPaths), r.ReducedPathsTotal))
-	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
-		panic("commandtext: reduction detail on a revision that does not reduce the scope")
-	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
-		panic("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
-	}
-	var supersedes string
-	if r.Previous != "" {
-		proposal, revision, ok := parseReference(r.Previous)
-		if !ok || proposal != r.Proposal || revision >= r.Revision {
-			panic(fmt.Sprintf("commandtext: previous %q is not an earlier revision of proposal %d", r.Previous, r.Proposal))
-		}
-		supersedes = "This supersedes `" + r.Previous + "`."
-	}
 	parts := []string{
 		"**SuiteWard contract change " + ref + "**",
 		fmt.Sprintf("This pull request changes the protected files against the canonical contract V%d. SuiteWard proposes the change as %s for the owner's approval.", r.Canonical, ref),
-		"- Base canonical version: V" + strconv.Itoa(r.Canonical) + "\n- Installation tier: `" + tier + "`",
+		"- Base canonical version: V" + strconv.Itoa(r.Canonical) + "\n" + tierLine(r.Tier),
 		listing("Protected files added", r.Added, r.AddedTotal), listing("Protected files modified", r.Modified, r.ModifiedTotal), listing("Protected files removed", r.Removed, r.RemovedTotal),
 	}
 	if r.Reduced {
-		parts = append(parts, "**This revision reduces the protected scope.** Review it carefully before approving.")
-		if r.ReducedOmitted {
-			omitted := "The detail of this reduction was omitted because it did not fit in this comment. Compare `.suiteward.yml` with the canonical one before approving."
-			if r.ReducedPathsTotal > 0 {
-				omitted += fmt.Sprintf(" Paths no longer covered: %d.", r.ReducedPathsTotal)
-			}
-			parts = append(parts, omitted)
-		}
-		if len(r.ReducedRules) > 0 {
-			parts = append(parts, listing("Rules removed from the scope", r.ReducedRules, len(r.ReducedRules)))
-		}
-		if len(r.ReducedPaths) > 0 {
-			parts = append(parts, listingAndMore("Paths that the scope no longer covers", r.ReducedPaths, r.ReducedPathsTotal))
-		}
+		parts = append(parts, reductionParts(r)...)
 	}
 	if r.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}
 	parts = append(parts,
 		"This comment is a record, not an approval. SuiteWard compares the protected files only; it does not run tests. To approve this exact revision, comment:",
-		copyable("/suiteward approve "+ref+" <code>"),
+		codeCommand("approve", ref),
 	)
-	if supersedes != "" {
-		parts = append(parts, supersedes)
+	if r.Previous != "" {
+		parts = append(parts, "This supersedes `"+r.Previous+"`.")
 	}
 	return paragraphs(parts...)
+}
+
+// validateRevision reports why RevisionComment would panic on r.
+func validateRevision(r Revision) error {
+	if err := checkID("canonical version", r.Canonical); err != nil {
+		return err
+	}
+	if r.AddedTotal < 0 || r.ModifiedTotal < 0 || r.RemovedTotal < 0 {
+		return fmt.Errorf("commandtext: negative totals %d, %d and %d", r.AddedTotal, r.ModifiedTotal, r.RemovedTotal)
+	}
+	switch {
+	case r.ReducedPathsTotal < 0 || len(r.ReducedRules) > maxListed || len(r.ReducedPaths) > maxListed:
+		return fmt.Errorf("commandtext: %d reduced rules, %d reduced paths and a total of %d", len(r.ReducedRules), len(r.ReducedPaths), r.ReducedPathsTotal)
+	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
+		return errors.New("commandtext: reduction detail on a revision that does not reduce the scope")
+	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
+		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
+	}
+	if _, err := reference(r.Proposal, r.Revision); err != nil {
+		return err
+	}
+	if r.Previous == "" {
+		return nil
+	}
+	if proposal, revision, ok := ParseReference(r.Previous); !ok || proposal != r.Proposal || revision >= r.Revision {
+		return fmt.Errorf("commandtext: previous %q is not an earlier revision of proposal %d", r.Previous, r.Proposal)
+	}
+	return nil
+}
+
+// reductionParts are the paragraphs that say a revision reduces the protected scope, with what it removes.
+func reductionParts(r Revision) []string {
+	parts := []string{"**This revision reduces the protected scope.** Review it carefully before approving."}
+	if r.ReducedOmitted {
+		omitted := "The detail of this reduction was omitted because it did not fit in this comment. Compare `.suiteward.yml` with the canonical one before approving."
+		if r.ReducedPathsTotal > 0 {
+			omitted += fmt.Sprintf(" Paths no longer covered: %d.", r.ReducedPathsTotal)
+		}
+		parts = append(parts, omitted)
+	}
+	if len(r.ReducedRules) > 0 {
+		parts = append(parts, listing("Rules removed from the scope", r.ReducedRules, len(r.ReducedRules)))
+	}
+	if len(r.ReducedPaths) > 0 {
+		parts = append(parts, listingAndMore("Paths that the scope no longer covers", r.ReducedPaths, r.ReducedPathsTotal))
+	}
+	return parts
 }
 
 // BootstrapNotice renders the comment that tells the owner how to start or skip the bootstrap.
@@ -701,9 +693,22 @@ func BootstrapCancelled(proposal, revision int) string {
 	)
 }
 
-// editStep is the paragraph that links to GitHub's editor for .suiteward.yml on the branch of the file a refusal asks to fix, led by lead; none
+// commitNote ends every sentence that sends the owner to GitHub's editor.
+const commitNote = "SuiteWard never commits it for you: the commit is yours."
+
+// editorStep is the paragraph that sends the owner to GitHub's editor: lead says what to change and where, link is the Markdown link.
+func editorStep(lead, link string) string {
+	return "\n\n" + lead + ", " + link + ". " + commitNote
+}
+
+// pasteStep is the sentence that sends the owner to the editor of .suiteward.yml on the pull request's branch to paste a declaration.
+func pasteStep(repo, branch string) string {
+	return "To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](" + editLink(repo, branch) + ") and paste the declaration. " + commitNote
+}
+
+// refusalStep is the paragraph that links to GitHub's editor for .suiteward.yml on the branch of the file a refusal asks to fix, led by lead; none
 // for an acknowledgment without the link.
-func editStep(a Ack, lead string) string {
+func refusalStep(a Ack, lead string) string {
 	if a.Branch == "" {
 		return ""
 	}
@@ -711,7 +716,7 @@ func editStep(a Ack, lead string) string {
 	if a.Base == BaseDefaultBranch {
 		where = "the default branch"
 	}
-	return "\n\n" + lead + " `.suiteward.yml` on " + where + ", [open GitHub's editor for it](" + editLink(a.Repo, a.Branch) + "). SuiteWard never commits it for you: the commit is yours."
+	return editorStep(lead+" `.suiteward.yml` on "+where, "[open GitHub's editor for it]("+editLink(a.Repo, a.Branch)+")")
 }
 
 // refused renders a refusal: the command, why it was not processed and what to do next.
@@ -719,68 +724,63 @@ func refused(command, reason, next string) string {
 	return paragraphs("`" + command + "` was not processed: " + reason + ". Nothing changed.\n" + next)
 }
 
-func suggestRefusal(a Ack) string {
-	r, base := a.Refusal, a.Base
-	const suggest = "/suiteward suggest"
-	switch r {
-	case Fork:
-		return refused(suggest, "this pull request comes from a fork, and pull requests from forks are not supported yet",
-			"Open the pull request from a branch of this repository, then comment `/suiteward suggest` there.")
-	case NotOpen:
-		return refused(suggest, "this pull request is no longer open", "Comment `/suiteward suggest` on an open pull request.")
-	case InvalidSource:
-		if base != 0 { // the file that failed, named and not quoted
-			_, file := baseNames(base)
-			return refused(suggest, file+" is not a valid declaration", "Fix the declaration, then comment `/suiteward suggest` again."+editStep(a, "To change"))
-		}
-		return refused(suggest, "SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
-			"Fix the files or the declaration, then comment `/suiteward suggest` again.")
-	case DeclarationTooLarge:
-		return refused(suggest, "the suggested declaration would be too large for a comment",
-			"Review the test-like paths of this pull request and add the missing patterns to `.suiteward.yml` yourself."+editStep(a, "To change"))
-	}
-	panic(fmt.Sprintf("commandtext: unknown suggest refusal %d", r))
+// refusalText is the account of one refusal: why the command was not processed, what to do next, and, for a refusal that asks to fix
+// .suiteward.yml, the lead of the editor link that follows (see refusalStep).
+type refusalText struct{ reason, next, edit string }
+
+// refusalSet is the refusals of one outcome, with the command they answer.
+type refusalSet struct {
+	command string
+	reasons map[Refusal]refusalText
 }
 
-func skipRefusal(r Refusal) string {
-	const skip = "/suiteward skip"
-	switch r {
-	case CanonicalPresent:
-		return refused(skip, "this repository already has a canonical contract, so there is nothing to skip", "Pull requests are assessed against that contract.")
-	case Fork:
-		return refused(skip, "this pull request comes from a fork, and pull requests from forks are not supported yet",
-			"Open the pull request from a branch of this repository.")
-	case Carrier:
-		return refused(skip, "this pull request carries the first contract proposal",
-			"Review the bootstrap summary on this pull request, or comment `/suiteward propose` on another pull request to move the first contract there.")
-	}
-	panic(fmt.Sprintf("commandtext: unknown skip refusal %d", r))
+const (
+	forkReason    = "this pull request comes from a fork, and pull requests from forks are not supported yet"
+	notOpenReason = "this pull request is no longer open"
+)
+
+// refusals is the one table of the refusals that an outcome may carry: ValidateAck reads which fit, and Acknowledge their text.
+var refusals = map[Outcome]refusalSet{
+	ProposeRefused: {"/suiteward propose", map[Refusal]refusalText{
+		CanonicalPresent: {"this repository already has a canonical contract, so there is no first contract to propose",
+			"Changes to the protected files are proposed, for your approval, on the pull request that makes them.", ""},
+		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward propose` there.", ""},
+		NotOpen: {notOpenReason, "Comment `/suiteward propose` on an open pull request into the default branch.", ""},
+		BaseNotTarget: {"this pull request does not target the default branch, so its merge could never become the first contract",
+			"Open the pull request into the default branch, then comment `/suiteward propose` there.", ""},
+		EmptyInventory: {"no file matches the include rules of `.suiteward.yml`, so there is nothing to protect",
+			"Fix the `include` rules so they match the files you want protected, then comment `/suiteward propose` again.", ""},
+		InvalidSource: {"SuiteWard could not read the files to protect as a contract: the `.suiteward.yml` declaration is invalid, a protected path is a link, or the repository tree is too large",
+			"Fix the declaration or the files, then comment `/suiteward propose` again.", "If the declaration is the problem, to change"},
+	}},
+	SkipRefused: {"/suiteward skip", map[Refusal]refusalText{
+		CanonicalPresent: {"this repository already has a canonical contract, so there is nothing to skip", "Pull requests are assessed against that contract.", ""},
+		Fork:             {forkReason, "Open the pull request from a branch of this repository.", ""},
+		Carrier: {"this pull request carries the first contract proposal",
+			"Review the bootstrap summary on this pull request, or comment `/suiteward propose` on another pull request to move the first contract there.", ""},
+	}},
+	SuggestRefused: {"/suiteward suggest", map[Refusal]refusalText{
+		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward suggest` there.", ""},
+		NotOpen: {notOpenReason, "Comment `/suiteward suggest` on an open pull request.", ""},
+		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
+			"Fix the files or the declaration, then comment `/suiteward suggest` again.", ""},
+		DeclarationTooLarge: {"the suggested declaration would be too large for a comment",
+			"Review the test-like paths of this pull request and add the missing patterns to `.suiteward.yml` yourself.", "To change"},
+	}},
 }
 
-func proposeRefusal(a Ack) string {
-	r := a.Refusal
-	const propose = "/suiteward propose"
-	switch r {
-	case CanonicalPresent:
-		return refused(propose, "this repository already has a canonical contract, so there is no first contract to propose",
-			"Changes to the protected files are proposed, for your approval, on the pull request that makes them.")
-	case Fork:
-		return refused(propose, "this pull request comes from a fork, and pull requests from forks are not supported yet",
-			"Open the pull request from a branch of this repository, then comment `/suiteward propose` there.")
-	case NotOpen:
-		return refused(propose, "this pull request is no longer open",
-			"Comment `/suiteward propose` on an open pull request into the default branch.")
-	case BaseNotTarget:
-		return refused(propose, "this pull request does not target the default branch, so its merge could never become the first contract",
-			"Open the pull request into the default branch, then comment `/suiteward propose` there.")
-	case EmptyInventory:
-		return refused(propose, "no file matches the include rules of `.suiteward.yml`, so there is nothing to protect",
-			"Fix the `include` rules so they match the files you want protected, then comment `/suiteward propose` again.")
-	case InvalidSource:
-		return refused(propose, "SuiteWard could not read the files to protect as a contract: the `.suiteward.yml` declaration is invalid, a protected path is a link, or the repository tree is too large",
-			"Fix the declaration or the files, then comment `/suiteward propose` again."+editStep(a, "If the declaration is the problem, to change"))
+// refusal renders the refusal of a propose, a skip or a suggest. A suggest whose file is invalid names the file that failed, not quoted.
+func refusal(a Ack) string {
+	set := refusals[a.Outcome]
+	text, known := set.reasons[a.Refusal]
+	if !known {
+		panic(fmt.Sprintf("commandtext: unknown refusal %d of outcome %d", a.Refusal, a.Outcome))
 	}
-	panic(fmt.Sprintf("commandtext: unknown propose refusal %d", r))
+	if a.Outcome == SuggestRefused && a.Refusal == InvalidSource && a.Base != 0 {
+		_, file := baseNames(a.Base)
+		text = refusalText{file + " is not a valid declaration", "Fix the declaration, then comment `/suiteward suggest` again.", "To change"}
+	}
+	return refused(set.command, text.reason, text.next+refusalStep(a, text.edit))
 }
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}/[A-Za-z0-9._-]{1,100}$`)
@@ -816,9 +816,7 @@ type DeclarationSuggestion struct {
 // one would change the rule), the branch is path-escaped and the declaration is URL-encoded. The repository name
 // and the branch are validated, and one that cannot be a GitHub repository or a git ref panics.
 func SuggestDeclaration(a DeclarationSuggestion) string {
-	if err := ValidateSuggestion(a); err != nil {
-		panic(err.Error())
-	}
+	must(ValidateSuggestion(a))
 	usable, runner := suggestableOnly(a.Patterns), suggestableOnly(a.Runner)
 	left := len(a.Patterns) + len(a.Runner) - len(usable) - len(runner)
 	intro := "SuiteWard suggests this declaration, built from the test-like paths of this repository. Review it and change it as needed:"
@@ -853,7 +851,7 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 	link := newLink(a.Repo, a.Branch) + "&value=" +
 		strings.ReplaceAll(url.QueryEscape(declaration), "+", "%20")
 	return replyTo(paragraphs(append(parts,
-		"To add it on this pull request's branch, [open GitHub's editor with this file filled in]("+link+"). SuiteWard never commits it for you: the commit is yours.",
+		"To add it on this pull request's branch, [open GitHub's editor with this file filled in]("+link+"). "+commitNote,
 		last,
 	)...), a.Source)
 }
@@ -904,26 +902,30 @@ func ValidateSuggestion(a DeclarationSuggestion) error {
 	if a.Source <= 0 {
 		return fmt.Errorf("commandtext: source comment %d does not fit a suggestion", a.Source)
 	}
-	if err := checkRepoAndBranch(a.Repo, a.Branch); err != nil {
+	if err := ValidateEditTarget(a.Repo, a.Branch); err != nil {
 		return err
 	}
-	if len(a.Patterns)+len(a.Runner) > maxListed {
-		return fmt.Errorf("commandtext: %d suggested patterns, at most %d", len(a.Patterns)+len(a.Runner), maxListed)
-	}
-	if len(a.Mixed) > maxListed {
-		return fmt.Errorf("commandtext: %d mixed files, at most %d", len(a.Mixed), maxListed)
-	}
-	if len(a.Submodules) > maxListed {
-		return fmt.Errorf("commandtext: %d submodules, at most %d", len(a.Submodules), maxListed)
+	if err := errors.Join(checkListed("suggested patterns", len(a.Patterns)+len(a.Runner)), checkListed("mixed files", len(a.Mixed)), checkListed("submodules", len(a.Submodules))); err != nil {
+		return err
 	}
 	if a.Declared && !a.Suggest {
-		return fmt.Errorf("commandtext: a declaration that exists is stated only in the reply of a suggest")
+		return errors.New("commandtext: a declaration that exists is stated only in the reply of a suggest")
 	}
 	return nil
 }
 
-// checkRepoAndBranch reports a repository that is not owner/name or a branch that is not a git ref name.
-func checkRepoAndBranch(repo, branch string) error {
+// checkListed reports a list of what that holds more than maxListed items.
+func checkListed(what string, n int) error {
+	if n > maxListed {
+		return fmt.Errorf("commandtext: %d %s, at most %d", n, what, maxListed)
+	}
+	return nil
+}
+
+// ValidateEditTarget reports why a repository and a branch cannot make the link to GitHub's editor, as an error that quotes
+// them: a repository that is not owner/name or a branch that is not a git ref name. The caller that stores the pair (see Ack)
+// says only that it does not fit.
+func ValidateEditTarget(repo, branch string) error {
 	if _, name, _ := strings.Cut(repo, "/"); !repoPattern.MatchString(repo) || name == "." || name == ".." {
 		return fmt.Errorf("commandtext: %q is not a GitHub repository", repo)
 	}
@@ -943,7 +945,3 @@ func gitBranch(b string) bool {
 	}
 	return !bad
 }
-
-// ValidateEditTarget reports why a repository and a branch cannot make the link to GitHub's editor, as an error that quotes
-// them: the caller that stores the pair (see Ack) says only that it does not fit.
-func ValidateEditTarget(repo, branch string) error { return checkRepoAndBranch(repo, branch) }

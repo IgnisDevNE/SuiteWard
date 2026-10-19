@@ -6,7 +6,7 @@
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
 // (with its Command: Verb Approve, Revoke, Propose, Skip or Suggest, Proposal, Revision and Code; Propose and Suggest have
 // neither reference nor code, Skip only a code) or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
-// MissingCode, BadCode or ExtraText). Reference formats P<n>-R<m>.
+// MissingCode, BadCode or ExtraText). Reference writes P<n>-R<m> and ParseReference reads it.
 //
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
@@ -19,20 +19,22 @@
 // DeclarationSuggestion (include and runner patterns, a cut notice and the mixed files it does not suggest) as the reply
 // to a propose without a declaration, or, with Suggest set, as the reply to /suiteward suggest. After the first contract, ScopeNoticeComment renders a ScopeNotice, the test-like
 // paths that the contract does not protect with the declaration to commit, and ScopeSuggestionBody renders the body of a
-// review comment that suggests new patterns for a list of .suiteward.yml. None takes any comment
-// text, so a body can never echo a comment or a code. None adds the marker: the
+// review comment that suggests new patterns for a list of .suiteward.yml. RunnerUncoveredComment renders the comment of a
+// runner-uncovered check, with RunnerChoiceBody for its review suggestions, InvalidSourceComment the comment of an
+// invalid-source check, CheckSummary the output of a check run and MergeComment the outcome of a merged pull request.
+// None takes any comment text, so a body can never echo a comment or a code. None adds the marker: the
 // publisher appends Marker(instance, key), and HasMarker recognizes it.
 //
 // Values that callers take from storage (references, versions, logins, the
 // origin SHA, marker arguments) are validated, and an invalid one panics: it
-// is an impossible state, not user input.
+// is an impossible state, not user input. A caller that stores a payload checks it where it builds it with
+// ValidateAck, ValidateSuggestion, ValidateScopeNotice, ValidateScopeSuggestion, ValidateRunnerUncovered,
+// ValidateRunnerChoice, ValidateInvalidSource or ValidateEditTarget: each reports as an error what its renderer panics on.
+// A declaration that a comment shows in a fence is shown as it is, so those validators refuse one that holds a character that
+// is not graphic other than a newline (LF or CRLF) and a tab.
 package commandtext
 
-import (
-	"fmt"
-	"strconv"
-	"strings"
-)
+import "strings"
 
 // Kind is the kind of a parsed comment body.
 type Kind uint8
@@ -86,10 +88,7 @@ type Parsed struct {
 	Reason  Reason
 }
 
-const (
-	maxID  = 999999999
-	prefix = "/suiteward"
-)
+const prefix = "/suiteward"
 
 // Parse reads the command line of a comment body (D-COMMANDS): the first line
 // outside fenced code blocks whose text, trimmed of spaces and tabs, starts
@@ -163,7 +162,7 @@ func parseLine(rest string) Parsed {
 	if len(tokens) < 2 {
 		return bad(MissingReference)
 	}
-	proposal, revision, ok := parseReference(tokens[1])
+	proposal, revision, ok := ParseReference(tokens[1])
 	if !ok {
 		return bad(BadReference)
 	}
@@ -192,30 +191,6 @@ func parseSkip(args []string) Parsed {
 	return Parsed{Kind: KindCommand, Command: Command{Verb: Skip, Code: args[0]}}
 }
 
-func parseReference(ref string) (proposal, revision int, ok bool) {
-	p, r, found := strings.Cut(ref, "-")
-	p, okP := strings.CutPrefix(p, "P")
-	r, okR := strings.CutPrefix(r, "R")
-	if !found || !okP || !okR {
-		return 0, 0, false
-	}
-	proposal, okP = parseID(p)
-	revision, okR = parseID(r)
-	return proposal, revision, okP && okR
-}
-
-// parseID accepts 1..999999999 in ASCII decimal with no sign or leading zero.
-func parseID(s string) (int, bool) {
-	if s == "" || len(s) > 9 || s[0] == '0' || !digits(s) {
-		return 0, false
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		panic(fmt.Sprintf("commandtext: validated id %q did not convert: %v", s, err))
-	}
-	return n, true
-}
-
 func digits(s string) bool {
 	for i := range len(s) {
 		if s[i] < '0' || s[i] > '9' {
@@ -223,20 +198,6 @@ func digits(s string) bool {
 		}
 	}
 	return true
-}
-
-// Reference returns P<n>-R<m>. Callers pass stored ids, so a value outside
-// 1..999999999 is an impossible state and panics.
-func Reference(proposal, revision int) string {
-	checkID("proposal", proposal)
-	checkID("revision", revision)
-	return fmt.Sprintf("P%d-R%d", proposal, revision)
-}
-
-func checkID(name string, id int) {
-	if id < 1 || id > maxID {
-		panic(fmt.Sprintf("commandtext: %s id %d is outside 1..%d", name, id, maxID))
-	}
 }
 
 // asciiLower lowers A-Z only, so no other Unicode character (the long s, the Kelvin sign) folds into a letter of the

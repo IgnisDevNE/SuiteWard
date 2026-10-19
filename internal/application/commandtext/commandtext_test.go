@@ -335,13 +335,13 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"invalid code",
 			commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The confirmation code for P4-R2 was not accepted; nothing changed.", "current code"},
+			[]string{"The confirmation code for P4-R2 was not accepted, so the command had no effect. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a current code, or push."},
 			[]string{"eligible"},
 		},
 		{
 			"replayed code",
 			commandtext.Ack{Outcome: commandtext.ReplayedCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The confirmation code for P4-R2 was already used; each code works only once, so nothing changed.", "new code"},
+			[]string{"The confirmation code for P4-R2 was already used, so the command had no effect; each code works only once. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a new code, or push.", "new code"},
 			[]string{"eligible"},
 		},
 		{
@@ -378,28 +378,15 @@ func TestAcknowledge(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if err := commandtext.ValidateAck(tc.ack); err != nil {
+				t.Errorf("ValidateAck refuses it: %v", err)
+			}
 			body := render(t, func() string { return commandtext.Acknowledge(tc.ack) })
 			if body == "" {
 				t.Fatal("empty body")
 			}
-			for _, w := range tc.want {
-				if !strings.Contains(body, w) {
-					t.Errorf("body lacks %q:\n%s", w, body)
-				}
-			}
-			for _, w := range tc.notWant {
-				if strings.Contains(body, w) {
-					t.Errorf("body contains %q:\n%s", w, body)
-				}
-			}
-			link := "[your command](#issuecomment-2345678901)"
-			if tc.ack.Outcome == commandtext.BootstrapPromoted {
-				if strings.Contains(body, "#issuecomment") {
-					t.Errorf("body links a command that did not trigger it:\n%s", body)
-				}
-			} else if !strings.Contains(body, link) {
-				t.Errorf("body lacks %q:\n%s", link, body)
-			}
+			checkWantedText(t, body, tc.want, tc.notWant)
+			checkReplyLink(t, tc.ack.Outcome, body)
 			if strings.Contains(body, "http") {
 				t.Errorf("body holds a host name or URL:\n%s", body)
 			}
@@ -410,6 +397,34 @@ func TestAcknowledge(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// checkWantedText holds when body contains each of want and none of notWant.
+func checkWantedText(t *testing.T, body string, want, notWant []string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	for _, w := range notWant {
+		if strings.Contains(body, w) {
+			t.Errorf("body contains %q:\n%s", w, body)
+		}
+	}
+}
+
+// checkReplyLink holds when body links the command comment, except for the acknowledgment of a bootstrap promotion, which no command triggered.
+func checkReplyLink(t *testing.T, outcome commandtext.Outcome, body string) {
+	t.Helper()
+	link := "[your command](#issuecomment-2345678901)"
+	if outcome == commandtext.BootstrapPromoted {
+		if strings.Contains(body, "#issuecomment") {
+			t.Errorf("body links a command that did not trigger it:\n%s", body)
+		}
+	} else if !strings.Contains(body, link) {
+		t.Errorf("body lacks %q:\n%s", link, body)
 	}
 }
 
@@ -462,6 +477,9 @@ func TestAcknowledgePanicsOnImpossibleState(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mustPanic(t, func() { commandtext.Acknowledge(tc.ack) })
+			if commandtext.ValidateAck(tc.ack) == nil {
+				t.Error("ValidateAck accepts it")
+			}
 		})
 	}
 }

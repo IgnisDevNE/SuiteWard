@@ -37,10 +37,7 @@ const (
 )
 
 var (
-	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`) // GitHub's caps: a payload is measured with the longest name
-	referencePattern = regexp.MustCompile(`^P([1-9][0-9]{0,8})-R([1-9][0-9]{0,8})$`)
-	// loginPattern is commandtext's: the renderer panics on any other owner.
-	loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$`)
+	repoPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`) // as config accepts a repository (GitHub's caps): commandtext exports no repository check without a branch
 )
 
 // validate reports why the target cannot name a pull request.
@@ -151,18 +148,6 @@ var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.Suggested: commandtext.NothingUncovered, commands.SuggestRefused: commandtext.SuggestRefused,
 }
 
-// referenceRule says whether the acknowledgment of d names a reference: always, never, or only when the command had one
-// (a skip and a propose have none, so their code outcomes and no-suite come without).
-func referenceRule(d commands.Disposition) (required, allowed bool) {
-	switch d {
-	case commands.UnknownProposal, commands.Proposed:
-		return true, true
-	case commands.InvalidCode, commands.ReplayedCode, commands.NoSuite:
-		return false, true
-	}
-	return false, false
-}
-
 // reasonFits reports whether reason is one a payload of d may carry.
 func reasonFits(d commands.Disposition, reason string) bool {
 	switch d {
@@ -195,28 +180,6 @@ func (a ackPayload) scopeNotice() bool {
 	return a.Disposition == string(commands.Suggested) && a.Reason == reasonScopeNotice
 }
 
-// nothingUncovered is whether the payload is the answer of a suggest that found every test-like path covered.
-func (a ackPayload) nothingUncovered() bool {
-	return a.Disposition == string(commands.Suggested) && a.Reason == reasonNothingUncovered
-}
-
-// namesFile is whether the payload is the refusal of a suggest whose base file is not a valid declaration, or of a propose whose source is invalid,
-// which names the file in Base: the head's or the default branch's. The contract is no file of a branch.
-func (a ackPayload) namesFile() bool {
-	return a.Reason == refusalInvalidSource && (a.Disposition == string(commands.SuggestRefused) || a.Disposition == string(commands.ProposeRefused) && a.Base != baseContract)
-}
-
-// editable is whether the payload may carry the Branch of the file to edit: a refusal that names its file, or a suggest whose declaration is too large.
-func (a ackPayload) editable() bool {
-	return (a.namesFile() && (a.Base == basePull || a.Base == baseDefaultBranch)) || (a.tooLarge() && (a.Base == "" || a.Base == baseDefaultBranch))
-}
-
-// tooLarge is whether the payload is the refusal of a suggest whose suggested declaration is too large for a comment. Its Base is none for the
-// pull request's file, or the default branch's when that was the base.
-func (a ackPayload) tooLarge() bool {
-	return a.Disposition == string(commands.SuggestRefused) && a.Reason == reasonDeclarationTooLarge
-}
-
 // hasNotice is whether the payload holds any field that only a scope notice uses. Base is not one: nothing-uncovered names it too.
 func (a ackPayload) hasNotice() bool {
 	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != "" || len(a.AddInclude) != 0 || len(a.AddRunner) != 0 || a.DefaultBranch != ""
@@ -238,12 +201,13 @@ func (a ackPayload) suggestion() commandtext.DeclarationSuggestion {
 	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Submodules: a.Submodules, Cut: a.Cut, Suggest: a.Disposition == string(commands.Suggested), Declared: a.Declared}
 }
 
-// validate reports why the payload cannot be rendered, without quoting it.
+// validate reports why the payload cannot be rendered, without quoting it. The shape of an acknowledgment is commandtext's (ValidateAck); what is
+// checked here is the envelope: which of the shapes the payload is, and the fields that no Ack carries.
 func (a ackPayload) validate() error {
 	if err := a.commentTarget.validate(); err != nil {
 		return err
 	}
-	if a.Comment <= 0 || !loginPattern.MatchString(a.Owner) {
+	if a.Comment <= 0 || !commandtext.ValidLogin(a.Owner) {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
@@ -259,29 +223,37 @@ func (a ackPayload) validate() error {
 	if !reasonFits(d, a.Reason) {
 		return errors.New("the reason does not fit the disposition")
 	}
-	required, allowed := referenceRule(d)
-	if (required && a.Reference == "") || (!allowed && a.Reference != "") {
-		return errors.New("the reference fits only a command that parsed")
-	}
-	if a.Reference != "" {
-		if _, _, ok := parseReference(a.Reference); !ok {
-			return errors.New("the reference is not P<n>-R<m>")
-		}
-	}
 	if _, known := scopeBases[a.Base]; !known && a.Base != "" {
 		return errors.New("the base is unknown")
 	}
 	switch {
 	case a.scopeNotice():
 		return a.validateNotice()
-	case !a.declarationMissing():
-		if (a.Branch != "" && !a.editable()) || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered() && !a.namesFile() && !a.tooLarge()) {
-			return errors.New("the branch, the suggestion and the notice fit only a missing declaration, a scope notice or a refusal that names its file")
-		}
-		if a.Branch != "" && commandtext.ValidateEditTarget(a.Repo, a.Branch) != nil {
-			return errors.New("the repository or the branch does not make an editor link")
-		}
-		return nil
+	case a.declarationMissing():
+		return a.validateMissing()
+	}
+	return a.validateRejected()
+}
+
+// validateRejected reports why the payload of an acknowledgment that has no receipt cannot be rendered.
+func (a ackPayload) validateRejected() error {
+	if a.suggested() || a.hasNotice() || a.Declared {
+		return errors.New("the suggestion and the notice fit only a missing declaration or a scope notice")
+	}
+	if _, _, ok := commandtext.ParseReference(a.Reference); a.Reference != "" && !ok { // an unreadable reference would render as none
+		return errors.New("the reference is not P<n>-R<m>")
+	}
+	if commandtext.ValidateAck(rejectedAckOf(a)) != nil { // its text quotes the owner and the branch, so only a fixed reason is kept
+		return errors.New("the acknowledgment does not fit its disposition")
+	}
+	return nil
+}
+
+// validateMissing reports why a declaration-missing payload cannot be rendered.
+func (a ackPayload) validateMissing() error {
+	switch {
+	case a.Reference != "":
+		return errors.New("a missing declaration names no reference")
 	case a.hasNotice() || a.Base != "":
 		return errors.New("a missing declaration holds no scope notice")
 	case a.Declared && a.Disposition != string(commands.Suggested):
@@ -404,16 +376,6 @@ func newAck(p ackPayload) (governance.OutboxMessage, error) {
 	}
 	key := fmt.Sprintf("%s:%d:%d", ackKey, p.RepositoryID, p.Comment)
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
-}
-
-func parseReference(s string) (proposal, revision int, ok bool) {
-	m := referencePattern.FindStringSubmatch(s)
-	if m == nil {
-		return 0, 0, false
-	}
-	proposal, _ = strconv.Atoi(m[1]) // the pattern admits one to nine digits
-	revision, _ = strconv.Atoi(m[2])
-	return proposal, revision, true
 }
 
 // lazy resolves a value on first use and keeps it. A failure is returned and the next call tries again, so
@@ -683,7 +645,7 @@ func rejectedAckOf(a ackPayload) commandtext.Ack {
 		ack.Refusal = suggestRefusals[a.Reason]
 	}
 	if a.Reference != "" {
-		ack.Proposal, ack.Revision, _ = parseReference(a.Reference)
+		ack.Proposal, ack.Revision, _ = commandtext.ParseReference(a.Reference)
 	}
 	return ack
 }
@@ -698,7 +660,7 @@ var rejections = map[contract.ConsentReason]commandtext.Rejection{
 // processing time, and the promotion that already happened for a proposal that is canonical.
 func ackOf(receipt governance.ConsentReceipt, ownerLogin string, comment int64) (commandtext.Ack, error) {
 	reference := receipt.Result.Command().Reference()
-	proposal, revision, ok := parseReference(string(reference.ProposalID) + "-" + string(reference.RevisionID))
+	proposal, revision, ok := commandtext.ParseReference(string(reference.ProposalID) + "-" + string(reference.RevisionID))
 	if !ok {
 		return commandtext.Ack{}, errors.New("the receipt does not name a P<n>-R<m> reference")
 	}
@@ -738,7 +700,7 @@ func (p *commentPublisher) summary(key, tail string, payload json.RawMessage) (c
 	if err != nil {
 		return commentTarget{}, "", err
 	}
-	proposal, revision, ok := parseReference(tail)
+	proposal, revision, ok := commandtext.ParseReference(tail)
 	if !ok || s.validate() != nil || s.Summary.Proposal != proposal || s.Summary.Revision != revision {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
@@ -755,7 +717,7 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 	if err != nil {
 		return commentTarget{}, "", err
 	}
-	proposal, revision, ok := parseReference(tail)
+	proposal, revision, ok := commandtext.ParseReference(tail)
 	if !ok || b.validate() != nil || b.Reference != tail || b.Version != string(firstVersion) {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
@@ -789,7 +751,7 @@ func (p *commentPublisher) cancelled(key, tail string, payload json.RawMessage) 
 	if err != nil {
 		return commentTarget{}, "", err
 	}
-	proposal, revision, ok := parseReference(tail)
+	proposal, revision, ok := commandtext.ParseReference(tail)
 	if !ok || c.validate() != nil || c.Reference != tail {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
@@ -842,7 +804,7 @@ func (p mergePayload) merge() (commandtext.Merge, error) {
 	}
 	if p.Reference != "" {
 		var valid bool
-		if m.Proposal, m.Revision, valid = parseReference(p.Reference); !valid {
+		if m.Proposal, m.Revision, valid = commandtext.ParseReference(p.Reference); !valid {
 			return commandtext.Merge{}, errors.New("the reference is not P<n>-R<m>")
 		}
 	}
@@ -931,7 +893,7 @@ type revisionPayload struct {
 
 // revision maps the payload to the values the renderer takes. The renderer checks the rest and panics on what cannot be stored.
 func (p revisionPayload) revision() (commandtext.Revision, error) {
-	proposal, revision, validReference := parseReference(p.Reference)
+	proposal, revision, validReference := commandtext.ParseReference(p.Reference)
 	canonical, validCanonical := parseVersion(p.Canonical)
 	var tier commandtext.Tier
 	switch p.Tier {

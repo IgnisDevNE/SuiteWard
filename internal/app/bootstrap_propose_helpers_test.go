@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
@@ -24,7 +25,7 @@ func proposeBaseline(t *testing.T, uow governance.UnitOfWork, content governance
 		t.Fatal(err)
 	}
 	reference := contract.ProposalReference{ProjectID: project, SuiteID: defaultSuite, ProposalID: id, RevisionID: "R1"}
-	proposal, revision, _ := parseReference(referenceText(reference))
+	proposal, revision, _ := commandtext.ParseReference(referenceText(reference))
 	tree := &bootTree{files: files}
 	inv, err := inventory.Build(t.Context(), tree)
 	if err != nil {

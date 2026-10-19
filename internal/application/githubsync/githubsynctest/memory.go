@@ -306,16 +306,16 @@ func (m *Memory) RecordClosed(ctx context.Context, repo string, closed []githubs
 		if item.UpdatedAt.After(latest) {
 			latest = item.UpdatedAt
 		}
-		if _, stored := r.pulls[item.Number]; r.hasWatermark && !stored && !item.MergedAt.IsZero() && item.UpdatedAt.After(r.watermark) {
+		if _, stored := r.pulls[item.Number]; r.hasWatermark && !stored && !item.MergedAt.IsZero() && !item.UpdatedAt.Before(r.watermark) {
 			r.pulls[item.Number] = githubsync.PullState{Number: item.Number, HeadSHA: item.HeadSHA, HeadRef: item.HeadRef, BaseRef: item.BaseRef, BaseSHA: item.BaseSHA,
 				UpdatedAt: item.UpdatedAt, FirstSeen: at, LastSeen: at, NotOpenSince: at, HeadRepo: item.HeadRepo}
 		}
 	}
-	if !r.hasWatermark { // the first call only sets the watermark; an empty listing sets the epoch, so the next call is not a first one
+	if !r.hasWatermark { // the first call only sets the watermark, one microsecond past its newest item so that the listing is history; an empty listing sets the epoch, so the next call is not a first one
 		if latest.IsZero() {
 			latest = time.Unix(0, 0)
 		}
-		r.watermark, r.hasWatermark = latest, true
+		r.watermark, r.hasWatermark = latest.Add(time.Microsecond), true
 	} else if latest.After(r.watermark) {
 		r.watermark = latest
 	}

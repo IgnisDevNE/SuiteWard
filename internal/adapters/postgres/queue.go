@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -148,11 +149,12 @@ func (s *Store) SystemStatus(ctx context.Context, jobID int64, outboxKey string)
 // messages that used every attempt are failed instead of claimed.
 func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (ClaimOutboxResult, error) {
 	q := dbgen.New(s.pool)
-	abandoned, err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: int32(params.MaxAttempts)})
+	maxAttempts, batch := int32(min(params.MaxAttempts, math.MaxInt32)), int32(min(params.Limit, math.MaxInt32)) // an oversized bound must not wrap
+	abandoned, err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: maxAttempts})
 	if err != nil {
 		return ClaimOutboxResult{}, fmt.Errorf("fail exhausted outbox messages: %w", err)
 	}
-	rows, err := q.ClaimOutbox(ctx, dbgen.ClaimOutboxParams{Now: timestamp(params.Now), LeaseUntil: timestamp(params.Now.Add(params.Lease)), MaxAttempts: int32(params.MaxAttempts), Batch: int32(params.Limit)})
+	rows, err := q.ClaimOutbox(ctx, dbgen.ClaimOutboxParams{Now: timestamp(params.Now), LeaseUntil: timestamp(params.Now.Add(params.Lease)), MaxAttempts: maxAttempts, Batch: batch})
 	if err != nil {
 		return ClaimOutboxResult{}, fmt.Errorf("claim outbox messages: %w", err)
 	}

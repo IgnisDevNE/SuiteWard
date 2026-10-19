@@ -15,6 +15,8 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
+var _ governance.Seeder = (*Store)(nil)
+
 // Seed writes the trusted initial state of one Suite in one transaction. It
 // takes the Suite's revision as given, never advances it, and does not verify
 // artifact content: seeded history was verified by whatever produced it.
@@ -31,18 +33,7 @@ func (s *Store) Seed(ctx context.Context, seed governance.Seed) error {
 	if err != nil {
 		return fmt.Errorf("begin seed transaction: %w", err)
 	}
-	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		rollback, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
-		defer cancel()
-		// The rollback must outlive a canceled ctx. Its own failure means the
-		// connection is gone: the server aborts the transaction and the pool
-		// discards the connection, so the original outcome is what matters.
-		_ = transaction.Rollback(rollback)
-	}()
+	defer rollback(ctx, transaction) // a no-op after the commit
 	if err := writeSeed(ctx, dbgen.New(transaction), seed); err != nil {
 		return err
 	}
@@ -52,7 +43,6 @@ func (s *Store) Seed(ctx context.Context, seed governance.Seed) error {
 	if err := transaction.Commit(ctx); err != nil {
 		return seedFailure("commit seed", err)
 	}
-	committed = true
 	return nil
 }
 

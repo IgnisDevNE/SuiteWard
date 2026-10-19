@@ -279,22 +279,12 @@ func (s *Store) RecordClosed(ctx context.Context, repo string, closed []githubsy
 		return err
 	}
 	found, err := s.withRepository(ctx, repo, func(q *dbgen.Queries, watermark pgtype.Timestamptz) error {
-		var latest time.Time
-		fresh := []pullRow{}
-		for _, item := range closed {
-			if item.UpdatedAt.After(latest) {
-				latest = item.UpdatedAt
-			}
-			if watermark.Valid && !item.MergedAt.IsZero() && item.UpdatedAt.After(watermark.Time) {
-				pull := item.ObservedPull
-				fresh = append(fresh, pullRow{Number: pull.Number, HeadSHA: pull.HeadSHA, HeadRef: pull.HeadRef, BaseRef: pull.BaseRef, BaseSHA: pull.BaseSHA, UpdatedAt: pull.UpdatedAt, HeadRepo: pull.HeadRepo})
-			}
-		}
-		if !watermark.Valid { // the first call only sets the watermark; an empty listing sets the epoch, so the next call is not a first one
+		fresh, latest := closedBatch(closed, watermark)
+		if !watermark.Valid { // the first call only sets the watermark, one microsecond past its newest item so that the listing is history; an empty listing sets the epoch, so the next call is not a first one
 			if latest.IsZero() {
 				latest = time.Unix(0, 0)
 			}
-			return q.SetClosedWatermark(ctx, dbgen.SetClosedWatermarkParams{Repo: repo, Watermark: timestamp(latest)})
+			return q.SetClosedWatermark(ctx, dbgen.SetClosedWatermarkParams{Repo: repo, Watermark: timestamp(latest.Add(time.Microsecond))})
 		}
 		if len(fresh) > 0 {
 			pulls, err := json.Marshal(fresh)
@@ -317,6 +307,20 @@ func (s *Store) RecordClosed(ctx context.Context, repo string, closed []githubsy
 		return fmt.Errorf("%w: repository %s has no recorded cycle", githubsync.ErrInvalidObservation, repo)
 	}
 	return nil
+}
+
+// closedBatch returns the merged items the watermark has not covered and the greatest updated_at of the listing.
+func closedBatch(closed []githubsync.ClosedPull, watermark pgtype.Timestamptz) (fresh []pullRow, latest time.Time) {
+	for _, item := range closed {
+		if item.UpdatedAt.After(latest) {
+			latest = item.UpdatedAt
+		}
+		if watermark.Valid && !item.MergedAt.IsZero() && !item.UpdatedAt.Before(watermark.Time) {
+			pull := item.ObservedPull
+			fresh = append(fresh, pullRow{Number: pull.Number, HeadSHA: pull.HeadSHA, HeadRef: pull.HeadRef, BaseRef: pull.BaseRef, BaseSHA: pull.BaseSHA, UpdatedAt: pull.UpdatedAt, HeadRepo: pull.HeadRepo})
+		}
+	}
+	return fresh, latest
 }
 
 // Merged implements githubsync.Store.

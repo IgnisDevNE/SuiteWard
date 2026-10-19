@@ -15,21 +15,21 @@ import (
 
 // canonicalShapes are canonical declarations of different shapes: line endings, styles, comments, quoting and lists that are missing or empty.
 var canonicalShapes = map[string]string{
-	"block":            "version: 1\ninclude:\n  - /tests/**\n",
-	"flow":             "version: 1\ninclude: [/tests/**]\n",
-	"crlf":             "version: 1\r\ninclude:\r\n  - /tests/**\r\nrunner:\r\n  - conftest.py\r\n",
-	"comments":         "# top\nversion: 1 # the schema\ninclude:\n  # tests\n  - /tests/** # all\nrunner: # the runners\n  - jest.config.*\n# end\n",
-	"empty runner":     "version: 1\ninclude: [/tests/**]\nrunner: []\n",
-	"flow runner":      "version: 1\ninclude: [/tests/**]\nrunner: [conftest.py, 'pytest.ini', \".nycrc*\"]\n",
-	"double quoted":    "version: 1\ninclude:\n  - \"/tests/**\"\nrunner:\n  - \"conftest.py\"\n",
-	"single quoted":    "version: 1\ninclude:\n  - '/tests/**'\nexclude:\n  - 'vendor/'\n",
-	"mixed quoting":    "version: 1\ninclude:\n  - /tests/**\n  - \"/e2e/**\"\n  - '/spec/**'\n",
-	"with exclude":     "version: 1\ninclude: [/tests/**]\nexclude: [/tests/fixtures/**, build/]\n",
-	"every runner":     "version: 1\ninclude: [/tests/**]\nrunner: [pytest.toml, .pytest.toml, pytest.ini, .pytest.ini, conftest.py, 'jest.config.*', 'vitest.config.*', 'vitest.workspace.*', '.mocharc.*', 'karma.conf.*']\n",
-	"an anchor":        "version: 1\ninclude: &tests [/tests/**]\n",
-	"no trailing eol":  "version: 1\ninclude: [/tests/**]",
-	"document marker":  "---\nversion: 1\ninclude: [/tests/**]\n",
-	"long list":        "version: 1\ninclude:\n" + strings.Repeat("  - /dir/**\n", 1) + func() string {
+	"block":           "version: 1\ninclude:\n  - /tests/**\n",
+	"flow":            "version: 1\ninclude: [/tests/**]\n",
+	"crlf":            "version: 1\r\ninclude:\r\n  - /tests/**\r\nrunner:\r\n  - conftest.py\r\n",
+	"comments":        "# top\nversion: 1 # the schema\ninclude:\n  # tests\n  - /tests/** # all\nrunner: # the runners\n  - jest.config.*\n# end\n",
+	"empty runner":    "version: 1\ninclude: [/tests/**]\nrunner: []\n",
+	"flow runner":     "version: 1\ninclude: [/tests/**]\nrunner: [conftest.py, 'pytest.ini', \".nycrc*\"]\n",
+	"double quoted":   "version: 1\ninclude:\n  - \"/tests/**\"\nrunner:\n  - \"conftest.py\"\n",
+	"single quoted":   "version: 1\ninclude:\n  - '/tests/**'\nexclude:\n  - 'vendor/'\n",
+	"mixed quoting":   "version: 1\ninclude:\n  - /tests/**\n  - \"/e2e/**\"\n  - '/spec/**'\n",
+	"with exclude":    "version: 1\ninclude: [/tests/**]\nexclude: [/tests/fixtures/**, build/]\n",
+	"every runner":    "version: 1\ninclude: [/tests/**]\nrunner: [pytest.toml, .pytest.toml, pytest.ini, .pytest.ini, conftest.py, 'jest.config.*', 'vitest.config.*', 'vitest.workspace.*', '.mocharc.*', 'karma.conf.*']\n",
+	"an anchor":       "version: 1\ninclude: &tests [/tests/**]\n",
+	"no trailing eol": "version: 1\ninclude: [/tests/**]",
+	"document marker": "---\nversion: 1\ninclude: [/tests/**]\n",
+	"long list": "version: 1\ninclude:\n" + strings.Repeat("  - /dir/**\n", 1) + func() string {
 		var b strings.Builder
 		for i := range 300 {
 			b.WriteString("  - /d" + string(rune('a'+i%26)) + string(rune('a'+i/26%26)) + "/**\n")

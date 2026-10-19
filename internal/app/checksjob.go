@@ -240,128 +240,198 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 var keptReasons = []string{reasonUnchanged, reasonReady, reasonBootstrapReady, reasonApprovalMissing, reasonNotCurrent, reasonAssessmentPending,
 	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand, reasonRunnerUncovered}
 
-// pull decides and publishes the check of one open pull request. problem is a code for /status when the decision had
-// to wait for the next run.
+// pullState is what the decision of one open pull request reads: the Suite, the stored check and the owner's latest command.
+type pullState struct {
+	enrollment owner.State
+	p          owner.ProjectPolicy
+	suite      suiteView
+	pull       githubsync.PullState
+	record     checks.Record  // the stored check, when found
+	latest     commands.Entry // the owner's latest command, when hasCommand
+	hasCommand bool
+	sameHead   bool // the stored check is of this head
+	tier       string
+	base       checks.Result // the result with no state, which every decision starts from
+}
+
+// pullDecision is the check of a pull request as it is decided, step by step.
+type pullDecision struct {
+	result  checks.Result
+	final   bool          // a result the owner's commands cannot change
+	wait    bool          // the decision cannot be made now: keep the stored check of this head
+	problem string        // a code for /status when the decision had to wait for the next run
+	source  sourceProblem // what made the head invalid, when this run assessed it
+}
+
+// pull decides and publishes the check of one open pull request, in the order of docs/contracts/runtime.md, "Check job and publisher (M1.6b)": the
+// state of the Suite and the head, the wait, a wrong code, the runner block, the comments that come before the check, the check, and the comments that
+// come after it. problem is a code for /status when the decision had to wait for the next run.
 func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState) (problem string, err error) {
+	s, err := j.pullState(ctx, enrollment, p, suite, pull)
+	if err != nil {
+		return "", err
+	}
+	d, err := j.decide(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	if d.wait {
+		j.overrideWait(s, &d)
+	}
+	if err := j.applyWrongCode(ctx, s, &d); err != nil {
+		return "", err
+	}
+	runners, err := j.applyRunnerBlock(ctx, s, &d)
+	if err != nil {
+		return "", err
+	}
+	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
+		return "", err
+	}
+	if err := j.publishCheck(ctx, s, d.result, runners); err != nil {
+		return "", err
+	}
+	if err := j.commentAfterCheck(ctx, s, d.result, runners); err != nil {
+		return "", err
+	}
+	return d.problem, nil
+}
+
+func (j *checksJob) pullState(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState) (*pullState, error) {
 	record, found, err := j.ledger.Current(ctx, p.RepositoryID, pull.Number)
 	if err != nil {
-		return "", fmt.Errorf("read the check: %w", err)
+		return nil, fmt.Errorf("read the check: %w", err)
 	}
 	latest, hasCommand, err := j.commands.LatestOwnerCommand(ctx, p.RepositoryID, pull.Number, enrollment.Owner.AccountID, 0)
 	if err != nil {
-		return "", fmt.Errorf("read the latest owner command: %w", err)
+		return nil, fmt.Errorf("read the latest owner command: %w", err)
 	}
-	sameHead := found && record.HeadSHA == pull.HeadSHA
 	tier, _ := effectiveTier(j.tier, enrollment, true)
-	base := checks.Result{RepositoryID: p.RepositoryID, PullNumber: pull.Number, HeadSHA: pull.HeadSHA, CommandID: latest.CommentID}
-	var (
-		result checks.Result
-		wait   bool
-		source sourceProblem // what made the head invalid, when this run assessed it
-	)
-	final := false // a result the owner's commands cannot change
+	return &pullState{enrollment: enrollment, p: p, suite: suite, pull: pull, record: record, latest: latest, hasCommand: hasCommand,
+		sameHead: found && record.HeadSHA == pull.HeadSHA, tier: tier,
+		base: checks.Result{RepositoryID: p.RepositoryID, PullNumber: pull.Number, HeadSHA: pull.HeadSHA, CommandID: latest.CommentID}}, nil
+}
+
+// decide is the check of the Suite and the head, before the wait, a wrong code and the runner block change it.
+func (j *checksJob) decide(ctx context.Context, s *pullState) (d pullDecision, err error) {
+	suite, pull, base := s.suite, s.pull, s.base
 	switch {
 	case !suite.exists: // the bootstrap job creates the Suite
-		result = base
-		result.State, result.Reason = checks.InProgress, reasonBootstrapAwaiting
+		d.result = base
+		d.result.State, d.result.Reason = checks.InProgress, reasonBootstrapAwaiting
 	case suite.canonical == "": // nothing to compare the head with: only the bootstrap carrier is assessed
-		if result, final, problem, wait, source, err = j.bootstrap(ctx, enrollment, p, suite, pull, base, record, sameHead, tier); err != nil {
-			return "", err
-		}
+		d.result, d.final, d.problem, d.wait, d.source, err = j.bootstrap(ctx, s.enrollment, s.p, suite, pull, base, s.record, s.sameHead, s.tier)
 	case suite.integrityFailed: // the canonical cannot be trusted: no head is compared with it, and no tree is read
-		result, final = base, true
-		result.State, result.Reason = checks.Failure, reasonIntegrityFailed
-	case isFork(pull.HeadRepo, p.Repo): // D-INTEGRATION: fork pull requests fail closed, with no assessment and no proposal
-		result, final = base, true
-		result.State, result.Reason = checks.InProgress, reasonForkUnsupported
-	case sameHead && record.Revision == suite.revision && record.CommandID == base.CommandID: // nothing that governs this head moved
-		result = record.Result
-	case sameHead && record.Change == changeCodes[inventory.Unchanged] && j.unchanged[checkPull{p.RepositoryID, pull.Number}] == unchangedAt{pull.HeadSHA, suite.canonical}:
-		result = base
-		result.State, result.Reason, result.Change, result.Revision = checks.Success, reasonUnchanged, record.Change, suite.revision
+		d.result, d.final = base, true
+		d.result.State, d.result.Reason = checks.Failure, reasonIntegrityFailed
+	case isFork(pull.HeadRepo, s.p.Repo): // D-INTEGRATION: fork pull requests fail closed, with no assessment and no proposal
+		d.result, d.final = base, true
+		d.result.State, d.result.Reason = checks.InProgress, reasonForkUnsupported
+	case s.sameHead && s.record.Revision == suite.revision && s.record.CommandID == base.CommandID: // nothing that governs this head moved
+		d.result = s.record.Result
+	case s.sameHead && s.record.Change == changeCodes[inventory.Unchanged] && j.unchanged[checkPull{s.p.RepositoryID, pull.Number}] == unchangedAt{pull.HeadSHA, suite.canonical}:
+		d.result = base
+		d.result.State, d.result.Reason, d.result.Change, d.result.Revision = checks.Success, reasonUnchanged, s.record.Change, suite.revision
 	default:
-		if result, problem, wait, source, err = j.assess(ctx, p, suite, pull, base, tier); err != nil {
-			return "", err
-		}
+		d.result, d.problem, d.wait, d.source, err = j.assess(ctx, s.p, suite, pull, base, s.tier)
 	}
-	if wait { // keep the stored check of this head, or say that a new head is pending, so it never stays without a check
-		result = base
-		result.State, result.Reason = checks.InProgress, reasonAssessmentPending
-		if sameHead && slices.Contains(keptReasons, record.Reason) {
-			result = record.Result
-		}
+	return d, err
+}
+
+// overrideWait keeps the stored check of this head, or says that a new head is pending, so it never stays without a check.
+func (j *checksJob) overrideWait(s *pullState, d *pullDecision) {
+	d.result = s.base
+	d.result.State, d.result.Reason = checks.InProgress, reasonAssessmentPending
+	if s.sameHead && slices.Contains(keptReasons, s.record.Reason) {
+		d.result = s.record.Result
 	}
-	// A wrong code is a security signal whatever the state, so it fails an awaiting or a skipped pull request too; a fork and an integrity failure are final.
-	if !final && sameHead && hasCommand {
-		wrongCode, err := j.wrongCode(ctx, p, enrollment.Owner.AccountID, pull.Number, latest, record.HeadSince)
-		if err != nil {
-			return "", err
-		}
-		if wrongCode {
-			result.State, result.Reason = checks.Failure, reasonOwnerCommand
-		}
+}
+
+// applyWrongCode fails the check after a wrong code. A wrong code is a security signal whatever the state, so it fails an awaiting or a skipped pull
+// request too; a fork and an integrity failure are final.
+func (j *checksJob) applyWrongCode(ctx context.Context, s *pullState, d *pullDecision) error {
+	if d.final || !s.sameHead || !s.hasCommand {
+		return nil
 	}
-	// A runner file outside the head's scope blocks a success (docs/contracts/runtime.md, "Check reason runner-uncovered"). It comes after the other reasons,
-	// so a rejected command, an approval that is missing and every failure keep precedence. A head whose runner files cannot be read is never success.
-	var runners *runnerSet
-	if suite.canonical != "" && (result.State == checks.Success || result.Reason == reasonRunnerUncovered) {
-		var runnerWait bool
-		if runners, runnerWait, err = j.runnerFiles(ctx, p, pull, suite.canonical); err != nil {
-			return "", err
-		}
-		switch {
-		case runnerWait:
-			result = base
-			result.State, result.Reason = checks.InProgress, reasonAssessmentPending
-			problem = problemReadFailed
-		case len(runners.paths) > 0:
-			result.State, result.Reason = checks.InProgress, reasonRunnerUncovered
-		case result.Reason == reasonRunnerUncovered: // the stored check cannot say which success it replaced: assess again
-			result = base
-			result.State, result.Reason = checks.InProgress, reasonAssessmentPending
-		}
+	wrongCode, err := j.wrongCode(ctx, s.p, s.enrollment.Owner.AccountID, s.pull.Number, s.latest, s.record.HeadSince)
+	if err != nil {
+		return err
 	}
-	// The comment comes before the check, so a run that fails between the two writes it again, and the check never goes without it.
+	if wrongCode {
+		d.result.State, d.result.Reason = checks.Failure, reasonOwnerCommand
+	}
+	return nil
+}
+
+// applyRunnerBlock lets a runner file outside the head's scope block a success (docs/contracts/runtime.md, "Check reason runner-uncovered"). It comes after
+// the other reasons, so a rejected command, an approval that is missing and every failure keep precedence. A head whose runner files cannot be read is
+// never success. It returns the runner set it decided from, nil when it did not apply.
+func (j *checksJob) applyRunnerBlock(ctx context.Context, s *pullState, d *pullDecision) (*runnerSet, error) {
+	if s.suite.canonical == "" || (d.result.State != checks.Success && d.result.Reason != reasonRunnerUncovered) {
+		return nil, nil
+	}
+	runners, wait, err := j.runnerFiles(ctx, s.p, s.pull, s.suite.canonical)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case wait:
+		d.result = s.base
+		d.result.State, d.result.Reason = checks.InProgress, reasonAssessmentPending
+		d.problem = problemReadFailed
+	case len(runners.paths) > 0:
+		d.result.State, d.result.Reason = checks.InProgress, reasonRunnerUncovered
+	case d.result.Reason == reasonRunnerUncovered: // the stored check cannot say which success it replaced: assess again
+		d.result = s.base
+		d.result.State, d.result.Reason = checks.InProgress, reasonAssessmentPending
+	}
+	return runners, nil
+}
+
+// commentBeforeCheck writes the comments that come before the check, so a run that fails between the two writes them again and the check never goes without them.
+func (j *checksJob) commentBeforeCheck(ctx context.Context, s *pullState, d pullDecision) error {
 	// It does not depend on the stored check: a pull request that waited before the Suite existed has the same reason and reference.
-	if suite.exists && result.Reason == reasonBootstrapAwaiting {
-		if err := j.announce(ctx, p, pull.Number, result.Reference); err != nil {
-			return "", err
+	if s.suite.exists && d.result.Reason == reasonBootstrapAwaiting {
+		if err := j.announce(ctx, s.p, s.pull.Number, d.result.Reference); err != nil {
+			return err
 		}
 	}
-	// Like the bootstrap comment, before the check: a run that fails between the two writes it again. Only the check that says invalid-source
-	// gets it, and only when this run assessed the head: an earlier run wrote it for the same head.
-	if source.kind != "" && result.Reason == reasonInvalidSource {
-		if err := j.explainInvalidSource(ctx, p, pull.Number, pull.HeadRef, source); err != nil {
-			return "", err
-		}
+	// Only the check that says invalid-source gets it, and only when this run assessed the head: an earlier run wrote it for the same head.
+	if d.source.kind != "" && d.result.Reason == reasonInvalidSource {
+		return j.explainInvalidSource(ctx, s.p, s.pull.Number, s.pull.HeadRef, d.source)
 	}
-	// Publishing every run, also an unchanged result, lets the ledger resend a message that ended failed.
-	_, _, err = j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
-		if result.Reason == reasonRunnerUncovered { // the block above decided it from a runner set, so a republish has the files too
+	return nil
+}
+
+// publishCheck publishes every run, also an unchanged result, which lets the ledger resend a message that ended failed.
+func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet) error {
+	_, _, err := j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
+		if result.Reason == reasonRunnerUncovered { // applyRunnerBlock decided it from a runner set, so a republish has the files too
 			if runners == nil {
 				return governance.OutboxMessage{}, errors.New("a runner-uncovered check has no runner set")
 			}
-			return newCheckMessageWithPaths(p.Repo, result, tier, string(suite.canonical), generation, runners.paths, len(runners.paths))
+			return newCheckMessageWithPaths(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, runners.paths, len(runners.paths))
 		}
-		return newCheckMessage(p.Repo, result, tier, string(suite.canonical), generation)
+		return newCheckMessage(s.p.Repo, result, s.tier, string(s.suite.canonical), generation)
 	})
 	if err != nil {
-		return "", fmt.Errorf("publish the check: %w", err)
+		return fmt.Errorf("publish the check: %w", err)
 	}
-	// After the check, so a failure here never delays or changes it: the comment is evidence and decides nothing.
+	return nil
+}
+
+// commentAfterCheck writes the comments that come after the check, so a failure here never delays or changes it: they are evidence and decide nothing.
+func (j *checksJob) commentAfterCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet) error {
 	if runners != nil && len(runners.paths) > 0 && result.Reason == reasonRunnerUncovered && !runners.written {
-		if err := j.explainRunners(ctx, p, pull, runners); err != nil {
-			return "", err
+		if err := j.explainRunners(ctx, s.p, s.pull, runners); err != nil {
+			return err
 		}
 		runners.written = true
 	}
-	// After the check, so a failure here never delays or changes it: the notice is evidence and decides nothing.
-	if suite.canonical != "" && !suite.integrityFailed && !isFork(pull.HeadRepo, p.Repo) {
-		if err := j.scopeNotice(ctx, p, pull, suite.canonical); err != nil {
-			return "", err
-		}
+	if s.suite.canonical != "" && !s.suite.integrityFailed && !isFork(s.pull.HeadRepo, s.p.Repo) {
+		return j.scopeNotice(ctx, s.p, s.pull, s.suite.canonical)
 	}
-	return problem, nil
+	return nil
 }
 
 // bootstrap decides the check of a pull request while the Suite has no canonical (docs/contracts/runtime.md, "github_checks

@@ -990,83 +990,18 @@ func cfRevisionAdvances(e *cfEnv) {
 	replay := e.command(c, "revision-1", "op-alias", "src-approve", contract.ApproveConsent, 1)
 
 	err := e.do(func(ctx context.Context, tx governance.Tx) error {
-		at := func(want int, step string) {
-			state, err := tx.Suite(ctx)
-			if err != nil || state.Canonical.Suite().Revision() != before+contract.StateRevision(want) {
-				e.t.Errorf("revision after %s = %d, %v, want %d", step, state.Canonical.Suite().Revision(), err, before+contract.StateRevision(want))
-			}
-		}
-		write, err := e.consentWrite(ctx, tx, approve)
+		steps := cfWriteSteps{e: e, ctx: ctx, tx: tx, before: before}
+		proposal, err := steps.approval(approve)
 		if err != nil {
 			return err
 		}
-		if err := tx.AppendConsent(ctx, write); err != nil {
-			return fmt.Errorf("append approval: %w", err)
-		}
-		at(1, "the approval")
-		if receipt, found, err := tx.Receipt(ctx, "op-approve"); err != nil || !found || receipt.Consent == nil || *receipt.Consent != write.Receipt {
-			e.t.Errorf("own write not visible by operation: found %v, %v", found, err)
-		}
-		if _, found, err := tx.ReceiptBySource(ctx, "src-approve"); err != nil || !found {
-			e.t.Errorf("own write not visible by source command: found %v, %v", found, err)
-		}
-		proposal, consent, err := tx.Proposal(ctx, "p1")
-		if err != nil {
+		if err := steps.revocation(revoke, proposal); err != nil {
 			return err
 		}
-		if !consent.HasApproval(proposal, e.policy(cfProject)) || len(consent.Results()) != 1 {
-			e.t.Errorf("own approval not visible: results %d", len(consent.Results()))
-		}
-
-		if write, err = e.consentWrite(ctx, tx, revoke); err != nil {
+		if err := steps.alias(replay); err != nil {
 			return err
 		}
-		if err := tx.AppendConsent(ctx, write); err != nil {
-			return fmt.Errorf("append revocation: %w", err)
-		}
-		at(2, "the revocation")
-		if _, consent, err = tx.Proposal(ctx, "p1"); err != nil {
-			return err
-		}
-		if consent.HasApproval(proposal, e.policy(cfProject)) || len(consent.Results()) != 2 {
-			e.t.Errorf("own revocation not visible: results %d", len(consent.Results()))
-		}
-
-		if write, err = e.consentWrite(ctx, tx, replay); err != nil {
-			return err
-		}
-		if !write.Alias {
-			e.t.Error("a replayed source command did not produce an alias write")
-		}
-		if err := tx.AppendConsent(ctx, write); err != nil {
-			return fmt.Errorf("append alias: %w", err)
-		}
-		at(3, "the alias")
-		if _, found, err := tx.Receipt(ctx, "op-alias"); err != nil || !found {
-			e.t.Errorf("own alias not visible: found %v, %v", found, err)
-		}
-
-		if err := tx.RecordPromotion(ctx, e.promotionWrite(c, "op-promote", "version-1", "")); err != nil {
-			return fmt.Errorf("record promotion: %w", err)
-		}
-		at(4, "the promotion")
-		state, err := tx.Suite(ctx)
-		if err != nil {
-			return err
-		}
-		if current, _ := state.Canonical.Suite().CurrentVersionID(); current != "version-1" {
-			e.t.Errorf("own promotion not visible: current version %q", current)
-		}
-		if _, found, err := tx.Version(ctx, "version-1"); err != nil || !found {
-			e.t.Errorf("own version not visible: found %v, %v", found, err)
-		}
-		if _, found, err := tx.PromotionFor(ctx, c.current()); err != nil || !found {
-			e.t.Errorf("own promotion record not visible: found %v, %v", found, err)
-		}
-		if _, found, err := tx.Receipt(ctx, "op-promote"); err != nil || !found {
-			e.t.Errorf("own promotion receipt not visible: found %v, %v", found, err)
-		}
-		return nil
+		return steps.promotion(c)
 	})
 	if err != nil {
 		e.t.Fatal(err)
@@ -1075,6 +1010,112 @@ func cfRevisionAdvances(e *cfEnv) {
 	if got := e.results("p1"); len(got) != 2 {
 		e.t.Errorf("committed results = %d, want the approval and the revocation", len(got))
 	}
+}
+
+// cfWriteSteps are the writes of cfRevisionAdvances in one unit of work: each makes one write, then checks that the
+// revision advanced by exactly one and that the transaction reads what it just wrote.
+type cfWriteSteps struct {
+	e      *cfEnv
+	ctx    context.Context
+	tx     governance.Tx
+	before contract.StateRevision
+}
+
+// at checks that the revision is want writes past where the unit of work began.
+func (s cfWriteSteps) at(want int, step string) {
+	state, err := s.tx.Suite(s.ctx)
+	if err != nil || state.Canonical.Suite().Revision() != s.before+contract.StateRevision(want) {
+		s.e.t.Errorf("revision after %s = %d, %v, want %d", step, state.Canonical.Suite().Revision(), err, s.before+contract.StateRevision(want))
+	}
+}
+
+// approval appends the approval and returns the proposal it approved.
+func (s cfWriteSteps) approval(command contract.Command) (contract.Proposal, error) {
+	write, err := s.e.consentWrite(s.ctx, s.tx, command)
+	if err != nil {
+		return contract.Proposal{}, err
+	}
+	if err := s.tx.AppendConsent(s.ctx, write); err != nil {
+		return contract.Proposal{}, fmt.Errorf("append approval: %w", err)
+	}
+	s.at(1, "the approval")
+	if receipt, found, err := s.tx.Receipt(s.ctx, "op-approve"); err != nil || !found || receipt.Consent == nil || *receipt.Consent != write.Receipt {
+		s.e.t.Errorf("own write not visible by operation: found %v, %v", found, err)
+	}
+	if _, found, err := s.tx.ReceiptBySource(s.ctx, "src-approve"); err != nil || !found {
+		s.e.t.Errorf("own write not visible by source command: found %v, %v", found, err)
+	}
+	proposal, consent, err := s.tx.Proposal(s.ctx, "p1")
+	if err != nil {
+		return contract.Proposal{}, err
+	}
+	if !consent.HasApproval(proposal, s.e.policy(cfProject)) || len(consent.Results()) != 1 {
+		s.e.t.Errorf("own approval not visible: results %d", len(consent.Results()))
+	}
+	return proposal, nil
+}
+
+func (s cfWriteSteps) revocation(command contract.Command, proposal contract.Proposal) error {
+	write, err := s.e.consentWrite(s.ctx, s.tx, command)
+	if err != nil {
+		return err
+	}
+	if err := s.tx.AppendConsent(s.ctx, write); err != nil {
+		return fmt.Errorf("append revocation: %w", err)
+	}
+	s.at(2, "the revocation")
+	_, consent, err := s.tx.Proposal(s.ctx, "p1")
+	if err != nil {
+		return err
+	}
+	if consent.HasApproval(proposal, s.e.policy(cfProject)) || len(consent.Results()) != 2 {
+		s.e.t.Errorf("own revocation not visible: results %d", len(consent.Results()))
+	}
+	return nil
+}
+
+// alias appends the replay of the approval under a new operation id.
+func (s cfWriteSteps) alias(command contract.Command) error {
+	write, err := s.e.consentWrite(s.ctx, s.tx, command)
+	if err != nil {
+		return err
+	}
+	if !write.Alias {
+		s.e.t.Error("a replayed source command did not produce an alias write")
+	}
+	if err := s.tx.AppendConsent(s.ctx, write); err != nil {
+		return fmt.Errorf("append alias: %w", err)
+	}
+	s.at(3, "the alias")
+	if _, found, err := s.tx.Receipt(s.ctx, "op-alias"); err != nil || !found {
+		s.e.t.Errorf("own alias not visible: found %v, %v", found, err)
+	}
+	return nil
+}
+
+// promotion records the promotion of c and checks that the pointer, the version, the record and the receipt are visible.
+func (s cfWriteSteps) promotion(c cfCandidate) error {
+	if err := s.tx.RecordPromotion(s.ctx, s.e.promotionWrite(c, "op-promote", "version-1", "")); err != nil {
+		return fmt.Errorf("record promotion: %w", err)
+	}
+	s.at(4, "the promotion")
+	state, err := s.tx.Suite(s.ctx)
+	if err != nil {
+		return err
+	}
+	if current, _ := state.Canonical.Suite().CurrentVersionID(); current != "version-1" {
+		s.e.t.Errorf("own promotion not visible: current version %q", current)
+	}
+	if _, found, err := s.tx.Version(s.ctx, "version-1"); err != nil || !found {
+		s.e.t.Errorf("own version not visible: found %v, %v", found, err)
+	}
+	if _, found, err := s.tx.PromotionFor(s.ctx, c.current()); err != nil || !found {
+		s.e.t.Errorf("own promotion record not visible: found %v, %v", found, err)
+	}
+	if _, found, err := s.tx.Receipt(s.ctx, "op-promote"); err != nil || !found {
+		s.e.t.Errorf("own promotion receipt not visible: found %v, %v", found, err)
+	}
+	return nil
 }
 
 func cfRejectedResults(e *cfEnv) {

@@ -138,11 +138,11 @@ func sameEntry(a, b commands.Entry) bool {
 }
 
 // LatestOwnerCommand implements commands.Store.
-func (m *Memory) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (commands.Entry, bool, error) {
+func (m *Memory) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID, before int64) (commands.Entry, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return commands.Entry{}, false, err
 	}
-	if err := commands.ValidateLatest(repositoryID, pull, ownerID); err != nil {
+	if err := commands.ValidateLatest(repositoryID, pull, ownerID, before); err != nil {
 		return commands.Entry{}, false, err
 	}
 	m.mu.Lock()
@@ -150,7 +150,7 @@ func (m *Memory) LatestOwnerCommand(ctx context.Context, repositoryID int64, pul
 	var latest commands.Entry
 	found := false
 	for _, e := range m.ledger {
-		if e.RepositoryID == repositoryID && e.PullNumber == pull && e.AuthorID == ownerID && e.Disposition.IsCommand() && (!found || e.CommentID > latest.CommentID) {
+		if e.RepositoryID == repositoryID && e.PullNumber == pull && e.AuthorID == ownerID && e.Disposition.AffectsCheck() && (before == 0 || e.CommentID < before) && (!found || e.CommentID > latest.CommentID) {
 			latest, found = e, true
 		}
 	}

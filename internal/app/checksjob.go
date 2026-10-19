@@ -54,7 +54,7 @@ type checkReader interface {
 
 // ownerCommands is the part of the command ledger the check job reads.
 type ownerCommands interface {
-	LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (commands.Entry, bool, error)
+	LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID, before int64) (commands.Entry, bool, error)
 	Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error)
 }
 
@@ -247,7 +247,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err != nil {
 		return "", fmt.Errorf("read the check: %w", err)
 	}
-	latest, hasCommand, err := j.commands.LatestOwnerCommand(ctx, p.RepositoryID, pull.Number, enrollment.Owner.AccountID)
+	latest, hasCommand, err := j.commands.LatestOwnerCommand(ctx, p.RepositoryID, pull.Number, enrollment.Owner.AccountID, 0)
 	if err != nil {
 		return "", fmt.Errorf("read the latest owner command: %w", err)
 	}
@@ -291,13 +291,13 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			result = record.Result
 		}
 	}
-	// A pull request that waits for the bootstrap or was skipped has no command to reject: only a carrier or a change has one.
-	if !final && result.Reason != reasonBootstrapAwaiting && result.Reason != reasonBootstrapSkipped && sameHead && hasCommand && !latest.CreatedAt.Before(record.HeadSince) {
-		rejected, err := j.rejected(ctx, p, latest)
+	// A wrong code is a security signal whatever the state, so it fails an awaiting or a skipped pull request too; a fork and an integrity failure are final.
+	if !final && sameHead && hasCommand {
+		wrongCode, err := j.wrongCode(ctx, p, enrollment.Owner.AccountID, pull.Number, latest, record.HeadSince)
 		if err != nil {
 			return "", err
 		}
-		if rejected {
+		if wrongCode {
 			result.State, result.Reason = checks.Failure, reasonOwnerCommand
 		}
 	}
@@ -631,16 +631,21 @@ func readiness(result checks.Result, ready bool, reason contract.PromotionReason
 	return result, nil
 }
 
-// rejected reports whether the owner's command was rejected: a disposition that never reached governance, or a
-// processed command whose consent result was rejected (read from its receipt).
-func (j *checksJob) rejected(ctx context.Context, p owner.ProjectPolicy, command commands.Entry) (bool, error) {
-	switch command.Disposition {
-	case commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.EditedFirst:
-		return true, nil
-	case commands.Processed:
+// wrongCode reports whether the owner's latest command that can set or clear the check, created at or after since, is a wrong code.
+// A wrong command that is no wrong code has no effect (D-COMMANDS, "A wrong command has no effect"): the ledger never lists one, and a
+// processed command whose consent result was rejected (read from its receipt) is skipped for the command before it.
+func (j *checksJob) wrongCode(ctx context.Context, p owner.ProjectPolicy, ownerID int64, pull int, latest commands.Entry, since time.Time) (bool, error) {
+	for !latest.CreatedAt.Before(since) {
+		switch latest.Disposition {
+		case commands.InvalidCode, commands.ReplayedCode:
+			return true, nil
+		case commands.Processed:
+		default:
+			return false, fmt.Errorf("the owner command %d has the disposition %q, which cannot set or clear a check", latest.CommentID, latest.Disposition)
+		}
 		var rejected bool
 		err := j.suites.Do(ctx, owner.ProjectID(p.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
-			receipt, found, err := tx.Receipt(ctx, command.Operation)
+			receipt, found, err := tx.Receipt(ctx, latest.Operation)
 			switch {
 			case err != nil:
 				return err
@@ -651,9 +656,15 @@ func (j *checksJob) rejected(ctx context.Context, p owner.ProjectPolicy, command
 			return nil
 		})
 		if err != nil {
-			return false, fmt.Errorf("read the receipt of comment %d: %w", command.CommentID, err)
+			return false, fmt.Errorf("read the receipt of comment %d: %w", latest.CommentID, err)
 		}
-		return rejected, nil
+		if !rejected {
+			return false, nil
+		}
+		var found bool
+		if latest, found, err = j.commands.LatestOwnerCommand(ctx, p.RepositoryID, pull, ownerID, latest.CommentID); err != nil || !found {
+			return false, err
+		}
 	}
-	return false, nil // no-suite and the dispositions that are no command are no rejection
+	return false, nil
 }

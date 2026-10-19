@@ -209,8 +209,7 @@ func TestSuggestIsRefusedForAForkAndAClosedPullRequestBeforeAnyTreeIsRead(t *tes
 	}
 }
 
-// The owner is told that the bootstrap is pending, as for a propose, but the entry is a suggestion: a no-suite entry would count as the
-// owner's latest command, and a rejected approve could then stop showing as owner-command-rejected once the Suite exists.
+// The owner is told that the bootstrap is pending, as for a propose, but the entry is a suggestion, not a no-suite entry.
 func TestSuggestForAProjectWithNoSuiteSaysTheBootstrapIsPendingAndIsNotACommand(t *testing.T) {
 	w := newCjWorld(t)
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
@@ -265,7 +264,7 @@ func TestSuggestIsNotTheOwnersLatestCommand(t *testing.T) {
 
 	w.requireDisposition(cjID1, 500, commands.InvalidCode)
 	w.requireDisposition(cjID1, 501, commands.Suggested)
-	latest, found, err := w.ledger.LatestOwnerCommand(t.Context(), cjID1, cjPull, cjOwnerID)
+	latest, found, err := w.ledger.LatestOwnerCommand(t.Context(), cjID1, cjPull, cjOwnerID, 0)
 	if err != nil || !found || latest.CommentID != 500 || latest.Disposition != commands.InvalidCode {
 		t.Fatalf("latest owner command = %+v, found %v, error %v; want the rejected approve, comment 500", latest, found, err)
 	}

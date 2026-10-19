@@ -296,7 +296,7 @@ func TestChecksKeepEveryOtherReasonOverTheRunnerBlock(t *testing.T) {
 		w := newCJWorld(t, true)
 		w.runnerPull(cjHead2, runner, added(cjJest)...)
 		w.want(5, checks.InProgress, "runner-uncovered", 1)
-		w.entry(5, 301, bootOwnerID, "malformed", "")
+		w.entry(5, 301, bootOwnerID, "invalid-code", "")
 		w.mustCheck()
 		w.want(5, checks.Failure, "owner-command-rejected", 2)
 	})

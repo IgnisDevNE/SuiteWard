@@ -91,7 +91,8 @@ const latestOwnerCommand = `-- name: LatestOwnerCommand :one
 SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at
 FROM pr_commands
 WHERE repository_id = $1 AND pull_number = $2 AND author_id = $3
-  AND disposition IN ('malformed', 'invalid-code', 'replayed-code', 'unknown-proposal', 'edited-first', 'no-suite', 'processed')
+  AND disposition IN ('invalid-code', 'replayed-code', 'processed')
+  AND ($4::bigint = 0 OR comment_id < $4::bigint)
 ORDER BY comment_id DESC
 LIMIT 1
 `
@@ -100,11 +101,18 @@ type LatestOwnerCommandParams struct {
 	RepositoryID int64
 	PullNumber   int32
 	AuthorID     int64
+	Before       int64
 }
 
-// The owner's latest command on a pull: the greatest comment id among the command dispositions.
+// The owner's latest command on a pull that can set or clear the check: the greatest comment id among the wrong codes and the processed
+// commands, below before when it is not 0. The other rejected dispositions have no effect on the check (D-COMMANDS, "A wrong command has no effect").
 func (q *Queries) LatestOwnerCommand(ctx context.Context, arg LatestOwnerCommandParams) (PrCommand, error) {
-	row := q.db.QueryRow(ctx, latestOwnerCommand, arg.RepositoryID, arg.PullNumber, arg.AuthorID)
+	row := q.db.QueryRow(ctx, latestOwnerCommand,
+		arg.RepositoryID,
+		arg.PullNumber,
+		arg.AuthorID,
+		arg.Before,
+	)
 	var i PrCommand
 	err := row.Scan(
 		&i.RepositoryID,

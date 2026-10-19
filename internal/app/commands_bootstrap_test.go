@@ -490,7 +490,7 @@ func TestProposeIsNotAnOwnerCommandForTheLedger(t *testing.T) {
 	w.requireProcessed(cjID1, 500)
 	w.requireDisposition(cjID1, 501, commands.Proposed)
 	w.requireDisposition(cjID1, 502, commands.Skipped)
-	latest, found, err := w.ledger.LatestOwnerCommand(t.Context(), cjID1, cjPull, cjOwnerID)
+	latest, found, err := w.ledger.LatestOwnerCommand(t.Context(), cjID1, cjPull, cjOwnerID, 0)
 	if err != nil || !found || latest.CommentID != 500 {
 		t.Fatalf("latest owner command = %+v, %v, %v; want the approval 500", latest, found, err)
 	}

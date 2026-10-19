@@ -45,7 +45,7 @@ try {
             Invoke-LocalPersistenceVerification $context {
                 & (Join-Path $PSScriptRoot 'check-persistence.ps1') -Mode Generated
                 Assert-ToolVersion $context 'go'
-                Invoke-ToolConfigScope $context { & (Join-Path $PSScriptRoot 'check-go.ps1') -Integration }
+                Invoke-ToolConfigScope $context { & (Join-Path $PSScriptRoot 'check-go.ps1') -Integration -Race }
             }
         }
         'db-start' { Start-DevDatabase $context }

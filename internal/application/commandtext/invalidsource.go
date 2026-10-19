@@ -18,12 +18,14 @@ const (
 // InvalidSourceNotice is what the comment of an invalid-source check states. Path, already cut by the caller, names the link of a
 // LinkProblem and is empty for the other problems. Declaration, only for a LinkProblem and at most MaxDeclaration bytes, is the
 // head's own .suiteward.yml with the link's anchored path added to exclude; it is empty when the head has none, and the comment then
-// shows the pattern alone. The comment quotes no other file content.
+// shows the pattern alone. Repo (owner/name) and Branch (the pull request's head ref) build the editor link; both or neither, and a
+// comment without them has no link. The comment quotes no other file content.
 type InvalidSourceNotice struct {
-	Problem     SourceProblem
-	Path        string
-	Declaration []byte
-	PathCut     bool // Path was cut by the caller: it is not the link's path, so the comment offers the exclude only with a Declaration
+	Problem      SourceProblem
+	Path         string
+	Declaration  []byte
+	PathCut      bool // Path was cut by the caller: it is not the link's path, so the comment offers the exclude only with a Declaration
+	Repo, Branch string
 }
 
 // ValidateInvalidSource reports why InvalidSourceComment would panic on s, as an error.
@@ -37,6 +39,8 @@ func ValidateInvalidSource(s InvalidSourceNotice) error {
 		return errors.New("commandtext: only a link problem carries a declaration or a cut path")
 	case len(s.Declaration) > MaxDeclaration || !utf8.Valid(s.Declaration):
 		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or not UTF-8", len(s.Declaration), MaxDeclaration)
+	case s.Repo != "" || s.Branch != "":
+		return checkRepoAndBranch(s.Repo, s.Branch)
 	}
 	return nil
 }
@@ -55,7 +59,7 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 	switch s.Problem {
 	case DeclarationProblem:
 		problem = "The `.suiteward.yml` of this pull request's head is not a valid declaration, so SuiteWard cannot tell which files this head protects."
-		next = "Next: fix `.suiteward.yml` and push."
+		next = "Next: fix `.suiteward.yml` and push." + editSentence(s, "To change it on this pull request's branch")
 	case LinkProblem:
 		problem = "This pull request's head has a symbolic link that the protected scope covers or may cover below, and whose target is not a regular file of the tree, " +
 			"so SuiteWard cannot tell what protecting it would mean:\n\n" + fencedLines([]string{s.Path})
@@ -64,6 +68,14 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 	return paragraphs("**SuiteWard could not read the contract source of this pull request**", problem, next,
 		"Any canonical contract already in force stays in force, and the check stays `failure` until a push fixes it.",
 		"This comment is evidence, not an approval, and SuiteWard does not run tests.")
+}
+
+// editSentence is the paragraph that links to GitHub's editor for .suiteward.yml on the pull request's branch, led by lead; none for a notice without the link.
+func editSentence(s InvalidSourceNotice, lead string) string {
+	if s.Branch == "" {
+		return ""
+	}
+	return "\n\n" + lead + ", [open GitHub's editor for it](" + editLink(s.Repo, s.Branch) + "). SuiteWard never commits it for you: the commit is yours."
 }
 
 // acceptLink is the paragraphs that offer to accept the link of s with an exact anchored exclude, and warn what that means; none when
@@ -76,5 +88,5 @@ func acceptLink(s InvalidSourceNotice) string {
 	if len(s.Declaration) > 0 {
 		choice = "Or accept the link by adding its exact anchored path to `exclude`. This is the head's own `.suiteward.yml` with that path added:\n\n" + fenced(withNewline(s.Declaration))
 	}
-	return "\n\n" + choice + "\n\nAccepting the link means that nothing reached through the link is protected. It is a scope reduction, so the owner approves it like any other change to the protected files."
+	return "\n\n" + choice + editSentence(s, "To make that change on this pull request's branch") + "\n\nAccepting the link means that nothing reached through the link is protected. It is a scope reduction, so the owner approves it like any other change to the protected files."
 }

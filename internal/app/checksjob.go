@@ -331,7 +331,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	// Like the bootstrap comment, before the check: a run that fails between the two writes it again. Only the check that says invalid-source
 	// gets it, and only when this run assessed the head: an earlier run wrote it for the same head.
 	if source.kind != "" && result.Reason == reasonInvalidSource {
-		if err := j.explainInvalidSource(ctx, p, pull.Number, source); err != nil {
+		if err := j.explainInvalidSource(ctx, p, pull.Number, pull.HeadRef, source); err != nil {
 			return "", err
 		}
 	}
@@ -555,8 +555,8 @@ func (j *checksJob) declarationReadFailed(ctx context.Context, what string, err 
 
 // explainInvalidSource writes the comment that explains an invalid-source check, once for each problem of a pull request: the key
 // is the idempotency key, so a problem that was written before is not an error.
-func (j *checksJob) explainInvalidSource(ctx context.Context, p owner.ProjectPolicy, pull int, s sourceProblem) error {
-	message, err := newInvalidSourceMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, s)
+func (j *checksJob) explainInvalidSource(ctx context.Context, p owner.ProjectPolicy, pull int, branch string, s sourceProblem) error {
+	message, err := newInvalidSourceMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, branch, s)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks invalid-source comment skipped: it cannot be rendered", "repo", p.Repo, "pull", pull, "reason", err.Error())
 		return nil

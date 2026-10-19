@@ -143,7 +143,7 @@ func TestChecksExplainAnInvalidDeclarationWithoutQuotingIt(t *testing.T) {
 
 	w.want(5, checks.Failure, "invalid-source", 1)
 	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
-	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "declaration"}
+	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "branch": "feature", "kind": "declaration"}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}

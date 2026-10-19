@@ -977,10 +977,15 @@ type invalidSourcePayload struct {
 	Path        string `json:"path,omitempty"`        // a link only
 	Declaration string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
 	PathCut     bool   `json:"pathCut,omitempty"`
+	Branch      string `json:"branch,omitempty"` // the pull request's head ref, for the editor link; none in a payload written before M1.9-E12, which then has no link
 }
 
 func (p invalidSourcePayload) source() commandtext.InvalidSourceNotice {
-	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, PathCut: p.PathCut, Declaration: []byte(p.Declaration)}
+	n := commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, PathCut: p.PathCut, Declaration: []byte(p.Declaration)}
+	if p.Branch != "" { // every payload has the repo, but only a branch makes the link
+		n.Repo, n.Branch = p.Repo, p.Branch
+	}
+	return n
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -992,7 +997,7 @@ func (p invalidSourcePayload) validate() error {
 		return errors.New("the path is too long")
 	}
 	if commandtext.ValidateInvalidSource(p.source()) != nil {
-		return errors.New("the kind or the path does not fit the comment")
+		return errors.New("the kind, the path or the branch does not fit the comment")
 	}
 	return nil
 }
@@ -1012,8 +1017,8 @@ func invalidSourceDigest(kind, path string, declaration []byte) string {
 
 // newInvalidSourceMessage builds the comment that explains one problem of a pull request's source. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
-func newInvalidSourceMessage(target commentTarget, s sourceProblem) (governance.OutboxMessage, error) {
-	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText}
+func newInvalidSourceMessage(target commentTarget, branch string, s sourceProblem) (governance.OutboxMessage, error) {
+	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText, Branch: branch}
 	if len(s.declaration) <= commandtext.MaxDeclaration { // a choice that cannot be shown is left out: the comment then shows the pattern alone
 		p.Declaration = string(s.declaration)
 	}

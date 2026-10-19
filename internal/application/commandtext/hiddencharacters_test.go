@@ -37,15 +37,15 @@ func declarationNotices(d []byte) map[string]func() error {
 
 func TestADeclarationWithAHiddenCharacterIsRefused(t *testing.T) {
 	for name, text := range map[string]string{
-		"a bidi override":     "version: 1\n# \u202e gnp\n",
-		"a zero-width space":  "version: 1\n# a\u200bb\n",
-		"a NUL":               "version: 1\n# a\x00b\n",
-		"a carriage return":   "version: 1\r\n",
-		"an escape":           "version: 1\n# \x1b[2J\n",
-		"a next line":         "version: 1\n# a\u0085b\n",
-		"a byte order mark":   "\ufeffversion: 1\n",
-		"a line separator":    "version: 1\n# a\u2028b\n",
-		"an object character": "version: 1\n# \ufffcx\n",
+		"a bidi override":    "version: 1\n# \u202e gnp\n",
+		"a zero-width space": "version: 1\n# a\u200bb\n",
+		"a NUL":              "version: 1\n# a\x00b\n",
+		"a carriage return":  "version: 1\r\n",
+		"an escape":          "version: 1\n# \x1b[2J\n",
+		"a next line":        "version: 1\n# a\u0085b\n",
+		"a byte order mark":  "\ufeffversion: 1\n",
+		"a line separator":   "version: 1\n# a\u2028b\n",
+		"a bidi isolate":     "version: 1\n# \u2066x\n",
 	} {
 		for what, validate := range declarationNotices([]byte(text)) {
 			t.Run(name+" in "+what, func(t *testing.T) {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
@@ -95,26 +94,7 @@ func (j *mergesJob) run(ctx context.Context) (river.Wake, error) {
 // advanceAll advances the merges of every enrolled, configured repository. A GitHub read failure stops that
 // repository until the next run; any other failure fails the run after every repository was tried.
 func (j *mergesJob) advanceAll(ctx context.Context) error {
-	enrollment, enrolled, err := j.owners.Current(ctx)
-	if err != nil {
-		return fmt.Errorf("read the enrollment: %w", err)
-	}
-	if !enrolled {
-		return nil
-	}
-	var failures []error
-	for _, project := range enrollment.Projects {
-		if !slices.Contains(j.repos, project.Repo) {
-			continue
-		}
-		if err := j.project(ctx, enrollment, project); err != nil {
-			if cancelled := ctx.Err(); cancelled != nil {
-				return cancelled
-			}
-			failures = append(failures, fmt.Errorf("merges %s: %w", project.Repo, err))
-		}
-	}
-	return errors.Join(failures...)
+	return forEachConfiguredProject(ctx, j.owners, j.repos, "merges", j.project)
 }
 
 // project advances one repository and keeps its last problem for /status.

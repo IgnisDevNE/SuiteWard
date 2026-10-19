@@ -350,26 +350,7 @@ func (b *bootstrapJob) run(ctx context.Context) (river.Wake, error) {
 // advanceAll advances every enrolled, configured project. A GitHub read failure skips that project until the next
 // run; any other failure fails the run after the other projects were tried.
 func (b *bootstrapJob) advanceAll(ctx context.Context) error {
-	enrollment, enrolled, err := b.owners.Current(ctx)
-	if err != nil {
-		return fmt.Errorf("read the enrollment: %w", err)
-	}
-	if !enrolled {
-		return nil
-	}
-	var failures []error
-	for _, project := range enrollment.Projects {
-		if !slices.Contains(b.repos, project.Repo) {
-			continue
-		}
-		if err := b.project(ctx, enrollment, project); err != nil {
-			if cancelled := ctx.Err(); cancelled != nil {
-				return cancelled
-			}
-			failures = append(failures, fmt.Errorf("bootstrap %s: %w", project.Repo, err))
-		}
-	}
-	return errors.Join(failures...)
+	return forEachConfiguredProject(ctx, b.owners, b.repos, "bootstrap", b.project)
 }
 
 // project advances one project and returns only the failures that fail the run.
@@ -616,3 +597,28 @@ func blockedCode(reason contract.PromotionReason) (string, error) {
 type bootstrapStop string
 
 func (s bootstrapStop) Error() string { return "bootstrap stopped: " + string(s) }
+
+// forEachConfiguredProject calls fn for every enrolled project whose repository is configured: the checks, merges and bootstrap jobs, which write only for
+// the configured repositories. A cancelled run ends at once; any other failure is labelled and joined after every project was tried.
+func forEachConfiguredProject(ctx context.Context, owners ownerSource, repos []string, label string, fn func(context.Context, owner.State, owner.ProjectPolicy) error) error {
+	enrollment, enrolled, err := owners.Current(ctx)
+	if err != nil {
+		return fmt.Errorf("read the enrollment: %w", err)
+	}
+	if !enrolled { // nothing is written without an owner; /status says why
+		return nil
+	}
+	var failures []error
+	for _, project := range enrollment.Projects {
+		if !slices.Contains(repos, project.Repo) {
+			continue
+		}
+		if err := fn(ctx, enrollment, project); err != nil {
+			if cancelled := ctx.Err(); cancelled != nil {
+				return cancelled
+			}
+			failures = append(failures, fmt.Errorf("%s %s: %w", label, project.Repo, err))
+		}
+	}
+	return errors.Join(failures...)
+}

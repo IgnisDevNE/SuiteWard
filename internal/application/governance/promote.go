@@ -46,8 +46,10 @@ func promoteWithin(ctx context.Context, tx Tx, identity PromotionIdentity) (Prom
 			return PromoteResult{}, fmt.Errorf("load corrected version: %w", err)
 		}
 		decision, err = contract.DecideCorrection(contract.CorrectionInput{Promotion: input, Target: target})
-	default:
+	case OperationPromote:
 		decision, err = contract.DecidePromotion(input)
+	default: // Bootstrap and PromoteMerge name no other kind
+		return PromoteResult{}, fmt.Errorf("%w: %q is not a promotion kind", ErrInvalidState, identity.Kind)
 	}
 	if err != nil {
 		return PromoteResult{}, fmt.Errorf("decide %s: %w", identity.Kind, err)

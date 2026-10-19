@@ -221,8 +221,9 @@ func ScopeSuggestionBody(anchorLine, indent string, patterns []string) string {
 		fence("suggestion", content+"\n"))
 }
 
-// quotingOf is the quoting of the item that anchorLine holds, the last of its list: double, single or plain. The line is a list item
-// (see ValidateScopeSuggestion), and a list of mixed quoting follows its last item, which scope.AddPatterns does not: it writes plain.
+// quotingOf is the quoting of the item that anchorLine holds: double, single or plain. The line is an item of the list that the
+// suggestion extends (see ValidateScopeSuggestion), which is all the caller carries of it. A list of mixed quoting thus follows the
+// quoting of that item, where scope.AddPatterns writes plain.
 func quotingOf(anchorLine string) yaml.Style {
 	item := strings.TrimLeft(strings.TrimPrefix(strings.TrimLeft(anchorLine, " "), "-"), " ")
 	switch {

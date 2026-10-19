@@ -108,15 +108,19 @@ func TestBaselineFromAnInventoryBootstrapsTheFirstCanonical(t *testing.T) {
 	request := governance.PromoteRequest{OperationID: "bootstrap-baseline", Reference: result.Revise.Current, Carrier: baselineCarrier,
 		Proposed: result.Contract, AssessmentSource: origin, Integration: integration, NewVersionID: "version-1", RecordedAt: recordedAt}
 
-	if blocked := w.bootstrap(request); blocked.Committed {
+	unassessed := w.revision()
+	if blocked := w.bootstrap(request); blocked.Outcome != contract.PromotionBlocked {
 		t.Fatalf("bootstrap = %+v before the assessment of the origin, want a block", blocked)
 	}
+	w.requireWrites(unassessed, 0)
 	w.recordAssessment(result.Revise.Current, origin, contract.IntegrityPassed)
+	assessed := w.revision()
 	promoted := w.bootstrap(request)
 
-	if promoted.Outcome != contract.PromotionProposed || !promoted.Committed {
-		t.Fatalf("bootstrap = %+v, want a committed proposed promotion", promoted)
+	if promoted.Outcome != contract.PromotionProposed || promoted.Duplicate {
+		t.Fatalf("bootstrap = %+v, want a new proposed promotion", promoted)
 	}
+	w.requireWrites(assessed, 1)
 	canonical, found := w.version("version-1")
 	if !found || canonical.Version().Manifest().Digest() != inv.Manifest().Digest() {
 		t.Fatalf("canonical manifest = %v (found %v), want the inventory's %v", canonical.Version().Manifest().Digest(), found, inv.Manifest().Digest())
@@ -153,8 +157,56 @@ func TestChangedProtectedFileCreatesANewBaselineRevision(t *testing.T) {
 		t.Fatalf("result = %+v, want a committed revision-2", next.Revise)
 	}
 	w.requireWrites(before, 1)
-	if got := w.proposal(baselineProposal).Current().Binding().Reference(); got != next.Revise.Current {
+	proposal := w.proposal(baselineProposal)
+	if got := proposal.Current().Binding().Reference(); got != next.Revise.Current {
 		t.Fatalf("current revision = %v, want %v", got, next.Revise.Current)
+	}
+	if _, err := proposal.Lookup(first.Revise.Current, baselineCarrier); err != nil {
+		t.Fatalf("the older revision is no longer resolvable: %v", err)
+	}
+	if got := len(proposal.Revisions()); got != 2 {
+		t.Fatalf("stored revisions = %d, want 2", got)
+	}
+}
+
+func TestBaselineRevisionOfAnotherCarrierOrWithAReusedIDIsRejected(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(*governance.BaselineRequest)
+		want error
+	}{
+		"the same coverage under another carrier": {func(r *governance.BaselineRequest) { r.Carrier = "another-carrier" }, contract.ErrProposalContextMismatch},
+		"a reused revision id with other coverage": {func(r *governance.BaselineRequest) {
+			r.Reference.RevisionID = "revision-1"
+			r.Tree = baselineTree("v2")
+		}, contract.ErrRevisionExists},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.propose(newFakeWriter(), baselineRequest("revision-1", "pinned-commit", baselineTree("v1")))
+			before := w.revision()
+			request := baselineRequest("revision-2", "pinned-later", baselineTree("v1"))
+			tc.edit(&request)
+
+			_, err := governance.ProposeBaseline(context.Background(), w.mem, newFakeWriter(), request)
+
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+			w.requireWrites(before, 0)
+			if got := len(w.proposal(baselineProposal).Revisions()); got != 1 {
+				t.Fatalf("stored revisions = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestBaselineOfAnUnknownSuiteIsNotFound(t *testing.T) {
+	w := newWorld(t)
+	request := baselineRequest("revision-1", "pinned-commit", baselineTree("v1"))
+	request.Reference.SuiteID = "nowhere"
+
+	if _, err := governance.ProposeBaseline(context.Background(), w.mem, newFakeWriter(), request); !errors.Is(err, governance.ErrNotFound) {
+		t.Fatalf("error = %v, want not found", err)
 	}
 }
 
@@ -162,7 +214,7 @@ func TestBaselineIsRejectedOnceACanonicalExists(t *testing.T) {
 	first := newCandidate(t, "p1", "", protectedOf(t, "v1"))
 	w := newWorld(t, first)
 	w.approve(first)
-	w.promote(first.mergedRequest(t, "promote-1", "version-1"))
+	w.bootstrap(first.baselineRequest(t, "bootstrap-1", "version-1"))
 	before := w.revision()
 
 	_, err := governance.ProposeBaseline(context.Background(), w.mem, newFakeWriter(), baselineRequest("revision-1", "pinned-commit", baselineTree("v1")))

@@ -170,7 +170,7 @@ func cfBootstrapHeadAssesses(e *cfEnv) {
 	if len(e.revisionsOf("P1")) != 1 {
 		e.t.Fatalf("P1 has %d revisions, want the assessment to add none", len(e.revisionsOf("P1")))
 	}
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func cfBootstrapHeadRepeated(e *cfEnv) {

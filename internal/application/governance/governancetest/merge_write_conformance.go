@@ -83,7 +83,7 @@ func mcMessageFailure(e *cfEnv) {
 		e.t.Fatal("the assessment of the merge commit survived the rollback")
 	}
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func mcOutboxConflict(e *cfEnv) {
@@ -143,7 +143,7 @@ func mcConcurrent(e *cfEnv) {
 		e.t.Fatalf("%d callers wrote the outcome, want exactly 1", fresh)
 	}
 	e.requireWrites(before, 2)
-	e.requireQueued(nil, []string{"comment/" + string(pr.carrier)})
+	e.requireOutbox([]string{"comment/" + string(pr.carrier)})
 }
 
 func mcOutcomeOfUnknown(e *cfEnv) {
@@ -292,4 +292,84 @@ func mcCorrectionContextReused(e *cfEnv) {
 	e.requireOutcome(fix.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBlocked, Reason: governance.MergeReasonCorrectionContextReused,
 		Source: mcSource(fix), Version: "V2", Reference: mcRef(fix)})
 	e.requireWrites(before, 1)
+}
+
+func mcCorrectionMessageFailure(e *cfEnv) {
+	fix := mcCandidate("fix", "V2", "v1") // restores V1's content on top of V2
+	e.mcSeed(true, fix)
+	e.approve(fix)
+	before := e.revision()
+	boom := errors.New("message cannot be built")
+
+	err := e.mergeErr(mcRequest(fix, "v1", &mcMessages{fail: boom}))
+
+	if !errors.Is(err, boom) {
+		e.t.Fatalf("error = %v, want the message error", err)
+	}
+	if _, found := e.outcomeOf(fix.carrier); found || e.currentVersion() != "V2" {
+		e.t.Fatalf("outcome recorded %v, current version %q; want neither", found, e.currentVersion())
+	}
+	if _, found := e.version("V3"); found {
+		e.t.Fatal("the corrected version survived the rollback")
+	}
+	if _, found := e.assessmentAt(fix.current(), mcSource(fix)); found {
+		e.t.Fatal("the assessment of the merge commit survived the rollback")
+	}
+	e.requireWrites(before, 0)
+	e.requireOutbox(nil)
+}
+
+func mcOperationAcrossKinds(e *cfEnv) {
+	pr := mcCandidate("pr", "V1", "v2")
+	e.mcSeed(false, pr)
+	e.approve(pr)
+	e.merge(mcRequest(pr, "v2", &mcMessages{}))
+	operation := contract.OperationID("merge:" + string(pr.carrier))
+	probe := cfProbe{proposal: pr.proposalID(), operations: []contract.OperationID{operation, "approve-pr"}, sources: []contract.SourceCommandID{"comment-other"},
+		versions: []contract.SuiteVersionID{"V3"}, references: []contract.ProposalReference{pr.current()}}
+	before := e.view(probe)
+
+	e.run("a merge promotion id used by a bootstrap", func(e *cfEnv) {
+		_, err := governance.Bootstrap(context.Background(), e.store, pr.baselineRequest(string(operation), "V3"))
+		if !errors.Is(err, governance.ErrOperationConflict) {
+			e.t.Fatalf("error = %v, want an operation conflict", err)
+		}
+	})
+	e.run("a merge promotion id used by a consent command", func(e *cfEnv) {
+		command := e.command(pr, "revision-1", string(operation), "comment-other", contract.ApproveConsent, 2)
+		_, err := governance.ProcessConsent(context.Background(), e.store, governance.ConsentRequest{Command: command})
+		if !errors.Is(err, governance.ErrOperationConflict) {
+			e.t.Fatalf("error = %v, want an operation conflict", err)
+		}
+	})
+	e.requireSameView(before, e.view(probe))
+}
+
+func mcWriteFailure(e *cfEnv) {
+	fail, ok := e.store.(FailNexter)
+	if !ok {
+		e.t.Skip("the store cannot inject a write failure")
+	}
+	pr := mcCandidate("pr", "V1", "v2")
+	e.mcSeed(false, pr)
+	e.approve(pr)
+	probe := cfProbe{proposal: pr.proposalID(), operations: []contract.OperationID{contract.OperationID("merge:" + string(pr.carrier))},
+		versions: []contract.SuiteVersionID{"V2"}, references: []contract.ProposalReference{pr.current()}}
+	before := e.view(probe)
+	boom := errors.New("conformance: injected write failure")
+
+	fail.FailNext(boom)
+	if err := e.mergeErr(mcRequest(pr, "v2", &mcMessages{})); !errors.Is(err, boom) {
+		e.t.Fatalf("error = %v, want the injected failure", err)
+	}
+
+	e.requireSameView(before, e.view(probe))
+	if _, found := e.outcomeOf(pr.carrier); found {
+		e.t.Fatal("an outcome was recorded by the failed merge")
+	}
+	retry := e.merge(mcRequest(pr, "v2", &mcMessages{}))
+	if retry.Duplicate || retry.Kind != governance.MergePromoted || retry.Version != "V2" {
+		e.t.Fatalf("retry = %+v, want a new promotion to V2", retry)
+	}
+	e.requireWrites(before.Revision, 2)
 }

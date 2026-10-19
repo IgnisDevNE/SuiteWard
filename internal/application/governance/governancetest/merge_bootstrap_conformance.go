@@ -109,7 +109,7 @@ func mbPromotesV1(e *cfEnv) {
 	if assessment, found := e.assessmentAt(reference, mbSource); !found || !assessment.Passed() {
 		e.t.Fatalf("assessment of the merge commit = %+v (found %v), want a passed one", assessment, found)
 	}
-	e.requireQueued(nil, []string{"comment/" + string(bsCarrier)})
+	e.requireOutbox([]string{"comment/" + string(bsCarrier)})
 }
 
 func mbReplay(e *cfEnv) {
@@ -240,7 +240,7 @@ func mbNonCarrier(e *cfEnv) {
 		e.t.Fatalf("message calls %d (last version %q), want the caller asked once and told there is no version", messages.calls, messages.last.Version)
 	}
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil) // the merge wrote no message
+	e.requireOutbox(nil) // the merge wrote no message
 	e.requireNoCanonical()
 
 	// A refusal of a PR with no bootstrap proposal records the same.

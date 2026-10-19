@@ -12,7 +12,7 @@
 | [0002](0002-exact-revision-approval.md) | Human approval of an exact proposal revision | Copyable PR command, exact binding, stale-reference handling, and idempotent approval processing. Amended (R1): the command carries a TOTP code. |
 | [0003](0003-go-and-chi.md) | Go and Chi | Product implementation language and minimal HTTP adapter. |
 | [0004](0004-postgresql-pgx-sqlc.md) | PostgreSQL, pgx, and sqlc | Explicit SQL, generated access code, and transaction responsibilities. |
-| [0005](0005-river-background-jobs.md) | River background jobs | Transactional enqueueing, repeatable processing, periodic triggers, and restart recovery. |
+| [0005](0005-river-background-jobs.md) | River background jobs | Transactional enqueueing, repeatable processing, periodic triggers, and restart recovery. Amended (M1.10): the outbox carries the transactional guarantee; `Tx.Enqueue` removed. |
 | [0006](0006-provider-agnostic-modular-monolith.md) | Provider-agnostic modular monolith | Control plane, execution plane, SCM adapter, and GitHub-first delivery. |
 | [0007](0007-canonical-contract-authority.md) | Canonical contract authority | Immutable versions, candidate non-authority, exact approval, bound evidence, and atomic promotion. Amended (R1): verify bytes at write; normalized state. |
 | [0008](0008-progressive-integrity-and-execution.md) | Integrity before canonical execution | M0-M3 sequence, distinct assurance levels, and DockerExecutionBackend in M2. |

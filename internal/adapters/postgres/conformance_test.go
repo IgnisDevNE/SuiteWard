@@ -44,8 +44,8 @@ type failingStore struct {
 }
 
 var (
-	_ governancetest.FailNexter     = (*failingStore)(nil)
-	_ governancetest.QueueInspector = (*failingStore)(nil)
+	_ governancetest.FailNexter      = (*failingStore)(nil)
+	_ governancetest.OutboxInspector = (*failingStore)(nil)
 )
 
 // column returns one text column of every committed row, sorted.
@@ -55,10 +55,6 @@ func (s *failingStore) column(ctx context.Context, query string) ([]string, erro
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[string])
-}
-
-func (s *failingStore) QueuedJobKinds(ctx context.Context) ([]string, error) {
-	return s.column(ctx, "SELECT kind FROM river_job ORDER BY kind")
 }
 
 func (s *failingStore) OutboxKeys(ctx context.Context) ([]string, error) {
@@ -98,10 +94,6 @@ func (t *failingTx) afterWrite(err error) error {
 
 func (t *failingTx) AppendConsent(ctx context.Context, write governance.ConsentWrite) error {
 	return t.afterWrite(t.Tx.AppendConsent(ctx, write))
-}
-
-func (t *failingTx) Enqueue(ctx context.Context, job governance.Job) error {
-	return t.afterWrite(t.Tx.Enqueue(ctx, job))
 }
 
 func (t *failingTx) Outbox(ctx context.Context, message governance.OutboxMessage) error {

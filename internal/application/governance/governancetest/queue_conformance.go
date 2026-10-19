@@ -11,44 +11,35 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// QueueInspector is implemented by stores that can list what committed units
-// of work enqueued, which the port itself cannot read. Subtests that need it
-// are skipped for stores that do not implement it.
-type QueueInspector interface {
-	QueuedJobKinds(ctx context.Context) ([]string, error) // the kind of every committed job, sorted
-	OutboxKeys(ctx context.Context) ([]string, error)     // the key of every committed outbox message, sorted
+// OutboxInspector is implemented by stores that can list what committed units of work wrote to the outbox, which the port
+// itself cannot read. Subtests that need it are skipped for stores that do not implement it.
+type OutboxInspector interface {
+	OutboxKeys(ctx context.Context) ([]string, error) // the key of every committed outbox message, sorted
 }
 
 var cfObject = json.RawMessage(`{"suite":"suite"}`)
 
-// requireQueued fails unless exactly the given job kinds and outbox keys are committed.
-func (e *cfEnv) requireQueued(kinds, keys []string) {
+// requireOutbox fails unless exactly the given outbox keys are committed.
+func (e *cfEnv) requireOutbox(keys []string) {
 	e.t.Helper()
-	inspector, ok := e.store.(QueueInspector)
+	inspector, ok := e.store.(OutboxInspector)
 	if !ok {
-		e.t.Skip("the store cannot list its queued work")
-	}
-	gotKinds, err := inspector.QueuedJobKinds(context.Background())
-	if err != nil {
-		e.t.Fatal(err)
+		e.t.Skip("the store cannot list its outbox")
 	}
 	gotKeys, err := inspector.OutboxKeys(context.Background())
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	if !slices.Equal(gotKinds, kinds) || !slices.Equal(gotKeys, keys) {
-		e.t.Fatalf("queued jobs %v and outbox keys %v, want %v and %v", gotKinds, gotKeys, kinds, keys)
+	if !slices.Equal(gotKeys, keys) {
+		e.t.Fatalf("outbox keys %v, want %v", gotKeys, keys)
 	}
 }
 
-func cfEnqueueAndOutbox(ctx context.Context, tx governance.Tx, key string) error {
-	if err := tx.Enqueue(ctx, governance.Job{Kind: "probe", Args: cfObject}); err != nil {
-		return err
-	}
+func cfWriteOutbox(ctx context.Context, tx governance.Tx, key string) error {
 	return tx.Outbox(ctx, governance.OutboxMessage{Key: key, Kind: "probe", Payload: cfObject})
 }
 
-func cfQueueCommitsWithTheFact(e *cfEnv) {
+func cfOutboxCommitsWithTheFact(e *cfEnv) {
 	c := e.candidate("p1", "", "v1")
 	e.seedSimple(cfProject, cfSuite, c)
 	before := e.revision()
@@ -62,16 +53,16 @@ func cfQueueCommitsWithTheFact(e *cfEnv) {
 		if err := tx.AppendConsent(ctx, write); err != nil {
 			return err
 		}
-		return cfEnqueueAndOutbox(ctx, tx, "publish-p1")
+		return cfWriteOutbox(ctx, tx, "publish-p1")
 	})
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.requireQueued([]string{"probe"}, []string{"publish-p1"})
-	e.requireWrites(before, 1) // the consent only: the queue does not advance the revision
+	e.requireOutbox([]string{"publish-p1"})
+	e.requireWrites(before, 1) // the consent only: the outbox does not advance the revision
 }
 
-func cfQueueRollsBackWithTheFact(e *cfEnv) {
+func cfOutboxRollsBackWithTheFact(e *cfEnv) {
 	c := e.candidate("p1", "", "v1")
 	e.seedSimple(cfProject, cfSuite, c)
 	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"approve-p1"}, sources: []contract.SourceCommandID{"comment-p1"}}
@@ -86,7 +77,7 @@ func cfQueueRollsBackWithTheFact(e *cfEnv) {
 		if err := tx.AppendConsent(ctx, write); err != nil {
 			return err
 		}
-		if err := cfEnqueueAndOutbox(ctx, tx, "publish-p1"); err != nil {
+		if err := cfWriteOutbox(ctx, tx, "publish-p1"); err != nil {
 			return err
 		}
 		return errCfAbort
@@ -95,145 +86,125 @@ func cfQueueRollsBackWithTheFact(e *cfEnv) {
 		e.t.Fatalf("error = %v, want the error of the unit of work", err)
 	}
 	e.requireSameView(before, e.view(probe))
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 
 	// The key of the failed attempt is free again.
-	if err := e.do(func(ctx context.Context, tx governance.Tx) error { return cfEnqueueAndOutbox(ctx, tx, "publish-p1") }); err != nil {
+	if err := e.do(func(ctx context.Context, tx governance.Tx) error { return cfWriteOutbox(ctx, tx, "publish-p1") }); err != nil {
 		e.t.Fatalf("retry after rollback = %v", err)
 	}
-	e.requireQueued([]string{"probe"}, []string{"publish-p1"})
+	e.requireOutbox([]string{"publish-p1"})
 }
 
-func cfQueueAloneCommits(e *cfEnv) {
+func cfOutboxAloneCommits(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite, e.candidate("p1", "", "v1"))
 	before := e.revision()
 
 	err := e.do(func(ctx context.Context, tx governance.Tx) error {
-		return cfEnqueueAndOutbox(ctx, tx, "alone")
+		return cfWriteOutbox(ctx, tx, "alone")
 	})
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.requireQueued([]string{"probe"}, []string{"alone"})
+	e.requireOutbox([]string{"alone"})
 	e.requireWrites(before, 0)
 }
 
-func cfInvalidQueueWritesAreRejected(e *cfEnv) {
+func cfInvalidOutboxWritesAreRejected(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite, e.candidate("p1", "", "v1"))
 	oversized := json.RawMessage(`{"a":"` + strings.Repeat("x", 64<<10) + `"}`)
-	job := func(j governance.Job) func(context.Context, governance.Tx) error {
-		return func(ctx context.Context, tx governance.Tx) error { return tx.Enqueue(ctx, j) }
-	}
-	message := func(m governance.OutboxMessage) func(context.Context, governance.Tx) error {
-		return func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, m) }
-	}
-	for name, write := range map[string]func(context.Context, governance.Tx) error{
-		"job with a bad kind":         job(governance.Job{Kind: "Bad", Args: cfObject}),
-		"job with array args":         job(governance.Job{Kind: "probe", Args: json.RawMessage(`[]`)}),
-		"job with oversized args":     job(governance.Job{Kind: "probe", Args: oversized}),
-		"message without a key":       message(governance.OutboxMessage{Kind: "probe", Payload: cfObject}),
-		"message with a bad kind":     message(governance.OutboxMessage{Key: "k", Kind: "Bad", Payload: cfObject}),
-		"message with a non-object":   message(governance.OutboxMessage{Key: "k", Kind: "probe", Payload: json.RawMessage(`1`)}),
-		"message with a huge payload": message(governance.OutboxMessage{Key: "k", Kind: "probe", Payload: oversized}),
+	for name, message := range map[string]governance.OutboxMessage{
+		"message without a key":       {Kind: "probe", Payload: cfObject},
+		"message with a bad kind":     {Key: "k", Kind: "Bad", Payload: cfObject},
+		"message with a non-object":   {Key: "k", Kind: "probe", Payload: json.RawMessage(`1`)},
+		"message with a huge payload": {Key: "k", Kind: "probe", Payload: oversized},
 	} {
 		e.run(name, func(e *cfEnv) {
 			err := e.do(func(ctx context.Context, tx governance.Tx) error {
-				if err := tx.Enqueue(ctx, governance.Job{Kind: "probe", Args: cfObject}); err != nil {
+				if err := cfWriteOutbox(ctx, tx, "valid"); err != nil {
 					return err
 				}
-				return write(ctx, tx)
+				return tx.Outbox(ctx, message)
 			})
 			if !errors.Is(err, governance.ErrInvalidRequest) {
 				e.t.Fatalf("error = %v, want ErrInvalidRequest", err)
 			}
-			e.requireQueued(nil, nil) // the valid job of the same unit of work is rolled back too
+			e.requireOutbox(nil) // the valid message of the same unit of work is rolled back too
 		})
 	}
 }
 
 func cfDuplicateOutboxKeyConflicts(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite, e.candidate("p1", "", "v1"))
-	if err := e.do(func(ctx context.Context, tx governance.Tx) error { return cfEnqueueAndOutbox(ctx, tx, "dup") }); err != nil {
+	if err := e.do(func(ctx context.Context, tx governance.Tx) error { return cfWriteOutbox(ctx, tx, "dup") }); err != nil {
 		e.t.Fatal(err)
 	}
 
-	err := e.do(func(ctx context.Context, tx governance.Tx) error { return cfEnqueueAndOutbox(ctx, tx, "dup") })
+	err := e.do(func(ctx context.Context, tx governance.Tx) error {
+		if err := cfWriteOutbox(ctx, tx, "other"); err != nil {
+			return err
+		}
+		return cfWriteOutbox(ctx, tx, "dup")
+	})
 	if !errors.Is(err, governance.ErrOperationConflict) {
 		e.t.Fatalf("repeated key = %v, want ErrOperationConflict", err)
 	}
-	e.requireQueued([]string{"probe"}, []string{"dup"}) // the job of the conflicting unit of work is not kept
+	e.requireOutbox([]string{"dup"}) // the message of the conflicting unit of work is not kept
 
 	err = e.do(func(ctx context.Context, tx governance.Tx) error {
-		if err := tx.Outbox(ctx, governance.OutboxMessage{Key: "twice", Kind: "probe", Payload: cfObject}); err != nil {
+		if err := cfWriteOutbox(ctx, tx, "twice"); err != nil {
 			return err
 		}
-		return tx.Outbox(ctx, governance.OutboxMessage{Key: "twice", Kind: "probe", Payload: cfObject})
+		return cfWriteOutbox(ctx, tx, "twice")
 	})
 	if !errors.Is(err, governance.ErrOperationConflict) {
 		e.t.Fatalf("key repeated inside one unit of work = %v, want ErrOperationConflict", err)
 	}
-	e.requireQueued([]string{"probe"}, []string{"dup"})
+	e.requireOutbox([]string{"dup"})
 }
 
-func cfQueueWriteFailureRollsBack(e *cfEnv) {
+func cfOutboxWriteFailureRollsBack(e *cfEnv) {
 	fail, ok := e.store.(FailNexter)
 	if !ok {
 		e.t.Skip("the store cannot inject a write failure")
 	}
 	e.seedSimple(cfProject, cfSuite, e.candidate("p1", "", "v1"))
-	boom := errors.New("conformance: injected queue failure")
+	boom := errors.New("conformance: injected outbox failure")
 
 	fail.FailNext(boom)
-	err := e.do(func(ctx context.Context, tx governance.Tx) error { return cfEnqueueAndOutbox(ctx, tx, "failing") })
+	err := e.do(func(ctx context.Context, tx governance.Tx) error { return cfWriteOutbox(ctx, tx, "failing") })
 	if !errors.Is(err, boom) {
 		e.t.Fatalf("error = %v, want the injected failure", err)
 	}
-	e.requireQueued(nil, nil)
-
-	fail.FailNext(boom)
-	err = e.do(func(ctx context.Context, tx governance.Tx) error {
-		if err := tx.Outbox(ctx, governance.OutboxMessage{Key: "failing", Kind: "probe", Payload: cfObject}); err != nil {
-			return err
-		}
-		return tx.Enqueue(ctx, governance.Job{Kind: "probe", Args: cfObject})
-	})
-	if !errors.Is(err, boom) {
-		e.t.Fatalf("outbox error = %v, want the injected failure", err)
-	}
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
-func cfQueueIsNotCommittedOnCancellation(e *cfEnv) {
+func cfOutboxIsNotCommittedOnCancellation(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite, e.candidate("p1", "", "v1"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	err := e.store.Do(ctx, cfProject, cfSuite, func(ctx context.Context, tx governance.Tx) error {
-		if err := cfEnqueueAndOutbox(ctx, tx, "canceled"); err != nil {
+		if err := cfWriteOutbox(ctx, tx, "canceled"); err != nil {
 			return err
 		}
 		cancel()
 		return nil
 	})
 	if err == nil {
-		e.t.Fatal("Do committed queued work after its context was canceled")
+		e.t.Fatal("Do committed an outbox message after its context was canceled")
 	}
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
-func cfQueueIsUnusableAfterTheUnitOfWork(e *cfEnv) {
+func cfOutboxIsUnusableAfterTheUnitOfWork(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite, e.candidate("p1", "", "v1"))
 	var leaked governance.Tx
 	e.read(func(_ context.Context, tx governance.Tx) error {
 		leaked = tx
 		return nil
 	})
-	ctx := context.Background()
-	if err := leaked.Enqueue(ctx, governance.Job{Kind: "probe", Args: cfObject}); err == nil {
-		e.t.Error("a job can still be enqueued after the unit of work ended")
-	}
-	if err := leaked.Outbox(ctx, governance.OutboxMessage{Key: "late", Kind: "probe", Payload: cfObject}); err == nil {
+	if err := cfWriteOutbox(context.Background(), leaked, "late"); err == nil {
 		e.t.Error("an outbox message can still be written after the unit of work ended")
 	}
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }

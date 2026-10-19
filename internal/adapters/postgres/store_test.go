@@ -20,6 +20,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -578,75 +579,72 @@ func (w *pgWorld) promotionWrite(c candidate, request governance.PromoteRequest,
 	}
 }
 
-func TestPromotionEndToEnd(t *testing.T) {
+func TestPromoteMergeEndToEnd(t *testing.T) {
 	w := newPGWorld(t)
-	base := newCandidate("p0", "", w.protected("baseline"))
-	one := newCandidate("p1", "v0", w.protected("first change"))
-	two := newCandidate("p2", "v1", w.protected("second change"))
-	w.seedWithBaseline(base, one, two)
+	base := w.treeCandidate("p0", "", treeOf("baseline"))
+	oneTree, twoTree := treeOf("first change"), treeOf("baseline") // the second change restores the content of V1
+	one, two := w.treeCandidate("p1", "V1", oneTree), w.treeCandidate("p2", "V2", twoTree)
+	w.seedMergeBaseline(base, one, two)
 	w.approve(one)
 	if w.revision() != 4 {
 		t.Fatalf("revision after the consent = %d; want 4", w.revision())
 	}
 
-	request := one.mergedRequest("promote-p1", "v1")
-	result, err := governance.Promote(t.Context(), w.store, request)
-	if err != nil || result.Outcome != contract.PromotionProposed || !result.Committed || result.Duplicate || w.revision() != 5 || w.currentVersion() != "v1" {
-		t.Fatalf("promotion %+v err=%v revision=%d current=%q", result, err, w.revision(), w.currentVersion())
+	request := one.mergeRequest(oneTree)
+	result, err := governance.PromoteMerge(t.Context(), w.store, w.content, request)
+	if err != nil || result.Kind != governance.MergePromoted || result.Version != "V2" || result.Duplicate || w.revision() != 6 || w.currentVersion() != "V2" {
+		t.Fatalf("merge %+v err=%v revision=%d current=%q; want a promotion to V2 with the assessment and the promotion written", result, err, w.revision(), w.currentVersion())
 	}
+	operation := contract.OperationID("merge:" + string(one.carrier))
 	w.read(func(ctx context.Context, tx governance.Tx) error {
-		historical, found, err := tx.Version(ctx, "v1")
-		if err != nil || !found || historical.Version().Manifest().Digest() != one.protected.Manifest().Digest() || !historical.Record().RecordedAt().Equal(fxRecordedAt) ||
-			!historical.Record().Binding().Equal(one.proposal.Current().Binding()) || historical.Record().OperationID() != "promote-p1" {
+		historical, found, err := tx.Version(ctx, "V2")
+		if err != nil || !found || historical.Version().Manifest().Digest() != one.protected.Manifest().Digest() || !historical.Record().RecordedAt().Equal(request.RecordedAt) ||
+			!historical.Record().Binding().Equal(one.proposal.Current().Binding()) || historical.Record().OperationID() != operation {
 			t.Fatalf("recorded version %+v found=%v err=%v", historical, found, err)
 		}
 		record, found, err := tx.PromotionFor(ctx, one.current())
-		if err != nil || !found || record.VersionID() != "v1" {
+		if err != nil || !found || record.VersionID() != "V2" {
 			t.Fatalf("promotion for the proposal %+v found=%v err=%v", record, found, err)
 		}
-		stored, found, err := tx.Receipt(ctx, "promote-p1")
+		stored, found, err := tx.Receipt(ctx, operation)
 		if err != nil || !found || stored.Kind != governance.OperationPromote || stored.Promotion == nil || stored.Consent != nil || stored.ProjectID != fxProject || stored.SuiteID != fxSuite {
 			t.Fatalf("promotion receipt %+v found=%v err=%v", stored, found, err)
 		}
+		integration := must(contract.NewIntegration(fxProject, fxTarget, request.Source, one.carrier, contract.IntegrationMergedChange))
 		identity := stored.Promotion.Identity
-		if identity.Kind != governance.OperationPromote || identity.Request.OperationID != "promote-p1" || identity.Request.Reference != one.current() || identity.Request.Carrier != one.carrier ||
-			!identity.Request.Proposed.Equal(one.protected) || identity.Request.AssessmentSource != one.merged || identity.Request.Integration != request.Integration ||
-			identity.Request.NewVersionID != "v1" || !identity.Binding.Equal(one.proposal.Current().Binding()) || identity.CorrectsVersionID != "" ||
-			stored.Promotion.Record.VersionID() != "v1" || !stored.Promotion.Record.RecordedAt().Equal(fxRecordedAt) {
+		if identity.Kind != governance.OperationPromote || identity.Request.OperationID != operation || identity.Request.Reference != one.current() || identity.Request.Carrier != one.carrier ||
+			!identity.Request.Proposed.Equal(one.protected) || identity.Request.AssessmentSource != request.Source || identity.Request.Integration != integration ||
+			identity.Request.NewVersionID != "V2" || !identity.Binding.Equal(one.proposal.Current().Binding()) || identity.CorrectsVersionID != "" ||
+			stored.Promotion.Record.VersionID() != "V2" || !stored.Promotion.Record.RecordedAt().Equal(request.RecordedAt) {
 			t.Fatalf("stored promotion identity %+v", identity)
 		}
 		return nil
 	})
 
-	replay, err := governance.Promote(t.Context(), w.store, request)
-	if err != nil || !replay.Duplicate || !replay.Committed || replay.Record.VersionID() != "v1" || w.revision() != 5 {
+	replay, err := governance.PromoteMerge(t.Context(), w.store, w.content, request)
+	if err != nil || !replay.Duplicate || replay.Kind != governance.MergePromoted || replay.Version != "V2" || w.revision() != 6 {
 		t.Fatalf("replay %+v err=%v revision=%d; want a duplicate without a write", replay, err, w.revision())
-	}
-	changed := request
-	changed.NewVersionID = "v-other"
-	if _, err := governance.Promote(t.Context(), w.store, changed); !errors.Is(err, governance.ErrOperationConflict) {
-		t.Fatalf("operation id reused for another version = %v; want ErrOperationConflict", err)
 	}
 
 	w.approve(two)
-	correction := governance.CorrectionRequest{Promotion: two.mergedRequest("correct-p2", "v2"), TargetVersionID: "v0"}
-	corrected, err := governance.Correct(t.Context(), w.store, correction)
-	if err != nil || corrected.Outcome != contract.PromotionProposed || !corrected.Committed || w.currentVersion() != "v2" || w.revision() != 7 {
-		t.Fatalf("correction %+v err=%v current=%q revision=%d", corrected, err, w.currentVersion(), w.revision())
+	corrected, err := governance.PromoteMerge(t.Context(), w.store, w.content, two.mergeRequest(twoTree))
+	if err != nil || corrected.Kind != governance.MergeCorrected || corrected.Version != "V3" || corrected.Corrects != "V2" || w.currentVersion() != "V3" || w.revision() != 9 {
+		t.Fatalf("correction %+v err=%v current=%q revision=%d; want V3 correcting V2", corrected, err, w.currentVersion(), w.revision())
 	}
+	correction := contract.OperationID("merge:" + string(two.carrier))
 	w.read(func(ctx context.Context, tx governance.Tx) error {
-		historical, found, err := tx.Version(ctx, "v2")
-		if err != nil || !found || historical.Record().CorrectsVersionID() != "v0" {
+		historical, found, err := tx.Version(ctx, "V3")
+		if err != nil || !found || historical.Record().CorrectsVersionID() != "V2" {
 			t.Fatalf("corrected version %+v found=%v err=%v", historical, found, err)
 		}
-		stored, _, err := tx.Receipt(ctx, "correct-p2")
-		if err != nil || stored.Kind != governance.OperationCorrect || stored.Promotion.Identity.CorrectsVersionID != "v0" {
+		stored, _, err := tx.Receipt(ctx, correction)
+		if err != nil || stored.Kind != governance.OperationCorrect || stored.Promotion.Identity.CorrectsVersionID != "V2" {
 			t.Fatalf("correction receipt %+v err=%v", stored, err)
 		}
 		return nil
 	})
 	var kind, corrects string
-	if err := w.db.conn.QueryRow(t.Context(), "SELECT o.kind, p.corrects_version_id FROM operations o JOIN promotions p ON p.operation_id = o.operation_id WHERE o.operation_id = 'correct-p2'").Scan(&kind, &corrects); err != nil || kind != "correct" || corrects != "v0" {
+	if err := w.db.conn.QueryRow(t.Context(), "SELECT o.kind, p.corrects_version_id FROM operations o JOIN promotions p ON p.operation_id = o.operation_id WHERE o.operation_id = $1", string(correction)).Scan(&kind, &corrects); err != nil || kind != "correct" || corrects != "V2" {
 		t.Fatalf("stored kind %q corrects %q err=%v", kind, corrects, err)
 	}
 	if n := w.count("suite_versions"); n != 3 {
@@ -661,23 +659,28 @@ func TestBootstrapRecordsAnExistingBaseline(t *testing.T) {
 	w.approve(base)
 	request := base.baselineRequest("bootstrap-p0", "v1")
 	result, err := governance.Bootstrap(t.Context(), w.store, request)
-	if err != nil || result.Outcome != contract.PromotionProposed || !result.Committed || w.currentVersion() != "v1" || w.revision() != 9 {
+	if err != nil || result.Outcome != contract.PromotionProposed || result.Duplicate || w.currentVersion() != "v1" || w.revision() != 9 {
 		t.Fatalf("bootstrap %+v err=%v current=%q revision=%d", result, err, w.currentVersion(), w.revision())
 	}
 	w.read(func(ctx context.Context, tx governance.Tx) error {
 		stored, found, err := tx.Receipt(ctx, "bootstrap-p0")
 		if err != nil || !found || stored.Kind != governance.OperationBootstrap || stored.Promotion.Identity.Request.Integration.Kind() != contract.IntegrationExistingBaseline ||
-			stored.Promotion.Identity.Request.Integration.Carrier() != "" {
+			stored.Promotion.Identity.Request.Integration.Carrier() != "" || stored.Promotion.Record.VersionID() != "v1" {
 			t.Fatalf("bootstrap receipt %+v found=%v err=%v", stored, found, err)
 		}
 		return nil
 	})
 	replay, err := governance.Bootstrap(t.Context(), w.store, request)
-	if err != nil || !replay.Duplicate || w.revision() != 9 {
+	if err != nil || !replay.Duplicate || replay.Outcome != contract.PromotionProposed || w.revision() != 9 {
 		t.Fatalf("bootstrap replay %+v err=%v revision=%d", replay, err, w.revision())
 	}
-	if _, err := governance.Promote(t.Context(), w.store, request); !errors.Is(err, governance.ErrOperationConflict) {
-		t.Fatalf("a bootstrap operation reused as a promotion = %v; want ErrOperationConflict", err)
+	changed := request
+	changed.NewVersionID = "v-other"
+	if _, err := governance.Bootstrap(t.Context(), w.store, changed); !errors.Is(err, governance.ErrOperationConflict) {
+		t.Fatalf("operation id reused for another version = %v; want ErrOperationConflict", err)
+	}
+	if w.revision() != 9 || w.count("suite_versions") != 1 {
+		t.Fatalf("a conflicting request wrote: revision %d, %d versions", w.revision(), w.count("suite_versions"))
 	}
 }
 
@@ -691,11 +694,15 @@ func readyForPromotion(t *testing.T, w *pgWorld, protected contract.ProtectedCon
 	return one
 }
 
-func TestConcurrentPromotionsRecordExactlyOneVersion(t *testing.T) {
+// TestConcurrentBootstrapsRecordExactlyOneVersion has four callers bootstrap the same approved baseline at the same
+// moment, as one operation four times and as four operations.
+func TestConcurrentBootstrapsRecordExactlyOneVersion(t *testing.T) {
 	const contenders = 4
 	run := func(t *testing.T, operations func(int) string, versions func(int) contract.SuiteVersionID) []governance.PromoteResult {
 		w := newPGWorld(t)
-		one := readyForPromotion(t, w, w.protected("contended"))
+		base := newCandidate("p0", "", w.protected("contended"))
+		w.seedSuite(fxProject, fxSuite, base)
+		w.approve(base)
 		before := w.revision()
 		results := make([]governance.PromoteResult, contenders)
 		failures := make([]error, contenders)
@@ -704,7 +711,7 @@ func TestConcurrentPromotionsRecordExactlyOneVersion(t *testing.T) {
 		for i := range contenders {
 			workers.Go(func() {
 				<-start
-				results[i], failures[i] = governance.Promote(t.Context(), w.store, one.mergedRequest(operations(i), versions(i)))
+				results[i], failures[i] = governance.Bootstrap(t.Context(), w.store, base.baselineRequest(operations(i), versions(i)))
 			})
 		}
 		close(start)
@@ -714,23 +721,20 @@ func TestConcurrentPromotionsRecordExactlyOneVersion(t *testing.T) {
 				t.Fatalf("contender %d: %v", i, err)
 			}
 		}
-		if w.revision() != before+1 || w.count("suite_versions") != 2 || w.count("promotions") != 2 {
+		if w.revision() != before+1 || w.count("suite_versions") != 1 || w.count("promotions") != 1 {
 			t.Fatalf("revision %d (was %d), %d versions, %d promotions; want exactly one new version", w.revision(), before, w.count("suite_versions"), w.count("promotions"))
 		}
 		return results
 	}
 	t.Run("different operations", func(t *testing.T) {
-		results := run(t, func(i int) string { return "promote-" + string(rune('a'+i)) }, func(i int) contract.SuiteVersionID { return contract.SuiteVersionID("v" + string(rune('1'+i))) })
+		results := run(t, func(i int) string { return "bootstrap-" + string(rune('a'+i)) }, func(i int) contract.SuiteVersionID { return contract.SuiteVersionID("v" + string(rune('1'+i))) })
 		var winners, settled int
 		for _, result := range results {
 			switch {
-			case result.Outcome == contract.PromotionProposed && result.Committed && !result.Duplicate:
+			case result.Outcome == contract.PromotionProposed && !result.Duplicate:
 				winners++
-			case result.Outcome == contract.PromotionNoChange || result.Outcome == contract.PromotionBlocked:
+			case result.Outcome == contract.PromotionBlocked && result.Reason == contract.PromotionReasonCanonicalPresent && !result.Duplicate:
 				settled++
-				if result.Committed {
-					t.Fatalf("a losing contender reports a commit: %+v", result)
-				}
 			default:
 				t.Fatalf("unexpected result %+v", result)
 			}
@@ -740,10 +744,10 @@ func TestConcurrentPromotionsRecordExactlyOneVersion(t *testing.T) {
 		}
 	})
 	t.Run("the same operation", func(t *testing.T) {
-		results := run(t, func(int) string { return "promote-same" }, func(int) contract.SuiteVersionID { return "v1" })
+		results := run(t, func(int) string { return "bootstrap-same" }, func(int) contract.SuiteVersionID { return "v1" })
 		var originals, replays int
 		for _, result := range results {
-			if !result.Committed || result.Outcome != contract.PromotionProposed || result.Record.VersionID() != "v1" {
+			if result.Outcome != contract.PromotionProposed {
 				t.Fatalf("unexpected result %+v", result)
 			}
 			if result.Duplicate {
@@ -901,20 +905,28 @@ func TestPromotionWritesRejectForeignFacts(t *testing.T) {
 }
 
 func TestArtifactBytesAreVerifiedWhenAVersionIsWritten(t *testing.T) {
+	// The merge is given a writer that stores nothing, so the content store holds only what the test put there: the
+	// store itself must verify the bytes of the version a promotion writes.
+	merge := func(w *pgWorld, c candidate, tree mapTree) (governance.MergeResult, error) {
+		return governance.PromoteMerge(t.Context(), w.store, discardWriter{}, c.mergeRequest(tree))
+	}
 	assertNothingWritten := func(t *testing.T, w *pgWorld, revision contract.StateRevision) {
 		t.Helper()
-		if w.revision() != revision || w.count("suite_versions") != 1 || w.count("promotions") != 1 || w.count("operations") != 1 || w.currentVersion() != "v0" {
-			t.Fatalf("revision %d (was %d), %d versions, %d promotions, %d operations, current %q; want no partial effect",
-				w.revision(), revision, w.count("suite_versions"), w.count("promotions"), w.count("operations"), w.currentVersion())
+		if w.revision() != revision || w.count("suite_versions") != 1 || w.count("promotions") != 1 || w.count("operations") != 1 || w.count("pr_merges") != 0 || w.currentVersion() != "V1" {
+			t.Fatalf("revision %d (was %d), %d versions, %d promotions, %d operations, %d merge outcomes, current %q; want no partial effect",
+				w.revision(), revision, w.count("suite_versions"), w.count("promotions"), w.count("operations"), w.count("pr_merges"), w.currentVersion())
 		}
 	}
 	t.Run("missing content", func(t *testing.T) {
 		w := newPGWorld(t)
-		one := readyForPromotion(t, w, unstoredProtected("never stored"))
+		tree := treeOf("never stored")
+		one := unstoredTreeCandidate("p1", "V1", tree)
+		w.seedMergeBaseline(w.treeCandidate("p0", "", treeOf("baseline")), one)
+		w.approve(one)
 		revision := w.revision()
-		_, err := governance.Promote(t.Context(), w.store, one.mergedRequest("promote-p1", "v1"))
+		_, err := merge(w, one, tree)
 		if !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("Promote with missing content = %v; want the content store's not-exist cause", err)
+			t.Fatalf("PromoteMerge with missing content = %v; want the content store's not-exist cause", err)
 		}
 		assertNothingWritten(t, w, revision)
 	})
@@ -929,19 +941,27 @@ func TestArtifactBytesAreVerifiedWhenAVersionIsWritten(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.content = content
-		protected := w.protected("will be damaged")
-		one := readyForPromotion(t, w, protected)
+		tree := treeOf("will be damaged")
+		one := w.treeCandidate("p1", "V1", tree)
+		w.seedMergeBaseline(w.treeCandidate("p0", "", treeOf("baseline")), one)
+		w.approve(one)
 		revision := w.revision()
-		object := filepath.Join(root, "sha256-"+strings.TrimPrefix(protected.Manifest().Entries()[0].Content.String(), "sha256:"))
+		var changed artifact.Digest // the protected file that differs from V1, which no other version shares
+		for _, entry := range one.protected.Manifest().Entries() {
+			if entry.Path == "tests/a_test.go" {
+				changed = entry.Content
+			}
+		}
+		object := filepath.Join(root, "sha256-"+strings.TrimPrefix(changed.String(), "sha256:"))
 		if err := os.Remove(object); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(object, []byte("damaged"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err = governance.Promote(t.Context(), w.store, one.mergedRequest("promote-p1", "v1"))
+		_, err = merge(w, one, tree)
 		if !errors.Is(err, filesystem.ErrCorruptArtifact) {
-			t.Fatalf("Promote with corrupt content = %v; want ErrCorruptArtifact", err)
+			t.Fatalf("PromoteMerge with corrupt content = %v; want ErrCorruptArtifact", err)
 		}
 		assertNothingWritten(t, w, revision)
 
@@ -949,14 +969,14 @@ func TestArtifactBytesAreVerifiedWhenAVersionIsWritten(t *testing.T) {
 		if err := os.WriteFile(object, []byte("will be damaged"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := governance.Promote(t.Context(), w.store, one.mergedRequest("promote-p1", "v1")); err != nil {
-			t.Fatal(err)
+		if result, err := merge(w, one, tree); err != nil || result.Kind != governance.MergePromoted {
+			t.Fatalf("PromoteMerge after the repair = %+v, %v; want a promotion", result, err)
 		}
 		if err := os.WriteFile(object, []byte("damaged again"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		w.read(func(ctx context.Context, tx governance.Tx) error {
-			if _, found, err := tx.Version(ctx, "v1"); err != nil || !found {
+			if _, found, err := tx.Version(ctx, "V2"); err != nil || !found {
 				t.Fatalf("version read after its content was damaged: found=%v err=%v", found, err)
 			}
 			if _, err := tx.Suite(ctx); err != nil {

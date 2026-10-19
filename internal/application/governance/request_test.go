@@ -12,7 +12,7 @@ import (
 func TestMalformedRequestsAreRejectedBeforeAnyUnitOfWork(t *testing.T) {
 	w, c := promotionWorld(t)
 	before := w.revision()
-	good := c.mergedRequest(t, "promote-9", "version-9")
+	good := c.baselineRequest(t, "bootstrap-9", "version-9")
 	var noUnitOfWork governance.UnitOfWork
 
 	attempts := map[string]func() error{
@@ -24,16 +24,7 @@ func TestMalformedRequestsAreRejectedBeforeAnyUnitOfWork(t *testing.T) {
 			_, err := governance.ProcessConsent(context.Background(), w.mem, governance.ConsentRequest{})
 			return err
 		},
-		"promotion without a unit of work": func() error { _, err := governance.Promote(context.Background(), noUnitOfWork, good); return err },
 		"bootstrap without a unit of work": func() error { _, err := governance.Bootstrap(context.Background(), noUnitOfWork, good); return err },
-		"correction without a unit of work": func() error {
-			_, err := governance.Correct(context.Background(), noUnitOfWork, governance.CorrectionRequest{Promotion: good, TargetVersionID: "version-1"})
-			return err
-		},
-		"correction without a target": func() error {
-			_, err := governance.Correct(context.Background(), w.mem, governance.CorrectionRequest{Promotion: good})
-			return err
-		},
 	}
 	for name, change := range map[string]func(*governance.PromoteRequest){
 		"operation id":      func(r *governance.PromoteRequest) { r.OperationID = " " },
@@ -47,7 +38,6 @@ func TestMalformedRequestsAreRejectedBeforeAnyUnitOfWork(t *testing.T) {
 	} {
 		malformed := good
 		change(&malformed)
-		attempts["promotion without a "+name] = func() error { _, err := governance.Promote(context.Background(), w.mem, malformed); return err }
 		attempts["bootstrap without a "+name] = func() error { _, err := governance.Bootstrap(context.Background(), w.mem, malformed); return err }
 	}
 
@@ -74,14 +64,6 @@ func TestUnknownSuiteOrProposalIsNotFound(t *testing.T) {
 		},
 		"consent for an unknown Suite": func() error {
 			_, err := governance.ProcessConsent(context.Background(), w.mem, governance.ConsentRequest{Command: w.command(nowhere, "revision-1", "approve-nowhere", "comment-nowhere", contract.ApproveConsent, 1)})
-			return err
-		},
-		"promotion of an unknown proposal": func() error {
-			_, err := governance.Promote(context.Background(), w.mem, ghost.mergedRequest(t, "promote-ghost", "version-ghost"))
-			return err
-		},
-		"promotion in an unknown Suite": func() error {
-			_, err := governance.Promote(context.Background(), w.mem, nowhere.mergedRequest(t, "promote-nowhere", "version-nowhere"))
 			return err
 		},
 	} {

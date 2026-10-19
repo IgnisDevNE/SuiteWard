@@ -83,8 +83,8 @@ func TestBaselineProposalStoresTheBytesThatBootstrapVerifies(t *testing.T) {
 	bootstrap.Proposed = result.Contract
 	promoted, err := governance.Bootstrap(t.Context(), w.store, bootstrap)
 
-	if err != nil || promoted.Outcome != contract.PromotionProposed || !promoted.Committed || w.currentVersion() != "v1" {
-		t.Fatalf("bootstrap = %+v err=%v current=%q, want a committed first canonical", promoted, err, w.currentVersion())
+	if err != nil || promoted.Outcome != contract.PromotionProposed || promoted.Duplicate || w.currentVersion() != "v1" {
+		t.Fatalf("bootstrap = %+v err=%v current=%q, want a new first canonical", promoted, err, w.currentVersion())
 	}
 }
 

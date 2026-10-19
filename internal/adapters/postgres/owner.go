@@ -51,16 +51,8 @@ func (s *Store) Enroll(ctx context.Context, e owner.Enrollment) error {
 	projects := slices.Clone(e.Projects)
 	slices.SortFunc(projects, func(a, b owner.ProjectPolicy) int { return cmp.Compare(a.RepositoryID, b.RepositoryID) })
 	if enrolled && previous.AccountID != e.Owner.AccountID {
-		ids := make([]string, len(projects))
-		for i, p := range projects {
-			ids[i] = string(owner.ProjectID(p.RepositoryID))
-		}
-		hasSuite, err := q.AnyProjectHasSuite(ctx, ids)
-		if err != nil {
-			return fmt.Errorf("check Suites of the enrolled projects: %w", err)
-		}
-		if hasSuite {
-			return fmt.Errorf("%w: another owner cannot take over a project that has a Suite", owner.ErrInvalidState)
+		if err := refuseTakeover(ctx, q, projects); err != nil {
+			return err
 		}
 	}
 
@@ -97,6 +89,22 @@ func (s *Store) Enroll(ctx context.Context, e owner.Enrollment) error {
 		return fmt.Errorf("commit owner enrollment transaction: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+// refuseTakeover rejects an enrollment by another owner of a project that already has a Suite.
+func refuseTakeover(ctx context.Context, q *dbgen.Queries, projects []owner.ProjectPolicy) error {
+	ids := make([]string, len(projects))
+	for i, p := range projects {
+		ids[i] = string(owner.ProjectID(p.RepositoryID))
+	}
+	hasSuite, err := q.AnyProjectHasSuite(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("check Suites of the enrolled projects: %w", err)
+	}
+	if hasSuite {
+		return fmt.Errorf("%w: another owner cannot take over a project that has a Suite", owner.ErrInvalidState)
+	}
 	return nil
 }
 

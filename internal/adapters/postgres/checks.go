@@ -73,10 +73,11 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 	row, err := q.LockPRCheck(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var first checks.Record
-		if first, err = insertFirstCheck(ctx, q, build, r, at); err != nil {
+		var inserted bool
+		if first, inserted, err = insertFirstCheck(ctx, q, build, r, at); err != nil {
 			return checks.Record{}, false, err
 		}
-		if first.Generation > 0 {
+		if inserted {
 			if err := transaction.Commit(ctx); err != nil {
 				return checks.Record{}, false, translateWrite("commit check transaction", err)
 			}
@@ -88,17 +89,39 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 	if err != nil {
 		return checks.Record{}, false, fmt.Errorf("lock check record: %w", err)
 	}
-	outcome, err := q.GetOutboxOutcome(ctx, row.MessageKey)
+	failedAt, err := failureTime(ctx, q, row.MessageKey)
 	if err != nil {
-		return checks.Record{}, false, fmt.Errorf("read the outbox state of check message %q: %w", row.MessageKey, err)
+		return checks.Record{}, false, err
 	}
-	var failedAt time.Time // zero: the current message did not fail
-	if outcome.State == OutboxFailed {
-		if !outcome.FinishedAt.Valid { // the outbox constraint forbids it; a zero time would read as "not failed" and never retry
-			return checks.Record{}, false, fmt.Errorf("check message %q ended failed without a finish time", row.MessageKey)
-		}
-		failedAt = outcome.FinishedAt.Time.UTC()
+	next, advance, err := advanceCheck(ctx, q, row, r, at, failedAt, build)
+	if err != nil {
+		return checks.Record{}, false, err
 	}
+	if err := transaction.Commit(ctx); err != nil {
+		return checks.Record{}, false, translateWrite("commit check transaction", err)
+	}
+	committed = true
+	return next, advance, nil
+}
+
+// failureTime is when the current message of a check failed; zero when it did not.
+func failureTime(ctx context.Context, q *dbgen.Queries, messageKey string) (time.Time, error) {
+	outcome, err := q.GetOutboxOutcome(ctx, messageKey)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read the outbox state of check message %q: %w", messageKey, err)
+	}
+	if outcome.State != OutboxFailed {
+		return time.Time{}, nil
+	}
+	if !outcome.FinishedAt.Valid { // the outbox constraint forbids it; a zero time would read as "not failed" and never retry
+		return time.Time{}, fmt.Errorf("check message %q ended failed without a finish time", messageKey)
+	}
+	return outcome.FinishedAt.Time.UTC(), nil
+}
+
+// advanceCheck stores the next record of a pull that has one. When the result advances the generation, the new
+// message is written first.
+func advanceCheck(ctx context.Context, q *dbgen.Queries, row dbgen.PrCheck, r checks.Result, at, failedAt time.Time, build func(int64) (governance.OutboxMessage, error)) (checks.Record, bool, error) {
 	next, advance := checks.Next(checkRecord(row), true, r, at, failedAt)
 	messageKey := row.MessageKey
 	if advance {
@@ -111,37 +134,33 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 		}
 		messageKey = msg.Key
 	}
-	if err := q.UpdatePRCheck(ctx, dbgen.UpdatePRCheckParams{RepositoryID: r.RepositoryID, PullNumber: key.PullNumber, HeadSha: next.HeadSHA, HeadSince: timestamp(next.HeadSince),
+	if err := q.UpdatePRCheck(ctx, dbgen.UpdatePRCheckParams{RepositoryID: r.RepositoryID, PullNumber: row.PullNumber, HeadSha: next.HeadSHA, HeadSince: timestamp(next.HeadSince),
 		State: string(next.State), Reason: next.Reason, Reference: next.Reference, Change: next.Change, Revision: next.Revision, CommandID: next.CommandID,
 		Generation: next.Generation, MessageKey: messageKey, DecidedAt: timestamp(next.DecidedAt)}); err != nil {
 		return checks.Record{}, false, fmt.Errorf("update check record: %w", err)
 	}
-	if err := transaction.Commit(ctx); err != nil {
-		return checks.Record{}, false, translateWrite("commit check transaction", err)
-	}
-	committed = true
 	return next, advance, nil
 }
 
-// insertFirstCheck writes the first record of a pull and its message. It returns the zero record when the pull
-// has a row after all: a concurrent first publication committed it while this insert waited.
-func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (governance.OutboxMessage, error), r checks.Result, at time.Time) (checks.Record, error) {
+// insertFirstCheck writes the first record of a pull and its message. It reports inserted false, and writes
+// nothing, when the pull has a row after all: a concurrent first publication committed it while this insert waited.
+func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (governance.OutboxMessage, error), r checks.Result, at time.Time) (checks.Record, bool, error) {
 	next, _ := checks.Next(checks.Record{}, false, r, at, time.Time{})
 	msg, err := build(next.Generation)
 	if err != nil {
-		return checks.Record{}, err
+		return checks.Record{}, false, err
 	}
 	inserted, err := q.InsertPRCheck(ctx, dbgen.InsertPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: int32(r.PullNumber), HeadSha: next.HeadSHA, HeadSince: timestamp(next.HeadSince), // ValidatePublish bounds the pull
 		State: string(next.State), Reason: next.Reason, Reference: next.Reference, Change: next.Change, Revision: next.Revision, CommandID: next.CommandID,
 		Generation: next.Generation, MessageKey: msg.Key, DecidedAt: timestamp(next.DecidedAt)})
 	if err != nil {
-		return checks.Record{}, fmt.Errorf("write check record: %w", err)
+		return checks.Record{}, false, fmt.Errorf("write check record: %w", err)
 	}
 	if inserted == 0 {
-		return checks.Record{}, nil
+		return checks.Record{}, false, nil
 	}
 	if err := insertOutbox(ctx, q, pgtype.Text{}, pgtype.Text{}, msg); err != nil {
-		return checks.Record{}, err
+		return checks.Record{}, false, err
 	}
-	return next, nil
+	return next, true, nil
 }

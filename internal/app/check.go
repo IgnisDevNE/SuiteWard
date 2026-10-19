@@ -81,7 +81,7 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal}
 	if p.Reference != "" {
 		var ok bool
-		if c.Proposal, c.Revision, ok = parseReference(p.Reference); !ok {
+		if c.Proposal, c.Revision, ok = commandtext.ParseReference(p.Reference); !ok {
 			return commandtext.Check{}, keyError(githubCheckKind, key, "the reference is not P<n>-R<m>")
 		}
 	}

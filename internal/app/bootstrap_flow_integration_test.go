@@ -12,6 +12,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
@@ -21,6 +22,49 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
 )
+
+// requireStoredCheck requires the stored check of pull to be state and reason under reference.
+func requireStoredCheck(t *testing.T, store *postgres.Store, pull int, state checks.State, reason, reference string) {
+	t.Helper()
+	record, found, err := store.Checks().Current(t.Context(), bootRepoID, pull)
+	if err != nil || !found {
+		t.Fatalf("the check of pull %d: found %v, error %v", pull, found, err)
+	}
+	if record.State != state || record.Reason != reason || record.Reference != reference {
+		t.Fatalf("check of pull %d is %s %s under %q, want %s %s under %q", pull, record.State, record.Reason, record.Reference, state, reason, reference)
+	}
+}
+
+// requireCommandLedger requires the command ledger to hold the dispositions of want, "<comment id>=<disposition>" in the order of the comments.
+func requireCommandLedger(t *testing.T, databaseURL, want string) {
+	t.Helper()
+	if got := scalar(t, databaseURL, "SELECT string_agg(comment_id || '=' || disposition, ' ' ORDER BY comment_id) FROM pr_commands"); got != want {
+		t.Fatalf("ledger = %q; want %q", got, want)
+	}
+}
+
+// requireLatestProposal requires the Suite's latest bootstrap proposal to be reference, carried by pull, with the origin kind and commit.
+func requireLatestProposal(t *testing.T, store *postgres.Store, reference string, pull int, kind contract.OriginKind, origin string) {
+	t.Helper()
+	err := store.Do(t.Context(), owner.ProjectID(bootRepoID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		id, found, err := tx.LatestBootstrapProposal(ctx)
+		if err != nil || !found {
+			t.Fatalf("the latest bootstrap proposal: found %v, error %v", found, err)
+		}
+		proposal, _, err := tx.Proposal(ctx, id)
+		if err != nil {
+			return err
+		}
+		current := proposal.Current()
+		if got := referenceText(current.Binding().Reference()); got != reference || current.Carrier() != carrierID(bootRepoID, pull) || current.OriginKind() != kind || string(current.Origin()) != origin {
+			t.Fatalf("latest proposal %s carried by %s from %s %s, want %s carried by pull %d from %s %s", got, current.Carrier(), current.OriginKind(), current.Origin(), reference, pull, kind, origin)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 // TestBootstrapFlowAcrossTheJobsOnPostgreSQL runs the explicit bootstrap through the commands, checks and merges jobs
 // against the real stores, as it happened on SuiteWardQ2. Each job's decision is read back from PostgreSQL by the next:
@@ -119,41 +163,16 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 	}
 	wantCheck := func(pull int, state checks.State, reason, reference string) {
 		t.Helper()
-		record, found, err := store.Checks().Current(t.Context(), bootRepoID, pull)
-		if err != nil || !found {
-			t.Fatalf("the check of pull %d: found %v, error %v", pull, found, err)
-		}
-		if record.State != state || record.Reason != reason || record.Reference != reference {
-			t.Fatalf("check of pull %d is %s %s under %q, want %s %s under %q", pull, record.State, record.Reason, record.Reference, state, reason, reference)
-		}
+		requireStoredCheck(t, store, pull, state, reason, reference)
 	}
 	wantLedger := func(want string) {
 		t.Helper()
-		if got := scalar(t, databaseURL, "SELECT string_agg(comment_id || '=' || disposition, ' ' ORDER BY comment_id) FROM pr_commands"); got != want {
-			t.Fatalf("ledger = %q; want %q", got, want)
-		}
+		requireCommandLedger(t, databaseURL, want)
 	}
 	// wantProposal requires the Suite's latest bootstrap proposal to be reference, carried by pull, with the origin kind and commit.
 	wantProposal := func(reference string, pull int, kind contract.OriginKind, origin string) {
 		t.Helper()
-		err := store.Do(t.Context(), owner.ProjectID(bootRepoID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
-			id, found, err := tx.LatestBootstrapProposal(ctx)
-			if err != nil || !found {
-				t.Fatalf("the latest bootstrap proposal: found %v, error %v", found, err)
-			}
-			proposal, _, err := tx.Proposal(ctx, id)
-			if err != nil {
-				return err
-			}
-			current := proposal.Current()
-			if got := referenceText(current.Binding().Reference()); got != reference || current.Carrier() != carrierID(bootRepoID, pull) || current.OriginKind() != kind || string(current.Origin()) != origin {
-				t.Fatalf("latest proposal %s carried by %s from %s %s, want %s carried by pull %d from %s %s", got, current.Carrier(), current.OriginKind(), current.Origin(), reference, pull, kind, origin)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireLatestProposal(t, store, reference, pull, kind, origin)
 	}
 
 	// 1. Propose on pull request 5, whose head holds .suiteward.yml and whose default branch does not: P2-R1, beside the older P1.

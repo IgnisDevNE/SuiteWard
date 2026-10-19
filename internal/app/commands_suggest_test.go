@@ -29,8 +29,9 @@ func cjSuggest(id int64, created time.Time) cjComment {
 
 // seedDeclared gives the repository's project a Suite whose canonical V1 holds the declaration, as the bootstrap leaves it, and the job
 // a content store that returns it. The head of the observed pull requests holds the files.
-func (w *cjWorld) seedDeclared(repositoryID int64, declaration string, head map[string]string) {
+func (w *cjWorld) seedDeclared(declaration string, head map[string]string) {
 	w.t.Helper()
+	repositoryID := cjID2
 	project, carrier := owner.ProjectID(repositoryID), carrierID(repositoryID, 3)
 	parsed := cjMust(scope.ParseDeclaration([]byte(declaration)))
 	protected := cjMust(contract.NewProtectedContract(cjMust(artifact.NewManifest([]artifact.Entry{{Path: scope.DeclarationPath, Content: artifact.Hash([]byte(declaration))}})),
@@ -121,7 +122,7 @@ func TestSuggestBeforeTheFirstContractIsTheReplyOfAProposeWithoutADeclaration(t 
 func TestSuggestAfterTheFirstContractRepliesWithTheScopeNoticeOfTheHead(t *testing.T) {
 	head := withFiles(bootFiles("v1"), "pkg/util_test.go", "package.json")
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl, head)
+	w.seedDeclared(cjDecl, head)
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
 
@@ -147,7 +148,7 @@ func TestSuggestAfterTheFirstContractListsTwentyPathsAndCountsAllOfThem(t *testi
 		extra = append(extra, fmt.Sprintf("pkg%02d/x_test.go", i))
 	}
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl, withFiles(bootFiles("v1"), extra...))
+	w.seedDeclared(cjDecl, withFiles(bootFiles("v1"), extra...))
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
 
@@ -161,7 +162,7 @@ func TestSuggestAfterTheFirstContractListsTwentyPathsAndCountsAllOfThem(t *testi
 
 func TestSuggestAfterTheFirstContractSaysWhenNothingIsUncovered(t *testing.T) {
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl, bootFiles("v1"))
+	w.seedDeclared(cjDecl, bootFiles("v1"))
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
 
@@ -185,7 +186,7 @@ func TestSuggestIsRefusedForAForkAndAClosedPullRequestBeforeAnyTreeIsRead(t *tes
 				repository := cjID1
 				if canonical {
 					repository = cjID2
-					w.seedDeclared(cjID2, cjDecl, withFiles(bootFiles("v1"), cjUtilTst))
+					w.seedDeclared(cjDecl, withFiles(bootFiles("v1"), cjUtilTst))
 				}
 				if tc.fork {
 					w.headRepo = "evil/widgets"
@@ -238,7 +239,7 @@ func TestSuggestFromAnotherAccountIsIgnoredAndNoCodeIsRead(t *testing.T) {
 	w.syncAll([]cjComment{other})
 	w.mustRun()
 
-	w.requireNoAck(cjID1, 500, commands.IgnoredAuthor)
+	w.requireNoAck(cjID1, commands.IgnoredAuthor)
 	if len(w.owners.consumed) != 0 || w.reader.calls["tree"] != 0 {
 		t.Fatalf("%d consumed steps and %d tree reads; another account's command acts on nothing", len(w.owners.consumed), w.reader.calls["tree"])
 	}
@@ -287,21 +288,21 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			return cjID1
 		}},
 		{"a truncated head tree after the first contract", "invalid-source", func(w *cjWorld) int64 {
-			w.seedDeclared(cjID2, cjDecl, bootFiles("v1"))
+			w.seedDeclared(cjDecl, bootFiles("v1"))
 			w.reader.repo(cjRepo2).treeErr[cjHead] = truncated
 			return cjID2
 		}},
 		{"a canonical that holds no declaration", "invalid-source", func(w *cjWorld) int64 {
-			w.seedCanonical(cjID2)
+			w.seedCanonical()
 			w.reader.repo(cjRepo2).trees[cjHead] = &bootTree{files: withFiles(bootFiles("v1"), cjUtilTst)}
 			return cjID2
 		}},
 		{"a head test-like path with a colon after the first contract", "invalid-source", func(w *cjWorld) int64 {
-			w.seedDeclared(cjID2, cjDecl, withFiles(bootFiles("v1"), "te:sts/test_a.py"))
+			w.seedDeclared(cjDecl, withFiles(bootFiles("v1"), "te:sts/test_a.py"))
 			return cjID2
 		}},
 		{"a head test-like path with a backslash after the first contract", "invalid-source", func(w *cjWorld) int64 {
-			w.seedDeclared(cjID2, cjDecl, withFiles(bootFiles("v1"), `te\sts/test_a.py`))
+			w.seedDeclared(cjDecl, withFiles(bootFiles("v1"), `te\sts/test_a.py`))
 			return cjID2
 		}},
 		{"a head test-like path with a colon before the first contract", "invalid-source", func(w *cjWorld) int64 {
@@ -309,7 +310,7 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			return cjID1
 		}},
 		{"a declaration over the limit of a notice", "declaration-too-large", func(w *cjWorld) int64 {
-			w.seedDeclared(cjID2, tooLong, withFiles(bootFiles("v1"), cjUtilTst))
+			w.seedDeclared(tooLong, withFiles(bootFiles("v1"), cjUtilTst))
 			return cjID2
 		}},
 	} {
@@ -343,7 +344,7 @@ func TestSuggestRetriesAGitHubFailureAndIsFailedAfterFiveAttemptsLoggingOnlyKind
 			repository, name := cjID1, cjRepo1
 			if canonical {
 				repository, name = cjID2, cjRepo2
-				w.seedDeclared(cjID2, cjDecl, withFiles(bootFiles("v1"), cjUtilTst))
+				w.seedDeclared(cjDecl, withFiles(bootFiles("v1"), cjUtilTst))
 			}
 			w.reader.repo(name).treeErr[cjHead] = errors.New(bootSecret)
 			if canonical {

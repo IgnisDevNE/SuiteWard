@@ -104,7 +104,7 @@ func newScopeNoticeMessage(target commentTarget, head, branch string, paths []st
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) scopeNotice(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) scopeNotice(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	n, err := decodePayload[scopeNoticePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -269,9 +269,6 @@ func (p *commentPublisher) publishReview(ctx context.Context, key string, reposi
 	return nil
 }
 
-// errNoCanonicalDeclaration says that the canonical holds no .suiteward.yml, so there is no declaration to widen.
-var errNoCanonicalDeclaration = governance.ErrNoCanonicalDeclaration
-
 // canonicalDeclaration returns the bytes of the canonical's own .suiteward.yml and the scope they declare. It reads the
 // canonical as AssessHead does and verifies the bytes against the scope digest the canonical was approved with.
 func canonicalDeclaration(ctx context.Context, suites governance.UnitOfWork, contents governance.ContentReader, project contract.ProjectID) ([]byte, scope.Scope, error) {
@@ -414,7 +411,7 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 	case ctx.Err() != nil:
 		return ctx.Err()
 	// Before the read failure, which wraps an invalid argument such as a base commit that is not a SHA: that will never succeed.
-	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, errNoCanonicalDeclaration):
+	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, governance.ErrNoCanonicalDeclaration):
 		j.logger.InfoContext(ctx, "github checks scope notice skipped: the source cannot be read", "repo", p.Repo, "pull", pull.Number)
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github checks scope notice read failed", p.Repo, err)
@@ -528,7 +525,7 @@ func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger,
 	}
 	hunks, err := changed[i].NewLineRanges()
 	if err != nil {
-		logger.WarnContext(ctx, logPrefix+" skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull)
+		logger.WarnContext(ctx, logPrefix+" skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull, "reason", err.Error()) // the text names only the constant path of the declaration
 		return nil, nil
 	}
 	var suggestions []scopeSuggestion

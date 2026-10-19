@@ -293,8 +293,8 @@ func (w *bootWorld) registerPolicy(project contract.ProjectID) {
 }
 
 // seedSuite adds the default Suite of the project of repository id, as an earlier run would have.
-func (w *bootWorld) seedSuite(id int64, target contract.IntegrationTargetID) {
-	w.seed(owner.ProjectID(id), "default", target)
+func (w *bootWorld) seedSuite(target contract.IntegrationTargetID) {
+	w.seed(owner.ProjectID(bootRepoID), "default", target)
 }
 
 func (w *bootWorld) run() error { _, err := w.job.run(w.t.Context()); return err }
@@ -413,8 +413,8 @@ func (w *bootWorld) payload(key string) map[string]any {
 }
 
 // approve records the owner's approval of P<n>-R1 of the main project as the command of a comment would.
-func (w *bootWorld) approve(n int, carrierPull int) {
-	w.approveIn(bootRepoID, 100+int64(n), n, carrierPull)
+func (w *bootWorld) approve() {
+	w.approveIn(bootRepoID, 101, 1, 4)
 }
 
 // approveIn records the owner's approval of P<n>-R1 of the project of repository id, as the comment with that id would.
@@ -430,14 +430,14 @@ func (w *bootWorld) approveIn(repositoryID, comment int64, n int, carrierPull in
 	}
 }
 
-func (w *bootWorld) assessmentOutcome(n int, source string) (contract.IntegrityOutcome, bool) {
+func (w *bootWorld) assessmentOutcome(source string) (contract.IntegrityOutcome, bool) {
 	w.t.Helper()
 	var (
 		outcome contract.IntegrityOutcome
 		found   bool
 	)
 	w.read(func(ctx context.Context, tx governance.Tx) {
-		proposal, _, err := tx.Proposal(ctx, contract.ProposalID(fmt.Sprintf("P%d", n)))
+		proposal, _, err := tx.Proposal(ctx, "P1")
 		if err != nil {
 			w.t.Fatal(err)
 		}
@@ -470,7 +470,7 @@ func proposedWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 func approvedWorld(t *testing.T, options ...func(*bootOptions)) *bootWorld {
 	t.Helper()
 	w := proposedWorld(t, options...)
-	w.approve(1, 4)
+	w.approve()
 	return w
 }
 
@@ -504,7 +504,7 @@ func TestBootstrapCreatesTheSuiteOnlyWhenItDoesNotExist(t *testing.T) {
 	})
 	t.Run("an existing suite is never created again", func(t *testing.T) {
 		w := newBootWorld(t)
-		w.seedSuite(bootRepoID, "branch:trunk") // another target than the repository's default branch: CreateSuite would conflict
+		w.seedSuite("branch:trunk") // another target than the repository's default branch: CreateSuite would conflict
 
 		w.mustRun()
 
@@ -551,7 +551,7 @@ func TestBootstrapPromotesAnApprovedBaselineOnce(t *testing.T) {
 	if version, found := w.canonical(); !found || version != "V1" {
 		t.Fatalf("canonical = %q (found %v), want V1\nlogs: %s", version, found, w.logs)
 	}
-	if outcome, found := w.assessmentOutcome(1, bootHead); !found || outcome != contract.IntegrityPassed {
+	if outcome, found := w.assessmentOutcome(bootHead); !found || outcome != contract.IntegrityPassed {
 		t.Fatalf("assessment = %v (found %v), want Passed from the service emitter", outcome, found)
 	}
 	w.requireOutbox(promotedKey, summaryKey)
@@ -637,7 +637,7 @@ func TestBootstrapDoesNotPromoteWithoutApproval(t *testing.T) {
 	if _, found := w.canonical(); found {
 		t.Fatal("a canonical exists without the owner's approval")
 	}
-	if _, found := w.assessmentOutcome(1, bootHead); found {
+	if _, found := w.assessmentOutcome(bootHead); found {
 		t.Fatal("an assessment was recorded before the approval")
 	}
 }
@@ -670,7 +670,7 @@ func TestBootstrapDoesNotPromoteAnOriginThatChangedOrCannotBeRead(t *testing.T) 
 			if _, found := w.canonical(); found {
 				t.Fatal("a canonical exists although the origin did not pass")
 			}
-			if outcome, found := w.assessmentOutcome(1, bootHead); !found || outcome != test.outcome {
+			if outcome, found := w.assessmentOutcome(bootHead); !found || outcome != test.outcome {
 				t.Fatalf("assessment = %v (found %v), want %v", outcome, found, test.outcome)
 			}
 			w.requireOutbox(summaryKey)
@@ -855,46 +855,50 @@ func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testin
 		"quotes":        `"`,
 	}
 	for name, unit := range units {
-		t.Run(name, func(t *testing.T) {
-			target := commentTarget{RepositoryID: 1<<62 + 1, Repo: strings.Repeat("o", 39) + "/" + strings.Repeat("n", 100), Pull: 1<<31 - 1}
+		t.Run(name, func(t *testing.T) { requireSummaryWithinTheOutboxLimit(t, unit) })
+	}
+}
 
-			message, err := newSummaryMessage(target, worstCase(unit))
-			if err != nil {
-				t.Fatal(err)
-			}
+// requireSummaryWithinTheOutboxLimit requires the summary of the worst case made of unit to fit the outbox, keep 20 of each list cut with a marker, and render under GitHub's limit.
+func requireSummaryWithinTheOutboxLimit(t *testing.T, unit string) {
+	t.Helper()
+	target := commentTarget{RepositoryID: 1<<62 + 1, Repo: strings.Repeat("o", 39) + "/" + strings.Repeat("n", 100), Pull: 1<<31 - 1}
 
-			if len(message.Payload) > 64<<10 {
-				t.Fatalf("payload is %d bytes, over the 64 KiB outbox limit", len(message.Payload))
-			}
-			if err := message.Validate(); err != nil {
-				t.Fatalf("the outbox rejects the message: %v", err)
-			}
-			var decoded bootstrapSummaryPayload
-			if err := json.Unmarshal(message.Payload, &decoded); err != nil {
-				t.Fatal(err)
-			}
-			if len(decoded.Summary.Paths) != 20 || len(decoded.Summary.Include) != 20 || len(decoded.Summary.Runner) != 20 || len(decoded.Summary.Exclude) != 20 || decoded.Summary.RunnerTotal != 40 {
-				t.Fatalf("payload keeps %d paths, %d include and %d exclude rules, want 20 each", len(decoded.Summary.Paths), len(decoded.Summary.Include), len(decoded.Summary.Exclude))
-			}
-			if decoded.Summary.Branch == "" {
-				t.Fatal("the branch was cut to nothing")
-			}
-			if decoded.Summary.IncludeTotal != 40 || decoded.Summary.ExcludeTotal != 40 {
-				t.Fatalf("totals are %d and %d, want the 40 rules each list had", decoded.Summary.IncludeTotal, decoded.Summary.ExcludeTotal)
-			}
-			for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Runner, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
-				if !strings.HasSuffix(entry, "…") {
-					t.Fatalf("a cut entry has no marker: %q", entry)
-				}
-			}
-			rendered, err := decoded.Summary.summary()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if body := commandtext.BootstrapSummary(rendered); len(body) >= 65536 {
-				t.Fatalf("the rendered comment is %d bytes, over GitHub's limit", len(body))
-			}
-		})
+	message, err := newSummaryMessage(target, worstCase(unit))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(message.Payload) > 64<<10 {
+		t.Fatalf("payload is %d bytes, over the 64 KiB outbox limit", len(message.Payload))
+	}
+	if err := message.Validate(); err != nil {
+		t.Fatalf("the outbox rejects the message: %v", err)
+	}
+	var decoded bootstrapSummaryPayload
+	if err := json.Unmarshal(message.Payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Summary.Paths) != 20 || len(decoded.Summary.Include) != 20 || len(decoded.Summary.Runner) != 20 || len(decoded.Summary.Exclude) != 20 || decoded.Summary.RunnerTotal != 40 {
+		t.Fatalf("payload keeps %d paths, %d include and %d exclude rules, want 20 each", len(decoded.Summary.Paths), len(decoded.Summary.Include), len(decoded.Summary.Exclude))
+	}
+	if decoded.Summary.Branch == "" {
+		t.Fatal("the branch was cut to nothing")
+	}
+	if decoded.Summary.IncludeTotal != 40 || decoded.Summary.ExcludeTotal != 40 {
+		t.Fatalf("totals are %d and %d, want the 40 rules each list had", decoded.Summary.IncludeTotal, decoded.Summary.ExcludeTotal)
+	}
+	for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Runner, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
+		if !strings.HasSuffix(entry, "…") {
+			t.Fatalf("a cut entry has no marker: %q", entry)
+		}
+	}
+	rendered, err := decoded.Summary.summary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := commandtext.BootstrapSummary(rendered); len(body) >= 65536 {
+		t.Fatalf("the rendered comment is %d bytes, over GitHub's limit", len(body))
 	}
 }
 
@@ -944,7 +948,7 @@ func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *te
 		if _, found := w.canonical(); found {
 			t.Fatal("a canonical exists after a failed read")
 		}
-		if _, found := w.assessmentOutcome(1, bootHead); found {
+		if _, found := w.assessmentOutcome(bootHead); found {
 			t.Fatal("a failed read was recorded as an assessment: it could never be Passed afterwards")
 		}
 		if strings.Contains(w.logs.String(), bootSecret) {
@@ -1001,7 +1005,7 @@ func TestBootstrapKeepsTheProblemOfAFailedRunAndClearsItWhenTheProjectIsCanonica
 	w.mustRun() // creates the Suite
 	w.requireProblem("")
 	w.branchProposal(4)
-	w.approve(1, 4)
+	w.approve()
 	w.mustRun()
 	w.requireProblem("")
 	if _, found := w.canonical(); !found {

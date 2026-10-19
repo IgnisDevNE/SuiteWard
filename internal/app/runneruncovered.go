@@ -117,24 +117,23 @@ func (j *checksJob) findRunners(ctx context.Context, p owner.ProjectPolicy, pull
 func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, set *runnerSet) error {
 	base, _, err := canonicalDeclaration(ctx, j.suites, j.contents, owner.ProjectID(p.RepositoryID))
 	switch {
-	case errors.Is(err, errNoCanonicalDeclaration):
+	case errors.Is(err, governance.ErrNoCanonicalDeclaration):
 		j.logger.InfoContext(ctx, "github checks runner-uncovered comment skipped: the canonical has no declaration to start from", "repo", p.Repo, "pull", pull.Number)
 		return nil
 	case err != nil:
 		return &opaque{what: "read the canonical declaration", cause: err}
 	}
 	protect, err := scope.AddPatterns(base, nil, inventory.RunnerPatterns(set.paths))
-	if err != nil { // unreachable with a valid canonical; kept so that a defect never fails the job: the comment is advice and the check says the same without it
-		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: the runner patterns cannot be added", "repo", p.Repo, "pull", pull.Number)
-		return nil
+	if err != nil { // no head input reaches it (the canonical is verified and the patterns are constants): a defect fails the job, not the comment
+		return &opaque{what: "add the runner patterns", cause: err}
 	}
 	var ignore []byte
 	if excludable(set.paths) {
-		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // unreachable with a valid canonical and excludable; kept so that a defect never fails the job (ignore is nil then)
-			j.logger.WarnContext(ctx, "github checks runner-uncovered ignore choice skipped: the excludes cannot be added", "repo", p.Repo, "pull", pull.Number)
+		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // excludable parsed the same patterns
+			return &opaque{what: "add the excludes", cause: err}
 		}
 	}
-	if len(ignore) > commandtext.MaxDeclaration { // a choice that cannot be shown is left out; protecting stays
+	if !quotable(ignore) { // a choice that cannot be shown is left out; protecting stays
 		ignore = nil
 	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
@@ -161,13 +160,17 @@ func excludePatterns(paths []string) []string {
 	return patterns
 }
 
+// hasGlobCharacter reports whether path has a character that exclude reads as a pattern ("*?[\"): the pattern it spells would name more than the path, or never the path.
+// Scope.ExcludesExactly and commandtext test the same set.
+func hasGlobCharacter(path string) bool { return strings.ContainsAny(path, `*?[\`) }
+
 // excludable reports whether every path can be excluded by a pattern that names exactly that file: a path with a pattern character
 // ("*?[\", as acceptingDeclaration and Scope.ExcludesExactly test it) either never matches the pattern it spells or matches other files too,
 // and one the pattern syntax refuses (such as a leading "!") cannot be added as an exclude at all.
 func excludable(paths []string) bool {
 	return !slices.ContainsFunc(paths, func(path string) bool {
 		_, err := scope.ParsePattern(excludePatterns([]string{path})[0])
-		return err != nil || strings.ContainsAny(path, `*?[\`)
+		return err != nil || hasGlobCharacter(path)
 	})
 }
 
@@ -319,7 +322,7 @@ func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths 
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) runnerUncovered(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) runnerUncovered(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	n, err := decodePayload[runnerUncoveredPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err

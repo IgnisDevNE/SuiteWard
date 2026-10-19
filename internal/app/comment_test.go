@@ -787,73 +787,46 @@ func TestAcknowledgmentConstructors(t *testing.T) {
 // second keeps the error of a constructor call, so a table can list the calls that must fail.
 func second(_ governance.OutboxMessage, err error) error { return err }
 
-// TestComposeGitHubBuildsTheCommentWriterAndALazyBot checks the composition against a GitHub that records what it
-// is asked: nothing is requested at compose time, the bot's id is read once on first use with the read token,
-// the comment is posted with a token that requests Pull requests: write, and the check runs are listed with a
-// token that requests exactly Checks: write (the comment token never asks for it).
-func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
-	var mu sync.Mutex
-	var requests []string
-	var tokenMaps []map[string]string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		requests = append(requests, r.Method+" "+r.URL.Path)
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == fmt.Sprintf("/app/installations/%d/access_tokens", setupInstallID):
-			var body struct {
-				Permissions map[string]string `json:"permissions"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad body", http.StatusBadRequest)
-				return
-			}
-			tokenMaps = append(tokenMaps, body.Permissions)
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"token": "t", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": body.Permissions})
-		case r.URL.Path == "/app":
-			_, _ = fmt.Fprint(w, `{"slug":"suiteward"}`)
-		case r.URL.Path == "/users/suiteward[bot]":
-			_, _ = fmt.Fprintf(w, `{"login":"suiteward[bot]","id":%d,"type":"Bot"}`, cmtBotID)
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/commits/"+chkHead+"/check-runs":
-			_, _ = fmt.Fprint(w, `{"check_runs":[]}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widgets/issues/7/comments":
-			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprint(w, `{"id":1}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	settings := config.GitHub{AppID: setupAppID, AppKey: config.Secret(setupKey()), InstallationID: setupInstallID, Repositories: []string{"acme/widgets"}, APIURL: server.URL}
+// composeGitHubFake is a GitHub that records the requests it gets and the permissions that each installation token asked for.
+type composeGitHubFake struct {
+	mu        sync.Mutex
+	requests  []string
+	tokenMaps []map[string]string
+}
 
-	gh, err := composeGitHub(settings, time.Minute, githubsynctest.NewMemory(), time.Now, quietLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	composed := len(requests)
-	mu.Unlock()
-	if composed != 0 {
-		t.Fatalf("composing the GitHub side made %d requests, want none", composed)
-	}
-	for range 2 {
-		if id, err := gh.bot.ID(t.Context()); err != nil || id != cmtBotID {
-			t.Fatalf("bot id = %d, %v; want %d", id, err, cmtBotID)
+func (f *composeGitHubFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requests = append(f.requests, r.Method+" "+r.URL.Path)
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == fmt.Sprintf("/app/installations/%d/access_tokens", setupInstallID):
+		var body struct {
+			Permissions map[string]string `json:"permissions"`
 		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		f.tokenMaps = append(f.tokenMaps, body.Permissions)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": "t", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": body.Permissions})
+	case r.URL.Path == "/app":
+		_, _ = fmt.Fprint(w, `{"slug":"suiteward"}`)
+	case r.URL.Path == "/users/suiteward[bot]":
+		_, _ = fmt.Fprintf(w, `{"login":"suiteward[bot]","id":%d,"type":"Bot"}`, cmtBotID)
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/commits/"+chkHead+"/check-runs":
+		_, _ = fmt.Fprint(w, `{"check_runs":[]}`)
+	case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widgets/issues/7/comments":
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprint(w, `{"id":1}`)
+	default:
+		http.NotFound(w, r)
 	}
-	if _, err := gh.writer.PostComment(t.Context(), "acme/widgets", 7, "hello"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := gh.checkRuns.Runs(t.Context(), "acme/widgets", chkHead, checkName, chkAppID); err != nil {
-		t.Fatal(err)
-	}
+}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if got := strings.Count(strings.Join(requests, "\n"), "GET /users/suiteward[bot]"); got != 1 {
-		t.Fatalf("the bot account was read %d times, want 1", got)
-	}
+// requireTokenPermissions requires a token that asked for pull_requests write with exactly metadata read, and one that asked for exactly metadata read and checks write.
+func requireTokenPermissions(t *testing.T, tokenMaps []map[string]string) {
+	t.Helper()
 	var sawWrite, sawChecks bool
 	for _, m := range tokenMaps {
 		if m["pull_requests"] == "write" {
@@ -875,6 +848,46 @@ func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
 	if !sawWrite {
 		t.Fatalf("no token asked for pull_requests write: %v", tokenMaps)
 	}
+}
+
+// TestComposeGitHubBuildsTheCommentWriterAndALazyBot checks the composition against a GitHub that records what it
+// is asked: nothing is requested at compose time, the bot's id is read once on first use with the read token,
+// the comment is posted with a token that requests Pull requests: write, and the check runs are listed with a
+// token that requests exactly Checks: write (the comment token never asks for it).
+func TestComposeGitHubBuildsTheCommentWriterAndALazyBot(t *testing.T) {
+	fake := &composeGitHubFake{}
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	settings := config.GitHub{AppID: setupAppID, AppKey: config.Secret(setupKey()), InstallationID: setupInstallID, Repositories: []string{"acme/widgets"}, APIURL: server.URL}
+
+	gh, err := composeGitHub(settings, time.Minute, githubsynctest.NewMemory(), time.Now, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	composed := len(fake.requests)
+	fake.mu.Unlock()
+	if composed != 0 {
+		t.Fatalf("composing the GitHub side made %d requests, want none", composed)
+	}
+	for range 2 {
+		if id, err := gh.bot.ID(t.Context()); err != nil || id != cmtBotID {
+			t.Fatalf("bot id = %d, %v; want %d", id, err, cmtBotID)
+		}
+	}
+	if _, err := gh.writer.PostComment(t.Context(), "acme/widgets", 7, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gh.checkRuns.Runs(t.Context(), "acme/widgets", chkHead, checkName, chkAppID); err != nil {
+		t.Fatal(err)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := strings.Count(strings.Join(fake.requests, "\n"), "GET /users/suiteward[bot]"); got != 1 {
+		t.Fatalf("the bot account was read %d times, want 1", got)
+	}
+	requireTokenPermissions(t, fake.tokenMaps)
 }
 
 func TestCommentPublisherBindsTheReceiptToItsCommentAndProject(t *testing.T) {
@@ -951,5 +964,19 @@ func TestCommentTargetRefusesARepositoryLongerThanGitHubAllows(t *testing.T) {
 	}
 	if err := (commentTarget{RepositoryID: 1, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: 1}).validate(); err != nil {
 		t.Errorf("the longest repository is refused: %v", err)
+	}
+}
+
+// Every kind that splitKey accepts, except the scope review, which posts on the diff, has a renderer, so the "no renderer" error of publish stays unreachable.
+func TestEveryCommentKindButTheScopeReviewHasARenderer(t *testing.T) {
+	for kind := range keyParts {
+		if _, has := commentHandlers[kind]; !has && kind != scopeReviewKey {
+			t.Errorf("the kind %q has no renderer in commentHandlers", kind)
+		}
+	}
+	for kind := range commentHandlers {
+		if _, known := keyParts[kind]; !known {
+			t.Errorf("commentHandlers has the kind %q, which splitKey refuses", kind)
+		}
 	}
 }

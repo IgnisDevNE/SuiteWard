@@ -87,13 +87,12 @@ func (w *intWorld) latest() (integrity.Record, bool) {
 	return record, found
 }
 
-func (w *intWorld) want(verdict integrity.Verdict) integrity.Record {
+func (w *intWorld) want(verdict integrity.Verdict) {
 	w.t.Helper()
 	record, found := w.latest()
 	if !found || record.Verdict != verdict || record.Version != "V1" || !record.CheckedAt.Equal(w.clock) {
 		w.t.Fatalf("verdict %+v, found %v; want %s of V1 checked at %v\nlogs: %s", record, found, verdict, w.clock, w.logs)
 	}
-	return record
 }
 
 func (w *intWorld) wantNothing() {
@@ -195,7 +194,7 @@ func TestIntegrityWritesNothingWithoutASuiteOrACanonical(t *testing.T) {
 	})
 	t.Run("a suite without a canonical", func(t *testing.T) {
 		w := newIntWorld(t, false)
-		w.seedSuite(bootRepoID, "branch:main")
+		w.seedSuite("branch:main")
 
 		w.mustRun()
 

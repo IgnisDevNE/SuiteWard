@@ -84,7 +84,7 @@ type MCP struct {
 	AllowedOrigins []string
 }
 
-// GitHub holds the interim M1.4 operator configuration of the GitHub App
+// GitHub holds the operator configuration of the GitHub App
 // (see docs/contracts/github.md); it does not establish a trusted installation.
 type GitHub struct {
 	AppID          int64
@@ -222,7 +222,7 @@ func (l *loader) present(name string, secret bool) (value string, set bool) {
 	return value, ok || len(l.errs) > reported
 }
 
-// github reads the interim M1.4 GitHub settings: the first four are all set
+// github reads the GitHub settings: the first four are all set
 // or all unset (nil), the API URL is checked either way.
 func (l *loader) github() *GitHub {
 	apiURL := l.optional("GITHUB_API_URL", "https://api.github.com")

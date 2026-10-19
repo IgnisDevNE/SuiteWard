@@ -32,7 +32,7 @@ const (
 func newCJBootWorld(t *testing.T) *cjJobWorld {
 	t.Helper()
 	w := newCJWorld(t, false)
-	w.seedSuite(bootRepoID, "branch:main")
+	w.seedSuite("branch:main")
 	return w
 }
 
@@ -166,7 +166,7 @@ func TestChecksSayApprovalMissingForTheCarrierOfABranchProposalUntilV1ExistsAndR
 		t.Fatalf("record %+v, want the reference P1-R1", record)
 	}
 	w.want(5, checks.InProgress, "bootstrap-awaiting", 1)
-	w.approve(1, 4)
+	w.approve()
 	w.mustCheck()
 	w.want(4, checks.InProgress, "approval-missing", 1) // until the bootstrap job promotes V1
 	if w.reader.reads[bootHead] != 0 || w.reader.reads[cjHead3] != 0 {
@@ -594,7 +594,7 @@ func TestChecksWriteTheNoticeOfAPullThatWaitedBeforeTheSuiteExisted(t *testing.T
 	w.want(4, checks.InProgress, "bootstrap-awaiting", 1)
 	w.requireOutbox()
 
-	w.seedSuite(bootRepoID, "branch:main")
+	w.seedSuite("branch:main")
 	w.mustCheck()
 	w.mustCheck()
 

@@ -200,7 +200,7 @@ func TestProposeAndSuggestCarryTheSubmodulesTheSuggestionReaches(t *testing.T) {
 
 func TestSuggestAfterTheFirstContractCarriesTheSubmodulesOfTheHead(t *testing.T) {
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl, bootFiles("v1"))
+	w.seedDeclared(cjDecl, bootFiles("v1"))
 	w.reader.repo(cjRepo2).trees[cjHead] = treeWithSubmodules(withFiles(bootFiles("v1"), "pkg/util_test.go"), "ext/lib", "vendor/lib")
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()

@@ -90,9 +90,9 @@ type mgWorld struct {
 	mgProbs *bootstrapProblems
 }
 
-func newMgWorld(t *testing.T, options ...func(*bootOptions)) *mgWorld {
+func newMgWorld(t *testing.T) *mgWorld {
 	t.Helper()
-	return newMgWorldOf(t, newCJWorld(t, true, options...))
+	return newMgWorldOf(t, newCJWorld(t, true))
 }
 
 func newMgWorldOf(t *testing.T, cj *cjJobWorld) *mgWorld {

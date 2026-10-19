@@ -47,7 +47,9 @@ func TestConsentApplyDecidesSimultaneousFaultsInOrder(t *testing.T) {
 		reason    contract.ConsentReason
 		duplicate bool
 	}
-	rejected := func(reason contract.ConsentReason) want { return want{outcome: contract.ConsentRejected, reason: reason} }
+	rejected := func(reason contract.ConsentReason) want {
+		return want{outcome: contract.ConsentRejected, reason: reason}
+	}
 	for _, tt := range []struct {
 		name    string
 		prepare func(*testing.T, *applyFaults)

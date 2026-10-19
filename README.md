@@ -113,7 +113,7 @@ The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [
 - **The MVP is feature-complete for a single owner on GitHub,** and accepted on both tiers. SuiteWard governs its own tests: every pull request to this repository that changes a protected file needs the owner's approval.
 - **Releases:**
   - `v0.1.0` is the first release.
-  - `v0.1.1` adds scope discovery (M1.9) and is in release.
+  - `v0.1.1` adds scope discovery (M1.9). It is the current release and runs on both tiers.
   - The final MVP release comes after a security gate: hardening, a heavy pentest of both tiers, and a SecOps review.
 - **After the MVP:**
   - canonical test execution (M2);

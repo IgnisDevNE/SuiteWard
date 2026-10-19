@@ -128,6 +128,12 @@ Accepted 2026-10-11 (owner, from the S1 findings in [s1-github](../spikes/s1-git
 - A token lives one hour and is reused until five minutes before it expires.
 - Acknowledgement comments use Pull requests write, requested only by the comment publisher with `{metadata: read, pull_requests: write}`. M1.6a-P0 measured on 2026-10-13 that a token requesting `pull_requests: read` from the App that holds write is granted exactly read, so synchronization stays read-only, and that the same comment POST with the read map answers 403.
 - The GitHub adapter contract is [github](../contracts/github.md).
+- **No Contents write, reaffirmed 2026-10-19 (owner, M1.9).** A one-click choice that commits for the owner was declined, because security and isolation are the product's core and Contents write would add a way to fail:
+  - it would let the key inject commits into PR branches, run existing workflows on new branches, and create tags;
+  - in the managed service, one key would write to every customer;
+  - in co-located, the agent reaches the key, so it would gain a second write identity.
+
+  The owner's choices stay copyable blocks, review suggestions (committed with the owner's own credentials), or a change the owner asks the agent to make. Checks write remains only because it is required.
 
 ### D-COMMENT-EDIT: One comment is one action
 

@@ -190,7 +190,7 @@ type PromotionInput struct {
 	NewVersionID SuiteVersionID
 	RecordedAt   time.Time
 	// CorrectsVersionID is the earlier version a correction restores, empty for a promotion that corrects nothing.
-	// DecideCorrection sets it; DecidePromotion and DecideBootstrap only carry it into the record.
+	// DecideCorrection sets it, DecideBootstrap refuses it, and DecidePromotion only carries it into the record.
 	CorrectsVersionID SuiteVersionID
 }
 

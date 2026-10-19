@@ -62,10 +62,14 @@ func (r *cjCountingReader) Tree(ctx context.Context, repo, sha string) (inventor
 // cjRecordingLedger keeps what the job publishes, as the single writer of the ledger.
 type cjRecordingLedger struct {
 	checks.Store
-	messages []governance.OutboxMessage
+	messages   []governance.OutboxMessage
+	publishErr error // every Publish fails with it, before it writes anything
 }
 
 func (l *cjRecordingLedger) Publish(ctx context.Context, r checks.Result, at time.Time, message func(int64) (governance.OutboxMessage, error)) (checks.Record, bool, error) {
+	if l.publishErr != nil {
+		return checks.Record{}, false, l.publishErr
+	}
 	return l.Store.Publish(ctx, r, at, func(generation int64) (governance.OutboxMessage, error) {
 		m, err := message(generation)
 		if err == nil {

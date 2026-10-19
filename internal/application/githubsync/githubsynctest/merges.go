@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
@@ -77,7 +76,7 @@ func (e *gsEnv) requireNumbers(got []githubsync.PullState, want ...int) {
 // gsMergeCases are the merge-facts cases of the conformance suite.
 var gsMergeCases = []struct {
 	name string
-	run  func(*gsEnv, func(*testing.T) githubsync.Store)
+	run  func(*gsEnv)
 }{
 	{"AbsenceResolutionReopenAndANewAbsence", gsResolutionLifecycle},
 	{"ResolutionRefreshesTheHeadBaseAndHeadRepository", gsResolutionRefreshes},
@@ -92,7 +91,7 @@ var gsMergeCases = []struct {
 	{"BlankHeadRepositoryIsRejectedWithoutEffects", gsBlankHeadRepository},
 }
 
-func gsResolutionLifecycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsResolutionLifecycle(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a"), gsPull(2, "b")), nil))
 	e.requireNumbers(e.awaiting())
 
@@ -123,7 +122,7 @@ func gsResolutionLifecycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsResolutionRefreshes(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsResolutionRefreshes(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	e.record(gsCycle(2, nil, nil))
 	resolution := gsResolution(1, 2, 40, 3)
@@ -142,7 +141,7 @@ func gsResolutionRefreshes(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsStaleResolution(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsStaleResolution(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a"), gsPull(2, "b")), nil))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "a")), nil)) // pull 2 absent since 2
 	before := e.view()
@@ -163,7 +162,7 @@ func gsStaleResolution(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.requireNumbers(e.awaiting(), 2)
 }
 
-func gsClosedFirst(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsClosedFirst(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	before := e.view()
 	e.closed(2, gsClosed(5, 20, 19), gsClosed(6, 30, 0))
@@ -175,7 +174,7 @@ func gsClosedFirst(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.requireView(e.view(), before)
 }
 
-func gsClosedInserts(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsClosedInserts(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a"), gsPull(2, "b")), nil))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "a")), nil)) // pull 2 absent, unresolved
 	e.closed(3, gsClosed(6, 30, 0))                    // watermark 30
@@ -204,7 +203,7 @@ func gsClosedInserts(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.requireNumbers(e.awaiting(), 2, 7, 11)
 }
 
-func gsMergedOrder(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsMergedOrder(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a"), gsPull(2, "b"), gsPull(3, "c")), nil))
 	e.record(gsCycle(2, nil, nil))
 	e.resolve(gsResolution(1, 2, 30, 3))
@@ -227,7 +226,7 @@ func gsMergedOrder(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsMarkProcessedUnknown(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsMarkProcessedUnknown(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	for _, number := range []int{2, 0} {
 		if err := e.store.MarkProcessed(context.Background(), gsRepo, number); !errors.Is(err, githubsync.ErrInvalidObservation) {
@@ -239,7 +238,7 @@ func gsMarkProcessedUnknown(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsHeadRepository(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsHeadRepository(e *gsEnv) {
 	fork, deleted, unobserved := gsPull(1, "a"), gsPull(2, "b"), gsPull(3, "c")
 	fork.HeadRepo, deleted.HeadRepo = "fork/widgets", "(deleted)"
 	e.record(gsCycle(1, gsPulls(fork, deleted, unobserved), nil))
@@ -260,7 +259,7 @@ func gsHeadRepository(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsInvalidMergeInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsInvalidMergeInput(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	e.record(gsCycle(2, nil, nil))
 	before := e.view()
@@ -308,7 +307,7 @@ func gsInvalidMergeInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 }
 
 // An empty first listing is still the first call: the next one inserts a merged item whatever its updated_at.
-func gsClosedEmptyFirst(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsClosedEmptyFirst(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	before := e.view()
 	e.closed(2)
@@ -322,7 +321,7 @@ func gsClosedEmptyFirst(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 }
 
 // A head repository is empty (not observed) or a name; a blank one is no observation the stores could tell apart.
-func gsBlankHeadRepository(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsBlankHeadRepository(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	e.record(gsCycle(2, nil, nil))
 	before := e.view()

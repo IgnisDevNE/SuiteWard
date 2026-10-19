@@ -73,9 +73,11 @@ type gsView struct {
 
 func gsNothing() gsView { return gsView{Comments: map[int][]githubsync.CommentVersion{}} }
 
+// gsEnv is one subtest's store, and newStore makes the further stores of the cases that compare several.
 type gsEnv struct {
-	t     *testing.T
-	store githubsync.Store
+	t        *testing.T
+	store    githubsync.Store
+	newStore func(*testing.T) githubsync.Store
 }
 
 func (e *gsEnv) must(err error) {
@@ -155,7 +157,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) githubsync.Store) 
 	t.Helper()
 	cases := []struct {
 		name string
-		run  func(*gsEnv, func(*testing.T) githubsync.Store)
+		run  func(*gsEnv)
 	}{
 		{"RepositoryIsUnknownBeforeItsFirstCycle", gsUnknownRepository},
 		{"FirstCycleCreatesTheState", gsFirstCycle},
@@ -188,16 +190,16 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) githubsync.Store) 
 					t.Fatalf("panic: %v\n%s", r, debug.Stack())
 				}
 			}()
-			tc.run(&gsEnv{t: t, store: newStore(t)}, newStore)
+			tc.run(&gsEnv{t: t, store: newStore(t), newStore: newStore})
 		})
 	}
 }
 
-func gsUnknownRepository(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsUnknownRepository(e *gsEnv) {
 	e.requireView(e.view(), gsNothing())
 }
 
-func gsFirstCycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsFirstCycle(e *gsEnv) {
 	approve, note := gsComment(10, "approved", 0), gsComment(11, "note", 0)
 	e.record(gsCycle(1, gsPulls(gsPull(1, "head-1"), gsPull(2, "head-2")), gsListing{1: gsComments(approve, note)}))
 
@@ -213,7 +215,7 @@ func gsFirstCycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.requireView(e.view(), want)
 }
 
-func gsRepeatedCycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsRepeatedCycle(e *gsEnv) {
 	cycle := gsCycle(1, gsPulls(gsPull(1, "head-1")), gsListing{1: gsComments(gsComment(10, "approved", 0))})
 	e.record(cycle)
 	first := e.view()
@@ -221,7 +223,7 @@ func gsRepeatedCycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.requireView(e.view(), first)
 }
 
-func gsLaterCycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsLaterCycle(e *gsEnv) {
 	comment := gsComment(10, "approved", 0)
 	e.record(gsCycle(1, gsPulls(gsPull(1, "head-1")), gsListing{1: gsComments(comment)}))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "head-1")), gsListing{1: gsComments(comment)}))
@@ -238,7 +240,7 @@ func gsLaterCycle(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsHeadChange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsHeadChange(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "head-1")), nil))
 	moved := gsPull(1, "head-2")
 	moved.HeadRef, moved.BaseRef, moved.BaseSHA, moved.UpdatedAt = "renamed", "develop", "base-2", gsTime(9)
@@ -250,7 +252,7 @@ func gsHeadChange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsPullNotOpen(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsPullNotOpen(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a"), gsPull(2, "b")), nil))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "a")), nil))
 	if got := e.pull(2); got.NotOpenSince != gsTime(2) || got.LastSeen != gsTime(1) {
@@ -271,7 +273,7 @@ func gsPullNotOpen(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsEdit(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsEdit(e *gsEnv) {
 	original, edited := gsComment(10, "approved", 0), gsComment(10, "approved, but only for now", 1)
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(original)}))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(edited)}))
@@ -282,7 +284,7 @@ func gsEdit(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsCreatedAtChange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsCreatedAtChange(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(gsComment(10, "approved", 0))}))
 	before := e.view()
 
@@ -298,7 +300,7 @@ func gsCreatedAtChange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 
 // gsRawBodies: a body is bytes, whatever they contain; a NUL or invalid UTF-8
 // must neither fail the cycle nor change on the way back.
-func gsRawBodies(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsRawBodies(e *gsEnv) {
 	nul, invalid, empty := gsComment(10, "a\x00b", 0), gsComment(11, "a\xffb", 0), gsComment(12, "", 0)
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(nul, invalid, empty)}))
 
@@ -310,7 +312,7 @@ func gsRawBodies(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 
 // gsSameUpdatedAt: GitHub's updated_at has one-second resolution, so two edits
 // can share it. Each distinct body is a version; the one seen last is the latest.
-func gsSameUpdatedAt(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsSameUpdatedAt(e *gsEnv) {
 	first := gsComment(10, "first", 0)
 	second := first
 	second.Body = "second"
@@ -343,7 +345,7 @@ func gsSameUpdatedAt(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsCommentsPullRange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsCommentsPullRange(e *gsEnv) {
 	for _, number := range []int{0, -1, math.MaxInt32 + 1} {
 		if _, err := e.store.Comments(context.Background(), gsRepo, number); !errors.Is(err, githubsync.ErrInvalidObservation) {
 			e.t.Fatalf("Comments of pull %d gave %v, want ErrInvalidObservation", number, err)
@@ -354,7 +356,7 @@ func gsCommentsPullRange(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsCommentAbsent(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsCommentAbsent(e *gsEnv) {
 	kept, first, own := gsComment(10, "kept", 0), gsComment(11, "first", 0), gsComment(20, "other pull", 0)
 	second := gsComment(11, "second", 1)
 	both := gsPulls(gsPull(1, "a"), gsPull(2, "b"))
@@ -382,7 +384,7 @@ func gsCommentAbsent(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsCommentReappearsEdited(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsCommentReappearsEdited(e *gsEnv) {
 	first, second := gsComment(10, "first", 0), gsComment(10, "second", 1)
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(first)}))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "a")), nil))
@@ -394,7 +396,7 @@ func gsCommentReappearsEdited(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsClosedPullComments(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsClosedPullComments(e *gsEnv) {
 	comment := gsComment(20, "on pull 2", 0)
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a"), gsPull(2, "b")), gsListing{2: gsComments(comment)}))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "a")), nil))
@@ -405,7 +407,7 @@ func gsClosedPullComments(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsFailure(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsFailure(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(gsComment(10, "approved", 0))}))
 	before := e.view()
 
@@ -421,7 +423,7 @@ func gsFailure(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.requireView(after, before)
 }
 
-func gsFailureFirst(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsFailureFirst(e *gsEnv) {
 	e.fail(githubsync.Failure{Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureTransport})
 
 	want := githubsync.RepositoryState{Repo: gsRepo, InstallationID: gsInstallation, LastError: githubsync.FailureTransport}
@@ -430,7 +432,7 @@ func gsFailureFirst(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsRecovery(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsRecovery(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	e.fail(githubsync.Failure{Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(2), Kind: githubsync.FailureBudgetExhausted, Status: 200, WaitUntil: gsTime(30)})
 	e.record(gsCycle(3, gsPulls(gsPull(1, "a")), nil))
@@ -441,7 +443,7 @@ func gsRecovery(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsInvalidInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsInvalidInput(e *gsEnv) {
 	ctx := context.Background()
 	valid := func(change func(*githubsync.Cycle)) githubsync.Cycle {
 		cycle := gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(gsComment(10, "x", 0))})
@@ -503,7 +505,7 @@ func gsInvalidInput(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	e.requireView(e.view(), gsNothing())
 }
 
-func gsIndependentRepositories(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsIndependentRepositories(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), gsListing{1: gsComments(gsComment(10, "x", 0))}))
 	e.record(gsCycleOf(gsOtherRepo, 1, gsPulls(gsPull(1, "other")), gsListing{1: gsComments(gsComment(10, "y", 0))}))
 	before := e.view()
@@ -517,7 +519,7 @@ func gsIndependentRepositories(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 	}
 }
 
-func gsCanceled(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsCanceled(e *gsEnv) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := e.store.RecordCycle(ctx, gsCycle(1, gsPulls(gsPull(1, "a")), nil)); err == nil {
@@ -531,11 +533,11 @@ func gsCanceled(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 
 // gsConcurrent has two cycles of one repository race; the result must equal
 // the cycles applied one after the other, in either order.
-func gsConcurrent(e *gsEnv, newStore func(*testing.T) githubsync.Store) {
+func gsConcurrent(e *gsEnv) {
 	x := gsCycle(1, gsPulls(gsPull(1, "x1"), gsPull(2, "x2")), gsListing{1: gsComments(gsComment(10, "x", 0))})
 	y := gsCycle(2, gsPulls(gsPull(2, "y2"), gsPull(3, "y3")), gsListing{2: gsComments(gsComment(20, "y", 0))})
 	sequential := func(first, second githubsync.Cycle) gsView {
-		order := &gsEnv{t: e.t, store: newStore(e.t)}
+		order := &gsEnv{t: e.t, store: e.newStore(e.t)}
 		order.record(first)
 		order.record(second)
 		return order.view()
@@ -548,7 +550,7 @@ func gsConcurrent(e *gsEnv, newStore func(*testing.T) githubsync.Store) {
 	for round := range 3 {
 		racing := &gsEnv{t: e.t, store: e.store}
 		if round > 0 {
-			racing.store = newStore(e.t)
+			racing.store = e.newStore(e.t)
 		}
 		start := make(chan struct{})
 		failures := make([]error, 2)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
@@ -13,7 +12,7 @@ import (
 // gsCycleStartCases are the cycle-start cases of the conformance suite (persistence contract, "Cycle start (M1.7c)").
 var gsCycleStartCases = []struct {
 	name string
-	run  func(*gsEnv, func(*testing.T) githubsync.Store)
+	run  func(*gsEnv)
 }{
 	{"CycleStartRoundTripsMicrosecondTruncatedAndAnEarlierLaterStartIsStillRecorded", gsCycleStartRoundTrip},
 	{"FailureKeepsTheStoredCycleStart", gsFailureKeepsCycleStart},
@@ -21,7 +20,7 @@ var gsCycleStartCases = []struct {
 	{"ConcurrentCyclesCarryingOneNewCommentReturnItsIdExactlyOnce", gsConcurrentFirstTimeCommentID},
 }
 
-func gsCycleStartRoundTrip(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsCycleStartRoundTrip(e *gsEnv) {
 	cycle := gsCycle(1, gsPulls(gsPull(1, "a")), nil)
 	cycle.StartedAt = gsStart(1).Add(789 * time.Nanosecond) // PostgreSQL keeps microseconds
 	e.record(cycle)
@@ -38,7 +37,7 @@ func gsCycleStartRoundTrip(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 }
 
 // A repository whose first record is a failure has no start: the same read a row from before the column gives.
-func gsFailureKeepsCycleStart(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsFailureKeepsCycleStart(e *gsEnv) {
 	e.fail(githubsync.Failure{Repo: gsRepo, InstallationID: gsInstallation, At: gsTime(1), Kind: githubsync.FailureTransport})
 	if got := e.view().Repository.CycleStartedAt; !got.IsZero() {
 		e.t.Fatalf("CycleStartedAt = %v for a repository that never completed a cycle, want zero", got)
@@ -59,7 +58,7 @@ func (e *gsEnv) newComments(cycle githubsync.Cycle) []int64 {
 	return ids
 }
 
-func gsFirstTimeCommentIDs(e *gsEnv, _ func(*testing.T) githubsync.Store) {
+func gsFirstTimeCommentIDs(e *gsEnv) {
 	pulls := gsPulls(gsPull(1, "a"), gsPull(2, "b"))
 	listing := gsListing{1: gsComments(gsComment(12, "x", 0), gsComment(10, "x", 0)), 2: gsComments(gsComment(11, "x", 0))}
 	require := func(step string, got, want []int64) {
@@ -87,12 +86,12 @@ func gsFirstTimeCommentIDs(e *gsEnv, _ func(*testing.T) githubsync.Store) {
 
 // gsConcurrentFirstTimeCommentID has two cycles of one repository, carrying the same new comment, race: between them
 // they return its id exactly once, since one of them stored it first.
-func gsConcurrentFirstTimeCommentID(e *gsEnv, newStore func(*testing.T) githubsync.Store) {
+func gsConcurrentFirstTimeCommentID(e *gsEnv) {
 	pulls, listing := gsPulls(gsPull(1, "a")), gsListing{1: gsComments(gsComment(10, "x", 0))}
 	for round := range 5 {
 		store := e.store
 		if round > 0 {
-			store = newStore(e.t)
+			store = e.newStore(e.t)
 		}
 		start := make(chan struct{})
 		returned, failures := make([][]int64, 2), make([]error, 2)

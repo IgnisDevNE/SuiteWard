@@ -238,7 +238,7 @@ func (c Cycle) Validate() error {
 		}
 		for _, comment := range listing {
 			if comment.CommentID <= 0 || seen[comment.CommentID] || comment.CreatedAt.IsZero() || comment.UpdatedAt.IsZero() {
-				return fmt.Errorf("%w: cycle has comment %d twice, with an invalid id or without a time", ErrInvalidObservation, comment.CommentID)
+				return fmt.Errorf("%w: cycle lists comment %d twice, with an id that is not positive, or without a time", ErrInvalidObservation, comment.CommentID)
 			}
 			seen[comment.CommentID] = true
 		}

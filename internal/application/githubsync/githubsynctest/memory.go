@@ -72,40 +72,60 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if r, ok := m.repos[cycle.Repo]; ok {
-		for _, listing := range cycle.Comments {
-			for _, comment := range listing {
-				for _, version := range r.versions {
-					if version.CommentID == comment.CommentID && !version.CreatedAt.Equal(comment.CreatedAt) {
-						return nil, fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, comment.CommentID)
-					}
-				}
-			}
+		if err := checkCreationTimes(r, cycle); err != nil {
+			return nil, err
 		}
 	}
 
 	r := m.repository(cycle.Repo)
-	known := map[int64]bool{}
+	fresh := freshComments(r, cycle) // before the versions of this cycle are stored
+	r.state = githubsync.RepositoryState{Repo: cycle.Repo, InstallationID: cycle.InstallationID, LastSuccess: cycle.At,
+		CycleStartedAt: cycle.StartedAt.Truncate(time.Microsecond)} // PostgreSQL keeps microseconds
+	recordPulls(r, cycle)
+	recordVersions(r, cycle)
+	return fresh, nil
+}
+
+// checkCreationTimes refuses a cycle that gives a stored comment another creation time, before anything is written.
+func checkCreationTimes(r *memoryRepository, cycle githubsync.Cycle) error {
+	for _, listing := range cycle.Comments {
+		for _, comment := range listing {
+			for _, version := range r.versions {
+				if version.CommentID == comment.CommentID && !version.CreatedAt.Equal(comment.CreatedAt) {
+					return fmt.Errorf("%w: comment %d", githubsync.ErrCreationTimeChanged, comment.CommentID)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// freshComments returns the sorted ids of the listed comments the repository has no version of yet.
+func freshComments(r *memoryRepository, cycle githubsync.Cycle) []int64 {
+	stored := map[int64]bool{}
 	for _, version := range r.versions {
-		known[version.CommentID] = true
+		stored[version.CommentID] = true
 	}
 	var fresh []int64
 	for _, listing := range cycle.Comments {
 		for _, comment := range listing {
-			if !known[comment.CommentID] {
-				known[comment.CommentID] = true
+			if !stored[comment.CommentID] {
+				stored[comment.CommentID] = true
 				fresh = append(fresh, comment.CommentID)
 			}
 		}
 	}
 	slices.Sort(fresh)
-	r.state = githubsync.RepositoryState{Repo: cycle.Repo, InstallationID: cycle.InstallationID, LastSuccess: cycle.At,
-		CycleStartedAt: cycle.StartedAt.Truncate(time.Microsecond)} // PostgreSQL keeps microseconds
+	return fresh
+}
 
+// recordPulls refreshes the open pulls and marks the stored pulls the listing no longer has.
+func recordPulls(r *memoryRepository, cycle githubsync.Cycle) {
 	open := map[int]bool{}
 	for _, observed := range cycle.OpenPulls {
 		open[observed.Number] = true
-		pull, known := r.pulls[observed.Number]
-		if !known {
+		pull, stored := r.pulls[observed.Number]
+		if !stored {
 			pull = githubsync.PullState{Number: observed.Number, FirstSeen: cycle.At}
 		}
 		pull.HeadSHA, pull.HeadRef, pull.BaseRef, pull.BaseSHA, pull.UpdatedAt, pull.HeadRepo = observed.HeadSHA, observed.HeadRef, observed.BaseRef, observed.BaseSHA, observed.UpdatedAt, observed.HeadRepo
@@ -118,7 +138,11 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int
 			r.pulls[number] = pull
 		}
 	}
+}
 
+// recordVersions clears the mark of the listed comments, stores the versions it has not seen, and marks the latest version of
+// every comment of a listed pull the listing no longer has.
+func recordVersions(r *memoryRepository, cycle githubsync.Cycle) {
 	seen := map[int64]bool{}
 	for _, listing := range cycle.Comments {
 		for _, comment := range listing {
@@ -134,10 +158,10 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int
 		for _, comment := range listing {
 			version := githubsync.CommentVersion{PullNumber: number, CommentID: comment.CommentID, AuthorID: comment.AuthorID, AuthorLogin: comment.AuthorLogin,
 				CreatedAt: comment.CreatedAt, UpdatedAt: comment.UpdatedAt, Body: comment.Body, BodyDigest: artifact.Hash([]byte(comment.Body)), FirstSeen: cycle.At}
-			known := slices.ContainsFunc(r.versions, func(v githubsync.CommentVersion) bool {
+			stored := slices.ContainsFunc(r.versions, func(v githubsync.CommentVersion) bool {
 				return v.CommentID == version.CommentID && v.UpdatedAt.Equal(version.UpdatedAt) && v.BodyDigest == version.BodyDigest
 			})
-			if !known {
+			if !stored {
 				r.versions = append(r.versions, version)
 			}
 		}
@@ -153,7 +177,6 @@ func (m *Memory) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int
 			r.versions[i].NotSeenSince = cycle.At
 		}
 	}
-	return fresh, nil
 }
 
 // versionOrder orders the versions of one comment: by GitHub's updated_at, then

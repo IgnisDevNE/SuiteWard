@@ -206,8 +206,9 @@ func (r *Reconciler) Tick(ctx context.Context, repos []string, deadline time.Dur
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			var err error
-			if results[i], err = r.SyncRepo(ctx, repo); err != nil && ctx.Err() == nil {
+			result, err := r.SyncRepo(ctx, repo)
+			results[i] = result
+			if err != nil && ctx.Err() == nil { // an end by the deadline or a cancellation is expected, not an error
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()

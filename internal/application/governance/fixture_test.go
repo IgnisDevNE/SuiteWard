@@ -179,29 +179,11 @@ func (w *world) approve(c candidate) {
 	}
 }
 
-func (w *world) promote(request governance.PromoteRequest) governance.PromoteResult {
-	w.t.Helper()
-	result, err := governance.Promote(context.Background(), w.mem, request)
-	if err != nil {
-		w.t.Fatalf("promote: %v", err)
-	}
-	return result
-}
-
 func (w *world) bootstrap(request governance.PromoteRequest) governance.PromoteResult {
 	w.t.Helper()
 	result, err := governance.Bootstrap(context.Background(), w.mem, request)
 	if err != nil {
 		w.t.Fatalf("bootstrap: %v", err)
-	}
-	return result
-}
-
-func (w *world) correct(request governance.CorrectionRequest) governance.PromoteResult {
-	w.t.Helper()
-	result, err := governance.Correct(context.Background(), w.mem, request)
-	if err != nil {
-		w.t.Fatalf("correct: %v", err)
 	}
 	return result
 }
@@ -261,21 +243,28 @@ func (w *world) requireWrites(before contract.StateRevision, writes int) {
 	}
 }
 
-// correctionWorld has two promoted versions (version-1, version-2) and an
-// approved fix proposal that restores the first contract against version-2.
-func correctionWorld(t *testing.T) (w *world, first, second, fix candidate) {
-	t.Helper()
-	v1 := protectedOf(t, "v1")
-	first = newCandidate(t, "p1", "", v1)
-	second = newCandidate(t, "p2", "version-1", protectedOf(t, "v2"))
-	fix = newCandidate(t, "p3", "version-2", v1)
-	w = newWorld(t, first, second, fix)
-	for _, c := range []candidate{first, second, fix} {
-		w.approve(c)
+func (w *world) proposal(id contract.ProposalID) contract.Proposal {
+	w.t.Helper()
+	var proposal contract.Proposal
+	w.read(func(ctx context.Context, tx governance.Tx) (err error) {
+		proposal, _, err = tx.Proposal(ctx, id)
+		return err
+	})
+	return proposal
+}
+
+// originKindOf is the kind a fixture means: a baseline (no canonical expected) comes from a branch, a change from a pull.
+func originKindOf(binding contract.ApprovalBinding) contract.OriginKind {
+	if binding.ExpectedCanonical() == "" {
+		return contract.OriginBranch
 	}
-	w.promote(first.mergedRequest(t, "promote-1", "version-1"))
-	w.promote(second.mergedRequest(t, "promote-2", "version-2"))
-	return w, first, second, fix
+	return contract.OriginPull
+}
+
+// sealRevision is the revision a binding input describes, as a fixture means it.
+func sealRevision(input contract.BindingInput, origin contract.SourceRevision, carrier contract.ApprovalCarrierID) contract.ProposalRevision {
+	binding := must(contract.NewApprovalBinding(input))
+	return must(contract.NewProposalRevision(binding, origin, originKindOf(binding), carrier))
 }
 
 // sameHistory compares the immutable facts of two historical versions.

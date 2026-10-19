@@ -9,6 +9,15 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
+// promotionWorld has one approved candidate.
+func promotionWorld(t *testing.T) (*world, candidate) {
+	t.Helper()
+	c := newCandidate(t, "p1", "", protectedOf(t, "v1"))
+	w := newWorld(t, c)
+	w.approve(c)
+	return w, c
+}
+
 func TestExistingBaselineBootstrapEstablishesFirstCanonical(t *testing.T) {
 	w, c := promotionWorld(t)
 	request := c.baselineRequest(t, "bootstrap-1", "version-1")
@@ -16,19 +25,19 @@ func TestExistingBaselineBootstrapEstablishesFirstCanonical(t *testing.T) {
 
 	result := w.bootstrap(request)
 
-	if result.Outcome != contract.PromotionProposed || !result.Committed || result.Duplicate {
-		t.Fatalf("result = %+v, want a committed proposed bootstrap", result)
+	if result.Outcome != contract.PromotionProposed || result.Duplicate {
+		t.Fatalf("result = %+v, want a new proposed bootstrap", result)
 	}
 	w.requireWrites(before, 1)
 	if w.currentVersion() != "version-1" {
 		t.Fatalf("current version = %q, want version-1", w.currentVersion())
 	}
-	if receipt, found := w.receipt("bootstrap-1"); !found || receipt.Kind != governance.OperationBootstrap {
+	if receipt, found := w.receipt("bootstrap-1"); !found || receipt.Kind != governance.OperationBootstrap || receipt.Promotion == nil || receipt.Promotion.Record.VersionID() != "version-1" {
 		t.Fatalf("receipt = %+v, found %v", receipt, found)
 	}
 	replay := w.bootstrap(request)
-	if !replay.Duplicate || !replay.Committed || replay.Record.VersionID() != "version-1" {
-		t.Fatalf("replay = %+v, want the original record as a committed duplicate", replay)
+	if !replay.Duplicate || replay.Outcome != contract.PromotionProposed {
+		t.Fatalf("replay = %+v, want the original outcome as a duplicate", replay)
 	}
 	w.requireWrites(before, 1)
 }
@@ -43,63 +52,22 @@ func TestBootstrapNeedsAnExistingBaselineAndNoCanonical(t *testing.T) {
 	t.Run("merged change", func(t *testing.T) {
 		before := w.revision()
 		result := w.bootstrap(first.mergedRequest(t, "bootstrap-merged", "version-1"))
-		if result.Outcome != contract.PromotionBlocked || result.Reason != contract.PromotionReasonIntegrationMismatch || result.Committed {
+		if result.Outcome != contract.PromotionBlocked || result.Reason != contract.PromotionReasonIntegrationMismatch {
 			t.Fatalf("result = %+v, want a block for a non-baseline integration", result)
 		}
 		w.requireWrites(before, 0)
 	})
 
-	w.promote(first.mergedRequest(t, "promote-1", "version-1"))
+	w.bootstrap(first.baselineRequest(t, "bootstrap-1", "version-1"))
 
 	t.Run("canonical present", func(t *testing.T) {
 		before := w.revision()
 		result := w.bootstrap(second.baselineRequest(t, "bootstrap-2", "version-2"))
-		if result.Outcome != contract.PromotionBlocked || result.Reason != contract.PromotionReasonCanonicalPresent || result.Committed {
+		if result.Outcome != contract.PromotionBlocked || result.Reason != contract.PromotionReasonCanonicalPresent {
 			t.Fatalf("result = %+v, want a block because a canonical exists", result)
 		}
 		w.requireWrites(before, 0)
 	})
-}
-
-func TestCorrectionCreatesNewVersionAttributingTheCorrectedOneAndKeepsHistory(t *testing.T) {
-	w, _, _, fix := correctionWorld(t)
-	request := governance.CorrectionRequest{Promotion: fix.mergedRequest(t, "correct-1", "version-3"), TargetVersionID: "version-1"}
-	before := w.revision()
-	v1, _ := w.version("version-1")
-	v2, _ := w.version("version-2")
-
-	missing := governance.CorrectionRequest{Promotion: request.Promotion, TargetVersionID: "version-9"}
-	if _, err := governance.Correct(context.Background(), w.mem, missing); !errors.Is(err, governance.ErrNotFound) {
-		t.Fatalf("correction of an unknown version: error = %v, want not found", err)
-	}
-	w.requireWrites(before, 0)
-
-	result := w.correct(request)
-
-	if result.Outcome != contract.PromotionProposed || !result.Committed || result.Record.CorrectsVersionID() != "version-1" {
-		t.Fatalf("result = %+v, want a committed correction of version-1", result)
-	}
-	w.requireWrites(before, 1)
-	if w.currentVersion() != "version-3" {
-		t.Fatalf("current version = %q, want version-3", w.currentVersion())
-	}
-	for _, earlier := range []contract.HistoricalCanonical{v1, v2} {
-		id := earlier.Version().ID()
-		if now, found := w.version(id); !found || !sameHistory(earlier, now) {
-			t.Fatalf("%s changed or went missing after the correction", id)
-		}
-	}
-	if _, found := w.version("version-3"); !found {
-		t.Fatal("version-3 is missing from history")
-	}
-	if receipt, found := w.receipt("correct-1"); !found || receipt.Kind != governance.OperationCorrect {
-		t.Fatalf("receipt = %+v, found %v", receipt, found)
-	}
-	replay := w.correct(request)
-	if !replay.Duplicate || !replay.Committed || replay.Record.CorrectsVersionID() != "version-1" {
-		t.Fatalf("replay = %+v, want the original correction as a committed duplicate", replay)
-	}
-	w.requireWrites(before, 1)
 }
 
 // A Suite whose canonical moved twice (a merged change, then a correction) still answers the bootstrap that made V1
@@ -170,6 +138,14 @@ func TestBootstrapOperationIDReusedForAnotherRequestConflicts(t *testing.T) {
 			changed := e.boot
 			change(&changed)
 			if _, err := governance.Bootstrap(context.Background(), e.mem, changed); !errors.Is(err, governance.ErrOperationConflict) {
+				t.Fatalf("error = %v, want operation conflict", err)
+			}
+		})
+	}
+	for name, id := range map[string]contract.OperationID{"a bootstrap": e.boot.OperationID, "a merge": contract.OperationID("merge:" + string(second.carrier))} {
+		t.Run("a consent command under the id of "+name, func(t *testing.T) {
+			command := e.command(second, "revision-1", string(id), "comment-other", contract.ApproveConsent, 2)
+			if _, err := governance.ProcessConsent(context.Background(), e.mem, governance.ConsentRequest{Command: command}); !errors.Is(err, governance.ErrOperationConflict) {
 				t.Fatalf("error = %v, want operation conflict", err)
 			}
 		})

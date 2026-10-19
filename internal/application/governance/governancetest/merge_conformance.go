@@ -415,6 +415,15 @@ func mcSecondPRBlocked(e *cfEnv) {
 	if got := e.currentVersion(); got != "V2" {
 		e.t.Fatalf("current version = %q, want V2 kept", got)
 	}
+	e.read(func(ctx context.Context, tx governance.Tx) error {
+		if _, found, err := tx.Receipt(ctx, "merge:"+contract.OperationID(b.carrier)); err != nil || found {
+			return fmt.Errorf("the blocked merge left a promotion receipt: found %v, %v", found, err)
+		}
+		if _, found, err := tx.PromotionFor(ctx, b.current()); err != nil || found {
+			return fmt.Errorf("the blocked merge's revision was promoted: found %v, %v", found, err)
+		}
+		return nil
+	})
 }
 
 func mcRebasedPRBlocked(e *cfEnv) {

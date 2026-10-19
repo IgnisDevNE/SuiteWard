@@ -102,8 +102,8 @@ func newHeadEnvFirst(t *testing.T, first contract.SuiteVersionID, baseline inven
 	e.boot = governance.PromoteRequest{OperationID: "bootstrap-P1-R1", Reference: result.Revise.Current, Carrier: bootstrapCarrier,
 		Proposed: result.Contract, AssessmentSource: "pinned", Integration: integration, NewVersionID: first, RecordedAt: recordedAt}
 	promoted := e.bootstrap(e.boot)
-	if !promoted.Committed {
-		t.Fatalf("bootstrap = %+v, want a first canonical", promoted)
+	if promoted.Outcome != contract.PromotionProposed || promoted.Duplicate || e.currentVersion() != first {
+		t.Fatalf("bootstrap = %+v, current version %q, want a first canonical %q", promoted, e.currentVersion(), first)
 	}
 	return e
 }
@@ -401,10 +401,7 @@ func TestConcurrentAssessmentsOfTwoPullsAllocateDistinctProposals(t *testing.T) 
 
 func TestAssessHeadReportsAMovedCanonicalAsAConflict(t *testing.T) {
 	e := newHeadEnv(t)
-	e.reader.onRead = func() {
-		e.approve(e.other)
-		e.promote(e.other.mergedRequest(t, "promote-px", "V2"))
-	}
+	e.reader.onRead = e.movedCanonical
 	before := e.revision()
 
 	err := e.assessErr(prA, "head-a", headTree("v2", "package main\n"))
@@ -499,7 +496,7 @@ func TestAssessHeadRejectsMissingCollaborators(t *testing.T) {
 func (e *headEnv) movedCanonical() {
 	e.t.Helper()
 	e.approve(e.other)
-	e.promote(e.other.mergedRequest(e.t, "promote-px", "V2"))
+	e.merge(e.other, headTree("other", "package main\n"), governance.MergePromoted)
 }
 
 func TestApprovedPullNeedsAFreshApprovalOnceTheCanonicalMoves(t *testing.T) {

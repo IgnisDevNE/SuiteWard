@@ -23,6 +23,7 @@ type InvalidSourceNotice struct {
 	Problem     SourceProblem
 	Path        string
 	Declaration []byte
+	PathCut     bool // Path was cut by the caller: it is not the link's path, so the comment offers the exclude only with a Declaration
 }
 
 // ValidateInvalidSource reports why InvalidSourceComment would panic on s, as an error.
@@ -32,8 +33,8 @@ func ValidateInvalidSource(s InvalidSourceNotice) error {
 		return fmt.Errorf("commandtext: source problem %d is unknown", s.Problem)
 	case (s.Problem == LinkProblem) != (s.Path != ""):
 		return errors.New("commandtext: only a link problem names a path, and it must")
-	case len(s.Declaration) > 0 && s.Problem != LinkProblem:
-		return errors.New("commandtext: only a link problem carries a declaration")
+	case (len(s.Declaration) > 0 || s.PathCut) && s.Problem != LinkProblem:
+		return errors.New("commandtext: only a link problem carries a declaration or a cut path")
 	case len(s.Declaration) > MaxDeclaration || !utf8.Valid(s.Declaration):
 		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or not UTF-8", len(s.Declaration), MaxDeclaration)
 	}
@@ -66,9 +67,9 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 }
 
 // acceptLink is the paragraphs that offer to accept the link of s with an exact anchored exclude, and warn what that means; none when
-// the path has a character that exclude reads as a pattern, which would name more than the link.
+// the path has a character that exclude reads as a pattern, which would name more than the link, or was cut and no declaration holds the whole one.
 func acceptLink(s InvalidSourceNotice) string {
-	if strings.ContainsAny(s.Path, `*?[\`) {
+	if strings.ContainsAny(s.Path, `*?[\`) || (s.PathCut && len(s.Declaration) == 0) {
 		return ""
 	}
 	choice := "Or accept the link by adding its exact anchored path to `exclude` in `.suiteward.yml`:\n\n" + fencedLines([]string{"/" + s.Path})

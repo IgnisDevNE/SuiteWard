@@ -976,10 +976,11 @@ type invalidSourcePayload struct {
 	Kind        string `json:"kind"`
 	Path        string `json:"path,omitempty"`        // a link only
 	Declaration string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
+	PathCut     bool   `json:"pathCut,omitempty"`
 }
 
 func (p invalidSourcePayload) source() commandtext.InvalidSourceNotice {
-	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, Declaration: []byte(p.Declaration)}
+	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, PathCut: p.PathCut, Declaration: []byte(p.Declaration)}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -1012,7 +1013,7 @@ func invalidSourceDigest(kind, path string, declaration []byte) string {
 // newInvalidSourceMessage builds the comment that explains one problem of a pull request's source. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
 func newInvalidSourceMessage(target commentTarget, s sourceProblem) (governance.OutboxMessage, error) {
-	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText)}
+	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText}
 	if len(s.declaration) <= commandtext.MaxDeclaration { // a choice that cannot be shown is left out: the comment then shows the pattern alone
 		p.Declaration = string(s.declaration)
 	}

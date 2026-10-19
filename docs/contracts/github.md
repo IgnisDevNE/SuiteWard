@@ -10,7 +10,7 @@ SuiteWard reaches GitHub outbound only, as the operator's GitHub App installed o
 - `internal/adapters/github/appauth` (A1): the App's JWT and installation tokens.
 - `internal/adapters/github/rest` (A2): HTTP transport with conditional requests, the shared budget and typed errors. It takes the token as a function value (`TokenFunc`), so it never imports `appauth`; the composition (A4) adapts `(*appauth.Installation).Token` to it in one function literal.
 - `internal/adapters/github` (A3): typed reads used by M1.4–M1.7 and an `inventory.Tree` over the git trees API, built on `rest`.
-- `spikes/s1` may be read as a reference and is never imported; anything taken from it is redone test-first.
+- The S1 spike code was removed in M1.10 and lives in git history (last present at commit `0aaba8818a3f2fce96eb0f5d49f811d029e66854`, under `spikes/s1`). It may be read there as a reference and is never imported; anything taken from it is redone test-first.
 
 ## Permissions (D-GITHUB-ACCESS)
 

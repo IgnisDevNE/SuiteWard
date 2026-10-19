@@ -303,3 +303,24 @@ func acceptingDeclaration(t *testing.T, raw, link string) string {
 	}
 	return string(accepted)
 }
+
+// The head that adds the accepting exclude is assessed under the canonical scope too (inventory.Classify evaluates the head's tree
+// under it), which still reaches the link.
+func TestChecksAHeadThatAcceptsTheLinkIsNotInvalid(t *testing.T) {
+	canonical := bootFiles("v1")
+	canonical[".suiteward.yml"] = reachable
+	canonical["app/main.py"] = "print('x')\n"
+	canonical["app/test_main.py"] = "t\n"
+	w := newCJWorldOf(t, canonical)
+	head := maps.Clone(canonical)
+	head[".suiteward.yml"] = acceptingDeclaration(t, reachable, "spec_link")
+	w.reader.repos[bootRepo].trees[cjHead2] = linkedTree{&bootTree{files: head}, map[string]string{"spec_link": "app"}}
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+	w.mustCheck()
+
+	w.wantInvalidSource()
+	if record, found := w.record(5); !found || record.Reason == "invalid-source" {
+		t.Fatalf("check record %+v (found %v), want a head that is assessed", record, found)
+	}
+}

@@ -3,6 +3,7 @@ package inventory_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -100,5 +101,28 @@ func TestBuildAcceptsALinkThatAnExactExcludeNames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The head that accepts the link is also evaluated under the governing scope, which still reaches the link: its exact exclude is
+// the scope reduction the owner approves, so it must not make the head invalid there.
+func TestClassifyAcceptsALinkThatTheCandidateExcludesExactly(t *testing.T) {
+	const reachable = "version: 1\ninclude: ['**/test_*.py']\n"
+	base, err := inventory.Build(context.Background(), newTree(t, regular(declaration, reachable), regular("app/test_main.py", "t")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	governing := inventory.Governing{Scope: base.Scope(), Manifest: base.Manifest()}
+	candidate := func(exclude string) *fakeTree {
+		return newTree(t, regular(declaration, reachable+"exclude: ['"+exclude+"']\n"), regular("app/test_main.py", "t"), link("spec_link", "app"))
+	}
+
+	got, _, err := inventory.Classify(context.Background(), governing, candidate("/spec_link"))
+	if err != nil || got.Change != inventory.ScopeReduction || !slices.Equal(got.ReducedRules, []string{"exclude /spec_link"}) {
+		t.Fatalf("Classify = %+v, %v; want a scope reduction by exclude /spec_link", got, err)
+	}
+
+	if _, _, err := inventory.Classify(context.Background(), governing, candidate("spec_*")); !errors.Is(err, inventory.ErrUnsafeEntry) {
+		t.Fatalf("Classify with a broader exclude = %v, want ErrUnsafeEntry", err)
 	}
 }

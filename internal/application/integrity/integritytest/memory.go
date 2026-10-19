@@ -40,7 +40,8 @@ func (m *Memory) Record(ctx context.Context, r integrity.Record) error {
 	defer m.mu.Unlock()
 	key := suite{r.Project, r.Suite}
 	current, found := m.records[key]
-	m.records[key] = next(current, found, r)
+	r.CheckedAt = r.CheckedAt.UTC().Truncate(time.Microsecond) // all PostgreSQL stores
+	m.records[key] = integrity.Next(current, found, r)
 	return nil
 }
 
@@ -53,15 +54,4 @@ func (m *Memory) Latest(ctx context.Context, project contract.ProjectID, id cont
 	defer m.mu.Unlock()
 	r, found := m.records[suite{project, id}]
 	return r, found, nil
-}
-
-// next is the record kept when r is recorded over current (found false: there is none). Times are kept at
-// microseconds, all PostgreSQL stores.
-func next(current integrity.Record, found bool, r integrity.Record) integrity.Record {
-	r.CheckedAt = r.CheckedAt.UTC().Truncate(time.Microsecond)
-	if found && current.Version == r.Version && current.Verdict == integrity.Failed && r.Verdict == integrity.Unavailable {
-		current.CheckedAt = r.CheckedAt
-		return current
-	}
-	return r
 }

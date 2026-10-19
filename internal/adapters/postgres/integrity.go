@@ -24,7 +24,7 @@ var _ integrity.Store = integrityLedger{}
 func (s *Store) Integrity() integrity.Store { return integrityLedger{pool: s.pool} }
 
 // Record implements integrity.Store. One statement replaces the verdict and keeps a failed one against an
-// unavailable one of the same version, so no transaction is needed. An unknown version fails the foreign key.
+// unavailable one of the same version (the rule of integrity.Next), so no transaction is needed. An unknown version fails the foreign key.
 func (l integrityLedger) Record(ctx context.Context, r integrity.Record) error {
 	if err := r.Validate(); err != nil {
 		return err

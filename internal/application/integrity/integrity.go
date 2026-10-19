@@ -45,6 +45,17 @@ type Store interface {
 	Latest(ctx context.Context, project contract.ProjectID, suite contract.SuiteID) (Record, bool, error)
 }
 
+// Next is the record kept when r is recorded over current (found false: there is none): r, except that "unavailable" never
+// replaces "failed" for the same version, where only CheckedAt moves. The in-memory store applies it; the PostgreSQL store
+// writes the same rule as one statement, so that concurrent writers cannot lose a confirmed failure.
+func Next(current Record, found bool, r Record) Record {
+	if found && current.Version == r.Version && current.Verdict == Failed && r.Verdict == Unavailable {
+		current.CheckedAt = r.CheckedAt
+		return current
+	}
+	return r
+}
+
 // Validate reports why the record cannot be kept, as ErrInvalid.
 func (r Record) Validate() error {
 	switch {

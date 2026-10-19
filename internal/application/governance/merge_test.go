@@ -69,7 +69,7 @@ func TestPromoteMergeNeedsAUnitOfWorkAndAContentWriter(t *testing.T) {
 }
 
 func TestPromoteMergeStoresTheContentOfAnIntegratedTreeBeforeThePromotion(t *testing.T) {
-	e := newHeadEnv(t)
+	e := newHeadEnvFirst(t, "version-1", headTree("v1", "package main\n"))
 	request := validMergeRequest()
 	request.Carrier, request.Tree = prA, headTree("v1", "package main\n") // the canonical's own content: no change, content is still stored
 	writer := newFakeWriter()

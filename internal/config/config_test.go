@@ -724,6 +724,8 @@ func TestLoadGitHubRepositories(t *testing.T) {
 		"acme/a;rm -rf /":     "acme/a;rm -rf /",
 		"https://acme/api":    "https://acme/api",
 		"acme/api, other/api": "other/api",
+		strings.Repeat("a", 40) + "/x":  strings.Repeat("a", 40) + "/x", // GitHub caps an owner at 39 characters
+		"acme/" + strings.Repeat("a", 101): strings.Repeat("a", 101), // and a name at 100
 	}
 	for value, item := range invalid {
 		vars := githubVars(t)

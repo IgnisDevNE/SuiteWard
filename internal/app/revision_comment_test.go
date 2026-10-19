@@ -419,3 +419,33 @@ func TestRevisionMessageKeepsTheReductionDetailThatFits(t *testing.T) {
 		t.Fatalf("payload %+v, want the detail kept and not marked omitted", payload)
 	}
 }
+
+// GitHub takes a comment of 65536 characters. Whatever the repository's text is made of, the body of the longest revision a payload can hold, with
+// its marker, must fit, so the comment always posts.
+func TestRevisionCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
+	const marker = len("<!-- suiteward:") + 32 + len(":") + len(cmtRevisionKey) + len(" -->")
+	for name, unit := range map[string]string{"plain": "a", "escaped by JSON": "<", "invalid UTF-8": "\xff", "backtick": "`", "bidi control": "\u202e", "newline": "\n", "control": "\x01", "3-byte": "\u20ac"} {
+		t.Run(name, func(t *testing.T) {
+			list := func() []string { return slices.Repeat([]string{strings.Repeat(unit, 400)}, 25) }
+			notice := cmtNotice()
+			notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
+			notice.ReducedRules, notice.ReducedPaths = list(), list()
+			target := commentTarget{RepositoryID: cmtRepoID, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: cmtPull}
+			message, err := newRevisionMessage(target, notice, "co-located")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload revisionPayload
+			if err := json.Unmarshal(message.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			text, err := payload.text(message.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := len(text) + marker; n >= 1<<16-4<<10 {
+				t.Fatalf("the comment is %d bytes with its marker, want under GitHub's 65536 characters with 4 KiB to spare", n)
+			}
+		})
+	}
+}

@@ -940,3 +940,16 @@ func TestCommentPublisherDoesNotQuoteAnOwnerLoginTheRendererRefuses(t *testing.T
 		t.Fatal("a comment was posted for an owner that cannot be named")
 	}
 }
+
+// GitHub caps an owner at 39 characters and a name at 100, so a longer repository is no repository: the payloads that carry it stay within the size
+// their worst case was measured with.
+func TestCommentTargetRefusesARepositoryLongerThanGitHubAllows(t *testing.T) {
+	for _, repo := range []string{strings.Repeat("a", 40) + "/x", "acme/" + strings.Repeat("a", 101)} {
+		if err := (commentTarget{RepositoryID: 1, Repo: repo, Pull: 1}).validate(); err == nil {
+			t.Errorf("a repository of %d characters is valid", len(repo))
+		}
+	}
+	if err := (commentTarget{RepositoryID: 1, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: 1}).validate(); err != nil {
+		t.Errorf("the longest repository is refused: %v", err)
+	}
+}

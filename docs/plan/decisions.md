@@ -279,11 +279,11 @@ Accepted 2026-10-13 (owner), from the S1 proposals ([s1-github](../spikes/s1-git
 | --- | --- |
 | `success` | the head's protected inventory under the canonical scope equals the canonical (an implementation-only change), or the PR's current proposal revision is ready for integration (`CheckPromotionReadiness` answers ready: exact revision approved under the governing policy, against the current canonical, with a passed integrity assessment of this head) |
 | `in_progress` | approval missing (including a revision rebound after the canonical or the policy changed); the head cannot be read yet (a transient GitHub or tree failure); the repository has no canonical yet (bootstrap pending, including a default branch without protected files) |
-| `failure` | an invalid command authored by the owner on this PR; an invalid declaration or source (an invalid `.suiteward.yml`, a symlink or submodule in scope); a confirmed integrity failure |
+| `failure` | an invalid command authored by the owner on this PR (superseded 2026-10-19 by D-COMMANDS, "A wrong command has no effect": only a wrong or reused code); an invalid declaration or source (an invalid `.suiteward.yml`, a symlink or submodule in scope); a confirmed integrity failure |
 
 `neutral` and `skipped` are never published. Comments by other accounts never affect the check.
 
-*Owner-command failure.* It applies to the PR's current head when the owner's latest command on that PR was rejected (malformed, invalid code, replayed code, unknown proposal, edited before read, or a rejected consent result). It lasts until the next state change for that PR: a later processed command or a new head.
+*Owner-command failure.* It applies to the PR's current head when the owner's latest command on that PR was rejected (malformed, invalid code, replayed code, unknown proposal, edited before read, or a rejected consent result). It lasts until the next state change for that PR: a later processed command or a new head. (Superseded 2026-10-19 by D-COMMANDS, "A wrong command has no effect": only a wrong or reused code sets it.)
 
 *No enrolled owner.* Nothing is published; the missing required check already blocks merges, and `/status` says why.
 

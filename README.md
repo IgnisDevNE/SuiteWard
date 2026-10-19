@@ -36,7 +36,7 @@ Everything happens in the pull request: comments, commands and one required chec
   - **Edit links.** Every suggested change links to GitHub's editor. When the diff shows `.suiteward.yml`, SuiteWard also posts a review suggestion that GitHub's **Commit suggestion** button applies.
   - **Mixed files.** Files that can hold test settings among other content, such as `package.json` and `pyproject.toml`, are named in a warning and never suggested.
 - **Evidence, not authority.** Comments and notices explain; they never approve or protect anything. A wrong or unrecognized command gets a reply and changes nothing. The exception is a wrong or reused confirmation code, which fails the check as a security signal.
-- **Labeled assurance.** An **isolated** installation, where SuiteWard, its App key, its database and the TOTP secret are out of the agent's reach, gives full assurance. A **co-located** one, next to the agent, is supported, and every comment says that its assurance is reduced.
+- **Labeled assurance.** An **isolated** installation, where SuiteWard, its App key, its database and the TOTP secret are out of the agent's reach, gives full assurance. A **co-located** one, next to the agent, is supported, and the check summary and the proposal, revision and merge comments say that its assurance is reduced.
 
 ## A pull request, step by step
 
@@ -47,7 +47,7 @@ Everything happens in the pull request: comments, commands and one required chec
 2. **A change to protected files.** An agent opens a pull request that changes a test. SuiteWard posts `SuiteWard contract change P2-R1` with the changed files, and the check waits.
    - The owner reviews the diff of those files and asks the agent why they changed.
    - If the change is right, the owner approves `P2-R1`, and the check turns green.
-3. **A test outside the scope.** The pull request also adds `spec/calc_spec.rb`, which the contract does not cover. SuiteWard posts a scope notice with the canonical declaration plus `*_spec.rb`, ready to commit.
+3. **A test outside the scope.** The pull request also adds `spec/calc_spec.rb`, which the contract does not cover. SuiteWard posts a scope notice with the canonical declaration plus `*_spec.rb` and `/spec/`, ready to commit.
 4. **At any time.** `/suiteward suggest` compares the pull request's head with the contract and replies with what is missing. Before the first contract, it compares with the declaration that `propose` would use.
 
 ### Commands
@@ -66,9 +66,9 @@ Commands from any other account are recorded and ignored. The prefix and the ver
 
 | State | Meaning |
 | --- | --- |
-| success | No protected change; or the current revision is approved and assessed. |
-| in_progress | An approval is missing, there is no contract yet, a runner file needs a decision, or SuiteWard is still reading. |
-| failure | `.suiteward.yml` is invalid or a symbolic link hides what would be protected (`invalid-source`); the canonical failed its integrity check; or the last command had a wrong or reused code. |
+| success | No protected change; or the current revision is approved and assessed. A pull request the owner skipped before the first contract is also `success`, with nothing assessed. |
+| in_progress | An approval is missing, there is no contract yet, a runner file needs a decision, the revision is no longer current, the pull request comes from a fork, the tree is too large to read, or SuiteWard is still reading. |
+| failure | `.suiteward.yml` is invalid or a symbolic link hides what would be protected (`invalid-source`); the canonical failed its integrity check; or a confirmation code was wrong or reused (a valid `approve` or `revoke`, or a new push, clears it). |
 
 The full table, with every reason, is in the [install guide](docs/install.md).
 
@@ -86,21 +86,21 @@ exclude:            # paths left out on purpose (a reduction the owner approves)
   - /docs/examples/
 ```
 
-Patterns are gitignore-style. A pattern with no slash inside it matches at any depth. A symbolic link counts by its target. Submodules are outside the scope and never read.
+Patterns are gitignore-style. A pattern with no slash inside it matches at any depth. A symbolic link to a file of the repository is accepted unless the scope covers the link's own path; any other link that a pattern can reach makes the declaration invalid, unless an `exclude` names its exact path. Submodules are outside the scope and never read.
 
 ## What it does not do
 
 - **It does not run the tests.** The claim is that the gating contract is the one a human approved, not that it was faithfully executed. Canonical execution in a controlled environment is the next milestone (M2).
 - **It does not read file contents to find tests.** A runner configured inside a mixed file (`pyproject.toml`, `package.json`) is reported, not protected.
-- **It does not support pull requests from forks.** They fail closed.
+- **It does not support pull requests from forks.** Their check stays in progress, so the ruleset blocks them (fail closed).
 - **It cannot read very large monorepos** whose tree GitHub cannot list in one request.
-- **It has no webhooks.** It polls GitHub every 20 seconds, and the App needs no inbound network access.
+- **It has no webhooks.** It polls GitHub about every 20 seconds, and the App needs no inbound network access.
 - **It never writes to the repository.** The App reads contents and writes only checks and comments. Every commit is the owner's.
 
 ## Install
 
 SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App that the owner creates. The [install guide](docs/install.md) covers both tiers:
-- **Isolated:** a Linux host under systemd, outbound only. This is the recommended tier.
+- **Isolated:** a Linux host under systemd, outbound only, with full assurance.
 - **Co-located:** Podman on the developer's Windows PC.
 
 The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.

@@ -51,7 +51,7 @@ Create a ruleset on each repository's default branch that:
 - requires branches to be up to date;
 - has an empty bypass list.
 
-`/status` must then show `enforced` for each repository.
+`/status` shows `enforced` for each repository within 15 minutes, with the caveat `ruleset-bypass-unverified`: check the bypass list yourself.
 
 ## 5. The first contract ([section 8](install.md#8-first-use-bootstrap))
 
@@ -61,7 +61,7 @@ On a pull request that carries tests, comment:
 /suiteward propose
 ```
 
-1. With no `.suiteward.yml`, SuiteWard replies with a suggested one and an editor link. Review it, commit it, and comment `/suiteward propose` again.
+1. With no `.suiteward.yml`, SuiteWard replies with a suggested one and an editor link. Review it and commit it. Wait about a minute, until the check shows the new head, then comment `/suiteward propose` again.
 2. Approve the revision it names with `/suiteward approve P1-R1 <code>` and merge. V1 is promoted.
 
 From then on, every pull request that changes a protected file needs your `/suiteward approve` on its current revision, and `/suiteward suggest` tells you what the contract misses ([section 9](install.md#9-day-to-day)).

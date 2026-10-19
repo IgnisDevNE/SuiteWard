@@ -33,7 +33,7 @@ SuiteWard protects a repository's tests from the coding agent that works on it. 
 ## Tier
 
 - **Isolated** (full assurance): the agent's role ends at preparing commands and explaining steps. Everything on the host is done by the user or an operator.
-- **Co-located** (reduced assurance): SuiteWard runs on the agent's machine, so the agent could reach its key, database and secret if it tried. SuiteWard says so in every comment. The rules above still apply: on this tier the user relies on the agent following them, and SuiteWard's TOTP and the GitHub account's own protection are the remaining safeguards.
+- **Co-located** (reduced assurance): SuiteWard runs on the agent's machine, so the agent could reach its key, database and secret if it tried. SuiteWard says so in the check summary and in its proposal, revision and merge comments. The rules above still apply: on this tier the user relies on the agent following them, and SuiteWard's TOTP and the GitHub account's own protection are the remaining safeguards.
 
 ## For the user
 

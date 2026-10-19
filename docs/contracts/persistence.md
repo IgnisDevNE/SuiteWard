@@ -224,7 +224,7 @@ Semantics:
 Retried delivery never reverses a committed fact.
 - River schema: River's own migrations are vendored into goose migrations (one migrator and one readiness check, ADR 0026), so `migrations.SupportedVersion` is the highest goose version and covers the River tables and the outbox. A test checks that a database migrated by goose passes River's own migrator validation. Upgrading River means adding a goose migration.
 
-The conformance suite gains: rollback removes the job and the outbox row together with the facts; a duplicate key conflicts; a job and a message written in a unit of work that writes nothing else are committed; neither changes the revision.
+The conformance suite gains: rollback removes the outbox row together with the facts; a duplicate key conflicts; a message written in a unit of work that writes nothing else is committed; it does not change the revision. The system enqueue is tested on PostgreSQL: a job and a message commit together or not at all, and an invalid job is `ErrInvalidRequest`.
 
 ## Proposal revisions (M1.3; normative)
 
@@ -1240,4 +1240,4 @@ All enumerations are `text` with `CHECK` constraints. Immutable and append-only 
 
 ## Behaviors that must stay covered
 
-The conformance suite (fake and PostgreSQL) names each of these: replay by operation id and by source command id; the same operation id in another Suite or kind → conflict; a source command replayed by another actor → conflict; an alias advances the revision; rejected results do not consume command order; full rollback when `fn` fails; canceled context; version conflict. PostgreSQL integration tests add: concurrent promotions (exactly one wins), rollback when any statement fails, triggers rejecting history mutation, and missing or corrupt content rejected when a version is written.
+The conformance suite (fake and PostgreSQL) names each of these: replay by operation id and by source command id; the same operation id in another Suite or kind → conflict; a source command replayed by another actor → conflict; an alias advances the revision; rejected results do not consume command order; full rollback when `fn` fails; canceled context; version conflict. PostgreSQL integration tests add: concurrent merges and concurrent bootstraps (exactly one version is recorded), rollback when any statement fails, triggers rejecting history mutation, and missing or corrupt content rejected when a version is written.

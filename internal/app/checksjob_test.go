@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,7 +43,15 @@ const (
 // cjCountingReader answers the job's tree reads from the boot repositories and counts them per commit.
 type cjCountingReader struct {
 	*fakeBootReader
-	reads map[string]int
+	reads     map[string]int
+	files     map[int][]github.PullFile // the files each pull request changes
+	filesErr  error                     // every PullFiles fails with it
+	fileReads int
+}
+
+func (r *cjCountingReader) PullFiles(_ context.Context, _ string, number int) ([]github.PullFile, error) {
+	r.fileReads++
+	return r.files[number], r.filesErr
 }
 
 func (r *cjCountingReader) Tree(ctx context.Context, repo, sha string) (inventory.Tree, error) {
@@ -88,6 +97,8 @@ type cjJobWorld struct {
 	memory   *checkstest.Memory
 	verdicts *integritytest.Memory
 	headRepo map[int]string // the observed head repository of a pull request; absent means not observed
+	bases    map[int]string // the observed base commit of a pull request; absent means bootHead
+	refs     map[int]string // the observed head ref of a pull request; absent means "feature"
 	cmds     *commandstest.Memory
 	check    *checksJob
 	problems *bootstrapProblems
@@ -108,6 +119,36 @@ func newCJWorld(t *testing.T, canonical bool, options ...func(*bootOptions)) *cj
 	default:
 		b = newBootWorld(t, options...)
 	}
+	return wrapCJWorld(t, b)
+}
+
+// newCJWorldOf is a canonical world whose V1 is the tree of files: the default branch holds them and the owner approved them.
+func newCJWorldOf(t *testing.T, files map[string]string) *cjJobWorld {
+	t.Helper()
+	b := newBootWorld(t)
+	b.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: files}
+	b.openPulls(bootRepo, 4)
+	b.seedSuite(bootRepoID, "branch:main")
+	proposeBaseline(t, b.suites, b.content, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, files)
+	b.approve(1, 4)
+	b.mustRun() // promotes V1
+	if _, found := b.canonical(); !found {
+		t.Fatalf("the setup did not bootstrap the canonical\nlogs: %s", b.logs)
+	}
+	w := wrapCJWorld(t, b)
+	w.check.contents = declarationContents(files[".suiteward.yml"])
+	return w
+}
+
+// declarationContents answers every read with the same declaration, the canonical's own.
+type declarationContents string
+
+func (c declarationContents) Read(context.Context, artifact.Digest) ([]byte, error) {
+	return []byte(c), nil
+}
+
+func wrapCJWorld(t *testing.T, b *bootWorld) *cjJobWorld {
+	t.Helper()
 	w := &cjJobWorld{bootWorld: b, memory: checkstest.NewMemory(), verdicts: integritytest.NewMemory(), cmds: commandstest.NewMemory(b.owners, b.pulls), problems: &bootstrapProblems{},
 		clock: bootTime.Add(2 * time.Hour), heads: map[int]string{4: bootHead}}
 	w.reader = &cjCountingReader{fakeBootReader: b.reader, reads: map[string]int{}}
@@ -125,6 +166,11 @@ func (nopContents) Read(context.Context, artifact.Digest) ([]byte, error) {
 	return []byte("version: 1\ninclude: [/tests/**]\n"), nil
 }
 
+// PullFiles lists no changed file: the integration tests that share this reader never ask for a diff that matters.
+func (f *fakeBootReader) PullFiles(context.Context, string, int) ([]github.PullFile, error) {
+	return nil, nil
+}
+
 func (w *cjJobWorld) tree(sha string, files map[string]string) {
 	w.reader.repos[bootRepo].trees[sha] = &bootTree{files: files}
 }
@@ -136,7 +182,7 @@ func (w *cjJobWorld) sync(heads map[int]string) {
 	w.cycles++
 	cycle := githubsync.Cycle{Repo: bootRepo, InstallationID: 1, At: bootTime.Add(time.Duration(w.cycles) * time.Minute), StartedAt: bootTime.Add(time.Duration(w.cycles) * time.Minute), Requests: 1, Comments: map[int][]githubsync.ObservedComment{}}
 	for number, head := range heads {
-		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: "feature", BaseRef: "main", BaseSHA: bootHead, UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
+		cycle.OpenPulls = append(cycle.OpenPulls, githubsync.ObservedPull{Number: number, HeadSHA: head, HeadRef: cmp.Or(w.refs[number], "feature"), BaseRef: "main", BaseSHA: cmp.Or(w.bases[number], bootHead), UpdatedAt: bootTime, HeadRepo: w.headRepo[number]})
 		cycle.Comments[number] = nil
 	}
 	if _, err := w.pulls.RecordCycle(w.t.Context(), cycle); err != nil {

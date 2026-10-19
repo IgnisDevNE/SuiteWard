@@ -59,6 +59,15 @@ Accepted 2026-10-05.
 
 - The declaration uses gitignore-style include and exclude rules, case-sensitive.
 - A symlink or submodule inside the scope makes the declaration invalid; the governing scope stays in force.
+  - **Amended 2026-10-17 (owner, M1.9 phase review).** Suggested patterns match at any depth, so this rule made every repository with a link or a submodule unprotectable. A typical case is `AGENTS.md -> CLAUDE.md`. The rule now depends on what the entry is:
+    - **A symlink whose target resolves, within the same tree, to a regular file** behaves as a file. It is unsafe only when the scope covers the link's own path. The target is the link's blob, resolved relative to the link's directory, following at most 8 links.
+    - **A symlink to a directory, to a path outside the repository, or to nothing** is unchanged: it is unsafe when the scope covers it or may cover a path below it.
+    - **A submodule** is outside the scope. Its content is not protected and is never read. The declaration stays valid, and the replies that suggest a declaration warn about every submodule that a pattern would have reached.
+    - The target is read only for a link that would otherwise be unsafe. It is resolved on the same tree that is being assessed, so it decides only whether that tree is safe and grants nothing.
+  - **Amended 2026-10-19 (owner, M1.9 live run): an accepted link.** An `exclude` pattern naming exactly the link's own path, anchored (`/spec_link`) or with an interior slash, accepts that link. The link no longer makes the declaration invalid, and nothing reached through it is protected.
+    - Because it is an exclude, it is a scope reduction and needs the owner's approval like any other.
+    - Other excludes, such as a broader pattern or one that only matches below the link, still do not make a link safe.
+    - The `invalid-source` comment for a link offers this choice with a warning, after removing the link or pointing it to a file. It does not suggest narrowing the include patterns, because that is a wider reduction the owner decides alone.
 - Approval binds the raw declaration bytes plus the normalized rules.
 - A candidate omission cannot remove existing protection; reducing the scope requires approval like any other change (ADR 0013).
 
@@ -73,6 +82,45 @@ Accepted 2026-10-11 (owner, phase M1.3). The ADR 0013 amendment protects the wor
 - The declaration is YAML, parsed with `go.yaml.in/yaml/v3`; its schema is fixed by the M1.3-A2 brief.
 - An `exclude` pattern that matches `.suiteward.yml` has no effect on coverage but is still classified as a scope reduction (decided by the integrator at the owner's request, 2026-10-11): the rule-level check is syntactic, and such an edit changes a covered file, so it needs approval either way; an exact rule would need a special case that buys no safety.
 
+### D-SCOPE-DISCOVERY: Suggesting and widening the scope
+
+Accepted 2026-10-17 (owner, M1.9 planning, after the C2 finding in [M1.8](phases/M1.8.md#c2-outcome-dogfooding-2026-10-17)). Discovery stays a suggestion (ADR 0013): only the owner's approval changes the contract.
+
+- **Every suggested change links to GitHub's editor** (owner, 2026-10-19). A comment that asks for a change to `.suiteward.yml` links to the editor for that file on the pull request's branch, or to GitHub's new-file page when the file does not exist yet. This holds even when the comment also carries a review suggestion or a copyable block. A change the web editor cannot make, such as removing a symbolic link, gets no link.
+
+- **Detection is path-only.** The suggestion is built from the file paths of a tree, with no file contents.
+  - **Test files.** Patterns follow the frameworks' own conventions and match at any depth (`*_test.go`, `test_*.py`, `*.spec.*`…). There is no longer one pattern per directory.
+  - **Test directories.** `testdata/`, `__tests__/`, `__snapshots__/`, `__mocks__/`, `__fixtures__/` and `src/test/` count at any depth. `tests/`, `test/` and `spec/` count at the top level, or when they hold a test-named file.
+  - **Runner files.** The runner list holds the files found by name, plus the higher-priority files that a runner reads first, even when they do not exist yet: pytest reads `pytest.toml` before `pytest.ini`. A suggested pattern may therefore match no file.
+  - **Test directories, in full:** besides those above, `cypress/` and `src/it/` also count at any depth.
+  - **Runner families.** The runner list holds whole families: a file of a family brings in every member. For example, `pytest.ini` brings `conftest.py`, `.coveragerc` brings `.nycrc*` and `.c8rc*`, and `.rspec` brings `spec_helper.rb`.
+  - **Vendored directories** never count: `node_modules`, `vendor`, `.venv`, `venv`, `.tox`, `__pycache__`, `bower_components`, `jspm_packages`, `.git`.
+  - **The limit** covers include and runner patterns together. When the limit cuts the list, the reply says so.
+- **Mixed files.** `package.json`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `Cargo.toml`, `*.csproj` and `CMakeLists.txt` can hold test settings among other content. The reply warns about the ones it finds and never suggests them, because protecting them would put every dependency update behind an approval.
+- **The scope notice.** After V1, a PR revision that adds test-like files outside the governing scope gets one comment.
+  - The comment lists those files and gives the full declaration to commit, with the edit link to `.suiteward.yml` on the PR branch.
+  - When the PR's diff already touches `.suiteward.yml`, it also gets a review comment with a suggestion block, so the owner can use GitHub's "Commit suggestion".
+  - The notice is evidence, not authority. It never changes the check, never protects a file and grants nothing.
+- **`/suiteward suggest`** (owner only, no code) asks for the same reply on any open PR.
+  - Before V1, the reply is the bootstrap reply of a `propose` that finds no declaration.
+  - After V1, the reply is the scope notice for the PR head.
+  - It is not a command for the check: it never clears `owner-command-rejected`.
+- **Where a suggested declaration starts from.** The notice and `suggest` start from the **canonical** declaration bytes, never from the PR head's file, and only add patterns. A PR that narrowed the scope therefore never comes back as a suggestion.
+  - **The one exception is the review suggestion.** It inserts the new lines into the PR head's own `.suiteward.yml`, on a list line inside a diff hunk, because GitHub accepts review comments only on such lines. This grants nothing either: a narrowing in the head is still listed as a reduction and still needs approval. When no list line falls inside a hunk, there is no review suggestion.
+  - **The head's own scope only silences.** A test path that the PR's valid `.suiteward.yml` already covers is not reported. That only suppresses an advisory; the widening still needs approval.
+- **Exclusions are respected.** A test-like path that matches an `exclude` of the governing scope is never reported, because adding patterns cannot undo an exclusion.
+- **One notice per set.** The notice is keyed by the set of added uncovered paths, so later pushes that add nothing new do not repeat it.
+- **Uncovered runner files block** (owner, 2026-10-18, M1.9 live run).
+  - **The risk.** A runner file can change how the protected tests run without touching any of them. A root `conftest.py` can skip them, and a `jest.config.js` can narrow `testMatch`. So, unlike an uncovered test file, an uncovered runner file is a bypass, and a notice alone is not enough.
+  - **The rule.** After V1, a PR that adds or modifies a file matching a runner family name, outside the governing scope and not excluded, gets the check `in_progress` with reason `runner-uncovered`. It is never `success` until the owner decides.
+  - **Protecting the file.** The owner commits the suggested declaration, which adds the pattern, and approves it.
+  - **Ignoring the file.** The owner adds the path to `exclude` and approves it. That is a scope reduction, which needs approval anyway, so the decision is recorded in the contract.
+  - **What stays non-blocking.** Uncovered test files stay a notice only: they add no bypass of the existing protection, and their detection is heuristic. The runner family names are a short, exact list.
+  - Rewriting the YAML can drop the owner's comments. Comments are part of the approved bytes, so the owner sees that change and approves it.
+- **Widening is a protected change.** Any edit to `.suiteward.yml` creates a revision that needs approval, comments included. An agent widens the scope with such a PR; it never posts `suggest`.
+- **A reduction is detailed.** The revision comment lists the rules and paths a reduction removes.
+- **After the MVP:** reading the content of config files (pytest `testpaths`, Jest `testMatch`, Vitest `include`, `phpunit.xml`, `Cargo.toml` `[[test]]`); protecting a single section of a mixed file; listing complete trees for monorepos.
+
 ### D-GITHUB-ACCESS: GitHub App permissions and token lifecycle
 
 Accepted 2026-10-11 (owner, from the S1 findings in [s1-github](../spikes/s1-github.md)).
@@ -82,6 +130,12 @@ Accepted 2026-10-11 (owner, from the S1 findings in [s1-github](../spikes/s1-git
 - A token lives one hour and is reused until five minutes before it expires.
 - Acknowledgement comments use Pull requests write, requested only by the comment publisher with `{metadata: read, pull_requests: write}`. M1.6a-P0 measured on 2026-10-13 that a token requesting `pull_requests: read` from the App that holds write is granted exactly read, so synchronization stays read-only, and that the same comment POST with the read map answers 403.
 - The GitHub adapter contract is [github](../contracts/github.md).
+- **No Contents write, reaffirmed 2026-10-19 (owner, M1.9).** A one-click choice that commits for the owner was declined, because security and isolation are the product's core and Contents write would add a way to fail:
+  - it would let the key inject commits into PR branches, run existing workflows on new branches, and create tags;
+  - in the managed service, one key would write to every customer;
+  - in co-located, the agent reaches the key, so it would gain a second write identity.
+
+  The owner's choices stay copyable blocks, review suggestions (committed with the owner's own credentials), or a change the owner asks the agent to make. Checks write remains only because it is required.
 
 ### D-COMMENT-EDIT: One comment is one action
 
@@ -126,7 +180,9 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 **Command syntax**
 - `/suiteward approve <ref> <code>` and `/suiteward revoke <ref> <code>` (ADR 0027).
 - The first line of the comment body that starts with `/suiteward`, outside fenced code blocks, is the command; the rest of the body is ignored.
+  - **Amended 2026-10-18 (owner, M1.9 live run).** The prefix and the verb are matched without regard to case, so `/SuiteWard suggest` or `/Suiteward Approve P1-R1 123456` from a phone's auto-capitalization is a command. A missing argument, an extra token or a malformed reference or code is still refused as malformed. The reference stays `P<n>-R<m>` as written.
 - `<ref>` is `P<n>-R<m>` (ADR 0002 and ADR 0010 examples), resolved inside the PR's project and its single Suite. `<code>` is the 6-digit TOTP code.
+- `/suiteward suggest` takes no argument and no code. It asks for a suggested declaration ([D-SCOPE-DISCOVERY](#d-scope-discovery-suggesting-and-widening-the-scope)), grants nothing, and is not counted as the owner's latest command.
 
 **TOTP**
 - The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-13).

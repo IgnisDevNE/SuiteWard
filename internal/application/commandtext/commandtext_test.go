@@ -71,6 +71,17 @@ func TestParse(t *testing.T) {
 		{"after a closed tilde fence", "~~~~sh\n/suiteward revoke P9-R9 999999\n~~~~\n/suiteward revoke P1-R2 121212", command(commandtext.Revoke, 1, 2, "121212")},
 		{"after a longer closing fence", "```\n/suiteward approve P9-R9 999999\n`````\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 
+		// The prefix and the verb are case-insensitive; the reference keeps its form.
+		{"upper case prefix and verb", "/SUITEWARD APPROVE P1-R1 123456", command(commandtext.Approve, 1, 1, "123456")},
+		{"mixed case approve", "/suiteward Approve P1-R1 123456", command(commandtext.Approve, 1, 1, "123456")},
+		{"mixed case prefix approve", "/SuiteWard approve P1-R1 123456", command(commandtext.Approve, 1, 1, "123456")},
+		{"mixed case revoke", "/suiteward REVOKE P2-R3 654321", command(commandtext.Revoke, 2, 3, "654321")},
+		{"mixed case skip", "/SuiteWard skip 123456", command(commandtext.Skip, 0, 0, "123456")},
+		{"mixed case suggest", "/SuiteWard suggest", command(commandtext.Suggest, 0, 0, "")},
+		{"upper case suggest", "/SUITEWARD SUGGEST", command(commandtext.Suggest, 0, 0, "")},
+		{"mixed case propose", "/Suiteward Propose", command(commandtext.Propose, 0, 0, "")},
+		{"mixed case on a later line", "On my phone\n/SuiteWard suggest", command(commandtext.Suggest, 0, 0, "")},
+
 		// Not a command.
 		{"empty body", "", notCommand},
 		{"no command line", "Looks good to me.\nThanks!", notCommand},
@@ -79,8 +90,11 @@ func TestParse(t *testing.T) {
 		{"in the middle of a line", "please run /suiteward approve P1-R1 123456", notCommand},
 		{"suiteward-x", "/suiteward-x approve P1-R1 123456", notCommand},
 		{"suitewardx", "/suitewardx approve P1-R1 123456", notCommand},
-		{"uppercase", "/SUITEWARD approve P1-R1 123456", notCommand},
-		{"mixed case", "/SuiteWard approve P1-R1 123456", notCommand},
+		{"prefix before the line start", "x /suiteward suggest", notCommand},
+		{"suitewardx with a verb that suggests", "/suitewardx suggest", notCommand},
+		{"mixed case prefix with a suffix", "/SuiteWardx suggest", notCommand},
+		{"fenced mixed case", "```\n/SuiteWard suggest\n```", notCommand},
+		{"long s is not an s", "/ſuiteward suggest", notCommand},
 		{"no-break space after the prefix", "/suiteward\u00a0approve P1-R1 123456", notCommand},
 		{"quoted", "> /suiteward approve P1-R1 123456", notCommand},
 
@@ -95,7 +109,12 @@ func TestParse(t *testing.T) {
 		{"bare prefix", "/suiteward", malformed(commandtext.UnknownVerb)},
 		{"bare prefix with trailing space", "/suiteward  \t", malformed(commandtext.UnknownVerb)},
 		{"unknown verb", "/suiteward merge P1-R1 123456", malformed(commandtext.UnknownVerb)},
-		{"uppercase verb", "/suiteward Approve P1-R1 123456", malformed(commandtext.UnknownVerb)},
+		{"extra text after a mixed case suggest", "/SuiteWard suggest foo", malformed(commandtext.ExtraText)},
+		{"missing reference after a mixed case prefix", "/SuiteWard Approve", malformed(commandtext.MissingReference)},
+		{"mixed case verb, short code", "/SuiteWard Approve P1-R1 12345", malformed(commandtext.BadCode)},
+		{"mixed case verb, lowercase reference", "/SuiteWard Approve p1-r1 123456", malformed(commandtext.BadReference)},
+		{"long s is not an s in a verb", "/suiteward ſkip 123456", malformed(commandtext.UnknownVerb)},
+		{"kelvin sign is not a k in a verb", "/suiteward revoKe P1-R1 123456", malformed(commandtext.UnknownVerb)},
 		{"missing reference", "/suiteward approve", malformed(commandtext.MissingReference)},
 		{"missing reference with trailing tab", "/suiteward revoke\t", malformed(commandtext.MissingReference)},
 		{"reference without revision", "/suiteward approve P1 123456", malformed(commandtext.BadReference)},
@@ -280,7 +299,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed unknown verb",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose` or `skip`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`"},
+			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose`, `skip` or `suggest`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`", "`/suiteward suggest`"},
 			[]string{"eligible"},
 		},
 		{
@@ -1005,5 +1024,99 @@ func TestBootstrapSummaryPanicsOnASourceThatDoesNotFit(t *testing.T) {
 			mutate(&s)
 			mustPanic(t, func() { commandtext.BootstrapSummary(s) })
 		})
+	}
+}
+
+// A summary built without Runner is the shape from before M1.9-E4: it knows nothing of the runner rules, so it names none
+// (the golden test above keeps that text byte for byte). A non-nil Runner, even an empty one, is a declaration that was read.
+func TestBootstrapSummaryListsTheRunnerRulesBetweenIncludeAndExclude(t *testing.T) {
+	rules := func(n int) []string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = "run" + strconv.Itoa(i) + ".toml"
+		}
+		return items
+	}
+	s := summary(3, pathList(3), commandtext.Isolated)
+
+	s.Runner = []string{"pytest.ini", "conftest.py"}
+	body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if !strings.Contains(body, "Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\nScope runner rules:\n\n```\npytest.ini\nconftest.py\n```\n\nScope exclude rules:") {
+		t.Errorf("the runner rules do not sit between the include and exclude rules:\n%s", body)
+	}
+
+	s.Runner = []string{}
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if !strings.Contains(body, "Scope runner rules: none.") {
+		t.Errorf("an empty runner list is not stated as none:\n%s", body)
+	}
+
+	s.Runner, s.RunnerTotal = rules(20), 27
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if !strings.Contains(body, "Scope runner rules (20 listed; 7 more are not listed)") || !strings.Contains(body, "run19.toml") {
+		t.Errorf("the runner rules do not count the ones left out:\n%s", body)
+	}
+
+	s.Runner, s.RunnerTotal = rules(25), 0
+	body = render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if strings.Contains(body, "run20.toml") || !strings.Contains(body, "Scope runner rules (20 listed; 5 more are not listed)") {
+		t.Errorf("the runner rules are not bounded to 20:\n%s", body)
+	}
+
+	s.Runner = nil
+	if body := render(t, func() string { return commandtext.BootstrapSummary(s) }); strings.Contains(body, "runner") {
+		t.Errorf("a summary without runner information names the runner rules:\n%s", body)
+	}
+}
+
+func TestBootstrapSummaryWithRunnerRulesKeepsTheRestOfTheText(t *testing.T) {
+	s := summary(1, pathList(1), commandtext.Isolated)
+	without := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	s.Runner = []string{"pytest.ini"}
+	with := render(t, func() string { return commandtext.BootstrapSummary(s) })
+	if want := strings.Replace(without, "Scope exclude rules:", "Scope runner rules:\n\n```\npytest.ini\n```\n\nScope exclude rules:", 1); with != want {
+		t.Errorf("the runner section is not the only change:\n%s", with)
+	}
+}
+
+func TestBootstrapSummaryWithRunnerRulesFitsInAComment(t *testing.T) {
+	for name, unit := range map[string]string{"plain": "a", "invalid UTF-8": "\xff", "backticks": "`", "bidi control": "\u202e", "newline": "\n", "3-byte printable": "\u20ac"} {
+		t.Run(name, func(t *testing.T) {
+			long := make([]string, 20)
+			for i := range long {
+				long[i] = strings.Repeat(unit, 4096/len(unit))
+			}
+			s := pullSummary(commandtext.CoLocated)
+			s.Protected, s.Paths, s.Include, s.Runner, s.Exclude = 1<<62, long, long, long, long
+			s.IncludeTotal, s.RunnerTotal, s.ExcludeTotal, s.Proposal, s.Revision = 1<<62, 1<<62, 1<<62, 999999999, 999999999
+			body := render(t, func() string { return commandtext.BootstrapSummary(s) })
+			if body == "" || len(body) >= maxComment {
+				t.Errorf("body has %d bytes, want 0 < n < %d", len(body), maxComment)
+			}
+			if !utf8.ValidString(body) {
+				t.Error("body is not valid UTF-8")
+			}
+		})
+	}
+}
+
+// The same text as the branch golden above, with the runner section a declaration's runner rules add.
+func TestBootstrapSummaryWithRunnerRulesHasItsExactText(t *testing.T) {
+	want := "**SuiteWard bootstrap proposal P1-R1**\n\n" +
+		"SuiteWard proposes this repository's protected baseline as P1-R1. Nothing is canonical yet.\n\n" +
+		"- Origin commit: `" + origin + "` on branch `main` (pinned: it does not move if the branch advances)\n" +
+		"- Protected files: 1\n" +
+		"- Installation tier: `isolated`\n\n" +
+		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
+		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
+		"Scope runner rules:\n\n```\npytest.ini\nconftest.py\n```\n\n" +
+		"Scope exclude rules:\n\n```\ntests/tmp/\n```\n\n" +
+		"Review the inventory and the scope. To approve this exact baseline, comment:\n\n" +
+		"```\n/suiteward approve P1-R1 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
+		"Approving P1-R1 does not approve the other changes in this PR.\n"
+	s := summary(1, pathList(1), commandtext.Isolated)
+	s.Runner = []string{"pytest.ini", "conftest.py"}
+	if got := render(t, func() string { return commandtext.BootstrapSummary(s) }); got != want {
+		t.Errorf("the text with runner rules changed:\n%s", got)
 	}
 }

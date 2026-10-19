@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -381,5 +382,170 @@ func TestBotIdentityUserReadFailureIsMatchable(t *testing.T) {
 	})
 	if _, err := reader.BotIdentity(t.Context(), newBotApp(t), srv.Client(), srv.URL); !errors.Is(err, rest.ErrNotFound) {
 		t.Errorf("err = %v, want rest.ErrNotFound", err)
+	}
+}
+
+const (
+	reviewPostURI     = "/repos/octo-org/octo-repo/pulls/42/comments"
+	reviewCommentsURI = reviewPostURI + "?per_page=100&page="
+)
+
+func TestPostReviewCommentSendsASingleLineComment(t *testing.T) {
+	p := &poster{status: http.StatusCreated, answer: `{"id": 8003}`}
+	w := newWriter(t, p)
+
+	id, err := w.PostReviewComment(t.Context(), repo, 42, branchSHA, ".suiteward.yml", 0, 7, "```suggestion\nx\n```")
+	if err != nil {
+		t.Fatalf("PostReviewComment: %v", err)
+	}
+	if id != 8003 {
+		t.Errorf("id = %d, want 8003", id)
+	}
+	reqs := p.requests()
+	if len(reqs) != 1 || reqs[0].method != http.MethodPost || reqs[0].uri != reviewPostURI || reqs[0].contentType != "application/json" {
+		t.Fatalf("requests = %+v, want one JSON POST to %s", reqs, reviewPostURI)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(reqs[0].body), &sent); err != nil {
+		t.Fatalf("sent body %q: %v", reqs[0].body, err)
+	}
+	want := map[string]any{"body": "```suggestion\nx\n```", "commit_id": branchSHA, "path": ".suiteward.yml", "line": 7.0, "side": "RIGHT"}
+	if !maps.Equal(sent, want) {
+		t.Errorf("sent = %v, want %v (no start_line for a single line)", sent, want)
+	}
+}
+
+func TestPostReviewCommentSendsStartLineOnlyForARange(t *testing.T) {
+	for name, c := range map[string]struct {
+		start     int
+		wantRange bool
+	}{
+		"range": {5, true}, "start equals line": {7, false}, "start after line": {9, false}, "negative": {-1, false},
+	} {
+		p := &poster{status: http.StatusCreated, answer: `{"id": 1}`}
+		w := newWriter(t, p)
+		if _, err := w.PostReviewComment(t.Context(), repo, 42, branchSHA, "a.yml", c.start, 7, "x"); err != nil {
+			t.Fatalf("%s: PostReviewComment: %v", name, err)
+		}
+		var sent map[string]any
+		if err := json.Unmarshal([]byte(p.requests()[0].body), &sent); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		_, hasStart := sent["start_line"]
+		_, hasSide := sent["start_side"]
+		if hasStart != c.wantRange || hasSide != c.wantRange {
+			t.Errorf("%s: sent %v, want start_line and start_side present = %t", name, sent, c.wantRange)
+		}
+		if c.wantRange && (sent["start_line"] != float64(c.start) || sent["start_side"] != "RIGHT") {
+			t.Errorf("%s: sent %v, want start_line %d on the RIGHT side", name, sent, c.start)
+		}
+	}
+}
+
+func TestPostReviewCommentRejectsInvalidArgumentsBeforeAnyRequest(t *testing.T) {
+	p := &poster{status: http.StatusCreated, answer: `{"id":1}`}
+	w := newWriter(t, p)
+	cases := []struct {
+		name   string
+		repo   string
+		number int
+		sha    string
+		path   string
+		line   int
+		body   string
+	}{
+		{"repository", "octo-repo", 42, branchSHA, "a.yml", 1, "x"},
+		{"zero number", repo, 0, branchSHA, "a.yml", 1, "x"},
+		{"short sha", repo, 42, "c0ffee", "a.yml", 1, "x"},
+		{"upper case sha", repo, 42, strings.ToUpper(branchSHA), "a.yml", 1, "x"},
+		{"empty path", repo, 42, branchSHA, "", 1, "x"},
+		{"zero line", repo, 42, branchSHA, "a.yml", 0, "x"},
+		{"empty body", repo, 42, branchSHA, "a.yml", 1, ""},
+	}
+	for _, c := range cases {
+		if _, err := w.PostReviewComment(t.Context(), c.repo, c.number, c.sha, c.path, 0, c.line, c.body); !errors.Is(err, github.ErrInvalidArgument) {
+			t.Errorf("%s: err = %v, want ErrInvalidArgument", c.name, err)
+		}
+	}
+	if n := len(p.requests()); n != 0 {
+		t.Errorf("%d requests, want none", n)
+	}
+}
+
+func TestPostReviewCommentRejectsAnAnswerWithoutAnID(t *testing.T) {
+	for _, answer := range []string{`{}`, `{"id":0}`, `[]`, `not json`} {
+		w := newWriter(t, &poster{status: http.StatusCreated, answer: answer})
+		if id, err := w.PostReviewComment(t.Context(), repo, 42, branchSHA, "a.yml", 0, 1, "x"); !errors.Is(err, github.ErrInvalidResponse) {
+			t.Errorf("answer %q: id %d, err %v; want ErrInvalidResponse", answer, id, err)
+		}
+	}
+}
+
+func TestPostReviewCommentLetsACallerTell422Apart(t *testing.T) {
+	// GitHub answers 422 when the line is not in the diff of that commit.
+	w := newWriter(t, &poster{status: http.StatusUnprocessableEntity, answer: `{"message":"Validation Failed"}`})
+
+	_, err := w.PostReviewComment(t.Context(), repo, 42, branchSHA, "a.yml", 0, 1, "x")
+	var status *rest.StatusError
+	if !errors.As(err, &status) || status.Status != http.StatusUnprocessableEntity || !errors.Is(err, rest.ErrUnprocessable) {
+		t.Fatalf("err = %v, want a *rest.StatusError 422 matching rest.ErrUnprocessable", err)
+	}
+}
+
+func TestReviewCommentsByAuthorKeepsOnlyThatAuthorsComments(t *testing.T) {
+	w, gh := newWriterOnRoutes(t, map[string]reply{reviewCommentsURI + "1": ok(fixture(t, "review_comments.json"))})
+
+	got, err := w.ReviewCommentsByAuthor(t.Context(), repo, 42, octocatID)
+	if err != nil {
+		t.Fatalf("ReviewCommentsByAuthor: %v", err)
+	}
+	want := []github.Comment{{
+		ID: 8002, AuthorLogin: "octocat", AuthorID: octocatID, Body: "```suggestion\n  - core\n  - docs\n```",
+		CreatedAt: time.Date(2026, 10, 2, 16, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 10, 2, 16, 0, 0, 0, time.UTC),
+	}}
+	if !slices.EqualFunc(got, want, sameComment) {
+		t.Errorf("comments = %+v, want %+v", got, want)
+	}
+	if uris := gh.uris(); !slices.Equal(uris, []string{reviewCommentsURI + "1"}) {
+		t.Errorf("requests = %v, want the review comments listing, not the conversation one", uris)
+	}
+
+	got, err = w.ReviewCommentsByAuthor(t.Context(), repo, 42, 999)
+	if err != nil || got == nil || len(got) != 0 {
+		t.Errorf("unknown author: %v, %v; want an empty non-nil slice", got, err)
+	}
+}
+
+func TestReviewCommentsByAuthorPagesThroughTheListing(t *testing.T) {
+	w, gh := newWriterOnRoutes(t, map[string]reply{
+		reviewCommentsURI + "1": ok(generatedPage(t, "review_comments.json", "id", 9001, 100)), // hubot, ids 9001..9100
+		reviewCommentsURI + "2": ok(fixture(t, "review_comments.json")),                        // 8001 hubot, 8002 octocat
+	})
+
+	got, err := w.ReviewCommentsByAuthor(t.Context(), repo, 42, hubotID)
+	if err != nil {
+		t.Fatalf("ReviewCommentsByAuthor: %v", err)
+	}
+	if len(got) != 101 || got[0].ID != 8001 || got[100].ID != 9100 {
+		t.Errorf("got %d comments, want 101 sorted by ID from 8001", len(got))
+	}
+	if uris := gh.uris(); !slices.Equal(uris, []string{reviewCommentsURI + "1", reviewCommentsURI + "2"}) {
+		t.Errorf("requests = %v, want pages 1 and 2", uris)
+	}
+}
+
+func TestReviewCommentsByAuthorRejectsInvalidArgumentsBeforeAnyRequest(t *testing.T) {
+	w, gh := newWriterOnRoutes(t, map[string]reply{})
+	for name, call := range map[string]func() error{
+		"repo":   func() error { _, err := w.ReviewCommentsByAuthor(t.Context(), "octo-repo", 42, hubotID); return err },
+		"number": func() error { _, err := w.ReviewCommentsByAuthor(t.Context(), repo, 0, hubotID); return err },
+		"author": func() error { _, err := w.ReviewCommentsByAuthor(t.Context(), repo, 42, 0); return err },
+	} {
+		if err := call(); !errors.Is(err, github.ErrInvalidArgument) {
+			t.Errorf("bad %s: err = %v, want ErrInvalidArgument", name, err)
+		}
+	}
+	if uris := gh.uris(); len(uris) != 0 {
+		t.Errorf("requests = %v, want none", uris)
 	}
 }

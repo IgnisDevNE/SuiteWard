@@ -76,7 +76,7 @@ Expect a digest line.
 **5.3 Start the stack.** The script creates the network, the volumes and the secrets. It generates the database password and the MCP token and never prints them. Pass the App key file only the first time; the three GitHub values are needed on every run that should keep GitHub:
 
 ```
-./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:vX.Y.Z -GitHubAppKeyFile <path to the PEM> -GitHubAppId <app id> -GitHubInstallationId <installation id> -GitHubRepositories <owner/name>,<owner/name>
+./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:vX.Y.Z -GitHubAppKeyFile <path to the PEM> -GitHubAppId <app id> -GitHubInstallationId <installation id> -GitHubRepositories '<owner/name>,<owner/name>'
 ```
 
 Expect the line `Started suiteward-db and suiteward (ghcr.io/ignisdevne/suiteward:vX.Y.Z), GitHub configured.`
@@ -85,6 +85,7 @@ Notes:
 
 - Always pass `-Image` with your pinned release. The script has its own default image, and that default is not a release.
 - The script reads `-GitHubAppKeyFile` only while the secret `suiteward-github-app-key` does not exist yet. Delete your copy of the `.pem` file after the first run.
+- Keep the quotes around `-GitHubRepositories`. Without them, PowerShell reads a comma-separated list as an array and joins it with spaces, and the service then refuses to start with `SUITEWARD_GITHUB_REPOSITORIES: "… …" is not an owner/name pair`.
 - The script stores none of the three GitHub values. A run without `-GitHubAppId`, `-GitHubInstallationId` and `-GitHubRepositories` replaces the container with one without GitHub. The state stays.
 - The MCP listener serves a local agent's `sync` and `status` tools, nothing else. Its token copy is in `%LOCALAPPDATA%\SuiteWard\mcp-token`, readable by your Windows user only.
 - The names and the ports are fixed: HTTP on 8081, MCP on 8091. Run one stack per machine.
@@ -181,7 +182,17 @@ Where `.suiteward.yml` is decides the source of the proposal:
 
 1. **On the default branch.** The proposal is pinned to the default branch's head. After you approve it, SuiteWard promotes the first version (V1) by itself, within about a minute, without waiting for a merge.
 2. **Only in the pull request's head.** The proposal is that head. Its V1 comes only from this pull request's exact merge commit, after the pull request merges.
-3. **Nowhere.** Nothing is proposed. SuiteWard replies with a suggested `.suiteward.yml`, built from the test-like paths it found, and a link. The link opens GitHub's editor on the pull request branch with that file filled in. You review the file and commit it yourself. SuiteWard never commits it. After you commit it, wait about a minute — until the check shows the new head — then comment `/suiteward propose` again.
+3. **Nowhere.** Nothing is proposed. SuiteWard replies with a suggested `.suiteward.yml` and a link. The link opens GitHub's editor on the pull request branch with that file filled in. You review the file and commit it yourself. SuiteWard never commits it. After you commit it, wait about a minute — until the check shows the new head — then comment `/suiteward propose` again.
+
+   The suggestion is built from the file paths of the pull request's tree, never from file contents, and it has two lists:
+   - `include:` holds patterns for test files and test directories. They match at any depth, so one pattern such as `*_test.go` covers every directory, and `testdata/` counts wherever it is. Files under vendored directories (`node_modules`, `vendor`, `.venv` and similar) never count.
+   - `runner:` holds the test runner files it found, plus the files that the same runner reads before them. Those may not exist yet. For example, when it finds `pytest.ini`, it also lists `pytest.toml`, which pytest reads first. Protecting a file that does not exist yet means that a pull request that adds it needs your approval, so nobody can override your runner settings by creating it.
+
+   The list is limited to 20 patterns, `include` and `runner` together. When SuiteWard cut the list, the reply says so. Read the suggestion as a start, and add what is missing before you commit it.
+
+   The reply also warns about mixed files: `package.json`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `Cargo.toml`, `*.csproj` and `CMakeLists.txt`. They can hold test settings among other content. SuiteWard names the ones it found and never suggests them, because protecting them would put every dependency update behind an approval. You decide whether to add one.
+
+   The reply also warns about submodules. A submodule is outside the scope: SuiteWard never reads one, so its contents are not protected, whatever you write in `.suiteward.yml`. When a suggested pattern would reach a submodule (a pattern such as `*_test.go` can reach one that is not vendored), the reply lists it, at most 20, and says that its contents are not protected.
 
 The declaration has `version: 1` and optional `include`, `exclude` and `runner` lists of path patterns, in gitignore style and case-sensitive. Any other key makes it invalid:
 
@@ -198,12 +209,20 @@ Quote a pattern that starts with `*` or `!`, such as `"*.spec.ts"` or `"!fixture
 
 `.suiteward.yml` itself and `.github/workflows/**` are always protected. Put your test files in `include`, and your test runner configuration and test scripts in `runner`.
 
+**Symbolic links and submodules.** SuiteWard reads the tree of a commit without checking it out, and it treats the two kinds of entry that are not plain files in this way:
+
+- A symbolic link matters only when a pattern of the scope matches the link's own path or could match a path below it. SuiteWard then resolves the link's target inside the same tree, one path component at a time, and follows at most 8 links.
+  - A link to a file of the repository is accepted, unless the scope covers the link's own path. If it does, the declaration is invalid (`invalid-source`): protect the file itself.
+  - A link to a directory, to a path outside the repository, to nothing (dangling), or a loop of links makes the declaration invalid whenever a pattern can reach it. Replace the link with the files, or, if its content does not need protection, accept the link by adding its exact anchored path to `exclude` (for example `/spec_link`). The `invalid-source` comment shows that declaration. It is a scope reduction, so it needs your approval, and nothing reached through the link is protected.
+- A submodule is outside the scope and never makes a declaration invalid. SuiteWard never reads it, so its contents are not protected, and every reply that suggests a declaration warns about the submodules that its patterns would reach.
+
 SuiteWard's proposal comment shows the copyable command. Approve the exact revision it names, for example `/suiteward approve P<n>-R1 <6-digit code>`.
 
 Keep these points in mind:
 
 - If a protected file changes after the proposal, SuiteWard cancels the proposal and comments. Post `/suiteward propose` again.
 - Pull requests from forks get no proposal. Their check shows `fork-unsupported`, because forks are not supported in this release.
+- SuiteWard cannot read a repository whose tree GitHub truncates, which happens with very large monorepos. `propose` refuses it as `invalid-source`, the bootstrap job stops at `origin-not-passed`, and the check of a pull request shows `source-unavailable` (section 9). Such a repository cannot be protected in this release.
 - Reading a very large test suite can take longer than the job timeout. On the isolated host, raise `SUITEWARD_JOB_TIMEOUT` (section 12). `deploy/local.ps1` has no parameter for it, so the co-located stack keeps the default: about 150 protected files read per minute of the job timeout. For a larger test suite, use the isolated host (section 10) instead.
 
 ## 9. Day to day
@@ -231,7 +250,7 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 - A code works once. A step is used up by the first command that uses it, across all commands. A second command needs the next code that your authenticator shows. A replayed code is refused.
 - A code is accepted within one 30-second step before or after the comment's creation time. Post the command with a fresh code.
 - Post each command once, and do not edit it. SuiteWard processes only the first version of a comment. Editing or deleting it afterwards changes nothing. A command edited before SuiteWard read it is refused. For another action, post a new comment.
-- A command on a pull request that is already closed is never processed.
+- SuiteWard lists comments only on open pull requests, so a command posted after the pull request closed or merged is never seen, and a promotion uses only the consent given before the merge. A command that SuiteWard saw while the pull request was open and had not processed when it closed is processed as usual, except `propose` and `suggest`, which answer `not-open` and do nothing.
 - SuiteWard reads new comments about every 20 seconds, so an answer usually comes within a minute.
 
 **What the check states mean.** The check is `SuiteWard / Contract`. Its summary names the state and the next action. GitHub's UI shows `in_progress` as "In progress".
@@ -244,17 +263,59 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 | success, `bootstrap-skipped` | Skipped by the owner before the first contract. Nothing was assessed. |
 | in_progress, `approval-missing` | Approve the current revision with the command in the comment. |
 | in_progress, `bootstrap-awaiting` | There is no contract yet. Post `propose` or `skip` (section 8). |
+| in_progress, `runner-uncovered` | The pull request adds or changes a test runner file (for example `conftest.py` or `jest.config.js`) that the contract does not cover. Such a file can change how the protected tests run, so the check waits for your decision. SuiteWard's comment offers two ways out, each one click when the pull request's diff shows `.suiteward.yml`: protect the file (add its pattern) or ignore it (add the path to `exclude`). Then approve the new revision. |
 | in_progress, `not-current` | This pull request's revision is no longer the current one. Use the newest revision comment. |
-| in_progress, `source-unavailable` | GitHub cannot list the whole tree of this revision, so SuiteWard cannot read it. |
+| in_progress, `source-unavailable` | GitHub cannot list the whole tree of this revision, so SuiteWard cannot read it. This happens with very large monorepos, which cannot be protected in this release. |
 | in_progress, `fork-unsupported` | Pull requests from forks are not supported. |
 | in_progress, `assessment-pending` | SuiteWard is still reading the pull request. Wait a few minutes. |
-| failure, `invalid-source` | `.suiteward.yml` is invalid, or a protected path is a symbolic link or a submodule. Fix it. |
+| failure, `invalid-source` | `.suiteward.yml` is invalid, or a symbolic link that the scope reaches points at a directory, outside the repository or nowhere, or the scope covers the link itself (section 8). Fix it. A submodule never causes this: its contents are not protected. |
 | failure, `integrity-failed` | A canonical artifact no longer matches its integrity record. SuiteWard fails the check on every pull request of that repository and does not promote; it does not block merges by itself — your branch protection does that, if you require the check. Restore the artifact from a trusted copy or a backup, never edit the database, and restart the service: it re-verifies at once. On the isolated host, use the restart command of step 11.3. On the co-located PC, run the `./deploy/local.ps1` command of step 5.3 again, with the same `-Image` and the three GitHub parameters. |
 | failure, `owner-command-rejected` | Your last `approve` or `revoke` was rejected. Post a valid command, or push a new head. |
 
 A success means that the protected files match what the owner approved, except `bootstrap-skipped`, where nothing was assessed. It never means that your tests ran or passed. Your own test check decides that.
 
+**Links and submodules.** Section 8 explains the rules, which hold for every pull request. A link to a file of the repository is accepted unless the scope covers the link's own path. A link to a directory, to a path outside the repository or to nothing makes the check fail with `invalid-source` when a pattern can reach it. Submodules are outside the scope: their contents are not protected, and a reply that suggests a declaration warns about the submodules its patterns would reach.
+
 **At merge.** When a pull request with an approved revision merges, SuiteWard comments naming the new canonical version — or, if it could not promote, a comment saying it did not promote, with the reason (the merged files do not match the approved revision, for example a rebase that brought in another change). Recover with a new pull request: one that restores the protected files of the last canonical version, or one that carries the merged content for a new exact approval ([D-INTEGRATION](plan/decisions.md)). There is no reset command.
+
+### Widening the scope
+
+The scope is the list of paths that `.suiteward.yml` protects. A test directory or a runner file that a pull request adds later is outside it, so nothing protects it. SuiteWard reports such files and never protects them: only your approval changes the contract.
+
+**The scope notice.** When a pull request adds test-like or runner files that the current scope does not cover, SuiteWard posts one comment that:
+
+- lists those files, at most 20 with the total, the mixed files it found and the submodules that a suggested pattern would reach (section 8), and says that the current contract does not protect the files. Submodule contents are never protected;
+- gives the full new `.suiteward.yml` in a code block that you can copy, and a link that opens GitHub's editor on the pull request branch;
+- says that nothing is protected until you commit the file and approve the revision it creates.
+
+Keep these points in mind:
+
+- The check does not change, and the comment never says that tests ran.
+- The comment appears once for each set of new files, not for each push. A later push that adds no new uncovered file posts nothing.
+- A path that matches an `exclude` of your scope is never reported: the exclusion is your choice.
+- The suggested file starts from the approved `.suiteward.yml` and only adds patterns. It may be re-indented and lose blank lines.
+- Comments in `.suiteward.yml` are part of the approved bytes. A pull request that edits only a comment is a protected change and needs your approval. Compare the suggested file with your own before you commit it, because it may have lost a comment.
+- A pull request whose own `.suiteward.yml` is valid and already covers the files gets no notice. That widening still needs your approval.
+- A declaration larger than 8192 bytes cannot be put in a comment: SuiteWard then posts no notice, and logs that it skipped it.
+
+**A suggestion on the diff.** SuiteWard also posts a review comment, together with the notice, when all of these hold: the pull request changes `.suiteward.yml`, the file in its head is a valid declaration in block style, and the diff shows an item line of the `include:` list or the `runner:` list. The comment sits on that line, with the line and the new patterns as a suggestion. Use GitHub's "Commit suggestion" button to accept it. It leaves out the patterns that the file already lists. A list written as `include: [a, b]`, or a list with no item line in the diff, gets no suggestion: copy the block from the notice instead.
+
+**Ask for it: `/suiteward suggest`.** Post it as the first line of a comment on any open pull request. Only the owner's comments count, and it takes no code.
+
+- After the first contract, SuiteWard replies with the scope notice for that pull request's head. If every test-like file is already in the scope, it says so.
+- Before the first contract, it replies with the suggestion of section 8, as `propose` does when it finds no declaration.
+- It grants nothing and changes no check.
+- SuiteWard can refuse it, and the reply names the reason:
+  - `fork`: the pull request comes from a fork, and forks are not supported in this release.
+  - `not-open`: the pull request is no longer open.
+  - `invalid-source`: SuiteWard cannot read the head well enough. Its tree is invalid or truncated, the approved contract has no declaration, or the reply cannot be written (an unusable branch name, for example).
+  - `declaration-too-large`: the suggested declaration would be over 8192 bytes, which does not fit a comment. Add the missing patterns to `.suiteward.yml` yourself.
+
+  If the approved contract fails its integrity check, the command gets no reply: SuiteWard retries it and then records it as failed.
+
+**An agent widens the scope** with a pull request that edits `.suiteward.yml`. The edit creates a protected revision, and you approve it like any other. An agent cannot use `/suiteward suggest`: only the owner's comments are commands.
+
+**A reduction.** When a revision removes rules or paths from the scope, its revision comment lists the rules and the paths that the reduction removes, so you see what would stop being protected before you approve.
 
 ### Correcting the canonical
 
@@ -457,6 +518,14 @@ podman secret inspect --showsecret \
   grep -Ec '^-----BEGIN (RSA )?PRIVATE KEY-----$'
 ```
 
+Then print the fingerprint of the key that the secret holds. It describes the public part, so it is safe to show:
+
+```
+podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-github-app-key | openssl rsa -pubout -outform DER 2>/dev/null | openssl dgst -sha256 -binary | openssl enc -base64
+```
+
+Open the App's settings page and find the private key you generated in section 4. The page shows its fingerprint as `SHA256:` followed by base64 text. The two must be the same text. The shape check cannot tell a revoked or wrong key from the right one: that is why you compare the fingerprint ([Rotating the App key](#rotating-the-app-key)). If they differ, run `podman secret rm suiteward-github-app-key`, and repeat this step with the right file.
+
 If the terminal goes silent, type `stty echo` and press Enter. After an aborted paste, run `shred -u ~/app-key.pem` and start this step again. Delete your own copy of the `.pem` file as well.
 
 **10.8 Create the MCP token secret (as `suiteward`).** The service needs this secret to start, even if you never use an MCP client. The MCP listener serves a local agent's `sync` and `status` tools, nothing else. The secret is 32 random bytes in hex:
@@ -640,6 +709,106 @@ systemctl --user enable --now podman-auto-update.timer
 
 The timer checks once a day by default. `latest-stable` moves only for a release that is not a pre-release. A migration in such a release still has no rollback, so keep your backup current.
 
+### Rotating the App key
+
+Rotate the key when it may have been seen by something it should not, for example by a coding agent. Do it yourself, from a terminal that no agent can reach. On the isolated host, that is a shell you opened as in step 10.1. A co-located install gives the agent access to the key anyway (section 2). There, rotation helps against a past exposure, a key that left the machine, and not against an agent that still shares your PC user.
+
+The order matters. After you replace the key, the service keeps working for up to an hour on installation tokens that it already holds. A wrong key therefore shows up late, when every GitHub call stops. So you check the fingerprint at each step, and you delete the old key last.
+
+**R.1 Generate a new key.** On the App's settings page, under **Private keys**, generate a private key. GitHub downloads a `.pem` file and shows the key's fingerprint, `SHA256:` followed by base64 text. Note it. Leave the old key in place.
+
+**R.2 Stop the service.**
+
+- Isolated host, as `suiteward`:
+
+  ```
+  systemctl --user stop suiteward.service
+  ```
+
+- Co-located PC:
+
+  ```
+  ./deploy/local.ps1 -Down
+  ```
+
+**R.3 Remove the old secret.** Run this on the host as `suiteward`, or on the PC:
+
+```
+podman secret rm suiteward-github-app-key
+```
+
+**R.4 Put the new key in a file.**
+
+- Isolated host, as `suiteward`: paste it without echo, as in step 10.7. Run the command, wait until the cursor stops, paste the whole PEM, press Enter, then press Ctrl-D:
+
+  ```
+  trap 'stty echo' INT; stty -echo; (umask 077; cat > ~/app-key.pem); stty echo; trap - INT
+  ```
+
+- Co-located PC: use the `.pem` file that GitHub downloaded, and its path below.
+
+**R.5 Check the file's fingerprint** before you use it. It must be the text you noted in R.1.
+
+- Isolated host, as `suiteward`:
+
+  ```
+  openssl rsa -in ~/app-key.pem -pubout -outform DER 2>/dev/null | openssl dgst -sha256 -binary | openssl enc -base64
+  ```
+
+- Co-located PC: in Git Bash, run the same command with the path of your `.pem` file in place of `~/app-key.pem`, written as Git Bash accepts it, for example `/c/Users/<you>/Downloads/<file>.pem`.
+
+If it differs, delete the file (`shred -u ~/app-key.pem` on the host, `Remove-Item <path of the new PEM>` on the PC), and repeat R.4 with the right key.
+
+**R.6 Create the secret, and start the service.**
+
+- Isolated host, as `suiteward`:
+
+  ```
+  podman secret create suiteward-github-app-key ~/app-key.pem
+  ```
+
+  ```
+  shred -u ~/app-key.pem
+  ```
+
+  ```
+  systemctl --user start suiteward.service
+  ```
+
+- Co-located PC: run the command of step 5.3 again, with the same `-Image` and the three GitHub parameters, and with `-GitHubAppKeyFile <path of the new PEM>`. The script finds no secret, creates it from that file and starts the stack. Then delete the file with `Remove-Item <path of the new PEM>`.
+
+**R.7 Check the secret's fingerprint again.** It must be the same text as in R.1.
+
+- Isolated host, as `suiteward`:
+
+  ```
+  podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-github-app-key | openssl rsa -pubout -outform DER 2>/dev/null | openssl dgst -sha256 -binary | openssl enc -base64
+  ```
+
+- Co-located PC, in Git Bash. The Podman machine has no OpenSSL, so the secret goes out to the PC's:
+
+  ```
+  podman machine ssh "podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-github-app-key" | openssl rsa -pubout -outform DER 2>/dev/null | openssl dgst -sha256 -binary | openssl enc -base64
+  ```
+
+**R.8 Confirm that GitHub accepts the key.** The service starts without a cached token, so its first reads already use the new key. Wait about a minute, and read `/status` twice, a minute apart (section 14 shows how). The `lastSuccess` of each repository must advance, and no repository may show a `lastError`. That is the proof. The log line `bot account could not be resolved` appears only when SuiteWard processes an owner command, so its absence proves nothing. If you do see it, the key is wrong. This prints the lines it finds:
+
+- Isolated host, as `suiteward`:
+
+  ```
+  journalctl --user -u suiteward.service --since '10 minutes ago' --no-pager | grep 'bot account could not be resolved'
+  ```
+
+- Co-located PC:
+
+  ```
+  podman machine ssh "podman logs --since 10m suiteward 2>&1 | grep 'bot account could not be resolved'"
+  ```
+
+**R.9 Delete the old key.** Only now, on the App's settings page, delete the old private key. Then delete every other copy of a `.pem` file, including the one GitHub downloaded in R.1.
+
+If R.5 or R.7 shows a different fingerprint, or R.8 shows no advance or a `lastError`, do not delete the old key. Stop the service, and repeat from R.3.
+
 ## 12. Configuration reference
 
 Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret can instead be given as `SUITEWARD_<NAME>_FILE`, the path of a file whose content is the value. Give one form, not both. A variable that is set but empty counts as unset.
@@ -705,7 +874,7 @@ These are the `/status` fields you read:
   - `bootstrap` shows why the first contract is waiting or stopped. `read-failed` means GitHub could not be read, and SuiteWard retries. `repository-changed` means the configured name now points at a different repository from the one enrolled, so check the name. `origin-not-passed` means the default branch's contract could not be read as a passing source. `assessment-conflict` means two assessments of one source disagree. `blocked-<reason>` means a block for the stated reason. `failed` means the bootstrap failed for good. Read the logs for the last three. The field is absent when nothing is wrong.
   - `merges` shows merge decisions. `waiting` means GitHub has not yet reported the merge commit, and SuiteWard retries. `read-failed`, `assessment-conflict` and `failed` need the logs.
   - `integrity` is `passed`, `failed` or `unavailable` for the current version. It appears after the first integrity check, which runs when the service starts and then every hour, so a canonical created after the start shows no `integrity` for up to an hour: wait, or restart the service. `failed` means SuiteWard fails the check on every pull request of that repository and does not promote until the problem is resolved; it does not block merges by itself — your branch protection does that, if you require the check. `unavailable` changes no check.
-- `outbox.failed` counts messages that SuiteWard could not deliver to GitHub after its retries. It should be 0. Read the logs for the repository. A refused write is often a missing App permission, so compare with section 4.
+- `outbox.failed` counts messages that SuiteWard could not deliver to GitHub after its retries. It should be 0. Read the logs for the repository. A refused write is often a missing App permission, so compare with section 4. If the failed message was a check, SuiteWard sends it again by itself about 15 minutes after the cause is fixed. Until then a pull request can lack its required `SuiteWard / Contract` check. Push a new commit to that pull request to get a new check at once.
 - `jobs.discarded` counts background jobs that failed for good. Read the logs.
 - `version`, `schemaVersion` and `source` identify the release and the database schema that run.
 
@@ -713,9 +882,10 @@ Common problems:
 
 - **The service does not start on the isolated host.** Podman refuses to start the container while a secret or `/etc/suiteward/github.env` is missing, and the journal shows which. The service restarts every five seconds until it starts. A unit that Podman cannot parse is not generated at all. Run the dry run in step 10.10.
 - **`/readyz` answers 503.** The database does not answer, or the schema is not ready. Check that `suiteward-db` is healthy with `podman ps` (on the isolated host, as `suiteward`), and read its logs.
+- **The journal says `github commands stopped: the bot account could not be resolved`, with a status of 401.** GitHub refuses the App key that is installed, for example because it was revoked or is not the key you meant. All GitHub calls (reads, checks and comments) stop within about an hour, when the tokens that the service already holds expire. This line is an early signal after a restart, not the first symptom. Follow [Rotating the App key](#rotating-the-app-key), and compare the fingerprints.
 - **Setup exits with code 2.** The `--test-check` list does not match the configured repositories. Give exactly one per repository, with no duplicates.
 - **Setup exits with code 1.** A lookup failed. The owner login may not be a user account, the App may not be installed on every configured repository, or GitHub could not be reached. Nothing was written.
-- **`propose` was refused.** The acknowledgment names the reason: `canonical-present` (the repository already has a contract; `propose` only works before the first one), `fork` (pull requests from forks are not supported), `not-open` (the pull request is no longer open), `base-not-target` (the pull request's base branch is not the repository's default branch, so merging it could never decide the first contract), `declaration-missing` (no `.suiteward.yml` was found on the default branch or the pull request head; see the suggested file and link, section 8), or `invalid-source` (`.suiteward.yml` is invalid, a protected path is a symbolic link or a submodule, or GitHub truncated the tree).
+- **`propose` was refused.** The acknowledgment names the reason: `canonical-present` (the repository already has a contract; `propose` only works before the first one), `fork` (pull requests from forks are not supported), `not-open` (the pull request is no longer open), `base-not-target` (the pull request's base branch is not the repository's default branch, so merging it could never decide the first contract), `declaration-missing` (no `.suiteward.yml` was found on the default branch or the pull request head; see the suggested file and link, section 8), or `invalid-source` (`.suiteward.yml` is invalid, a symbolic link that the scope reaches points at a directory, outside the repository or nowhere (section 8), or GitHub truncated the tree, which happens with very large monorepos and cannot be protected in this release).
 - **A command gets no reply.** Check that the first line starts with `/suiteward`, outside a code block, that it comes from your account, that you did not edit it, and that the pull request is still open. Another account's command gets no reply by design.
 - **An approval is rejected.** The reply gives the reason: an invalid, replayed or expired code, or an unknown revision. Use a fresh code, and check the reference against the newest revision comment.
 - **The check shows `approval-missing` after a push.** The push changed a protected file, which creates a new revision. Approve the revision named in the newest comment.

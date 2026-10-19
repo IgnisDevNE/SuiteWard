@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -42,6 +44,14 @@ var (
 	ErrInvalidGoverning = errors.New("invalid governing contract")
 )
 
+// UnsafeEntryError is the ErrUnsafeEntry of one entry: Path is the link, or the declaration that is no regular file, that the
+// protected scope cannot take. Its text is that of the sentinel and the quoted path.
+type UnsafeEntryError struct{ Path string }
+
+func (e *UnsafeEntryError) Error() string { return fmt.Sprintf("%v: %q", ErrUnsafeEntry, e.Path) }
+
+func (e *UnsafeEntryError) Unwrap() error { return ErrUnsafeEntry }
+
 // Inventory is the protected inventory of a tree under its own declaration.
 type Inventory struct {
 	manifest artifact.Manifest
@@ -61,7 +71,7 @@ func Build(ctx context.Context, tree Tree) (Inventory, error) {
 	known := map[string][]byte{}
 	if i := slices.IndexFunc(entries, func(e Entry) bool { return e.Path == scope.DeclarationPath }); i >= 0 {
 		if entries[i].Kind != File {
-			return Inventory{}, fmt.Errorf("%w: %s is not a regular file", ErrUnsafeEntry, scope.DeclarationPath)
+			return Inventory{}, &UnsafeEntryError{Path: scope.DeclarationPath}
 		}
 		raw, err := tree.Read(ctx, scope.DeclarationPath)
 		if err != nil {
@@ -74,7 +84,7 @@ func Build(ctx context.Context, tree Tree) (Inventory, error) {
 		known[scope.DeclarationPath] = raw
 	}
 	effective := scope.NewScope(declaration)
-	manifest, err := manifestOf(ctx, tree, entries, effective, known)
+	manifest, err := manifestOf(ctx, tree, entries, effective, effective, known)
 	if err != nil {
 		return Inventory{}, err
 	}
@@ -101,11 +111,17 @@ func (i Inventory) Contract() (contract.ProtectedContract, error) {
 // the tree's own declaration, so that the governing rules decide which
 // existing protection is checked (ADR 0013).
 func Evaluate(ctx context.Context, tree Tree, governing scope.Scope) (artifact.Manifest, error) {
+	return evaluate(ctx, tree, governing, governing)
+}
+
+// evaluate is Evaluate for a tree whose links are also accepted by the exact excludes of accepting: the candidate's own scope, whose
+// exclude is the reduction the owner approves (D-SCOPE, an accepted link).
+func evaluate(ctx context.Context, tree Tree, governing, accepting scope.Scope) (artifact.Manifest, error) {
 	entries, err := listEntries(ctx, tree)
 	if err != nil {
 		return artifact.Manifest{}, err
 	}
-	return manifestOf(ctx, tree, entries, governing, map[string][]byte{})
+	return manifestOf(ctx, tree, entries, governing, accepting, map[string][]byte{})
 }
 
 // listEntries returns the tree's entries once each has a valid path, a valid
@@ -130,28 +146,51 @@ func listEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 	return entries, nil
 }
 
-// manifestOf rejects a symlink or submodule inside effective, then hashes
-// every covered file, reading from the tree only what known lacks.
-func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
+// maxLinkHops bounds the links followed to resolve one symlink (D-SCOPE).
+const maxLinkHops = 8
+
+// manifestOf rejects a symlink inside effective that may hide protected content, unless accepting excludes it exactly, then hashes every covered file,
+// reading from the tree only what known lacks. A submodule is outside the scope: it is never rejected and never read.
+func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective, accepting scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
+	index := newLayout(entries)
+	targets := map[string]string{} // the blobs of the links read so far
 	covered := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		covers, err := effective.Covers(entry.Path)
 		if err != nil {
 			return artifact.Manifest{}, err
 		}
-		if entry.Kind == File {
+		switch entry.Kind {
+		case File:
 			if covers {
 				covered = append(covered, entry.Path)
 			}
 			continue
+		case Submodule:
+			continue
 		}
-		below, err := effective.MayCoverBelow(entry.Path)
-		if err != nil {
-			return artifact.Manifest{}, err
+		// D-SCOPE, an accepted link: an exclude that names exactly this link skips it. Nothing reached through it is protected.
+		if accepting.ExcludesExactly(entry.Path) {
+			continue
 		}
-		if covers || below {
-			// D-SCOPE: a link inside the scope makes the declaration invalid.
-			return artifact.Manifest{}, fmt.Errorf("%w: %q", ErrUnsafeEntry, entry.Path)
+		// D-SCOPE: a link the scope covers makes the declaration invalid. A link that a pattern may reach below does too,
+		// unless it resolves to a regular file of the tree, which behaves as a file.
+		unsafe := covers
+		if !unsafe {
+			below, err := effective.MayCoverBelow(entry.Path)
+			if err != nil {
+				return artifact.Manifest{}, err
+			}
+			if below {
+				resolved, err := resolvesToFile(ctx, tree, index, targets, entry.Path)
+				if err != nil {
+					return artifact.Manifest{}, err
+				}
+				unsafe = !resolved
+			}
+		}
+		if unsafe {
+			return artifact.Manifest{}, &UnsafeEntryError{Path: entry.Path}
 		}
 	}
 
@@ -167,6 +206,88 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 		files = append(files, artifact.Entry{Path: path, Content: artifact.Hash(content)})
 	}
 	return artifact.NewManifest(files)
+}
+
+// layout indexes the entries of a tree for link resolution: the kind of each entry, and every directory, which has an
+// entry somewhere below it and none of its own.
+type layout struct {
+	kinds map[string]EntryKind
+	dirs  map[string]bool
+}
+
+func newLayout(entries []Entry) layout {
+	l := layout{kinds: make(map[string]EntryKind, len(entries)), dirs: map[string]bool{}}
+	for _, entry := range entries {
+		l.kinds[entry.Path] = entry.Kind
+		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
+			l.dirs[dir] = true
+		}
+	}
+	return l
+}
+
+func (l layout) isDir(p string) bool { return p == "" || (l.dirs[p] && l.kinds[p] == 0) }
+
+// resolve returns the path that target names from the directory dir, the way a filesystem walks it: "" and "." stay,
+// ".." leaves the last directory, and every directory passed through must be a real directory of the tree. A link, a file
+// or a submodule in the middle, a missing directory, a ".." past the root and a target that ends in a directory form
+// resolve to nothing, because a lexical join would send ".." through a link somewhere the tree does not show.
+func (l layout) resolve(dir, target string) (string, bool) {
+	segments := strings.Split(target, "/")
+	if last := segments[len(segments)-1]; target == "" || target[0] == '/' || last == "" || last == "." || last == ".." {
+		return "", false
+	}
+	var parts []string
+	if dir != "." {
+		parts = strings.Split(dir, "/")
+	}
+	for _, segment := range segments {
+		if segment == "" || segment == "." {
+			continue
+		}
+		if !l.isDir(strings.Join(parts, "/")) {
+			return "", false
+		}
+		if segment != ".." {
+			parts = append(parts, segment)
+		} else if len(parts) == 0 {
+			return "", false
+		} else {
+			parts = parts[:len(parts)-1]
+		}
+	}
+	return strings.Join(parts, "/"), true
+}
+
+// resolvesToFile follows the symlink at link, in the same tree, through at most maxLinkHops links and reports whether
+// it ends at a regular file. A link's blob is its target, relative to the link's directory (layout.resolve). Every
+// target that resolves to nothing, a submodule, a directory and a loop end at no file. A failed read is an error, not
+// an answer.
+func resolvesToFile(ctx context.Context, tree Tree, l layout, targets map[string]string, link string) (bool, error) {
+	for range maxLinkHops {
+		target, read := targets[link]
+		if !read {
+			blob, err := tree.Read(ctx, link)
+			if err != nil {
+				return false, fmt.Errorf("read link %q: %w", link, err)
+			}
+			target = string(blob)
+			targets[link] = target
+		}
+		next, ok := l.resolve(path.Dir(link), target)
+		if !ok {
+			return false, nil
+		}
+		switch l.kinds[next] { // a directory has no entry: the zero kind
+		case File:
+			return true, nil
+		case Symlink:
+			link = next
+		default:
+			return false, nil
+		}
+	}
+	return false, nil
 }
 
 // Change classifies a candidate against the governing contract; its zero
@@ -203,7 +324,7 @@ func Classify(ctx context.Context, governing Governing, candidate Tree) (Classif
 	if err != nil {
 		return Classification{}, Inventory{}, err
 	}
-	underGoverning, err := Evaluate(ctx, candidate, governing.Scope)
+	underGoverning, err := evaluate(ctx, candidate, governing.Scope, proposed.scope)
 	if err != nil {
 		return Classification{}, Inventory{}, err
 	}

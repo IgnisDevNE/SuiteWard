@@ -236,7 +236,7 @@ The co-located stack creates its volumes only when it starts, and a start also s
    ```
 
    ```powershell
-   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:<version> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories <owner/name>
+   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:<version> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
    ```
 
    Give the GitHub flags only if this stack uses GitHub. The purge removes the volumes, the secrets and the MCP token. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`. Expect `Started suiteward-db and suiteward`. The service starts on an empty database and creates its schema, and the next two steps replace that schema.

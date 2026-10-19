@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
@@ -292,10 +293,11 @@ type commentJSON struct {
 // PullComments returns the comments of pull request number of repo updated at
 // or after since (every comment when since is zero), sorted by ID, and what the listing read.
 func (r *Reader) PullComments(ctx context.Context, repo string, number int, since time.Time) ([]Comment, ReadInfo, error) {
-	return pullComments(ctx, r.client, repo, number, since)
+	return pullComments(ctx, r.client, repo, number, "issues", since)
 }
 
-func pullComments(ctx context.Context, client *rest.Client, repo string, number int, since time.Time) ([]Comment, ReadInfo, error) {
+// pullComments lists the comments of collection "issues" (the conversation) or "pulls" (the review comments).
+func pullComments(ctx context.Context, client *rest.Client, repo string, number int, collection string, since time.Time) ([]Comment, ReadInfo, error) {
 	if err := checkRepo(repo); err != nil {
 		return nil, ReadInfo{}, err
 	}
@@ -307,7 +309,7 @@ func pullComments(ctx context.Context, client *rest.Client, repo string, number 
 		sinceParam = "&since=" + since.UTC().Format(time.RFC3339)
 	}
 	raw, info, err := readDecoded[commentJSON](ctx, client, func(page int) string {
-		return fmt.Sprintf("/repos/%s/issues/%d/comments?per_page=%d&page=%d%s", repo, number, pageSize, page, sinceParam)
+		return fmt.Sprintf("/repos/%s/%s/%d/comments?per_page=%d&page=%d%s", repo, collection, number, pageSize, page, sinceParam)
 	})
 	if err != nil {
 		return nil, info, fmt.Errorf("comments of pull request %d of %s: %w", number, repo, err)
@@ -484,14 +486,14 @@ func (t *tree) Entries(context.Context) ([]inventory.Entry, error) {
 	return slices.Clone(t.entries), nil
 }
 
-// Read fetches and decodes the blob of a listed regular file.
+// Read fetches and decodes the blob of a listed regular file or symlink; a symlink's blob is its target.
 func (t *tree) Read(ctx context.Context, path string) ([]byte, error) {
 	entry, listed := t.byPath[path]
 	switch {
 	case !listed:
 		return nil, fmt.Errorf("github tree: %q is not listed", path)
-	case entry.kind != inventory.File:
-		return nil, fmt.Errorf("github tree: %q is not a regular file", path)
+	case entry.kind != inventory.File && entry.kind != inventory.Symlink:
+		return nil, fmt.Errorf("github tree: %q is neither a regular file nor a symlink", path)
 	}
 	blobPath := "/repos/" + t.repo + "/git/blobs/" + entry.sha
 	resp, err := t.client.GetImmutable(ctx, blobPath)
@@ -540,4 +542,72 @@ func (r *Reader) BranchHead(ctx context.Context, repo, branch string) (string, e
 		return "", fmt.Errorf("%w: the answer to %s lacks a 40-hex commit SHA", ErrInvalidResponse, path)
 	}
 	return raw.Commit.SHA, nil
+}
+
+// PullFile is one file a pull request changes. Patch is GitHub's unified diff
+// of the file, empty for a binary or too large one.
+type PullFile struct {
+	Path, Status, Patch string
+}
+
+// PullFiles returns the files pull request number of repo changes, in the order
+// GitHub lists them (it lists at most 3000).
+func (r *Reader) PullFiles(ctx context.Context, repo string, number int) ([]PullFile, error) {
+	if err := checkRepo(repo); err != nil {
+		return nil, err
+	}
+	if number <= 0 {
+		return nil, fmt.Errorf("%w: pull request number %d", ErrInvalidArgument, number)
+	}
+	raw, err := readPages[struct {
+		Filename string `json:"filename"`
+		Status   string `json:"status"`
+		Patch    string `json:"patch"`
+	}](ctx, r.client, func(page int) string {
+		return fmt.Sprintf("/repos/%s/pulls/%d/files?per_page=%d&page=%d", repo, number, pageSize, page)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("files of pull request %d of %s: %w", number, repo, err)
+	}
+	files := make([]PullFile, len(raw))
+	for i, f := range raw {
+		if f.Filename == "" || f.Status == "" {
+			return nil, fmt.Errorf("%w: file of pull request %d of %s without a filename or status", ErrInvalidResponse, number, repo)
+		}
+		files[i] = PullFile{Path: f.Filename, Status: f.Status, Patch: f.Patch}
+	}
+	return files, nil
+}
+
+// LineRange is a span of lines of a file, 1-based and inclusive.
+type LineRange struct{ Start, End int }
+
+var hunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
+
+// NewLineRanges returns the line spans the patch adds or keeps context around
+// in the new version of the file, one per hunk; a pure deletion has none.
+func (f PullFile) NewLineRanges() ([]LineRange, error) {
+	var ranges []LineRange
+	// A diff body line starts with " ", "+", "-" or "\", so "@@" starts a header.
+	for _, line := range strings.Split(f.Patch, "\n") {
+		if !strings.HasPrefix(line, "@@") {
+			continue
+		}
+		m := hunkHeader.FindStringSubmatch(line)
+		if m == nil {
+			return nil, fmt.Errorf("%w: malformed hunk header in the patch of %s", ErrInvalidResponse, f.Path)
+		}
+		start, err := strconv.Atoi(m[1])
+		count := 1
+		if err == nil && m[2] != "" {
+			count, err = strconv.Atoi(m[2])
+		}
+		if err != nil || (count > 0 && count-1 > math.MaxInt-start) {
+			return nil, fmt.Errorf("%w: hunk header numbers of the patch of %s are out of range", ErrInvalidResponse, f.Path)
+		}
+		if count > 0 {
+			ranges = append(ranges, LineRange{Start: start, End: start + count - 1})
+		}
+	}
+	return ranges, nil
 }

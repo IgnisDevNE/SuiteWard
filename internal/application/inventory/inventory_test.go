@@ -45,7 +45,7 @@ func paths(entries []artifact.Entry) []string {
 // guard marks every File of tree outside want as unreadable.
 func guard(tree *fakeTree, want []string) {
 	for _, f := range tree.files {
-		if !slices.Contains(want, f.path) {
+		if f.kind == inventory.File && !slices.Contains(want, f.path) { // a link's own blob may be read to resolve it
 			tree.unreadable[f.path] = true
 		}
 	}
@@ -109,9 +109,20 @@ func TestBuild(t *testing.T) {
 			err:   inventory.ErrUnsafeEntry,
 		},
 		{
-			name:  "symlink inside an excluded part of an included directory",
-			files: []file{regular(declaration, "version: 1\ninclude: [/tests/**]\nexclude: [/tests/fixtures/**]\n"), symlink("tests/fixtures/link")},
-			err:   inventory.ErrUnsafeEntry,
+			name: "symlink to a directory inside an excluded part of an included directory",
+			files: []file{
+				regular(declaration, "version: 1\ninclude: [/tests/**]\nexclude: [/tests/fixtures/**]\n"),
+				regular("tests/fixtures/data.txt", "d"), link("tests/fixtures/link", "."),
+			},
+			err: inventory.ErrUnsafeEntry,
+		},
+		{
+			name: "symlink to a file inside an excluded part of an included directory behaves as a file",
+			files: []file{
+				regular(declaration, "version: 1\ninclude: [/tests/**]\nexclude: [/tests/fixtures/**]\n"),
+				regular("tests/a_test.go", "a"), link("tests/fixtures/link", "../a_test.go"),
+			},
+			want: []string{declaration, "tests/a_test.go"},
 		},
 		{
 			name:  "symlink in place of a workflow",
@@ -119,24 +130,34 @@ func TestBuild(t *testing.T) {
 			err:   inventory.ErrUnsafeEntry,
 		},
 		{
-			name:  "symlink in place of the workflows directory",
-			files: []file{symlink(".github/workflows")},
+			name:  "symlink to a directory in place of the workflows directory",
+			files: []file{link(".github/workflows", "../docs"), regular("docs/guide.md", "g")},
 			err:   inventory.ErrUnsafeEntry,
 		},
 		{
-			name:  "submodule that is a parent of an anchored include",
+			name:  "symlink to a file in place of the workflows directory behaves as a file",
+			files: []file{link(".github/workflows", "../README.md"), regular("README.md", "r")},
+			want:  []string{},
+		},
+		{
+			name:  "submodule that is a parent of an anchored include is outside the scope",
 			files: []file{regular(declaration, "version: 1\ninclude: [/vendor/tests/**]\n"), submodule("vendor")},
-			err:   inventory.ErrUnsafeEntry,
+			want:  []string{declaration},
 		},
 		{
-			name:  "any submodule when an unanchored include exists",
+			name:  "any submodule when an unanchored include exists is outside the scope",
 			files: []file{regular(declaration, "version: 1\ninclude: ['*_test.go']\n"), submodule("third_party/lib")},
+			want:  []string{declaration},
+		},
+		{
+			name:  "dangling symlink when an unanchored runner entry exists",
+			files: []file{regular(declaration, "version: 1\nrunner: [Makefile]\n"), link("docs/link", "MISSING.md")},
 			err:   inventory.ErrUnsafeEntry,
 		},
 		{
-			name:  "any symlink when an unanchored runner entry exists",
-			files: []file{regular(declaration, "version: 1\nrunner: [Makefile]\n"), symlink("docs/link")},
-			err:   inventory.ErrUnsafeEntry,
+			name:  "symlink to a file when an unanchored runner entry exists behaves as a file",
+			files: []file{regular(declaration, "version: 1\nrunner: [Makefile]\n"), regular("Makefile", "m"), link("docs/link", "../Makefile")},
+			want:  []string{declaration, "Makefile"},
 		},
 		{
 			name: "symlink and submodule outside every pattern are ignored",

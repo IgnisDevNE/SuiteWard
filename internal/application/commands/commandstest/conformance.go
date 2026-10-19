@@ -228,7 +228,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 	run("Record stores every disposition", func(e *cmdEnv) {
 		all := []commands.Disposition{commands.NotCommand, commands.BeforeEnrollment, commands.NoSuite, commands.EditedFirst, commands.Failed,
 			commands.IgnoredAuthor, commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.Processed,
-			commands.Proposed, commands.ProposeRefused, commands.Skipped, commands.SkipRefused}
+			commands.Proposed, commands.ProposeRefused, commands.Skipped, commands.SkipRefused, commands.Suggested, commands.SuggestRefused}
 		for i, d := range all {
 			e.must(e.store.Record(e.ctx, entry(10, int64(i+1), d), nil))
 			e.must(e.store.Record(e.ctx, entry(10, int64(i+1), d), nil)) // stored: a repeat is the same entry
@@ -432,7 +432,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 	run("LatestOwnerCommand counts only the command dispositions", func(e *cmdEnv) {
 		counted := []commands.Disposition{commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.Processed}
 		ignored := []commands.Disposition{commands.NotCommand, commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor,
-			commands.Proposed, commands.ProposeRefused, commands.Skipped, commands.SkipRefused}
+			commands.Proposed, commands.ProposeRefused, commands.Skipped, commands.SkipRefused, commands.Suggested, commands.SuggestRefused}
 		// A new disposition must be placed in exactly one set, so it cannot drift between IsCommand and the store's own list.
 		placed := map[commands.Disposition]int{}
 		for _, d := range counted {
@@ -475,14 +475,14 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		}
 	})
 
-	run("a skipped or proposed command never replaces the owner's latest approve or revoke", func(e *cmdEnv) {
+	run("a skipped, proposed or suggested command never replaces the owner's latest approve or revoke", func(e *cmdEnv) {
 		record := func(comment int64, d commands.Disposition) {
 			x := entry(10, comment, d)
 			x.AuthorID = ownerAccount
 			e.must(e.store.Record(e.ctx, x, nil))
 		}
 		record(1, commands.InvalidCode) // a rejected approve
-		for i, d := range []commands.Disposition{commands.Skipped, commands.SkipRefused, commands.Proposed, commands.ProposeRefused} {
+		for i, d := range []commands.Disposition{commands.Skipped, commands.SkipRefused, commands.Proposed, commands.ProposeRefused, commands.Suggested, commands.SuggestRefused} {
 			record(int64(i+2), d)
 			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount)
 			e.must(err)

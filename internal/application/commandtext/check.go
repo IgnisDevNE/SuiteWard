@@ -24,6 +24,9 @@ type Check struct {
 	Proposal, Revision int
 	Version            int
 	Tier               Tier
+	// Paths are at most 20 of the PathsTotal runner files of a runner-uncovered check, each already cut by the caller; the other reasons have none.
+	Paths      []string
+	PathsTotal int
 }
 
 // checkReason is the output of one reason code: its state, a title, what happened and the next action. The text
@@ -67,13 +70,18 @@ var checkReasons = map[string]checkReason{
 	"source-unavailable": {CheckInProgress, "Source unavailable",
 		"GitHub truncated the file tree of this head, so SuiteWard cannot read the protected files in full.",
 		"Next: SuiteWard cannot check this head until GitHub returns the full tree; reducing the number of files in the repository may help."},
+	"runner-uncovered": {CheckInProgress, "Runner files outside the protected scope",
+		"This pull request adds or changes runner files that the protected scope does not cover. A runner file can change how the protected tests run without touching any of them, " +
+			"so this head is not ready until the owner decides.",
+		"Next: protect the files by committing the suggested declaration, which adds their runner patterns, and approving the new revision, " +
+			"or ignore them by adding the paths to `exclude` and approving that revision. SuiteWard gives both declarations in a comment on this pull request."},
 	"fork-unsupported": {CheckInProgress, "Pull requests from forks are not supported",
 		"Pull requests from forks are not supported yet, so SuiteWard does not assess this head and never proposes a contract change for it.",
 		"Next: open the pull request from a branch of this repository."},
 	"invalid-source": {CheckFailure, "Invalid contract source",
 		"The contract declaration or the protected source of this head is invalid, for example an invalid `.suiteward.yml` " +
-			"or a symlink or submodule inside the protected scope. The canonical contract stays in force.",
-		"Next: fix `.suiteward.yml`, or remove the symlink or submodule from the protected scope, and push."},
+			"or a symlink that the protected scope reaches. The canonical contract stays in force.",
+		"Next: fix `.suiteward.yml`, or remove the symlink or point it to a regular file, or accept the symlink by adding its exact anchored path to `exclude`, a scope reduction that the owner approves and that leaves nothing reached through it protected, and push."},
 	"integrity-failed": {CheckFailure, "Canonical contract failed its integrity check",
 		"SuiteWard's stored canonical contract failed its integrity verification, so SuiteWard cannot trust it and blocks every pull request of this repository until it is restored.",
 		"Next: the operator must restore the artifact store from a backup or re-bootstrap the repository. Pushing to this pull request does not help."},
@@ -99,6 +107,9 @@ func CheckSummary(c Check) (title, summary string) {
 	if (beforeCanonical && c.Version != 0) || (c.Reason == "bootstrap-ready" && c.Proposal == 0) {
 		panic(fmt.Sprintf("commandtext: reason %q does not fit reference P%d-R%d and version V%d: it has no canonical version, and a ready bootstrap has a reference", c.Reason, c.Proposal, c.Revision, c.Version))
 	}
+	if (c.Reason != "runner-uncovered" && (len(c.Paths) > 0 || c.PathsTotal > 0)) || len(c.Paths) > maxListed || c.PathsTotal < len(c.Paths) || (len(c.Paths) == 0 && c.PathsTotal != 0) {
+		panic(fmt.Sprintf("commandtext: reason %q does not fit %d paths of a total of %d: only a runner-uncovered check lists at most %d", c.Reason, len(c.Paths), c.PathsTotal, maxListed))
+	}
 	facts := []string{"- State: `" + checkStateName[c.State] + "`"}
 	var ref string
 	if c.Proposal != 0 {
@@ -114,7 +125,11 @@ func CheckSummary(c Check) (title, summary string) {
 	if c.Reason == "approval-missing" && c.Version == 0 { // no canonical: the head proposes the first contract, it changes none
 		text = "This pull request carries the proposed first contract " + ref + ", awaiting the owner's approval of that exact revision."
 	}
-	parts := []string{text, strings.Join(facts, "\n")}
+	parts := []string{text}
+	if len(c.Paths) > 0 {
+		parts = append(parts, listingAndMore("Runner files that this head adds or changes outside the protected scope", c.Paths, c.PathsTotal))
+	}
+	parts = append(parts, strings.Join(facts, "\n"))
 	if c.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}

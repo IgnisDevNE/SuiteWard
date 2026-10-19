@@ -124,15 +124,14 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 		return &opaque{what: "read the canonical declaration", cause: err}
 	}
 	protect, err := scope.AddPatterns(base, nil, inventory.RunnerPatterns(set.paths))
-	if err != nil { // the comment is advice and the check says the same without it
+	if err != nil { // unreachable with a valid canonical; kept so that a defect never fails the job: the comment is advice and the check says the same without it
 		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: the runner patterns cannot be added", "repo", p.Repo, "pull", pull.Number)
 		return nil
 	}
 	var ignore []byte
 	if excludable(set.paths) {
-		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // advice only: the choice is left out, as for an unspellable path
+		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // unreachable with a valid canonical and excludable; kept so that a defect never fails the job (ignore is nil then)
 			j.logger.WarnContext(ctx, "github checks runner-uncovered ignore choice skipped: the excludes cannot be added", "repo", p.Repo, "pull", pull.Number)
-			ignore = nil
 		}
 	}
 	if len(ignore) > commandtext.MaxDeclaration { // a choice that cannot be shown is left out; protecting stays

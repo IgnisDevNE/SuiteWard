@@ -68,14 +68,13 @@ type Tx interface {
 	// which must come first because the outcome may name the version it wrote.
 	RecordMergeOutcome(context.Context, MergeWrite) error
 
-	// Enqueue and Outbox are written in the same transaction as the facts
-	// above. Neither advances the Suite revision.
-	Enqueue(context.Context, Job) error
+	// Outbox is written in the same transaction as the facts above: the transactional guarantee of an external effect
+	// (ADR 0005). It does not advance the Suite revision.
 	Outbox(context.Context, OutboxMessage) error
 }
 
-// Job is follow-up work for a background worker. Args reference scoped
-// records and immutable revisions; they never carry credentials.
+// Job is follow-up work for a background worker, enqueued with an outbox message outside any Suite by the store's
+// EnqueueSystem. Args reference scoped records and immutable revisions; they never carry credentials.
 type Job struct {
 	Kind        string          // ^[a-z][a-z0-9_.]*$, at most 64 bytes, for example "probe"
 	Args        json.RawMessage // a JSON object, at most 64 KiB

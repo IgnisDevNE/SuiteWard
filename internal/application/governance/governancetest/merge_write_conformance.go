@@ -83,7 +83,7 @@ func mcMessageFailure(e *cfEnv) {
 		e.t.Fatal("the assessment of the merge commit survived the rollback")
 	}
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func mcOutboxConflict(e *cfEnv) {
@@ -143,7 +143,7 @@ func mcConcurrent(e *cfEnv) {
 		e.t.Fatalf("%d callers wrote the outcome, want exactly 1", fresh)
 	}
 	e.requireWrites(before, 2)
-	e.requireQueued(nil, []string{"comment/" + string(pr.carrier)})
+	e.requireOutbox([]string{"comment/" + string(pr.carrier)})
 }
 
 func mcOutcomeOfUnknown(e *cfEnv) {
@@ -316,7 +316,7 @@ func mcCorrectionMessageFailure(e *cfEnv) {
 		e.t.Fatal("the assessment of the merge commit survived the rollback")
 	}
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func mcOperationAcrossKinds(e *cfEnv) {

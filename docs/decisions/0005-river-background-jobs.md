@@ -84,3 +84,9 @@ or assumption that PostgreSQL will satisfy every future workload is part of this
 - Checkpoint representation, coalescing semantics, and recovery for interrupted scans.
 - API and worker process packaging, shutdown behavior, and operator retry controls.
 - Polling defaults and acceptable discovery delay, validated against the shared GitHub budget in ADR 0001.
+
+## Amendment (2026-10-19, phase M1.10): the outbox carries the transactional guarantee
+
+The decision above says to insert the River job with the same transaction as the domain change. The implementation took the other route that the Alternatives section describes: a use case writes the follow-up as an outbox message in the same transaction as its facts (`Tx.Outbox`), and a River job, the outbox relay, delivers it at least once, idempotent by the message key. That removes the dual-write gap for governance facts: a committed fact always has its message, and a rolled-back one has none.
+
+`Tx.Enqueue`, which inserted a River job through the unit of work's transaction, had no production caller and is removed (owner decision, 2026-10-19). A use case that needs follow-up work now writes an outbox message and lets the relay or a periodic worker act on it. `Store.EnqueueSystem` stays, outside the port: it inserts a job and an outbox message with no Suite in one transaction, for the diagnostic `probe`. If a later feature needs a job committed with a fact, it adds that capability again with its first caller.

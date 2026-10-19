@@ -49,9 +49,8 @@ type Tx interface {
 	// AppendProposalRevision (M1.3); see "Proposal revisions".
 	AppendProposalRevision(context.Context, ProposalWrite) error
 
-	// Enqueue and Outbox are written in the same transaction as the facts
-	// above (M1.2); see "Jobs and outbox".
-	Enqueue(context.Context, Job) error
+	// Outbox is written in the same transaction as the facts above (M1.2); see
+	// "Jobs and outbox". It is the transactional guarantee of an external effect.
 	Outbox(context.Context, OutboxMessage) error
 }
 
@@ -198,8 +197,9 @@ Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `
 Declared in `internal/application/governance/uow.go` next to `Tx`. River types never appear in `governance`.
 
 ```go
-// Job is follow-up work for a background worker. Args reference scoped
-// records and immutable revisions; they never carry credentials.
+// Job is follow-up work for a background worker, enqueued with an outbox message
+// outside any Suite by the store's EnqueueSystem. Args reference scoped records
+// and immutable revisions; they never carry credentials.
 type Job struct {
 	Kind        string          // ^[a-z][a-z0-9_.]*$, at most 64 bytes, for example "probe"
 	Args        json.RawMessage // a JSON object, at most 64 KiB
@@ -218,12 +218,12 @@ type OutboxMessage struct {
 
 Semantics:
 
-- `Job.Validate()` and `OutboxMessage.Validate()` (in `internal/application/governance/queue.go`) apply the limits above and are shared by every implementation of `Tx`, so the fake and the adapter reject the same inputs.
-- `Enqueue` inserts the job and `Outbox` inserts the message through the unit of work's own `pgx.Tx`. They commit or roll back with the facts; there is no enqueue after commit. Neither advances the Suite revision (the revision counts governance facts only) and neither takes a lock beyond the Suite's.
+- `Job.Validate()` and `OutboxMessage.Validate()` (in `internal/application/governance/queue.go`) apply the limits above. `OutboxMessage.Validate()` is shared by every implementation of `Tx`, so the fake and the adapter reject the same inputs; `Job.Validate()` guards the system enqueue.
+- `Outbox` inserts the message through the unit of work's own `pgx.Tx`. It commits or rolls back with the facts; there is no write after commit. It does not advance the Suite revision (the revision counts governance facts only) and takes no lock beyond the Suite's. There is no `Tx.Enqueue`: a job committed with a fact had no caller, and the outbox plus its relay carry the guarantee that a committed fact has its follow-up (removed in M1.10; see the amendment to [ADR 0005](../decisions/0005-river-background-jobs.md)).
 - A malformed kind, a non-object or oversized `Args`/`Payload`, or an empty key is `ErrInvalidRequest`. A repeated `Key` is `ErrOperationConflict`; use cases replay by receipt before they write, so a repeated key means a genuine conflict.
 - Retry limits, timeouts and backoff are runtime settings per kind (see [runtime](runtime.md)), not part of the port.
 - A job's terminal state is River's `discarded` (retries exhausted) or `completed`; both stay in `river_job` and are counted by the runtime status endpoint until River's cleaner removes them. The runtime sets no retention, so River v0.49.0's defaults apply: completed and cancelled jobs are removed after 24 hours and discarded jobs after 7 days. The job counts of `/status` therefore describe the retained jobs, not the history.
-- `outbox.project_id` and `outbox.suite_id` are both set (a message written through `Tx.Outbox`) or both null (a system message, for example the diagnostic `probe` written through the non-port `Store.EnqueueSystem`, which reuses the same insert statements without taking a Suite lock); a `CHECK` enforces it.
+- `outbox.project_id` and `outbox.suite_id` are both set (a message written through `Tx.Outbox`) or both null (a system message, for example the diagnostic `probe` written through the non-port `Store.EnqueueSystem`, which reuses the outbox insert statement and inserts a job in the same transaction without taking a Suite lock); a `CHECK` enforces it.
 - The outbox row is the single owner of delivery state (it is not mirrored by a River job per message). A relay, itself a periodic River job that runs at startup and then on `OUTBOX_POLL_INTERVAL`, claims due rows with `FOR UPDATE SKIP LOCKED`, increments `attempts`, sets `next_attempt_at` to now plus `OUTBOX_LEASE` and commits; it then calls the publisher registered for the row's kind outside any transaction. An outcome update is conditional on the claim (`WHERE key = $1 AND state = 'pending' AND attempts = <attempts at claim>`): when a publish outlasts the lease and another relay has reclaimed the row, the late outcome updates nothing and is logged, never an error and never overwriting the newer claim. Success sets `state = delivered`. An error sets `last_error`; at `OUTBOX_MAX_ATTEMPTS` the state becomes `failed` (terminal, visible), otherwise `next_attempt_at` is now plus a capped exponential backoff. A crash between claim and outcome leaves the row pending until the lease expires, so it is redelivered. A row whose kind has no registered publisher stays pending. Until M1.7 it failed at once; M1.7 changes that:
 - the relay releases the claim, restoring the attempt, and defers the row by the backoff cap;
 - it logs a Warn naming the kind, once per kind per process;

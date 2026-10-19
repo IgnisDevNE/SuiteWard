@@ -96,8 +96,7 @@ func insertOutbox(ctx context.Context, q *dbgen.Queries, project, suite pgtype.T
 }
 
 // EnqueueSystem inserts a job and an outbox message with no Suite in one
-// transaction, using the statements of Tx.Enqueue and Tx.Outbox. It returns
-// the job id.
+// transaction, with the statement of Tx.Outbox and the job inserter. It returns the job id.
 func (s *Store) EnqueueSystem(ctx context.Context, job governance.Job, message governance.OutboxMessage) (int64, error) {
 	transaction, err := s.pool.Begin(ctx)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,18 +27,14 @@ func (w *pgWorld) scalar(query string, args ...any) (value string) {
 	return value
 }
 
-func TestEnqueueStoresAJobThatCarriesItsRequest(t *testing.T) {
+func TestEnqueueSystemStoresAJobThatCarriesItsRequest(t *testing.T) {
 	w := newPGWorld(t)
-	w.seedSuite(fxProject, fxSuite)
 	when := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 
-	err := w.store.Do(t.Context(), fxProject, fxSuite, func(ctx context.Context, tx governance.Tx) error {
-		if err := tx.Enqueue(ctx, governance.Job{Kind: "probe", Args: queueObject}); err != nil {
-			return err
-		}
-		return tx.Enqueue(ctx, governance.Job{Kind: "later", Args: queueObject, ScheduledAt: when})
-	})
-	if err != nil {
+	if _, err := w.store.EnqueueSystem(t.Context(), governance.Job{Kind: "probe", Args: queueObject}, governance.OutboxMessage{Key: "probe-1", Kind: "probe", Payload: queueObject}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.store.EnqueueSystem(t.Context(), governance.Job{Kind: "later", Args: queueObject, ScheduledAt: when}, governance.OutboxMessage{Key: "later-1", Kind: "probe", Payload: queueObject}); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.scalar("SELECT state::text || ' ' || max_attempts || ' ' || args::text FROM river_job WHERE kind='probe'"); got != `available 5 {"suite": "suite"}` {
@@ -66,7 +63,7 @@ func TestOutboxMessageIsWrittenWithItsSuite(t *testing.T) {
 	}
 }
 
-// A unit of work that fails while committing leaves no job and no message.
+// A transaction that fails while committing leaves no job and no message, in a unit of work and in a system enqueue.
 func TestFailedCommitLeavesNoQueuedWork(t *testing.T) {
 	w := newPGWorld(t)
 	w.seedSuite(fxProject, fxSuite)
@@ -76,19 +73,28 @@ func TestFailedCommitLeavesNoQueuedWork(t *testing.T) {
 	} {
 		schemaExec(t, w.db.conn, statement)
 	}
+	const nothingQueued = "SELECT (SELECT count(*) FROM river_job) || ' ' || (SELECT count(*) FROM outbox)"
 
-	err := w.store.Do(t.Context(), fxProject, fxSuite, func(ctx context.Context, tx governance.Tx) error {
-		if err := tx.Enqueue(ctx, governance.Job{Kind: "probe", Args: queueObject}); err != nil {
-			return err
+	t.Run("unit of work", func(t *testing.T) {
+		err := w.store.Do(t.Context(), fxProject, fxSuite, func(ctx context.Context, tx governance.Tx) error {
+			return tx.Outbox(ctx, governance.OutboxMessage{Key: "k1", Kind: "probe", Payload: queueObject})
+		})
+		if err == nil {
+			t.Fatal("Do reported success although the commit failed")
 		}
-		return tx.Outbox(ctx, governance.OutboxMessage{Key: "k1", Kind: "probe", Payload: queueObject})
+		if got := w.scalar(nothingQueued); got != "0 0" {
+			t.Fatalf("jobs and messages after the failed commit = %q, want none", got)
+		}
 	})
-	if err == nil {
-		t.Fatal("Do reported success although the commit failed")
-	}
-	if got := w.scalar("SELECT (SELECT count(*) FROM river_job) || ' ' || (SELECT count(*) FROM outbox)"); got != "0 0" {
-		t.Fatalf("jobs and messages after the failed commit = %q, want none", got)
-	}
+	t.Run("system enqueue", func(t *testing.T) {
+		_, err := w.store.EnqueueSystem(t.Context(), governance.Job{Kind: "probe", Args: queueObject}, governance.OutboxMessage{Key: "k2", Kind: "probe", Payload: queueObject})
+		if err == nil {
+			t.Fatal("EnqueueSystem reported success although the commit failed")
+		}
+		if got := w.scalar(nothingQueued); got != "0 0" {
+			t.Fatalf("jobs and messages after the failed commit = %q, want none", got)
+		}
+	})
 }
 
 func TestEnqueueSystemWritesAJobAndAMessageWithoutASuite(t *testing.T) {
@@ -125,8 +131,15 @@ func TestEnqueueSystemIsAtomic(t *testing.T) {
 	if _, err := w.store.EnqueueSystem(t.Context(), job, message); !errors.Is(err, governance.ErrOperationConflict) {
 		t.Errorf("repeated key = %v, want ErrOperationConflict", err)
 	}
-	if _, err := w.store.EnqueueSystem(t.Context(), governance.Job{Kind: "Bad"}, governance.OutboxMessage{Key: "probe-2", Kind: "probe", Payload: queueObject}); !errors.Is(err, governance.ErrInvalidRequest) {
-		t.Errorf("invalid job = %v, want ErrInvalidRequest", err)
+	oversized := json.RawMessage(`{"a":"` + strings.Repeat("x", 64<<10) + `"}`)
+	for name, bad := range map[string]governance.Job{
+		"a bad kind":     {Kind: "Bad", Args: queueObject},
+		"array args":     {Kind: "probe", Args: json.RawMessage(`[]`)},
+		"oversized args": {Kind: "probe", Args: oversized},
+	} {
+		if _, err := w.store.EnqueueSystem(t.Context(), bad, governance.OutboxMessage{Key: "probe-2", Kind: "probe", Payload: queueObject}); !errors.Is(err, governance.ErrInvalidRequest) {
+			t.Errorf("job with %s = %v, want ErrInvalidRequest", name, err)
+		}
 	}
 	if _, err := w.store.EnqueueSystem(t.Context(), job, governance.OutboxMessage{Kind: "probe", Payload: queueObject}); !errors.Is(err, governance.ErrInvalidRequest) {
 		t.Errorf("invalid message = %v, want ErrInvalidRequest", err)

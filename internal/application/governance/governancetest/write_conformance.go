@@ -392,16 +392,16 @@ func cfConsentOutbox(e *cfEnv) {
 
 	before := e.revision()
 	process(approve, "ack-1", "ack-1b")
-	e.requireQueued(nil, []string{"ack-1", "ack-1b"})
+	e.requireOutbox([]string{"ack-1", "ack-1b"})
 	e.requireWrites(before, 1) // the outbox does not advance the revision
 
 	process(approve, "ack-replay")                                                                             // replay by operation id
 	process(e.command(c, "revision-2", "approve-alias", "comment-1", contract.ApproveConsent, 1), "ack-alias") // replay by source
-	e.requireQueued(nil, []string{"ack-1", "ack-1b"})
+	e.requireOutbox([]string{"ack-1", "ack-1b"})
 
 	// A rejected result is a new fact and gets its message.
 	process(e.command(c, "revision-1", "approve-stale", "comment-2", contract.ApproveConsent, 2), "ack-rejected")
-	e.requireQueued(nil, []string{"ack-1", "ack-1b", "ack-rejected"})
+	e.requireOutbox([]string{"ack-1", "ack-1b", "ack-rejected"})
 }
 
 func cfConsentOutboxFailureRollsBackTheFact(e *cfEnv) {
@@ -424,7 +424,7 @@ func cfConsentOutboxFailureRollsBackTheFact(e *cfEnv) {
 		})
 	}
 	e.requireSameView(before, e.view(probe))
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func cfPromotionOutbox(e *cfEnv) {
@@ -439,7 +439,7 @@ func cfPromotionOutbox(e *cfEnv) {
 		e.t.Fatalf("bootstrap without approval = %+v, %v, want a block for the missing approval", blocked, err)
 	}
 	e.requireWrites(unapproved, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 	e.approve(c)
 	before := e.revision()
 
@@ -448,7 +448,7 @@ func cfPromotionOutbox(e *cfEnv) {
 	if err != nil || result.Outcome != contract.PromotionProposed || result.Duplicate {
 		e.t.Fatalf("bootstrap = %+v, %v, want a new proposed promotion", result, err)
 	}
-	e.requireQueued(nil, []string{"ack-bootstrap"})
+	e.requireOutbox([]string{"ack-bootstrap"})
 	e.requireWrites(before, 1)
 
 	replay := request
@@ -457,7 +457,7 @@ func cfPromotionOutbox(e *cfEnv) {
 	if err != nil || !again.Duplicate {
 		e.t.Fatalf("replay = %+v, %v, want a duplicate", again, err)
 	}
-	e.requireQueued(nil, []string{"ack-bootstrap"})
+	e.requireOutbox([]string{"ack-bootstrap"})
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		receipt, found, err := tx.Receipt(ctx, "bootstrap-1")
 		if err != nil || !found || len(receipt.Promotion.Identity.Request.Outbox) != 0 {
@@ -481,12 +481,12 @@ func cfPromotionOutboxFailureRollsBackTheFact(e *cfEnv) {
 	}
 
 	e.requireSameView(before, e.view(probe))
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 	request.Outbox = cfMessages("ack")
 	if result, err := governance.Bootstrap(context.Background(), e.store, request); err != nil || result.Outcome != contract.PromotionProposed || result.Duplicate {
 		e.t.Fatalf("retry = %+v, %v, want a new proposed promotion", result, err)
 	}
-	e.requireQueued(nil, []string{"ack"})
+	e.requireOutbox([]string{"ack"})
 }
 
 func cfRecordAssessmentRejectsAnotherEmitter(e *cfEnv) {

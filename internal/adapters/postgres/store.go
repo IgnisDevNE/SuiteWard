@@ -34,8 +34,7 @@ type ArtifactVerifier interface {
 	Verify(ctx context.Context, digest artifact.Digest) error
 }
 
-// JobInserter inserts a job through a unit of work's transaction and returns
-// its id. The River adapter implements it.
+// JobInserter inserts a job through the transaction of EnqueueSystem and returns its id. The River adapter implements it.
 type JobInserter interface {
 	Insert(ctx context.Context, tx pgx.Tx, job governance.Job) (int64, error)
 }
@@ -92,7 +91,7 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 			rollback(ctx, transaction)
 		}
 	}()
-	work := &tx{q: dbgen.New(transaction), raw: transaction, project: project, suite: suite, artifacts: s.artifacts, jobs: s.jobs}
+	work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
 	if _, err := work.lock(ctx); err != nil {
 		return err
 	}

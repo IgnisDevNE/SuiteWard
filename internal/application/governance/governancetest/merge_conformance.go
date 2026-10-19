@@ -316,7 +316,7 @@ func mcPromotes(e *cfEnv) {
 	if assessment, found := e.assessmentAt(pr.current(), mcSource(pr)); !found || !assessment.Passed() {
 		e.t.Fatalf("assessment of the merge commit = %+v (found %v), want a passed one", assessment, found)
 	}
-	e.requireQueued(nil, []string{"comment/" + string(pr.carrier)})
+	e.requireOutbox([]string{"comment/" + string(pr.carrier)})
 }
 
 func mcReplay(e *cfEnv) {
@@ -337,7 +337,7 @@ func mcReplay(e *cfEnv) {
 		e.t.Fatalf("replay duplicate %v, message calls %d; want a duplicate that calls no message", replay.Duplicate, again.calls)
 	}
 	e.requireWrites(after, 0)
-	e.requireQueued(nil, []string{"comment/" + string(pr.carrier)})
+	e.requireOutbox([]string{"comment/" + string(pr.carrier)})
 }
 
 func mcCorrects(e *cfEnv) {
@@ -372,7 +372,7 @@ func mcCorrects(e *cfEnv) {
 		}
 		return nil
 	})
-	e.requireQueued(nil, []string{"comment/" + string(fix.carrier)})
+	e.requireOutbox([]string{"comment/" + string(fix.carrier)})
 
 	again := &mcMessages{} // the replay asks for nothing and writes nothing
 	replay := e.merge(mcRequest(fix, "v1", again))
@@ -381,7 +381,7 @@ func mcCorrects(e *cfEnv) {
 		e.t.Fatalf("replay duplicate %v, message calls %d; want a duplicate that calls no message", replay.Duplicate, again.calls)
 	}
 	e.requireWrites(before, 2)
-	e.requireQueued(nil, []string{"comment/" + string(fix.carrier)})
+	e.requireOutbox([]string{"comment/" + string(fix.carrier)})
 }
 
 // mcSecondPR merges a, which promotes V2, and then b, which was approved against V1 as well.
@@ -552,7 +552,7 @@ func mcNotTarget(e *cfEnv) {
 		e.t.Fatalf("message calls = %d, want the message function asked once", messages.calls)
 	}
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func mcBeforeCanonical(e *cfEnv) {
@@ -567,7 +567,7 @@ func mcBeforeCanonical(e *cfEnv) {
 
 	e.requireOutcome(early.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBeforeCanonical, Source: mcSource(early), Version: "V1"})
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 	// Observed at the very moment V1 was recorded is not before it: the merge is judged on its content.
 	request = mcRequest(atTheEdge, "v1", &mcMessages{})
 	request.ObservedAt = cfRecordedAt

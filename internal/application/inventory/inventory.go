@@ -84,7 +84,7 @@ func Build(ctx context.Context, tree Tree) (Inventory, error) {
 		known[scope.DeclarationPath] = raw
 	}
 	effective := scope.NewScope(declaration)
-	manifest, err := manifestOf(ctx, tree, entries, effective, known)
+	manifest, err := manifestOf(ctx, tree, entries, effective, effective, known)
 	if err != nil {
 		return Inventory{}, err
 	}
@@ -111,11 +111,17 @@ func (i Inventory) Contract() (contract.ProtectedContract, error) {
 // the tree's own declaration, so that the governing rules decide which
 // existing protection is checked (ADR 0013).
 func Evaluate(ctx context.Context, tree Tree, governing scope.Scope) (artifact.Manifest, error) {
+	return evaluate(ctx, tree, governing, governing)
+}
+
+// evaluate is Evaluate for a tree whose links are also accepted by the exact excludes of accepting: the candidate's own scope, whose
+// exclude is the reduction the owner approves (D-SCOPE, an accepted link).
+func evaluate(ctx context.Context, tree Tree, governing, accepting scope.Scope) (artifact.Manifest, error) {
 	entries, err := listEntries(ctx, tree)
 	if err != nil {
 		return artifact.Manifest{}, err
 	}
-	return manifestOf(ctx, tree, entries, governing, map[string][]byte{})
+	return manifestOf(ctx, tree, entries, governing, accepting, map[string][]byte{})
 }
 
 // listEntries returns the tree's entries once each has a valid path, a valid
@@ -143,9 +149,9 @@ func listEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 // maxLinkHops bounds the links followed to resolve one symlink (D-SCOPE).
 const maxLinkHops = 8
 
-// manifestOf rejects a symlink inside effective that may hide protected content, then hashes every covered file,
+// manifestOf rejects a symlink inside effective that may hide protected content, unless accepting excludes it exactly, then hashes every covered file,
 // reading from the tree only what known lacks. A submodule is outside the scope: it is never rejected and never read.
-func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
+func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective, accepting scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
 	index := newLayout(entries)
 	targets := map[string]string{} // the blobs of the links read so far
 	covered := make([]string, 0, len(entries))
@@ -164,7 +170,7 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 			continue
 		}
 		// D-SCOPE, an accepted link: an exclude that names exactly this link skips it. Nothing reached through it is protected.
-		if effective.ExcludesExactly(entry.Path) {
+		if accepting.ExcludesExactly(entry.Path) {
 			continue
 		}
 		// D-SCOPE: a link the scope covers makes the declaration invalid. A link that a pattern may reach below does too,
@@ -318,7 +324,7 @@ func Classify(ctx context.Context, governing Governing, candidate Tree) (Classif
 	if err != nil {
 		return Classification{}, Inventory{}, err
 	}
-	underGoverning, err := Evaluate(ctx, candidate, governing.Scope)
+	underGoverning, err := evaluate(ctx, candidate, governing.Scope, proposed.scope)
 	if err != nil {
 		return Classification{}, Inventory{}, err
 	}

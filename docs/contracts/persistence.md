@@ -755,9 +755,9 @@ type ClosedPull struct {
   - It sets `resolved_for = not_open_since`, the merge facts and `resolved_at`. It refreshes the head and base columns and `head_repo` from the read, because a push between the last cycle and the merge is not otherwise seen.
   - A pull that reopens is upserted by the cycle, which clears `not_open_since`. A later absence is then unresolved again (`resolved_for <> not_open_since`). A merged pull cannot reopen.
 - **Closed listing.**
-  - `RecordClosed` keeps a per-repository watermark (`github_repositories.closed_watermark`), which is GitHub's greatest `updated_at` seen in the listing.
-  - The first call for a repository only sets the watermark.
-  - A later call inserts each merged item with `updated_at` at or above the watermark (a pull merged in the same second as the holder of the watermark is not lost; a seen pull is left alone) and no `github_pulls` row: a new row with `first_seen = last_seen = not_open_since = at` and no resolution, which the merges job then resolves with `Reader.Pull`. Then it raises the watermark.
+  - `RecordClosed` keeps a per-repository watermark (`github_repositories.closed_watermark`), which is GitHub's greatest `updated_at` seen in the listing, except after the first call.
+  - **The first call is exclusive.** The first call for a repository only sets the watermark, one microsecond past its newest item. What it listed is history and is never inserted later, so a merge from before enrollment is not backfilled. A merge in the exact moment of that newest item that is listed only later is history too.
+  - A later call inserts each merged item with `updated_at` at or above the watermark (inclusive from the second call on: a pull merged in the same second as the item that raised the watermark is not lost, and a seen pull is left alone) and no `github_pulls` row: a new row with `first_seen = last_seen = not_open_since = at` and no resolution, which the merges job then resolves with `Reader.Pull`. Then it raises the watermark.
   - Existing rows and unmerged items are left alone.
   - Times from GitHub are compared only with times from GitHub.
 - **Processed.** `MarkProcessed` sets `merge_processed`.
@@ -767,7 +767,7 @@ type ClosedPull struct {
 - **Conformance.**
   - Absence, then resolution, then reopen, then a new absence that is unresolved.
   - A stale resolution writes nothing.
-  - The closed listing: first call sets the watermark; an unseen merged item is inserted unresolved; a seen pull and an item below the watermark are ignored; an item at the watermark is inserted.
+  - The closed listing: first call sets an exclusive watermark; an item it listed, or one at its newest moment listed only later, is never inserted; an unseen merged item above the watermark is inserted unresolved; a seen pull and an item below the watermark are ignored; on a later call an item at exactly the current watermark is inserted.
   - `Merged` ordering and the `Processed` flag.
   - The head repository round-trips.
 

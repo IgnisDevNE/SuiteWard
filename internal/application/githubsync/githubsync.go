@@ -113,9 +113,11 @@ type Store interface {
 	// r.NotOpenSince.
 	RecordResolution(ctx context.Context, repo string, r Resolution) error
 	// RecordClosed applies one listing of closed pulls. The first call for a repository only sets the closed
-	// watermark. Later, each merged item at or above the watermark with no stored pull is inserted unresolved, absent
-	// since at; stored pulls, unmerged items and items below it are ignored. Then the watermark rises to the greatest
-	// updated_at of the listing. The repository must have a recorded cycle or failure.
+	// watermark, one microsecond past its newest item: what it listed, and a merge in the exact moment of its newest
+	// item that is listed only later, is history and is never inserted. Later, each merged item at or above the
+	// watermark (inclusive) with no stored pull is inserted unresolved, absent since at; stored pulls, unmerged items
+	// and items below it are ignored. Then the watermark rises to the greatest updated_at of the listing. The
+	// repository must have a recorded cycle or failure.
 	RecordClosed(ctx context.Context, repo string, closed []ClosedPull, at time.Time) error
 	// Merged returns every pull resolved as merged, by MergedAt and then number.
 	Merged(ctx context.Context, repo string) ([]MergedPull, error)

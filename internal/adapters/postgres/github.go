@@ -280,11 +280,11 @@ func (s *Store) RecordClosed(ctx context.Context, repo string, closed []githubsy
 	}
 	found, err := s.withRepository(ctx, repo, func(q *dbgen.Queries, watermark pgtype.Timestamptz) error {
 		fresh, latest := closedBatch(closed, watermark)
-		if !watermark.Valid { // the first call only sets the watermark; an empty listing sets the epoch, so the next call is not a first one
+		if !watermark.Valid { // the first call only sets the watermark, one microsecond past its newest item so that the listing is history; an empty listing sets the epoch, so the next call is not a first one
 			if latest.IsZero() {
 				latest = time.Unix(0, 0)
 			}
-			return q.SetClosedWatermark(ctx, dbgen.SetClosedWatermarkParams{Repo: repo, Watermark: timestamp(latest)})
+			return q.SetClosedWatermark(ctx, dbgen.SetClosedWatermarkParams{Repo: repo, Watermark: timestamp(latest.Add(time.Microsecond))})
 		}
 		if len(fresh) > 0 {
 			pulls, err := json.Marshal(fresh)

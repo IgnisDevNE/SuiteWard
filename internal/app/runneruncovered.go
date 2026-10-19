@@ -76,7 +76,7 @@ func (j *checksJob) findRunners(ctx context.Context, p owner.ProjectPolicy, pull
 		return nil, githubRead(err)
 	}
 	head := &githubTree{tree: read, files: map[string][]byte{}}
-	entries, err := head.Entries(ctx)
+	entries, err := inventory.ListEntries(ctx, head)
 	if err != nil {
 		return nil, err
 	}

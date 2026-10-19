@@ -342,7 +342,7 @@ func discoverHead(ctx context.Context, suites governance.UnitOfWork, contents go
 // discoverUnder finds the test-like paths of tree, the head of a pull request, that the declaration raw, which declares governing,
 // does not cover, with the mixed files and the submodules of the head. It consults no other declaration.
 func discoverUnder(ctx context.Context, tree inventory.Tree, raw []byte, governing scope.Scope) (headScope, error) {
-	entries, err := tree.Entries(ctx)
+	entries, err := inventory.ListEntries(ctx, tree) // the head is untrusted: a path that is none is an invalid tree, not a failed step
 	if err != nil {
 		return headScope{}, err
 	}

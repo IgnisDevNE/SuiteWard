@@ -63,7 +63,7 @@ type Inventory struct {
 // declaration returns scope.ErrInvalidDeclaration, so the caller keeps the
 // governing scope in force (D-SCOPE).
 func Build(ctx context.Context, tree Tree) (Inventory, error) {
-	entries, err := listEntries(ctx, tree)
+	entries, err := ListEntries(ctx, tree)
 	if err != nil {
 		return Inventory{}, err
 	}
@@ -117,16 +117,16 @@ func Evaluate(ctx context.Context, tree Tree, governing scope.Scope) (artifact.M
 // evaluate is Evaluate for a tree whose links are also accepted by the exact excludes of accepting: the candidate's own scope, whose
 // exclude is the reduction the owner approves (D-SCOPE, an accepted link).
 func evaluate(ctx context.Context, tree Tree, governing, accepting scope.Scope) (artifact.Manifest, error) {
-	entries, err := listEntries(ctx, tree)
+	entries, err := ListEntries(ctx, tree)
 	if err != nil {
 		return artifact.Manifest{}, err
 	}
 	return manifestOf(ctx, tree, entries, governing, accepting, map[string][]byte{})
 }
 
-// listEntries returns the tree's entries once each has a valid path, a valid
+// ListEntries returns the tree's entries once each has a valid path, a valid
 // kind and a distinct path.
-func listEntries(ctx context.Context, tree Tree) ([]Entry, error) {
+func ListEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 	entries, err := tree.Entries(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list source entries: %w", err)

@@ -257,8 +257,8 @@ func uncoveredWhere(entries []Entry, s scope.Scope, keep func(Entry) bool) ([]st
 			continue
 		}
 		covered, err := s.Covers(entry.Path)
-		if err != nil {
-			return nil, err
+		if err != nil { // the only failure is a path that is none: a fact about the tree
+			return nil, fmt.Errorf("%w: %w", ErrInvalidTree, err)
 		}
 		if covered {
 			continue

@@ -16,6 +16,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // The comment of an invalid-source check (docs/contracts/runtime.md, "Outbox github_comment, key invalid-source:..."): the checks job
@@ -95,7 +96,7 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 
 	w.want(5, checks.Failure, "invalid-source", 1)
 	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"))
-	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "link", "path": "spec_link"}
+	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "link", "path": "spec_link", "declaration": acceptingDeclaration(t, reachable, "spec_link")}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}
@@ -252,4 +253,53 @@ func TestChecksExplainTheInvalidSourceOfTheBootstrapCarrier(t *testing.T) {
 
 	w.want(5, checks.Failure, "invalid-source", 1)
 	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
+}
+
+// D-SCOPE, an accepted link: the comment of a link carries the head's own declaration with the link's anchored path in exclude, or
+// nothing when the head has no declaration (the comment then shows the one-line pattern).
+func TestChecksCarryTheDeclarationThatAcceptsTheLink(t *testing.T) {
+	t.Run("a head with a declaration", func(t *testing.T) {
+		w := newCJWorld(t, true)
+		w.linkHead(cjHead2, "spec_link")
+		w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+		w.mustCheck()
+
+		if got, want := w.invalidSourcePayload(0)["declaration"], acceptingDeclaration(t, reachable, "spec_link"); got != want {
+			t.Fatalf("declaration %q, want %q", got, want)
+		}
+	})
+	t.Run("a head without one", func(t *testing.T) {
+		w := newCJWorld(t, true)
+		w.reader.repos[bootRepo].trees[cjHead2] = linkedTree{&bootTree{files: map[string]string{"src/main.go": "package main\n"}}, map[string]string{".github/workflows/ci.yml": "app"}}
+		w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+		w.mustCheck()
+
+		w.wantInvalidSource(invalidKeyOf(5, "link", ".github/workflows/ci.yml"))
+		if declaration, found := w.invalidSourcePayload(0)["declaration"]; found {
+			t.Fatalf("declaration %q, want none: the head has no .suiteward.yml", declaration)
+		}
+	})
+	t.Run("a path no exclude can name exactly", func(t *testing.T) {
+		w := newCJWorld(t, true)
+		w.linkHead(cjHead2, "spec_*link")
+		w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+		w.mustCheck()
+
+		if declaration, found := w.invalidSourcePayload(0)["declaration"]; found {
+			t.Fatalf("declaration %q, want none: the pattern would match more than the link", declaration)
+		}
+	})
+}
+
+// acceptingDeclaration is raw with the anchored path of link added to exclude, as the comment of a link shows it.
+func acceptingDeclaration(t *testing.T, raw, link string) string {
+	t.Helper()
+	accepted, err := scope.AddExcludes([]byte(raw), []string{"/" + link})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(accepted)
 }

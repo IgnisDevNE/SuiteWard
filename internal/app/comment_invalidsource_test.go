@@ -73,7 +73,9 @@ func TestCommentPublisherRefusesAnInvalidSourceThatDoesNotMatchItsKeyOrCannotBeR
 		{"a digest that is not SHA-256 hex", "invalid-source:1001:7:" + strings.Repeat("g", 64), cmtInvalidPayload("link", nil)},
 		{"a key without a digest", "invalid-source:1001:7", cmtInvalidPayload("link", nil)},
 		{"a key with five parts", cmtInvalidKey + ":1", cmtInvalidPayload("link", nil)},
-		{"an unknown field", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["declaration"] = cmtSecretText })},
+		{"an unknown field", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["body"] = cmtSecretText })},
+		{"a declaration of a declaration problem", cmtInvalidKey, cmtInvalidPayload("declaration", func(m map[string]any) { m["declaration"] = "version: 1\n" })},
+		{"a declaration over the bound", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["declaration"] = strings.Repeat("#", commandtext.MaxDeclaration+1) })},
 		{"an unknown kind", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["kind"] = "SECRET" })},
 		{"no kind", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { delete(m, "kind") })},
 		{"a link without a path", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { delete(m, "path") })},
@@ -109,5 +111,58 @@ func TestSplitKeyKnowsTheInvalidSourceKeyAndKeepsTheOthers(t *testing.T) {
 		if _, _, _, ok := splitKey(key); !ok {
 			t.Errorf("splitKey refused %q", key)
 		}
+	}
+}
+
+// D-SCOPE, an accepted link: the payload carries the head's declaration with the link's exact anchored path in exclude. A payload that
+// v0.1.1-rc.6 queued has none and still renders, with the one-line pattern.
+func TestCommentPublisherRendersTheDeclarationThatAcceptsTheLink(t *testing.T) {
+	const declaration = "version: 1\ninclude: ['test_*.py']\nexclude:\n  - /spec_link\n"
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+		says   string
+	}{
+		{"with a declaration", func(m map[string]any) { m["declaration"] = declaration }, "```\n" + declaration + "```"},
+		{"queued before it existed", nil, "```\n/spec_link\n```"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCmtWorld(t)
+
+			if err := w.pub.publish(t.Context(), cmtInvalidKey, cmtInvalidPayload("link", tc.change)); err != nil {
+				t.Fatalf("publish: %v", err)
+			}
+
+			posts := w.writer.posts()
+			if len(posts) != 1 || !strings.Contains(posts[0].body, tc.says) || !strings.Contains(posts[0].body, "nothing reached through the link is protected") {
+				t.Fatalf("posts %v, want one that holds %q and the warning", posts, tc.says)
+			}
+		})
+	}
+}
+
+func TestInvalidSourceMessageCarriesTheDeclarationAndDropsOneOverTheBound(t *testing.T) {
+	target := commentTarget{RepositoryID: cmtRepoID, Repo: cmtRepo, Pull: cmtPull}
+	declaration := []byte("version: 1\nexclude:\n  - /spec_link\n")
+	for _, tc := range []struct {
+		name        string
+		declaration []byte
+		want        string
+	}{
+		{"within the bound", declaration, string(declaration)},
+		{"over the bound", append([]byte("# "), make([]byte, commandtext.MaxDeclaration)...), ""},
+		{"none", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message, err := newInvalidSourceMessage(target, sourceProblem{kind: sourceLink, path: "spec_link", declaration: tc.declaration})
+			if err != nil {
+				t.Fatalf("newInvalidSourceMessage: %v", err)
+			}
+
+			p, err := decodePayload[invalidSourcePayload](githubCommentKind, message.Key, message.Payload)
+			if err != nil || p.Declaration != tc.want || p.validate() != nil {
+				t.Fatalf("decoded payload %+v, %v; want the declaration %q and a valid payload", p, err, tc.want)
+			}
+		})
 	}
 }

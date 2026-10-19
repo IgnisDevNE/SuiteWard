@@ -18,7 +18,7 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 		{"declaration", commandtext.InvalidSourceNotice{Problem: commandtext.DeclarationProblem},
 			[]string{"`.suiteward.yml` of this pull request's head is not a valid declaration", "fix `.suiteward.yml`"}},
 		{"link", commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link"},
-			[]string{"symbolic link", "```\nspec_link\n```", "remove the link, point it to a file, or narrow the pattern that reaches it"}},
+			[]string{"symbolic link", "```\nspec_link\n```", "remove the link or point it to a regular file, and push"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -29,7 +29,7 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 					t.Errorf("the comment lacks %q:\n%s", want, body)
 				}
 			}
-			if strings.Contains(strings.ToLower(body), "submodule") || !strings.HasSuffix(body, "\n") || strings.Contains(body, "<!--") {
+			if strings.Contains(strings.ToLower(body), "narrow") || strings.Contains(strings.ToLower(body), "submodule") || !strings.HasSuffix(body, "\n") || strings.Contains(body, "<!--") {
 				t.Errorf("the comment mentions submodules, lacks its final newline or holds a marker:\n%s", body)
 			}
 		})
@@ -53,6 +53,9 @@ func TestInvalidSourceCommentRefusesWhatItCannotRender(t *testing.T) {
 		"an unknown problem":      {Problem: commandtext.LinkProblem + 1},
 		"a link without a path":   {Problem: commandtext.LinkProblem},
 		"a declaration with path": {Problem: commandtext.DeclarationProblem, Path: ".suiteward.yml"},
+		"a declaration problem with a declaration": {Problem: commandtext.DeclarationProblem, Declaration: []byte("version: 1\n")},
+		"a declaration over the bound":             {Problem: commandtext.LinkProblem, Path: "l", Declaration: make([]byte, commandtext.MaxDeclaration+1)},
+		"a declaration that is not UTF-8":          {Problem: commandtext.LinkProblem, Path: "l", Declaration: []byte{0xff}},
 	}
 	for name, problem := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -83,5 +86,54 @@ func TestTheInvalidSourceCheckSummaryNamesLinksAndTheDeclarationButNoSubmodule(t
 	}
 	if strings.Contains(strings.ToLower(summary), "submodule") {
 		t.Errorf("the summary mentions submodules:\n%s", summary)
+	}
+}
+
+// D-SCOPE, an accepted link: the comment offers to accept the link with an exact anchored exclude, warns that nothing reached through
+// the link is protected, and never suggests narrowing the include patterns.
+func TestInvalidSourceCommentOffersToAcceptTheLink(t *testing.T) {
+	const declaration = "version: 1\ninclude:\n  - '**/test_*.py'\nexclude:\n  - /spec_link\n"
+	tests := []struct {
+		name        string
+		declaration []byte
+		block       string
+	}{
+		{"with the head's declaration", []byte(declaration), "```\n" + declaration + "```"},
+		{"without a declaration", nil, "```\n/spec_link\n```"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := render(t, func() string {
+				return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link", Declaration: tc.declaration})
+			})
+
+			for _, want := range []string{"remove the link or point it to a regular file, and push", "accept the link", "`exclude`", tc.block,
+				"nothing reached through the link is protected", "scope reduction", "the owner approves"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("the comment lacks %q:\n%s", want, body)
+				}
+			}
+			if strings.Contains(strings.ToLower(body), "narrow") {
+				t.Errorf("the comment suggests narrowing the pattern:\n%s", body)
+			}
+		})
+	}
+}
+
+// The declaration is the head's own file, so it is fenced against backticks, and so is the one-line pattern of a path with them.
+func TestInvalidSourceCommentFencesTheDeclarationAndThePatternAgainstBackticks(t *testing.T) {
+	declaration := "version: 1\n# ```\nexclude:\n  - /a```b\n"
+	withDeclaration := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "a```b", Declaration: []byte(declaration)})
+	})
+	if !strings.Contains(withDeclaration, "````\n"+declaration+"````") {
+		t.Errorf("the declaration is not inside a longer fence:\n%s", withDeclaration)
+	}
+
+	pattern := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "a```b"})
+	})
+	if !strings.Contains(pattern, "````\n/a```b\n````\n") {
+		t.Errorf("the pattern is not inside a longer fence:\n%s", pattern)
 	}
 }

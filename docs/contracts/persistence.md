@@ -55,9 +55,11 @@ type Tx interface {
 }
 
 // Seeder writes trusted initial state: policies, assessments and historical
-// versions. It is no longer their only writer: the owner enrollment writes
-// policies (Enroll), CreateSuite creates Suites and RecordAssessment records
-// assessments (M1.6a); proposals also have AppendProposalRevision (M1.3).
+// versions. Only tests use it: the PostgreSQL store implements it in
+// `internal/adapters/postgres/seed_test.go`, so no production path can seed.
+// Enrollment writes policies (Enroll), CreateSuite creates Suites and
+// RecordAssessment records assessments (M1.6a); proposals also have
+// AppendProposalRevision (M1.3).
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }

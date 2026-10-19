@@ -105,6 +105,18 @@ func TestConsentApplyDecidesSimultaneousFaultsInOrder(t *testing.T) {
 			f.apply(t, earlier)
 			f.input = subsequentConsentCommand(f.input, "later", contract.ApproveConsent, 100)
 		}, rejected(contract.ConsentReasonObsoleteCommand)},
+		{"an unknown revision before the order its own stored rejection holds", func(t *testing.T, f *applyFaults) {
+			f.input.Reference.RevisionID = "unknown"
+			f.input.Order = 100
+			f.apply(t, f.input)
+			f.input = subsequentConsentCommand(f.input, "second", contract.ApproveConsent, 100)
+		}, rejected(contract.ConsentReasonUnknownRevision)},
+		{"a superseded revision before the order its own stored rejection holds", func(t *testing.T, f *applyFaults) {
+			f.supersedeRevision(t)
+			f.input.Order = 100
+			f.apply(t, f.input)
+			f.input = subsequentConsentCommand(f.input, "second", contract.ApproveConsent, 100)
+		}, rejected(contract.ConsentReasonSupersededRevision)},
 		{"replay before an unknown revision, a changed policy and a new order", func(t *testing.T, f *applyFaults) {
 			f.apply(t, f.input)
 			f.input.Reference.RevisionID = "unknown"

@@ -54,6 +54,10 @@ func TestPromotionReadinessDecidesSimultaneousFaultsInOrder(t *testing.T) {
 			input.ExpectedCanonical = "v1"
 			c.Proposal = promotionProposal(t, input, "candidate-source", c.Carrier)
 		}, blocked(contract.PromotionReasonEmptyInventory)},
+		{"another proposed contract before an empty inventory", func(c *contract.PromotionContext) {
+			*c = promotionContextWith(t, promotionAbsentCanonical(t), promotionProtected(t, promotionManifest(t, "baseline"), "scope", map[string]string{"runner": "v1"}))
+			c.Proposed = promotionProtected(t, promotionManifest(t), "scope", map[string]string{"runner": "v1"}) // empty, and not what the revision binds
+		}, blocked(contract.PromotionReasonContextMismatch)},
 		{"another canonical before a policy of another project", func(c *contract.PromotionContext) {
 			c.Canonical = promotionNewerCanonical(t)
 			c.Policy = promotionPolicy(t, "foreign", "other", "owner")
@@ -76,6 +80,10 @@ func TestPromotionReadinessDecidesSimultaneousFaultsInOrder(t *testing.T) {
 		{"a missing approval before another assessed source", func(c *contract.PromotionContext) {
 			c.Consent = contract.Consent{}
 			c.Assessment = promotionAssessment(t, "candidate-source", c.Proposal.Current().Binding(), contract.IntegrityPassed)
+		}, blocked(contract.PromotionReasonApprovalMissing)},
+		{"a missing approval before an absent assessment", func(c *contract.PromotionContext) {
+			c.Consent = contract.Consent{}
+			c.Assessment = contract.IntegrityAssessment{}
 		}, blocked(contract.PromotionReasonApprovalMissing)},
 		{"an absent assessment before another assessed source", func(c *contract.PromotionContext) {
 			c.Assessment = contract.IntegrityAssessment{}

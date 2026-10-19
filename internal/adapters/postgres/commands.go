@@ -101,11 +101,11 @@ func sameEntry(ctx context.Context, q *dbgen.Queries, e commands.Entry) error {
 }
 
 // LatestOwnerCommand implements commands.Store.
-func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (commands.Entry, bool, error) {
-	if err := commands.ValidateLatest(repositoryID, pull, ownerID); err != nil {
+func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID, before int64) (commands.Entry, bool, error) {
+	if err := commands.ValidateLatest(repositoryID, pull, ownerID, before); err != nil {
 		return commands.Entry{}, false, err
 	}
-	row, err := dbgen.New(s.pool).LatestOwnerCommand(ctx, dbgen.LatestOwnerCommandParams{RepositoryID: repositoryID, PullNumber: int32(pull), AuthorID: ownerID}) // ValidateLatest bounds it
+	row, err := dbgen.New(s.pool).LatestOwnerCommand(ctx, dbgen.LatestOwnerCommandParams{RepositoryID: repositoryID, PullNumber: int32(pull), AuthorID: ownerID, Before: before}) // ValidateLatest bounds it
 	if errors.Is(err, pgx.ErrNoRows) {
 		return commands.Entry{}, false, nil
 	}

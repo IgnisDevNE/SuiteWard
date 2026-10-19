@@ -40,12 +40,14 @@ FROM pr_commands WHERE repository_id = sqlc.arg(repository_id) AND comment_id = 
 -- name: GetInstanceID :one
 SELECT instance_id FROM suiteward_instance WHERE singleton;
 
--- The owner's latest command on a pull: the greatest comment id among the command dispositions.
+-- The owner's latest command on a pull that can set or clear the check: the greatest comment id among the wrong codes and the processed
+-- commands, below before when it is not 0. The other rejected dispositions have no effect on the check (D-COMMANDS, "A wrong command has no effect").
 -- name: LatestOwnerCommand :one
 SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at
 FROM pr_commands
 WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_number) AND author_id = sqlc.arg(author_id)
-  AND disposition IN ('malformed', 'invalid-code', 'replayed-code', 'unknown-proposal', 'edited-first', 'no-suite', 'processed')
+  AND disposition IN ('invalid-code', 'replayed-code', 'processed')
+  AND (sqlc.arg(before)::bigint = 0 OR comment_id < sqlc.arg(before)::bigint)
 ORDER BY comment_id DESC
 LIMIT 1;
 

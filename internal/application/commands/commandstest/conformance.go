@@ -393,7 +393,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		}
 		latest := func(repository int64, pull int, want int64) {
 			e.t.Helper()
-			got, found, err := e.store.LatestOwnerCommand(e.ctx, repository, pull, ownerAccount)
+			got, found, err := e.store.LatestOwnerCommand(e.ctx, repository, pull, ownerAccount, 0)
 			e.must(err)
 			switch {
 			case want == 0 && found:
@@ -405,35 +405,44 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		latest(10, 1, 0) // nothing recorded
 
 		// The order is the comment id, not the order of recording, creation or decision.
-		by(ownerAccount, 10, 5, 1, commands.Malformed)
+		by(ownerAccount, 10, 5, 1, commands.ReplayedCode)
 		by(ownerAccount, 10, 3, 1, commands.InvalidCode)
 		latest(10, 1, 5)
 		by(ownerAccount, 10, 9, 1, commands.Processed)
 		latest(10, 1, 9)
-		got, _, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount)
+		got, _, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount, 0)
 		e.must(err)
 		if got.Disposition != commands.Processed || got.Operation == "" {
 			e.t.Fatalf("LatestOwnerCommand = %+v; want the whole processed entry", got)
 		}
 
 		// Another author, repository or pull never answers.
-		by(7, 10, 20, 1, commands.Malformed)
-		by(ownerAccount, 20, 21, 1, commands.Malformed)
-		by(ownerAccount, 10, 22, 2, commands.Malformed)
+		by(7, 10, 20, 1, commands.InvalidCode)
+		by(ownerAccount, 20, 21, 1, commands.InvalidCode)
+		by(ownerAccount, 10, 22, 2, commands.InvalidCode)
 		latest(10, 1, 9)
 		latest(10, 2, 22)
 		latest(20, 1, 21)
 		latest(10, 3, 0)
-		if _, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, 7); err != nil || !found {
+		if _, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, 7, 0); err != nil || !found {
 			e.t.Fatalf("LatestOwnerCommand for author 7 found %v, error %v; want its own command", found, err)
+		}
+
+		// before is an exclusive upper bound on the comment id, so the command before the latest one is reachable.
+		for before, want := range map[int64]int64{10: 9, 9: 5, 5: 3, 3: 0} {
+			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount, before)
+			e.must(err)
+			if (want == 0 && found) || (want != 0 && (!found || got.CommentID != want)) {
+				e.t.Fatalf("LatestOwnerCommand before %d = %+v, found %v; want comment %d", before, got, found, want)
+			}
 		}
 	})
 
-	run("LatestOwnerCommand counts only the command dispositions", func(e *cmdEnv) {
-		counted := []commands.Disposition{commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.Processed}
-		ignored := []commands.Disposition{commands.NotCommand, commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor,
+	run("LatestOwnerCommand counts only the dispositions that can set or clear the check", func(e *cmdEnv) {
+		counted := []commands.Disposition{commands.InvalidCode, commands.ReplayedCode, commands.Processed}
+		ignored := []commands.Disposition{commands.Malformed, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.NotCommand, commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor,
 			commands.Proposed, commands.ProposeRefused, commands.Skipped, commands.SkipRefused, commands.Suggested, commands.SuggestRefused}
-		// A new disposition must be placed in exactly one set, so it cannot drift between IsCommand and the store's own list.
+		// A new disposition must be placed in exactly one set, so it cannot drift between AffectsCheck and the store's own list.
 		placed := map[commands.Disposition]int{}
 		for _, d := range counted {
 			placed[d]++
@@ -449,8 +458,8 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 			if placed[d] != 1 {
 				e.t.Fatalf("disposition %q is in %d of the counted and ignored sets; want exactly one", d, placed[d])
 			}
-			if d.IsCommand() != slices.Contains(counted, d) {
-				e.t.Fatalf("IsCommand(%q) = %v, but the store counts it: %v", d, d.IsCommand(), slices.Contains(counted, d))
+			if d.AffectsCheck() != slices.Contains(counted, d) {
+				e.t.Fatalf("AffectsCheck(%q) = %v, but the store counts it: %v", d, d.AffectsCheck(), slices.Contains(counted, d))
 			}
 		}
 		comment := int64(0)
@@ -463,11 +472,11 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		}
 		for _, d := range counted {
 			want := record(d)
-			// A comment of the owner that is not a command never clears an earlier command, however late it is.
+			// A comment of the owner that cannot set or clear the check never hides an earlier command, however late it is.
 			for _, other := range ignored {
 				record(other)
 			}
-			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount)
+			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount, 0)
 			e.must(err)
 			if !found || got.CommentID != want || got.Disposition != d {
 				e.t.Fatalf("after a %s command and ordinary comments: LatestOwnerCommand = %+v, found %v; want comment %d", d, got, found, want)
@@ -484,10 +493,10 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		record(1, commands.InvalidCode) // a rejected approve
 		for i, d := range []commands.Disposition{commands.Skipped, commands.SkipRefused, commands.Proposed, commands.ProposeRefused, commands.Suggested, commands.SuggestRefused} {
 			record(int64(i+2), d)
-			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount)
+			got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount, 0)
 			e.must(err)
 			if !found || got.CommentID != 1 || got.Disposition != commands.InvalidCode {
-				e.t.Fatalf("after %s: LatestOwnerCommand = %+v, found %v; want the rejected approve, comment 1", d, got, found)
+				e.t.Fatalf("after %s: LatestOwnerCommand = %+v, found %v; want the wrong code, comment 1", d, got, found)
 			}
 		}
 	})
@@ -540,15 +549,16 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 			repository int64
 			pull       int
 			owner      int64
-		}{"repository": {0, 1, ownerAccount}, "pull": {10, 0, ownerAccount}, "huge pull": {10, 1 << 31, ownerAccount}, "owner": {10, 1, 0}} {
-			_, _, err := e.store.LatestOwnerCommand(e.ctx, args.repository, args.pull, args.owner)
+			before     int64
+		}{"repository": {0, 1, ownerAccount, 0}, "pull": {10, 0, ownerAccount, 0}, "huge pull": {10, 1 << 31, ownerAccount, 0}, "owner": {10, 1, 0, 0}, "before": {10, 1, ownerAccount, -1}} {
+			_, _, err := e.store.LatestOwnerCommand(e.ctx, args.repository, args.pull, args.owner, args.before)
 			if !errors.Is(err, commands.ErrInvalid) {
 				e.t.Fatalf("%s: error = %v; want ErrInvalid", name, err)
 			}
 		}
 		ctx, cancel := context.WithCancel(e.ctx)
 		cancel()
-		_, _, err := e.store.LatestOwnerCommand(ctx, 10, 1, ownerAccount)
+		_, _, err := e.store.LatestOwnerCommand(ctx, 10, 1, ownerAccount, 0)
 		e.requireErr(err, context.Canceled)
 	})
 

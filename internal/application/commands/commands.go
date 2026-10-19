@@ -91,10 +91,11 @@ type Store interface {
 	// ErrConflict. Entries are never updated or deleted.
 	Record(ctx context.Context, e Entry, ack *governance.OutboxMessage) error
 	// LatestOwnerCommand returns the entry of the command with the greatest comment id on the pull among the
-	// owner's ledger entries whose disposition is a command one (malformed, invalid-code, replayed-code,
-	// unknown-proposal, edited-first, no-suite, processed). Other dispositions never count, so an ordinary
-	// comment never hides an earlier rejected command. ErrInvalid for a non-positive id or a pull out of range.
-	LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64) (Entry, bool, error)
+	// owner's ledger entries whose disposition can set or clear the check (invalid-code, replayed-code, processed;
+	// see AffectsCheck), only those below the comment id before when it is not 0. Other dispositions never count,
+	// so a wrong command that is no wrong code, and an ordinary comment, never hide an earlier one.
+	// ErrInvalid for a non-positive id, a negative before or a pull out of range.
+	LatestOwnerCommand(ctx context.Context, repositoryID int64, pull int, ownerID int64, before int64) (Entry, bool, error)
 	// Skipped reports whether the pull has a `skipped` entry whose comment was created at or after since (the current
 	// enrollment's enrolled_at). ErrInvalid for a non-positive id or a pull out of range.
 	Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error)
@@ -126,9 +127,9 @@ func (e Entry) Validate() error {
 }
 
 // ValidateLatest reports why LatestOwnerCommand cannot answer, as ErrInvalid.
-func ValidateLatest(repositoryID int64, pull int, ownerID int64) error {
-	if repositoryID <= 0 || ownerID <= 0 || pull < 1 || pull > math.MaxInt32 {
-		return invalid("the repository and owner ids must be positive and the pull number between 1 and %d", math.MaxInt32)
+func ValidateLatest(repositoryID int64, pull int, ownerID, before int64) error {
+	if repositoryID <= 0 || ownerID <= 0 || before < 0 || pull < 1 || pull > math.MaxInt32 {
+		return invalid("the repository and owner ids must be positive, before not negative, and the pull number between 1 and %d", math.MaxInt32)
 	}
 	return nil
 }
@@ -141,11 +142,11 @@ func ValidateSkipped(repositoryID int64, pull int) error {
 	return nil
 }
 
-// IsCommand reports whether the disposition is the decision about a command of the owner (as opposed to an
-// ordinary comment, a failed candidate or a comment before enrollment).
-func (d Disposition) IsCommand() bool {
+// AffectsCheck reports whether the disposition can set or clear the check of the pull request: a wrong code sets
+// it, a processed command clears it. Every other wrong command has no effect (D-COMMANDS, "A wrong command has no effect").
+func (d Disposition) AffectsCheck() bool {
 	switch d {
-	case Malformed, InvalidCode, ReplayedCode, UnknownProposal, EditedFirst, NoSuite, Processed:
+	case InvalidCode, ReplayedCode, Processed:
 		return true
 	}
 	return false

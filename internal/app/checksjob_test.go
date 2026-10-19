@@ -482,10 +482,18 @@ func TestChecksLeaveTheCheckAloneAfterAWrongCommandThatIsNoWrongCode(t *testing.
 		}
 	}
 	wrong := map[string]func(w *cjJobWorld, pull int, comment int64){
-		"malformed":        func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.Malformed, "") },
-		"edited first":     func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.EditedFirst, "") },
-		"unknown proposal": func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.UnknownProposal, "") },
-		"no suite":         func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.NoSuite, "") },
+		"malformed": func(w *cjJobWorld, pull int, comment int64) {
+			w.entry(pull, comment, bootOwnerID, commands.Malformed, "")
+		},
+		"edited first": func(w *cjJobWorld, pull int, comment int64) {
+			w.entry(pull, comment, bootOwnerID, commands.EditedFirst, "")
+		},
+		"unknown proposal": func(w *cjJobWorld, pull int, comment int64) {
+			w.entry(pull, comment, bootOwnerID, commands.UnknownProposal, "")
+		},
+		"no suite": func(w *cjJobWorld, pull int, comment int64) {
+			w.entry(pull, comment, bootOwnerID, commands.NoSuite, "")
+		},
 		"unknown revision": unknownRevision,
 	}
 	for name, command := range wrong {

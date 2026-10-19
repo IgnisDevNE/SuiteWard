@@ -320,7 +320,7 @@ This replaces these parts of the section above: "Who writes what", the `github_b
 
      When no test-like path is found, `suggestion` is empty. The text then gives a minimal `version: 1` with an `include:` placeholder to fill in, and the link carries that minimal file. The text shows the YAML and the link `https://github.com/<repo>/new/<path-escaped branch>?filename=.suiteward.yml&value=<URL-encoded YAML>` (verified 2026-10-16 on SuiteWardQ2: GitHub fills both the name and the content).
 3. **Invalid or empty source.**
-   - A source that cannot be read as a contract gives `propose-refused`, reason `invalid-source`: an invalid `.suiteward.yml`, a protected path that is a link, or a truncated tree. These are the cases the bootstrap job reports as `invalid-source`. They are deterministic, so they are refused rather than retried (clarified 2026-10-16).
+   - A source that cannot be read as a contract gives `propose-refused`, reason `invalid-source`: an invalid `.suiteward.yml`, a protected path that is a link, or a truncated tree. These are the cases the bootstrap job reports as `invalid-source`. They are deterministic, so they are refused rather than retried (clarified 2026-10-16). When the source was read but failed to build, the ack also carries `base` (`pull` or `default-branch`) and `branch` (optional), and the text adds that, if the declaration is the problem, GitHub's editor for `.suiteward.yml` on that branch fixes it (amended 2026-10-19). A source that could not be read at all gets no link.
    - An empty inventory gives `propose-refused`, reason `empty-inventory`. A source that has `.suiteward.yml` always covers that file, so this cannot happen. The job treats it as an invalid state, an error, and the reason stays reserved.
 4. **Idempotent reuse.** If the Suite's latest bootstrap proposal is carried by this PR, and its current revision has the same origin and coverage as the source, reuse it: no new proposal. Record `proposed` with a short acknowledgment, "already proposed as `P<n>-R<m>`". This covers a retry after a failure between the proposal and the ledger write, and a repeated `propose` on an unchanged PR.
 5. **Otherwise propose.** Call `ProposeBaseline`:
@@ -432,7 +432,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **`suggest-refused`** is recorded with a short ack that names the reason and quotes no repository text. It is never retried. The reasons are:
   - `fork` or `not-open`, as for `propose`;
   - `invalid-source`: the tree is invalid or truncated, the canonical has no declaration, or the reply cannot be rendered (an unusable branch name, for example);
-  - `declaration-too-large`: the suggested declaration is over 8192 bytes.
+  - `declaration-too-large`: the suggested declaration is over 8192 bytes. Unless the base was the default branch, the ack carries `branch` (optional) and links to the editor for `.suiteward.yml` on the PR's branch.
 
   A canonical that fails its integrity check gets no reply: the command is retried, then recorded `failed`, like any other failure.
 - Otherwise it records **`suggested`**, and its ack replies to the command. The reply compares the head with a **base declaration**:
@@ -449,7 +449,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
     - `base`: `pull`, `default-branch` or `contract`;
     - `addInclude` and `addRunner`: the missing patterns, at most 20 in all.
 
-    When the base is the default branch's file, the change belongs on the default branch. The reply then has no link and no review suggestion. It gives the updated file to commit or merge there, and then `/suiteward propose`.
+    When the base is the default branch's file, the change belongs on the default branch. The reply then has no review suggestion. Its link opens GitHub's editor for `.suiteward.yml` on the default branch (amended 2026-10-19, D-SCOPE-DISCOVERY): the ack adds `defaultBranch` (optional), the Suite's integration target, and the text says that GitHub offers a new branch and a pull request when the default branch is protected. It gives the updated file to commit or merge there, and then `/suiteward propose`. An ack queued without `defaultBranch` renders without the link.
     - The text names the base: "this pull request's `.suiteward.yml`", "the default branch's `.suiteward.yml`" or "the current contract". It shows the missing patterns and the updated file.
     - The text gives the next step as a copyable command:
       - base `pull`: commit the change on this branch, then `/suiteward propose`;
@@ -462,7 +462,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 
       A runner name can match no file yet, so a missing runner name is reported even when no file is uncovered. The text explains that runner names matter before their files exist. The checks job's unsolicited notice keeps the first kind only: it reports what a pull request adds.
   - **`nothing-uncovered`:** a short ack that names the base and says that it covers every test-like path of the head. It is sent only when neither kind of missing pattern exists.
-  - **An invalid base file** is refused as `invalid-source`. The ack carries `base` (`pull` or `default-branch`), and the text names the file ("this pull request's `.suiteward.yml` is not a valid declaration") without quoting it.
+  - **An invalid base file** is refused as `invalid-source`. The ack carries `base` (`pull` or `default-branch`) and `branch` (optional, the branch that holds that file). The text names the file ("this pull request's `.suiteward.yml` is not a valid declaration") without quoting it, and links to the editor for it.
   - **Excludes and the review key.**
     - A runner name without glob characters that an `exclude` of the base removes is not reported. A glob runner pattern counts as handled when the base lists the same string in `include`, `runner` or `exclude`. Either way, the exclusion is the owner's choice.
     - The command's `scope-review` key digests the uncovered paths together with the missing runner names. It matches the checks job's key, and so posts one review between them, only when no runner name is missing.

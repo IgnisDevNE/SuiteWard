@@ -106,8 +106,14 @@ try {
         if (-not $rejected) { throw 'Required PostgreSQL verification ran without a connection instead of failing closed.' }
         $env:SUITEWARD_TEST_DATABASE_URL = 'postgresql://fixture:fixture@127.0.0.1:5432/fixture'
         & (Join-Path $fixtureScripts 'check-go.ps1') -Integration
+        if ('-race' -cin $invocation.TestArguments) { throw 'Integration without -Race must not run the race detector.' }
+        & (Join-Path $fixtureScripts 'check-go.ps1') -Integration -Race
+        foreach ($required in @('-race', '-count=1', '-tags=integration')) {
+            if ($required -cnotin $invocation.TestArguments) { throw "Integration -Race lost required argument $required." }
+        }
+        if ('-covermode=atomic' -cin $invocation.TestArguments) { throw 'Integration -Race must not turn on coverage.' }
         & (Join-Path $fixtureScripts 'check-go.ps1') -Coverage -Integration
-        if (($lint.Events -join ';') -cne 'vet;vet') { throw "Integration modes must not run lint. Events: $($lint.Events -join ';')" }
+        if (($lint.Events -join ';') -cne 'vet;vet;vet') { throw "Integration modes must not run lint. Events: $($lint.Events -join ';')" }
         foreach($command in @('list','vet','build')) {
             $arguments=$invocation.Commands[$command]
             if($arguments.Count -ne 3 -or $arguments[1] -cne '-tags=integration' -or $arguments[2] -cne './...'){throw "Integration $command must receive the complete build tag as one argument."}
@@ -122,7 +128,7 @@ try {
         if ($null -eq $savedDatabase) { Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', $savedDatabase, 'Process') }
     }
-    Write-Output 'Passed 17 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
+    Write-Output 'Passed 22 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $scratch).Path
     if ($resolved -ne [IO.Path]::GetFullPath($scratch) -or -not $resolved.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {

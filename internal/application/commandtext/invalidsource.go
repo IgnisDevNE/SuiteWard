@@ -3,6 +3,8 @@ package commandtext
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 )
 
 // SourceProblem is what makes the source of a head invalid (docs/contracts/runtime.md, "Outbox github_comment, key invalid-source:..."); its zero value is invalid.
@@ -14,10 +16,13 @@ const (
 )
 
 // InvalidSourceNotice is what the comment of an invalid-source check states. Path, already cut by the caller, names the link of a
-// LinkProblem and is empty for the other problems: the comment never quotes the declaration or any other file content.
+// LinkProblem and is empty for the other problems. Declaration, only for a LinkProblem and at most MaxDeclaration bytes, is the
+// head's own .suiteward.yml with the link's anchored path added to exclude; it is empty when the head has none, and the comment then
+// shows the pattern alone. The comment quotes no other file content.
 type InvalidSourceNotice struct {
-	Problem SourceProblem
-	Path    string
+	Problem     SourceProblem
+	Path        string
+	Declaration []byte
 }
 
 // ValidateInvalidSource reports why InvalidSourceComment would panic on s, as an error.
@@ -27,14 +32,20 @@ func ValidateInvalidSource(s InvalidSourceNotice) error {
 		return fmt.Errorf("commandtext: source problem %d is unknown", s.Problem)
 	case (s.Problem == LinkProblem) != (s.Path != ""):
 		return errors.New("commandtext: only a link problem names a path, and it must")
+	case len(s.Declaration) > 0 && s.Problem != LinkProblem:
+		return errors.New("commandtext: only a link problem carries a declaration")
+	case len(s.Declaration) > MaxDeclaration || !utf8.Valid(s.Declaration):
+		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or not UTF-8", len(s.Declaration), MaxDeclaration)
 	}
 	return nil
 }
 
 // InvalidSourceComment renders the comment that explains an invalid-source check: the problem, the next step, and that the check
-// stays failure until a push fixes it while any canonical contract stays in force. The path comes from the repository, so it is
-// shown only inside a code fence that backticks cannot close, with control characters escaped. An input that does not fit panics
-// (see ValidateInvalidSource).
+// stays failure until a push fixes it while any canonical contract stays in force. For a link the next step is to remove it or point
+// it to a regular file, or to accept it with an exact anchored exclude, a scope reduction that the owner approves and that leaves
+// nothing reached through the link protected; SuiteWard never suggests narrowing the include patterns. The path and the declaration come
+// from the repository, so they are shown only inside code fences that backticks cannot close, the path with control characters
+// escaped. An input that does not fit panics (see ValidateInvalidSource).
 func InvalidSourceComment(s InvalidSourceNotice) string {
 	if err := ValidateInvalidSource(s); err != nil {
 		panic(err.Error())
@@ -47,9 +58,22 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 	case LinkProblem:
 		problem = "This pull request's head has a symbolic link that the protected scope covers or may cover below, and whose target is not a regular file of the tree, " +
 			"so SuiteWard cannot tell what protecting it would mean:\n\n" + fencedLines([]string{s.Path})
-		next = "Next: remove the link, point it to a file, or narrow the pattern that reaches it, and push."
+		next = "Next: remove the link or point it to a regular file, and push." + acceptLink(s)
 	}
 	return paragraphs("**SuiteWard could not read the contract source of this pull request**", problem, next,
 		"Any canonical contract already in force stays in force, and the check stays `failure` until a push fixes it.",
 		"This comment is evidence, not an approval, and SuiteWard does not run tests.")
+}
+
+// acceptLink is the paragraphs that offer to accept the link of s with an exact anchored exclude, and warn what that means; none when
+// the path has a character that exclude reads as a pattern, which would name more than the link.
+func acceptLink(s InvalidSourceNotice) string {
+	if strings.ContainsAny(s.Path, `*?[\`) {
+		return ""
+	}
+	choice := "Or accept the link by adding its exact anchored path to `exclude` in `.suiteward.yml`:\n\n" + fencedLines([]string{"/" + s.Path})
+	if len(s.Declaration) > 0 {
+		choice = "Or accept the link by adding its exact anchored path to `exclude`. This is the head's own `.suiteward.yml` with that path added:\n\n" + fenced(withNewline(s.Declaration))
+	}
+	return "\n\n" + choice + "\n\nAccepting the link means that nothing reached through the link is protected. It is a scope reduction, so the owner approves it like any other change to the protected files."
 }

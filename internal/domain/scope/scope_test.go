@@ -244,6 +244,7 @@ func TestScopeExcludesExactly(t *testing.T) {
 		{"another path", "/other", "spec_link", false},
 		{"a parent of the path", "/a", "a/l", false},
 		{"the path below the pattern", "/a/l", "a", false},
+		{"the declaration file", "/.suiteward.yml", ".suiteward.yml", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

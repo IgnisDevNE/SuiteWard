@@ -969,16 +969,17 @@ const (
 var sourceProblems = map[string]commandtext.SourceProblem{sourceDeclaration: commandtext.DeclarationProblem, sourceLink: commandtext.LinkProblem}
 
 // invalidSourcePayload is the payload of invalid-source:<repository id>:<pull>:<problem digest>. It holds a code and, for a link, the
-// path cut to maxSummaryText bytes, never file content. The key's digest is that of the whole path, which the cut one cannot
+// path cut to maxSummaryText bytes and the head's declaration that accepts it, the only file content a comment quotes. The key's digest is that of the whole path, which the cut one cannot
 // reproduce, so the publisher checks only its shape.
 type invalidSourcePayload struct {
 	commentTarget
-	Kind string `json:"kind"`
-	Path string `json:"path,omitempty"` // a link only
+	Kind        string `json:"kind"`
+	Path        string `json:"path,omitempty"`        // a link only
+	Declaration string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
 }
 
 func (p invalidSourcePayload) source() commandtext.InvalidSourceNotice {
-	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path}
+	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, Declaration: []byte(p.Declaration)}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -1005,6 +1006,9 @@ func invalidSourceDigest(kind, path string) string {
 // render is an error, so nobody writes a message that nobody can post.
 func newInvalidSourceMessage(target commentTarget, s sourceProblem) (governance.OutboxMessage, error) {
 	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText)}
+	if len(s.declaration) <= commandtext.MaxDeclaration { // a choice that cannot be shown is left out: the comment then shows the pattern alone
+		p.Declaration = string(s.declaration)
+	}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("invalid-source comment: %w", err)
 	}

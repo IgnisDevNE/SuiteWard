@@ -1,9 +1,9 @@
 package inventory_test
 
 import (
-	"strings"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"

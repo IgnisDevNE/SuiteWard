@@ -479,6 +479,9 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 		if source, named = sourceProblemOf(err); !named { // the check is the same, only the comment is left out
 			j.logger.InfoContext(ctx, "github checks invalid-source comment skipped: the problem cannot be named", "repo", p.Repo, "pull", pull.Number)
 		}
+		if source.kind == sourceLink {
+			source.declaration = j.acceptingDeclaration(ctx, tree, source.path)
+		}
 		return result, "", false, source, nil
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github checks read failed", p.Repo, err)
@@ -492,7 +495,10 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 
 // sourceProblem is what made the source of a head invalid, as the comment states it: kind is declaration or link, and path
 // names a link. Its zero value is no problem.
-type sourceProblem struct{ kind, path string }
+type sourceProblem struct {
+	kind, path  string
+	declaration []byte // a link: the head's declaration that accepts it, when there is one
+}
 
 // sourceProblemOf names the problem that err, an invalid-source error, reports. It cannot for an error that holds no path (an unsafe
 // entry that is not an UnsafeEntryError) or that is neither kind (an invalid tree, for example).
@@ -507,6 +513,39 @@ func sourceProblemOf(err error) (sourceProblem, bool) {
 		return sourceProblem{kind: sourceDeclaration}, true
 	}
 	return sourceProblem{}, false
+}
+
+// acceptingDeclaration is the head's own .suiteward.yml with the anchored path of link added to exclude (D-SCOPE, an accepted link), or
+// nil when the head has none, when the path cannot be named exactly by an exclude, or when the file cannot be read or rewritten: the
+// comment is advice, so it then shows the pattern alone and the check is the same.
+func (j *checksJob) acceptingDeclaration(ctx context.Context, tree inventory.Tree, link string) []byte {
+	entries, err := tree.Entries(ctx)
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the head's files cannot be listed", "reason", err.Error())
+		return nil
+	}
+	if !hasDeclaration(entries) {
+		return nil
+	}
+	raw, err := tree.Read(ctx, scope.DeclarationPath)
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the head's declaration cannot be read", "reason", err.Error())
+		return nil
+	}
+	declaration, err := scope.AddExcludes(raw, []string{"/" + link})
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the exclude cannot be added", "reason", err.Error())
+		return nil
+	}
+	parsed, err := scope.ParseDeclaration(declaration)
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the declaration with the exclude is invalid", "reason", err.Error())
+		return nil
+	}
+	if !scope.NewScope(parsed).ExcludesExactly(link) { // a path with a pattern character is not named by its own pattern
+		return nil
+	}
+	return declaration
 }
 
 // explainInvalidSource writes the comment that explains an invalid-source check, once for each problem of a pull request: the key

@@ -49,10 +49,10 @@ func TestInvalidSourceCommentShowsThePathInAnEscapedFence(t *testing.T) {
 
 func TestInvalidSourceCommentRefusesWhatItCannotRender(t *testing.T) {
 	tests := map[string]commandtext.InvalidSourceNotice{
-		"no problem":              {},
-		"an unknown problem":      {Problem: commandtext.LinkProblem + 1},
-		"a link without a path":   {Problem: commandtext.LinkProblem},
-		"a declaration with path": {Problem: commandtext.DeclarationProblem, Path: ".suiteward.yml"},
+		"no problem":                               {},
+		"an unknown problem":                       {Problem: commandtext.LinkProblem + 1},
+		"a link without a path":                    {Problem: commandtext.LinkProblem},
+		"a declaration with path":                  {Problem: commandtext.DeclarationProblem, Path: ".suiteward.yml"},
 		"a declaration problem with a declaration": {Problem: commandtext.DeclarationProblem, Declaration: []byte("version: 1\n")},
 		"a declaration over the bound":             {Problem: commandtext.LinkProblem, Path: "l", Declaration: make([]byte, commandtext.MaxDeclaration+1)},
 		"a declaration that is not UTF-8":          {Problem: commandtext.LinkProblem, Path: "l", Declaration: []byte{0xff}},
@@ -135,5 +135,18 @@ func TestInvalidSourceCommentFencesTheDeclarationAndThePatternAgainstBackticks(t
 	})
 	if !strings.Contains(pattern, "````\n/a```b\n````\n") {
 		t.Errorf("the pattern is not inside a longer fence:\n%s", pattern)
+	}
+}
+
+// A path with a character that exclude reads as a pattern cannot be named exactly, so the comment does not offer to accept it.
+func TestInvalidSourceCommentDoesNotOfferToAcceptALinkNoPatternNamesExactly(t *testing.T) {
+	for _, path := range []string{"spec_*", "spec_?", "spec_[a]", `spec\link`} {
+		body := render(t, func() string {
+			return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: path})
+		})
+
+		if strings.Contains(body, "accept") || !strings.Contains(body, "remove the link or point it to a regular file, and push") {
+			t.Errorf("the comment for %q offers to accept the link or lacks the other step:\n%s", path, body)
+		}
 	}
 }

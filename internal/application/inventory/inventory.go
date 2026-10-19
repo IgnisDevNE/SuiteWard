@@ -163,6 +163,10 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective scope
 		case Submodule:
 			continue
 		}
+		// D-SCOPE, an accepted link: an exclude that names exactly this link skips it. Nothing reached through it is protected.
+		if effective.ExcludesExactly(entry.Path) {
+			continue
+		}
 		// D-SCOPE: a link the scope covers makes the declaration invalid. A link that a pattern may reach below does too,
 		// unless it resolves to a regular file of the tree, which behaves as a file.
 		unsafe := covers

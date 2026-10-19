@@ -109,7 +109,7 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 
 	w.want(5, checks.Failure, "invalid-source", 1)
 	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
-	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "link", "path": "spec_link", "declaration": acceptingDeclaration(t, reachable, "spec_link")}
+	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "branch": "feature", "kind": "link", "path": "spec_link", "declaration": acceptingDeclaration(t, reachable, "spec_link")}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}

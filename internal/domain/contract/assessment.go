@@ -2,6 +2,7 @@ package contract
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -37,7 +38,7 @@ type IntegrityAssessment struct {
 // Its result supplies integrity evidence, never consent or promotion authority.
 func AssessIntegrity(expectedSource SourceRevision, expectedBinding ApprovalBinding, evidence *IntegrityEvidence) (IntegrityAssessment, error) {
 	if strings.TrimSpace(string(expectedSource)) == "" || expectedBinding.IsZero() {
-		return IntegrityAssessment{}, ErrInvalidIntegrityAssessment
+		return IntegrityAssessment{}, fmt.Errorf("%w: an assessment names its expected source and binding", ErrInvalidIntegrityAssessment)
 	}
 	assessment := IntegrityAssessment{
 		source: expectedSource, binding: expectedBinding,
@@ -58,6 +59,8 @@ func AssessIntegrity(expectedSource SourceRevision, expectedBinding ApprovalBind
 		assessment.reason = IntegrityReasonFailed
 	case IntegrityUnavailable:
 		assessment.reason = IntegrityReasonUnavailable
+	default: // NewIntegrityEvidence accepts no other outcome
+		return IntegrityAssessment{}, fmt.Errorf("%w: unknown evidence outcome %d", ErrInvalidIntegrityAssessment, assessment.evidence.Outcome())
 	}
 	return assessment, nil
 }

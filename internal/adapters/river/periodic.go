@@ -135,16 +135,21 @@ func queues(workers int) map[string]riverqueue.QueueConfig {
 	return configs
 }
 
+// period is every, or the default period of the job when every is not positive.
+func (s periodicSpec) period(every time.Duration) time.Duration {
+	if every <= 0 {
+		return s.defaultEvery
+	}
+	return every
+}
+
 // addPeriodic registers the worker of s in workers and returns its periodic job (the run is not nil).
 func addPeriodic(workers *riverqueue.Workers, s periodicSpec, run runFunc, every time.Duration, waker *waker) (*riverqueue.PeriodicJob, error) {
 	if err := s.register(workers, run, waker); err != nil {
 		return nil, fmt.Errorf("register %s: %w", s.label, err)
 	}
-	if every <= 0 {
-		every = s.defaultEvery
-	}
 	kind := s.args.Kind()
-	return riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(every),
+	return riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(s.period(every)),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
 			// Periodic runs do not overlap: the insert is unique while a run is unfinished. One that failed is not retried, the next run is.
 			opts := &riverqueue.InsertOpts{MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}

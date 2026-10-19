@@ -1207,8 +1207,7 @@ func liveInt(t *testing.T, name string) int64 {
 	return n
 }
 
-// failure renders an error without a GitHub answer body, which a StatusError or
-// a RateLimitedError carries.
+// failure renders a status or rate-limit error as its status and wait time only, so a live log holds no more than that.
 func failure(err error) string {
 	var se *rest.StatusError
 	var rl *rest.RateLimitedError

@@ -31,3 +31,16 @@ func TestPeriodicSpecsDefineThePeriodsQueuesAndWakeUps(t *testing.T) {
 		t.Errorf("wakeable kinds %v; want %v", woken, want)
 	}
 }
+
+func TestAPeriodicJobWithoutAnIntervalUsesItsDefaultPeriod(t *testing.T) {
+	for _, s := range periodicSpecs {
+		for _, every := range []time.Duration{0, -time.Second} {
+			if got := s.period(every); got != s.defaultEvery {
+				t.Errorf("%s: period(%v) = %v; want the default %v", s.args.Kind(), every, got, s.defaultEvery)
+			}
+		}
+		if got := s.period(7 * time.Second); got != 7*time.Second {
+			t.Errorf("%s: period(7s) = %v; want the configured interval", s.args.Kind(), got)
+		}
+	}
+}

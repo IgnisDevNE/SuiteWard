@@ -569,8 +569,6 @@ func (j *commandsJob) refusePropose(ctx context.Context, enrollment owner.State,
 // attempts, records it as failed with the propose-failed acknowledgment. A source that cannot be read as a contract (an
 // invalid declaration, a link in the protected files, a truncated tree) is refused with invalid-source.
 func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
-	m, login := c.Comment, enrollment.Owner.Login
-	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
 	view, done, err := j.gate(ctx, enrollment, c, commands.ProposeRefused)
 	if done || err != nil {
 		return err
@@ -582,44 +580,9 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	case contract.IntegrationTargetID(targetPrefix+view.pull.BaseRef) != view.target:
 		return j.refusePropose(ctx, enrollment, c, reasonBaseNotTarget)
 	}
-	// A source that cannot be read as a contract is a fact about the commit, so it is refused and never retried.
-	// base and branch name the file that failed when the source was found; none when it could not be read at all.
-	refuseSource := func(base, branch string) error {
-		j.logger.WarnContext(ctx, "github propose refused: the source cannot be read as a contract", "repo", c.Repo, "comment", m.CommentID)
-		ack, err := newProposeInvalidSourceAck(target, m.CommentID, login, base, branch)
-		if err != nil {
-			return &opaque{what: "build the acknowledgment", cause: err}
-		}
-		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
-	}
-	src, suggestion, found, err := j.source(ctx, c, view)
-	if invalidSource(err) {
-		return refuseSource("", "")
-	}
-	if err != nil {
+	src, inv, done, err := j.proposalSource(ctx, enrollment, c, view)
+	if done || err != nil {
 		return err
-	}
-	if !found {
-		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion, commands.ProposeRefused)
-		if err != nil {
-			return &opaque{what: "build the acknowledgment", cause: err}
-		}
-		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
-	}
-	inv, err := inventory.Build(ctx, src.tree)
-	if invalidSource(err) { // the source is known: the file that holds the declaration is the one to fix
-		if src.kind == contract.OriginBranch {
-			return refuseSource(baseDefaultBranch, src.branch)
-		}
-		return refuseSource(basePull, view.pull.HeadRef)
-	}
-	if err != nil {
-		return &opaque{what: "inventory of the source", cause: err}
-	}
-	// ADR 0010: never manufacture an empty canonical suite. A source holds .suiteward.yml, which covers itself, so its
-	// inventory is never empty: this is an impossible state, not the empty-inventory refusal.
-	if len(inv.Manifest().Entries()) == 0 {
-		return &opaque{what: "inventory of the source", cause: governance.ErrInvalidState}
 	}
 	proposed, err := inv.Contract()
 	if err != nil {
@@ -631,12 +594,64 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return &opaque{what: "compare the proposal", cause: err}
 	}
 	if reused { // a retry after a crash between the proposal and the ledger, or a repeated command on an unchanged pull request
-		ack, err := newBootstrapAck(target, m.CommentID, login, commands.Proposed, "", reference)
+		ack, err := newBootstrapAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, c.Comment.CommentID, enrollment.Owner.Login, commands.Proposed, "", reference)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
 		return j.record(ctx, c, commands.Proposed, "", &ack)
 	}
+	return j.writeProposal(ctx, enrollment, c, view, src, inv)
+}
+
+// proposalSource reads the source a propose proposes and its inventory. done is true when it recorded a refusal instead: a source that cannot be read as a
+// contract is a fact about the commit, so it is refused with invalid-source and never retried, and a source with no declaration gets the suggestion of one.
+func (j *commandsJob) proposalSource(ctx context.Context, enrollment owner.State, c commands.Candidate, view bootstrapView) (src bootstrapSource, inv inventory.Inventory, done bool, err error) {
+	m, login := c.Comment, enrollment.Owner.Login
+	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
+	// base and branch name the file that failed when the source was found; none when it could not be read at all.
+	refuseSource := func(base, branch string) (bootstrapSource, inventory.Inventory, bool, error) {
+		j.logger.WarnContext(ctx, "github propose refused: the source cannot be read as a contract", "repo", c.Repo, "comment", m.CommentID)
+		ack, err := newProposeInvalidSourceAck(target, m.CommentID, login, base, branch)
+		if err != nil {
+			return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return bootstrapSource{}, inventory.Inventory{}, true, j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	}
+	src, suggestion, found, err := j.source(ctx, c, view)
+	if invalidSource(err) {
+		return refuseSource("", "")
+	}
+	if err != nil {
+		return bootstrapSource{}, inventory.Inventory{}, false, err
+	}
+	if !found {
+		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion, commands.ProposeRefused)
+		if err != nil {
+			return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return bootstrapSource{}, inventory.Inventory{}, true, j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	}
+	inv, err = inventory.Build(ctx, src.tree)
+	if invalidSource(err) { // the source is known: the file that holds the declaration is the one to fix
+		if src.kind == contract.OriginBranch {
+			return refuseSource(baseDefaultBranch, src.branch)
+		}
+		return refuseSource(basePull, view.pull.HeadRef)
+	}
+	if err != nil {
+		return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "inventory of the source", cause: err}
+	}
+	// ADR 0010: never manufacture an empty canonical suite. A source holds .suiteward.yml, which covers itself, so its
+	// inventory is never empty: this is an impossible state, not the empty-inventory refusal.
+	if len(inv.Manifest().Entries()) == 0 {
+		return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "inventory of the source", cause: governance.ErrInvalidState}
+	}
+	return src, inv, false, nil
+}
+
+// writeProposal proposes the baseline of src as the next proposal, with its bootstrap summary, and records the command.
+func (j *commandsJob) writeProposal(ctx context.Context, enrollment owner.State, c commands.Candidate, view bootstrapView, src bootstrapSource, inv inventory.Inventory) error {
+	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
 	number, err := strconv.Atoi(strings.TrimPrefix(string(view.next), "P"))
 	if err != nil {
 		return &opaque{what: "number the proposal", cause: err}
@@ -652,7 +667,7 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	}
 	result, err := governance.ProposeBaseline(ctx, j.suites, j.content, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(c.RepositoryID), SuiteID: defaultSuite, ProposalID: view.next, RevisionID: firstRevision},
-		Carrier:   carrier, Origin: contract.SourceRevision(src.origin), OriginKind: src.kind, Tree: src.tree, Outbox: []governance.OutboxMessage{message}})
+		Carrier:   carrierID(c.RepositoryID, c.PullNumber), Origin: contract.SourceRevision(src.origin), OriginKind: src.kind, Tree: src.tree, Outbox: []governance.OutboxMessage{message}})
 	if err != nil {
 		return &opaque{what: "propose the baseline", cause: err}
 	}

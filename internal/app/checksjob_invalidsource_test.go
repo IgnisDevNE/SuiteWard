@@ -74,14 +74,14 @@ func problemDigest(kind, path, declaration string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func invalidKeyOf(pull int, kind, path string, declaration ...string) string {
-	return fmt.Sprintf("invalid-source:%d:%d:%s", bootRepoID, pull, problemDigest(kind, path, strings.Join(declaration, "")))
+func invalidKeyOf(kind, path string, declaration ...string) string {
+	return fmt.Sprintf("invalid-source:%d:5:%s", bootRepoID, problemDigest(kind, path, strings.Join(declaration, "")))
 }
 
 // linkKeyOf is the key of a link of the reachable head, whose carried declaration is the head's file with the link excluded.
-func linkKeyOf(t *testing.T, pull int, link string) string {
+func linkKeyOf(t *testing.T, link string) string {
 	t.Helper()
-	return invalidKeyOf(pull, "link", link, acceptingDeclaration(t, reachable, link))
+	return invalidKeyOf("link", link, acceptingDeclaration(t, reachable, link))
 }
 
 func (w *cjJobWorld) wantInvalidSource(keys ...string) {
@@ -91,10 +91,10 @@ func (w *cjJobWorld) wantInvalidSource(keys ...string) {
 	}
 }
 
-func (w *cjJobWorld) invalidSourcePayload(index int) map[string]any {
+func (w *cjJobWorld) invalidSourcePayload() map[string]any {
 	w.t.Helper()
 	var payload map[string]any
-	if err := json.Unmarshal(w.scopeMessages("invalid-source:")[index].Payload, &payload); err != nil {
+	if err := json.Unmarshal(w.scopeMessages("invalid-source:")[0].Payload, &payload); err != nil {
 		w.t.Fatal(err)
 	}
 	return payload
@@ -108,9 +108,9 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
+	w.wantInvalidSource(linkKeyOf(t, "spec_link"))
 	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "branch": "feature", "kind": "link", "path": "spec_link", "declaration": acceptingDeclaration(t, reachable, "spec_link")}
-	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
+	if got := w.invalidSourcePayload(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}
 	if got := w.scopeMessages("invalid-source:")[0].Kind; got != githubCommentKind {
@@ -122,14 +122,14 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 	w.sync(map[int]string{4: bootHead, 5: cjHead5})
 	w.mustCheck()
 	w.want(5, checks.Failure, "invalid-source", 2)
-	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
+	w.wantInvalidSource(linkKeyOf(t, "spec_link"))
 
 	// Another bad link is another problem.
 	w.linkHead(cjHead4, "other_link")
 	w.sync(map[int]string{4: bootHead, 5: cjHead4})
 	w.mustCheck()
 	w.want(5, checks.Failure, "invalid-source", 3)
-	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"), linkKeyOf(t, 5, "other_link"))
+	w.wantInvalidSource(linkKeyOf(t, "spec_link"), linkKeyOf(t, "other_link"))
 }
 
 func TestChecksExplainAnInvalidDeclarationWithoutQuotingIt(t *testing.T) {
@@ -142,9 +142,9 @@ func TestChecksExplainAnInvalidDeclarationWithoutQuotingIt(t *testing.T) {
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
+	w.wantInvalidSource(invalidKeyOf("declaration", ""))
 	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "branch": "feature", "kind": "declaration"}
-	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
+	if got := w.invalidSourcePayload(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}
 	if payload := string(w.scopeMessages("invalid-source:")[0].Payload); strings.Contains(payload, "EVIL") || strings.Contains(payload, "script") {
@@ -161,7 +161,7 @@ func TestChecksCallAnUnsafeDeclarationFileADeclarationProblem(t *testing.T) {
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
+	w.wantInvalidSource(invalidKeyOf("declaration", ""))
 }
 
 func TestChecksBoundThePathOfALinkAndDigestTheWholePath(t *testing.T) {
@@ -172,8 +172,8 @@ func TestChecksBoundThePathOfALinkAndDigestTheWholePath(t *testing.T) {
 
 	w.mustCheck()
 
-	w.wantInvalidSource(linkKeyOf(t, 5, long))
-	path, _ := w.invalidSourcePayload(0)["path"].(string)
+	w.wantInvalidSource(linkKeyOf(t, long))
+	path, _ := w.invalidSourcePayload()["path"].(string)
 	if len(path) == 0 || len(path) > 150 || !strings.HasPrefix(path, "lll") || !strings.HasSuffix(path, "…") {
 		t.Fatalf("payload path %q (%d bytes), want the path cut to at most 150 bytes", path, len(path))
 	}
@@ -265,7 +265,7 @@ func TestChecksExplainTheInvalidSourceOfTheBootstrapCarrier(t *testing.T) {
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
+	w.wantInvalidSource(invalidKeyOf("declaration", ""))
 }
 
 // D-SCOPE, an accepted link: the comment of a link carries the head's own declaration with the link's anchored path in exclude, or
@@ -278,7 +278,7 @@ func TestChecksCarryTheDeclarationThatAcceptsTheLink(t *testing.T) {
 
 		w.mustCheck()
 
-		if got, want := w.invalidSourcePayload(0)["declaration"], acceptingDeclaration(t, reachable, "spec_link"); got != want {
+		if got, want := w.invalidSourcePayload()["declaration"], acceptingDeclaration(t, reachable, "spec_link"); got != want {
 			t.Fatalf("declaration %q, want %q", got, want)
 		}
 	})
@@ -289,8 +289,8 @@ func TestChecksCarryTheDeclarationThatAcceptsTheLink(t *testing.T) {
 
 		w.mustCheck()
 
-		w.wantInvalidSource(invalidKeyOf(5, "link", ".github/workflows/ci.yml"))
-		if declaration, found := w.invalidSourcePayload(0)["declaration"]; found {
+		w.wantInvalidSource(invalidKeyOf("link", ".github/workflows/ci.yml"))
+		if declaration, found := w.invalidSourcePayload()["declaration"]; found {
 			t.Fatalf("declaration %q, want none: the head has no .suiteward.yml", declaration)
 		}
 	})
@@ -301,7 +301,7 @@ func TestChecksCarryTheDeclarationThatAcceptsTheLink(t *testing.T) {
 
 		w.mustCheck()
 
-		if declaration, found := w.invalidSourcePayload(0)["declaration"]; found {
+		if declaration, found := w.invalidSourcePayload()["declaration"]; found {
 			t.Fatalf("declaration %q, want none: the pattern would match more than the link", declaration)
 		}
 	})
@@ -345,7 +345,7 @@ func TestChecksPostANewLinkCommentWhenTheHeadsDeclarationChanges(t *testing.T) {
 	w.linkHead(cjHead2, "spec_link")
 	w.sync(map[int]string{4: bootHead, 5: cjHead2})
 	w.mustCheck()
-	first := linkKeyOf(t, 5, "spec_link")
+	first := linkKeyOf(t, "spec_link")
 
 	w.linkHead(cjHead5, "spec_link") // the same file: the same problem
 	w.sync(map[int]string{4: bootHead, 5: cjHead5})
@@ -358,7 +358,7 @@ func TestChecksPostANewLinkCommentWhenTheHeadsDeclarationChanges(t *testing.T) {
 	w.reader.repos[bootRepo].trees[cjHead4] = linkedTree{&bootTree{files: edited}, map[string]string{"spec_link": "app"}}
 	w.sync(map[int]string{4: bootHead, 5: cjHead4})
 	w.mustCheck()
-	w.wantInvalidSource(first, invalidKeyOf(5, "link", "spec_link", acceptingDeclaration(t, reachable+"# edited\n", "spec_link")))
+	w.wantInvalidSource(first, invalidKeyOf("link", "spec_link", acceptingDeclaration(t, reachable+"# edited\n", "spec_link")))
 }
 
 // declarationReadFails is a tree whose declaration reads after the first one fail with err: the first is the head's own build, the
@@ -409,8 +409,8 @@ func TestChecksLeaveOutTheDeclarationWhenItCannotBeRead(t *testing.T) {
 
 	w.mustCheck()
 
-	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"))
-	if declaration, found := w.invalidSourcePayload(0)["declaration"]; found {
+	w.wantInvalidSource(invalidKeyOf("link", "spec_link"))
+	if declaration, found := w.invalidSourcePayload()["declaration"]; found {
 		t.Fatalf("declaration %q, want none", declaration)
 	}
 	w.logged("declaration skipped")
@@ -437,7 +437,7 @@ func TestChecksSayWhetherTheHeadHasADeclarationForTheEditorLink(t *testing.T) {
 
 			w.mustCheck()
 
-			got, found := w.invalidSourcePayload(0)["noDeclaration"]
+			got, found := w.invalidSourcePayload()["noDeclaration"]
 			if found != tc.want || (found && got != true) {
 				t.Fatalf("noDeclaration = %v (found %v), want found %v", got, found, tc.want)
 			}
@@ -453,8 +453,8 @@ func TestChecksLinkNoEditorForADeclarationFileThatIsNoRegularFile(t *testing.T) 
 
 	w.mustCheck()
 
-	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
-	if branch, found := w.invalidSourcePayload(0)["branch"]; found {
+	w.wantInvalidSource(invalidKeyOf("declaration", ""))
+	if branch, found := w.invalidSourcePayload()["branch"]; found {
 		t.Fatalf("branch %q, want none: the editor cannot fix a file that is no regular file", branch)
 	}
 }
@@ -468,8 +468,8 @@ func TestChecksExplainAnInvalidSourceWithoutTheLinkWhenTheBranchIsNoRef(t *testi
 
 	w.mustCheck()
 
-	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
-	if branch, found := w.invalidSourcePayload(0)["branch"]; found {
+	w.wantInvalidSource(linkKeyOf(t, "spec_link"))
+	if branch, found := w.invalidSourcePayload()["branch"]; found {
 		t.Fatalf("branch %q, want none", branch)
 	}
 }

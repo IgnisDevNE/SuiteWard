@@ -14,7 +14,7 @@ import (
 // proposeBaseline proposes the bootstrap on a pull request as the commands job does: P<n+1>-R1 of the origin kind, carried by
 // the pull request, from head with files, with its bootstrap summary. The Suite must exist.
 func proposeBaseline(t *testing.T, uow governance.UnitOfWork, content governance.ContentWriter, repositoryID int64, repo string, kind contract.OriginKind, pull int, head string,
-	files map[string]string) contract.ProposalReference {
+	files map[string]string) {
 	t.Helper()
 	project := owner.ProjectID(repositoryID)
 	var id contract.ProposalID
@@ -43,23 +43,22 @@ func proposeBaseline(t *testing.T, uow governance.UnitOfWork, content governance
 		Origin: contract.SourceRevision(head), OriginKind: kind, Tree: tree, Outbox: []governance.OutboxMessage{message}}); err != nil {
 		t.Fatalf("propose the bootstrap of pull %d: %v", pull, err)
 	}
-	return reference
 }
 
 // pullProposal proposes the bootstrap of pull request pull from its head, as the commands job does.
-func (w *bootWorld) pullProposal(pull int, head string, files map[string]string) contract.ProposalReference {
+func (w *bootWorld) pullProposal(pull int, head string, files map[string]string) {
 	w.t.Helper()
 	if !w.suiteExists() {
-		w.seedSuite(bootRepoID, "branch:main")
+		w.seedSuite("branch:main")
 	}
-	return proposeBaseline(w.t, w.suites, w.content, bootRepoID, bootRepo, contract.OriginPull, pull, head, files)
+	proposeBaseline(w.t, w.suites, w.content, bootRepoID, bootRepo, contract.OriginPull, pull, head, files)
 }
 
 // branchProposal proposes the bootstrap of the default branch head (bootHead, protecting tests/**) on pull request pull.
-func (w *bootWorld) branchProposal(pull int) contract.ProposalReference {
+func (w *bootWorld) branchProposal(pull int) {
 	w.t.Helper()
 	if !w.suiteExists() {
-		w.seedSuite(bootRepoID, "branch:main")
+		w.seedSuite("branch:main")
 	}
-	return proposeBaseline(w.t, w.suites, w.content, bootRepoID, bootRepo, contract.OriginBranch, pull, bootHead, bootFiles("v1"))
+	proposeBaseline(w.t, w.suites, w.content, bootRepoID, bootRepo, contract.OriginBranch, pull, bootHead, bootFiles("v1"))
 }

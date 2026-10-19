@@ -35,10 +35,10 @@ func added(paths ...string) []github.PullFile {
 }
 
 // runnerPull opens pull 5 at head, whose tree is headFiles over the base commit cjBase (the canonical's tree), changes diff, and checks once.
-func (w *cjJobWorld) runnerPull(head string, headFiles map[string]string, diff ...github.PullFile) {
+func (w *cjJobWorld) runnerPull(headFiles map[string]string, diff ...github.PullFile) {
 	w.t.Helper()
 	w.reader.files = map[int][]github.PullFile{5: diff}
-	w.scopePull(head, headFiles, bootFiles("v1"))
+	w.scopePull(headFiles, bootFiles("v1"))
 }
 
 // declarations returns the canonical's declaration with the runner patterns of paths added, and with paths excluded.
@@ -84,7 +84,7 @@ func (w *cjJobWorld) wantRunnerKeys(keys ...string) {
 func TestChecksBlockANewRunnerFileOutsideTheScopeAndWriteOneCommentWithBothDeclarations(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 
 	record := w.want(5, checks.InProgress, "runner-uncovered", 1)
 	if record.Change != "unchanged" {
@@ -114,7 +114,7 @@ func TestChecksBlockANewRunnerFileOutsideTheScopeAndWriteOneCommentWithBothDecla
 
 func TestChecksWriteNoSecondRunnerCommentForTheSameFilesAndTheSameDeclaration(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 	files := w.reader.fileReads
 	trees := w.reader.reads[cjHead2]
 
@@ -136,7 +136,7 @@ func TestChecksWriteNoSecondRunnerCommentForTheSameFilesAndTheSameDeclaration(t 
 
 func TestChecksWriteANewRunnerCommentWhenTheHeadsDeclarationChanges(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 
 	// The same file under another declaration (an unrelated edit, approved): the review is anchored to the new bytes, so a new comment says so.
 	w.tree(cjHead3, reviewFiles(reviewDecl, cjJest))
@@ -153,7 +153,7 @@ func TestChecksWriteANewRunnerCommentWhenTheHeadsDeclarationChanges(t *testing.T
 func TestChecksKeepApprovalMissingFirstAndBlockOnlyAfterTheApprovalOfTheSameHead(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: added(cjJest)}
-	w.scopePull(cjHead2, withFiles(bootFiles("v2"), cjJest), bootFiles("v1")) // a protected change, and a runner file
+	w.scopePull(withFiles(bootFiles("v2"), cjJest), bootFiles("v1")) // a protected change, and a runner file
 
 	w.want(5, checks.InProgress, "approval-missing", 1)
 	w.wantRunnerKeys()
@@ -185,7 +185,7 @@ func TestChecksNeverLetTheHeadsOwnDeclarationApproveItsRunnerFile(t *testing.T) 
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)
 			w.reader.files = map[int][]github.PullFile{5: append(added(cjJest), github.PullFile{Path: ".suiteward.yml", Status: "modified"})}
-			w.scopePull(cjHead2, files, bootFiles("v1"))
+			w.scopePull(files, bootFiles("v1"))
 
 			w.want(5, checks.InProgress, "approval-missing", 1) // the new declaration needs the owner's approval first
 
@@ -202,7 +202,7 @@ func TestChecksDoNotBlockARunnerFileTheBaseAlreadyHoldsAndThePullRequestLeavesAl
 	w := newCJWorld(t, true)
 
 	w.reader.files = map[int][]github.PullFile{5: added("README.md")}
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py"), withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py")) // the base holds both files already
+	w.scopePull(withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py"), withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py")) // the base holds both files already
 
 	w.want(5, checks.Success, "unchanged", 1)
 	w.wantRunnerKeys()
@@ -223,7 +223,7 @@ func TestChecksReadNoFilesOfThePullRequestWhenNoRunnerFileIsUncovered(t *testing
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)
 
-			w.runnerPull(cjHead2, tc.files, added(cjJest, "node_modules/x/jest.config.js", "test_x.py", cjUtilTst, "tests/conftest.py")...)
+			w.runnerPull(tc.files, added(cjJest, "node_modules/x/jest.config.js", "test_x.py", cjUtilTst, "tests/conftest.py")...)
 
 			w.want(5, checks.Success, "unchanged", 1)
 			w.wantRunnerKeys()
@@ -238,7 +238,7 @@ func TestChecksReadNoFilesOfThePullRequestWhenNoRunnerFileIsUncovered(t *testing
 func TestChecksKeepAnUncoveredTestFileANoticeOnly(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst, "test_x.py"), added(cjUtilTst, "test_x.py")...)
+	w.runnerPull(withFiles(bootFiles("v1"), cjUtilTst, "test_x.py"), added(cjUtilTst, "test_x.py")...)
 
 	w.want(5, checks.Success, "unchanged", 1)
 	w.wantRunnerKeys()
@@ -252,7 +252,7 @@ func TestChecksBlockEveryKindOfChangeThatTouchesTheFile(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			w := newCJWorld(t, true)
 
-			w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), github.PullFile{Path: cjJest, Status: status})
+			w.runnerPull(withFiles(bootFiles("v1"), cjJest), github.PullFile{Path: cjJest, Status: status})
 
 			w.want(5, checks.InProgress, "runner-uncovered", 1)
 		})
@@ -264,7 +264,7 @@ func TestChecksBlockEveryKindOfChangeThatTouchesTheFile(t *testing.T) {
 			diff[i] = github.PullFile{Path: fmt.Sprintf("gen/f%04d.txt", i), Status: "added"} // GitHub lists at most 3000: the runner file may be past them
 		}
 
-		w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), diff...)
+		w.runnerPull(withFiles(bootFiles("v1"), cjJest), diff...)
 
 		w.want(5, checks.InProgress, "runner-uncovered", 1)
 	})
@@ -274,27 +274,27 @@ func TestChecksKeepEveryOtherReasonOverTheRunnerBlock(t *testing.T) {
 	runner := withFiles(bootFiles("v1"), cjJest)
 	t.Run("invalid-source", func(t *testing.T) {
 		w := newCJWorld(t, true)
-		w.runnerPull(cjHead2, withDeclaration(runner, "version: 2\n"), added(cjJest)...)
+		w.runnerPull(withDeclaration(runner, "version: 2\n"), added(cjJest)...)
 		w.want(5, checks.Failure, "invalid-source", 1)
 		w.wantRunnerKeys()
 	})
 	t.Run("integrity-failed", func(t *testing.T) {
 		w := newCJWorld(t, true)
 		w.verdict("V1", integrity.Failed)
-		w.runnerPull(cjHead2, runner, added(cjJest)...)
+		w.runnerPull(runner, added(cjJest)...)
 		w.want(5, checks.Failure, "integrity-failed", 1)
 		w.wantRunnerKeys()
 	})
 	t.Run("a fork", func(t *testing.T) {
 		w := newCJWorld(t, true)
 		w.headRepo = map[int]string{5: "evil/widgets"}
-		w.runnerPull(cjHead2, runner, added(cjJest)...)
+		w.runnerPull(runner, added(cjJest)...)
 		w.want(5, checks.InProgress, "fork-unsupported", 1)
 		w.wantRunnerKeys()
 	})
 	t.Run("an owner command that was rejected", func(t *testing.T) {
 		w := newCJWorld(t, true)
-		w.runnerPull(cjHead2, runner, added(cjJest)...)
+		w.runnerPull(runner, added(cjJest)...)
 		w.want(5, checks.InProgress, "runner-uncovered", 1)
 		w.entry(5, 301, bootOwnerID, "invalid-code", "")
 		w.mustCheck()
@@ -316,7 +316,7 @@ func TestChecksKeepEveryOtherReasonOverTheRunnerBlock(t *testing.T) {
 // A read that fails must never leave a success: the head's runner files are unknown, so the check says it is pending.
 func TestChecksNeverKeepASuccessWhenTheFilesOfThePullRequestCannotBeRead(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), "pkg/conftest.py"), added("README.md")...) // a runner file the pull request does not touch
+	w.runnerPull(withFiles(bootFiles("v1"), "pkg/conftest.py"), added("README.md")...) // a runner file the pull request does not touch
 	w.want(5, checks.Success, "unchanged", 1)
 
 	w.check.runners = nil // a restart forgets what was decided
@@ -334,7 +334,7 @@ func TestChecksNeverKeepASuccessWhenTheFilesOfThePullRequestCannotBeRead(t *test
 
 func TestChecksNeverKeepABlockWhenTheFilesCannotBeReadAfterARestart(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 	w.want(5, checks.InProgress, "runner-uncovered", 1)
 
 	w.check.runners = nil
@@ -350,7 +350,7 @@ func TestChecksNeverKeepABlockWhenTheFilesCannotBeReadAfterARestart(t *testing.T
 
 func TestChecksDecideAgainAfterARestartWithoutAnotherComment(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 
 	w.check.runners, w.check.announced, w.check.scoped = nil, nil, nil
 	w.mustCheck()
@@ -368,7 +368,7 @@ func TestChecksResolveARunnerBlockWhenTheNextHeadProtectsOrIgnoresTheFile(t *tes
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCJWorld(t, true)
-			w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+			w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 			w.want(5, checks.InProgress, "runner-uncovered", 1)
 
 			w.reader.files = map[int][]github.PullFile{5: append(added(cjJest), github.PullFile{Path: ".suiteward.yml", Status: "modified"})}
@@ -449,7 +449,7 @@ func (w *cjJobWorld) wantRunnerReview(head string, paths []string, suggestions .
 func (w *cjJobWorld) approvedRunnerPull(declaration, hunk string) {
 	w.t.Helper()
 	w.reader.files = map[int][]github.PullFile{5: append(added(cjJest), github.PullFile{Path: ".suiteward.yml", Status: "modified", Patch: hunk + "\n context\n-old\n+new"})}
-	w.scopePull(cjHead2, reviewFiles(declaration, cjJest), bootFiles("v1"))
+	w.scopePull(reviewFiles(declaration, cjJest), bootFiles("v1"))
 	w.want(5, checks.InProgress, "approval-missing", 1)
 	w.wantRunnerKeys()
 	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
@@ -585,7 +585,7 @@ const runnerNoticeDecl = "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pyte
 func TestChecksKeepTheRunnerReviewApartFromTheScopeNoticesReview(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: append(added(cjJest), github.PullFile{Path: ".suiteward.yml", Status: "modified", Patch: "@@ -1,5 +1,5 @@\n context\n-old\n+new"})}
-	w.scopePull(cjHead2, reviewFiles(runnerNoticeDecl, cjJest), bootFiles("v1")) // the notice's set is [jest.config.js] too, and its review has a runner list to suggest on
+	w.scopePull(reviewFiles(runnerNoticeDecl, cjJest), bootFiles("v1")) // the notice's set is [jest.config.js] too, and its review has a runner list to suggest on
 	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
 	w.mustCheck()
 
@@ -607,7 +607,7 @@ func TestChecksLeaveTheIgnoreChoiceOutWhenAPathCannotBeNamedInExclude(t *testing
 			w := newCJWorld(t, true)
 
 			w.reader.files = map[int][]github.PullFile{5: added(odd)}
-			w.scopePull(cjHead2, withFiles(bootFiles("v1"), odd), bootFiles("v1"))
+			w.scopePull(withFiles(bootFiles("v1"), odd), bootFiles("v1"))
 
 			w.want(5, checks.InProgress, "runner-uncovered", 1)
 			payload := w.runnerPayload(0)
@@ -627,7 +627,7 @@ func TestChecksLogWhyTheRunnerCommentIsSkippedAndKeepTheBlock(t *testing.T) {
 	t.Run("a declaration over the limit", func(t *testing.T) {
 		w := newCJWorldOf(t, withDeclaration(bootFiles("v1"), cjDecl+"# "+strings.Repeat("x", commandtext.MaxDeclaration)+"\n"))
 
-		w.runnerPull(cjHead2, withDeclaration(withFiles(bootFiles("v1"), cjJest), cjDecl+"# "+strings.Repeat("x", commandtext.MaxDeclaration)+"\n"), added(cjJest)...)
+		w.runnerPull(withDeclaration(withFiles(bootFiles("v1"), cjJest), cjDecl+"# "+strings.Repeat("x", commandtext.MaxDeclaration)+"\n"), added(cjJest)...)
 
 		w.want(5, checks.InProgress, "runner-uncovered", 1)
 		w.wantRunnerKeys()
@@ -652,7 +652,7 @@ func anchored(paths []string) []string {
 func TestChecksIgnoreOnlyTheFileThatWasAskedAbout(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), "conftest.py"), added("conftest.py")...)
+	w.runnerPull(withFiles(bootFiles("v1"), "conftest.py"), added("conftest.py")...)
 
 	w.want(5, checks.InProgress, "runner-uncovered", 1)
 	var payload struct {
@@ -702,7 +702,7 @@ func TestChecksLogTheChoiceThatCannotBeSuggested(t *testing.T) {
 	const quoted = `q"x/conftest.py` // a quote cannot be written in a double-quoted suggestion item
 
 	w.reader.files = map[int][]github.PullFile{5: append(added(quoted), github.PullFile{Path: ".suiteward.yml", Status: "modified", Patch: "@@ -1,3 +1,3 @@\n context\n-old\n+new"})}
-	w.scopePull(cjHead2, reviewFiles(reviewDecl, quoted), bootFiles("v1"))
+	w.scopePull(reviewFiles(reviewDecl, quoted), bootFiles("v1"))
 	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
 	w.mustCheck()
 

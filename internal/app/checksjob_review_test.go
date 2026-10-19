@@ -86,7 +86,7 @@ func TestChecksWriteAScopeReviewOnTheIncludeLineInsideTheDiff(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
 
-	w.scopePull(cjHead2, reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
+	w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 
 	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{"scope-notice:1001:5:" + scopeDigest(cjUtilTst)}) {
 		t.Fatalf("notices %v, want the one of the added path", keys)
@@ -98,7 +98,7 @@ func TestChecksWriteOneScopeReviewForBothListsWithoutThePatternsTheHeadAlreadyHa
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,5 +1,5 @@")}
 
-	w.scopePull(cjHead2, reviewFiles(reviewBoth, cjUtilTst, "conftest.py"), bootFiles("v1"))
+	w.scopePull(reviewFiles(reviewBoth, cjUtilTst, "conftest.py"), bootFiles("v1"))
 
 	paths := []string{"conftest.py", cjUtilTst}
 	w.wantReview(reviewBoth, paths, suggestion("include", 3, "  - /tests/**", "*_test.go"),
@@ -109,7 +109,7 @@ func TestChecksWriteAScopeReviewOnlyForTheListWithALineInsideTheDiff(t *testing.
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -4,2 +4,2 @@")} // lines 4 and 5: the runner list, not the include item on line 3
 
-	w.scopePull(cjHead2, reviewFiles(reviewBoth, cjUtilTst, "conftest.py"), bootFiles("v1"))
+	w.scopePull(reviewFiles(reviewBoth, cjUtilTst, "conftest.py"), bootFiles("v1"))
 
 	w.wantReview(reviewBoth, []string{"conftest.py", cjUtilTst}, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
 }
@@ -119,7 +119,7 @@ func TestChecksStripTheLineBreakOfAWindowsFileFromTheAnchor(t *testing.T) {
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
 
 	windows := strings.ReplaceAll(reviewDecl, "\n", "\r\n")
-	w.scopePull(cjHead2, reviewFiles(windows, cjUtilTst), bootFiles("v1"))
+	w.scopePull(reviewFiles(windows, cjUtilTst), bootFiles("v1"))
 
 	w.wantReview(windows, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 }
@@ -141,7 +141,7 @@ func TestChecksWriteAScopeNoticeButNoReviewWhenTheDiffGivesNoLineToSuggestOn(t *
 			w := newCJWorld(t, true)
 			w.reader.files = tc.files
 
-			w.scopePull(cjHead2, reviewFiles(tc.decl, cjUtilTst), bootFiles("v1"))
+			w.scopePull(reviewFiles(tc.decl, cjUtilTst), bootFiles("v1"))
 
 			if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{"scope-notice:1001:5:" + scopeDigest(cjUtilTst)}) {
 				t.Fatalf("notices %v, want the one of the added path\nlogs: %s", keys, w.logs)
@@ -156,7 +156,7 @@ func TestChecksWriteAScopeNoticeButNoReviewWhenTheDiffGivesNoLineToSuggestOn(t *
 func TestChecksWriteNoScopeReviewWithoutANewScopeNotice(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
-	w.scopePull(cjHead2, reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
+	w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 	w.wantReview(reviewDecl, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 	fileReads := w.reader.fileReads
 
@@ -179,7 +179,7 @@ func TestChecksWriteTheScopeNoticeWhenTheListOfFilesCannotBeRead(t *testing.T) {
 		w := newCJWorld(t, true)
 		w.reader.filesErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
 
-		w.scopePull(cjHead2, reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
+		w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 
 		if keys := w.scopeKeys("scope-notice:"); len(keys) != 1 || len(w.scopeKeys("scope-review:")) != 0 {
 			t.Fatalf("scope messages %v, want the notice and no review", w.scopeKeys("scope-"))
@@ -193,7 +193,7 @@ func TestChecksWriteTheScopeNoticeWhenTheListOfFilesCannotBeRead(t *testing.T) {
 		w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
 		w.reader.filesErr = &rest.RateLimitedError{Status: 403}
 
-		w.scopePull(cjHead2, reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
+		w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 
 		w.wantNoScopeMessages()
 		w.reader.filesErr = nil // the limit ended
@@ -228,7 +228,7 @@ func TestChecksLogTheReasonWhenTheReviewCannotBeRendered(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,4 +1,4 @@")}
 
-	w.scopePull(cjHead2, reviewFiles(reviewDecl+"  - /"+long+"/**\n", cjUtilTst), bootFiles("v1"))
+	w.scopePull(reviewFiles(reviewDecl+"  - /"+long+"/**\n", cjUtilTst), bootFiles("v1"))
 
 	if keys := w.scopeKeys("scope-notice:"); len(keys) != 1 || len(w.scopeKeys("scope-review:")) != 0 {
 		t.Fatalf("scope messages %v, want the notice and no review", w.scopeKeys("scope-"))

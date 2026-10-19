@@ -26,8 +26,8 @@ func TestChecksShowThePatternAloneWhenTheHeadsDeclarationHoldsAHiddenCharacter(t
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link", acceptingDeclaration(t, hidden, "spec_link"))) // the key digests the declaration as it did
-	payload := w.invalidSourcePayload(0)
+	w.wantInvalidSource(invalidKeyOf("link", "spec_link", acceptingDeclaration(t, hidden, "spec_link"))) // the key digests the declaration as it did
+	payload := w.invalidSourcePayload()
 	if declaration, found := payload["declaration"]; found {
 		t.Fatalf("declaration %q, want none: the comment shows the pattern alone", declaration)
 	}
@@ -44,7 +44,7 @@ func TestChecksNeverQueueACommentWhoseDeclarationHoldsAHiddenCharacter(t *testin
 	t.Run("the scope notice", func(t *testing.T) {
 		w := newCJWorldOf(t, files)
 
-		w.scopePull(cjHead2, withFiles(files, cjUtilTst), files)
+		w.scopePull(withFiles(files, cjUtilTst), files)
 
 		w.wantNoScopeMessages()
 		w.logged("scope notice skipped")
@@ -53,7 +53,7 @@ func TestChecksNeverQueueACommentWhoseDeclarationHoldsAHiddenCharacter(t *testin
 	t.Run("the runner-uncovered comment", func(t *testing.T) {
 		w := newCJWorldOf(t, files)
 
-		w.runnerPull(cjHead2, withFiles(files, cjJest), added(cjJest)...)
+		w.runnerPull(withFiles(files, cjJest), added(cjJest)...)
 
 		w.want(5, checks.InProgress, "runner-uncovered", 1)
 		w.wantRunnerKeys()
@@ -63,7 +63,7 @@ func TestChecksNeverQueueACommentWhoseDeclarationHoldsAHiddenCharacter(t *testin
 
 func TestSuggestRefusesAsAnInvalidSourceACanonicalWhoseDeclarationHoldsAHiddenCharacter(t *testing.T) {
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl+hiddenComment, withFiles(bootFiles("v1"), cjUtilTst))
+	w.seedDeclared(cjDecl+hiddenComment, withFiles(bootFiles("v1"), cjUtilTst))
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 
 	w.mustRun()

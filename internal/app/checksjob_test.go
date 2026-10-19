@@ -132,9 +132,9 @@ func newCJWorldOf(t *testing.T, files map[string]string) *cjJobWorld {
 	b := newBootWorld(t)
 	b.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: files}
 	b.openPulls(bootRepo, 4)
-	b.seedSuite(bootRepoID, "branch:main")
+	b.seedSuite("branch:main")
 	proposeBaseline(t, b.suites, b.content, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, files)
-	b.approve(1, 4)
+	b.approve()
 	b.mustRun() // promotes V1
 	if _, found := b.canonical(); !found {
 		t.Fatalf("the setup did not bootstrap the canonical\nlogs: %s", b.logs)

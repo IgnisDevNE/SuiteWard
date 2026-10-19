@@ -160,7 +160,7 @@ func TestChecksKeepTheStoredCheckForEachKeptReasonOnAFailedRead(t *testing.T) {
 func TestChecksKeepARunnerUncoveredCheckOnAFailedReadOnlyWhileTheRunnerFilesAreKnown(t *testing.T) {
 	setup := func(t *testing.T) *cjJobWorld {
 		w := newCJWorld(t, true)
-		w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+		w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 		w.want(5, checks.InProgress, "runner-uncovered", 1)
 		w.check.unchanged = nil // the stored change is unchanged: without the memory of that, the head is assessed again
 		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
@@ -191,7 +191,7 @@ func TestChecksKeepARunnerUncoveredCheckOnAFailedReadOnlyWhileTheRunnerFilesAreK
 func TestChecksKeepASuccessOnAFailedReadOnlyWhileTheRunnerFilesAreKnown(t *testing.T) {
 	setup := func(t *testing.T) *cjJobWorld {
 		w := newCJWorld(t, true)
-		w.runnerPull(cjHead2, bootFiles("v1"))
+		w.runnerPull(bootFiles("v1"))
 		w.want(5, checks.Success, "unchanged", 1)
 		w.check.unchanged = nil
 		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
@@ -250,7 +250,7 @@ func TestChecksSkipTheRunnerBlockForEveryOtherState(t *testing.T) {
 	})
 	t.Run("approval-missing", func(t *testing.T) {
 		w := newCJWorld(t, true)
-		w.runnerPull(cjHead2, withFiles(bootFiles("v2"), cjJest), added(cjJest)...)
+		w.runnerPull(withFiles(bootFiles("v2"), cjJest), added(cjJest)...)
 
 		w.want(5, checks.InProgress, "approval-missing", 1)
 		w.wantRunnerKeys()
@@ -290,11 +290,11 @@ func TestChecksWriteTheCommentBeforeTheCheckAndNeverTheOnesAfterIt(t *testing.T)
 			t.Fatalf("run error %v, want the failed publish", err)
 		}
 		w.wantNone(5)
-		w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
+		w.wantInvalidSource(linkKeyOf(t, "spec_link"))
 		w.ledger.publishErr = nil
 		w.mustCheck()
 		w.want(5, checks.Failure, "invalid-source", 1)
-		w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
+		w.wantInvalidSource(linkKeyOf(t, "spec_link"))
 	})
 	t.Run("the runner and the scope comments", func(t *testing.T) {
 		w := newCJWorld(t, true)

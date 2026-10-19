@@ -84,9 +84,11 @@ func editSentence(s InvalidSourceNotice, lead string) string {
 }
 
 // acceptLink is the paragraphs that offer to accept the link of s with an exact anchored exclude, and warn what that means; none when
-// the path has a character that exclude reads as a pattern, which would name more than the link, or was cut and no declaration holds the whole one.
+// the path has a character that exclude reads as a pattern, which would name more than the link. Without a declaration the pattern
+// alone is offered, so there is none either for a path that was cut, which is not the link's path, or for one that the fence shows
+// escaped, which is not the pattern to paste.
 func acceptLink(s InvalidSourceNotice) string {
-	if strings.ContainsAny(s.Path, `*?[\`) || (s.PathCut && len(s.Declaration) == 0) {
+	if strings.ContainsAny(s.Path, `*?[\`) || (len(s.Declaration) == 0 && (s.PathCut || notGraphic(s.Path))) {
 		return ""
 	}
 	choice := "Or accept the link by adding its exact anchored path to `exclude` in `.suiteward.yml`:\n\n" + fencedLines([]string{"/" + s.Path})

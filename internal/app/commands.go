@@ -631,6 +631,12 @@ var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 // errDeclarationTooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration).
 var errDeclarationTooLarge = errors.New("the suggested declaration is too large")
 
+// tooLarge is errDeclarationTooLarge that also says which base declaration was compared, so a refusal links the editor of the right file.
+type tooLarge struct{ base string }
+
+func (e *tooLarge) Error() string { return errDeclarationTooLarge.Error() }
+func (e *tooLarge) Unwrap() error { return errDeclarationTooLarge }
+
 // The codes of the base of a suggest (ackPayload.Base): what the head was compared with.
 const (
 	basePull          = "pull"           // the head's own .suiteward.yml, before the first contract
@@ -691,10 +697,15 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	}
 	ack, reviews, err := j.suggestion(ctx, target, c, login, view)
 	var invalid *invalidBase
+	var large *tooLarge
 	switch {
-	case errors.Is(err, errDeclarationTooLarge):
+	case errors.As(err, &large):
 		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
-		return refuse(reasonDeclarationTooLarge, "", view.pull.HeadRef)
+		branch := view.pull.HeadRef // the default branch's file is not on it: that refusal links to no editor
+		if large.base == baseDefaultBranch {
+			branch = ""
+		}
+		return refuse(reasonDeclarationTooLarge, "", branch)
 	case errors.As(err, &invalid):
 		j.logger.InfoContext(ctx, "github suggest refused: the base declaration is not valid", "repo", c.Repo, "comment", m.CommentID, "base", invalid.base)
 		branch, err := editBranch(view, invalid.base)
@@ -784,7 +795,7 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 		return governance.OutboxMessage{}, nil, err
 	}
 	if len(declaration) > commandtext.MaxDeclaration {
-		return governance.OutboxMessage{}, nil, errDeclarationTooLarge
+		return governance.OutboxMessage{}, nil, &tooLarge{base: base}
 	}
 	var defaultBranch string // the reply for the default branch links to that branch's editor
 	if base == baseDefaultBranch {

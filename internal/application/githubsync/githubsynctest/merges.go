@@ -3,6 +3,7 @@ package githubsynctest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -82,7 +83,7 @@ var gsMergeCases = []struct {
 	{"ResolutionRefreshesTheHeadBaseAndHeadRepository", gsResolutionRefreshes},
 	{"StaleResolutionWritesNothing", gsStaleResolution},
 	{"ClosedListingFirstCallOnlySetsTheWatermark", gsClosedFirst},
-	{"ClosedListingInsertsOnlyUnseenMergedItemsAboveTheWatermark", gsClosedInserts},
+	{"ClosedListingInsertsOnlyUnseenMergedItemsAtOrAboveTheWatermark", gsClosedInserts},
 	{"MergedIsOrderedByMergedAtThenNumberAndCarriesProcessed", gsMergedOrder},
 	{"MarkProcessedRejectsAnUnknownPull", gsMarkProcessedUnknown},
 	{"HeadRepositoryRoundTripsThroughACycle", gsHeadRepository},
@@ -183,24 +184,26 @@ func gsClosedInserts(e *gsEnv) {
 	e.closed(4,
 		gsClosed(7, 40, 39), // unseen, merged, above the watermark: inserted
 		gsClosed(8, 25, 24), // below the watermark: ignored
-		gsClosed(9, 30, 29), // at the watermark: ignored
+		gsClosed(9, 30, 29), // at the watermark (the same second as its holder): inserted
 		gsClosed(6, 50, 0),  // unmerged: ignored, but it raises the watermark
 		gsClosed(1, 45, 44), // an open pull is stored already: ignored
 		gsClosed(2, 46, 45), // an absent pull is stored already: ignored
 	)
-	inserted := githubsync.PullState{Number: 7, HeadSHA: "closed-head", HeadRef: "feature-7", BaseRef: "main", BaseSHA: "base-sha", UpdatedAt: gsTime(40),
-		FirstSeen: gsTime(4), LastSeen: gsTime(4), NotOpenSince: gsTime(4), HeadRepo: "fork/widgets"}
+	inserted := func(number, updatedAt int) githubsync.PullState {
+		return githubsync.PullState{Number: number, HeadSHA: "closed-head", HeadRef: fmt.Sprintf("feature-%d", number), BaseRef: "main", BaseSHA: "base-sha", UpdatedAt: gsTime(updatedAt),
+			FirstSeen: gsTime(4), LastSeen: gsTime(4), NotOpenSince: gsTime(4), HeadRepo: "fork/widgets"}
+	}
 	want := before
-	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), inserted)
+	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), inserted(7, 40), inserted(9, 30))
 	e.requireView(e.view(), want)
-	e.requireNumbers(e.awaiting(), 2, 7)
+	e.requireNumbers(e.awaiting(), 2, 7, 9)
 	if got := e.merged(); len(got) != 0 {
 		e.t.Fatalf("merged %+v before the merges job resolved anything", got)
 	}
 
 	// The watermark rose to 50 (the unmerged item): 49 is below it and 51 is above.
 	e.closed(5, gsClosed(10, 49, 48), gsClosed(11, 51, 50))
-	e.requireNumbers(e.awaiting(), 2, 7, 11)
+	e.requireNumbers(e.awaiting(), 2, 7, 9, 11)
 }
 
 func gsMergedOrder(e *gsEnv) {

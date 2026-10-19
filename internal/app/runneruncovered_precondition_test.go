@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -44,7 +45,7 @@ var everyRunnerName = []string{"conftest.py", "jest.config.js", "vitest.config.t
 
 func TestTheRunnerPatternsAlwaysGoIntoACanonicalDeclaration(t *testing.T) {
 	all := inventory.RunnerPatterns(everyRunnerName)
-	if len(all) < 25 {
+	if len(all) < 25 { // 25 is the number of patterns of the runner groups of the inventory today; a group added later needs a name in everyRunnerName
 		t.Fatalf("%d runner patterns for every family, want every pattern of the inventory", len(all))
 	}
 	for name, base := range canonicalShapes {
@@ -101,4 +102,13 @@ func singles(names []string) [][]string {
 		out[i] = []string{"pkg/" + name}
 	}
 	return slices.Clip(out)
+}
+
+// A path with invalid UTF-8 never reaches AddExcludes: the inventory refuses it as an invalid tree (artifact.ValidPath) before runnerFiles builds any pattern from it.
+func TestAPathWithInvalidUTF8NeverReachesTheExcludes(t *testing.T) {
+	tree := &bootTree{files: map[string]string{".suiteward.yml": cjDecl, "a\xffb/conftest.py": "x\n"}}
+
+	if _, err := inventory.ListEntries(t.Context(), tree); !errors.Is(err, inventory.ErrInvalidTree) {
+		t.Fatalf("ListEntries error = %v, want ErrInvalidTree", err)
+	}
 }

@@ -966,3 +966,17 @@ func TestCommentTargetRefusesARepositoryLongerThanGitHubAllows(t *testing.T) {
 		t.Errorf("the longest repository is refused: %v", err)
 	}
 }
+
+// Every kind that splitKey accepts, except the scope review, which posts on the diff, has a renderer, so the "no renderer" error of publish stays unreachable.
+func TestEveryCommentKindButTheScopeReviewHasARenderer(t *testing.T) {
+	for kind := range keyParts {
+		if _, has := commentHandlers[kind]; !has && kind != scopeReviewKey {
+			t.Errorf("the kind %q has no renderer in commentHandlers", kind)
+		}
+	}
+	for kind := range commentHandlers {
+		if _, known := keyParts[kind]; !known {
+			t.Errorf("commentHandlers has the kind %q, which splitKey refuses", kind)
+		}
+	}
+}

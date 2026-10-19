@@ -376,3 +376,24 @@ func TestChecksFailTheRunWhenACommentAfterTheCheckFailsButKeepTheCheck(t *testin
 		})
 	}
 }
+
+// A wrong code is applied before the runner block: a head that is a success with runner files, whose runner set is not known, is failed by the code and its files
+// are not read (the problem for /status stays empty).
+func TestChecksFailAWrongCodeBeforeTheRunnerBlockReadsTheFiles(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.want(5, checks.InProgress, "runner-uncovered", 1)
+	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "")
+	w.check.runners = nil // a restart forgets the runner set: a runner block that came first would read the files
+	w.reader.fileReads = 0
+
+	w.mustCheck()
+
+	w.want(5, checks.Failure, "owner-command-rejected", 2)
+	if w.reader.fileReads != 0 {
+		t.Fatalf("the files of the pull request were read %d times, want none: the wrong code decided first", w.reader.fileReads)
+	}
+	if got := w.problems.lookup(bootRepo); got != "" {
+		t.Fatalf("problem %q, want none", got)
+	}
+}

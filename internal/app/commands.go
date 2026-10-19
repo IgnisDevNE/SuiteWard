@@ -186,19 +186,12 @@ func (j *commandsJob) record(ctx context.Context, c commands.Candidate, d comman
 // or a code: the log and river_job.errors keep only the step that failed.
 func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID int64, c commands.Candidate) error {
 	m := c.Comment
-	if m.CreatedAt.Before(enrollment.EnrolledAt) {
-		return j.record(ctx, c, commands.BeforeEnrollment, "", nil)
-	}
 	parsed := commandtext.Parse(m.Body)
-	if m.AuthorID == botID || parsed.Kind == commandtext.KindNotCommand {
-		return j.record(ctx, c, commands.NotCommand, "", nil)
+	if d, ignored := ignoredDisposition(enrollment, botID, m, parsed); ignored {
+		return j.record(ctx, c, d, "", nil)
 	}
-	if m.AuthorID != enrollment.Owner.AccountID {
-		return j.record(ctx, c, commands.IgnoredAuthor, "", nil)
-	}
-	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
 	reject := func(d commands.Disposition, reason commandtext.Reason, reference string) error {
-		ack, err := newRejectedAck(target, m.CommentID, enrollment.Owner.Login, d, reason, reference)
+		ack, err := newRejectedAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, m.CommentID, enrollment.Owner.Login, d, reason, reference)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
@@ -210,40 +203,77 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	case parsed.Kind == commandtext.KindMalformed:
 		return reject(commands.Malformed, parsed.Reason, "")
 	}
-	command := parsed.Command
-	if command.Verb == commandtext.Propose { // no code, no reference
+	switch command := parsed.Command; command.Verb {
+	case commandtext.Propose: // no code, no reference
 		return j.propose(ctx, enrollment, c)
-	}
-	if command.Verb == commandtext.Suggest { // no code, no reference: it reads no step and grants nothing
+	case commandtext.Suggest: // no code, no reference: it reads no step and grants nothing
 		return j.suggest(ctx, enrollment, c)
+	default:
+		return j.consent(ctx, enrollment, c, command, reject)
 	}
+}
+
+// ignoredDisposition is the disposition of a comment that is not a command of the owner's, and whether it is one.
+func ignoredDisposition(enrollment owner.State, botID int64, m githubsync.CommentVersion, parsed commandtext.Parsed) (commands.Disposition, bool) {
+	switch {
+	case m.CreatedAt.Before(enrollment.EnrolledAt):
+		return commands.BeforeEnrollment, true
+	case m.AuthorID == botID || parsed.Kind == commandtext.KindNotCommand:
+		return commands.NotCommand, true
+	case m.AuthorID != enrollment.Owner.AccountID:
+		return commands.IgnoredAuthor, true
+	}
+	return "", false
+}
+
+// rejectFunc records a command as rejected with its acknowledgment.
+type rejectFunc func(d commands.Disposition, reason commandtext.Reason, reference string) error
+
+// consent decides an approve, a revoke or a skip: it verifies and consumes the code, then applies the command.
+func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, reject rejectFunc) error {
 	var reference string // a skip names no proposal
 	if command.Verb != commandtext.Skip {
 		reference = commandtext.Reference(command.Proposal, command.Revision)
 	}
-	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
-	if errors.Is(err, totp.ErrInvalidCode) {
-		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
-		return reject(commands.InvalidCode, 0, reference)
-	}
-	if err != nil {
-		return &opaque{what: "verify the code", cause: err}
-	}
-	// Logged before the step is consumed, so a replayed code also logs "verified" and is then rejected.
-	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
-	source := commentSource(m.CommentID)
-	// The comment's own time keeps a retry after a crash identical to the first call.
-	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {
-	case errors.Is(err, owner.ErrStepUsed):
-		return reject(commands.ReplayedCode, 0, reference)
-	case err != nil:
-		return &opaque{what: "consume the step", cause: err}
+	source := commentSource(c.Comment.CommentID)
+	if verified, err := j.verifyCode(ctx, enrollment, c, command, source, reference, reject); !verified {
+		return err
 	}
 	if command.Verb == commandtext.Skip {
 		return j.skip(ctx, enrollment, c)
 	}
+	return j.process(ctx, enrollment, c, command, source, reference, reject)
+}
+
+// verifyCode checks the code of the command and consumes its step. verified is false when the command was recorded as rejected, or the step failed:
+// err is then the result of that.
+func (j *commandsJob) verifyCode(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, source contract.SourceCommandID, reference string, reject rejectFunc) (verified bool, err error) {
+	m := c.Comment
+	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
+	if errors.Is(err, totp.ErrInvalidCode) {
+		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
+		return false, reject(commands.InvalidCode, 0, reference)
+	}
+	if err != nil {
+		return false, &opaque{what: "verify the code", cause: err}
+	}
+	// Logged before the step is consumed, so a replayed code also logs "verified" and is then rejected.
+	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
+	// The comment's own time keeps a retry after a crash identical to the first call.
+	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {
+	case errors.Is(err, owner.ErrStepUsed):
+		return false, reject(commands.ReplayedCode, 0, reference)
+	case err != nil:
+		return false, &opaque{what: "consume the step", cause: err}
+	}
+	return true, nil
+}
+
+// process applies a verified approve or revoke through ProcessConsent and records the command.
+func (j *commandsJob) process(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, source contract.SourceCommandID, reference string, reject rejectFunc) error {
+	m := c.Comment
 	project, operation := owner.ProjectID(c.RepositoryID), contract.OperationID("consent:"+string(source))
-	ack, err := newProcessedAck(target, m.CommentID, enrollment.Owner.Login, project, defaultSuite, operation)
+	ack, err := newProcessedAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, m.CommentID, enrollment.Owner.Login, project, defaultSuite, operation)
 	if err != nil {
 		return &opaque{what: "build the acknowledgment", cause: err}
 	}
@@ -281,7 +311,7 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	return j.record(ctx, c, commands.Processed, operation, nil)
 }
 
-// measuredTolerance is how far logRejectedOffset looks, to measure whether commandTolerance is too narrow (before M1.8).
+// measuredTolerance is how far logRejectedOffset looks, to measure whether commandTolerance is too narrow.
 const measuredTolerance = 2
 
 // logRejectedOffset logs, for measurement only, whether a wider window would have accepted a rejected code and at which
@@ -321,7 +351,7 @@ func (j *commandsJob) recordFailed(ctx context.Context, enrollment owner.State, 
 	m := c.Comment
 	parsed := commandtext.Parse(m.Body)
 	ownerPropose := parsed.Kind == commandtext.KindCommand && parsed.Command.Verb == commandtext.Propose && m.AuthorID == enrollment.Owner.AccountID &&
-		!m.CreatedAt.Before(enrollment.EnrolledAt) && m.UpdatedAt.Equal(m.CreatedAt) // the checks decide made before it reached propose
+		!m.CreatedAt.Before(enrollment.EnrolledAt) && m.UpdatedAt.Equal(m.CreatedAt) // the same conditions as decide, before it reaches propose
 	if !ownerPropose {
 		return j.record(ctx, c, commands.Failed, "", nil)
 	}

@@ -356,3 +356,19 @@ func TestSuggestRetriesAGitHubFailureAndIsFailedAfterFiveAttemptsLoggingOnlyKind
 		})
 	}
 }
+
+// Before the first contract the default branch's file can be the base, and the refusal asks to fix that file: the pull request's branch is
+// not where it is, so the acknowledgment links to no editor.
+func TestSuggestRefusesADeclarationTooLargeForTheDefaultBranchWithoutAnEditorLink(t *testing.T) {
+	tooLong := "version: 1\ninclude:\n"
+	for i := range 400 {
+		tooLong += fmt.Sprintf("  - \"tests/directory%03d/**\"\n", i)
+	}
+	w := newCjWorld(t)
+	w.trees(withDeclaration(bootFiles("v1"), tooLong), map[string]string{cjUtilTst: "x"})
+	w.pullFiles(nil)
+	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
+	w.mustRun()
+
+	w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "declaration-too-large"})
+}

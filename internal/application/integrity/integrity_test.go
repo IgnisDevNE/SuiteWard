@@ -35,4 +35,3 @@ func TestNextKeepsAFailedVerdictAgainstAnUnavailableOneOfTheSameVersion(t *testi
 		})
 	}
 }
-

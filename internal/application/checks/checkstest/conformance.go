@@ -88,10 +88,10 @@ func (e *env) requireOutbox(want ...string) {
 	}
 }
 
-// requireCurrent requires the current record of the pull of repository 10.
-func (e *env) requireCurrent(pull int, want checks.Record) {
+// requireCurrent requires the current record of pull 1 of repository 10.
+func (e *env) requireCurrent(want checks.Record) {
 	e.t.Helper()
-	got, found, err := e.env.Store.Current(e.ctx, 10, pull)
+	got, found, err := e.env.Store.Current(e.ctx, 10, 1)
 	e.must(err)
 	if !found || got != want {
 		e.t.Fatalf("Current = %+v, found %v;\nwant %+v", got, found, want)
@@ -162,7 +162,7 @@ func ckFirstPublish(e *env) {
 	if record != want {
 		e.t.Fatalf("Publish returned %+v; want %+v", record, want)
 	}
-	e.requireCurrent(1, want)
+	e.requireCurrent(want)
 	e.requireOutbox(key(10, 1, 1))
 }
 
@@ -173,7 +173,7 @@ func ckIdenticalResult(e *env) {
 	again.Change, again.Revision, again.CommandID = "protected-change", 9, 55
 	record, written := e.publish(again, 5)
 	e.requirePublished(record, written, false, 1)
-	e.requireCurrent(1, checks.Record{Result: again, HeadSince: at(1), Generation: 1, DecidedAt: at(5)})
+	e.requireCurrent(checks.Record{Result: again, HeadSince: at(1), Generation: 1, DecidedAt: at(5)})
 	e.requireOutbox(key(10, 1, 1))
 }
 
@@ -338,7 +338,7 @@ func ckFailingMessage(e *env) {
 	// A new state with a failing message leaves the record as it was.
 	_, _, err = e.env.Store.Publish(e.ctx, result(10, 1, headA, checks.Success, "ready"), at(3), failing)
 	e.requireErr(err, boom)
-	e.requireCurrent(1, before)
+	e.requireCurrent(before)
 
 	// A message whose key is taken fails the same way.
 	_, _, err = e.env.Store.Publish(e.ctx, result(20, 1, headA, checks.Success, "ready"), at(3), message(10, 1)) // key check:10:1:1 exists
@@ -349,7 +349,7 @@ func ckFailingMessage(e *env) {
 	e.must(e.env.FailMessage(e.ctx, key(10, 1, 1), at(3)))
 	_, _, err = e.env.Store.Publish(e.ctx, first, at(3+cooldownMinutes), failing)
 	e.requireErr(err, boom)
-	e.requireCurrent(1, before)
+	e.requireCurrent(before)
 	e.requireOutbox(key(10, 1, 1))
 
 	// An update that writes no message never calls it.
@@ -414,7 +414,7 @@ func ckPrecision(e *env) {
 	if !written {
 		e.t.Fatal("the first result wrote no message")
 	}
-	e.requireCurrent(1, checks.Record{Result: r, HeadSince: at(1), Generation: 1, DecidedAt: at(1)})
+	e.requireCurrent(checks.Record{Result: r, HeadSince: at(1), Generation: 1, DecidedAt: at(1)})
 }
 
 func ckCanceled(e *env) {

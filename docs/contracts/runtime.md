@@ -504,16 +504,16 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **When it is written.** When the checks job publishes `failure` with reason `invalid-source` for an open, non-fork PR, it also writes one comment that explains the problem.
 - **The problem** has three kinds:
   - **`declaration`:** the head's `.suiteward.yml` is not a valid declaration;
-  - **`link`:** a symbolic link the scope covers or may cover below, whose target is not a regular file of the tree; the payload adds `path`, the link's path cut to 150 bytes;
+  - **`link`:** a symbolic link the scope covers or may cover below, whose target is not a regular file of the tree; the payload adds `path`, the link's path cut to 150 bytes, and `declaration` (amended 2026-10-19, optional): the head's `.suiteward.yml` with the link's anchored path added to `exclude`, omitted when the head has no declaration, it cannot be built, or it exceeds 8 KiB;
   - A truncated tree is `source-unavailable`, not `invalid-source`, so it gets no such comment.
-- **The key.** The problem digest is the SHA-256 of the kind and the path. A later push with the same problem posts nothing; a different problem posts a new comment.
+- **The key.** The problem digest is the SHA-256 of the kind and the path; for a `link` it also covers the head's `.suiteward.yml`, so an edit of the declaration posts a comment with a current one. A later push with the same problem posts nothing; a different problem posts a new comment.
 - **The text:**
   - it names the problem and gives the next step:
     - fix the declaration;
-    - remove the link, point it to a file, or narrow the pattern that reaches it;
+    - remove the link or point it to a regular file; or accept it with its exact anchored path in `exclude` (an accepted link), with the warning that nothing reached through it is protected and that the change is a reduction the owner approves. The comment never suggests narrowing the include patterns;
     - the repository is too large for this release.
   - the path goes inside a fence, escaped;
-  - it never quotes file content;
+  - it quotes no file content except the head's own declaration of a `link` comment;
   - it says the canonical contract stays in force and the check stays `failure` until the next push fixes it.
 - **The check summary** for `invalid-source` no longer mentions submodules, which are outside the scope since the D-SCOPE amendment.
 

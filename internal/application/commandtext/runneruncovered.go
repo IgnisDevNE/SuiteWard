@@ -13,11 +13,12 @@ import (
 // declaration that protects them, Ignore the full declaration that excludes them; Ignore is empty when the paths cannot be named in
 // an exclude list, and the comment then offers only to protect them.
 type RunnerUncovered struct {
-	Repo, Branch string
-	Paths        []string
-	PathsTotal   int
-	Protect      []byte
-	Ignore       []byte
+	Repo, Branch    string
+	Paths           []string
+	PathsTotal      int
+	Protect         []byte
+	ProtectPatterns []string
+	Ignore          []byte
 }
 
 // ValidateRunnerUncovered reports why RunnerUncoveredComment would panic on n, as an error: a caller that stores the notice calls it
@@ -92,8 +93,8 @@ const maxKeyIndent = 40
 // writes it (see suggestedItems). With newList empty the items follow the anchor's list at indent, the spaces before its dash, in the
 // quoting of the anchor. With newList (runner for the protect choice, exclude for the ignore choice) the anchor ends another list, and the block continues with that key at indent and its items two spaces deeper.
 // An input that does not fit panics (see ValidateRunnerChoice).
-func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string) string {
-	must(ValidateRunnerChoice(choice, anchorLine, indent, patterns, newList))
+func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string, quoting Quoting) string {
+	must(ValidateRunnerChoice(choice, anchorLine, indent, patterns, newList, quoting))
 	items := suggestedItems(patterns, indent, quotingOf(anchorLine))
 	if newList != "" { // a list the block creates has no items to follow
 		items = "\n" + indent + newList + ":" + suggestedItems(patterns, indent+"  ", 0)
@@ -109,7 +110,7 @@ func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns [
 // ValidateRunnerChoice reports why RunnerChoiceBody would panic on its arguments, as an error. The items are written in the
 // style of the anchor (see quotingOf), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
 // out: the caller decides what to do.
-func ValidateRunnerChoice(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string) error {
+func ValidateRunnerChoice(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string, quoting Quoting) error {
 	switch {
 	case choice != ProtectChoice && choice != IgnoreChoice:
 		return fmt.Errorf("commandtext: runner choice %d is unknown", choice)

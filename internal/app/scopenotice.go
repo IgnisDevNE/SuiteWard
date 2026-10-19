@@ -155,9 +155,9 @@ func (s scopeSuggestion) validate() error {
 	}
 	var err error
 	if isChoice {
-		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, "")
 	} else {
-		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns)
+		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns, "")
 	}
 	if err != nil { // its text quotes the anchor line and the patterns
 		return errors.New("the anchor line, its indent or the patterns do not fit the suggestion")
@@ -168,9 +168,9 @@ func (s scopeSuggestion) validate() error {
 // body renders the review comment of the suggestion; it panics on one that does not validate.
 func (s scopeSuggestion) body() string {
 	if choice, isChoice := choices[s.List]; isChoice {
-		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, "")
 	}
-	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns)
+	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns, "")
 }
 
 // scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<review digest>: one or two suggestions, the include

@@ -139,7 +139,7 @@ var (
 )
 
 func cmtChoiceBody(choice commandtext.RunnerChoice, anchor, indent string, patterns []string, newList, suffix string) string {
-	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList)) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
+	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
 }
 
 func TestCommentPublisherPostsTheProtectAndIgnoreSuggestionsEachWithItsOwnMarker(t *testing.T) {

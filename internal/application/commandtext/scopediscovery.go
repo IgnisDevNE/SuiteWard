@@ -214,8 +214,8 @@ func pathEscape(branch string) string {
 // sentence, then a suggestion block that holds anchorLine (the list item the comment is on) unchanged, followed by one item
 // per pattern at the same indentation, in the quoting of the anchor, as scope.AddPatterns writes it (see suggestedItems). An
 // input that does not fit panics (see ValidateScopeSuggestion).
-func ScopeSuggestionBody(anchorLine, indent string, patterns []string) string {
-	must(ValidateScopeSuggestion(anchorLine, indent, patterns))
+func ScopeSuggestionBody(anchorLine, indent string, patterns []string, quoting Quoting) string {
+	must(ValidateScopeSuggestion(anchorLine, indent, patterns, quoting))
 	content := anchorLine + suggestedItems(patterns, indent, quotingOf(anchorLine))
 	return paragraphs("SuiteWard suggests adding these patterns to this list; committing the suggestion is a protected change that needs the owner's approval.",
 		fence("suggestion", content+"\n"))
@@ -254,7 +254,7 @@ func suggestedItems(patterns []string, indent string, style yaml.Style) string {
 // ValidateScopeSuggestion reports why ScopeSuggestionBody would panic on its arguments, as an error. The items are written in the
 // style of the anchor (see quotingOf), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
 // out: the caller decides what to do.
-func ValidateScopeSuggestion(anchorLine, indent string, patterns []string) error {
+func ValidateScopeSuggestion(anchorLine, indent string, patterns []string, quoting Quoting) error {
 	switch {
 	case len(patterns) == 0 || len(patterns) > maxListed:
 		return fmt.Errorf("commandtext: %d suggested patterns, want 1 to %d", len(patterns), maxListed)
@@ -272,3 +272,14 @@ func ValidateScopeSuggestion(anchorLine, indent string, patterns []string) error
 	}
 	return nil
 }
+
+// Quoting is the quoting style of the list that a review suggestion extends, as scope.AddPatterns would write its new items: the quoting
+// that every existing item shares, plain when they differ. The zero value follows the anchor line, which is all that a payload written before
+// the style was carried knows of the list.
+type Quoting string
+
+const (
+	QuotingPlain  Quoting = "plain"
+	QuotingSingle Quoting = "single"
+	QuotingDouble Quoting = "double"
+)

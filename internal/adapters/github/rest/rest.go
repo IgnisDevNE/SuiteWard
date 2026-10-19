@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 // TokenFunc returns the bearer value and a stable identity of the current
@@ -48,9 +47,6 @@ var (
 	ErrRateLimited = errors.New("github: rate limited")
 )
 
-// maxErrorBody bounds the response body kept in an error.
-const maxErrorBody = 512
-
 // maxBody bounds any response body read into memory; a variable only so tests can lower it.
 var maxBody int64 = 64 << 20
 
@@ -76,23 +72,19 @@ func (e *BudgetExhaustedError) Unwrap() error { return ErrBudgetExhausted }
 type RateLimitedError struct {
 	Status int
 	Until  time.Time
-	Body   string
 }
 
 func (e *RateLimitedError) Error() string {
-	return fmt.Sprintf("%v: status %d until %s: %s", ErrRateLimited, e.Status, e.Until.UTC().Format(time.RFC3339), e.Body)
+	return fmt.Sprintf("%v: status %d until %s", ErrRateLimited, e.Status, e.Until.UTC().Format(time.RFC3339))
 }
 
 func (e *RateLimitedError) Unwrap() error { return ErrRateLimited }
 
-// StatusError is any other non-2xx answer. Body is truncated to 512 bytes.
-type StatusError struct {
-	Status int
-	Body   string
-}
+// StatusError is any other non-2xx answer. It carries the status only: GitHub's answer text can quote repository text.
+type StatusError struct{ Status int }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("github: status %d: %s", e.Status, e.Body)
+	return fmt.Sprintf("github: status %d", e.Status)
 }
 
 // statusKinds maps the statuses callers distinguish; any other status matches no sentinel.
@@ -256,9 +248,7 @@ func (c *Client) GetImmutable(ctx context.Context, path string) (Response, error
 const maxPostBody = 64 << 10
 
 // Post sends a JSON body and expects 201. It shares the budget and the rate-limit
-// errors of Get but never uses the ETag cache. Neither the request body nor any
-// answer text reaches an error: a comment can quote repository text, and a
-// POST error only needs the status.
+// errors of Get but never uses the ETag cache. The request body never reaches an error: a comment can quote repository text.
 func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, error) {
 	if !strings.HasPrefix(path, "/") {
 		return Response{}, fmt.Errorf("github POST %q: path must start with /", path)
@@ -269,16 +259,13 @@ func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, 
 	if err := c.budget.acquire(); err != nil {
 		return Response{}, fmt.Errorf("github POST %s: %w", path, err)
 	}
-	resp, _, err := c.send(ctx, http.MethodPost, path, body, false)
+	resp, err := c.send(ctx, http.MethodPost, path, body, false)
 	if err != nil {
 		c.budget.release()
 		return Response{}, fmt.Errorf("github POST %s: %w", path, err)
 	}
 	c.budget.record(resp.status, resp.header)
-	if resp.status < 200 || resp.status > 299 {
-		resp.body = nil // interpret keeps the answer text of an error; a POST error keeps none
-	}
-	out, err := c.interpret(resp, "")
+	out, err := c.interpret(resp)
 	if err != nil {
 		return Response{}, fmt.Errorf("github POST %s: %w", path, err)
 	}
@@ -295,13 +282,13 @@ func (c *Client) get(ctx context.Context, path string, useCache bool) (Response,
 	if err := c.budget.acquire(); err != nil {
 		return Response{}, fmt.Errorf("github GET %s: %w", path, err)
 	}
-	resp, value, err := c.send(ctx, http.MethodGet, path, nil, useCache)
+	resp, err := c.send(ctx, http.MethodGet, path, nil, useCache)
 	if err != nil {
 		c.budget.release()
 		return Response{}, fmt.Errorf("github GET %s: %w", path, err)
 	}
 	c.budget.record(resp.status, resp.header)
-	out, err := c.interpret(resp, value)
+	out, err := c.interpret(resp)
 	if err != nil {
 		return Response{}, fmt.Errorf("github GET %s: %w", path, err)
 	}
@@ -322,10 +309,10 @@ type answer struct {
 // send performs one request with the current token and, when useCache is set
 // and the cache of that token's identity holds the path, its ETag. A request
 // with a body is sent as JSON.
-func (c *Client) send(ctx context.Context, method, path string, payload []byte, useCache bool) (answer, string, error) {
+func (c *Client) send(ctx context.Context, method, path string, payload []byte, useCache bool) (answer, error) {
 	value, identity, err := c.token(ctx)
 	if err != nil {
-		return answer{}, "", fmt.Errorf("%w: token: %w", ErrNotSent, err)
+		return answer{}, fmt.Errorf("%w: token: %w", ErrNotSent, err)
 	}
 	var entry cached
 	var hadCache bool
@@ -340,7 +327,7 @@ func (c *Client) send(ctx context.Context, method, path string, payload []byte, 
 
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(payload))
 	if err != nil {
-		return answer{}, "", err
+		return answer{}, err
 	}
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
@@ -353,22 +340,22 @@ func (c *Client) send(ctx context.Context, method, path string, payload []byte, 
 	}
 	resp, err := c.http.Do(req) // the error names the URL, never a header
 	if err != nil {
-		return answer{}, "", err
+		return answer{}, err
 	}
 	defer func() { _ = resp.Body.Close() }() // the body is read (up to the limit) below; a close error cannot change the outcome
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
-		return answer{}, "", fmt.Errorf("read body: %w", err)
+		return answer{}, fmt.Errorf("read body: %w", err)
 	}
 	if int64(len(body)) > maxBody {
-		return answer{}, "", fmt.Errorf("response body exceeds the limit of %d bytes", maxBody)
+		return answer{}, fmt.Errorf("response body exceeds the limit of %d bytes", maxBody)
 	}
-	return answer{path: path, identity: identity, useCache: useCache, status: resp.StatusCode, header: resp.Header, body: body, cached: entry, hadCache: hadCache}, value, nil
+	return answer{path: path, identity: identity, useCache: useCache, status: resp.StatusCode, header: resp.Header, body: body, cached: entry, hadCache: hadCache}, nil
 }
 
 // interpret turns GitHub's answer into a Response or a typed error, and keeps
 // the ETag of a 2xx for the identity that requested it.
-func (c *Client) interpret(a answer, value string) (Response, error) {
+func (c *Client) interpret(a answer) (Response, error) {
 	switch {
 	case a.status == http.StatusNotModified:
 		if !a.hadCache {
@@ -390,14 +377,13 @@ func (c *Client) interpret(a answer, value string) (Response, error) {
 		}
 		return Response{Status: a.status, Body: a.body, ETag: etag, Date: responseDate(a.header)}, nil
 	}
-	body := errorBody(a.body, value)
 	if a.status == http.StatusForbidden || a.status == http.StatusTooManyRequests {
 		retryAfter, hasRetry := a.header["Retry-After"]
 		if hasRetry || a.header.Get("X-RateLimit-Remaining") == "0" {
-			return Response{}, &RateLimitedError{Status: a.status, Until: c.retryTime(retryAfter, a.header.Get("X-RateLimit-Reset")), Body: body}
+			return Response{}, &RateLimitedError{Status: a.status, Until: c.retryTime(retryAfter, a.header.Get("X-RateLimit-Reset"))}
 		}
 	}
-	return Response{}, &StatusError{Status: a.status, Body: body}
+	return Response{}, &StatusError{Status: a.status}
 }
 
 // responseDate is the answer's own Date in UTC, zero when the header is missing or cannot be parsed. Unlike the
@@ -426,21 +412,4 @@ func (c *Client) retryTime(retryAfter []string, reset string) time.Time {
 		return c.budget.local(time.Unix(r, 0))
 	}
 	return time.Time{}
-}
-
-// errorBody removes the token from a body (a server could echo it) and
-// truncates it to maxErrorBody bytes.
-func errorBody(body []byte, value string) string {
-	s := string(body)
-	if value != "" {
-		s = strings.ReplaceAll(s, value, "[redacted]")
-	}
-	if len(s) > maxErrorBody {
-		n := maxErrorBody
-		for n > 0 && !utf8.RuneStart(s[n]) { // never split a rune
-			n--
-		}
-		s = s[:n]
-	}
-	return s
 }

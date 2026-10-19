@@ -32,13 +32,13 @@ func TestReadErrorsAreClassifiedWithoutTheTextGitHubSent(t *testing.T) {
 		err  error
 		want githubsync.ReadError
 	}{
-		"rate limited":     {&rest.RateLimitedError{Status: 403, Until: until, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureRateLimited, Status: 403, WaitUntil: until}},
+		"rate limited":     {fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 403, Until: until}, secret), githubsync.ReadError{Kind: githubsync.FailureRateLimited, Status: 403, WaitUntil: until}},
 		"budget exhausted": {&rest.BudgetExhaustedError{Reset: until}, githubsync.ReadError{Kind: githubsync.FailureBudgetExhausted, WaitUntil: until}},
-		"unauthorized":     {&rest.StatusError{Status: 401, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
-		"forbidden":        {&rest.StatusError{Status: 403, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureForbidden, Status: 403}},
-		"not found":        {&rest.StatusError{Status: 404, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureNotFound, Status: 404}},
-		"unprocessable":    {&rest.StatusError{Status: 422, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureUnprocessable, Status: 422}},
-		"other status":     {&rest.StatusError{Status: 502, Body: secret}, githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 502}},
+		"unauthorized":     {fmt.Errorf("%w: %s", &rest.StatusError{Status: 401}, secret), githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
+		"forbidden":        {fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, secret), githubsync.ReadError{Kind: githubsync.FailureForbidden, Status: 403}},
+		"not found":        {fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, secret), githubsync.ReadError{Kind: githubsync.FailureNotFound, Status: 404}},
+		"unprocessable":    {fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, secret), githubsync.ReadError{Kind: githubsync.FailureUnprocessable, Status: 422}},
+		"other status":     {fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, secret), githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 502}},
 		"token request":    {&appauth.StatusError{Status: 401}, githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
 		"app jwt refused":  {&appauth.StatusError{Endpoint: "app", Status: 401}, githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
 		"token not found":  {&appauth.StatusError{Status: 404}, githubsync.ReadError{Kind: githubsync.FailureNotFound, Status: 404}},

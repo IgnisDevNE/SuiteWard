@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 )
@@ -482,7 +481,6 @@ func TestBudgetIsSharedByClients(t *testing.T) {
 func TestGetReturnsTypedErrors(t *testing.T) {
 	const skew = 2 * time.Minute
 	reset := t0.Add(30 * time.Minute)
-	sentinels := []error{rest.ErrUnauthorized, rest.ErrForbidden, rest.ErrNotFound, rest.ErrUnprocessable, rest.ErrRateLimited, rest.ErrBudgetExhausted}
 	cases := []struct {
 		name       string
 		status     int
@@ -528,45 +526,52 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 			if err == nil || hits.Load() != 1 {
 				t.Fatalf("err = %v after %d requests; want an error after one request", err, hits.Load())
 			}
-			for _, s := range sentinels {
-				if got := errors.Is(err, s); got != (s == tc.want) {
-					t.Errorf("errors.Is(err, %v) = %v", s, got)
-				}
-			}
-			if tc.want == rest.ErrRateLimited {
-				var rl *rest.RateLimitedError
-				if !errors.As(err, &rl) || rl.Status != tc.status || !rl.Until.Equal(tc.until) {
-					t.Fatalf("rate-limit error = %#v, want status %d until %v", err, tc.status, tc.until)
-				}
-				return
-			}
-			var se *rest.StatusError
-			if !errors.As(err, &se) || se.Status != tc.status || se.Body != `{"message":"refused"}` {
-				t.Fatalf("status error = %#v, want status %d with the body", err, tc.status)
-			}
+			assertTypedError(t, err, tc.status, tc.want, tc.until)
 		})
 	}
 }
 
-func TestErrorBodiesAreTruncated(t *testing.T) {
-	long := strings.Repeat("x", 4096)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(long))
-	}))
-	defer srv.Close()
-	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
-
-	_, err := c.Get(context.Background(), "/repos/o/r")
+// assertTypedError checks that err matches only the sentinel want (nil: none) and carries status; a rate limit also carries until.
+func assertTypedError(t *testing.T, err error, status int, want error, until time.Time) {
+	t.Helper()
+	for _, s := range []error{rest.ErrUnauthorized, rest.ErrForbidden, rest.ErrNotFound, rest.ErrUnprocessable, rest.ErrRateLimited, rest.ErrBudgetExhausted} {
+		if got := errors.Is(err, s); got != (s == want) {
+			t.Errorf("errors.Is(err, %v) = %v", s, got)
+		}
+	}
+	if want == rest.ErrRateLimited {
+		var rl *rest.RateLimitedError
+		if !errors.As(err, &rl) || rl.Status != status || !rl.Until.Equal(until) {
+			t.Fatalf("rate-limit error = %#v, want status %d until %v", err, status, until)
+		}
+		return
+	}
 	var se *rest.StatusError
-	if !errors.As(err, &se) {
-		t.Fatalf("err = %v, want a *StatusError", err)
+	if !errors.As(err, &se) || se.Status != status {
+		t.Fatalf("status error = %#v, want status %d", err, status)
 	}
-	if se.Body != long[:512] {
-		t.Fatalf("body in error has %d bytes, want the first 512", len(se.Body))
-	}
-	if strings.Contains(err.Error(), long[:513]) {
-		t.Fatal("error text carries more than 512 bytes of the body")
+}
+
+// GitHub's answer text can quote repository text, so no error of a read carries it, whatever the status.
+func TestGetErrorsNeverCarryTheAnswerText(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		header map[string]string
+	}{
+		{401, nil}, {403, nil}, {404, nil}, {422, nil}, {500, nil},
+		{403, map[string]string{"Retry-After": "30"}}, {429, map[string]string{"X-RateLimit-Remaining": "0"}},
+	} {
+		t.Run(strconv.Itoa(tc.status)+fmt.Sprint(tc.header), func(t *testing.T) {
+			client, _ := newPoster(t, tc.status, tc.header, `{"message":"`+secretAnswer+" "+tokenValue+`"}`)
+
+			_, err := client.Get(t.Context(), "/repos/o/r")
+			if err == nil {
+				t.Fatal("Get succeeded")
+			}
+			if strings.Contains(err.Error(), secretAnswer) || strings.Contains(fmt.Sprintf("%#v", errors.Unwrap(err)), secretAnswer) {
+				t.Fatalf("error %q carries the answer text", err)
+			}
+		})
 	}
 }
 
@@ -888,8 +893,8 @@ func TestBodiesOverTheLimitAreAnErrorNotTruncated(t *testing.T) {
 						t.Errorf("%s: %+v, %v; want the full body", name, got, err)
 					}
 				case tc.ok:
-					if !errors.As(err, &se) || len(se.Body) != limit {
-						t.Errorf("%s: err = %v, want a StatusError carrying the body", name, err)
+					if !errors.As(err, &se) {
+						t.Errorf("%s: err = %v, want a StatusError", name, err)
 					}
 				default:
 					if err == nil || errors.As(err, &se) || !strings.Contains(err.Error(), "8 bytes") {
@@ -966,25 +971,6 @@ func TestRetryAfterAsHTTPDate(t *testing.T) {
 	var rl *rest.RateLimitedError
 	if !errors.As(err, &rl) || !rl.Until.Equal(until) {
 		t.Fatalf("err = %#v, want a RateLimitedError until %v", err, until)
-	}
-}
-
-func TestErrorBodyTruncationKeepsRunesWhole(t *testing.T) {
-	body := strings.Repeat("x", 511) + "é" // the rune spans bytes 511 and 512
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(body))
-	}))
-	defer srv.Close()
-	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
-
-	_, err := c.Get(context.Background(), "/p")
-	var se *rest.StatusError
-	if !errors.As(err, &se) {
-		t.Fatalf("err = %v, want a *StatusError", err)
-	}
-	if !utf8.ValidString(se.Body) || se.Body != body[:511] {
-		t.Fatalf("truncated body has %d bytes, want the 511 whole bytes before the rune", len(se.Body))
 	}
 }
 

@@ -586,9 +586,9 @@ func TestCommentPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 		err    error
 		status string
 	}{
-		{"post answered with a status", func(f *fakeCommentWriter, err error) { f.postErr = err }, &rest.StatusError{Status: 403, Body: cmtSecretText}, "403"},
-		{"readback answered with a status", func(f *fakeCommentWriter, err error) { f.listErr = err }, &rest.StatusError{Status: 502, Body: cmtSecretText}, "502"},
-		{"rate limited", func(f *fakeCommentWriter, err error) { f.postErr = err }, &rest.RateLimitedError{Status: 429, Body: cmtSecretText}, "rate_limited"},
+		{"post answered with a status", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, cmtSecretText), "403"},
+		{"readback answered with a status", func(f *fakeCommentWriter, err error) { f.listErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText), "502"},
+		{"rate limited", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 429}, cmtSecretText), "rate_limited"},
 		{"transport failure", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("Post https://api.example/%s: connection refused", cmtSecretText), "transport"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -614,7 +614,7 @@ func TestBotAccountResolvesOnceAndRetriesAfterAFailure(t *testing.T) {
 	bot := newBotAccount(func(context.Context) (int64, error) {
 		calls++
 		if fail {
-			return 0, &rest.StatusError{Status: 502, Body: cmtSecretText}
+			return 0, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText)
 		}
 		return cmtBotID, nil
 	})
@@ -641,7 +641,7 @@ func TestCommentPublisherReturnsABotIdentityFailureAndRetriesIt(t *testing.T) {
 	w.pub.bot = newBotAccount(func(context.Context) (int64, error) {
 		calls.Add(1)
 		if failing.Load() {
-			return 0, &rest.StatusError{Status: 502, Body: cmtSecretText}
+			return 0, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText)
 		}
 		return cmtBotID, nil
 	})

@@ -184,6 +184,7 @@ func (a App) Slug(ctx context.Context, httpClient *http.Client, baseURL string) 
 	}
 	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
 	if resp.StatusCode != http.StatusOK {
+		drain(resp.Body)
 		return "", &StatusError{Endpoint: "app", Status: resp.StatusCode}
 	}
 	var out struct {
@@ -315,6 +316,7 @@ func (i *Installation) mint(ctx context.Context) (Token, error) {
 	}
 	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
 	if resp.StatusCode != http.StatusCreated {
+		drain(resp.Body)
 		return Token{}, &StatusError{Endpoint: "access_tokens", Status: resp.StatusCode}
 	}
 	var out struct {
@@ -370,3 +372,6 @@ func (t Token) MarshalText() ([]byte, error) { return []byte(t.String()), nil }
 
 // Format hides the value whatever the verb.
 func (t Token) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, t.String()) }
+
+// drain reads a refused answer up to maxAnswer so the connection can be reused; its text is never kept.
+func drain(body io.Reader) { _, _ = io.Copy(io.Discard, io.LimitReader(body, maxAnswer)) }

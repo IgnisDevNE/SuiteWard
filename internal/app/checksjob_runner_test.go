@@ -320,7 +320,7 @@ func TestChecksNeverKeepASuccessWhenTheFilesOfThePullRequestCannotBeRead(t *test
 	w.want(5, checks.Success, "unchanged", 1)
 
 	w.check.runners = nil // a restart forgets what was decided
-	w.reader.filesErr = &rest.StatusError{Status: 500, Body: bootSecret}
+	w.reader.filesErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
 	w.mustCheck()
 
 	w.want(5, checks.InProgress, "assessment-pending", 2)

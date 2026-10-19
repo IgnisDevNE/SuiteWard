@@ -19,10 +19,12 @@ import (
 	"log"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -951,4 +953,37 @@ func TestPrintingAnInstallationWhileMintingIsRaceFree(t *testing.T) {
 	}
 	close(stop)
 	<-printed
+}
+
+// A refused answer is drained before it is closed, so the connection serves the next request.
+func TestRefusedAnswersLeaveTheConnectionReusable(t *testing.T) {
+	t.Parallel()
+	var connections atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("x", 512<<10))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	app := newApp(t, &fakeClock{now: t0})
+	inst, err := app.Installation(installationID, repositories, syncPerms, srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	for range 2 {
+		if _, err := app.Slug(context.Background(), srv.Client(), srv.URL); err == nil {
+			t.Fatal("Slug accepted the answer")
+		}
+		if _, err := inst.Token(context.Background()); err == nil {
+			t.Fatal("Token accepted the answer")
+		}
+	}
+	if got := connections.Load(); got != 1 {
+		t.Errorf("%d connections for four refused requests, want 1", got)
+	}
 }

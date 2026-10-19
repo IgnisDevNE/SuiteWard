@@ -204,19 +204,30 @@ func TestCommentsByAuthorPagesThroughTheListing(t *testing.T) {
 	}
 }
 
-func TestCommentsByAuthorRejectsInvalidArgumentsBeforeAnyRequest(t *testing.T) {
-	w, gh := newWriterOnRoutes(t, map[string]reply{})
-	for name, call := range map[string]func() error{
-		"repo":   func() error { _, err := w.CommentsByAuthor(t.Context(), "octo-repo", 42, hubotID); return err },
-		"number": func() error { _, err := w.CommentsByAuthor(t.Context(), repo, 0, hubotID); return err },
-		"author": func() error { _, err := w.CommentsByAuthor(t.Context(), repo, 42, 0); return err },
+func TestCommentListsRejectInvalidArgumentsBeforeAnyRequest(t *testing.T) {
+	for name, list := range map[string]func(*github.Writer, context.Context, string, int, int64) ([]github.Comment, error){
+		"comments":        (*github.Writer).CommentsByAuthor,
+		"review comments": (*github.Writer).ReviewCommentsByAuthor,
 	} {
-		if err := call(); !errors.Is(err, github.ErrInvalidArgument) {
-			t.Errorf("bad %s: err = %v, want ErrInvalidArgument", name, err)
-		}
-	}
-	if uris := gh.uris(); len(uris) != 0 {
-		t.Errorf("requests = %v, want none", uris)
+		t.Run(name, func(t *testing.T) {
+			w, gh := newWriterOnRoutes(t, map[string]reply{})
+			for arg, bad := range map[string]struct {
+				repo   string
+				number int
+				author int64
+			}{
+				"repo":   {"octo-repo", 42, hubotID},
+				"number": {repo, 0, hubotID},
+				"author": {repo, 42, 0},
+			} {
+				if _, err := list(w, t.Context(), bad.repo, bad.number, bad.author); !errors.Is(err, github.ErrInvalidArgument) {
+					t.Errorf("bad %s: err = %v, want ErrInvalidArgument", arg, err)
+				}
+			}
+			if uris := gh.uris(); len(uris) != 0 {
+				t.Errorf("requests = %v, want none", uris)
+			}
+		})
 	}
 }
 
@@ -531,21 +542,5 @@ func TestReviewCommentsByAuthorPagesThroughTheListing(t *testing.T) {
 	}
 	if uris := gh.uris(); !slices.Equal(uris, []string{reviewCommentsURI + "1", reviewCommentsURI + "2"}) {
 		t.Errorf("requests = %v, want pages 1 and 2", uris)
-	}
-}
-
-func TestReviewCommentsByAuthorRejectsInvalidArgumentsBeforeAnyRequest(t *testing.T) {
-	w, gh := newWriterOnRoutes(t, map[string]reply{})
-	for name, call := range map[string]func() error{
-		"repo":   func() error { _, err := w.ReviewCommentsByAuthor(t.Context(), "octo-repo", 42, hubotID); return err },
-		"number": func() error { _, err := w.ReviewCommentsByAuthor(t.Context(), repo, 0, hubotID); return err },
-		"author": func() error { _, err := w.ReviewCommentsByAuthor(t.Context(), repo, 42, 0); return err },
-	} {
-		if err := call(); !errors.Is(err, github.ErrInvalidArgument) {
-			t.Errorf("bad %s: err = %v, want ErrInvalidArgument", name, err)
-		}
-	}
-	if uris := gh.uris(); len(uris) != 0 {
-		t.Errorf("requests = %v, want none", uris)
 	}
 }

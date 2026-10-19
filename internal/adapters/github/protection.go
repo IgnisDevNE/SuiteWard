@@ -197,7 +197,7 @@ func (r *Reader) Protection(ctx context.Context, repo, branch string) (Protectio
 	rulesPath := func(page int) string {
 		return fmt.Sprintf("/repos/%s/rules/branches/%s?per_page=%d&page=%d", repo, escaped, pageSize, page)
 	}
-	rules, err := readPages[ruleJSON](ctx, r.client, rulesPath)
+	rules, _, err := readDecoded[ruleJSON](ctx, r.client, rulesPath)
 	switch {
 	case statusIs(err, http.StatusForbidden):
 		p.RulesForbidden = true

@@ -385,24 +385,8 @@ func TestAcknowledge(t *testing.T) {
 			if body == "" {
 				t.Fatal("empty body")
 			}
-			for _, w := range tc.want {
-				if !strings.Contains(body, w) {
-					t.Errorf("body lacks %q:\n%s", w, body)
-				}
-			}
-			for _, w := range tc.notWant {
-				if strings.Contains(body, w) {
-					t.Errorf("body contains %q:\n%s", w, body)
-				}
-			}
-			link := "[your command](#issuecomment-2345678901)"
-			if tc.ack.Outcome == commandtext.BootstrapPromoted {
-				if strings.Contains(body, "#issuecomment") {
-					t.Errorf("body links a command that did not trigger it:\n%s", body)
-				}
-			} else if !strings.Contains(body, link) {
-				t.Errorf("body lacks %q:\n%s", link, body)
-			}
+			checkWantedText(t, body, tc.want, tc.notWant)
+			checkReplyLink(t, tc.ack.Outcome, body)
 			if strings.Contains(body, "http") {
 				t.Errorf("body holds a host name or URL:\n%s", body)
 			}
@@ -413,6 +397,34 @@ func TestAcknowledge(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// checkWantedText holds when body contains each of want and none of notWant.
+func checkWantedText(t *testing.T, body string, want, notWant []string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(body, w) {
+			t.Errorf("body lacks %q:\n%s", w, body)
+		}
+	}
+	for _, w := range notWant {
+		if strings.Contains(body, w) {
+			t.Errorf("body contains %q:\n%s", w, body)
+		}
+	}
+}
+
+// checkReplyLink holds when body links the command comment, except for the acknowledgment of a bootstrap promotion, which no command triggered.
+func checkReplyLink(t *testing.T, outcome commandtext.Outcome, body string) {
+	t.Helper()
+	link := "[your command](#issuecomment-2345678901)"
+	if outcome == commandtext.BootstrapPromoted {
+		if strings.Contains(body, "#issuecomment") {
+			t.Errorf("body links a command that did not trigger it:\n%s", body)
+		}
+	} else if !strings.Contains(body, link) {
+		t.Errorf("body lacks %q:\n%s", link, body)
 	}
 }
 

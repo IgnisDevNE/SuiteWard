@@ -225,3 +225,21 @@ func TestRunnerChoiceBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 		})
 	}
 }
+
+// A declaration of exactly the limit is accepted and, in the worst fence (one run of backticks, which the fence outgrows at both ends), the
+// comment with both declarations still fits; one byte more is refused.
+func TestRunnerUncoveredCommentAcceptsDeclarationsOfExactlyTheLimit(t *testing.T) {
+	n := runnerNotice()
+	n.Protect = []byte(strings.Repeat("`", commandtext.MaxDeclaration))
+	n.Ignore = n.Protect
+	if err := commandtext.ValidateRunnerUncovered(n); err != nil {
+		t.Fatalf("declarations of %d bytes are refused: %v", commandtext.MaxDeclaration, err)
+	}
+	if body := runnerText(t, n); body == "" || len(body) >= maxComment || !utf8.ValidString(body) {
+		t.Errorf("body has %d bytes or is not UTF-8, want 0 < n < %d", len(body), maxComment)
+	}
+	n.Protect = append(n.Protect, '`')
+	if commandtext.ValidateRunnerUncovered(n) == nil {
+		t.Errorf("a protect declaration of %d bytes is accepted", len(n.Protect))
+	}
+}

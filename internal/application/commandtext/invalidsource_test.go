@@ -264,3 +264,18 @@ func TestInvalidSourceNoticeNeedsBothTheRepositoryAndTheBranchOrNeither(t *testi
 		})
 	}
 }
+
+// A declaration of exactly the limit is accepted and, in the worst fence (one run of backticks), the comment still fits; one byte more is refused.
+func TestInvalidSourceCommentAcceptsADeclarationOfExactlyTheLimit(t *testing.T) {
+	notice := commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link", Declaration: []byte(strings.Repeat("`", commandtext.MaxDeclaration))}
+	if err := commandtext.ValidateInvalidSource(notice); err != nil {
+		t.Fatalf("a declaration of %d bytes is refused: %v", commandtext.MaxDeclaration, err)
+	}
+	if body := render(t, func() string { return commandtext.InvalidSourceComment(notice) }); body == "" || len(body) >= maxComment/2 {
+		t.Errorf("body has %d bytes, want 0 < n < %d", len(body), maxComment/2)
+	}
+	notice.Declaration = append(notice.Declaration, '`')
+	if commandtext.ValidateInvalidSource(notice) == nil {
+		t.Errorf("a declaration of %d bytes is accepted", len(notice.Declaration))
+	}
+}

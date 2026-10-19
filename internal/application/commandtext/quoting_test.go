@@ -34,7 +34,7 @@ func TestScopeSuggestionBodyQuotesTheItemsAsTheListDoes(t *testing.T) {
 			file := "version: 1\ninclude:\n" + anchor + "\n"
 			want := addedLines(t, file, func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, quotingPatterns, nil) }, anchor)
 			block := suggestionBlock.FindStringSubmatch(suggestionBody(t, anchor, "  ", quotingPatterns))
-			if block == nil || block[1] != anchor+"\n"+want {
+			if len(block) < 2 || block[1] != anchor+"\n"+want {
 				t.Errorf("the block is %q, want the anchor and\n%s", block, want)
 			}
 		})
@@ -55,7 +55,7 @@ func TestRunnerChoiceBodyQuotesTheItemsAsTheListDoes(t *testing.T) {
 			file := "version: 1\ninclude:\n" + include + "\n"
 			want := addedLines(t, file, c.add, include)
 			block := suggestionBlock.FindStringSubmatch(choiceBody(t, c.choice, include, "", quotingPatterns, c.newList))
-			if block == nil || block[1] != include+"\n"+want {
+			if len(block) < 2 || block[1] != include+"\n"+want {
 				t.Errorf("the block is %q, want the anchor and\n%s", block, want)
 			}
 		})
@@ -65,7 +65,7 @@ func TestRunnerChoiceBodyQuotesTheItemsAsTheListDoes(t *testing.T) {
 			file := "version: 1\nrunner:\n" + anchor + "\n"
 			want := addedLines(t, file, func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, nil, quotingPatterns) }, anchor)
 			block := suggestionBlock.FindStringSubmatch(choiceBody(t, commandtext.ProtectChoice, anchor, "  ", quotingPatterns, ""))
-			if block == nil || block[1] != anchor+"\n"+want {
+			if len(block) < 2 || block[1] != anchor+"\n"+want {
 				t.Errorf("the block is %q, want the anchor and\n%s", block, want)
 			}
 		})

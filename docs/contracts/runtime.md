@@ -25,7 +25,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | `GITHUB_APP_ID` (M1.4) | no | none | Positive integer. The GitHub settings are all set or all unset; when unset, `serve` runs without synchronization. |
 | `GITHUB_APP_KEY` (M1.4) | yes | none | The App's RSA private key in PEM (PKCS#1 or PKCS#8); normally given as `GITHUB_APP_KEY_FILE`. |
 | `GITHUB_INSTALLATION_ID` (M1.4) | no | none | Positive integer. |
-| `GITHUB_REPOSITORIES` (M1.4) | no | none | Comma-separated `owner/name`, 1 to 20 (D-SYNC), no duplicates. |
+| `GITHUB_REPOSITORIES` (M1.4) | no | none | Comma-separated `owner/name`, 1 to 20 (D-SYNC), no duplicates. An owner has at most 39 characters and a name at most 100, as on GitHub (since the M1.9 release review). |
 | `GITHUB_API_URL` (M1.4) | no | `https://api.github.com` | Absolute `https` URL (an `http` URL is accepted only for a loopback host, for tests). |
 | `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, `deploy/local.ps1` sets `co-located`. |
 
@@ -118,7 +118,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
     - The `reason` codes are `unknown-verb`, `missing-reference`, `bad-reference`, `missing-code`, `bad-code` and `extra-text`. `reference` is required for `invalid-code`, `replayed-code`, `no-suite` and `unknown-proposal`, and absent for `malformed` and `edited-first`.
   - `bootstrap-summary:<repository id>:P<n>-R1`: `summary`, the inputs of the bootstrap summary. These are the proposal and revision numbers, `origin`, `branch`, `protected` (the count), `paths`, `include`, `runner` (since M1.9; absent in older messages, which then render no runner section) and `exclude` (at most 20 each), `includeTotal`, `runnerTotal` and `excludeTotal` (how many rules the declaration has, so the publisher can say how many are not listed), and `tier`, the effective tier (D-IDENTITY: `co-located` when either the setting or the enrollment says so).
     - The payload must stay within the outbox limit of 64 KiB after JSON encoding, whatever the repository holds. A payload over the limit would fail `ProposeBaseline` on every run.
-    - So the bootstrap cuts each path, rule and the branch to at most 150 bytes (a runner rule to 48 bytes since the M1.9 release review, so that four lists of escaped text fit the 60 KiB guard) on a UTF-8 boundary before encoding, and ends a shortened entry with `…` (counted in the 150 bytes) so a cut entry never looks complete. `json.Marshal` turns a control byte into a 6-byte escape and invalid UTF-8 into U+FFFD, and that is acceptable for display.
+    - So the bootstrap cuts each path, rule and the branch to at most 150 bytes (a runner rule to 30 bytes since the M1.9 release review, so that the worst case of escaped text, with a 140-character repository, stays 2 KiB under the 60 KiB guard) on a UTF-8 boundary before encoding, and ends a shortened entry with `…` (counted in the 150 bytes) so a cut entry never looks complete. `json.Marshal` turns a control byte into a 6-byte escape and invalid UTF-8 into U+FFFD, and that is acceptable for display.
     - A test pins the worst case: 20 paths and 20 rules of each kind, made of control bytes and invalid UTF-8.
   - `bootstrap-promoted:<repository id>:P<n>-R1`: `reference` and `version` (`V1`).
 - **Rendering.** The publisher renders the body with the command-text package from these inputs.
@@ -499,7 +499,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **Resolution** is by the usual flow: the next head's assessment sees the changed scope.
 - **Which scope decides "covered".** It is the head's own declaration. This is sound because a head can be `success` only when it is `unchanged` (its declaration bytes equal the canonical's) or `ready` (the owner approved that exact revision, its declaration included). An approved reduction that drops a runner pattern therefore blocks, which fails closed.
 - **What counts as a runner file.** A runner file is a regular file or a symbolic link whose name is a runner-family name. A link counts too, so `conftest.py -> other.py` cannot slip past.
-- **The ignore choice** excludes only the file itself: a path with no slash is written anchored, as `/conftest.py`.
+- **The ignore choice** excludes only the file itself: a path with no slash is written anchored, as `/conftest.py`. A path with `*`, `?`, `[` or `\`, or one that is no valid exclude pattern (a leading `!`), gets no ignore choice, because no exclude names exactly that file; and a choice whose declaration cannot be built is dropped, never failing the job (amended 2026-10-19, M1.9 release review).
 - **The copyable declarations** start from the canonical. For a head whose own approved declaration differs from the canonical, the review suggestions apply to the head's file, while pasting a copy block would revert those edits. The comment says so.
 
 **Outbox `github_comment`, key `invalid-source:<repository id>:<pull>:<problem digest>` (new, 2026-10-18, live run 5).**

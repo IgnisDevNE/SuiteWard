@@ -79,13 +79,13 @@ func TestTheInvalidSourceCheckSummaryNamesLinksAndTheDeclarationButNoSubmodule(t
 	if title != "Invalid contract source" {
 		t.Errorf("title %q, want %q", title, "Invalid contract source")
 	}
-	for _, want := range []string{"`.suiteward.yml`", "symlink", "The canonical contract stays in force.", "and push"} {
+	for _, want := range []string{"`.suiteward.yml`", "symlink", "The canonical contract stays in force.", "remove the symlink or point it to a regular file", "exact anchored path to `exclude`", "scope reduction that the owner approves", "and push"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, summary)
 		}
 	}
-	if strings.Contains(strings.ToLower(summary), "submodule") {
-		t.Errorf("the summary mentions submodules:\n%s", summary)
+	if strings.Contains(strings.ToLower(summary), "submodule") || strings.Contains(strings.ToLower(summary), "narrow") {
+		t.Errorf("the summary mentions submodules or narrowing:\n%s", summary)
 	}
 }
 

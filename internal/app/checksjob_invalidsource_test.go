@@ -61,14 +61,26 @@ func (w *cjJobWorld) linkHead(sha string, links ...string) {
 	w.reader.repos[bootRepo].trees[sha] = linkedTree{&bootTree{files: files}, targets}
 }
 
-// problemDigest is the digest of a problem: SHA-256 of its kind, a newline and the whole path.
-func problemDigest(kind, path string) string {
-	sum := sha256.Sum256([]byte(kind + "\n" + path))
+// problemDigest is the digest of a problem: SHA-256 of its kind, a newline and the whole path, and for a link that carries the head's
+// declaration, a newline and the hex SHA-256 of that declaration, so an edited .suiteward.yml is a new problem.
+func problemDigest(kind, path, declaration string) string {
+	text := kind + "\n" + path
+	if declaration != "" {
+		inner := sha256.Sum256([]byte(declaration))
+		text += "\n" + hex.EncodeToString(inner[:])
+	}
+	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
 }
 
-func invalidKeyOf(pull int, kind, path string) string {
-	return fmt.Sprintf("invalid-source:%d:%d:%s", bootRepoID, pull, problemDigest(kind, path))
+func invalidKeyOf(pull int, kind, path string, declaration ...string) string {
+	return fmt.Sprintf("invalid-source:%d:%d:%s", bootRepoID, pull, problemDigest(kind, path, strings.Join(declaration, "")))
+}
+
+// linkKeyOf is the key of a link of the reachable head, whose carried declaration is the head's file with the link excluded.
+func linkKeyOf(t *testing.T, pull int, link string) string {
+	t.Helper()
+	return invalidKeyOf(pull, "link", link, acceptingDeclaration(t, reachable, link))
 }
 
 func (w *cjJobWorld) wantInvalidSource(keys ...string) {
@@ -95,7 +107,7 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 	w.mustCheck()
 
 	w.want(5, checks.Failure, "invalid-source", 1)
-	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"))
+	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
 	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "link", "path": "spec_link", "declaration": acceptingDeclaration(t, reachable, "spec_link")}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
@@ -109,14 +121,14 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 	w.sync(map[int]string{4: bootHead, 5: cjHead5})
 	w.mustCheck()
 	w.want(5, checks.Failure, "invalid-source", 2)
-	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"))
+	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
 
 	// Another bad link is another problem.
 	w.linkHead(cjHead4, "other_link")
 	w.sync(map[int]string{4: bootHead, 5: cjHead4})
 	w.mustCheck()
 	w.want(5, checks.Failure, "invalid-source", 3)
-	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"), invalidKeyOf(5, "link", "other_link"))
+	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"), linkKeyOf(t, 5, "other_link"))
 }
 
 func TestChecksExplainAnInvalidDeclarationWithoutQuotingIt(t *testing.T) {
@@ -159,7 +171,7 @@ func TestChecksBoundThePathOfALinkAndDigestTheWholePath(t *testing.T) {
 
 	w.mustCheck()
 
-	w.wantInvalidSource(invalidKeyOf(5, "link", long))
+	w.wantInvalidSource(linkKeyOf(t, 5, long))
 	path, _ := w.invalidSourcePayload(0)["path"].(string)
 	if len(path) == 0 || len(path) > 150 || !strings.HasPrefix(path, "lll") || !strings.HasSuffix(path, "…") {
 		t.Fatalf("payload path %q (%d bytes), want the path cut to at most 150 bytes", path, len(path))
@@ -323,4 +335,27 @@ func TestChecksAHeadThatAcceptsTheLinkIsNotInvalid(t *testing.T) {
 	if record, found := w.record(5); !found || record.Reason == "invalid-source" {
 		t.Fatalf("check record %+v (found %v), want a head that is assessed", record, found)
 	}
+}
+
+// The comment shows the head's declaration, so a push that edits .suiteward.yml but keeps the link must post a comment with the
+// current one: the key digests the carried declaration for a link, and only then.
+func TestChecksPostANewLinkCommentWhenTheHeadsDeclarationChanges(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.linkHead(cjHead2, "spec_link")
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	w.mustCheck()
+	first := linkKeyOf(t, 5, "spec_link")
+
+	w.linkHead(cjHead5, "spec_link") // the same file: the same problem
+	w.sync(map[int]string{4: bootHead, 5: cjHead5})
+	w.mustCheck()
+	w.wantInvalidSource(first)
+
+	edited := bootFiles("v1")
+	edited[".suiteward.yml"] = reachable + "# edited\n"
+	edited["app/main.py"] = "print('x')\n"
+	w.reader.repos[bootRepo].trees[cjHead4] = linkedTree{&bootTree{files: edited}, map[string]string{"spec_link": "app"}}
+	w.sync(map[int]string{4: bootHead, 5: cjHead4})
+	w.mustCheck()
+	w.wantInvalidSource(first, invalidKeyOf(5, "link", "spec_link", acceptingDeclaration(t, reachable+"# edited\n", "spec_link")))
 }

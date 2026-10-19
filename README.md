@@ -1,6 +1,27 @@
-# SuiteWard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/svg/suiteward-logo-dark.svg">
+    <img src="assets/brand/svg/suiteward-logo.svg" alt="SuiteWard" width="420">
+  </picture>
+</p>
 
-**A human-approved, tamper-evident test contract for repositories where AI agents write the code.**
+<p align="center">
+  <strong>A human-approved, tamper-evident test contract for repositories where AI agents write the code.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/IgnisDevNE/SuiteWard/actions/workflows/ci.yml"><img src="https://github.com/IgnisDevNE/SuiteWard/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://codecov.io/gh/IgnisDevNE/SuiteWard"><img src="https://codecov.io/gh/IgnisDevNE/SuiteWard/branch/main/graph/badge.svg" alt="Coverage"></a>
+  <a href="https://github.com/IgnisDevNE/SuiteWard/releases/latest"><img src="https://img.shields.io/github/v/release/IgnisDevNE/SuiteWard?color=3DD6A0&labelColor=12202F" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-3DD6A0?labelColor=12202F" alt="License: AGPL-3.0-only"></a>
+</p>
+
+<p align="center">
+  <a href="docs/quickstart.md">Quickstart</a> ·
+  <a href="docs/install.md">Install guide</a> ·
+  <a href="docs/agent-install.md">Installing with an agent</a> ·
+  <a href="docs/plan/README.md">Roadmap</a>
+</p>
 
 SuiteWard lets a repository hold and propose tests, but not redefine the tests that decide whether its own changes are acceptable. That set of files is a versioned, immutable contract, and only the project's verified owner can change it, by approving one exact revision with a one-time code.
 
@@ -39,6 +60,18 @@ Everything happens in the pull request: comments, commands and one required chec
 - **Labeled assurance.** An **isolated** installation, where SuiteWard, its App key, its database and the TOTP secret are out of the agent's reach, gives full assurance. A **co-located** one, next to the agent, is supported, and the check summary and the proposal, revision and merge comments say that its assurance is reduced.
 
 ## A pull request, step by step
+
+```mermaid
+flowchart LR
+    A["Agent opens a PR<br/>that changes a test"] --> B{"Protected files<br/>changed?"}
+    B -- no --> G["SuiteWard / Contract<br/>success"]
+    B -- yes --> C["Revision comment<br/>P&lt;n&gt;-R&lt;m&gt;: files and reductions"]
+    C --> D["Owner reviews the diff<br/>/suiteward approve P&lt;n&gt;-R&lt;m&gt; &lt;TOTP&gt;"]
+    D --> G
+    G --> E["Merge"]
+    E --> F["Merge commit matches<br/>the approved revision"]
+    F --> H["New canonical version<br/>V1, V2…"]
+```
 
 1. **The first contract.** On a repository with no contract, the owner comments `/suiteward propose`.
    - With no `.suiteward.yml`, SuiteWard replies with a suggested one and an editor link that opens with the file filled in.
@@ -113,7 +146,7 @@ The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [
 - **The MVP is feature-complete for a single owner on GitHub,** and accepted on both tiers. SuiteWard governs its own tests: every pull request to this repository that changes a protected file needs the owner's approval.
 - **Releases:**
   - `v0.1.0` is the first release.
-  - `v0.1.1` adds scope discovery (M1.9) and is in release.
+  - `v0.1.1` adds scope discovery (M1.9). It is the current release and runs on both tiers.
   - The final MVP release comes after a security gate: hardening, a heavy pentest of both tiers, and a SecOps review.
 - **After the MVP:**
   - canonical test execution (M2);

@@ -47,7 +47,7 @@ Every phase that changes what runs (S1, M1.2, M1.4–M1.8, including M1.7b and M
 | Target | ADR 0027 tier | Shape |
 | --- | --- | --- |
 | Local container | co-located | The same OCI image under Podman on the developer machine, next to the agent; reduced assurance is reported. |
-| Remote host | isolated | The same image on a remote Linux host as a systemd service (Podman quadlet). Outbound-only: no inbound ports; status and MCP reached through Session Manager port forwarding or Cloudflare Access; owner setup and TOTP enrollment run as a local command in the owner's own Session Manager session (D-IDENTITY). The App key and database never leave the host. |
+| Remote host | isolated | The same image on a remote Linux host as a systemd service (Podman quadlet). Outbound-only: no inbound ports; status and MCP reached through Session Manager port forwarding (the Cloudflare tunnel was removed on 2026-10-19); owner setup and TOTP enrollment run as a local command in the owner's own Session Manager session (D-IDENTITY). The App key and database never leave the host. |
 
 Remote deployment runs through a GitHub Actions workflow bound to a protected environment that requires the owner's approval; the host pulls the promoted image itself (no deploy key or registry credential leaves GitHub or reaches the host), and the owner places the App key on the host once. The agent can prepare and trigger a deployment but never holds host credentials, so the remote target stays a genuine isolated installation. Host choice and access are decided in D-DEPLOY.
 

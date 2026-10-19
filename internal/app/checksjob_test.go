@@ -410,9 +410,10 @@ func TestChecksChangeTheHeadOfAnUnchangedPullWithANewGeneration(t *testing.T) {
 	}
 }
 
-func TestChecksFailAfterARejectedOwnerCommandUntilTheNextStateChange(t *testing.T) {
-	t.Run("rejected dispositions", func(t *testing.T) {
-		for _, disposition := range []commands.Disposition{commands.Malformed, commands.InvalidCode, commands.ReplayedCode, commands.UnknownProposal, commands.EditedFirst} {
+// Only a wrong confirmation code fails the check (D-COMMANDS, "A wrong command has no effect").
+func TestChecksFailAfterAWrongCodeUntilTheNextStateChange(t *testing.T) {
+	t.Run("wrong codes", func(t *testing.T) {
+		for _, disposition := range []commands.Disposition{commands.InvalidCode, commands.ReplayedCode} {
 			t.Run(string(disposition), func(t *testing.T) {
 				w := newCJWorld(t, true)
 				w.protectedPull()
@@ -426,17 +427,6 @@ func TestChecksFailAfterARejectedOwnerCommandUntilTheNextStateChange(t *testing.
 				}
 			})
 		}
-	})
-	t.Run("a rejected consent result", func(t *testing.T) {
-		w := newCJWorld(t, true)
-		w.protectedPull()
-		if outcome := w.consent(contract.ApproveConsent, 301, 2, 9, 5); outcome != contract.ConsentRejected { // P2-R9 does not exist
-			t.Fatalf("outcome %v, want rejected", outcome)
-		}
-
-		w.mustCheck()
-
-		w.want(5, checks.Failure, "owner-command-rejected", 2)
 	})
 	t.Run("cleared by the next processed valid command", func(t *testing.T) {
 		w := newCJWorld(t, true)
@@ -480,6 +470,53 @@ func TestChecksFailAfterARejectedOwnerCommandUntilTheNextStateChange(t *testing.
 
 		w.want(5, checks.InProgress, "approval-missing", 1)
 	})
+}
+
+// A wrong command that is no wrong code changes nothing: the check of a green or an in-progress pull stays as it was, and a failure
+// that a wrong code set neither moves nor clears. The dispositions are those the commands job records for a malformed `suggest please`,
+// an `approve` without a code, a command edited before it was first seen, a proposal that does not exist and a Suite that does not exist.
+func TestChecksLeaveTheCheckAloneAfterAWrongCommandThatIsNoWrongCode(t *testing.T) {
+	unknownRevision := func(w *cjJobWorld, pull int, comment int64) {
+		if outcome := w.consent(contract.ApproveConsent, comment, 2, 9, pull); outcome != contract.ConsentRejected { // P2-R9 does not exist
+			t.Fatalf("outcome %v, want rejected", outcome)
+		}
+	}
+	wrong := map[string]func(w *cjJobWorld, pull int, comment int64){
+		"malformed":        func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.Malformed, "") },
+		"edited first":     func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.EditedFirst, "") },
+		"unknown proposal": func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.UnknownProposal, "") },
+		"no suite":         func(w *cjJobWorld, pull int, comment int64) { w.entry(pull, comment, bootOwnerID, commands.NoSuite, "") },
+		"unknown revision": unknownRevision,
+	}
+	for name, command := range wrong {
+		t.Run(name+" leaves a green and an in-progress check alone", func(t *testing.T) {
+			w := newCJWorld(t, true)
+			w.protectedPull()
+			w.want(4, checks.Success, "unchanged", 1)
+
+			command(w, 4, 301)
+			command(w, 5, 302)
+			w.mustCheck()
+
+			w.want(4, checks.Success, "unchanged", 1)
+			w.want(5, checks.InProgress, "approval-missing", 1)
+		})
+		t.Run(name+" after a wrong code keeps the failure until a valid approve", func(t *testing.T) {
+			w := newCJWorld(t, true)
+			w.protectedPull()
+			w.entry(5, 301, bootOwnerID, commands.InvalidCode, "")
+			w.mustCheck()
+			w.want(5, checks.Failure, "owner-command-rejected", 2)
+
+			command(w, 5, 302)
+			w.mustCheck()
+			w.want(5, checks.Failure, "owner-command-rejected", 2)
+
+			w.consent(contract.ApproveConsent, 303, 2, 1, 5)
+			w.mustCheck()
+			w.want(5, checks.Success, "ready", 3)
+		})
+	}
 }
 
 func TestChecksIgnoreCommandsOfOtherAccountsAndOrdinaryOwnerComments(t *testing.T) {

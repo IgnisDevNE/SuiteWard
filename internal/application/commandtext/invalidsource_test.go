@@ -174,3 +174,93 @@ func TestInvalidSourceCommentOffersTheCutLinkOnlyWithItsDeclaration(t *testing.T
 		t.Error("ValidateInvalidSource accepted a cut path on a declaration problem")
 	}
 }
+
+// D-SCOPE-DISCOVERY, every suggested change links to GitHub's editor: the declaration problem links where the owner fixes the file, the
+// link problem links with the choice to accept the link, and never with the step to remove it, which the web editor cannot do.
+const (
+	editorBranch = "feat/a#b%c/ünï"
+	editorURL    = "https://github.com/octo-org/widgets/edit/feat/a%23b%25c/%C3%BCn%C3%AF/.suiteward.yml"
+)
+
+func TestInvalidSourceCommentLinksToTheEditorWithTheEscapedBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		notice commandtext.InvalidSourceNotice
+		after  string // the editor link comes after this text of the comment
+	}{
+		{"declaration", commandtext.InvalidSourceNotice{Problem: commandtext.DeclarationProblem}, "fix `.suiteward.yml`"},
+		{"link with a declaration", commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link", Declaration: []byte("version: 1\nexclude:\n  - /spec_link\n")}, "accept the link"},
+		{"link with the one-line pattern", commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link"}, "accept the link"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.notice.Repo, tc.notice.Branch = "octo-org/widgets", editorBranch
+			body := render(t, func() string { return commandtext.InvalidSourceComment(tc.notice) })
+
+			raw, _ := editorLink(t, body)
+			if raw != editorURL {
+				t.Errorf("the link is %q, want %q", raw, editorURL)
+			}
+			if !strings.Contains(body, "[open GitHub's editor for it]("+editorURL+")") || strings.Index(body, editorURL) < strings.Index(body, tc.after) {
+				t.Errorf("the link is not in the sentence style of the other comments or comes before %q:\n%s", tc.after, body)
+			}
+		})
+	}
+}
+
+// The step to remove the link has no link, and a link that cannot be accepted has no step that the editor could do.
+func TestInvalidSourceCommentLinksNothingForRemovingTheLink(t *testing.T) {
+	for name, notice := range map[string]commandtext.InvalidSourceNotice{
+		"a pattern that names more than the link": {Problem: commandtext.LinkProblem, Path: "spec_*"},
+		"a cut path without a declaration":        {Problem: commandtext.LinkProblem, Path: strings.Repeat("l", 140) + "…", PathCut: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			notice.Repo, notice.Branch = "octo-org/widgets", editorBranch
+			body := render(t, func() string { return commandtext.InvalidSourceComment(notice) })
+
+			if strings.Contains(body, "github.com") || !strings.Contains(body, "remove the link or point it to a regular file, and push") {
+				t.Errorf("the comment has a link or lacks the step to remove the link:\n%s", body)
+			}
+		})
+	}
+	body := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link", Repo: "octo-org/widgets", Branch: editorBranch})
+	})
+	if before, _, _ := strings.Cut(body, "Or accept the link"); strings.Contains(before, "github.com") {
+		t.Errorf("the step to remove the link has a link:\n%s", body)
+	}
+}
+
+// A notice queued without the repository and the branch renders without a link.
+func TestInvalidSourceCommentHasNoLinkWithoutTheRepositoryAndTheBranch(t *testing.T) {
+	for _, notice := range []commandtext.InvalidSourceNotice{
+		{Problem: commandtext.DeclarationProblem},
+		{Problem: commandtext.LinkProblem, Path: "spec_link"},
+	} {
+		body := render(t, func() string { return commandtext.InvalidSourceComment(notice) })
+
+		if strings.Contains(body, "github.com") || strings.Contains(body, "editor") {
+			t.Errorf("the comment has a link though it has no repository and branch:\n%s", body)
+		}
+	}
+}
+
+func TestInvalidSourceNoticeNeedsBothTheRepositoryAndTheBranchOrNeither(t *testing.T) {
+	for name, notice := range map[string]commandtext.InvalidSourceNotice{
+		"a repository without a branch": {Problem: commandtext.DeclarationProblem, Repo: "octo-org/widgets"},
+		"a branch without a repository": {Problem: commandtext.DeclarationProblem, Branch: "feature"},
+		"a repository that is not one":  {Problem: commandtext.DeclarationProblem, Repo: "SECRET", Branch: "feature"},
+		"a branch that is not a ref":    {Problem: commandtext.DeclarationProblem, Repo: "octo-org/widgets", Branch: "a b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := commandtext.ValidateInvalidSource(notice); err == nil {
+				t.Fatal("ValidateInvalidSource accepted it")
+			}
+			defer func() {
+				if recover() == nil {
+					t.Error("InvalidSourceComment did not panic")
+				}
+			}()
+			commandtext.InvalidSourceComment(notice)
+		})
+	}
+}

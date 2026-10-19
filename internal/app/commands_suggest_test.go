@@ -312,7 +312,11 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			}
 			w.mustRun()
 
-			w.requireAckPayload(repository, 500, commands.SuggestRefused, map[string]any{"reason": tc.reason})
+			payload := map[string]any{"reason": tc.reason}
+			if tc.reason == "declaration-too-large" { // the editor link goes to the pull request's branch
+				payload["branch"] = cjBranch
+			}
+			w.requireAckPayload(repository, 500, commands.SuggestRefused, payload)
 			if !strings.Contains(w.logs.String(), "github suggest refused") {
 				t.Fatalf("no log line says the suggestion was refused\nlogs: %s", w.logs)
 			}
@@ -351,4 +355,20 @@ func TestSuggestRetriesAGitHubFailureAndIsFailedAfterFiveAttemptsLoggingOnlyKind
 			w.requireNothingLeaked(bootSecret)
 		})
 	}
+}
+
+// Before the first contract the default branch's file can be the base, and the refusal asks to fix that file: the acknowledgment names the
+// base and links to the editor of the default branch, not of the pull request's branch.
+func TestSuggestRefusesADeclarationTooLargeForTheDefaultBranchWithItsEditorLink(t *testing.T) {
+	tooLong := "version: 1\ninclude:\n"
+	for i := range 400 {
+		tooLong += fmt.Sprintf("  - \"tests/directory%03d/**\"\n", i)
+	}
+	w := newCjWorld(t)
+	w.trees(withDeclaration(bootFiles("v1"), tooLong), map[string]string{cjUtilTst: "x"})
+	w.pullFiles(nil)
+	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
+	w.mustRun()
+
+	w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "declaration-too-large", "base": "default-branch", "branch": "main"})
 }

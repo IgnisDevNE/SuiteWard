@@ -166,7 +166,7 @@ func TestSuggestBeforeTheFirstContractComparesWithTheDefaultBranchWhenTheHeadHas
 	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 	w.mustRun()
 
-	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "default-branch", "paths": []string{cjUtilTst}, "pathsTotal": 1,
+	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "default-branch", "defaultBranch": "main", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": addPatterns(t, cjDecl, []string{"*_test.go"}, nil), "addInclude": []string{"*_test.go"}})
 	if keys := w.scopeMessagesKeys("scope-"); len(keys) != 0 || reader.calls != 0 {
 		t.Fatalf("scope messages %v and %d reads of the changed files; want none: the head has no file for a review to edit", keys, reader.calls)
@@ -207,7 +207,7 @@ func TestSuggestBeforeTheFirstContractPrefersTheDefaultBranchsDeclarationToTheHe
 		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 		w.mustRun()
 
-		w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "default-branch", "paths": []string{cjUtilTst}, "pathsTotal": 1,
+		w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "default-branch", "defaultBranch": "main", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 			"declaration": addPatterns(t, cjDecl, []string{"*_test.go"}, nil), "addInclude": []string{"*_test.go"}})
 		// The review edits the head's file, which is not the base here: none is offered.
 		if keys := w.scopeMessagesKeys("scope-"); len(keys) != 0 || reader.calls != 0 {
@@ -244,7 +244,8 @@ func TestSuggestBeforeTheFirstContractRefusesAnInvalidDeclarationAsInvalidSource
 			w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 			w.mustRun()
 
-			w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "invalid-source", "base": tc.base})
+			branch := map[string]string{"pull": cjBranch, "default-branch": "main"}[tc.base] // the editor link goes to the branch of the file refused
+			w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "invalid-source", "base": tc.base, "branch": branch})
 			if !strings.Contains(w.logs.String(), "github suggest refused") {
 				t.Fatalf("no log line says the suggestion was refused\nlogs: %s", w.logs)
 			}
@@ -445,7 +446,7 @@ func escapedWorstCase(unit string) (paths, mixed, submodules []string, declarati
 func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 	for _, unit := range []string{"<", "\x01"} {
 		paths, mixed, submodules, declaration := escapedWorstCase(unit)
-		if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", paths, declaration, inventory.Suggestion{}, mixed, submodules); err == nil {
+		if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{}, mixed, submodules); err == nil {
 			t.Errorf("unit %q: the acknowledgment is accepted", unit)
 		}
 		if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err == nil {
@@ -454,7 +455,7 @@ func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 	}
 	// What fits is still written: plain text of the same sizes, and the largest review.
 	paths, mixed, submodules, declaration := escapedWorstCase("a")
-	if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", paths, declaration, inventory.Suggestion{Include: paths}, mixed, submodules); err != nil {
+	if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{Include: paths}, mixed, submodules); err != nil {
 		t.Errorf("the acknowledgment of plain text: %v", err)
 	}
 	if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err != nil {

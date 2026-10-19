@@ -154,7 +154,7 @@ func TestInvalidSourceMessageCarriesTheDeclarationAndDropsOneOverTheBound(t *tes
 		{"none", nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			message, err := newInvalidSourceMessage(target, sourceProblem{kind: sourceLink, path: "spec_link", declaration: tc.declaration})
+			message, err := newInvalidSourceMessage(target, "feature", sourceProblem{kind: sourceLink, path: "spec_link", declaration: tc.declaration})
 			if err != nil {
 				t.Fatalf("newInvalidSourceMessage: %v", err)
 			}
@@ -182,7 +182,7 @@ func TestInvalidSourceMessageMarksACutPathAndTheCommentOffersNoCutPattern(t *tes
 		{"a long path with its declaration", long, []byte("version: 1\nexclude:\n  - /whole\n"), true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			message, err := newInvalidSourceMessage(target, sourceProblem{kind: sourceLink, path: tc.path, declaration: tc.declaration})
+			message, err := newInvalidSourceMessage(target, "feature", sourceProblem{kind: sourceLink, path: tc.path, declaration: tc.declaration})
 			if err != nil {
 				t.Fatalf("newInvalidSourceMessage: %v", err)
 			}
@@ -197,5 +197,67 @@ func TestInvalidSourceMessageMarksACutPathAndTheCommentOffersNoCutPattern(t *tes
 				t.Errorf("the comment offers to accept the link: %v, want %v:\n%s", offers, tc.offers, text)
 			}
 		})
+	}
+}
+
+// D-SCOPE-DISCOVERY, every suggested change links to GitHub's editor: the payload carries the pull request's head ref as branch, next
+// to the repo every comment payload has. A payload that v0.1.1-rc.7 queued has no branch and renders without the link.
+func TestCommentPublisherLinksTheInvalidSourceToTheEditorOnItsBranch(t *testing.T) {
+	const branch = "feat/a#b%c/ünï"
+	for _, kind := range []string{"declaration", "link"} {
+		t.Run(kind, func(t *testing.T) {
+			w := newCmtWorld(t)
+
+			if err := w.pub.publish(t.Context(), cmtInvalidKey, cmtInvalidPayload(kind, func(m map[string]any) { m["branch"] = branch })); err != nil {
+				t.Fatalf("publish: %v", err)
+			}
+
+			posts := w.writer.posts()
+			want := "[open GitHub's editor for it](https://github.com/" + cmtRepo + "/edit/feat/a%23b%25c/%C3%BCn%C3%AF/.suiteward.yml)"
+			if len(posts) != 1 || !strings.Contains(posts[0].body, want) {
+				t.Fatalf("posts %v, want one that holds %q", posts, want)
+			}
+		})
+	}
+}
+
+func TestCommentPublisherRendersAnInvalidSourceQueuedBeforeTheBranchWithoutTheLink(t *testing.T) {
+	for _, kind := range []string{"declaration", "link"} {
+		t.Run(kind, func(t *testing.T) {
+			w := newCmtWorld(t)
+
+			if err := w.pub.publish(t.Context(), cmtInvalidKey, cmtInvalidPayload(kind, nil)); err != nil {
+				t.Fatalf("publish: %v", err)
+			}
+
+			if posts := w.writer.posts(); len(posts) != 1 || strings.Contains(posts[0].body, "editor") || strings.Contains(posts[0].body, "/edit/") {
+				t.Fatalf("posts %v, want one without the editor link", posts)
+			}
+		})
+	}
+}
+
+func TestCommentPublisherRefusesAnInvalidSourceWithABranchThatIsNoRef(t *testing.T) {
+	w := newCmtWorld(t)
+
+	err := w.pub.publish(t.Context(), cmtInvalidKey, cmtInvalidPayload("declaration", func(m map[string]any) { m["branch"] = "SECRET branch" }))
+
+	if err == nil || strings.Contains(err.Error(), "SECRET") || len(w.writer.posts()) != 0 {
+		t.Fatalf("publish = %v with %d posts, want a refusal that quotes nothing", err, len(w.writer.posts()))
+	}
+}
+
+func TestInvalidSourceMessageCarriesTheBranchForTheEditorLink(t *testing.T) {
+	message, err := newInvalidSourceMessage(commentTarget{RepositoryID: cmtRepoID, Repo: cmtRepo, Pull: cmtPull}, "feat/x", sourceProblem{kind: sourceDeclaration})
+	if err != nil {
+		t.Fatalf("newInvalidSourceMessage: %v", err)
+	}
+
+	p, err := decodePayload[invalidSourcePayload](githubCommentKind, message.Key, message.Payload)
+	if err != nil || p.Branch != "feat/x" || p.validate() != nil {
+		t.Fatalf("decoded payload %+v, %v; want the branch and a valid payload", p, err)
+	}
+	if _, err := newInvalidSourceMessage(commentTarget{RepositoryID: cmtRepoID, Repo: cmtRepo, Pull: cmtPull}, "a b", sourceProblem{kind: sourceDeclaration}); err == nil {
+		t.Error("newInvalidSourceMessage accepted a branch that is no ref")
 	}
 }

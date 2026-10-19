@@ -331,7 +331,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	// Like the bootstrap comment, before the check: a run that fails between the two writes it again. Only the check that says invalid-source
 	// gets it, and only when this run assessed the head: an earlier run wrote it for the same head.
 	if source.kind != "" && result.Reason == reasonInvalidSource {
-		if err := j.explainInvalidSource(ctx, p, pull.Number, source); err != nil {
+		if err := j.explainInvalidSource(ctx, p, pull.Number, pull.HeadRef, source); err != nil {
 			return "", err
 		}
 	}
@@ -480,7 +480,7 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 			j.logger.InfoContext(ctx, "github checks invalid-source comment skipped: the problem cannot be named", "repo", p.Repo, "pull", pull.Number)
 		}
 		if source.kind == sourceLink {
-			if source.declaration, err = j.acceptingDeclaration(ctx, tree, source.path); err != nil {
+			if source.declaration, source.noDeclaration, err = j.acceptingDeclaration(ctx, tree, source.path); err != nil {
 				return checks.Result{}, "", false, sourceProblem{}, err
 			}
 		}
@@ -498,8 +498,10 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 // sourceProblem is what made the source of a head invalid, as the comment states it: kind is declaration or link, and path
 // names a link. Its zero value is no problem.
 type sourceProblem struct {
-	kind, path  string
-	declaration []byte // a link: the head's declaration that accepts it, when there is one
+	kind, path    string
+	declaration   []byte // a link: the head's declaration that accepts it, when there is one
+	noDeclaration bool   // a link: the head has no .suiteward.yml
+	uneditable    bool   // the declaration is a link or another entry that is no regular file, which the web editor cannot fix
 }
 
 // sourceProblemOf names the problem that err, an invalid-source error, reports. It cannot for an error that holds no path (an unsafe
@@ -508,7 +510,7 @@ func sourceProblemOf(err error) (sourceProblem, bool) {
 	var unsafe *inventory.UnsafeEntryError
 	switch {
 	case errors.As(err, &unsafe) && unsafe.Path == scope.DeclarationPath:
-		return sourceProblem{kind: sourceDeclaration}, true // a declaration that is no regular file
+		return sourceProblem{kind: sourceDeclaration, uneditable: true}, true // a declaration that is no regular file
 	case errors.As(err, &unsafe):
 		return sourceProblem{kind: sourceLink, path: unsafe.Path}, true
 	case errors.Is(err, scope.ErrInvalidDeclaration):
@@ -518,30 +520,29 @@ func sourceProblemOf(err error) (sourceProblem, bool) {
 }
 
 // acceptingDeclaration is the head's own .suiteward.yml with the anchored path of link added to exclude (D-SCOPE, an accepted link), or
-// nil when the head has none, when the path has a character that exclude reads as a pattern (the pattern would name more than the link),
+// nil when the head has none (then noFile is true), when the path has a character that exclude reads as a pattern (the pattern would name more than the link),
 // or when the file cannot be read or rewritten: the comment is advice, so it then shows the pattern alone and the check is the same.
 // A cancelled or timed-out read is the error instead, so the job retries rather than posting the comment without it.
-func (j *checksJob) acceptingDeclaration(ctx context.Context, tree inventory.Tree, link string) ([]byte, error) {
+func (j *checksJob) acceptingDeclaration(ctx context.Context, tree inventory.Tree, link string) (declaration []byte, noFile bool, err error) {
 	if strings.ContainsAny(link, `*?[\`) {
-		return nil, nil
+		return nil, false, nil
 	}
 	entries, err := tree.Entries(ctx)
 	if err != nil {
-		return nil, j.declarationReadFailed(ctx, "list the head's files", err)
+		return nil, false, j.declarationReadFailed(ctx, "list the head's files", err)
 	}
 	if !hasDeclaration(entries) {
-		return nil, nil
+		return nil, true, nil
 	}
 	raw, err := tree.Read(ctx, scope.DeclarationPath)
 	if err != nil {
-		return nil, j.declarationReadFailed(ctx, "read the head's declaration", err)
+		return nil, false, j.declarationReadFailed(ctx, "read the head's declaration", err)
 	}
-	declaration, err := scope.AddExcludes(raw, []string{"/" + link})
-	if err != nil {
+	if declaration, err = scope.AddExcludes(raw, []string{"/" + link}); err != nil {
 		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the exclude cannot be added", "reason", err.Error())
-		return nil, nil
+		return nil, false, nil
 	}
-	return declaration, nil
+	return declaration, false, nil
 }
 
 // declarationReadFailed is the error of a read that was cancelled or timed out, and nil, after a log line, for any other failure.
@@ -555,8 +556,12 @@ func (j *checksJob) declarationReadFailed(ctx context.Context, what string, err 
 
 // explainInvalidSource writes the comment that explains an invalid-source check, once for each problem of a pull request: the key
 // is the idempotency key, so a problem that was written before is not an error.
-func (j *checksJob) explainInvalidSource(ctx context.Context, p owner.ProjectPolicy, pull int, s sourceProblem) error {
-	message, err := newInvalidSourceMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, s)
+func (j *checksJob) explainInvalidSource(ctx context.Context, p owner.ProjectPolicy, pull int, branch string, s sourceProblem) error {
+	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}
+	if s.uneditable { // the web editor cannot fix it: no link
+		branch = ""
+	}
+	message, err := newInvalidSourceMessage(target, editableBranch(target, branch), s)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks invalid-source comment skipped: it cannot be rendered", "repo", p.Repo, "pull", pull, "reason", err.Error())
 		return nil

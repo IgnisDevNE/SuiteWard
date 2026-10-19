@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"testing"
@@ -811,19 +812,20 @@ func TestProposeRefusesASourceThatCannotBeReadAsAContract(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(w *cjWorld)
+		extra map[string]any // the editor link: the file that failed, none when the source could not be read at all
 	}{
-		{"an invalid declaration on the default branch", func(w *cjWorld) { w.trees(invalidDeclaration, bootFiles("v1")) }},
+		{"an invalid declaration on the default branch", func(w *cjWorld) { w.trees(invalidDeclaration, bootFiles("v1")) }, map[string]any{"base": "default-branch", "branch": "main"}},
 		{"an invalid declaration in the pull request head", func(w *cjWorld) {
 			w.trees(map[string]string{"README.md": "x"}, invalidDeclaration)
-		}},
+		}, map[string]any{"base": "pull", "branch": cjBranch}},
 		{"a link inside the protected files", func(w *cjWorld) {
 			w.trees(bootFiles("v1"), bootFiles("v1"))
 			w.reader.repo(cjRepo1).trees[bootHead] = linkedFile{&bootTree{files: bootFiles("v1")}, "tests/a_test.go"}
-		}},
+		}, map[string]any{"base": "default-branch", "branch": "main"}},
 		{"a tree GitHub truncated", func(w *cjWorld) {
 			w.trees(bootFiles("v1"), bootFiles("v1"))
 			w.reader.repo(cjRepo1).treeErr[bootHead] = fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
-		}},
+		}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -831,7 +833,9 @@ func TestProposeRefusesASourceThatCannotBeReadAsAContract(t *testing.T) {
 			w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
 			w.mustRun() // refused at once: a deterministic source is not retried
 
-			w.requireAckPayload(cjID1, 500, commands.ProposeRefused, map[string]any{"reason": "invalid-source"})
+			want := map[string]any{"reason": "invalid-source"}
+			maps.Copy(want, tc.extra)
+			w.requireAckPayload(cjID1, 500, commands.ProposeRefused, want)
 			w.requireNoProposal("P2")
 			w.requireNothingLeaked()
 		})

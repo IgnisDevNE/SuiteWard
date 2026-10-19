@@ -544,9 +544,10 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return j.refusePropose(ctx, enrollment, c, reasonBaseNotTarget)
 	}
 	// A source that cannot be read as a contract is a fact about the commit, so it is refused and never retried.
-	refuseSource := func() error {
+	// base and branch name the file that failed when the source was found; none when it could not be read at all.
+	refuseSource := func(base, branch string) error {
 		j.logger.WarnContext(ctx, "github propose refused: the source cannot be read as a contract", "repo", c.Repo, "comment", m.CommentID)
-		ack, err := newBootstrapAck(target, m.CommentID, login, commands.ProposeRefused, refusalInvalidSource, "")
+		ack, err := newProposeInvalidSourceAck(target, m.CommentID, login, base, branch)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
@@ -554,7 +555,7 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	}
 	src, suggestion, found, err := j.source(ctx, c, view)
 	if invalidSource(err) {
-		return refuseSource()
+		return refuseSource("", "")
 	}
 	if err != nil {
 		return err
@@ -567,8 +568,11 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
 	}
 	inv, err := inventory.Build(ctx, src.tree)
-	if invalidSource(err) {
-		return refuseSource()
+	if invalidSource(err) { // the source is known: the file that holds the declaration is the one to fix
+		if src.kind == contract.OriginBranch {
+			return refuseSource(baseDefaultBranch, src.branch)
+		}
+		return refuseSource(basePull, view.pull.HeadRef)
 	}
 	if err != nil {
 		return &opaque{what: "inventory of the source", cause: err}
@@ -624,8 +628,11 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 // refuses): a fact about the source, so it is never retried.
 var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 
-// errDeclarationTooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration).
-var errDeclarationTooLarge = errors.New("the suggested declaration is too large")
+// tooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration), and says which base declaration was compared,
+// so a refusal links the editor of the right file.
+type tooLarge struct{ base string }
+
+func (e *tooLarge) Error() string { return "the suggested declaration is too large" }
 
 // The codes of the base of a suggest (ackPayload.Base): what the head was compared with.
 const (
@@ -671,8 +678,9 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	if view.pull, err = j.observedPull(ctx, c); err != nil {
 		return err
 	}
-	refuse := func(reason, base string) error {
-		ack, err := newSuggestRefusedAck(target, m.CommentID, login, reason, base)
+	// branch is the branch of the file the owner is asked to fix, for the editor link: none for a refusal that asks for no edit.
+	refuse := func(reason, base, branch string) error {
+		ack, err := newSuggestRefusedAck(target, m.CommentID, login, reason, base, branch)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
@@ -680,22 +688,34 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	}
 	switch {
 	case isFork(view.pull.HeadRepo, c.Repo):
-		return refuse(reasonFork, "")
+		return refuse(reasonFork, "", "")
 	case !view.pull.NotOpenSince.IsZero():
-		return refuse(reasonNotOpen, "")
+		return refuse(reasonNotOpen, "", "")
 	}
 	ack, reviews, err := j.suggestion(ctx, target, c, login, view)
 	var invalid *invalidBase
+	var large *tooLarge
 	switch {
-	case errors.Is(err, errDeclarationTooLarge):
+	case errors.As(err, &large):
 		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
-		return refuse(reasonDeclarationTooLarge, "")
+		base, branch := "", view.pull.HeadRef // the base names the file only when it is the default branch's
+		if large.base == baseDefaultBranch {
+			base = baseDefaultBranch
+			if branch, err = editBranch(view, base); err != nil {
+				return &opaque{what: "read the default branch", cause: err}
+			}
+		}
+		return refuse(reasonDeclarationTooLarge, base, branch)
 	case errors.As(err, &invalid):
 		j.logger.InfoContext(ctx, "github suggest refused: the base declaration is not valid", "repo", c.Repo, "comment", m.CommentID, "base", invalid.base)
-		return refuse(refusalInvalidSource, invalid.base)
+		branch, err := editBranch(view, invalid.base)
+		if err != nil {
+			return &opaque{what: "read the default branch", cause: err}
+		}
+		return refuse(refusalInvalidSource, invalid.base, branch)
 	case invalidSource(err) || errors.Is(err, errNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
 		j.logger.InfoContext(ctx, "github suggest refused: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
-		return refuse(refusalInvalidSource, "")
+		return refuse(refusalInvalidSource, "", "")
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github suggest read failed", c.Repo, err)
 		return &opaque{what: "read for the suggestion", cause: err}
@@ -775,9 +795,15 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 		return governance.OutboxMessage{}, nil, err
 	}
 	if len(declaration) > commandtext.MaxDeclaration {
-		return governance.OutboxMessage{}, nil, errDeclarationTooLarge
+		return governance.OutboxMessage{}, nil, &tooLarge{base: base}
 	}
-	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, view.pull.HeadRef, base, found.Paths, declaration, suggested, found.Mixed, found.Submodules)
+	var defaultBranch string // the reply for the default branch links to that branch's editor
+	if base == baseDefaultBranch {
+		if defaultBranch, err = editBranch(view, base); err != nil {
+			return governance.OutboxMessage{}, nil, err
+		}
+	}
+	ack, err := newScopeNoticeAck(target, c.Comment.CommentID, login, view.pull.HeadRef, base, editableBranch(target, defaultBranch), found.Paths, declaration, suggested, found.Mixed, found.Submodules)
 	if err != nil {
 		return governance.OutboxMessage{}, nil, fmt.Errorf("%w: %w", errAnswerNotRenderable, err)
 	}
@@ -786,6 +812,18 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 	}
 	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested, setDigest(slices.Concat(found.Paths, unexplained)))
 	return ack, reviews, err
+}
+
+// editBranch is the branch of the file of base for the editor link: the pull request's head ref, or for the default branch the one the Suite targets.
+func editBranch(view bootstrapView, base string) (string, error) {
+	if base != baseDefaultBranch {
+		return view.pull.HeadRef, nil
+	}
+	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
+	if !ok {
+		return "", errors.New("the suite does not target a branch")
+	}
+	return branch, nil
 }
 
 // defaultBranchTree reads the tree of the head of the Suite's target branch, the default branch.

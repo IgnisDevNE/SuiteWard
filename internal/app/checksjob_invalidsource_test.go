@@ -109,7 +109,7 @@ func TestChecksExplainALinkTheScopeMayReachWithOneCommentPerProblem(t *testing.T
 
 	w.want(5, checks.Failure, "invalid-source", 1)
 	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
-	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "link", "path": "spec_link", "declaration": acceptingDeclaration(t, reachable, "spec_link")}
+	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "branch": "feature", "kind": "link", "path": "spec_link", "declaration": acceptingDeclaration(t, reachable, "spec_link")}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}
@@ -143,7 +143,7 @@ func TestChecksExplainAnInvalidDeclarationWithoutQuotingIt(t *testing.T) {
 
 	w.want(5, checks.Failure, "invalid-source", 1)
 	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
-	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "kind": "declaration"}
+	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "branch": "feature", "kind": "declaration"}
 	if got := w.invalidSourcePayload(0); !reflect.DeepEqual(got, want) {
 		t.Fatalf("payload %v, want %v", got, want)
 	}
@@ -414,4 +414,62 @@ func TestChecksLeaveOutTheDeclarationWhenItCannotBeRead(t *testing.T) {
 		t.Fatalf("declaration %q, want none", declaration)
 	}
 	w.logged("declaration skipped")
+}
+
+// The editor link of the comment goes only where the web editor can do the change. A head with no .suiteward.yml has nothing to edit: the
+// payload says so, and the comment links to GitHub's new-file page.
+func TestChecksSayWhetherTheHeadHasADeclarationForTheEditorLink(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(w *cjJobWorld)
+		want  bool
+	}{
+		{"a head with a declaration", func(w *cjJobWorld) { w.linkHead(cjHead2, "spec_link") }, false},
+		{"a head with one that cannot be read", func(w *cjJobWorld) { w.linkHeadReadFailing(errors.New("the blob is gone")) }, false},
+		{"a head without one", func(w *cjJobWorld) {
+			w.reader.repos[bootRepo].trees[cjHead2] = linkedTree{&bootTree{files: map[string]string{"src/main.go": "package main\n"}}, map[string]string{".github/workflows/ci.yml": "app"}}
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCJWorld(t, true)
+			tc.setup(w)
+			w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+			w.mustCheck()
+
+			got, found := w.invalidSourcePayload(0)["noDeclaration"]
+			if found != tc.want || (found && got != true) {
+				t.Fatalf("noDeclaration = %v (found %v), want found %v", got, found, tc.want)
+			}
+		})
+	}
+}
+
+// A .suiteward.yml that is a link or another entry that is not a regular file cannot be fixed in the web editor: the comment has no link.
+func TestChecksLinkNoEditorForADeclarationFileThatIsNoRegularFile(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.reader.repos[bootRepo].trees[cjHead2] = linkedFile{&bootTree{files: bootFiles("v2")}, ".suiteward.yml"}
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+	w.mustCheck()
+
+	w.wantInvalidSource(invalidKeyOf(5, "declaration", ""))
+	if branch, found := w.invalidSourcePayload(0)["branch"]; found {
+		t.Fatalf("branch %q, want none: the editor cannot fix a file that is no regular file", branch)
+	}
+}
+
+// A branch that is no git ref name drops only the link: the comment is still written.
+func TestChecksExplainAnInvalidSourceWithoutTheLinkWhenTheBranchIsNoRef(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.refs = map[int]string{5: "a b"}
+	w.linkHead(cjHead2, "spec_link")
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+
+	w.mustCheck()
+
+	w.wantInvalidSource(linkKeyOf(t, 5, "spec_link"))
+	if branch, found := w.invalidSourcePayload(0)["branch"]; found {
+		t.Fatalf("branch %q, want none", branch)
+	}
 }

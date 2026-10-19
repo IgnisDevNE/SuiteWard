@@ -9,7 +9,7 @@ import (
 // otherwise decides in the domain and writes only a proposed promotion with the request's outbox.
 func Bootstrap(ctx context.Context, uow UnitOfWork, request PromoteRequest) (PromoteResult, error) {
 	if uow == nil || !validPromoteRequest(request) {
-		return PromoteResult{}, ErrInvalidRequest
+		return PromoteResult{}, fmt.Errorf("%w: a bootstrap needs a unit of work and a complete request", ErrInvalidRequest)
 	}
 	identity := PromotionIdentity{Kind: OperationBootstrap, Request: request}
 	var result PromoteResult

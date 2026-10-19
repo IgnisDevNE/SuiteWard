@@ -2,7 +2,6 @@ package governance
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -36,7 +35,7 @@ func (w AssessmentWrite) Validate(project contract.ProjectID, suite contract.Sui
 	switch {
 	case w.Reference.ProjectID != project || w.Reference.SuiteID != suite:
 		return fmt.Errorf("%w: an assessment belongs to the locked suite", ErrInvalidRequest)
-	case strings.TrimSpace(string(w.Reference.ProposalID)) == "" || strings.TrimSpace(string(w.Reference.RevisionID)) == "" || strings.TrimSpace(string(w.Source)) == "":
+	case blank(string(w.Reference.ProposalID)) || blank(string(w.Reference.RevisionID)) || blank(string(w.Source)):
 		return fmt.Errorf("%w: an assessment names a proposal revision and a source", ErrInvalidRequest)
 	case w.Evidence.IsZero():
 		return fmt.Errorf("%w: an assessment carries evidence", ErrInvalidRequest)

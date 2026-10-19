@@ -3,7 +3,6 @@ package governance
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
@@ -79,13 +78,13 @@ func promoteWithin(ctx context.Context, tx Tx, identity PromotionIdentity) (Prom
 func replayPromotion(stored OperationReceipt, wanted PromotionIdentity) (PromoteResult, error) {
 	reference := wanted.Request.Reference
 	if stored.Kind != wanted.Kind || stored.ProjectID != reference.ProjectID || stored.SuiteID != reference.SuiteID {
-		return PromoteResult{}, ErrOperationConflict
+		return PromoteResult{}, fmt.Errorf("%w: the operation id belongs to another kind of operation or another suite", ErrOperationConflict)
 	}
 	if stored.Promotion == nil {
 		return PromoteResult{}, fmt.Errorf("%w: %s receipt without a promotion", ErrInvalidState, stored.Kind)
 	}
 	if !samePromotionIdentity(stored.Promotion.Identity, wanted) {
-		return PromoteResult{}, ErrOperationConflict
+		return PromoteResult{}, fmt.Errorf("%w: the operation id was used for another bootstrap request", ErrOperationConflict)
 	}
 	return PromoteResult{Outcome: contract.PromotionProposed, Duplicate: true}, nil
 }
@@ -99,7 +98,7 @@ func samePromotionIdentity(left, right PromotionIdentity) bool {
 
 func validPromoteRequest(request PromoteRequest) bool {
 	r := request.Reference
-	return strings.TrimSpace(string(request.OperationID)) != "" && strings.TrimSpace(string(r.ProjectID)) != "" && strings.TrimSpace(string(r.SuiteID)) != "" &&
-		strings.TrimSpace(string(r.ProposalID)) != "" && strings.TrimSpace(string(r.RevisionID)) != "" && strings.TrimSpace(string(request.Carrier)) != "" &&
-		!request.Proposed.IsZero() && strings.TrimSpace(string(request.AssessmentSource)) != ""
+	return !blank(string(request.OperationID)) && !blank(string(r.ProjectID)) && !blank(string(r.SuiteID)) &&
+		!blank(string(r.ProposalID)) && !blank(string(r.RevisionID)) && !blank(string(request.Carrier)) &&
+		!request.Proposed.IsZero() && !blank(string(request.AssessmentSource))
 }

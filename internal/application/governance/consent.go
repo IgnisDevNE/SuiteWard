@@ -53,7 +53,7 @@ func processConsent(ctx context.Context, tx Tx, request ConsentRequest) (Consent
 	}
 	switch {
 	case result.Reason() == contract.ConsentReasonCommandConflict:
-		return ConsentResponse{}, ErrOperationConflict
+		return ConsentResponse{}, fmt.Errorf("%w: the operation or the source command of %q belongs to another command", ErrOperationConflict, command.OperationID())
 	case result.Duplicate() != (bySource != nil):
 		return ConsentResponse{}, fmt.Errorf("%w: consent history and receipts disagree about source command %q", ErrInvalidState, command.SourceCommandID())
 	case result.Duplicate():
@@ -111,7 +111,7 @@ func consentReceipts(ctx context.Context, tx Tx, command contract.Command) (byOp
 // without its body is damaged stored state.
 func commandReceipt(stored OperationReceipt, command contract.Command) (*ConsentReceipt, error) {
 	if stored.Kind != OperationConsent {
-		return nil, ErrOperationConflict
+		return nil, fmt.Errorf("%w: the receipt is not a consent receipt", ErrOperationConflict)
 	}
 	if stored.Consent == nil {
 		return nil, fmt.Errorf("%w: a consent receipt without its body", ErrInvalidState)
@@ -120,7 +120,7 @@ func commandReceipt(stored OperationReceipt, command contract.Command) (*Consent
 	wanted := command.Reference()
 	if stored.ProjectID != wanted.ProjectID || stored.SuiteID != wanted.SuiteID || original.Reference().ProposalID != wanted.ProposalID ||
 		original.SourceCommandID() != command.SourceCommandID() || original.Actor() != command.Actor() {
-		return nil, ErrOperationConflict
+		return nil, fmt.Errorf("%w: the receipt belongs to another source command, actor or proposal", ErrOperationConflict)
 	}
 	return stored.Consent, nil
 }

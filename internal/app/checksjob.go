@@ -579,7 +579,7 @@ func sourceProblemOf(err error) (sourceProblem, bool) {
 // or when the file cannot be read or rewritten: the comment is advice, so it then shows the pattern alone and the check is the same.
 // A cancelled or timed-out read is the error instead, so the job retries rather than posting the comment without it.
 func (j *checksJob) acceptingDeclaration(ctx context.Context, repo string, tree inventory.Tree, link string) (declaration []byte, noFile bool, err error) {
-	if strings.ContainsAny(link, `*?[\`) {
+	if hasGlobCharacter(link) {
 		return nil, false, nil
 	}
 	entries, err := tree.Entries(ctx)

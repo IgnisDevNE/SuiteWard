@@ -343,6 +343,15 @@ type bootstrapView struct {
 	pull      githubsync.PullState
 }
 
+// targetBranch is the default branch that the Suite targets.
+func (v bootstrapView) targetBranch() (string, error) {
+	branch, ok := strings.CutPrefix(string(v.target), targetPrefix)
+	if !ok {
+		return "", errors.New("the suite does not target a branch")
+	}
+	return branch, nil
+}
+
 // bootstrapView reads the Suite and the observed pull request of the candidate. governance.ErrNotFound means the Suite
 // does not exist.
 func (j *commandsJob) bootstrapView(ctx context.Context, c commands.Candidate) (v bootstrapView, err error) {
@@ -468,9 +477,9 @@ func hasDeclaration(entries []inventory.Entry) bool {
 // when that has it. found is false when neither does, with the suggestion built from the pull request's tree, or the
 // default branch's when the pull request's gives no pattern.
 func (j *commandsJob) source(ctx context.Context, c commands.Candidate, view bootstrapView) (src bootstrapSource, suggestion inventory.Suggestion, found bool, err error) {
-	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
-	if !ok {
-		return bootstrapSource{}, inventory.Suggestion{}, false, errors.New("the suite does not target a branch")
+	branch, err := view.targetBranch()
+	if err != nil {
+		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	head, err := j.reader.BranchHead(ctx, c.Repo, branch)
 	if err != nil {
@@ -822,18 +831,14 @@ func editBranch(view bootstrapView, base string) (string, error) {
 	if base != baseDefaultBranch {
 		return view.pull.HeadRef, nil
 	}
-	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
-	if !ok {
-		return "", errors.New("the suite does not target a branch")
-	}
-	return branch, nil
+	return view.targetBranch()
 }
 
 // defaultBranchTree reads the tree of the head of the Suite's target branch, the default branch.
 func (j *commandsJob) defaultBranchTree(ctx context.Context, c commands.Candidate, view bootstrapView) (*githubTree, []inventory.Entry, error) {
-	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
-	if !ok {
-		return nil, nil, errors.New("the suite does not target a branch")
+	branch, err := view.targetBranch()
+	if err != nil {
+		return nil, nil, err
 	}
 	sha, err := j.reader.BranchHead(ctx, c.Repo, branch)
 	if err != nil {

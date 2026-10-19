@@ -160,13 +160,17 @@ func excludePatterns(paths []string) []string {
 	return patterns
 }
 
+// hasGlobCharacter reports whether path has a character that exclude reads as a pattern ("*?[\"): the pattern it spells would name more than the path, or never the path.
+// Scope.ExcludesExactly and commandtext test the same set.
+func hasGlobCharacter(path string) bool { return strings.ContainsAny(path, `*?[\`) }
+
 // excludable reports whether every path can be excluded by a pattern that names exactly that file: a path with a pattern character
 // ("*?[\", as acceptingDeclaration and Scope.ExcludesExactly test it) either never matches the pattern it spells or matches other files too,
 // and one the pattern syntax refuses (such as a leading "!") cannot be added as an exclude at all.
 func excludable(paths []string) bool {
 	return !slices.ContainsFunc(paths, func(path string) bool {
 		_, err := scope.ParsePattern(excludePatterns([]string{path})[0])
-		return err != nil || strings.ContainsAny(path, `*?[\`)
+		return err != nil || hasGlobCharacter(path)
 	})
 }
 

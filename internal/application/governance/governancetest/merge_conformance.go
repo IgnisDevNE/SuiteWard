@@ -260,6 +260,8 @@ func mergeCases() []struct {
 		{"MergeNeedsVersionV1WhileACanonicalExists", mcMissingFirstVersion},
 		{"MergeMessageFailureRollsBackThePromotionAndTheOutcome", mcMessageFailure},
 		{"MergeMessageFailureRollsBackACorrection", mcCorrectionMessageFailure},
+		{"MergeOperationIDBelongsToItsKind", mcOperationAcrossKinds},
+		{"MergeRollsBackWhenAWriteFails", mcWriteFailure},
 		{"MergeOutboxConflictRollsBackTheOutcome", mcOutboxConflict},
 		{"ConcurrentMergesOfOneCarrierWriteOneOutcome", mcConcurrent},
 		{"MergeOutcomeOfAnUnknownCarrierOrSuite", mcOutcomeOfUnknown},
@@ -293,14 +295,21 @@ func mcPromotes(e *cfEnv) {
 		record.Target() != cfTarget || record.CorrectsVersionID() != "" || !record.RecordedAt().Equal(cfRecordedAt.Add(2*time.Hour)) {
 		e.t.Fatalf("promotion record = %+v (found %v); want operation merge:%s at %s, source %s, no correction", record, found, pr.carrier, mcSource(pr), cfRecordedAt.Add(2*time.Hour))
 	}
+	if !e.state().Canonical.Contract().Equal(pr.protected) {
+		e.t.Fatal("the canonical contract is not the merged contract")
+	}
+	integration := cfMust(contract.NewIntegration(cfProject, cfTarget, mcSource(pr), pr.carrier, contract.IntegrationMergedChange))
+	wantReceipt := governance.OperationReceipt{Kind: governance.OperationPromote, ProjectID: cfProject, SuiteID: cfSuite, Promotion: &governance.PromotionReceipt{
+		Identity: governance.PromotionIdentity{Kind: governance.OperationPromote, Binding: pr.proposal.Current().Binding(), Request: governance.PromoteRequest{
+			OperationID: record.OperationID(), Reference: pr.current(), Carrier: pr.carrier, Proposed: pr.protected, AssessmentSource: mcSource(pr), Integration: integration,
+			NewVersionID: "V2", RecordedAt: cfRecordedAt.Add(2 * time.Hour)}}, Record: record}}
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		receipt, found, err := tx.Receipt(ctx, record.OperationID())
-		if err != nil || !found || receipt.Kind != governance.OperationPromote || receipt.Promotion == nil {
-			return fmt.Errorf("receipt = %+v, %v, %v; want a promotion", receipt, found, err)
+		if err != nil || !found || !cfSameReceipt(receipt, wantReceipt) {
+			return fmt.Errorf("receipt = %+v, %v, %v; want the promotion of the merged change at %s", receipt, found, err, mcSource(pr))
 		}
-		integration := receipt.Promotion.Identity.Request.Integration
-		if integration.Kind() != contract.IntegrationMergedChange || integration.Source() != mcSource(pr) || integration.Carrier() != pr.carrier || integration.Target() != cfTarget {
-			return fmt.Errorf("integration = %+v, want the merged change at %s", integration, mcSource(pr))
+		if _, found, err := tx.ReceiptBySource(ctx, contract.SourceCommandID(record.OperationID())); err != nil || found {
+			return fmt.Errorf("a merge promotion has a source command receipt: found %v, %v", found, err)
 		}
 		return nil
 	})

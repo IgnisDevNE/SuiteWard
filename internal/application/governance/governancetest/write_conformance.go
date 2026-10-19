@@ -347,18 +347,25 @@ func cfBootstrapNeedsTheRecordedAssessment(e *cfEnv) {
 	e.approve(c)
 	request := c.baselineRequest("bootstrap-1", "version-1")
 
+	before := e.revision()
 	blocked, err := governance.Bootstrap(context.Background(), e.store, request)
-	if err != nil || blocked.Outcome != contract.PromotionBlocked || blocked.Committed {
+	if err != nil || blocked.Outcome != contract.PromotionBlocked {
 		e.t.Fatalf("bootstrap without evidence = %+v, %v, want a block", blocked, err)
 	}
+	e.requireWrites(before, 0)
 	if err := e.recordAssessment(e.assessmentWrite(c, "revision-1", c.origin, contract.IntegrityPassed)); err != nil {
 		e.t.Fatal(err)
 	}
+	assessed := e.revision()
 
 	result, err := governance.Bootstrap(context.Background(), e.store, request)
 
-	if err != nil || result.Outcome != contract.PromotionProposed || !result.Committed {
-		e.t.Fatalf("bootstrap after the assessment = %+v, %v, want a committed promotion", result, err)
+	if err != nil || result.Outcome != contract.PromotionProposed || result.Duplicate {
+		e.t.Fatalf("bootstrap after the assessment = %+v, %v, want a new proposed promotion", result, err)
+	}
+	e.requireWrites(assessed, 1)
+	if got := e.currentVersion(); got != "version-1" {
+		e.t.Fatalf("current version = %q, want version-1", got)
 	}
 }
 
@@ -426,18 +433,20 @@ func cfPromotionOutbox(e *cfEnv) {
 	request := c.baselineRequest("bootstrap-1", "version-1")
 	request.Outbox = cfMessages("ack-bootstrap")
 
+	unapproved := e.revision()
 	blocked, err := governance.Bootstrap(context.Background(), e.store, request) // not approved yet
-	if err != nil || blocked.Committed {
-		e.t.Fatalf("bootstrap without approval = %+v, %v, want a block", blocked, err)
+	if err != nil || blocked.Outcome != contract.PromotionBlocked || blocked.Reason != contract.PromotionReasonApprovalMissing {
+		e.t.Fatalf("bootstrap without approval = %+v, %v, want a block for the missing approval", blocked, err)
 	}
+	e.requireWrites(unapproved, 0)
 	e.requireQueued(nil, nil)
 	e.approve(c)
 	before := e.revision()
 
 	result, err := governance.Bootstrap(context.Background(), e.store, request)
 
-	if err != nil || !result.Committed || result.Duplicate {
-		e.t.Fatalf("bootstrap = %+v, %v, want a committed promotion", result, err)
+	if err != nil || result.Outcome != contract.PromotionProposed || result.Duplicate {
+		e.t.Fatalf("bootstrap = %+v, %v, want a new proposed promotion", result, err)
 	}
 	e.requireQueued(nil, []string{"ack-bootstrap"})
 	e.requireWrites(before, 1)
@@ -458,21 +467,6 @@ func cfPromotionOutbox(e *cfEnv) {
 	})
 }
 
-func cfPromoteOutbox(e *cfEnv) {
-	c := e.candidate("p1", "", "v1")
-	e.seedSimple(cfProject, cfSuite, c)
-	e.approve(c)
-	request := c.mergedRequest("promote-1", "version-1")
-	request.Outbox = cfMessages("ack-promote")
-
-	result, err := governance.Promote(context.Background(), e.store, request)
-
-	if err != nil || !result.Committed {
-		e.t.Fatalf("promote = %+v, %v, want a committed promotion", result, err)
-	}
-	e.requireQueued(nil, []string{"ack-promote"})
-}
-
 func cfPromotionOutboxFailureRollsBackTheFact(e *cfEnv) {
 	c := e.candidate("p1", "", "v1")
 	e.seedSimple(cfProject, cfSuite, c)
@@ -489,32 +483,10 @@ func cfPromotionOutboxFailureRollsBackTheFact(e *cfEnv) {
 	e.requireSameView(before, e.view(probe))
 	e.requireQueued(nil, nil)
 	request.Outbox = cfMessages("ack")
-	if result, err := governance.Bootstrap(context.Background(), e.store, request); err != nil || !result.Committed {
-		e.t.Fatalf("retry = %+v, %v, want a committed promotion", result, err)
+	if result, err := governance.Bootstrap(context.Background(), e.store, request); err != nil || result.Outcome != contract.PromotionProposed || result.Duplicate {
+		e.t.Fatalf("retry = %+v, %v, want a new proposed promotion", result, err)
 	}
-}
-
-func cfCorrectOutbox(e *cfEnv) {
-	r := e.seedRich()
-	e.approve(r.open)
-	request := governance.CorrectionRequest{Promotion: r.open.mergedRequest("correct-1", "version-3"), TargetVersionID: "version-1"}
-	request.Promotion.Outbox = cfMessages("ack-correct")
-	before := e.revision()
-
-	result, err := governance.Correct(context.Background(), e.store, request)
-
-	if err != nil || !result.Committed || result.Duplicate {
-		e.t.Fatalf("correct = %+v, %v, want a committed correction", result, err)
-	}
-	e.requireQueued(nil, []string{"ack-correct"})
-	e.requireWrites(before, 1)
-
-	request.Promotion.Outbox = cfMessages("ack-replay")
-	again, err := governance.Correct(context.Background(), e.store, request)
-	if err != nil || !again.Duplicate {
-		e.t.Fatalf("replay = %+v, %v, want a duplicate", again, err)
-	}
-	e.requireQueued(nil, []string{"ack-correct"})
+	e.requireQueued(nil, []string{"ack"})
 }
 
 func cfRecordAssessmentRejectsAnotherEmitter(e *cfEnv) {

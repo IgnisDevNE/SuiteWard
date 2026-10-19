@@ -318,3 +318,58 @@ func mcCorrectionMessageFailure(e *cfEnv) {
 	e.requireWrites(before, 0)
 	e.requireQueued(nil, nil)
 }
+
+func mcOperationAcrossKinds(e *cfEnv) {
+	pr := mcCandidate("pr", "V1", "v2")
+	e.mcSeed(false, pr)
+	e.approve(pr)
+	e.merge(mcRequest(pr, "v2", &mcMessages{}))
+	operation := contract.OperationID("merge:" + string(pr.carrier))
+	probe := cfProbe{proposal: pr.proposalID(), operations: []contract.OperationID{operation, "approve-pr"}, sources: []contract.SourceCommandID{"comment-other"},
+		versions: []contract.SuiteVersionID{"V3"}, references: []contract.ProposalReference{pr.current()}}
+	before := e.view(probe)
+
+	e.run("a merge promotion id used by a bootstrap", func(e *cfEnv) {
+		_, err := governance.Bootstrap(context.Background(), e.store, pr.baselineRequest(string(operation), "V3"))
+		if !errors.Is(err, governance.ErrOperationConflict) {
+			e.t.Fatalf("error = %v, want an operation conflict", err)
+		}
+	})
+	e.run("a merge promotion id used by a consent command", func(e *cfEnv) {
+		command := e.command(pr, "revision-1", string(operation), "comment-other", contract.ApproveConsent, 2)
+		_, err := governance.ProcessConsent(context.Background(), e.store, governance.ConsentRequest{Command: command})
+		if !errors.Is(err, governance.ErrOperationConflict) {
+			e.t.Fatalf("error = %v, want an operation conflict", err)
+		}
+	})
+	e.requireSameView(before, e.view(probe))
+}
+
+func mcWriteFailure(e *cfEnv) {
+	fail, ok := e.store.(FailNexter)
+	if !ok {
+		e.t.Skip("the store cannot inject a write failure")
+	}
+	pr := mcCandidate("pr", "V1", "v2")
+	e.mcSeed(false, pr)
+	e.approve(pr)
+	probe := cfProbe{proposal: pr.proposalID(), operations: []contract.OperationID{contract.OperationID("merge:" + string(pr.carrier))},
+		versions: []contract.SuiteVersionID{"V2"}, references: []contract.ProposalReference{pr.current()}}
+	before := e.view(probe)
+	boom := errors.New("conformance: injected write failure")
+
+	fail.FailNext(boom)
+	if err := e.mergeErr(mcRequest(pr, "v2", &mcMessages{})); !errors.Is(err, boom) {
+		e.t.Fatalf("error = %v, want the injected failure", err)
+	}
+
+	e.requireSameView(before, e.view(probe))
+	if _, found := e.outcomeOf(pr.carrier); found {
+		e.t.Fatal("an outcome was recorded by the failed merge")
+	}
+	retry := e.merge(mcRequest(pr, "v2", &mcMessages{}))
+	if retry.Duplicate || retry.Kind != governance.MergePromoted || retry.Version != "V2" {
+		e.t.Fatalf("retry = %+v, want a new promotion to V2", retry)
+	}
+	e.requireWrites(before.Revision, 2)
+}

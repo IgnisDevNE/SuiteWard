@@ -103,6 +103,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
     5. Call `ProcessConsent` with the D-COMMANDS identifiers, `Order` set to the comment id, and the actor `github:<owner id>`. Its `Outbox` holds the acknowledgment, with key `ack:<repository id>:<comment id>`. When it reports `ErrNotFound`, look at the Suite and the proposal in one unit of work: a project with no Suite yet records `no-suite`, with an acknowledgment saying that the bootstrap is pending, and a proposal that does not exist on an existing Suite records `unknown-proposal` (the step stays consumed, because the code was valid). Any other probe failure is a store error.
     6. Record `processed` with the operation.
   - **Rejected owner commands.** `malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal` and `edited-first` get an acknowledgment, written with the ledger entry in one transaction. A known proposal with an unknown revision is processed: `ProcessConsent` rejects it with `UnknownRevision`, and the acknowledgment explains it. `unknown-proposal` is acknowledged with the same text (`Rejected`, reason `UnknownRevision`), which is true for a proposal that does not exist.
+    - **The wording of a wrong code** (M1.10). The acknowledgment of `invalid-code` and `replayed-code` says that the command had no effect, and that the `SuiteWard / Contract` check may now show as failed until the owner comments a corrected command with a current code (a new one after a replayed code), or pushes. It no longer says that nothing changed, because the check does change (see "Owner-command failure").
 - **Errors.**
   - A store or network error stops the run. A later candidate must never go ahead of an earlier one, because that would reopen the race the watermark closes.
   - After 5 consecutive failed attempts in this process, the candidate is recorded as `failed` and logged (repository, comment id, error kind; never GitHub text). The next candidate is then processed.
@@ -243,15 +244,15 @@ The job counts also exclude `github_merges` and `canonical_integrity`.
    - **Superseded proposals.** A proposal superseded by the branch path is never chosen, because step 1 already answered `bootstrap-pending`. "Superseded" has no store marker. The proposal stays, and if its PR merges with a tree that matches the approved revision exactly, `PromoteMerge` still promotes it, which is safe because an exact match means no drift. A later branch baseline then blocks with `CanonicalPresent`.
 
    Head inventories are read only while looking for a carrier, and each verdict is cached by head SHA.
-   - **A carrier keeps its role while its PR is open,** even when a later push removes its protected files (its check is then `bootstrap-pending`). Another PR with protected files waits until the owner closes it. Changing that is a policy decision, not taken here.
-   - **A default branch whose tree GitHub truncates** is treated like one with protected files: every PR gets `bootstrap-pending`, cached by head SHA. The bootstrap job reports the same case as `invalid-source`.
+   - **A carrier keeps its role while its PR is open,** even when a later push removes its protected files (its check is then `bootstrap-awaiting`). Another PR with protected files waits until the owner closes it. Changing that is a policy decision, not taken here.
+   - **A default branch whose tree GitHub truncates** is treated like one with protected files: every PR gets `bootstrap-awaiting`, cached by head SHA. The bootstrap job reports the same case as `invalid-source`.
 3. **The carrier's head.** First the M1.6b fast path: same head, same Suite revision and same latest owner command keep the record without a read (an approval bumps the Suite revision, so readiness still changes on the next run). Otherwise call `AssessBootstrapHead`, with a `bootstrap-summary` message for a committed revision.
    - Not ready: `in_progress`, `approval-missing`, with the reference.
    - Ready: `success`, `bootstrap-ready`.
    - An invalid source is `failure` / `invalid-source`. A truncated tree is `source-unavailable`.
    - The owner-command `failure` applies to the carrier as it does to change PRs.
    - `ErrCanonicalMoved` keeps the record, and the next run retries.
-4. **Every other open PR** gets `bootstrap-pending`. A fork PR keeps `fork-unsupported`.
+4. **Every other open PR** gets `bootstrap-awaiting`. A fork PR keeps `fork-unsupported`.
 
 **`bootstrap-ready` check text.**
 - Title: "Bootstrap ready for integration".
@@ -404,7 +405,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **Payload:**
   - `repositoryId`, `repo`, `pull`, `head`, `branch`;
   - `paths`: at most 20, each cut to 150 bytes, plus `pathsTotal`;
-  - `declaration`: the canonical declaration bytes with the new patterns added by `scope.AddPatterns`. It is never built from the PR head's file. It is at most 8192 bytes (`maxDeclaration`, which bounds the comment). For a larger declaration the job writes no notice and logs that it skipped it;
+  - `declaration`: the canonical declaration bytes with the new patterns added by `scope.AddPatterns`. It is never built from the PR head's file. It is at most 8192 bytes (`maxDeclaration`, which bounds the comment), and it holds no character that is not graphic besides newline (LF or CRLF) and tab (decision 7 of M1.10: a comment of the owner's `.suiteward.yml` could carry a bidi, zero-width or control character). For a declaration that fails either rule the job writes no notice, because a notice has no form without its declaration, and logs that it skipped it;
   - `mixed`;
   - `submodules` (optional): the submodules that `Suggest(head entries)` would reach, listed with a warning that their contents are not protected;
   - `cut` (optional): set when the new patterns were cut at the limit of 20, so the text says the declaration is partial and asks the owner to review it.
@@ -434,7 +435,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **`suggest-refused`** is recorded with a short ack that names the reason and quotes no repository text. It is never retried. The reasons are:
   - `fork` or `not-open`, as for `propose`;
   - `invalid-source`: the tree is invalid or truncated, the canonical has no declaration, or the reply cannot be rendered (an unusable branch name, for example);
-  - `declaration-too-large`: the suggested declaration is over 8192 bytes. The ack carries `branch` (optional) and links to the editor for `.suiteward.yml` on the PR's branch. When the base was the default branch's file, it also carries `base: default-branch`, and the link and wording name the default branch.
+  - `declaration-too-large`: the suggested declaration is over 8192 bytes. (A base declaration that holds a character that is not graphic besides newline and tab cannot be shown either, and has no form without it: the suggest answers `invalid-source`, with no pattern-only reply.) The ack carries `branch` (optional) and links to the editor for `.suiteward.yml` on the PR's branch. When the base was the default branch's file, it also carries `base: default-branch`, and the link and wording name the default branch.
 
   A canonical that fails its integrity check gets no reply: the command is retried, then recorded `failed`, like any other failure.
 - Otherwise it records **`suggested`**, and its ack replies to the command. The reply compares the head with a **base declaration**:
@@ -499,21 +500,20 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **Resolution** is by the usual flow: the next head's assessment sees the changed scope.
 - **Which scope decides "covered".** It is the head's own declaration. This is sound because a head can be `success` only when it is `unchanged` (its declaration bytes equal the canonical's) or `ready` (the owner approved that exact revision, its declaration included). An approved reduction that drops a runner pattern therefore blocks, which fails closed.
 - **What counts as a runner file.** A runner file is a regular file or a symbolic link whose name is a runner-family name. A link counts too, so `conftest.py -> other.py` cannot slip past.
-- **The ignore choice** excludes only the file itself: a path with no slash is written anchored, as `/conftest.py`. A path with `*`, `?`, `[` or `\`, or one that is no valid exclude pattern (a leading `!`), gets no ignore choice, because no exclude names exactly that file; and a choice whose declaration cannot be built is dropped, never failing the job (amended 2026-10-19, M1.9 release review).
+- **The ignore choice** excludes only the file itself: a path with no slash is written anchored, as `/conftest.py`. A path with `*`, `?`, `[` or `\`, or one that is no valid exclude pattern (a leading `!`), gets no ignore choice, because no exclude names exactly that file; and a choice whose declaration cannot be shown is dropped (it is over 8192 bytes or holds a character that is not graphic besides newline and tab, decision 7 of M1.10), so the comment offers the protect choice alone (amended 2026-10-19, M1.9 release review). The protect declaration has no form without it: when it cannot be shown the job logs that it skipped the comment and the check is the same. A declaration that `scope.AddPatterns` or `scope.AddExcludes` cannot extend is an impossible state, because the canonical was verified and the patterns are constants, so it fails the job instead of dropping the comment (decision 5 of M1.10).
 - **The copyable declarations** start from the canonical. For a head whose own approved declaration differs from the canonical, the review suggestions apply to the head's file, while pasting a copy block would revert those edits. The comment says so.
 
 **Outbox `github_comment`, key `invalid-source:<repository id>:<pull>:<problem digest>` (new, 2026-10-18, live run 5).**
 - **When it is written.** When the checks job publishes `failure` with reason `invalid-source` for an open, non-fork PR, it also writes one comment that explains the problem.
 - **The problem** has three kinds:
   - **`declaration`:** the head's `.suiteward.yml` is not a valid declaration;
-  - **`link`:** a symbolic link the scope covers or may cover below, whose target is not a regular file of the tree; the payload adds `path`, the link's path cut to 150 bytes, `pathCut` (optional, set when it was cut: the comment then offers no one-line pattern), and `declaration` (amended 2026-10-19, optional): the head's `.suiteward.yml` with the link's anchored path added to `exclude`, omitted when the head has no declaration, it cannot be built, or it exceeds 8 KiB;
+  - **`link`:** a symbolic link the scope covers or may cover below, whose target is not a regular file of the tree; the payload adds `path`, the link's path cut to 150 bytes, `pathCut` (optional, set when it was cut: the comment then offers no one-line pattern), and `declaration` (amended 2026-10-19, optional): the head's `.suiteward.yml` with the link's anchored path added to `exclude`, omitted when the head has no declaration, it cannot be built, it exceeds 8 KiB, or it holds a character that is not graphic besides newline and tab (decision 7 of M1.10: the comment then shows the pattern line alone, and the key's digest still covers the declaration, so a key never moves);
   - A truncated tree is `source-unavailable`, not `invalid-source`, so it gets no such comment.
 - **The key.** The problem digest is the SHA-256 of the kind and the path; for a `link` that carries a `declaration` it also covers that declaration's SHA-256, so an edit of the head's `.suiteward.yml` posts a comment with a current one. A later push with the same problem posts nothing; a different problem posts a new comment.
 - **The text:**
   - it names the problem and gives the next step:
     - fix the declaration;
     - remove the link or point it to a regular file; or accept it with its exact anchored path in `exclude` (an accepted link), with the warning that nothing reached through it is protected and that the change is a reduction the owner approves. The comment never suggests narrowing the include patterns;
-    - the repository is too large for this release.
   - the path goes inside a fence, escaped;
   - it quotes no file content except the head's own declaration of a `link` comment;
   - it says the canonical contract stays in force and the check stays `failure` until the next push fixes it;
@@ -521,6 +521,8 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **The check summary** for `invalid-source` no longer mentions submodules, which are outside the scope since the D-SCOPE amendment.
 
 **Bot identity.** When the bot account cannot be resolved, the commands job logs the failure's `kind` and `status` (`readFailure`), never GitHub's text. This also covers a refused App JWT on `GET /app`.
+
+**Logs of the checks job (M1.10).** A GitHub read that fails is logged by its `kind` and `status` through `logReadFailure`, never with the error's text; this includes the read of the head's declaration for an accepted link. A declaration that `scope.AddExcludes` cannot extend is logged with a fixed message and only whether it was an invalid declaration, because the error text quotes the head's file. A skipped review logs the reason of a diff that cannot be read, which names only the constant path `.suiteward.yml`.
 
 ### Protection verification job (M1.5)
 

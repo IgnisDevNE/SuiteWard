@@ -31,7 +31,7 @@
 // ValidateAck, ValidateSuggestion, ValidateScopeNotice, ValidateScopeSuggestion, ValidateRunnerUncovered,
 // ValidateRunnerChoice, ValidateInvalidSource or ValidateEditTarget: each reports as an error what its renderer panics on.
 // A declaration that a comment shows in a fence is shown as it is, so those validators refuse one that holds a character that
-// is not graphic other than a newline and a tab.
+// is not graphic other than a newline (LF or CRLF) and a tab.
 package commandtext
 
 import "strings"

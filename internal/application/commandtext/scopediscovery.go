@@ -65,7 +65,7 @@ func ValidateScopeNotice(n ScopeNotice) error {
 		return err
 	}
 	if len(n.Declaration) == 0 || len(n.Declaration) > MaxDeclaration || !verbatim(n.Declaration) {
-		return fmt.Errorf("commandtext: a declaration of %d bytes is empty, over %d bytes or holds a character that is not graphic besides newline and tab", len(n.Declaration), MaxDeclaration)
+		return fmt.Errorf("commandtext: a declaration of %d bytes is empty, over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Declaration), MaxDeclaration)
 	}
 	return validateNoticeBase(n)
 }
@@ -98,7 +98,7 @@ func validateNoticeBase(n ScopeNotice) error {
 // suggestion: it changes nothing, grants nothing and never says that tests ran. The paths and the declaration come from
 // the repository, so they are shown only inside code fences that backticks cannot close. The paths are shown with their
 // control characters escaped. The declaration is shown as it is, and ValidateScopeNotice refuses one that holds a character
-// that is not graphic other than a newline and a tab. The branch is path-escaped. An input that does not fit panics (see
+// that is not graphic other than a newline (LF or CRLF) and a tab. The branch is path-escaped. An input that does not fit panics (see
 // ValidateScopeNotice).
 func ScopeNoticeComment(n ScopeNotice) string {
 	must(ValidateScopeNotice(n))
@@ -251,8 +251,9 @@ func suggestedItems(patterns []string, indent string, style yaml.Style) string {
 	return items.String()
 }
 
-// ValidateScopeSuggestion reports why ScopeSuggestionBody would panic on its arguments, as an error. A pattern that
-// cannot be written inside a double-quoted YAML scalar is refused, not left out: the caller decides what to do.
+// ValidateScopeSuggestion reports why ScopeSuggestionBody would panic on its arguments, as an error. The items are written in the
+// style of the anchor (see quotingOf), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
+// out: the caller decides what to do.
 func ValidateScopeSuggestion(anchorLine, indent string, patterns []string) error {
 	switch {
 	case len(patterns) == 0 || len(patterns) > maxListed:

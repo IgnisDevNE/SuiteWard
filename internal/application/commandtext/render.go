@@ -428,9 +428,8 @@ func listing(title string, items []string, total int) string {
 }
 
 // listingAndMore is listing for paths: the entries inside a fence, then "and N more" for the ones the total counts
-// beyond them. At most maxListed items are shown; a total below them is their number.
+// beyond them. The items are at most maxListed (the validators cap them); a total below them is their number.
 func listingAndMore(title string, items []string, total int) string {
-	items = items[:min(len(items), maxListed)]
 	body := listing(title, items, len(items))
 	if unlisted := total - len(items); unlisted > 0 {
 		body += fmt.Sprintf("\n\nand %d more", unlisted)

@@ -30,9 +30,9 @@ func ValidateRunnerUncovered(n RunnerUncovered) error {
 	case len(n.Paths) == 0 || len(n.Paths) > maxListed || n.PathsTotal < len(n.Paths):
 		return fmt.Errorf("commandtext: %d paths of a total of %d in a runner-uncovered notice, want 1 to %d, and a total that is not below them", len(n.Paths), n.PathsTotal, maxListed)
 	case len(n.Protect) == 0 || len(n.Protect) > MaxDeclaration || !verbatim(n.Protect):
-		return fmt.Errorf("commandtext: a protect declaration of %d bytes is empty, over %d bytes or holds a character that is not graphic besides newline and tab", len(n.Protect), MaxDeclaration)
+		return fmt.Errorf("commandtext: a protect declaration of %d bytes is empty, over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Protect), MaxDeclaration)
 	case len(n.Ignore) > MaxDeclaration || !verbatim(n.Ignore):
-		return fmt.Errorf("commandtext: an ignore declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline and tab", len(n.Ignore), MaxDeclaration)
+		return fmt.Errorf("commandtext: an ignore declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Ignore), MaxDeclaration)
 	}
 	return nil
 }
@@ -42,7 +42,7 @@ func ValidateRunnerUncovered(n RunnerUncovered) error {
 // suggestion: it commits nothing, approves nothing and never says that tests ran. The paths and the declarations come from the
 // repository, so they are shown only inside code fences that backticks cannot close. The paths are shown with their control characters
 // escaped. A declaration is shown as it is, and ValidateRunnerUncovered refuses one that holds a character that is not graphic other than
-// a newline and a tab. The branch is path-escaped. An input that does not fit panics (see ValidateRunnerUncovered).
+// a newline (LF or CRLF) and a tab. The branch is path-escaped. An input that does not fit panics (see ValidateRunnerUncovered).
 func RunnerUncoveredComment(n RunnerUncovered) string {
 	must(ValidateRunnerUncovered(n))
 	parts := []string{
@@ -106,8 +106,9 @@ func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns [
 	return paragraphs(sentence, fence("suggestion", content+"\n"))
 }
 
-// ValidateRunnerChoice reports why RunnerChoiceBody would panic on its arguments, as an error. A pattern that cannot be written inside
-// a double-quoted YAML scalar is refused, not left out: the caller decides what to do.
+// ValidateRunnerChoice reports why RunnerChoiceBody would panic on its arguments, as an error. The items are written in the
+// style of the anchor (see quotingOf), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
+// out: the caller decides what to do.
 func ValidateRunnerChoice(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string) error {
 	switch {
 	case choice != ProtectChoice && choice != IgnoreChoice:

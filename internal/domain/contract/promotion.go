@@ -183,28 +183,28 @@ const (
 )
 
 type PromotionInput struct {
-	Context           PromotionContext
-	Integration       Integration
-	Target            IntegrationTargetID
-	OperationID       OperationID
-	NewVersionID      SuiteVersionID
-	RecordedAt        time.Time
+	Context      PromotionContext
+	Integration  Integration
+	Target       IntegrationTargetID
+	OperationID  OperationID
+	NewVersionID SuiteVersionID
+	RecordedAt   time.Time
+	// CorrectsVersionID is the earlier version a correction restores, empty for a promotion that corrects nothing.
+	// DecideCorrection sets it; DecidePromotion and DecideBootstrap only carry it into the record.
 	CorrectsVersionID SuiteVersionID
 }
 
-// PromotionEffect proposes one atomic local write.
+// PromotionEffect proposes one atomic local write: the new version and its promotion record. The store advances the
+// Suite pointer itself under the lock, so the pointer the decision computed (suite) is read only by the tests.
 type PromotionEffect struct {
-	expectedCanonical SuiteVersionID
-	suite             Suite
-	version           SuiteVersion
-	promotion         PromotionRecord
+	suite     Suite
+	version   SuiteVersion
+	promotion PromotionRecord
 }
 
-func (e PromotionEffect) IsZero() bool                        { return e.promotion.IsZero() }
-func (e PromotionEffect) ExpectedCanonicalID() SuiteVersionID { return e.expectedCanonical }
-func (e PromotionEffect) Suite() Suite                        { return e.suite }
-func (e PromotionEffect) Version() SuiteVersion               { return e.version }
-func (e PromotionEffect) Promotion() PromotionRecord          { return e.promotion }
+func (e PromotionEffect) IsZero() bool               { return e.promotion.IsZero() }
+func (e PromotionEffect) Version() SuiteVersion      { return e.version }
+func (e PromotionEffect) Promotion() PromotionRecord { return e.promotion }
 
 // DecidePromotion proposes effects only; committing them under the per-Suite lock is an
 // application obligation. No-change means only that no new canonical is needed.
@@ -220,7 +220,7 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 		return blockedPromotion(PromotionReasonIntegrationMissing), nil
 	}
 	if strings.TrimSpace(string(input.Target)) == "" {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: a promotion names its target", ErrInvalidPromotion)
 	}
 	readiness, err := CheckPromotionReadiness(input.Context, input.Integration.Source())
 	if err != nil || readiness.Outcome() != PromotionReady {
@@ -234,7 +234,7 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 		if input.Integration.Carrier() != input.Context.Carrier {
 			return blockedPromotion(PromotionReasonIntegrationMismatch), nil
 		}
-	} else if _, present := current.CurrentVersionID(); present || input.Integration.Source() != input.Context.Proposal.Current().Origin() || input.Context.Proposal.Current().OriginKind() != OriginBranch {
+	} else if !existingBaselineMatches(input.Integration, current, input.Context.Proposal.Current()) {
 		return blockedPromotion(PromotionReasonIntegrationMismatch), nil
 	}
 	record, err := NewPromotionRecord(PromotionRecordInput{OperationID: input.OperationID, VersionID: input.NewVersionID, Binding: input.Context.Proposal.Current().Binding(), Carrier: input.Context.Carrier, Source: input.Integration.Source(), Target: input.Target, RecordedAt: input.RecordedAt, CorrectsVersionID: input.CorrectsVersionID})
@@ -244,14 +244,21 @@ func DecidePromotion(input PromotionInput) (PromotionDecision, error) {
 	// Cannot fail here: the version id was validated by NewPromotionRecord and the project, suite and manifest come from the validated canonical Suite and Proposed contract.
 	version, err := NewSuiteVersion(current.ProjectID(), current.ID(), input.NewVersionID, input.Context.Proposed.Manifest())
 	if err != nil {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
 	suite, err := NewSuite(current.ProjectID(), current.ID(), input.NewVersionID, current.Revision()+1)
 	if err != nil {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: %w", ErrInvalidPromotion, err)
 	}
-	effect := PromotionEffect{expectedCanonical: record.Binding().ExpectedCanonical(), suite: suite, version: version, promotion: record}
+	effect := PromotionEffect{suite: suite, version: version, promotion: record}
 	return PromotionDecision{outcome: PromotionProposed, effect: effect}, nil
+}
+
+// existingBaselineMatches reports whether integration is the pinned default-branch commit that proposal's current
+// revision was made from, before any canonical exists: the only integration that establishes a baseline.
+func existingBaselineMatches(integration Integration, current Suite, latest ProposalRevision) bool {
+	_, present := current.CurrentVersionID()
+	return !present && integration.Source() == latest.Origin() && latest.OriginKind() == OriginBranch
 }
 
 type PromotionDecision struct {
@@ -266,9 +273,16 @@ func (d PromotionDecision) Effect() (PromotionEffect, bool) { return d.effect, !
 func blockedPromotion(reason PromotionReason) PromotionDecision {
 	return PromotionDecision{outcome: PromotionBlocked, reason: reason}
 }
+
+// CheckPromotionReadiness says whether the proposal's current revision may become canonical, judged at requiredSource.
+// It blocks with the first reason that holds, in this order, which the tests pin: the proposal and its context (another
+// carrier, a revision that is unknown or no longer current, a protected contract the revision does not bind), an empty
+// first inventory, a canonical other than the one approved against, the policy (another project, then another
+// revision), the owner's approval, and the integrity assessment (its assurance, then its source and binding, then its
+// outcome). Structurally unusable input is an error, not a blocked decision.
 func CheckPromotionReadiness(context PromotionContext, requiredSource SourceRevision) (PromotionDecision, error) {
 	if context.Canonical.IsZero() || context.Proposed.IsZero() || context.Policy.RevisionID() == "" || strings.TrimSpace(string(requiredSource)) == "" {
-		return PromotionDecision{}, ErrInvalidPromotion
+		return PromotionDecision{}, fmt.Errorf("%w: readiness needs a canonical, a proposed contract, a policy and a required source", ErrInvalidPromotion)
 	}
 	// Resolve itself rejects a zero proposal, an invalid reference and a blank carrier.
 	revision, err := context.Proposal.Resolve(context.Reference, context.Carrier)

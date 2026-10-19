@@ -17,6 +17,7 @@ type PromotionRecordInput struct {
 	Source            SourceRevision
 	Target            IntegrationTargetID
 	RecordedAt        time.Time
+	// CorrectsVersionID is the earlier version this promotion restores (the one that was current), empty when it corrects nothing.
 	CorrectsVersionID SuiteVersionID
 }
 

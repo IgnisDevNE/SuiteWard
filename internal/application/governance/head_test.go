@@ -548,18 +548,24 @@ func TestScopeReductionGetsAProposalLikeAProtectedChange(t *testing.T) {
 
 func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
 	ctx := context.Background()
+	// scope.Declaration has no accessor for presence in production: a scope's digest covers the presence byte and the raw bytes.
+	digestOf := func(d scope.Declaration) artifact.Digest { return scope.NewScope(d).Digest() }
 	t.Run("valid", func(t *testing.T) {
 		e := newHeadEnv(t)
 		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
-		if err != nil || string(raw) != declaration || !d.Present() {
-			t.Fatalf("raw = %q, present = %v, error = %v; want the stored declaration", raw, d.Present(), err)
+		stored, parseErr := scope.ParseDeclaration([]byte(declaration))
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		if err != nil || string(raw) != declaration || digestOf(d) != digestOf(stored) {
+			t.Fatalf("raw = %q, error = %v; want the stored declaration, parsed", raw, err)
 		}
 	})
 	t.Run("no entry", func(t *testing.T) {
 		e := newHeadEnvOn(t, newFakeTree(regularFile(".github/workflows/ci.yml", "on: push\n")))
 		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
-		if !errors.Is(err, governance.ErrNoCanonicalDeclaration) || raw != nil || d.Present() {
-			t.Fatalf("raw = %q, present = %v, error = %v; want no bytes, no declaration and ErrNoCanonicalDeclaration", raw, d.Present(), err)
+		if !errors.Is(err, governance.ErrNoCanonicalDeclaration) || raw != nil || digestOf(d) != digestOf(scope.NoDeclaration()) {
+			t.Fatalf("raw = %q, error = %v; want no bytes, no declaration and ErrNoCanonicalDeclaration", raw, err)
 		}
 	})
 	stored := artifact.Hash([]byte(declaration))

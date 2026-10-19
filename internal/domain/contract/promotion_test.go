@@ -678,6 +678,30 @@ func promotionInput(t *testing.T) contract.PromotionInput {
 	return contract.PromotionInput{Context: promotionContext(t), Integration: promotionIntegration(t, "integrated-source", "carrier", contract.IntegrationMergedChange), Target: "main", OperationID: "promote-op", NewVersionID: "v2", RecordedAt: time.Date(2026, 9, 30, 13, 0, 0, 0, time.UTC), CorrectsVersionID: "v0"}
 }
 
+// requireEffectPointerAndVersion checks the proposed baseline, pointer and version of effect against input.
+func requireEffectPointerAndVersion(t *testing.T, effect contract.PromotionEffect, input contract.PromotionInput) {
+	t.Helper()
+	if effect.ExpectedCanonicalID() != "v1" {
+		t.Fatal("effect lost its expected canonical baseline")
+	}
+	current, exists := effect.Suite().CurrentVersionID()
+	if !exists || current != "v2" || effect.Suite().ProjectID() != "project" || effect.Suite().ID() != "suite" || effect.Suite().Revision() != 11 || effect.Version().ID() != "v2" || effect.Version().ProjectID() != "project" || effect.Version().SuiteID() != "suite" || effect.Version().Manifest().Digest() != input.Context.Proposed.Manifest().Digest() {
+		t.Fatal("grouped proposed version and pointer disagree")
+	}
+}
+
+// requireEffectRecord checks that the record of effect states exactly the facts of input and fits the canonical it proposes.
+func requireEffectRecord(t *testing.T, effect contract.PromotionEffect, input contract.PromotionInput) {
+	t.Helper()
+	record := effect.Promotion()
+	if record.IsZero() || record.OperationID() != input.OperationID || record.VersionID() != input.NewVersionID || !record.Binding().Equal(input.Context.Proposal.Current().Binding()) || record.Carrier() != input.Context.Carrier || record.Source() != input.Integration.Source() || record.Target() != input.Target || record.RecordedAt() != input.RecordedAt || record.CorrectsVersionID() != input.CorrectsVersionID {
+		t.Fatal("effect promotion record lost exact facts")
+	}
+	if _, err := contract.NewCanonicalSnapshot(effect.Suite(), effect.Version(), input.Context.Proposed, record); err != nil {
+		t.Fatalf("proposed canonical is internally contradictory: %v", err)
+	}
+}
+
 func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	input := promotionInput(t)
 	beforeSuite := input.Context.Canonical.Suite()
@@ -690,21 +714,9 @@ func TestPromotionProposesOneConsistentImmutableEffect(t *testing.T) {
 	if !present || effect.IsZero() {
 		t.Fatal("proposed promotion omitted grouped effect")
 	}
-	if effect.ExpectedCanonicalID() != "v1" {
-		t.Fatal("effect lost its expected canonical baseline")
-	}
-	current, exists := effect.Suite().CurrentVersionID()
-	if !exists || current != "v2" || effect.Suite().ProjectID() != "project" || effect.Suite().ID() != "suite" || effect.Suite().Revision() != 11 || effect.Version().ID() != "v2" || effect.Version().ProjectID() != "project" || effect.Version().SuiteID() != "suite" || effect.Version().Manifest().Digest() != input.Context.Proposed.Manifest().Digest() {
-		t.Fatal("grouped proposed version and pointer disagree")
-	}
-	record := effect.Promotion()
-	if record.IsZero() || record.OperationID() != input.OperationID || record.VersionID() != input.NewVersionID || !record.Binding().Equal(input.Context.Proposal.Current().Binding()) || record.Carrier() != input.Context.Carrier || record.Source() != input.Integration.Source() || record.Target() != input.Target || record.RecordedAt() != input.RecordedAt || record.CorrectsVersionID() != input.CorrectsVersionID {
-		t.Fatal("effect promotion record lost exact facts")
-	}
-	if _, err := contract.NewCanonicalSnapshot(effect.Suite(), effect.Version(), input.Context.Proposed, record); err != nil {
-		t.Fatalf("proposed canonical is internally contradictory: %v", err)
-	}
-	context := record.Binding().CoveredInputs()
+	requireEffectPointerAndVersion(t, effect, input)
+	requireEffectRecord(t, effect, input)
+	context := effect.Promotion().Binding().CoveredInputs()
 	context["runner"] = "changed"
 	entries := effect.Version().Manifest().Entries()
 	entries[0].Path = "changed"

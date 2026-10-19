@@ -79,13 +79,7 @@ func (b ApprovalBinding) CoveredInputs() map[string]string   { return maps.Clone
 
 // Equal compares usable bindings exactly; absence cannot satisfy a binding.
 func (b ApprovalBinding) Equal(other ApprovalBinding) bool {
-	return !b.IsZero() && !other.IsZero() &&
-		b.input.Reference == other.input.Reference &&
-		b.input.ExpectedCanonical == other.input.ExpectedCanonical &&
-		b.input.Manifest == other.input.Manifest &&
-		b.input.Scope == other.input.Scope &&
-		b.input.PolicyRevision == other.input.PolicyRevision &&
-		maps.Equal(b.input.CoveredInputs, other.input.CoveredInputs)
+	return b.SameCoverage(other) && b.input.Reference == other.input.Reference
 }
 
 // SameCoverage compares what consent covers: manifest, scope, covered inputs,

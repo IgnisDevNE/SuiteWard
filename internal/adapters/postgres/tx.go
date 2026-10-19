@@ -383,17 +383,10 @@ func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
 // one; the use case has already made every decision.
 
 func (t *tx) AppendConsent(ctx context.Context, write governance.ConsentWrite) error {
-	command := write.Result.Command()
-	switch {
-	case write.OperationID == "" || command.OperationID() == "":
-		return fmt.Errorf("%w: a consent write needs its operation and command", governance.ErrInvalidRequest)
-	case !t.inScope(command.Reference()):
-		return fmt.Errorf("%w: command %q belongs to another suite", governance.ErrInvalidRequest, command.SourceCommandID())
-	case write.Result.Duplicate() != write.Alias || (!write.Alias && write.OperationID != command.OperationID()):
-		return fmt.Errorf("%w: operation %q does not match the command result it records", governance.ErrOperationConflict, write.OperationID)
-	case write.Receipt.Result.Command().SourceCommandID() != command.SourceCommandID():
-		return fmt.Errorf("%w: the receipt belongs to another source command", governance.ErrInvalidRequest)
+	if err := write.Validate(t.project, t.suite); err != nil {
+		return err
 	}
+	command := write.Result.Command()
 	kind, receipt, err := encodeReceipt(governance.OperationConsent, &write.Receipt, nil)
 	if err != nil {
 		return invalidRequest("consent receipt", err)
@@ -445,19 +438,10 @@ func (t *tx) consentResultRow(result contract.CommandResult) (dbgen.InsertConsen
 }
 
 func (t *tx) RecordPromotion(ctx context.Context, write governance.PromotionWrite) error {
-	receipt, record := write.Receipt, write.Receipt.Record
-	switch {
-	case record.IsZero() || write.Version.ID() == "":
-		return fmt.Errorf("%w: a promotion write needs its record and version", governance.ErrInvalidRequest)
-	case !t.inScope(record.Binding().Reference()) || write.Version.ProjectID() != t.project || write.Version.SuiteID() != t.suite:
-		return fmt.Errorf("%w: promotion %q belongs to another suite", governance.ErrInvalidRequest, record.OperationID())
-	case receipt.Identity.Request.OperationID != record.OperationID():
-		return fmt.Errorf("%w: the receipt request and the promotion record name different operations", governance.ErrInvalidRequest)
-	case receipt.Identity.CorrectsVersionID != record.CorrectsVersionID() || !receipt.Identity.Binding.Equal(record.Binding()):
-		return fmt.Errorf("%w: the receipt identity and the promotion record disagree about the corrected version or the approval binding", governance.ErrInvalidRequest)
-	case !exactMicroseconds(record.RecordedAt()):
-		return fmt.Errorf("%w: recorded time %s needs sub-microsecond precision that PostgreSQL does not keep", governance.ErrInvalidRequest, record.RecordedAt().Format(time.RFC3339Nano))
+	if err := write.Validate(t.project, t.suite); err != nil {
+		return err
 	}
+	receipt, record := write.Receipt, write.Receipt.Record
 	if _, err := contract.NewHistoricalCanonical(write.Version, record); err != nil {
 		return invalidRequest("version and promotion record", err)
 	}

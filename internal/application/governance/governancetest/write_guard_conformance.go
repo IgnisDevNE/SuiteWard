@@ -26,11 +26,11 @@ func writeGuardCases() []struct {
 	}
 }
 
-// requireInvalidWrite fails the subtest unless write is refused as an invalid request and leaves the probed view as it was.
-func (e *cfEnv) requireInvalidWrite(probe cfProbe, before cfView, write func(context.Context, governance.Tx) error) {
+// requireRefusedWrite fails the subtest unless write is refused with the sentinel want and leaves the probed view as it was.
+func (e *cfEnv) requireRefusedWrite(probe cfProbe, before cfView, want error, write func(context.Context, governance.Tx) error) {
 	e.t.Helper()
-	if err := e.do(write); !errors.Is(err, governance.ErrInvalidRequest) {
-		e.t.Fatalf("error = %v, want an invalid request", err)
+	if err := e.do(write); !errors.Is(err, want) {
+		e.t.Fatalf("error = %v, want %v", err, want)
 	}
 	e.requireSameView(before, e.view(probe))
 }
@@ -42,7 +42,7 @@ func cfInvalidConsentWrites(e *cfEnv) {
 	approve := e.command(c, "revision-1", "guard-op", "guard-src", contract.ApproveConsent, 1)
 	another := e.command(c, "revision-1", "guard-op-2", "guard-src-2", contract.ApproveConsent, 2)
 	foreign := e.command(other, "revision-1", "guard-op-3", "guard-src-3", contract.ApproveConsent, 1)
-	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"guard-op", "guard-op-2", "guard-op-3"}, sources: []contract.SourceCommandID{"guard-src", "guard-src-2", "guard-src-3"}}
+	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"guard-op", "guard-op-2", "guard-op-3", "guard-op-4"}, sources: []contract.SourceCommandID{"guard-src", "guard-src-2", "guard-src-3"}}
 	before := e.view(probe)
 	resultOf := func(command contract.Command) contract.CommandResult {
 		return cfMust(contract.ReconstituteCommandResult(command, contract.ConsentApproved, contract.ConsentReasonNone))
@@ -52,20 +52,44 @@ func cfInvalidConsentWrites(e *cfEnv) {
 		return governance.ConsentWrite{OperationID: command.OperationID(), Result: result,
 			Receipt: governance.ConsentReceipt{Result: result, EvaluatedReference: command.Reference(), PolicyRevisionID: cfPolicy, CurrentApprovalEligible: true}}
 	}
+	// replayed, below, is the result of the same command applied twice: a duplicate, which only an alias write may record.
+	apply := func(consent contract.Consent) (contract.Consent, contract.CommandResult) {
+		next, result, err := consent.Apply(c.proposal, e.policy(cfProject), approve)
+		if err != nil {
+			panic(err)
+		}
+		return next, result
+	}
+	approved, _ := apply(cfMust(contract.NewConsent(cfProject, cfSuite, c.proposalID())))
+	_, replayed := apply(approved)
+
 	otherSource := writeOf(approve)
 	otherSource.Receipt.Result = resultOf(another)
 	noOperation := writeOf(approve)
 	noOperation.OperationID = ""
+	noCommand := writeOf(approve)
+	noCommand.Result = contract.CommandResult{}
+	duplicateWithoutAlias := writeOf(approve)
+	duplicateWithoutAlias.Result = replayed
+	aliasOfANewResult := writeOf(approve)
+	aliasOfANewResult.Alias = true
+	otherOperation := writeOf(approve)
+	otherOperation.OperationID = "guard-op-4"
 	for _, tc := range []struct {
 		name  string
 		write governance.ConsentWrite
+		want  error
 	}{
-		{"a command of another suite", writeOf(foreign)},
-		{"a receipt of another source command", otherSource},
-		{"no operation id", noOperation},
+		{"a command of another suite", writeOf(foreign), governance.ErrInvalidRequest},
+		{"a receipt of another source command", otherSource, governance.ErrInvalidRequest},
+		{"no operation id", noOperation, governance.ErrInvalidRequest},
+		{"a result without a command", noCommand, governance.ErrInvalidRequest},
+		{"a duplicate result that is not an alias", duplicateWithoutAlias, governance.ErrOperationConflict},
+		{"an alias of a result that is not a duplicate", aliasOfANewResult, governance.ErrOperationConflict},
+		{"an operation id other than the command's", otherOperation, governance.ErrOperationConflict},
 	} {
 		e.run(tc.name, func(e *cfEnv) {
-			e.requireInvalidWrite(probe, before, func(ctx context.Context, tx governance.Tx) error { return tx.AppendConsent(ctx, tc.write) })
+			e.requireRefusedWrite(probe, before, tc.want, func(ctx context.Context, tx governance.Tx) error { return tx.AppendConsent(ctx, tc.write) })
 		})
 	}
 }
@@ -86,6 +110,12 @@ func cfInvalidPromotionWrites(e *cfEnv) {
 	record := subMicrosecond.Receipt.Record
 	subMicrosecond.Receipt.Record = cfMust(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: record.OperationID(), VersionID: record.VersionID(), Binding: record.Binding(),
 		Carrier: record.Carrier(), Source: record.Source(), Target: record.Target(), RecordedAt: record.RecordedAt().Add(time.Nanosecond)}))
+	noRecord := write()
+	noRecord.Receipt.Record = contract.PromotionRecord{}
+	noVersion := write()
+	noVersion.Version = contract.SuiteVersion{}
+	versionOfAnotherSuite := write() // its record names this suite, its version another
+	versionOfAnotherSuite.Version = cfMust(contract.NewSuiteVersion(cfProject, "other-suite", "version-3", r.open.protected.Manifest()))
 	for _, tc := range []struct {
 		name  string
 		write governance.PromotionWrite
@@ -95,9 +125,12 @@ func cfInvalidPromotionWrites(e *cfEnv) {
 		{"a receipt identity that corrects another version", otherCorrection},
 		{"a receipt identity bound to another revision", otherBinding},
 		{"a record time that PostgreSQL cannot keep", subMicrosecond},
+		{"no promotion record", noRecord},
+		{"no version id", noVersion},
+		{"a version of another suite under a record of this one", versionOfAnotherSuite},
 	} {
 		e.run(tc.name, func(e *cfEnv) {
-			e.requireInvalidWrite(probe, before, func(ctx context.Context, tx governance.Tx) error { return tx.RecordPromotion(ctx, tc.write) })
+			e.requireRefusedWrite(probe, before, governance.ErrInvalidRequest, func(ctx context.Context, tx governance.Tx) error { return tx.RecordPromotion(ctx, tc.write) })
 		})
 	}
 }

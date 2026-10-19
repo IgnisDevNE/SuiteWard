@@ -210,6 +210,9 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if err := commandtext.ValidateAck(tc.ack); err != nil {
+				t.Errorf("ValidateAck refuses it: %v", err)
+			}
 			body := render(t, func() string { return commandtext.Acknowledge(tc.ack) })
 			if body == "" {
 				t.Fatal("empty body")
@@ -472,6 +475,9 @@ func TestAcknowledgeProposeAndSkipPanicsOnImpossibleState(t *testing.T) {
 	for name, ack := range cases {
 		t.Run(name, func(t *testing.T) {
 			mustPanic(t, func() { commandtext.Acknowledge(ack) })
+			if commandtext.ValidateAck(ack) == nil {
+				t.Error("ValidateAck accepts it")
+			}
 		})
 	}
 }

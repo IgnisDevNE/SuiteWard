@@ -48,7 +48,7 @@ func TestRunnerChoiceBodyQuotesTheItemsAsTheListDoes(t *testing.T) {
 		newList string
 		add     func([]byte) ([]byte, error)
 	}{
-		"a created runner list": {commandtext.ProtectChoice, "runner", func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, nil, quotingPatterns) }},
+		"a created runner list":  {commandtext.ProtectChoice, "runner", func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, nil, quotingPatterns) }},
 		"a created exclude list": {commandtext.IgnoreChoice, "exclude", func(raw []byte) ([]byte, error) { return scope.AddExcludes(raw, quotingPatterns) }},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -126,10 +126,10 @@ func TestSuggestBeforeTheFirstContractListsTheMissingRunnerPatternsToo(t *testin
 	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 	w.mustRun()
 
-	runner := []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}
+	// pytest.toml is no news: the base lists it.
+	runner := []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"}
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{"conftest.py", cjUtilTst}, "pathsTotal": 2,
 		"declaration": addPatterns(t, reviewBoth, []string{"*_test.go"}, runner), "addInclude": []string{"*_test.go"}, "addRunner": runner})
-	// The review leaves out pytest.toml, which the head's list holds.
 	w.requireReview(cjID1, cjHead, reviewBoth, []string{"conftest.py", cjUtilTst}, suggestInclude, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
 }
 

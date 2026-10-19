@@ -1,6 +1,7 @@
 package app
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
@@ -108,4 +109,36 @@ func TestChecksWriteNoScopeNoticeForARunnerNameTheCanonicalLacks(t *testing.T) {
 	w.scopePull(cjHead2, files, files)
 
 	w.wantNoScopeMessages()
+}
+
+// The runner patterns a missing path brings (the pytest family for a Python test file) are reported only when the base neither lists nor covers
+// them (A3 pull request 7, rc.7: the reply listed the whole pytest family as missing, though the canonical listed it).
+func TestSuggestReportsNoRunnerNameTheBaseAlreadyListsForAnUncoveredTestFile(t *testing.T) {
+	const decl = "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - .pytest.ini\n  - .pytest.toml\n  - pytest.ini\n  - pytest.toml\n  - conftest.py\n  - jest.config.*\n"
+	w := newCjWorld(t)
+	w.seedDeclared(cjID2, decl, map[string]string{"README.md": "x", ".suiteward.yml": decl, "app/calc_test.py": "x\n", "web/sum.test.js": "x\n"})
+	w.pullFiles(nil)
+	w.syncAll(nil, cjSuggest(500, cjAt(10)))
+	w.mustRun()
+
+	include := []string{"*.test.*", "*_test.py"}
+	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract", "paths": []string{"app/calc_test.py", "web/sum.test.js"}, "pathsTotal": 2,
+		"declaration": addPatterns(t, decl, include, nil), "addInclude": include})
+}
+
+// The limit of 20 patterns holds for the missing ones: names the base lists do not use up room, nor set Cut.
+func TestSuggestDoesNotCutForRunnerNamesTheBaseAlreadyLists(t *testing.T) {
+	const decl = "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - .pytest.ini\n  - .pytest.toml\n  - pytest.ini\n  - pytest.toml\n  - conftest.py\n"
+	// One test file for each of 16 convention globs: with the 5 pytest names that is 21 patterns, 16 of them missing.
+	files := []string{"a_test.go", "a.test.js", "a.spec.js", "a.cy.js", "a_spec.rb", "a_test.rb", "a_test.exs", "a_test.dart", "ATest.java", "ATests.java", "ATest.kt", "ATests.cs", "ATest.php", "test_a.py", "a_test.py", "tests.py"}
+	include := []string{"*.cy.*", "*.spec.*", "*.test.*", "*Test.java", "*Test.kt", "*Test.php", "*Tests.cs", "*Tests.java", "*_spec.rb", "*_test.dart", "*_test.exs", "*_test.go", "*_test.py", "*_test.rb", "test_*.py", "tests.py"}
+	w := newCjWorld(t)
+	w.seedDeclared(cjID2, decl, withFiles(map[string]string{"README.md": "x", ".suiteward.yml": decl}, files...))
+	w.pullFiles(nil)
+	w.syncAll(nil, cjSuggest(500, cjAt(10)))
+	w.mustRun()
+
+	sorted := slices.Sorted(slices.Values(files))
+	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract", "paths": sorted, "pathsTotal": len(files),
+		"declaration": addPatterns(t, decl, include, nil), "addInclude": include})
 }

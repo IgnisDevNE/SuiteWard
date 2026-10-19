@@ -312,7 +312,11 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			}
 			w.mustRun()
 
-			w.requireAckPayload(repository, 500, commands.SuggestRefused, map[string]any{"reason": tc.reason})
+			payload := map[string]any{"reason": tc.reason}
+			if tc.reason == "declaration-too-large" { // the editor link goes to the pull request's branch
+				payload["branch"] = cjBranch
+			}
+			w.requireAckPayload(repository, 500, commands.SuggestRefused, payload)
 			if !strings.Contains(w.logs.String(), "github suggest refused") {
 				t.Fatalf("no log line says the suggestion was refused\nlogs: %s", w.logs)
 			}

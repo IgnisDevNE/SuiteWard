@@ -331,7 +331,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		w := newCjWorld(t)
 		w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewDecl, cjUtilTst))
 		reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
-		reader.err = &rest.StatusError{Status: 500, Body: bootSecret}
+		reader.err = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
 		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 		w.mustRun()
 

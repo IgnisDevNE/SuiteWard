@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -176,7 +177,7 @@ func TestChecksWriteNoScopeReviewWithoutANewScopeNotice(t *testing.T) {
 func TestChecksWriteTheScopeNoticeWhenTheListOfFilesCannotBeRead(t *testing.T) {
 	t.Run("a failure that will repeat", func(t *testing.T) {
 		w := newCJWorld(t, true)
-		w.reader.filesErr = &rest.StatusError{Status: 500, Body: bootSecret}
+		w.reader.filesErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
 
 		w.scopePull(cjHead2, reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 

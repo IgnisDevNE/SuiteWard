@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 )
@@ -541,32 +540,10 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 				return
 			}
 			var se *rest.StatusError
-			if !errors.As(err, &se) || se.Status != tc.status || se.Body != `{"message":"refused"}` {
-				t.Fatalf("status error = %#v, want status %d with the body", err, tc.status)
+			if !errors.As(err, &se) || se.Status != tc.status {
+				t.Fatalf("status error = %#v, want status %d", err, tc.status)
 			}
 		})
-	}
-}
-
-func TestErrorBodiesAreTruncated(t *testing.T) {
-	long := strings.Repeat("x", 4096)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(long))
-	}))
-	defer srv.Close()
-	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
-
-	_, err := c.Get(context.Background(), "/repos/o/r")
-	var se *rest.StatusError
-	if !errors.As(err, &se) {
-		t.Fatalf("err = %v, want a *StatusError", err)
-	}
-	if se.Body != long[:512] {
-		t.Fatalf("body in error has %d bytes, want the first 512", len(se.Body))
-	}
-	if strings.Contains(err.Error(), long[:513]) {
-		t.Fatal("error text carries more than 512 bytes of the body")
 	}
 }
 
@@ -911,8 +888,8 @@ func TestBodiesOverTheLimitAreAnErrorNotTruncated(t *testing.T) {
 						t.Errorf("%s: %+v, %v; want the full body", name, got, err)
 					}
 				case tc.ok:
-					if !errors.As(err, &se) || len(se.Body) != limit {
-						t.Errorf("%s: err = %v, want a StatusError carrying the body", name, err)
+					if !errors.As(err, &se) {
+						t.Errorf("%s: err = %v, want a StatusError", name, err)
 					}
 				default:
 					if err == nil || errors.As(err, &se) || !strings.Contains(err.Error(), "8 bytes") {
@@ -989,25 +966,6 @@ func TestRetryAfterAsHTTPDate(t *testing.T) {
 	var rl *rest.RateLimitedError
 	if !errors.As(err, &rl) || !rl.Until.Equal(until) {
 		t.Fatalf("err = %#v, want a RateLimitedError until %v", err, until)
-	}
-}
-
-func TestErrorBodyTruncationKeepsRunesWhole(t *testing.T) {
-	body := strings.Repeat("x", 511) + "é" // the rune spans bytes 511 and 512
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(body))
-	}))
-	defer srv.Close()
-	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
-
-	_, err := c.Get(context.Background(), "/p")
-	var se *rest.StatusError
-	if !errors.As(err, &se) {
-		t.Fatalf("err = %v, want a *StatusError", err)
-	}
-	if !utf8.ValidString(se.Body) || se.Body != body[:511] {
-		t.Fatalf("truncated body has %d bytes, want the 511 whole bytes before the rune", len(se.Body))
 	}
 }
 

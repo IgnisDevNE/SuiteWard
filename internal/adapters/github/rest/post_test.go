@@ -159,15 +159,9 @@ func TestPostMapsStatusesAndNeverKeepsText(t *testing.T) {
 				if limited.Until.IsZero() {
 					t.Error("RateLimitedError.Until is zero")
 				}
-				if limited.Body != "" {
-					t.Errorf("RateLimitedError carries answer text %q", limited.Body)
-				}
 			case c.wantStatus != 0:
 				if !errors.As(err, &status) || status.Status != c.wantStatus {
 					t.Fatalf("err = %v, want *StatusError with status %d", err, c.wantStatus)
-				}
-				if status.Body != "" {
-					t.Errorf("StatusError carries answer text %q", status.Body)
 				}
 			}
 			if c.sentinel != nil && !errors.Is(err, c.sentinel) {

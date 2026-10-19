@@ -111,7 +111,7 @@ func TestCommentPublisherPostsAScopeReviewOnceAndOnlyWhatIsMissing(t *testing.T)
 
 func TestCommentPublisherCompletesAScopeReviewThatGitHubRefusesAndLogsOnlyTheKindAndStatus(t *testing.T) {
 	w := newCmtWorld(t)
-	w.writer.reviewPostErrs = []error{fmt.Errorf("post review comment: %w", &rest.StatusError{Status: 422, Body: cmtSecretText})}
+	w.writer.reviewPostErrs = []error{fmt.Errorf("post review comment: %w", fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, cmtSecretText))}
 
 	err := w.pub.publish(t.Context(), cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList, cmtRunnerList}, nil))
 
@@ -129,8 +129,8 @@ func TestCommentPublisherCompletesAScopeReviewThatGitHubRefusesAndLogsOnlyTheKin
 
 func TestCommentPublisherRetriesAScopeReviewOnAnyOtherFailure(t *testing.T) {
 	for name, failure := range map[string]error{
-		"a server error":  &rest.StatusError{Status: 500, Body: cmtSecretText},
-		"a rate limit":    &rest.RateLimitedError{Status: 403, Body: cmtSecretText},
+		"a server error":  fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, cmtSecretText),
+		"a rate limit":    fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 403}, cmtSecretText),
 		"a transport one": errors.New("connection reset"),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestCommentPublisherRetriesAScopeReviewOnAnyOtherFailure(t *testing.T) {
 	}
 	t.Run("a failed readback", func(t *testing.T) {
 		w := newCmtWorld(t)
-		w.writer.reviewListErr = &rest.StatusError{Status: 500, Body: cmtSecretText}
+		w.writer.reviewListErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, cmtSecretText)
 
 		err := w.pub.publish(t.Context(), cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList}, nil))
 

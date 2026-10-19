@@ -46,6 +46,8 @@ type ScopeNotice struct {
 	Base       ScopeBase
 	AddInclude []string
 	AddRunner  []string
+	// DefaultBranch, only with BaseDefaultBranch, is the branch whose .suiteward.yml the reply asks to change, for the editor link; none: no link.
+	DefaultBranch string
 }
 
 // ValidateScopeNotice reports why ScopeNoticeComment would panic on n, as an error: a caller that stores the notice
@@ -74,6 +76,8 @@ func ValidateScopeNotice(n ScopeNotice) error {
 		return errors.New("commandtext: new patterns are listed only with a base")
 	case len(n.AddInclude)+len(n.AddRunner) > maxListed:
 		return fmt.Errorf("commandtext: %d new patterns, at most %d", len(n.AddInclude)+len(n.AddRunner), maxListed)
+	case n.DefaultBranch != "" && (n.Base != BaseDefaultBranch || !gitBranch(n.DefaultBranch)):
+		return errors.New("commandtext: a default branch fits only the reply for the default branch, and must be a git branch name")
 	}
 	return nil
 }
@@ -162,6 +166,9 @@ func scopeSuggestReply(n ScopeNotice, declaration string) string {
 		parts = append(parts, "To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it]("+editLink(n.Repo, n.Branch)+") and paste the declaration. "+
 			"SuiteWard never commits it for you: the commit is yours.",
 			"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts these lines as a review comment, and GitHub's **Commit suggestion** button applies them in one click.")
+	} else if n.DefaultBranch != "" {
+		parts = append(parts, "To change `.suiteward.yml` on the default branch, [open GitHub's editor for it]("+editLink(n.Repo, n.DefaultBranch)+") and paste the declaration. "+
+			"GitHub offers a new branch and a pull request when the default branch is protected.")
 	}
 	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
 	switch n.Base {

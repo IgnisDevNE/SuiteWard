@@ -87,7 +87,7 @@ func TestScopeReplyMentionsTheOneClickCommitSuggestionWhenTheHeadsFileIsTheBase(
 }
 
 // The first contract is proposed from the default branch's file, so the change has to reach that branch first. The branch is not
-// in the payload, so there is no link to it: the file is shown to copy.
+// in the notice of an old payload, so it has no link to it: the file is shown to copy.
 func TestScopeReplyForTheDefaultBranchSaysTheChangeMustReachTheDefaultBranchFirst(t *testing.T) {
 	body := noticeText(t, reply(commandtext.BaseDefaultBranch))
 	for _, w := range []string{"default branch first", "commit or merge", "```\n/suiteward propose\n```"} {

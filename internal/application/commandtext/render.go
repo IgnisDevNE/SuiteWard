@@ -91,6 +91,10 @@ type Ack struct {
 	// Base, for NothingUncovered and for the InvalidSource refusal of a suggest, names what the head was compared with, or the file that is not a
 	// valid declaration; none is the words written before M1.9-E5.
 	Base ScopeBase
+	// Repo (owner/name) and Branch build the editor link of a refusal that asks to fix .suiteward.yml: SuggestRefused for an InvalidSource
+	// with a Base (the file refused) or a DeclarationTooLarge, and ProposeRefused for an InvalidSource with a Base of pull or default-branch.
+	// Branch is the branch of that file, the pull request's head ref or the default branch; both or neither, and none is no link.
+	Repo, Branch string
 	// Refusal is set exactly for ProposeRefused and SkipRefused.
 	Refusal Refusal
 }
@@ -221,7 +225,7 @@ func acknowledgment(a Ack) string {
 		return paragraphs(subject + " was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.\n" +
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
 	case ProposeRefused:
-		return proposeRefusal(a.Refusal)
+		return proposeRefusal(a)
 	case AlreadyProposed:
 		return paragraphs("The baseline was already proposed as "+ref+". Nothing changed.",
 			"Review the bootstrap summary SuiteWard posted for "+ref+" on this pull request, and approve it as described there.")
@@ -235,7 +239,7 @@ func acknowledgment(a Ack) string {
 	case SkipRefused:
 		return skipRefusal(a.Refusal)
 	case SuggestRefused:
-		return suggestRefusal(a.Refusal, a.Base)
+		return suggestRefusal(a)
 	case NothingUncovered:
 		covered := "in the scope already"
 		if a.Base != 0 {
@@ -277,13 +281,32 @@ func checkAck(a Ack) {
 		panic(fmt.Sprintf("commandtext: malformed reason %d does not fit outcome %d", a.Malformed, a.Outcome))
 	case (a.Outcome == BootstrapPromoted) != (a.Version != 0):
 		panic(fmt.Sprintf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome))
-	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && (a.Outcome != SuggestRefused || a.Refusal != InvalidSource)):
+	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && !namesFile(a)) || (a.Outcome == ProposeRefused && a.Base == BaseContract):
 		panic(fmt.Sprintf("commandtext: base %d does not fit outcome %d", a.Base, a.Outcome))
 	case !refusalFits(a.Outcome, a.Refusal):
 		panic(fmt.Sprintf("commandtext: refusal %d does not fit outcome %d", a.Refusal, a.Outcome))
+	case (a.Repo != "" || a.Branch != "") && !editorFits(a):
+		panic(fmt.Sprintf("commandtext: an editor link does not fit outcome %d with refusal %d and base %d", a.Outcome, a.Refusal, a.Base))
+	case a.Repo != "" || a.Branch != "":
+		if err := checkRepoAndBranch(a.Repo, a.Branch); err != nil {
+			panic(err.Error())
+		}
 	case a.Outcome == BootstrapPromoted:
 		checkID("version", a.Version)
 	}
+}
+
+// editorFits reports whether a may carry an editor link: a refusal that names a file of a branch, or a suggest whose declaration is too large.
+func editorFits(a Ack) bool {
+	if a.Outcome == SuggestRefused && a.Refusal == DeclarationTooLarge {
+		return true
+	}
+	return namesFile(a) && (a.Base == BasePull || a.Base == BaseDefaultBranch)
+}
+
+// namesFile reports whether a is the refusal of an invalid source of a suggest or a propose, which may name the file refused in Base.
+func namesFile(a Ack) bool {
+	return a.Refusal == InvalidSource && (a.Outcome == SuggestRefused || a.Outcome == ProposeRefused)
 }
 
 // referenceOf returns the reference an outcome names and "" for one that names none. It panics when the reference
@@ -662,12 +685,26 @@ func BootstrapCancelled(proposal, revision int) string {
 	)
 }
 
+// editStep is the paragraph that links to GitHub's editor for .suiteward.yml on the branch of the file a refusal asks to fix, led by lead; none
+// for an acknowledgment without the link.
+func editStep(a Ack, lead string) string {
+	if a.Branch == "" {
+		return ""
+	}
+	where := "this pull request's branch"
+	if a.Base == BaseDefaultBranch {
+		where = "the default branch"
+	}
+	return "\n\n" + lead + " `.suiteward.yml` on " + where + ", [open GitHub's editor for it](" + editLink(a.Repo, a.Branch) + "). SuiteWard never commits it for you: the commit is yours."
+}
+
 // refused renders a refusal: the command, why it was not processed and what to do next.
 func refused(command, reason, next string) string {
 	return paragraphs("`" + command + "` was not processed: " + reason + ". Nothing changed.\n" + next)
 }
 
-func suggestRefusal(r Refusal, base ScopeBase) string {
+func suggestRefusal(a Ack) string {
+	r, base := a.Refusal, a.Base
 	const suggest = "/suiteward suggest"
 	switch r {
 	case Fork:
@@ -678,13 +715,13 @@ func suggestRefusal(r Refusal, base ScopeBase) string {
 	case InvalidSource:
 		if base != 0 { // the file that failed, named and not quoted
 			_, file := baseNames(base)
-			return refused(suggest, file+" is not a valid declaration", "Fix the declaration, then comment `/suiteward suggest` again.")
+			return refused(suggest, file+" is not a valid declaration", "Fix the declaration, then comment `/suiteward suggest` again."+editStep(a, "To change"))
 		}
 		return refused(suggest, "SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
 			"Fix the files or the declaration, then comment `/suiteward suggest` again.")
 	case DeclarationTooLarge:
 		return refused(suggest, "the suggested declaration would be too large for a comment",
-			"Review the test-like paths of this pull request and add the missing patterns to `.suiteward.yml` yourself.")
+			"Review the test-like paths of this pull request and add the missing patterns to `.suiteward.yml` yourself."+editStep(a, "To change"))
 	}
 	panic(fmt.Sprintf("commandtext: unknown suggest refusal %d", r))
 }
@@ -704,7 +741,8 @@ func skipRefusal(r Refusal) string {
 	panic(fmt.Sprintf("commandtext: unknown skip refusal %d", r))
 }
 
-func proposeRefusal(r Refusal) string {
+func proposeRefusal(a Ack) string {
+	r := a.Refusal
 	const propose = "/suiteward propose"
 	switch r {
 	case CanonicalPresent:
@@ -724,7 +762,7 @@ func proposeRefusal(r Refusal) string {
 			"Fix the `include` rules so they match the files you want protected, then comment `/suiteward propose` again.")
 	case InvalidSource:
 		return refused(propose, "SuiteWard could not read the files to protect as a contract: the `.suiteward.yml` declaration is invalid, a protected path is a link, or the repository tree is too large",
-			"Fix the declaration or the files, then comment `/suiteward propose` again.")
+			"Fix the declaration or the files, then comment `/suiteward propose` again."+editStep(a, "If the declaration is the problem, to change"))
 	}
 	panic(fmt.Sprintf("commandtext: unknown propose refusal %d", r))
 }
@@ -889,3 +927,7 @@ func gitBranch(b string) bool {
 	}
 	return !bad
 }
+
+// ValidateEditTarget reports why a repository and a branch cannot make the link to GitHub's editor, as an error that quotes
+// them: the caller that stores the pair (see Ack) says only that it does not fit.
+func ValidateEditTarget(repo, branch string) error { return checkRepoAndBranch(repo, branch) }

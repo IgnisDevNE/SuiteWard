@@ -65,27 +65,28 @@ func (t commentTarget) validate() error {
 // without reaching ProcessConsent) has Disposition and none of the three: the payload holds the decision.
 type ackPayload struct {
 	commentTarget
-	Project     contract.ProjectID   `json:"project,omitempty"`     // processed: the project of the Suite
-	Suite       contract.SuiteID     `json:"suite,omitempty"`       // processed: the Suite whose receipt is read
-	Operation   contract.OperationID `json:"operation,omitempty"`   // processed: the operation of the consent receipt
-	Disposition string               `json:"disposition,omitempty"` // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
-	Comment     int64                `json:"comment"`               // the id of the command comment
-	Owner       string               `json:"owner"`                 // the owner's GitHub login at processing time
-	Reason      string               `json:"reason,omitempty"`      // malformed: the reason code; propose-refused, skip-refused and suggest-refused: the refusal; suggested: declaration-missing, scope-notice or nothing-uncovered
-	Reference   string               `json:"reference,omitempty"`   // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
-	Branch      string               `json:"branch,omitempty"`      // declaration-missing and scope-notice: the pull request's head ref
-	Suggestion  []string             `json:"suggestion,omitempty"`  // declaration-missing: the include patterns inventory.Suggest found
-	Runner      []string             `json:"runner,omitempty"`      // and the runner patterns,
-	Mixed       []string             `json:"mixed,omitempty"`       // the mixed files, shown and never suggested (also in a scope-notice),
-	Submodules  []string             `json:"submodules,omitempty"`  // the submodules a suggested pattern reaches, whose contents are not protected (also in a scope-notice),
-	Cut         bool                 `json:"cut,omitempty"`         // and whether the limit of 20 patterns cut the lists (also in a scope-notice)
-	Paths       []string             `json:"paths,omitempty"`       // scope-notice: at most 20 uncovered test-like paths of the head, each cut to 150 bytes,
-	PathsTotal  int                  `json:"pathsTotal,omitempty"`  // how many there are,
-	Declaration string               `json:"declaration,omitempty"` // and the canonical declaration with the new patterns added, at most 8192 bytes
-	Declared    bool                 `json:"declared,omitempty"`    // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded)
-	Base        string               `json:"base,omitempty"`        // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; none in a notice written before M1.9-E5. Also an invalid-source suggest-refused, for the file that is not a valid declaration
-	AddInclude  []string             `json:"addInclude,omitempty"`  // with a base: the include patterns the base lacks,
-	AddRunner   []string             `json:"addRunner,omitempty"`   // and the runner patterns, at most 20 together
+	Project       contract.ProjectID   `json:"project,omitempty"`       // processed: the project of the Suite
+	Suite         contract.SuiteID     `json:"suite,omitempty"`         // processed: the Suite whose receipt is read
+	Operation     contract.OperationID `json:"operation,omitempty"`     // processed: the operation of the consent receipt
+	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
+	Comment       int64                `json:"comment"`                 // the id of the command comment
+	Owner         string               `json:"owner"`                   // the owner's GitHub login at processing time
+	Reason        string               `json:"reason,omitempty"`        // malformed: the reason code; propose-refused, skip-refused and suggest-refused: the refusal; suggested: declaration-missing, scope-notice or nothing-uncovered
+	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
+	Branch        string               `json:"branch,omitempty"`        // declaration-missing and scope-notice: the pull request's head ref. Also a refusal that asks to fix .suiteward.yml: the branch of the file to edit
+	Suggestion    []string             `json:"suggestion,omitempty"`    // declaration-missing: the include patterns inventory.Suggest found
+	Runner        []string             `json:"runner,omitempty"`        // and the runner patterns,
+	Mixed         []string             `json:"mixed,omitempty"`         // the mixed files, shown and never suggested (also in a scope-notice),
+	Submodules    []string             `json:"submodules,omitempty"`    // the submodules a suggested pattern reaches, whose contents are not protected (also in a scope-notice),
+	Cut           bool                 `json:"cut,omitempty"`           // and whether the limit of 20 patterns cut the lists (also in a scope-notice)
+	Paths         []string             `json:"paths,omitempty"`         // scope-notice: at most 20 uncovered test-like paths of the head, each cut to 150 bytes,
+	PathsTotal    int                  `json:"pathsTotal,omitempty"`    // how many there are,
+	Declaration   string               `json:"declaration,omitempty"`   // and the canonical declaration with the new patterns added, at most 8192 bytes
+	Declared      bool                 `json:"declared,omitempty"`      // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded)
+	Base          string               `json:"base,omitempty"`          // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; none in a notice written before M1.9-E5. Also an invalid-source suggest-refused, for the file that is not a valid declaration
+	AddInclude    []string             `json:"addInclude,omitempty"`    // with a base: the include patterns the base lacks,
+	AddRunner     []string             `json:"addRunner,omitempty"`     // and the runner patterns, at most 20 together
+	DefaultBranch string               `json:"defaultBranch,omitempty"` // scope-notice for the default branch: the branch whose file the reply asks to change, for the editor link
 }
 
 // The codes of the malformed reasons in a payload.
@@ -199,20 +200,26 @@ func (a ackPayload) nothingUncovered() bool {
 	return a.Disposition == string(commands.Suggested) && a.Reason == reasonNothingUncovered
 }
 
-// invalidFile is whether the payload is the refusal of a suggest whose base file is not a valid declaration, which names the file in Base.
-func (a ackPayload) invalidFile() bool {
-	return a.Disposition == string(commands.SuggestRefused) && a.Reason == refusalInvalidSource
+// namesFile is whether the payload is the refusal of a suggest whose base file is not a valid declaration, or of a propose whose source is invalid,
+// which names the file in Base: the head's or the default branch's. The contract is no file of a branch.
+func (a ackPayload) namesFile() bool {
+	return a.Reason == refusalInvalidSource && (a.Disposition == string(commands.SuggestRefused) || a.Disposition == string(commands.ProposeRefused) && a.Base != "contract")
+}
+
+// editable is whether the payload may carry the Branch of the file to edit: a refusal that names its file, or a suggest whose declaration is too large.
+func (a ackPayload) editable() bool {
+	return (a.namesFile() && (a.Base == "pull" || a.Base == "default-branch")) || (a.Disposition == string(commands.SuggestRefused) && a.Reason == reasonDeclarationTooLarge)
 }
 
 // hasNotice is whether the payload holds any field that only a scope notice uses. Base is not one: nothing-uncovered names it too.
 func (a ackPayload) hasNotice() bool {
-	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != "" || len(a.AddInclude) != 0 || len(a.AddRunner) != 0
+	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != "" || len(a.AddInclude) != 0 || len(a.AddRunner) != 0 || a.DefaultBranch != ""
 }
 
 // notice is what the renderer takes for a scope-notice payload.
 func (a ackPayload) notice() commandtext.ScopeNotice {
 	return commandtext.ScopeNotice{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Paths: a.Paths, PathsTotal: a.PathsTotal, Declaration: []byte(a.Declaration), Mixed: a.Mixed, Submodules: a.Submodules, Cut: a.Cut,
-		Base: scopeBases[a.Base], AddInclude: a.AddInclude, AddRunner: a.AddRunner}
+		Base: scopeBases[a.Base], AddInclude: a.AddInclude, AddRunner: a.AddRunner, DefaultBranch: a.DefaultBranch}
 }
 
 // suggested is whether the payload holds any of the lists of a suggestion.
@@ -262,8 +269,11 @@ func (a ackPayload) validate() error {
 	case a.scopeNotice():
 		return a.validateNotice()
 	case !a.declarationMissing():
-		if a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered() && !a.invalidFile()) {
-			return errors.New("the branch, the suggestion and the notice fit only a missing declaration or a scope notice")
+		if (a.Branch != "" && !a.editable()) || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered() && !a.namesFile()) {
+			return errors.New("the branch, the suggestion and the notice fit only a missing declaration, a scope notice or a refusal that names its file")
+		}
+		if a.Branch != "" && commandtext.ValidateEditTarget(a.Repo, a.Branch) != nil {
+			return errors.New("the repository or the branch does not make an editor link")
 		}
 		return nil
 	case a.hasNotice() || a.Base != "":
@@ -346,15 +356,31 @@ func declarationMissingPayload(target commentTarget, comment int64, ownerLogin, 
 // default-branch or contract), as an acknowledgment so that it replies to the command and never takes the key of the notice the checks
 // job writes. paths are the whole uncovered set and suggested the patterns for them, bounded as the notice bounds them; the error says
 // the notice cannot be rendered.
-func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch, base string, paths []string, declaration []byte, suggested inventory.Suggestion, mixed, submodules []string) (governance.OutboxMessage, error) {
+// defaultBranch, for the base default-branch, is the branch whose file the reply links to.
+func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch, base, defaultBranch string, paths []string, declaration []byte, suggested inventory.Suggestion, mixed, submodules []string) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
 		Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut,
-		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner)})
+		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner), DefaultBranch: defaultBranch})
 }
 
 // newSuggestRefusedAck builds the refusal of a suggest. base, when not empty, says which file is not a valid declaration (invalid-source only).
-func newSuggestRefusedAck(target commentTarget, comment int64, ownerLogin, reason, base string) (governance.OutboxMessage, error) {
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.SuggestRefused), Comment: comment, Owner: ownerLogin, Reason: reason, Base: base})
+// branch is the branch of the file to fix for the editor link, and a declaration too large has none but the pull request's.
+func newSuggestRefusedAck(target commentTarget, comment int64, ownerLogin, reason, base, branch string) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.SuggestRefused), Comment: comment, Owner: ownerLogin, Reason: reason, Base: base, Branch: editableBranch(target, branch)})
+}
+
+// newProposeInvalidSourceAck builds the refusal of a propose whose source cannot be read as a contract. base and branch name the file that failed,
+// when the source was found: the head's or the default branch's.
+func newProposeInvalidSourceAck(target commentTarget, comment int64, ownerLogin, base, branch string) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ProposeRefused), Comment: comment, Owner: ownerLogin, Reason: refusalInvalidSource, Base: base, Branch: editableBranch(target, branch)})
+}
+
+// editableBranch is branch when it can make the editor link of the repository, else none: a refusal is still sent, without the link.
+func editableBranch(target commentTarget, branch string) string {
+	if commandtext.ValidateEditTarget(target.Repo, branch) != nil {
+		return ""
+	}
+	return branch
 }
 
 // newNothingUncoveredAck builds the answer of a suggest that found the base (pull, default-branch or contract) to cover every test-like path.
@@ -635,6 +661,9 @@ func (p *commentPublisher) receipt(ctx context.Context, key string, a ackPayload
 func rejectedAckOf(a ackPayload) commandtext.Ack {
 	d := commands.Disposition(a.Disposition)
 	ack := commandtext.Ack{Outcome: rejectedOutcomes[d], Owner: a.Owner, Source: a.Comment, Base: scopeBases[a.Base]}
+	if a.Branch != "" { // every payload has the repo, but only a branch makes the editor link
+		ack.Repo, ack.Branch = a.Repo, a.Branch
+	}
 	if d == commands.UnknownProposal { // the text of UnknownRevision is true for a proposal that does not exist
 		ack.Rejection = commandtext.UnknownRevision
 	}

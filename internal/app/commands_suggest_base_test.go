@@ -446,7 +446,7 @@ func escapedWorstCase(unit string) (paths, mixed, submodules []string, declarati
 func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 	for _, unit := range []string{"<", "\x01"} {
 		paths, mixed, submodules, declaration := escapedWorstCase(unit)
-		if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", paths, declaration, inventory.Suggestion{}, mixed, submodules); err == nil {
+		if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{}, mixed, submodules); err == nil {
 			t.Errorf("unit %q: the acknowledgment is accepted", unit)
 		}
 		if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err == nil {
@@ -455,7 +455,7 @@ func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 	}
 	// What fits is still written: plain text of the same sizes, and the largest review.
 	paths, mixed, submodules, declaration := escapedWorstCase("a")
-	if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", paths, declaration, inventory.Suggestion{Include: paths}, mixed, submodules); err != nil {
+	if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{Include: paths}, mixed, submodules); err != nil {
 		t.Errorf("the acknowledgment of plain text: %v", err)
 	}
 	if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err != nil {

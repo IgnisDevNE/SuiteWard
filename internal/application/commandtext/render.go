@@ -500,10 +500,12 @@ func notGraphic(s string) bool {
 	return !utf8.ValidString(s) || strings.IndexFunc(s, func(r rune) bool { return !strconv.IsGraphic(r) }) >= 0
 }
 
-var declarationLayout = strings.NewReplacer("\n", "", "\t", "")
+// declarationLayout removes the layout of a declaration: a CRLF line ending (the form of a file written on Windows), a newline and a tab.
+// A carriage return that no line feed follows is not layout.
+var declarationLayout = strings.NewReplacer("\r\n", "", "\n", "", "\t", "")
 
-// verbatim reports whether a declaration can be shown in a fence as it is: UTF-8 whose only characters that are not graphic are newlines
-// and tabs. A fence shows no escape, so a bidi control or a zero-width space in it would reach the owner's clipboard unseen.
+// verbatim reports whether a declaration can be shown in a fence as it is: UTF-8 whose only characters that are not graphic are line
+// endings (LF or CRLF) and tabs. A fence shows no escape, so a bidi control or a zero-width space in it would reach the owner's clipboard unseen.
 func verbatim(declaration []byte) bool {
 	return !notGraphic(declarationLayout.Replace(string(declaration)))
 }

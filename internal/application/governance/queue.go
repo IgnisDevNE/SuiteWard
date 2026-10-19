@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 )
 
 const (
@@ -26,7 +25,7 @@ func (j Job) Validate() error {
 
 // Validate reports ErrInvalidRequest when the message cannot be written.
 func (m OutboxMessage) Validate() error {
-	if strings.TrimSpace(m.Key) == "" || len(m.Key) > maxKeyBytes {
+	if blank(m.Key) || len(m.Key) > maxKeyBytes {
 		return fmt.Errorf("%w: outbox key must be non-blank and at most %d bytes", ErrInvalidRequest, maxKeyBytes)
 	}
 	if err := validateKind(m.Kind); err != nil {

@@ -21,6 +21,8 @@ type Pattern struct {
 	raw      string
 	segments []string
 	isDir    bool
+	// anchored: a leading "/" or an interior "/" ties the pattern to the repository root.
+	anchored bool
 	// belowOnly marks a trailing "/**" (not itself a directory pattern): the
 	// stripped base must be followed by at least one component, as in gitignore.
 	belowOnly bool
@@ -83,7 +85,7 @@ func ParsePattern(s string) (Pattern, error) {
 		segments = segments[:len(segments)-1]
 	}
 
-	return Pattern{raw: s, segments: segments, isDir: isDir, belowOnly: belowOnly}, nil
+	return Pattern{raw: s, segments: segments, isDir: isDir, anchored: anchored, belowOnly: belowOnly}, nil
 }
 
 // Match reports whether path, a repository-relative, "/"-separated file

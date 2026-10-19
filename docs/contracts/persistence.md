@@ -168,18 +168,41 @@ The use cases are `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `Bootstrap(
 
 ### Use-case semantics
 
-- **Consent:** inside `Do`: look up `Receipt(operationID)`. A consent receipt for the same Suite, proposal, source command and actor is returned as a duplicate; anything else is `ErrOperationConflict`. Then look up `ReceiptBySource(sourceCommandID)`: source command ids are global and the domain sees only one proposal's history, so a receipt there that is not a consent receipt for the same Suite, proposal and actor is `ErrOperationConflict`. Then load the proposal and consent, apply the command with the governing policy, and:
-  - `ConsentReasonCommandConflict` → `ErrOperationConflict`, nothing written;
+- **Consent:** inside `Do`: look up `Receipt(operationID)`. A consent receipt for the same Suite, proposal, source command and actor is returned as a duplicate; any other receipt is `ErrOperationConflict`, except a consent receipt without its body, which is damaged stored state and `ErrInvalidState`. Then look up `ReceiptBySource(sourceCommandID)`: source command ids are global and the domain sees only one proposal's history, so a receipt there that is not a consent receipt for the same Suite, proposal and actor is `ErrOperationConflict` (a body-less one is `ErrInvalidState`), before the Suite or the proposal is read. The steps are `consentReceipts` (with `commandReceipt`) and `processConsent`. Then load the proposal and consent, apply the command with the governing policy, and:
+  - `ConsentReasonCommandConflict` → `ErrOperationConflict`, nothing written, and checked before the next case;
+  - a result whose duplicate flag disagrees with whether `ReceiptBySource` knew the source command → `ErrInvalidState` (history and receipts disagree);
   - a duplicate result (same source command, new operation id) → `AppendConsent` with `Alias: true` and the original receipt from `ReceiptBySource`;
   - otherwise build the receipt (eligibility from `Consent.HasApproval`; `PromotedVersionID` from `PromotionFor(reference)`) and `AppendConsent`.
 - **Bootstrap:** inside `Do`: replay by `Receipt(operationID)` compares the stored identity with the request (same kind, reference, carrier, proposed contract, assessment source, integration, new version id); mismatch, including an operation id held by a consent command or a merge, is `ErrOperationConflict`. Otherwise load suite state, proposal, consent and assessment; decide in the domain. Only a `PromotionProposed` decision writes, through `RecordPromotion`, then the request's outbox. Blocked outcomes are returned without writing. A merge decides through the same function over `Tx` (see "Merge outcome"), replays by carrier, and corrects only the current version. There is no admission gate: proposals based on the same canonical version are all promotable, the first promotion wins, and the canonical compare-and-set blocks the others with `PromotionReasonCanonicalChanged` until they have a new revision against the new canonical and a fresh exact approval.
 
+### Impossible states are errors
+
+A state that no valid input reaches is an error, not a decision (the [nil-check rule](../development-guide.md#nil-checks)):
+- `Consent.Apply` returns an error wrapping `contract.ErrInvalidConsent` when the proposal cannot answer a command's reference (`ErrInvalidReference` or `ErrInvalidProposal` from `Resolve` or `Lookup`), which a command built by `NewCommand` never causes. It never records that as a context mismatch. A reference of another carrier is a reachable `ConsentReasonContextMismatch`.
+- `AssessIntegrity` returns an error wrapping `contract.ErrInvalidIntegrityAssessment` for evidence whose outcome is none of the three, which `NewIntegrityEvidence` never builds. It no longer answers "missing".
+- `promoteWithin` returns `ErrInvalidState` for an operation kind other than bootstrap, promotion or correction.
+- `ProcessConsent` returns `ErrInvalidState` for a consent receipt without its body, and when the consent history and the receipts disagree about a source command.
+
+`scope.Declaration.Present` and `Raw`, and `contract.PromotionEffect.ExpectedCanonicalID` and `Suite`, are read only by tests and live in `export_test.go` files. Production code compares declarations by `scope.NewScope(declaration).Digest()`, which covers the presence byte and the raw bytes.
+
 ### Store write semantics
 
+- `AppendConsent` and `RecordPromotion` start with `ConsentWrite.Validate(project, suite)` and `PromotionWrite.Validate(project, suite)` (`internal/application/governance/validate.go`), called by the PostgreSQL `Tx` and by `governancetest.Memory` alike, before they read or write anything. The refusals, in this order:
+  - `ConsentWrite.Validate`:
+    - `ErrInvalidRequest` when the write has no operation id or its result's command has none;
+    - `ErrInvalidRequest` when the command's reference is not in the locked Suite;
+    - `ErrOperationConflict` when `Result.Duplicate()` differs from `Alias`, or when it is not an alias and the write's operation id is not the command's;
+    - `ErrInvalidRequest` when the receipt's result belongs to another source command.
+  - `PromotionWrite.Validate`, all `ErrInvalidRequest`:
+    - the record is zero or the version id is empty;
+    - the record's reference or the version's project or Suite is not the locked Suite;
+    - the receipt's request names another operation than the record;
+    - the receipt identity's `CorrectsVersionID` or binding differs from the record's;
+    - `RecordedAt` has finer than microsecond precision (the rule below).
 - `AppendConsent` (not alias): insert the command result and an operation row carrying the receipt; bump the revision.
 - `AppendConsent` (alias): insert only an operation row keyed by `ConsentWrite.OperationID` pointing at `Result.Command().SourceCommandID()` (never at `Result.Command().OperationID()`, which is the original operation), with a copy of the original receipt; bump the revision.
 - `RecordPromotion`: verify the version's manifest bytes in the content store; insert the version, the promotion, and the operation row; set the Suite's current version; bump the revision. A duplicate version id or promoted reference is `ErrVersionConflict`.
-- Time values are stored with microsecond precision (PostgreSQL `timestamptz`). Stores reject a `PromotionRecord.RecordedAt` with finer precision rather than truncating it, so callers building a `PromoteRequest` must truncate their clock to microseconds (`time.Now().UTC().Truncate(time.Microsecond)`).
+- Time values are stored with microsecond precision (PostgreSQL `timestamptz`). `PromotionWrite.Validate` (and `MergeWrite.Validate` for a merge outcome) rejects a `RecordedAt` with finer precision as `ErrInvalidRequest` rather than truncating it, in every store, so callers building a `PromoteRequest` must truncate their clock to microseconds (`time.Now().UTC().Truncate(time.Microsecond)`).
 - `Seed` stores the given state as is, including the Suite revision carried by `Canonical.Suite().Revision()`; it does not reset counters.
 - `Do` must not commit when its context is canceled, even if `fn` returned nil; a `Tx` is unusable after `fn` returns.
 - Reads reconstitute: proposals via `NewProposal` + `Revise` in sequence order; consent via `ReconstituteConsent` from stored results and aliases; assessments via `AssessIntegrity` over stored evidence; canonical and history via `NewSuite`, `NewSuiteVersion`, `NewPromotionRecord`, `NewCanonicalSnapshot`, `NewHistoricalCanonical`.
@@ -210,7 +233,7 @@ type OutboxMessage struct {
 
 Semantics:
 
-- `Job.Validate()` and `OutboxMessage.Validate()` (in `internal/application/governance/queue.go`) apply the limits above. `OutboxMessage.Validate()` is shared by every implementation of `Tx`, so the fake and the adapter reject the same inputs; `Job.Validate()` guards the system enqueue.
+- `Job.Validate()` and `OutboxMessage.Validate()` (in `internal/application/governance/queue.go`) apply the limits above. `OutboxMessage.Validate()` is shared by every implementation of `Tx`, and so are `ConsentWrite.Validate`, `PromotionWrite.Validate`, `AssessmentWrite.Validate` and `MergeWrite.Validate` (see "Store write semantics"), so the fake and the adapter reject the same inputs; `Job.Validate()` guards the system enqueue.
 - `Outbox` inserts the message through the unit of work's own `pgx.Tx`. It commits or rolls back with the facts; there is no write after commit. It does not advance the Suite revision (the revision counts governance facts only) and takes no lock beyond the Suite's. There is no `Tx.Enqueue`: a job committed with a fact had no caller, and the outbox plus its relay carry the guarantee that a committed fact has its follow-up (removed in M1.10; see the amendment to [ADR 0005](../decisions/0005-river-background-jobs.md)).
 - A malformed kind, a non-object or oversized `Args`/`Payload`, or an empty key is `ErrInvalidRequest`. A repeated `Key` is `ErrOperationConflict`; use cases replay by receipt before they write, so a repeated key means a genuine conflict.
 - Retry limits, timeouts and backoff are runtime settings per kind (see [runtime](runtime.md)), not part of the port.
@@ -1240,4 +1263,4 @@ All enumerations are `text` with `CHECK` constraints. Immutable and append-only 
 
 ## Behaviors that must stay covered
 
-The conformance suite (fake and PostgreSQL) names each of these: replay by operation id and by source command id; the same operation id in another Suite or kind → conflict; a source command replayed by another actor → conflict; an alias advances the revision; rejected results do not consume command order; full rollback when `fn` fails; canceled context; version conflict. PostgreSQL integration tests add: concurrent merges and concurrent bootstraps (exactly one version is recorded), rollback when any statement fails, triggers rejecting history mutation, and missing or corrupt content rejected when a version is written.
+The conformance suite (fake and PostgreSQL) names each of these: replay by operation id and by source command id; the same operation id in another Suite or kind → conflict; a source command replayed by another actor → conflict; an alias advances the revision; rejected results do not consume command order; full rollback when `fn` fails; canceled context; version conflict; and the write guard (`write_guard_conformance.go`), where each invalid write is refused and leaves the visible state unchanged. For `AppendConsent` that is a command of another Suite, a receipt of another source command, no operation id, a result without a command (all `ErrInvalidRequest`), and a duplicate result that is not an alias, an alias of a result that is not a duplicate and an operation id other than the command's (all `ErrOperationConflict`). For `RecordPromotion`, all `ErrInvalidRequest`, it is a promotion of another Suite, a receipt request naming another operation, a receipt identity correcting another version or bound to another revision, a record time finer than a microsecond, no record, no version id, and a version of another Suite under a record of this one. PostgreSQL integration tests add: concurrent merges and concurrent bootstraps (exactly one version is recorded), rollback when any statement fails, triggers rejecting history mutation, and missing or corrupt content rejected when a version is written.

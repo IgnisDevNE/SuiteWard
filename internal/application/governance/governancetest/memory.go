@@ -355,12 +355,15 @@ func (t *tx) AppendConsent(ctx context.Context, w governance.ConsentWrite) error
 	if err := t.live(ctx); err != nil {
 		return err
 	}
+	if err := w.Validate(t.key.project, t.key.suite); err != nil {
+		return err
+	}
 	command := w.Result.Command()
 	p, ok := t.s.proposals[command.Reference().ProposalID]
 	if !ok {
 		return governance.ErrNotFound
 	}
-	if _, taken := t.d.byOp[w.OperationID]; taken || w.Result.Duplicate() != w.Alias || (!w.Alias && w.OperationID != command.OperationID()) {
+	if _, taken := t.d.byOp[w.OperationID]; taken {
 		return governance.ErrOperationConflict
 	}
 	receipt := w.Receipt
@@ -385,6 +388,9 @@ func (t *tx) AppendConsent(ctx context.Context, w governance.ConsentWrite) error
 
 func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) error {
 	if err := t.live(ctx); err != nil {
+		return err
+	}
+	if err := w.Validate(t.key.project, t.key.suite); err != nil {
 		return err
 	}
 	record := w.Receipt.Record

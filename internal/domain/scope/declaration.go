@@ -132,16 +132,6 @@ func NoDeclaration() Declaration {
 	return Declaration{include: []Pattern{}, exclude: []Pattern{}, runner: []Pattern{}}
 }
 
-// Present reports whether the declaration file exists.
-func (d Declaration) Present() bool {
-	return d.present
-}
-
-// Raw returns a copy of the exact declaration bytes, nil when absent.
-func (d Declaration) Raw() []byte {
-	return slices.Clone(d.raw)
-}
-
 // Include returns a copy of the include patterns in input order.
 func (d Declaration) Include() []Pattern {
 	return slices.Clone(d.include)

@@ -82,7 +82,7 @@ var gsMergeCases = []struct {
 	{"AbsenceResolutionReopenAndANewAbsence", gsResolutionLifecycle},
 	{"ResolutionRefreshesTheHeadBaseAndHeadRepository", gsResolutionRefreshes},
 	{"StaleResolutionWritesNothing", gsStaleResolution},
-	{"ClosedListingFirstCallOnlySetsTheWatermark", gsClosedFirst},
+	{"ClosedListingFirstCallOnlySetsAnExclusiveWatermark", gsClosedFirst},
 	{"ClosedListingInsertsOnlyUnseenMergedItemsAtOrAboveTheWatermark", gsClosedInserts},
 	{"MergedIsOrderedByMergedAtThenNumberAndCarriesProcessed", gsMergedOrder},
 	{"MarkProcessedRejectsAnUnknownPull", gsMarkProcessedUnknown},
@@ -166,42 +166,43 @@ func gsStaleResolution(e *gsEnv) {
 func gsClosedFirst(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a")), nil))
 	before := e.view()
-	e.closed(2, gsClosed(5, 20, 19), gsClosed(6, 30, 0))
+	e.closed(2, gsClosed(5, 20, 19), gsClosed(6, 30, 29))
 	e.requireView(e.view(), before)
 	e.requireNumbers(e.awaiting())
 
-	// The first call set the watermark to the greatest updated_at, 30: a merged item below it is not new, one at it is.
-	e.closed(3, gsClosed(5, 20, 19), gsClosed(7, 30, 29))
-	want := before
-	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), gsInserted(7, 30, 3))
-	e.requireView(e.view(), want)
+	// The first watermark is exclusive: what the first call listed is history, and so is a merge in the exact moment
+	// of its newest item (30) that is listed only later.
+	e.closed(3, gsClosed(5, 20, 19), gsClosed(6, 30, 29), gsClosed(7, 30, 28))
+	e.requireView(e.view(), before)
+	e.requireNumbers(e.awaiting())
 }
 
 func gsClosedInserts(e *gsEnv) {
 	e.record(gsCycle(1, gsPulls(gsPull(1, "a"), gsPull(2, "b")), nil))
 	e.record(gsCycle(2, gsPulls(gsPull(1, "a")), nil)) // pull 2 absent, unresolved
-	e.closed(3, gsClosed(6, 30, 0))                    // watermark 30
+	e.closed(3, gsClosed(6, 30, 0))                    // the first watermark: 30, exclusive
 	before := e.view()
 
 	e.closed(4,
 		gsClosed(7, 40, 39), // unseen, merged, above the watermark: inserted
 		gsClosed(8, 25, 24), // below the watermark: ignored
-		gsClosed(9, 30, 29), // at the watermark (the same second as its holder): inserted
+		gsClosed(9, 30, 29), // at the first watermark: history, ignored
 		gsClosed(6, 50, 0),  // unmerged: ignored, but it raises the watermark
 		gsClosed(1, 45, 44), // an open pull is stored already: ignored
 		gsClosed(2, 46, 45), // an absent pull is stored already: ignored
 	)
 	want := before
-	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), gsInserted(7, 40, 4), gsInserted(9, 30, 4))
+	want.Pulls = append(append([]githubsync.PullState{}, before.Pulls...), gsInserted(7, 40, 4))
 	e.requireView(e.view(), want)
-	e.requireNumbers(e.awaiting(), 2, 7, 9)
+	e.requireNumbers(e.awaiting(), 2, 7)
 	if got := e.merged(); len(got) != 0 {
 		e.t.Fatalf("merged %+v before the merges job resolved anything", got)
 	}
 
-	// The watermark rose to 50 (the unmerged item): 49 is below it and 51 is above.
-	e.closed(5, gsClosed(10, 49, 48), gsClosed(11, 51, 50))
-	e.requireNumbers(e.awaiting(), 2, 7, 9, 11)
+	// The watermark rose to 50 (the unmerged item), and from now on it is inclusive: 49 is below it, 50 is at it and
+	// 51 is above.
+	e.closed(5, gsClosed(10, 49, 48), gsClosed(11, 51, 50), gsClosed(12, 50, 49))
+	e.requireNumbers(e.awaiting(), 2, 7, 11, 12)
 }
 
 func gsMergedOrder(e *gsEnv) {

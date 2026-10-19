@@ -432,7 +432,9 @@ func TestChecksMapTheTreeProblemsOfTheCarrierAndReadThemOnce(t *testing.T) {
 	})
 }
 
-func TestChecksFailTheCarrierAfterARejectedOwnerCommandButNotAnAwaitingOrSkippedPull(t *testing.T) {
+// A wrong code is a security signal whatever the state: it fails the carrier, a skipped pull request and an awaiting one alike (a `skip` with a
+// wrong code on an awaiting pull request included). Other wrong commands have no effect on any of them.
+func TestChecksFailEveryOpenPullAfterAWrongCodeWhateverItsBootstrapState(t *testing.T) {
 	w := newCJBootWorld(t)
 	w.carrierPull()
 	w.sync(map[int]string{4: cjHead3, 5: cjHead2, 6: cjHead4})
@@ -442,7 +444,7 @@ func TestChecksFailTheCarrierAfterARejectedOwnerCommandButNotAnAwaitingOrSkipped
 	w.want(4, checks.Success, "bootstrap-skipped", 2)
 	w.want(6, checks.InProgress, "bootstrap-awaiting", 1)
 
-	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "") // a stale approve on the carrier, on a skipped pull and on an awaiting one
+	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "") // a wrong code on the carrier, on a skipped pull and on an awaiting one
 	w.entry(4, 303, bootOwnerID, commands.InvalidCode, "")
 	w.entry(6, 304, bootOwnerID, commands.ReplayedCode, "")
 	w.mustCheck()
@@ -451,8 +453,8 @@ func TestChecksFailTheCarrierAfterARejectedOwnerCommandButNotAnAwaitingOrSkipped
 	if record.Reference != "P1-R1" {
 		t.Fatalf("record %+v, want the reference kept", record)
 	}
-	w.want(4, checks.Success, "bootstrap-skipped", 2)
-	w.want(6, checks.InProgress, "bootstrap-awaiting", 1)
+	w.want(4, checks.Failure, "owner-command-rejected", 3)
+	w.want(6, checks.Failure, "owner-command-rejected", 2)
 }
 
 // The carrier follows the same rule as any pull request (D-COMMANDS, "A wrong command has no effect"): a wrong code fails it, with an approve
@@ -521,7 +523,7 @@ func TestChecksLeaveTheCarrierAloneAfterAWrongCommandThatIsNoWrongCode(t *testin
 	})
 }
 
-func TestChecksKeepACancelledCarrierAwaitingAfterARejectedOwnerCommand(t *testing.T) {
+func TestChecksFailACancelledCarrierAfterAWrongCode(t *testing.T) {
 	w := newCJBootWorld(t)
 	w.carrierPull()
 	w.tree(cjHead5, bootFiles("v2"))
@@ -532,7 +534,7 @@ func TestChecksKeepACancelledCarrierAwaitingAfterARejectedOwnerCommand(t *testin
 	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "")
 	w.mustCheck()
 
-	w.want(5, checks.InProgress, "bootstrap-awaiting", 2)
+	w.want(5, checks.Failure, "owner-command-rejected", 3)
 }
 
 func TestChecksNeverMakeAPullHeadCanonicalOrAnnounceItAsAChange(t *testing.T) {

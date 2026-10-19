@@ -527,6 +527,27 @@ func TestChecksLeaveTheCheckAloneAfterAWrongCommandThatIsNoWrongCode(t *testing.
 	}
 }
 
+// The walk back from a processed command whose consent result was rejected stops at the head's window: a wrong code posted for an earlier head
+// does not fail the new one.
+func TestChecksWalkBackFromARejectedConsentOnlyWithinTheHeadsWindow(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.protectedPull()
+	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "")
+	w.mustCheck()
+	w.want(5, checks.Failure, "owner-command-rejected", 2)
+	w.tree(cjHead4, bootFiles("v3"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead4})
+	w.mustCheck()
+	w.want(5, checks.InProgress, "approval-missing", 3)
+
+	if outcome := w.consent(contract.ApproveConsent, 302, 2, 9, 5); outcome != contract.ConsentRejected { // P2-R9 does not exist
+		t.Fatalf("outcome %v, want rejected", outcome)
+	}
+	w.mustCheck()
+
+	w.want(5, checks.InProgress, "approval-missing", 3)
+}
+
 func TestChecksIgnoreCommandsOfOtherAccountsAndOrdinaryOwnerComments(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.protectedPull()

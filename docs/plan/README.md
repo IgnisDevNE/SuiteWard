@@ -60,3 +60,8 @@ Deferred by the R1 amendments, in no fixed order until the MVP is in use:
 - Encrypted backups, Release storage, contingency PRs and guided restore (ADRs 0019–0021).
 - M2: canonical execution. Research on the first execution profile and isolation (D-EXECUTION) may start at any time.
 - M3: hardening selected from observed threats.
+- Change report for protected files (owner, 2026-10-19), with no analysis by an agent:
+  - in the revision comment, `+N/−M` per protected file, the files with removed lines highlighted, and a link to each file's diff between the canonical commit and the head;
+  - a full report on the check's Details page, built from the bytes SuiteWard compared, with the removed and added lines;
+  - deterministic markers to look at, never verdicts: removed assertions, added skips, deleted test functions, changed runner files;
+  - an HTML report served by the managed service, behind its sign-in.

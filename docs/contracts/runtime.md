@@ -457,7 +457,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
       - after V1: approve the new revision SuiteWard posts.
     - The command also writes a **`scope-review`** under the same rules as the checks job: the PR's diff shows `.suiteward.yml` in block style with a list item line inside a hunk, the lines are inserted into the head's file, and patterns already listed are skipped. The key is the same `scope-review:<repository id>:<pull>:<set digest>`, so a notice and a command for the same set post one review.
     - **The missing patterns are of two kinds** (amended 2026-10-18, live run 3):
-      - the patterns of `Suggest(uncovered entries)`, for the test-like files the base does not cover;
+      - the patterns of `Suggest(uncovered entries)`, for the test-like files the base does not cover, without the runner patterns the base lists or covers (amended 2026-10-19, A3 pull request 7: a Python test file brings the pytest family, and the base may hold it already). They are left out before the 20-pattern limit applies;
       - the runner patterns of `Suggest(head entries)` that the base neither lists nor covers.
 
       A runner name can match no file yet, so a missing runner name is reported even when no file is uncovered. The text explains that runner names matter before their files exist. The checks job's unsolicited notice keeps the first kind only: it reports what a pull request adds.

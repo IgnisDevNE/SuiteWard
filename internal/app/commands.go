@@ -784,7 +784,10 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 		return governance.OutboxMessage{}, nil, fmt.Errorf("find the missing runner names: %w", err)
 	}
 	// The names a missing path already brings are no news: only the others, which no uncovered file explains, are part of the review's key.
-	fromPaths := pathsSuggestion(found.Paths)
+	fromPaths, err := found.pathsSuggestion(found.Paths)
+	if err != nil {
+		return governance.OutboxMessage{}, nil, err
+	}
 	unexplained := slices.DeleteFunc(missing, func(pattern string) bool { return slices.Contains(fromPaths.Runner, pattern) })
 	if len(found.Paths) == 0 && len(unexplained) == 0 {
 		ack, err := newNothingUncoveredAck(target, c.Comment.CommentID, login, base)

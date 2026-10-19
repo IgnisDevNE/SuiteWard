@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"path"
@@ -106,6 +107,27 @@ func classify(p string) (include, runner []string) {
 // patterns, each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut
 // is set. Mixed and Submodules have their own limit.
 func Suggest(entries []Entry) Suggestion {
+	return suggest(entries, func(string) bool { return true })
+}
+
+// SuggestAgainst is Suggest for a base declaration s: a runner pattern that s lists or covers (the rule of MissingRunner) is left out before
+// the limit applies, so it neither takes room nor sets Cut. Include patterns are not filtered: a file they come from is one s does not cover.
+func SuggestAgainst(entries []Entry, s scope.Scope) (Suggestion, error) {
+	handled := runnerHandled(s)
+	var failed error
+	suggestion := suggest(entries, func(pattern string) bool {
+		done, err := handled(pattern)
+		failed = cmp.Or(failed, err)
+		return !done
+	})
+	if failed != nil {
+		return Suggestion{}, failed
+	}
+	return suggestion, nil
+}
+
+// suggest is Suggest keeping only the runner patterns that keepRunner accepts.
+func suggest(entries []Entry, keepRunner func(pattern string) bool) Suggestion {
 	directories, files, runner := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	var mixed, submodules []string
 	for _, entry := range entries {
@@ -128,7 +150,9 @@ func Suggest(entries []Entry) Suggestion {
 			}
 		}
 		for _, pattern := range runnerPatterns {
-			runner[pattern] = true
+			if keepRunner(pattern) {
+				runner[pattern] = true
+			}
 		}
 		if slices.Contains(mixedNames, name) || strings.HasSuffix(name, ".csproj") {
 			mixed = append(mixed, entry.Path)
@@ -262,36 +286,45 @@ func excludes(s scope.Scope, path string) (bool, error) {
 }
 
 // MissingRunner returns the runner patterns Suggest offers for entries that s neither lists nor covers, in Suggest's order. A runner
-// name matches no file until someone adds one, so it can be missing while Uncovered finds nothing. A pattern is not missing when s
-// lists the same string in its include, runner or exclude list (an exclusion is the owner's choice), or, for a name with no glob character,
-// when s covers that name as a root path or an exclude of s matches it. Any other glob pattern is missing.
+// name matches no file until someone adds one, so it can be missing while Uncovered finds nothing. See runnerHandled for the rule.
 func MissingRunner(entries []Entry, s scope.Scope) ([]string, error) {
+	handled := runnerHandled(s)
+	missing := []string{}
+	for _, pattern := range Suggest(entries).Runner {
+		done, err := handled(pattern)
+		if err != nil {
+			return nil, err
+		}
+		if !done {
+			missing = append(missing, pattern)
+		}
+	}
+	return missing, nil
+}
+
+// runnerHandled returns the test of whether a runner pattern needs no suggestion for s. A pattern is handled when s lists the same string
+// in its include, runner or exclude list (an exclusion is the owner's choice), or, for a name with no glob character, when s covers that name as
+// a root path or an exclude of s matches it. Any other glob pattern is not handled.
+func runnerHandled(s scope.Scope) func(pattern string) (bool, error) {
 	d := s.Declaration()
 	listed := map[string]bool{}
 	for _, p := range slices.Concat(d.Include(), d.Runner(), d.Exclude()) {
 		listed[p.String()] = true
 	}
-	missing := []string{}
-	for _, pattern := range Suggest(entries).Runner {
+	return func(pattern string) (bool, error) {
 		if listed[pattern] {
-			continue
+			return true, nil
 		}
-		if !strings.ContainsAny(pattern, "*?[") {
-			covered, err := s.Covers(pattern)
-			if err != nil {
-				return nil, err
-			}
-			excluded, err := excludes(s, pattern)
-			if err != nil {
-				return nil, err
-			}
-			if covered || excluded {
-				continue
-			}
+		if strings.ContainsAny(pattern, "*?[") {
+			return false, nil
 		}
-		missing = append(missing, pattern)
+		covered, err := s.Covers(pattern)
+		if err != nil {
+			return false, err
+		}
+		excluded, err := excludes(s, pattern)
+		return covered || excluded, err
 	}
-	return missing, nil
 }
 
 // WithRunner returns s with the runner patterns extra added, sorted and without repeats. The limit of maxSuggestions include and runner

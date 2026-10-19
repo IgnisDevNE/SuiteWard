@@ -3,29 +3,42 @@
 package postgres_test
 
 import (
+	"context"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
 // treeOf is the protected baseline layout with a protected test file that holds text.
 func treeOf(text string) mapTree { return headTree(text, "package main\n") }
 
-// treeCandidate is a candidate whose contract is the inventory of tree, the only contract a merge of tree can promote,
-// with the bytes of that contract in the content store.
+// unstoredTreeCandidate is a candidate whose contract is the inventory of tree, the only contract a merge of tree can
+// promote, without its bytes in any content store.
+func unstoredTreeCandidate(id string, baseline contract.SuiteVersionID, tree mapTree) candidate {
+	return newCandidate(id, baseline, must(must(inventory.Build(context.Background(), tree)).Contract()))
+}
+
+// treeCandidate is unstoredTreeCandidate with the bytes of the contract in the content store.
 func (w *pgWorld) treeCandidate(id string, baseline contract.SuiteVersionID, tree mapTree) candidate {
 	w.t.Helper()
-	inv := must(inventory.Build(w.t.Context(), tree))
-	for _, entry := range inv.Manifest().Entries() {
+	c := unstoredTreeCandidate(id, baseline, tree)
+	for _, entry := range c.protected.Manifest().Entries() {
 		if err := w.content.Put(w.t.Context(), entry.Content, strings.NewReader(tree[entry.Path])); err != nil {
 			w.t.Fatal(err)
 		}
 	}
-	return newCandidate(id, baseline, must(inv.Contract()))
+	return c
 }
+
+// discardWriter is a content writer that stores nothing.
+type discardWriter struct{}
+
+func (discardWriter) Put(context.Context, artifact.Digest, io.Reader) error { return nil }
 
 // noOutcomeMessage is the outcome comment of a caller that wants none.
 func noOutcomeMessage(governance.MergeOutcome) (governance.OutboxMessage, bool, error) {

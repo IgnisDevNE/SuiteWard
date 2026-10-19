@@ -291,8 +291,8 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			result = record.Result
 		}
 	}
-	// A pull request that waits for the bootstrap or was skipped has no command to reject: only a carrier or a change has one.
-	if !final && result.Reason != reasonBootstrapAwaiting && result.Reason != reasonBootstrapSkipped && sameHead && hasCommand {
+	// A wrong code is a security signal whatever the state, so it fails an awaiting or a skipped pull request too; a fork and an integrity failure are final.
+	if !final && sameHead && hasCommand {
 		wrongCode, err := j.wrongCode(ctx, p, enrollment.Owner.AccountID, pull.Number, latest, record.HeadSince)
 		if err != nil {
 			return "", err

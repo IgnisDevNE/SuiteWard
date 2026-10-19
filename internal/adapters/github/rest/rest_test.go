@@ -570,6 +570,29 @@ func TestErrorBodiesAreTruncated(t *testing.T) {
 	}
 }
 
+// GitHub's answer text can quote repository text, so no error of a read carries it, whatever the status.
+func TestGetErrorsNeverCarryTheAnswerText(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		header map[string]string
+	}{
+		{401, nil}, {403, nil}, {404, nil}, {422, nil}, {500, nil},
+		{403, map[string]string{"Retry-After": "30"}}, {429, map[string]string{"X-RateLimit-Remaining": "0"}},
+	} {
+		t.Run(strconv.Itoa(tc.status)+fmt.Sprint(tc.header), func(t *testing.T) {
+			client, _ := newPoster(t, tc.status, tc.header, `{"message":"`+secretAnswer+" "+tokenValue+`"}`)
+
+			_, err := client.Get(t.Context(), "/repos/o/r")
+			if err == nil {
+				t.Fatal("Get succeeded")
+			}
+			if strings.Contains(err.Error(), secretAnswer) || strings.Contains(fmt.Sprintf("%#v", errors.Unwrap(err)), secretAnswer) {
+				t.Fatalf("error %q carries the answer text", err)
+			}
+		})
+	}
+}
+
 // A server that echoes the request headers must not get the token into an error.
 func TestErrorsNeverContainTheToken(t *testing.T) {
 	for _, status := range []int{304, 401, 403, 404, 422, 429, 500} {

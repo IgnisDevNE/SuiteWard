@@ -37,15 +37,17 @@ func declarationNotices(d []byte) map[string]func() error {
 
 func TestADeclarationWithAHiddenCharacterIsRefused(t *testing.T) {
 	for name, text := range map[string]string{
-		"a bidi override":    "version: 1\n# \u202e gnp\n",
-		"a zero-width space": "version: 1\n# a\u200bb\n",
-		"a NUL":              "version: 1\n# a\x00b\n",
-		"a carriage return":  "version: 1\r\n",
-		"an escape":          "version: 1\n# \x1b[2J\n",
-		"a next line":        "version: 1\n# a\u0085b\n",
-		"a byte order mark":  "\ufeffversion: 1\n",
-		"a line separator":   "version: 1\n# a\u2028b\n",
-		"a bidi isolate":     "version: 1\n# \u2066x\n",
+		"a bidi override":                   "version: 1\n# \u202e gnp\n",
+		"a zero-width space":                "version: 1\n# a\u200bb\n",
+		"a NUL":                             "version: 1\n# a\x00b\n",
+		"a lone carriage return":            "version: 1\r# x\n",
+		"a carriage return ending the text": "version: 1\r",
+		"a carriage return before another":  "version: 1\r\r\n",
+		"an escape":                         "version: 1\n# \x1b[2J\n",
+		"a next line":                       "version: 1\n# a\u0085b\n",
+		"a byte order mark":                 "\ufeffversion: 1\n",
+		"a line separator":                  "version: 1\n# a\u2028b\n",
+		"a bidi isolate":                    "version: 1\n# \u2066x\n",
 	} {
 		for what, validate := range declarationNotices([]byte(text)) {
 			t.Run(name+" in "+what, func(t *testing.T) {
@@ -59,6 +61,18 @@ func TestADeclarationWithAHiddenCharacterIsRefused(t *testing.T) {
 
 func TestADeclarationMayHoldNewlinesTabsAndGraphicCharacters(t *testing.T) {
 	text := "version: 1\ninclude:\n\t- \"caf\u00e9/**\" # \u65e5\u672c\u8a9e \u20ac\n"
+	for what, validate := range declarationNotices([]byte(text)) {
+		t.Run(what, func(t *testing.T) {
+			if err := validate(); err != nil {
+				t.Errorf("the validator refuses %q: %v", text, err)
+			}
+		})
+	}
+}
+
+// A CRLF line ending is the normal form of a file written on Windows, not a hidden character; only a carriage return that no line feed follows is.
+func TestADeclarationMayHoldCRLFLineEndings(t *testing.T) {
+	text := "version: 1\r\ninclude:\r\n  - /tests/**\r\n"
 	for what, validate := range declarationNotices([]byte(text)) {
 		t.Run(what, func(t *testing.T) {
 			if err := validate(); err != nil {

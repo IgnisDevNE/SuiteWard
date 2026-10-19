@@ -297,6 +297,18 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			w.reader.repo(cjRepo2).trees[cjHead] = &bootTree{files: withFiles(bootFiles("v1"), cjUtilTst)}
 			return cjID2
 		}},
+		{"a head test-like path with a colon after the first contract", "invalid-source", func(w *cjWorld) int64 {
+			w.seedDeclared(cjID2, cjDecl, withFiles(bootFiles("v1"), "te:sts/test_a.py"))
+			return cjID2
+		}},
+		{"a head test-like path with a backslash after the first contract", "invalid-source", func(w *cjWorld) int64 {
+			w.seedDeclared(cjID2, cjDecl, withFiles(bootFiles("v1"), `te\sts/test_a.py`))
+			return cjID2
+		}},
+		{"a head test-like path with a colon before the first contract", "invalid-source", func(w *cjWorld) int64 {
+			w.reader.repo(cjRepo1).trees[cjHead] = &bootTree{files: withFiles(bootFiles("v1"), "te:sts/test_a.py")}
+			return cjID1
+		}},
 		{"a declaration over the limit of a notice", "declaration-too-large", func(w *cjWorld) int64 {
 			w.seedDeclared(cjID2, tooLong, withFiles(bootFiles("v1"), cjUtilTst))
 			return cjID2

@@ -117,7 +117,7 @@ func (j *checksJob) findRunners(ctx context.Context, p owner.ProjectPolicy, pull
 func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, set *runnerSet) error {
 	base, _, err := canonicalDeclaration(ctx, j.suites, j.contents, owner.ProjectID(p.RepositoryID))
 	switch {
-	case errors.Is(err, errNoCanonicalDeclaration):
+	case errors.Is(err, governance.ErrNoCanonicalDeclaration):
 		j.logger.InfoContext(ctx, "github checks runner-uncovered comment skipped: the canonical has no declaration to start from", "repo", p.Repo, "pull", pull.Number)
 		return nil
 	case err != nil:

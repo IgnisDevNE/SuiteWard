@@ -767,7 +767,7 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 			return &opaque{what: "read the default branch", cause: err}
 		}
 		return refuse(refusalInvalidSource, invalid.base, branch)
-	case invalidSource(err) || errors.Is(err, errNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
+	case invalidSource(err) || errors.Is(err, governance.ErrNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
 		j.logger.InfoContext(ctx, "github suggest refused: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
 		return refuse(refusalInvalidSource, "", "")
 	case errors.Is(err, errGitHubRead):

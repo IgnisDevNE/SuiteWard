@@ -269,9 +269,6 @@ func (p *commentPublisher) publishReview(ctx context.Context, key string, reposi
 	return nil
 }
 
-// errNoCanonicalDeclaration says that the canonical holds no .suiteward.yml, so there is no declaration to widen.
-var errNoCanonicalDeclaration = governance.ErrNoCanonicalDeclaration
-
 // canonicalDeclaration returns the bytes of the canonical's own .suiteward.yml and the scope they declare. It reads the
 // canonical as AssessHead does and verifies the bytes against the scope digest the canonical was approved with.
 func canonicalDeclaration(ctx context.Context, suites governance.UnitOfWork, contents governance.ContentReader, project contract.ProjectID) ([]byte, scope.Scope, error) {
@@ -414,7 +411,7 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 	case ctx.Err() != nil:
 		return ctx.Err()
 	// Before the read failure, which wraps an invalid argument such as a base commit that is not a SHA: that will never succeed.
-	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, errNoCanonicalDeclaration):
+	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, governance.ErrNoCanonicalDeclaration):
 		j.logger.InfoContext(ctx, "github checks scope notice skipped: the source cannot be read", "repo", p.Repo, "pull", pull.Number)
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github checks scope notice read failed", p.Repo, err)

@@ -432,7 +432,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
 - **`suggest-refused`** is recorded with a short ack that names the reason and quotes no repository text. It is never retried. The reasons are:
   - `fork` or `not-open`, as for `propose`;
   - `invalid-source`: the tree is invalid or truncated, the canonical has no declaration, or the reply cannot be rendered (an unusable branch name, for example);
-  - `declaration-too-large`: the suggested declaration is over 8192 bytes. Unless the base was the default branch, the ack carries `branch` (optional) and links to the editor for `.suiteward.yml` on the PR's branch.
+  - `declaration-too-large`: the suggested declaration is over 8192 bytes. The ack carries `branch` (optional) and links to the editor for `.suiteward.yml` on the PR's branch. When the base was the default branch's file, it also carries `base: default-branch`, and the link and wording name the default branch.
 
   A canonical that fails its integrity check gets no reply: the command is retried, then recorded `failed`, like any other failure.
 - Otherwise it records **`suggested`**, and its ack replies to the command. The reply compares the head with a **base declaration**:
@@ -515,7 +515,7 @@ The order is deterministic: directory patterns first, then file patterns, each g
   - the path goes inside a fence, escaped;
   - it quotes no file content except the head's own declaration of a `link` comment;
   - it says the canonical contract stays in force and the check stays `failure` until the next push fixes it;
-  - it links to GitHub's editor for `.suiteward.yml` on the PR's branch, for fixing the declaration and for accepting a link (amended 2026-10-19, D-SCOPE-DISCOVERY). The payload adds `repo` and `branch` (optional), and a message queued without them renders without the link.
+  - it links to GitHub's editor for `.suiteward.yml` on the PR's branch, for fixing the declaration and for accepting a link (amended 2026-10-19, D-SCOPE-DISCOVERY). The payload adds `branch` (optional; the repository is already in every comment payload), and a message queued without it renders without the link. A head with no `.suiteward.yml` sets `noDeclaration`, and the accept choice then links to GitHub's new-file page instead. A `.suiteward.yml` that is a link or another non-regular entry gets no link, because the web editor cannot fix it, and neither does a branch that is not a valid ref name.
 - **The check summary** for `invalid-source` no longer mentions submodules, which are outside the scope since the D-SCOPE amendment.
 
 **Bot identity.** When the bot account cannot be resolved, the commands job logs the failure's `kind` and `status` (`readFailure`), never GitHub's text. This also covers a refused App JWT on `GET /app`.

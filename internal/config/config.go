@@ -27,7 +27,8 @@ const (
 	minMCPTokenBytes      = 32
 )
 
-var gitHubRepository = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+// GitHub caps an owner at 39 characters and a name at 100: the size of a payload that carries the repository is measured with that longest name.
+var gitHubRepository = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`)
 
 // toolingPrefixes name variables that development shells and CI set; they are never warned about.
 var toolingPrefixes = []string{prefix + "TEST_", prefix + "TOOLS_", prefix + "HOOK_"}

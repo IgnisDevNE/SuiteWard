@@ -37,7 +37,7 @@ const (
 )
 
 var (
-	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`) // GitHub's caps: a payload is measured with the longest name
 	referencePattern = regexp.MustCompile(`^P([1-9][0-9]{0,8})-R([1-9][0-9]{0,8})$`)
 	// loginPattern is commandtext's: the renderer panics on any other owner.
 	loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$`)

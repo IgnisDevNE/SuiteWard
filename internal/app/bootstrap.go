@@ -42,7 +42,7 @@ const (
 	carrierPrefix                              = "github-pr:"
 	maxSummaryRun                              = 20  // paths, include, runner and exclude rules the summary carries
 	maxSummaryText                             = 150 // bytes of one path, one rule or the branch in the payload
-	maxRunnerText                              = 48  // bytes of one runner rule: three lists of 150 bytes, the branch and 20 of these are 59.9 KB when every byte is escaped, under maxOutboxPayload
+	maxRunnerText                              = 30  // bytes of one runner rule: with a repository of the 140 characters GitHub allows, three lists of 150 bytes, the branch and 20 of these make 59.2 KB when every byte is escaped, 2 KB under maxOutboxPayload
 )
 
 // commentTarget is what every github_comment payload carries: the repository

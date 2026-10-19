@@ -335,13 +335,13 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"invalid code",
 			commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The confirmation code for P4-R2 was not accepted; nothing changed.", "current code"},
+			[]string{"The confirmation code for P4-R2 was not accepted, so the command had no effect. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a current code, or push."},
 			[]string{"eligible"},
 		},
 		{
 			"replayed code",
 			commandtext.Ack{Outcome: commandtext.ReplayedCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The confirmation code for P4-R2 was already used; each code works only once, so nothing changed.", "new code"},
+			[]string{"The confirmation code for P4-R2 was already used, so the command had no effect; each code works only once. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a new code, or push.", "new code"},
 			[]string{"eligible"},
 		},
 		{

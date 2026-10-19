@@ -566,8 +566,8 @@ func TestScopeSuggestionBodyParsesWhenSplicedAfterTheAnchor(t *testing.T) {
 }
 
 func TestScopeSuggestionBodyFencesAnchorAgainstBackticks(t *testing.T) {
-	body := suggestionBody(t, "  - a/```/b # ```", "  ", []string{"x"})
-	if !strings.Contains(body, "````suggestion\n  - a/```/b # ```\n  - \"x\"\n````") {
+	body := suggestionBody(t, "  - \"a/```/b\" # ```", "  ", []string{"x"})
+	if !strings.Contains(body, "````suggestion\n  - \"a/```/b\" # ```\n  - \"x\"\n````") {
 		t.Errorf("a backtick run can close the block:\n%s", body)
 	}
 }

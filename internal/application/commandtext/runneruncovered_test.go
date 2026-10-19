@@ -139,7 +139,7 @@ func choiceBody(t *testing.T, choice commandtext.RunnerChoice, anchor, indent st
 func TestRunnerChoiceBodyAddsTheItemsToAnExistingList(t *testing.T) {
 	body := choiceBody(t, commandtext.ProtectChoice, "  - pytest.ini", "  ", []string{"conftest.py", "pytest.toml"}, "")
 	block := suggestionBlock.FindStringSubmatch(body)
-	if len(block) < 2 || block[1] != "  - pytest.ini\n  - \"conftest.py\"\n  - \"pytest.toml\"" {
+	if len(block) < 2 || block[1] != "  - pytest.ini\n  - conftest.py\n  - pytest.toml" {
 		t.Fatalf("the block is %q in\n%s", block, body)
 	}
 	for _, w := range []string{"protecting the runner files", "`runner` list", "needs the owner's approval"} {

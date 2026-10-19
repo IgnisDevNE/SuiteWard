@@ -70,3 +70,21 @@ func TestSuggestRefusesAsAnInvalidSourceACanonicalWhoseDeclarationHoldsAHiddenCh
 
 	w.requireAckPayload(cjID2, 500, commands.SuggestRefused, map[string]any{"reason": "invalid-source"})
 }
+
+// A runner file in a directory whose name holds a zero-width space is excludable, and the declaration that excludes it holds that character raw: the comment
+// offers the protect choice alone, and the check says the same.
+func TestChecksOfferOnlyTheProtectChoiceWhenTheIgnoreDeclarationHoldsAHiddenCharacter(t *testing.T) {
+	const hidden = "a\u200bb/conftest.py"
+	w := newCJWorld(t, true)
+
+	w.runnerPull(withFiles(bootFiles("v1"), hidden), added(hidden)...)
+
+	w.want(5, checks.InProgress, "runner-uncovered", 1)
+	if len(w.scopeKeys("runner-uncovered:")) != 1 {
+		t.Fatalf("runner comments %v, want one\nlogs: %s", w.scopeKeys("runner-uncovered:"), w.logs)
+	}
+	payload := w.runnerPayload(0)
+	if _, hasIgnore := payload["ignore"]; hasIgnore || payload["protect"] == "" {
+		t.Fatalf("payload %v, want a protect declaration and no ignore declaration", payload)
+	}
+}

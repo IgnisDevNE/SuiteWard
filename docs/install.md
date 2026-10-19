@@ -50,6 +50,7 @@ Create the App by hand, and tick each box when it is done:
 - [ ] Generate a private key. GitHub downloads a `.pem` file. Keep it somewhere safe until section 5 or 10 stores it. Never commit it. Do this before the next item: the private key must exist before GitHub allows the installation.
 - [ ] Install the App on the repositories you want to protect, and no others. The limit is 20.
 - [ ] Note the **App ID** (on the App's settings page) and the **installation ID** (the number in the address of the installation's settings page).
+- [ ] Optional: upload [`assets/brand/png/suiteward-github-app.png`](../assets/brand/png/suiteward-github-app.png) as the App's logo, with the badge background color `#12202F`, so its comments and checks carry the SuiteWard mark.
 
 Keep these permissions off, for these reasons:
 

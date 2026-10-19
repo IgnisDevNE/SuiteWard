@@ -13,8 +13,8 @@ func TestPeriodicSpecsDefineThePeriodsQueuesAndWakeUps(t *testing.T) {
 		periods[s.args.Kind()] = s.defaultEvery
 	}
 	wantPeriods := map[string]time.Duration{
-		SyncTickKind: 20 * time.Second, ProtectionCheckKind: 15 * time.Minute, BootstrapKind: time.Minute, CommandsKind: 15 * time.Second,
-		ChecksKind: 30 * time.Second, MergesKind: 30 * time.Second, IntegrityKind: time.Hour,
+		"github_sync_tick": 20 * time.Second, "github_protection_check": 15 * time.Minute, "github_bootstrap": time.Minute, "github_commands": 15 * time.Second,
+		"github_checks": 30 * time.Second, "github_merges": 30 * time.Second, "canonical_integrity": time.Hour,
 	}
 	if !maps.Equal(periods, wantPeriods) {
 		t.Errorf("default periods %v; want %v", periods, wantPeriods)
@@ -24,10 +24,10 @@ func TestPeriodicSpecsDefineThePeriodsQueuesAndWakeUps(t *testing.T) {
 	if want := []string{"default", "github_bootstrap", "github_checks", "github_commands", "github_merges", "github_sync_tick", outboxQueue}; !slices.Equal(queued, want) {
 		t.Errorf("queues %v; want %v", queued, want)
 	}
-	if configs := queues(4); configs["default"].MaxWorkers != 4 || configs[outboxQueue].MaxWorkers != 1 || configs[ChecksKind].MaxWorkers != 1 {
+	if configs := queues(4); configs["default"].MaxWorkers != 4 || configs[outboxQueue].MaxWorkers != 1 || configs["github_checks"].MaxWorkers != 1 {
 		t.Errorf("queue workers %v; want 4 on the default queue and one on each other", configs)
 	}
-	if woken, want := slices.Sorted(maps.Keys(wakeable)), []string{BootstrapKind, ChecksKind, CommandsKind, MergesKind}; !slices.Equal(woken, want) {
+	if woken, want := slices.Sorted(maps.Keys(wakeable)), []string{"github_bootstrap", "github_checks", "github_commands", "github_merges"}; !slices.Equal(woken, want) {
 		t.Errorf("wakeable kinds %v; want %v", woken, want)
 	}
 }

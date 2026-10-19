@@ -69,8 +69,8 @@ func addSyncRepo(workers *riverqueue.Workers, config Config, waker *waker) error
 	return nil
 }
 
-// InsertSyncRepo queues a github_sync_repo job for repo. It reports false when
-// one for the same repo is still unfinished, which then covers the request.
+// InsertSyncRepo queues a github_sync_repo job for repo. It reports false when one for the same repo is unfinished: a
+// waiting one covers the request, a running one leaves it to the next tick.
 func (r *Runtime) InsertSyncRepo(ctx context.Context, repo string) (inserted bool, err error) {
 	if !r.sync {
 		return false, errors.New("river runtime has no synchronization jobs")

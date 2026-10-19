@@ -12,19 +12,20 @@ import (
 )
 
 // periodicJobs are the periodic jobs of the GitHub integration (the synchronization tick has its own tests): set puts a
-// job in a Config (nil removes it) and every sets its period.
+// job in a Config (nil removes it) and every sets its period. The kinds are literal on purpose: they are persisted job names
+// and periodic job ids.
 var periodicJobs = []struct {
 	name  string
 	kind  string
 	set   func(*river.Config, func(context.Context) error)
 	every func(*river.Config, time.Duration)
 }{
-	{"bootstrap", river.BootstrapKind, func(c *river.Config, job func(context.Context) error) { c.Bootstrap = noWake(job) }, func(c *river.Config, d time.Duration) { c.BootstrapInterval = d }},
-	{"checks", river.ChecksKind, func(c *river.Config, job func(context.Context) error) { c.Checks = job }, func(c *river.Config, d time.Duration) { c.ChecksInterval = d }},
-	{"commands", river.CommandsKind, func(c *river.Config, job func(context.Context) error) { c.Commands = noWake(job) }, func(c *river.Config, d time.Duration) { c.CommandsInterval = d }},
-	{"merges", river.MergesKind, func(c *river.Config, job func(context.Context) error) { c.Merges = noWake(job) }, func(c *river.Config, d time.Duration) { c.MergesInterval = d }},
-	{"integrity", river.IntegrityKind, func(c *river.Config, job func(context.Context) error) { c.Integrity = job }, func(c *river.Config, d time.Duration) { c.IntegrityInterval = d }},
-	{"protection", river.ProtectionCheckKind, func(c *river.Config, job func(context.Context) error) { c.ProtectionCheck = job }, func(c *river.Config, d time.Duration) { c.ProtectionInterval = d }},
+	{"bootstrap", "github_bootstrap", func(c *river.Config, job func(context.Context) error) { c.Bootstrap = noWake(job) }, func(c *river.Config, d time.Duration) { c.BootstrapInterval = d }},
+	{"checks", "github_checks", func(c *river.Config, job func(context.Context) error) { c.Checks = job }, func(c *river.Config, d time.Duration) { c.ChecksInterval = d }},
+	{"commands", "github_commands", func(c *river.Config, job func(context.Context) error) { c.Commands = noWake(job) }, func(c *river.Config, d time.Duration) { c.CommandsInterval = d }},
+	{"merges", "github_merges", func(c *river.Config, job func(context.Context) error) { c.Merges = noWake(job) }, func(c *river.Config, d time.Duration) { c.MergesInterval = d }},
+	{"integrity", "canonical_integrity", func(c *river.Config, job func(context.Context) error) { c.Integrity = job }, func(c *river.Config, d time.Duration) { c.IntegrityInterval = d }},
+	{"protection", "github_protection_check", func(c *river.Config, job func(context.Context) error) { c.ProtectionCheck = job }, func(c *river.Config, d time.Duration) { c.ProtectionInterval = d }},
 }
 
 func TestPeriodicJobsRunAtStartOnceAndWithOneAttempt(t *testing.T) {

@@ -357,9 +357,9 @@ func TestSuggestRetriesAGitHubFailureAndIsFailedAfterFiveAttemptsLoggingOnlyKind
 	}
 }
 
-// Before the first contract the default branch's file can be the base, and the refusal asks to fix that file: the pull request's branch is
-// not where it is, so the acknowledgment links to no editor.
-func TestSuggestRefusesADeclarationTooLargeForTheDefaultBranchWithoutAnEditorLink(t *testing.T) {
+// Before the first contract the default branch's file can be the base, and the refusal asks to fix that file: the acknowledgment names the
+// base and links to the editor of the default branch, not of the pull request's branch.
+func TestSuggestRefusesADeclarationTooLargeForTheDefaultBranchWithItsEditorLink(t *testing.T) {
 	tooLong := "version: 1\ninclude:\n"
 	for i := range 400 {
 		tooLong += fmt.Sprintf("  - \"tests/directory%03d/**\"\n", i)
@@ -370,5 +370,5 @@ func TestSuggestRefusesADeclarationTooLargeForTheDefaultBranchWithoutAnEditorLin
 	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 	w.mustRun()
 
-	w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "declaration-too-large"})
+	w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "declaration-too-large", "base": "default-branch", "branch": "main"})
 }

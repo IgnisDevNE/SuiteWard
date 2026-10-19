@@ -125,3 +125,42 @@ func TestAcknowledgeRefusesAnEditorLinkThatDoesNotFit(t *testing.T) {
 		})
 	}
 }
+
+// The head has no .suiteward.yml: accepting the link needs a new file, so the link is GitHub's new-file page for it.
+func TestInvalidSourceCommentLinksTheNewFilePageForAHeadWithoutADeclaration(t *testing.T) {
+	n := commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link", Repo: "octo-org/widgets", Branch: editorBranch, NoDeclaration: true}
+
+	body := render(t, func() string { return commandtext.InvalidSourceComment(n) })
+
+	raw, _ := editorLink(t, body)
+	if want := "https://github.com/octo-org/widgets/new/feat/a%23b%25c/%C3%BCn%C3%AF?filename=.suiteward.yml"; raw != want {
+		t.Errorf("the link is %q, want %q", raw, want)
+	}
+	if !strings.Contains(body, "[open GitHub's editor for a new file](") || strings.Contains(body, "/edit/") {
+		t.Errorf("the body lacks the new-file words or has an edit link:\n%s", body)
+	}
+	for name, bad := range map[string]commandtext.InvalidSourceNotice{
+		"on a declaration problem":       {Problem: commandtext.DeclarationProblem, NoDeclaration: true},
+		"with the declaration of a link": {Problem: commandtext.LinkProblem, Path: "l", NoDeclaration: true, Declaration: []byte("version: 1\n")},
+	} {
+		if commandtext.ValidateInvalidSource(bad) == nil {
+			t.Errorf("ValidateInvalidSource accepted NoDeclaration %s", name)
+		}
+	}
+}
+
+func TestDeclarationTooLargeAgainstTheDefaultBranchLinksItsEditor(t *testing.T) {
+	body := render(t, func() string {
+		return commandtext.Acknowledge(refusal(commandtext.SuggestRefused, commandtext.DeclarationTooLarge, commandtext.BaseDefaultBranch, "main"))
+	})
+
+	if raw, _ := editorLink(t, body); raw != "https://github.com/octo-org/widgets/edit/main/.suiteward.yml" || !strings.Contains(body, "on the default branch") {
+		t.Errorf("the link is %q or the words are not the default branch's:\n%s", raw, body)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("Acknowledge did not panic for a pull base on a declaration too large")
+		}
+	}()
+	commandtext.Acknowledge(refusal(commandtext.SuggestRefused, commandtext.DeclarationTooLarge, commandtext.BasePull, "feature"))
+}

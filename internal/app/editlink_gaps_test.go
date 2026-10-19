@@ -98,3 +98,62 @@ func TestCommentPublisherRefusesABranchOfTheFileThatDoesNotFit(t *testing.T) {
 		})
 	}
 }
+
+// An invalid-source comment for a head that has no .suiteward.yml links to GitHub's new-file page, not to an editor that would be a 404.
+func TestCommentPublisherLinksTheNewFilePageForALinkOfAHeadWithoutADeclaration(t *testing.T) {
+	body := newCmtWorld(t).publishedInvalidSource(t, "link", map[string]any{"branch": "feat/a#b", "noDeclaration": true})
+
+	want := "[open GitHub's editor for a new file](https://github.com/" + cmtRepo + "/new/feat/a%23b?filename=.suiteward.yml)"
+	if !strings.Contains(body, want) || strings.Contains(body, "/edit/") {
+		t.Errorf("the body lacks %q or has an edit link:\n%s", want, body)
+	}
+}
+
+func TestCommentPublisherRefusesANoDeclarationFlagThatDoesNotFit(t *testing.T) {
+	for name, tc := range map[string]struct {
+		kind   string
+		change map[string]any
+	}{
+		"on a declaration problem":       {"declaration", map[string]any{"noDeclaration": true}},
+		"with the declaration of a link": {"link", map[string]any{"noDeclaration": true, "declaration": "version: 1\n"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+
+			err := w.pub.publish(t.Context(), cmtInvalidKey, cmtInvalidPayload(tc.kind, func(m map[string]any) {
+				for k, v := range tc.change {
+					m[k] = v
+				}
+			}))
+
+			if err == nil || len(w.writer.posts()) != 0 {
+				t.Fatalf("publish = %v with %d posts, want a refusal", err, len(w.writer.posts()))
+			}
+		})
+	}
+}
+
+func (w *cmtWorld) publishedInvalidSource(t *testing.T, kind string, extra map[string]any) string {
+	t.Helper()
+	if err := w.pub.publish(t.Context(), cmtInvalidKey, cmtInvalidPayload(kind, func(m map[string]any) {
+		for k, v := range extra {
+			m[k] = v
+		}
+	})); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	posts := w.writer.posts()
+	if len(posts) != 1 {
+		t.Fatalf("%d posts, want 1", len(posts))
+	}
+	return posts[0].body
+}
+
+// The refusal of a declaration too large for the default branch's file links to that branch's editor, in the words of the default branch.
+func TestCommentPublisherLinksTheDefaultBranchForADeclarationTooLargeAgainstIt(t *testing.T) {
+	body := newCmtWorld(t).publishedAck(t, map[string]any{"disposition": "suggest-refused", "reason": "declaration-too-large", "base": "default-branch", "branch": "main"})
+
+	if want := "[open GitHub's editor for it](https://github.com/" + cmtRepo + "/edit/main/.suiteward.yml)"; !strings.Contains(body, want) || !strings.Contains(body, "on the default branch") {
+		t.Errorf("the body lacks %q or the words of the default branch:\n%s", want, body)
+	}
+}

@@ -134,7 +134,7 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 			j.logger.WarnContext(ctx, "github checks runner-uncovered ignore choice skipped: the excludes cannot be added", "repo", p.Repo, "pull", pull.Number)
 		}
 	}
-	if len(ignore) > commandtext.MaxDeclaration { // a choice that cannot be shown is left out; protecting stays
+	if !quotable(ignore) { // a choice that cannot be shown is left out; protecting stays
 		ignore = nil
 	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}

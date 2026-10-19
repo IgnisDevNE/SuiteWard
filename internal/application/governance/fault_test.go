@@ -280,7 +280,7 @@ func TestPromoteMergeSurfacesTheFailureToLoadTheProposalOfTheFirstVersion(t *tes
 	w.requireWrites(before, 0)
 }
 
-// The promotion is the last write of a merge: the assessment of the merge commit and the promotion itself are rolled back
+// The promotion write fails after it is made (the merge outcome would follow it): the assessment of the merge commit and the promotion itself are rolled back
 // with it, and the merge can be decided again.
 func TestPromoteMergeRollsBackWhenThePromotionWriteFails(t *testing.T) {
 	e := newHeadEnv(t)

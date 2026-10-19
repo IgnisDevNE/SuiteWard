@@ -164,7 +164,7 @@ var (
 )
 ```
 
-The use cases are `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `Bootstrap(ctx, UnitOfWork, PromoteRequest)` (existing-baseline only), `PromoteMerge` (see "Merge outcome") and, since M1.3, `ProposeBaseline` and `AssessHead`, which share the proposal revision rule (see "Proposal revisions"). `Promote`, `Correct` and `ReviseProposal` were removed in M1.10: no production path called them, and a promotion or a correction is now only a merge. Errors from the domain or the store are wrapped with `%w`, preserving the cause. Errors from the domain or the store are wrapped with `%w`, preserving the cause.
+The use cases are `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `Bootstrap(ctx, UnitOfWork, PromoteRequest)` (existing-baseline only), `PromoteMerge` (see "Merge outcome") and, since M1.3, `ProposeBaseline` and `AssessHead`, which share the proposal revision rule (see "Proposal revisions"). `Promote`, `Correct` and `ReviseProposal` were removed in M1.10: no production path called them, and a promotion or a correction is now only a merge. Errors from the domain or the store are wrapped with `%w`, preserving the cause.
 
 ### Use-case semantics
 

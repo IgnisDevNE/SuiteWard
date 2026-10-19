@@ -528,7 +528,7 @@ func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger,
 	}
 	hunks, err := changed[i].NewLineRanges()
 	if err != nil {
-		logger.WarnContext(ctx, logPrefix+" skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull)
+		logger.WarnContext(ctx, logPrefix+" skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull, "reason", err.Error()) // the text names only the constant path of the declaration
 		return nil, nil
 	}
 	var suggestions []scopeSuggestion

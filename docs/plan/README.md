@@ -36,6 +36,7 @@ The MVP is a self-hosted, tamper-evident, human-approved test contract for one d
 | [M1.7c](phases/M1.7c.md) | Lower latency: the commands watermark in GitHub's clock, a 20 s paced poll, and wake-ups between jobs. Verified on both targets and merged 2026-10-17 (PR #27). Results in the [phase page](phases/M1.7c.md#outcome). | M1.7b |
 | [M1.8](phases/M1.8.md) | MVP acceptance: install guide, backup and re-bootstrap runbook, end-to-end run, dogfooding on SuiteWard. Merged 2026-10-17 (PRs #30–#33), released as `v0.1.0`. | M1.7c |
 | [M1.9](phases/M1.9.md) | Scope discovery: a suggestion that finds tests at any depth and runner files, a scope notice on PRs that add tests outside the scope, `/suiteward suggest`, the reduction detail, and the key-rotation guide. | M1.8 |
+| Security gate (owner request, 2026-10-19) | The last step before the final MVP release, after every other phase:<ul><li>a hardening session;</li><li>a heavy pentest of both tiers and of the managed-service shape (App key, permissions, TOTP flow, host, outbox, check forgery, workflows and tags);</li><li>a dedicated SecOps review between the owner and the orchestrator.</li></ul>Its findings decide what the release carries and what goes to M3. | All MVP phases |
 
 S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
 

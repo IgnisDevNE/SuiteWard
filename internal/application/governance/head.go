@@ -32,7 +32,7 @@ type HeadRequest struct {
 	Suite   contract.SuiteID
 	Carrier contract.ApprovalCarrierID // github-pr:<repository id>/<pull>
 	Head    contract.SourceRevision    // the PR head SHA
-	Tree    inventory.Tree             // that commit's source tree (AssessHead only)
+	Tree    inventory.Tree             // that commit's source tree
 	// Revision builds the comment about a revision this call commits; false writes no message. Callers that want no
 	// comment pass a function that returns false.
 	Revision func(RevisionNotice) (OutboxMessage, bool, error)
@@ -64,29 +64,10 @@ type HeadResult struct {
 // lock, and the proposal is written in a second unit of work that fails with ErrConflict when the canonical
 // moved in between.
 func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, writer ContentWriter, request HeadRequest) (HeadResult, error) {
-	switch {
-	case uow == nil:
-		return HeadResult{}, fmt.Errorf("%w: no unit of work", ErrInvalidRequest)
-	case reader == nil:
-		return HeadResult{}, fmt.Errorf("%w: no content reader", ErrInvalidRequest)
-	case writer == nil:
-		return HeadResult{}, fmt.Errorf("%w: no content writer", ErrInvalidRequest)
-	case request.Tree == nil:
-		return HeadResult{}, fmt.Errorf("%w: no tree", ErrInvalidRequest)
-	case request.Revision == nil:
-		return HeadResult{}, fmt.Errorf("%w: no revision comment function", ErrInvalidRequest)
-	case strings.TrimSpace(string(request.Head)) == "" || strings.TrimSpace(string(request.Carrier)) == "":
-		return HeadResult{}, fmt.Errorf("%w: a head assessment names a head and a carrier", ErrInvalidRequest)
+	if err := validateHeadRequest(uow, reader, writer, request); err != nil {
+		return HeadResult{}, err
 	}
-	var canonical contract.CanonicalSnapshot
-	err := uow.Do(ctx, request.Project, request.Suite, func(ctx context.Context, tx Tx) error {
-		state, err := tx.Suite(ctx)
-		if err != nil {
-			return fmt.Errorf("load suite: %w", err)
-		}
-		canonical = state.Canonical
-		return nil
-	})
+	canonical, err := canonicalOf(ctx, uow, request)
 	if err != nil {
 		return HeadResult{}, err
 	}
@@ -112,72 +93,139 @@ func AssessHead(ctx context.Context, uow UnitOfWork, reader ContentReader, write
 	if err := storeContent(ctx, request.Tree, proposed.Manifest(), writer); err != nil {
 		return HeadResult{}, err
 	}
-	result := HeadResult{Change: classification.Change, Canonical: version}
-	err = uow.Do(ctx, request.Project, request.Suite, func(ctx context.Context, tx Tx) error {
-		state, err := tx.Suite(ctx)
-		if err != nil {
-			return fmt.Errorf("load suite: %w", err)
-		}
-		if current, _ := state.Canonical.Suite().CurrentVersionID(); current != version {
-			return fmt.Errorf("%w: from %q to %q", ErrCanonicalMoved, version, current)
-		}
-		revised, previous, err := keepProposalCurrent(ctx, tx, state, request, proposed)
-		if err != nil {
-			return err
-		}
-		reference := revised.Current
-		if revised.Committed {
-			notice := RevisionNotice{Reference: reference, Previous: previous, Canonical: version, Added: classification.Added, Modified: classification.Modified,
-				Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction,
-				ReducedRules: classification.ReducedRules, ReducedPaths: classification.ReducedPaths}
-			message, send, err := request.Revision(notice)
-			if err != nil {
-				return fmt.Errorf("build the revision comment: %w", err)
-			}
-			if send {
-				if err := writeOutbox(ctx, tx, []OutboxMessage{message}); err != nil {
-					return err
-				}
-			}
-		}
-		proposal, consent, err := tx.Proposal(ctx, reference.ProposalID)
-		if err != nil {
-			return fmt.Errorf("load proposal: %w", err)
-		}
-		evidence, err := HeadEvidence(inv, proposal.Current().Binding(), request.Head)
-		if err != nil {
-			return err
-		}
-		if err := tx.RecordAssessment(ctx, AssessmentWrite{Reference: reference, Source: request.Head, Evidence: evidence}); err != nil {
-			return fmt.Errorf("record the assessment of the head: %w", err)
-		}
-		assessment, found, err := tx.Assessment(ctx, reference, request.Head)
-		if err != nil {
-			return fmt.Errorf("load assessment: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("%w: the assessment of %v at %q is missing right after it was recorded", ErrInvalidState, reference, request.Head)
-		}
-		decision, err := contract.CheckPromotionReadiness(contract.PromotionContext{
-			Canonical: state.Canonical, Proposed: proposed, Proposal: proposal, Reference: reference, Carrier: request.Carrier,
-			Policy: state.Policy, Consent: consent, Assessment: assessment,
-		}, request.Head)
-		if err != nil {
-			return fmt.Errorf("check readiness: %w", err)
-		}
-		written, err := tx.Suite(ctx) // the revision this answer holds at, after its own writes
-		if err != nil {
-			return fmt.Errorf("load suite: %w", err)
-		}
-		result.Reference = &reference
-		result.Ready, result.Reason = decision.Outcome() == contract.PromotionReady, decision.Reason()
-		result.Revision = int64(written.Canonical.Suite().Revision())
-		return nil
+	var result HeadResult
+	err = uow.Do(ctx, request.Project, request.Suite, func(ctx context.Context, tx Tx) (err error) {
+		result, err = recordHead(ctx, tx, request, version, classification, inv, proposed)
+		return err
 	})
 	if err != nil {
 		return HeadResult{}, err
 	}
 	return result, nil
+}
+
+func validateHeadRequest(uow UnitOfWork, reader ContentReader, writer ContentWriter, request HeadRequest) error {
+	switch {
+	case uow == nil:
+		return fmt.Errorf("%w: no unit of work", ErrInvalidRequest)
+	case reader == nil:
+		return fmt.Errorf("%w: no content reader", ErrInvalidRequest)
+	case writer == nil:
+		return fmt.Errorf("%w: no content writer", ErrInvalidRequest)
+	case request.Tree == nil:
+		return fmt.Errorf("%w: no tree", ErrInvalidRequest)
+	case request.Revision == nil:
+		return fmt.Errorf("%w: no revision comment function", ErrInvalidRequest)
+	case blank(string(request.Head)) || blank(string(request.Carrier)):
+		return fmt.Errorf("%w: a head assessment names a head and a carrier", ErrInvalidRequest)
+	}
+	return nil
+}
+
+// canonicalOf reads the Suite's canonical in a unit of work of its own, before any tree is read.
+func canonicalOf(ctx context.Context, uow UnitOfWork, request HeadRequest) (contract.CanonicalSnapshot, error) {
+	var canonical contract.CanonicalSnapshot
+	err := uow.Do(ctx, request.Project, request.Suite, func(ctx context.Context, tx Tx) error {
+		state, err := tx.Suite(ctx)
+		if err != nil {
+			return fmt.Errorf("load suite: %w", err)
+		}
+		canonical = state.Canonical
+		return nil
+	})
+	return canonical, err
+}
+
+// recordHead is the unit of work of AssessHead that writes: it checks that the canonical is still version, keeps the
+// carrier's proposal current (with the comment about a new revision, in the same transaction), and records and
+// judges the assessment of the head.
+func recordHead(ctx context.Context, tx Tx, request HeadRequest, version contract.SuiteVersionID, classification inventory.Classification, inv inventory.Inventory, proposed contract.ProtectedContract) (HeadResult, error) {
+	state, err := tx.Suite(ctx)
+	if err != nil {
+		return HeadResult{}, fmt.Errorf("load suite: %w", err)
+	}
+	if current, _ := state.Canonical.Suite().CurrentVersionID(); current != version {
+		return HeadResult{}, fmt.Errorf("%w: from %q to %q", ErrCanonicalMoved, version, current)
+	}
+	revised, previous, err := keepProposalCurrent(ctx, tx, state, request, proposed)
+	if err != nil {
+		return HeadResult{}, err
+	}
+	if revised.Committed {
+		notice := RevisionNotice{Reference: revised.Current, Previous: previous, Canonical: version, Added: classification.Added, Modified: classification.Modified,
+			Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction,
+			ReducedRules: classification.ReducedRules, ReducedPaths: classification.ReducedPaths}
+		if err := writeRevisionComment(ctx, tx, request, notice); err != nil {
+			return HeadResult{}, err
+		}
+	}
+	proposal, consent, err := tx.Proposal(ctx, revised.Current.ProposalID)
+	if err != nil {
+		return HeadResult{}, fmt.Errorf("load proposal: %w", err)
+	}
+	reference, decision, revision, err := recordHeadAssessment(ctx, tx, headEvaluation{state: state, proposal: proposal, consent: consent, inv: inv, proposed: proposed, carrier: request.Carrier, head: request.Head})
+	if err != nil {
+		return HeadResult{}, err
+	}
+	return HeadResult{Change: classification.Change, Reference: &reference, Ready: decision.Outcome() == contract.PromotionReady, Reason: decision.Reason(), Canonical: version, Revision: revision}, nil
+}
+
+// writeRevisionComment asks request.Revision for the comment about notice and writes it, if there is one.
+func writeRevisionComment(ctx context.Context, tx Tx, request HeadRequest, notice RevisionNotice) error {
+	message, send, err := request.Revision(notice)
+	if err != nil {
+		return fmt.Errorf("build the revision comment: %w", err)
+	}
+	if !send {
+		return nil
+	}
+	return writeOutbox(ctx, tx, []OutboxMessage{message})
+}
+
+// headEvaluation is a head about to be judged against the current revision of the proposal that carries it: the Suite
+// state read under the lock, the proposal with its consent, and the head's inventory and protected contract.
+type headEvaluation struct {
+	state    SuiteState
+	proposal contract.Proposal
+	consent  contract.Consent
+	inv      inventory.Inventory
+	proposed contract.ProtectedContract
+	carrier  contract.ApprovalCarrierID
+	head     contract.SourceRevision
+}
+
+// recordHeadAssessment records the integrity assessment of the head against the proposal's current revision and judges
+// readiness for the head. It returns that revision, the decision, and the Suite revision the answer holds at, read after
+// its own write. AssessHead and AssessBootstrapHead share it.
+func recordHeadAssessment(ctx context.Context, tx Tx, e headEvaluation) (contract.ProposalReference, contract.PromotionDecision, int64, error) {
+	binding := e.proposal.Current().Binding()
+	reference := binding.Reference()
+	evidence, err := HeadEvidence(e.inv, binding, e.head)
+	if err != nil {
+		return contract.ProposalReference{}, contract.PromotionDecision{}, 0, err
+	}
+	if err := tx.RecordAssessment(ctx, AssessmentWrite{Reference: reference, Source: e.head, Evidence: evidence}); err != nil {
+		return contract.ProposalReference{}, contract.PromotionDecision{}, 0, fmt.Errorf("record the assessment of the head: %w", err)
+	}
+	assessment, found, err := tx.Assessment(ctx, reference, e.head)
+	if err != nil {
+		return contract.ProposalReference{}, contract.PromotionDecision{}, 0, fmt.Errorf("load assessment: %w", err)
+	}
+	if !found {
+		return contract.ProposalReference{}, contract.PromotionDecision{}, 0, fmt.Errorf("%w: the assessment of %v at %q is missing right after it was recorded", ErrInvalidState, reference, e.head)
+	}
+	decision, err := contract.CheckPromotionReadiness(contract.PromotionContext{
+		Canonical: e.state.Canonical, Proposed: e.proposed, Proposal: e.proposal, Reference: reference, Carrier: e.carrier,
+		Policy: e.state.Policy, Consent: e.consent, Assessment: assessment,
+	}, e.head)
+	if err != nil {
+		return contract.ProposalReference{}, contract.PromotionDecision{}, 0, fmt.Errorf("check readiness: %w", err)
+	}
+	written, err := tx.Suite(ctx) // the revision this answer holds at, after its own writes
+	if err != nil {
+		return contract.ProposalReference{}, contract.PromotionDecision{}, 0, fmt.Errorf("load suite: %w", err)
+	}
+	return reference, decision, int64(written.Canonical.Suite().Revision()), nil
 }
 
 // keepProposalCurrent makes the carrier's change proposal cover proposed under the locked Suite's canonical and
@@ -273,8 +321,8 @@ func governingOf(ctx context.Context, reader ContentReader, canonical contract.C
 }
 
 // HeadEvidence is the integrity evidence of the service about source: Passed when the protected inventory
-// of source equals what binding covers (manifest and scope), Failed otherwise. AssessHead, AssessBootstrapHead and
-// PromoteMerge share it.
+// of source equals what binding covers (manifest and scope), Failed otherwise. AssessHead, AssessBootstrapHead,
+// PromoteMerge and the bootstrap job share it.
 func HeadEvidence(inv inventory.Inventory, binding contract.ApprovalBinding, source contract.SourceRevision) (contract.IntegrityEvidence, error) {
 	outcome := contract.IntegrityFailed
 	if inv.Manifest().Digest() == binding.ManifestDigest() && inv.Scope().Digest() == binding.ScopeDigest() {

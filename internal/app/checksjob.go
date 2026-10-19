@@ -281,9 +281,11 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.applyWrongCode(ctx, s, &d); err != nil {
 		return "", err
 	}
-	runners, err := j.applyRunnerBlock(ctx, s, &d)
-	if err != nil {
-		return "", err
+	var runners *runnerSet
+	if d.runnerBlockApplies(s) {
+		if runners, err = j.applyRunnerBlock(ctx, s, &d); err != nil {
+			return "", err
+		}
 	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
@@ -365,11 +367,8 @@ func (j *checksJob) applyWrongCode(ctx context.Context, s *pullState, d *pullDec
 
 // applyRunnerBlock lets a runner file outside the head's scope block a success (docs/contracts/runtime.md, "Check reason runner-uncovered"). It comes after
 // the other reasons, so a rejected command, an approval that is missing and every failure keep precedence. A head whose runner files cannot be read is
-// never success. It returns the runner set it decided from, nil when it did not apply.
+// never success. It returns the runner set it decided from, nil when GitHub could not be read.
 func (j *checksJob) applyRunnerBlock(ctx context.Context, s *pullState, d *pullDecision) (*runnerSet, error) {
-	if s.suite.canonical == "" || (d.result.State != checks.Success && d.result.Reason != reasonRunnerUncovered) {
-		return nil, nil
-	}
 	runners, wait, err := j.runnerFiles(ctx, s.p, s.pull, s.suite.canonical)
 	if err != nil {
 		return nil, err
@@ -386,6 +385,11 @@ func (j *checksJob) applyRunnerBlock(ctx context.Context, s *pullState, d *pullD
 		d.result.State, d.result.Reason = checks.InProgress, reasonAssessmentPending
 	}
 	return runners, nil
+}
+
+// runnerBlockApplies reports whether the runner block decides: only a success, and a check that a runner block set, can change to or from it.
+func (d pullDecision) runnerBlockApplies(s *pullState) bool {
+	return s.suite.canonical != "" && (d.result.State == checks.Success || d.result.Reason == reasonRunnerUncovered)
 }
 
 // commentBeforeCheck writes the comments that come before the check, so a run that fails between the two writes them again and the check never goes without them.
@@ -609,7 +613,7 @@ func (j *checksJob) acceptingDeclaration(ctx context.Context, repo string, tree 
 		return nil, false, j.declarationReadFailed(ctx, repo, "read the head's declaration", err)
 	}
 	if declaration, err = scope.AddExcludes(raw, []string{"/" + link}); err != nil {
-		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the exclude cannot be added", "repo", repo) // its text may quote the head's file
+		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the exclude cannot be added", "repo", repo, "invalid", errors.Is(err, scope.ErrInvalidDeclaration)) // the error text may quote the head's file
 		return nil, false, nil
 	}
 	return declaration, false, nil

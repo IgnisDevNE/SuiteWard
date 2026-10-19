@@ -333,9 +333,6 @@ func (t *tx) ReceiptBySource(ctx context.Context, id contract.SourceCommandID) (
 }
 
 func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
-	if _, err := t.lock(ctx); err != nil {
-		return "", false, err
-	}
 	ids, err := t.q.ListChangeProposalsOfCarrier(ctx, dbgen.ListChangeProposalsOfCarrierParams{ProjectID: string(t.project), SuiteID: string(t.suite), CarrierID: string(carrier)})
 	switch {
 	case err != nil:
@@ -349,9 +346,6 @@ func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCar
 }
 
 func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
-	if _, err := t.lock(ctx); err != nil {
-		return "", false, err
-	}
 	rows, err := t.q.ListBootstrapProposals(ctx, dbgen.ListBootstrapProposalsParams{ProjectID: string(t.project), SuiteID: string(t.suite)})
 	if err != nil {
 		return "", false, fmt.Errorf("list bootstrap proposals: %w", err)
@@ -365,9 +359,6 @@ func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, 
 }
 
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
-	if _, err := t.lock(ctx); err != nil {
-		return "", err
-	}
 	rows, err := t.q.ListProposalIDs(ctx, dbgen.ListProposalIDsParams{ProjectID: string(t.project), SuiteID: string(t.suite)})
 	if err != nil {
 		return "", fmt.Errorf("list proposal ids: %w", err)

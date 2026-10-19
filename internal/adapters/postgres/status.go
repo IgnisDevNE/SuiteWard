@@ -22,14 +22,14 @@ func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("read schema version: %w", err)
 	}
-	if version != migrations.SupportedVersion {
-		return 0, fmt.Errorf("%w: schema version %d, this build requires %d", ErrSchemaNotReady, version, migrations.SupportedVersion)
+	if err := supportedSchema(version); err != nil {
+		return 0, err
 	}
 	return version, nil
 }
 
-// Counts reports the job and outbox totals the status endpoint serves. The
-// outbox relay's and the GitHub synchronization tick's own jobs are not counted.
+// Counts reports the job and outbox totals the status endpoint serves. The service's own bookkeeping jobs, the
+// eight kinds that CountJobsByState excludes (status.sql), are not counted.
 func (s *Store) Counts(ctx context.Context) (Counts, error) {
 	q := dbgen.New(s.pool)
 	jobs, err := q.CountJobsByState(ctx)
@@ -48,4 +48,12 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		counts.Outbox[row.State] = row.Total
 	}
 	return counts, nil
+}
+
+// supportedSchema returns ErrSchemaNotReady unless version is the one this build supports.
+func supportedSchema(version int64) error {
+	if version != migrations.SupportedVersion {
+		return fmt.Errorf("%w: schema version %d, this build requires %d", ErrSchemaNotReady, version, migrations.SupportedVersion)
+	}
+	return nil
 }

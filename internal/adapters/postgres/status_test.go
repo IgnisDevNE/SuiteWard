@@ -9,6 +9,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 )
 
@@ -25,7 +26,7 @@ func TestCountsGroupsJobsAndOutboxByState(t *testing.T) {
 	// Two probes stay available, one is completed, one discarded; the relay, the synchronization tick, the protection check, the bootstrap, the commands, the checks, the merges and the integrity verification are not counted.
 	jobIDs := map[string]int64{}
 	for _, name := range []string{"available-1", "available-2", "completed", "discarded", "relay", "tick", "protection", "bootstrap", "commands", "checks", "merges", "integrity"} {
-		kind := map[string]string{"relay": "outbox_relay", "tick": "github_sync_tick", "protection": "github_protection_check", "bootstrap": "github_bootstrap", "commands": "github_commands", "checks": "github_checks", "merges": "github_merges", "integrity": "canonical_integrity"}[name]
+		kind := map[string]string{"relay": "outbox_relay", "tick": river.SyncTickKind, "protection": river.ProtectionCheckKind, "bootstrap": river.BootstrapKind, "commands": river.CommandsKind, "checks": river.ChecksKind, "merges": river.MergesKind, "integrity": river.IntegrityKind}[name] // every periodic kind of the River adapter; outbox_relay is unexported there
 		if kind == "" {
 			kind = "probe"
 		}

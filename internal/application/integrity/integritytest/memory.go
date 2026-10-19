@@ -40,8 +40,7 @@ func (m *Memory) Record(ctx context.Context, r integrity.Record) error {
 	defer m.mu.Unlock()
 	key := suite{r.Project, r.Suite}
 	current, found := m.records[key]
-	r.CheckedAt = r.CheckedAt.UTC().Truncate(time.Microsecond) // all PostgreSQL stores
-	m.records[key] = integrity.Next(current, found, r)
+	m.records[key] = next(current, found, r)
 	return nil
 }
 
@@ -54,4 +53,17 @@ func (m *Memory) Latest(ctx context.Context, project contract.ProjectID, id cont
 	defer m.mu.Unlock()
 	r, found := m.records[suite{project, id}]
 	return r, found, nil
+}
+
+// next is the record kept when r is recorded over current (found false: there is none): r, except that "unavailable" never
+// replaces "failed" for the same version, where only CheckedAt moves. The PostgreSQL store writes the same rule as one
+// statement, so that concurrent writers cannot lose a confirmed failure; the conformance suite pins both. Times are kept at
+// microseconds, all PostgreSQL stores.
+func next(current integrity.Record, found bool, r integrity.Record) integrity.Record {
+	r.CheckedAt = r.CheckedAt.UTC().Truncate(time.Microsecond)
+	if found && current.Version == r.Version && current.Verdict == integrity.Failed && r.Verdict == integrity.Unavailable {
+		current.CheckedAt = r.CheckedAt
+		return current
+	}
+	return r
 }

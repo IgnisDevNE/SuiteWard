@@ -1,4 +1,4 @@
-package integrity_test
+package integritytest
 
 import (
 	"testing"
@@ -29,7 +29,7 @@ func TestNextKeepsAFailedVerdictAgainstAnUnavailableOneOfTheSameVersion(t *testi
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := integrity.Next(tt.current, tt.found, tt.r); got != tt.want {
+			if got := next(tt.current, tt.found, tt.r); got != tt.want {
 				t.Fatalf("Next = %+v; want %+v", got, tt.want)
 			}
 		})

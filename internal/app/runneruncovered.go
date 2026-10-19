@@ -124,13 +124,15 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 		return &opaque{what: "read the canonical declaration", cause: err}
 	}
 	protect, err := scope.AddPatterns(base, nil, inventory.RunnerPatterns(set.paths))
-	if err != nil {
-		return &opaque{what: "add the runner patterns", cause: err}
+	if err != nil { // the comment is advice and the check says the same without it
+		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: the runner patterns cannot be added", "repo", p.Repo, "pull", pull.Number)
+		return nil
 	}
 	var ignore []byte
 	if excludable(set.paths) {
-		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil {
-			return &opaque{what: "add the excludes", cause: err}
+		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // advice only: the choice is left out, as for an unspellable path
+			j.logger.WarnContext(ctx, "github checks runner-uncovered ignore choice skipped: the excludes cannot be added", "repo", p.Repo, "pull", pull.Number)
+			ignore = nil
 		}
 	}
 	if len(ignore) > commandtext.MaxDeclaration { // a choice that cannot be shown is left out; protecting stays
@@ -161,9 +163,13 @@ func excludePatterns(paths []string) []string {
 }
 
 // excludable reports whether every path can be excluded by a pattern that names exactly that file: a path with a pattern character
-// ("*?[\", as acceptingDeclaration and Scope.ExcludesExactly test it) either never matches the pattern it spells or matches other files too.
+// ("*?[\", as acceptingDeclaration and Scope.ExcludesExactly test it) either never matches the pattern it spells or matches other files too,
+// and one the pattern syntax refuses (such as a leading "!") cannot be added as an exclude at all.
 func excludable(paths []string) bool {
-	return !slices.ContainsFunc(paths, func(path string) bool { return strings.ContainsAny(path, `*?[\`) })
+	return !slices.ContainsFunc(paths, func(path string) bool {
+		_, err := scope.ParsePattern(excludePatterns([]string{path})[0])
+		return err != nil || strings.ContainsAny(path, `*?[\`)
+	})
 }
 
 // runnerReview builds the review of the choices: one message, or none (an empty list). Its key digests a salt with the set and the head's file, so it never

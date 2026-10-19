@@ -1,6 +1,6 @@
 # Installing SuiteWard
 
-This guide installs SuiteWard once, creates its GitHub App, and runs the owner setup. After that you only approve the pull requests that change protected test files.
+This guide installs SuiteWard once, creates its GitHub App, and runs the owner setup. After that you only approve the pull requests that change protected test files. For the short path, see the [quickstart](quickstart.md). If a coding agent helps you install, give it [agent-install.md](agent-install.md) first.
 
 Two rules apply to every command:
 

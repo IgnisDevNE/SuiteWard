@@ -105,6 +105,9 @@ SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `
 
 The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
 
+- **In a hurry?** The [quickstart](docs/quickstart.md) is the short co-located path, in five steps.
+- **Installing with a coding agent?** Point it to [agent-install.md](docs/agent-install.md). It says what the agent may prepare, and which steps (the App key, TOTP enrollment, the ruleset, every `/suiteward` command) only you do.
+
 ## Status
 
 - **The MVP is feature-complete for a single owner on GitHub,** and accepted on both tiers. SuiteWard governs its own tests: every pull request to this repository that changes a protected file needs the owner's approval.

@@ -1,6 +1,7 @@
 package commandtext
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -63,30 +64,55 @@ var blockedReasons = map[string]blockedReason{
 // version and the merge commit, for a blocked merge that the canonical stays in force, why, and the recovery. It
 // never says that tests ran. The values come from storage, so one that does not fit is an impossible state and panics.
 func MergeComment(m Merge) string {
-	tier := tierName(m.Tier)
-	// Only a blocked merge can leave no canonical in force; integrity-failed needs one to have failed.
-	noCanonical := m.Version == 0 && m.Kind == MergeBlocked && m.Reason != "integrity-failed"
-	if (m.Version < 1 && !noCanonical) || (m.Proposal == 0) != (m.Revision == 0) || m.Proposal < 0 || m.Revision < 0 {
-		panic(fmt.Sprintf("commandtext: merge version %d and reference P%d-R%d do not fit", m.Version, m.Proposal, m.Revision))
+	reason, err := validateMerge(m)
+	must(err)
+	lead, body := mergeLead(m, reason)
+	parts := []string{lead, body, strings.Join(mergeFacts(m), "\n")}
+	if m.Tier == CoLocated {
+		parts = append(parts, coLocatedNotice)
 	}
-	if !noCanonical {
-		checkID("version", m.Version)
+	if m.Kind != MergeBlocked {
+		return paragraphs(append(parts, "SuiteWard checked the approval and the integrity of the protected files at that commit. It did not run the tests.")...)
+	}
+	return paragraphs(append(parts, mergeRecovery(m, reason))...)
+}
+
+// noCanonical reports whether m is a blocked merge that leaves no canonical contract in force: only a blocked merge can, and
+// integrity-failed needs a canonical to have failed.
+func (m Merge) noCanonical() bool {
+	return m.Version == 0 && m.Kind == MergeBlocked && m.Reason != "integrity-failed"
+}
+
+// validateMerge reports why MergeComment would panic on m, and returns the account of its blocked reason.
+func validateMerge(m Merge) (blockedReason, error) {
+	if (m.Version < 1 && !m.noCanonical()) || (m.Proposal == 0) != (m.Revision == 0) || m.Proposal < 0 || m.Revision < 0 {
+		return blockedReason{}, fmt.Errorf("commandtext: merge version %d and reference P%d-R%d do not fit", m.Version, m.Proposal, m.Revision)
+	}
+	if !m.noCanonical() {
+		if err := checkID("version", m.Version); err != nil {
+			return blockedReason{}, err
+		}
 	}
 	reason, blocked := blockedReasons[m.Reason]
 	switch {
 	case m.Kind != MergeBlocked && m.Kind != MergePromoted && m.Kind != MergeCorrected:
-		panic(fmt.Sprintf("commandtext: unknown merge kind %d", m.Kind))
+		return reason, fmt.Errorf("commandtext: unknown merge kind %d", m.Kind)
 	case blocked != (m.Kind == MergeBlocked) || (m.Kind != MergeBlocked && m.Reason != ""):
-		panic(fmt.Sprintf("commandtext: merge kind %d does not fit the reason %q", m.Kind, m.Reason))
+		return reason, fmt.Errorf("commandtext: merge kind %d does not fit the reason %q", m.Kind, m.Reason)
 	case (m.Kind == MergeCorrected) != (m.Corrects != 0) || m.Corrects < 0:
-		panic(fmt.Sprintf("commandtext: merge kind %d does not fit the corrected version %d", m.Kind, m.Corrects))
+		return reason, fmt.Errorf("commandtext: merge kind %d does not fit the corrected version %d", m.Kind, m.Corrects)
 	case m.Source == "" && m.Reason != "integration-unreadable":
-		panic("commandtext: a merge names its merge commit unless it was unreadable")
+		return reason, errors.New("commandtext: a merge names its merge commit unless it was unreadable")
 	case m.Source != "" && !shaPattern.MatchString(m.Source):
-		panic(fmt.Sprintf("commandtext: merge commit %q is not a 40-hex commit SHA", m.Source))
+		return reason, fmt.Errorf("commandtext: merge commit %q is not a 40-hex commit SHA", m.Source)
+	case m.Kind == MergeCorrected:
+		return reason, checkID("corrected version", m.Corrects)
 	}
-	version := "V" + strconv.Itoa(m.Version)
-	firstVersion := m.Kind == MergePromoted && m.Version == 1 // only a bootstrap promotes V1
+	return reason, nil
+}
+
+// mergeFacts are the facts a comment lists: the merge commit when there is one, the proposal revision and the tier.
+func mergeFacts(m Merge) []string {
 	var facts []string
 	if m.Source != "" {
 		facts = append(facts, "- Merge commit: `"+m.Source+"`")
@@ -94,45 +120,43 @@ func MergeComment(m Merge) string {
 	if m.Proposal != 0 {
 		facts = append(facts, "- Proposal revision: "+Reference(m.Proposal, m.Revision))
 	}
-	facts = append(facts, "- Installation tier: `"+tier+"`")
-	var lead, body string
+	return append(facts, tierLine(m.Tier))
+}
+
+// mergeLead is the bold first line of the comment and the paragraph that says what the merge did.
+func mergeLead(m Merge, reason blockedReason) (lead, body string) {
+	version := "V" + strconv.Itoa(m.Version)
 	switch m.Kind {
 	case MergePromoted:
 		lead = "**SuiteWard promoted the canonical contract to " + version + "**"
 		body = "This merge integrated the contract change the owner approved, and SuiteWard promoted " + version + " from the merge commit."
-		if firstVersion {
+		if m.Version == 1 { // only a bootstrap promotes V1
 			body = "This merge integrated the bootstrap baseline the owner approved, and SuiteWard promoted " + version + " from the merge commit. " +
 				"This is the first canonical version."
 		}
 	case MergeCorrected:
-		checkID("corrected version", m.Corrects)
 		lead = "**SuiteWard promoted the canonical contract to " + version + " as a correction**"
 		body = "This merge restored the protected files of an earlier version, and SuiteWard promoted " + version + " as a correction of V" + strconv.Itoa(m.Corrects) +
 			". The history is kept."
 	default:
 		lead = "**SuiteWard did not promote this merge: the canonical contract stays at " + version + "**"
-		if noCanonical {
+		if m.noCanonical() {
 			lead = "**SuiteWard did not promote this merge: SuiteWard has no canonical contract yet**"
 		}
 		body = reason.text
 	}
-	parts := []string{lead, body, strings.Join(facts, "\n")}
-	if m.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+	return lead, body
+}
+
+// mergeRecovery is the paragraph that says how to recover from a blocked merge.
+func mergeRecovery(m Merge, reason blockedReason) string {
+	if m.noCanonical() {
+		return "To recover, the default branch now holds the merged files: the owner comments `/suiteward propose` on an open pull request to propose the default branch's contract. " +
+			"Approve that proposal to make it the first canonical version."
 	}
-	if m.Kind != MergeBlocked {
-		parts = append(parts, "SuiteWard checked the approval and the integrity of the protected files at that commit. It did not run the tests.")
-		return paragraphs(parts...)
-	}
-	if noCanonical {
-		return paragraphs(append(parts, "To recover, the default branch now holds the merged files: the owner comments `/suiteward propose` on an open pull request to propose the default branch's contract. "+
-			"Approve that proposal to make it the first canonical version.")...)
-	}
-	recovery := "open a new pull request that restores the protected files of " + version + ", or one that carries the integrated files for a new exact approval. There is no reset command."
+	recovery := "open a new pull request that restores the protected files of V" + strconv.Itoa(m.Version) + ", or one that carries the integrated files for a new exact approval. There is no reset command."
 	if reason.next != "" {
-		parts = append(parts, reason.next+" After that, to recover, "+recovery)
-	} else {
-		parts = append(parts, "To recover, "+recovery)
+		return reason.next + " After that, to recover, " + recovery
 	}
-	return paragraphs(parts...)
+	return "To recover, " + recovery
 }

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 )
 
 // SourceProblem is what makes the source of a head invalid (docs/contracts/runtime.md, "Outbox github_comment, key invalid-source:..."); its zero value is invalid.
@@ -16,7 +15,7 @@ const (
 )
 
 // InvalidSourceNotice is what the comment of an invalid-source check states. Path, already cut by the caller, names the link of a
-// LinkProblem and is empty for the other problems. Declaration, only for a LinkProblem and at most MaxDeclaration bytes, is the
+// LinkProblem and is empty for the other problems. Declaration, only for a LinkProblem, at most MaxDeclaration bytes and with no character that is not graphic besides newline and tab, is the
 // head's own .suiteward.yml with the link's anchored path added to exclude; it is empty when the head has none, and the comment then
 // shows the pattern alone. Repo (owner/name) and Branch (the pull request's head ref) build the editor link; both or neither, and a
 // comment without them has no link. The comment quotes no other file content.
@@ -38,12 +37,12 @@ func ValidateInvalidSource(s InvalidSourceNotice) error {
 		return errors.New("commandtext: only a link problem names a path, and it must")
 	case (len(s.Declaration) > 0 || s.PathCut) && s.Problem != LinkProblem:
 		return errors.New("commandtext: only a link problem carries a declaration or a cut path")
-	case len(s.Declaration) > MaxDeclaration || !utf8.Valid(s.Declaration):
-		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or not UTF-8", len(s.Declaration), MaxDeclaration)
+	case len(s.Declaration) > MaxDeclaration || !verbatim(s.Declaration):
+		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline and tab", len(s.Declaration), MaxDeclaration)
 	case s.NoDeclaration && (s.Problem != LinkProblem || len(s.Declaration) > 0):
 		return errors.New("commandtext: only a link problem of a head with no declaration says so, and it carries no declaration")
 	case s.Repo != "" || s.Branch != "":
-		return checkRepoAndBranch(s.Repo, s.Branch)
+		return ValidateEditTarget(s.Repo, s.Branch)
 	}
 	return nil
 }
@@ -52,12 +51,11 @@ func ValidateInvalidSource(s InvalidSourceNotice) error {
 // stays failure until a push fixes it while any canonical contract stays in force. For a link the next step is to remove it or point
 // it to a regular file, or to accept it with an exact anchored exclude, a scope reduction that the owner approves and that leaves
 // nothing reached through the link protected; SuiteWard never suggests narrowing the include patterns. The path and the declaration come
-// from the repository, so they are shown only inside code fences that backticks cannot close, the path with control characters
-// escaped. An input that does not fit panics (see ValidateInvalidSource).
+// from the repository, so they are shown only inside code fences that backticks cannot close. The path is shown with its control
+// characters escaped. The declaration is shown as it is, and ValidateInvalidSource refuses one that holds a character that is not graphic
+// other than a newline and a tab. An input that does not fit panics (see ValidateInvalidSource).
 func InvalidSourceComment(s InvalidSourceNotice) string {
-	if err := ValidateInvalidSource(s); err != nil {
-		panic(err.Error())
-	}
+	must(ValidateInvalidSource(s))
 	var problem, next string
 	switch s.Problem {
 	case DeclarationProblem:
@@ -82,7 +80,7 @@ func editSentence(s InvalidSourceNotice, lead string) string {
 	if s.NoDeclaration {
 		link = "[open GitHub's editor for a new file](" + newLink(s.Repo, s.Branch) + ")"
 	}
-	return "\n\n" + lead + ", " + link + ". SuiteWard never commits it for you: the commit is yours."
+	return editorStep(lead, link)
 }
 
 // acceptLink is the paragraphs that offer to accept the link of s with an exact anchored exclude, and warn what that means; none when

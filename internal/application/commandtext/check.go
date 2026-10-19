@@ -1,6 +1,7 @@
 package commandtext
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -30,8 +31,9 @@ type Check struct {
 }
 
 // checkReason is the output of one reason code: its state, a title, what happened and the next action. The text
-// never quotes the repository, the pull request or a comment, so a summary is fixed text and numbers and stays
-// far below GitHub's limit of 65,535 characters.
+// never quotes a comment or the pull request. The only repository text a summary holds is the paths of a
+// runner-uncovered check: at most 20, each cut by the caller and shown in a fence with its control characters
+// escaped. A summary stays far below GitHub's limit of 65,535 characters.
 type checkReason struct {
 	state CheckState
 	title string
@@ -95,21 +97,8 @@ var checkReasons = map[string]checkReason{
 // tests ran. The reason, the state and the tier come from storage, so a value that does not fit is an impossible
 // state and panics.
 func CheckSummary(c Check) (title, summary string) {
-	reason, known := checkReasons[c.Reason]
-	if !known || reason.state != c.State {
-		panic(fmt.Sprintf("commandtext: check reason %q does not fit state %d", c.Reason, c.State))
-	}
-	tier := tierName(c.Tier)
-	if (c.Proposal == 0) != (c.Revision == 0) || c.Version < 0 {
-		panic(fmt.Sprintf("commandtext: check reference P%d-R%d and version %d do not fit", c.Proposal, c.Revision, c.Version))
-	}
-	beforeCanonical := c.Reason == "bootstrap-ready" || c.Reason == "bootstrap-awaiting" || c.Reason == "bootstrap-skipped"
-	if (beforeCanonical && c.Version != 0) || (c.Reason == "bootstrap-ready" && c.Proposal == 0) {
-		panic(fmt.Sprintf("commandtext: reason %q does not fit reference P%d-R%d and version V%d: it has no canonical version, and a ready bootstrap has a reference", c.Reason, c.Proposal, c.Revision, c.Version))
-	}
-	if (c.Reason != "runner-uncovered" && (len(c.Paths) > 0 || c.PathsTotal > 0)) || len(c.Paths) > maxListed || c.PathsTotal < len(c.Paths) || (len(c.Paths) == 0 && c.PathsTotal != 0) {
-		panic(fmt.Sprintf("commandtext: reason %q does not fit %d paths of a total of %d: only a runner-uncovered check lists at most %d", c.Reason, len(c.Paths), c.PathsTotal, maxListed))
-	}
+	reason, err := validateCheck(c)
+	must(err)
 	facts := []string{"- State: `" + checkStateName[c.State] + "`"}
 	var ref string
 	if c.Proposal != 0 {
@@ -117,10 +106,9 @@ func CheckSummary(c Check) (title, summary string) {
 		facts = append(facts, "- Proposal revision: "+ref)
 	}
 	if c.Version != 0 {
-		checkID("version", c.Version)
 		facts = append(facts, fmt.Sprintf("- Canonical version: V%d", c.Version))
 	}
-	facts = append(facts, "- Installation tier: `"+tier+"`")
+	facts = append(facts, tierLine(c.Tier))
 	text := reason.text
 	if c.Reason == "approval-missing" && c.Version == 0 { // no canonical: the head proposes the first contract, it changes none
 		text = "This pull request carries the proposed first contract " + ref + ", awaiting the owner's approval of that exact revision."
@@ -135,13 +123,48 @@ func CheckSummary(c Check) (title, summary string) {
 	}
 	parts = append(parts, reason.next)
 	if c.Reason == "approval-missing" {
-		if ref == "" {
-			panic("commandtext: approval is missing for no revision")
-		}
-		parts = append(parts, copyable("/suiteward approve "+ref+" <code>"))
+		parts = append(parts, codeCommand("approve", ref))
 	}
 	parts = append(parts, "This check reports on the protected contract only. It does not run tests.")
 	return reason.title, paragraphs(parts...)
+}
+
+// validateCheck reports why CheckSummary would panic on c, and returns the output of its reason.
+func validateCheck(c Check) (checkReason, error) {
+	reason, known := checkReasons[c.Reason]
+	if !known || reason.state != c.State {
+		return reason, fmt.Errorf("commandtext: check reason %q does not fit state %d", c.Reason, c.State)
+	}
+	if err := checkCheckReference(c); err != nil {
+		return reason, err
+	}
+	if (c.Reason != "runner-uncovered" && (len(c.Paths) > 0 || c.PathsTotal > 0)) || len(c.Paths) > maxListed || c.PathsTotal < len(c.Paths) || (len(c.Paths) == 0 && c.PathsTotal != 0) {
+		return reason, fmt.Errorf("commandtext: reason %q does not fit %d paths of a total of %d: only a runner-uncovered check lists at most %d", c.Reason, len(c.Paths), c.PathsTotal, maxListed)
+	}
+	return reason, nil
+}
+
+// checkCheckReference reports a reference or a version that does not fit the reason of c.
+func checkCheckReference(c Check) error {
+	if (c.Proposal == 0) != (c.Revision == 0) || c.Version < 0 {
+		return fmt.Errorf("commandtext: check reference P%d-R%d and version %d do not fit", c.Proposal, c.Revision, c.Version)
+	}
+	beforeCanonical := c.Reason == "bootstrap-ready" || c.Reason == "bootstrap-awaiting" || c.Reason == "bootstrap-skipped"
+	if (beforeCanonical && c.Version != 0) || (c.Reason == "bootstrap-ready" && c.Proposal == 0) {
+		return fmt.Errorf("commandtext: reason %q does not fit reference P%d-R%d and version V%d: it has no canonical version, and a ready bootstrap has a reference", c.Reason, c.Proposal, c.Revision, c.Version)
+	}
+	if c.Reason == "approval-missing" && c.Proposal == 0 {
+		return errors.New("commandtext: approval is missing for no revision")
+	}
+	if c.Proposal != 0 {
+		if _, err := reference(c.Proposal, c.Revision); err != nil {
+			return err
+		}
+	}
+	if c.Version != 0 {
+		return checkID("version", c.Version)
+	}
+	return nil
 }
 
 var checkStateName = map[CheckState]string{CheckSuccess: "success", CheckInProgress: "in_progress", CheckFailure: "failure"}

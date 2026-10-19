@@ -23,16 +23,16 @@ type RunnerUncovered struct {
 // ValidateRunnerUncovered reports why RunnerUncoveredComment would panic on n, as an error: a caller that stores the notice calls it
 // first, so a payload that cannot be rendered is refused where it is built.
 func ValidateRunnerUncovered(n RunnerUncovered) error {
-	if err := checkRepoAndBranch(n.Repo, n.Branch); err != nil {
+	if err := ValidateEditTarget(n.Repo, n.Branch); err != nil {
 		return err
 	}
 	switch {
 	case len(n.Paths) == 0 || len(n.Paths) > maxListed || n.PathsTotal < len(n.Paths):
 		return fmt.Errorf("commandtext: %d paths of a total of %d in a runner-uncovered notice, want 1 to %d, and a total that is not below them", len(n.Paths), n.PathsTotal, maxListed)
-	case len(n.Protect) == 0 || len(n.Protect) > MaxDeclaration || !utf8.Valid(n.Protect):
-		return fmt.Errorf("commandtext: a protect declaration of %d bytes is empty, over %d bytes or not UTF-8", len(n.Protect), MaxDeclaration)
-	case len(n.Ignore) > MaxDeclaration || !utf8.Valid(n.Ignore):
-		return fmt.Errorf("commandtext: an ignore declaration of %d bytes is over %d bytes or not UTF-8", len(n.Ignore), MaxDeclaration)
+	case len(n.Protect) == 0 || len(n.Protect) > MaxDeclaration || !verbatim(n.Protect):
+		return fmt.Errorf("commandtext: a protect declaration of %d bytes is empty, over %d bytes or holds a character that is not graphic besides newline and tab", len(n.Protect), MaxDeclaration)
+	case len(n.Ignore) > MaxDeclaration || !verbatim(n.Ignore):
+		return fmt.Errorf("commandtext: an ignore declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline and tab", len(n.Ignore), MaxDeclaration)
 	}
 	return nil
 }
@@ -40,12 +40,11 @@ func ValidateRunnerUncovered(n RunnerUncovered) error {
 // RunnerUncoveredComment renders the comment that tells the owner which runner files of a pull request the current contract does not
 // protect, why that blocks the check, and the two ways out with their full declarations and the link to GitHub's editor. It is a
 // suggestion: it commits nothing, approves nothing and never says that tests ran. The paths and the declarations come from the
-// repository, so they are shown only inside code fences that backticks cannot close, with control characters escaped; the branch is
-// path-escaped. An input that does not fit panics (see ValidateRunnerUncovered).
+// repository, so they are shown only inside code fences that backticks cannot close. The paths are shown with their control characters
+// escaped. A declaration is shown as it is, and ValidateRunnerUncovered refuses one that holds a character that is not graphic other than
+// a newline and a tab. The branch is path-escaped. An input that does not fit panics (see ValidateRunnerUncovered).
 func RunnerUncoveredComment(n RunnerUncovered) string {
-	if err := ValidateRunnerUncovered(n); err != nil {
-		panic(err.Error())
-	}
+	must(ValidateRunnerUncovered(n))
 	parts := []string{
 		"**SuiteWard found runner files outside the protected scope**",
 		listingAndMore("Runner files that this pull request adds or changes and the current contract does not protect", n.Paths, n.PathsTotal),
@@ -61,7 +60,7 @@ func RunnerUncoveredComment(n RunnerUncovered) string {
 		parts = append(parts, "SuiteWard cannot offer to ignore these files: a path with a character that `exclude` reads as a pattern cannot be named there exactly. Protect them, or write the `exclude` entries yourself.")
 	}
 	parts = append(parts,
-		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it]("+editLink(n.Repo, n.Branch)+") and paste the declaration. SuiteWard never commits it for you: the commit is yours.",
+		pasteStep(n.Repo, n.Branch),
 		"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts each choice as a review comment, and GitHub's **Commit suggestion** button applies it in one click.",
 		"Nothing is protected or ignored until the owner approves the new revision and it is promoted.",
 		"This comment is a suggestion, not an approval, and SuiteWard does not run tests.",
@@ -89,28 +88,22 @@ const (
 const maxKeyIndent = 40
 
 // RunnerChoiceBody renders the body of a review comment that suggests one choice on .suiteward.yml: one sentence, then a suggestion
-// block that holds anchorLine (the list item the comment is on) unchanged, followed by one quoted item per pattern. With newList empty
-// the items follow the anchor's list at indent, the spaces before its dash. With newList (runner for the protect choice, exclude for
-// the ignore choice) the anchor ends another list, and the block continues with that key at indent and its items two spaces deeper.
+// block that holds anchorLine (the list item the comment is on) unchanged, followed by one item per pattern, written as scope.AddPatterns
+// writes it (see suggestedItems). With newList empty the items follow the anchor's list at indent, the spaces before its dash, in the
+// quoting of the anchor. With newList (runner for the protect choice, exclude for the ignore choice) the anchor ends another list, and the block continues with that key at indent and its items two spaces deeper.
 // An input that does not fit panics (see ValidateRunnerChoice).
 func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string) string {
-	if err := ValidateRunnerChoice(choice, anchorLine, indent, patterns, newList); err != nil {
-		panic(err.Error())
+	must(ValidateRunnerChoice(choice, anchorLine, indent, patterns, newList))
+	items := suggestedItems(patterns, indent, quotingOf(anchorLine))
+	if newList != "" { // a list the block creates has no items to follow
+		items = "\n" + indent + newList + ":" + suggestedItems(patterns, indent+"  ", 0)
 	}
-	content, itemIndent := anchorLine, indent
-	if newList != "" {
-		content += "\n" + indent + newList + ":"
-		itemIndent += "  "
-	}
-	for _, p := range patterns {
-		content += "\n" + itemIndent + "- \"" + p + "\""
-	}
-	fence := strings.Repeat("`", max(3, longestBacktickRun(content)+1))
+	content := anchorLine + items
 	sentence := "SuiteWard suggests protecting the runner files of this pull request by adding their patterns to the `runner` list. Committing the suggestion is a protected change that needs the owner's approval."
 	if choice == IgnoreChoice {
 		sentence = "SuiteWard suggests ignoring the runner files of this pull request by adding their paths to the `exclude` list. Committing the suggestion reduces the protected scope and needs the owner's approval."
 	}
-	return paragraphs(sentence, fence+"suggestion\n"+content+"\n"+fence)
+	return paragraphs(sentence, fence("suggestion", content+"\n"))
 }
 
 // ValidateRunnerChoice reports why RunnerChoiceBody would panic on its arguments, as an error. A pattern that cannot be written inside

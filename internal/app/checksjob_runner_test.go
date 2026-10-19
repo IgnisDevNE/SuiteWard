@@ -500,10 +500,10 @@ func TestChecksSuggestBothChoicesOnTheItemsOfTheListsThatExist(t *testing.T) {
 	got := w.wantRunnerReview(declaration, []string{cjJest},
 		scopeSuggestion{List: "protect", Line: 5, Anchor: "  - pytest.toml", Patterns: []string{"jest.config.*"}},
 		scopeSuggestion{List: "ignore", Line: 7, Anchor: "  - gen/", Patterns: []string{"/" + cjJest}})
-	if applied := apply(t, declaration, got[0]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\n  - \"jest.config.*\"\nexclude:\n  - gen/\n" {
+	if applied := apply(t, declaration, got[0]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\n  - jest.config.*\nexclude:\n  - gen/\n" {
 		t.Errorf("protect applied gives %q", applied)
 	}
-	if applied := apply(t, declaration, got[1]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\nexclude:\n  - gen/\n  - \"/jest.config.js\"\n" {
+	if applied := apply(t, declaration, got[1]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\nexclude:\n  - gen/\n  - /jest.config.js\n" {
 		t.Errorf("ignore applied gives %q", applied)
 	}
 	for _, s := range got {

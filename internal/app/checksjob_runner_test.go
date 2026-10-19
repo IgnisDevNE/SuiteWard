@@ -600,16 +600,21 @@ func TestChecksKeepTheRunnerReviewApartFromTheScopeNoticesReview(t *testing.T) {
 }
 
 func TestChecksLeaveTheIgnoreChoiceOutWhenAPathCannotBeNamedInExclude(t *testing.T) {
-	w := newCJWorld(t, true)
-	const odd = "app/[id]/jest.config.js" // a bracket is a character class in a pattern: the path would never match itself
+	// A bracket is a character class in a pattern, so the path would never match itself; a star or a question mark makes the pattern match the path but
+	// also other files, and an ignore choice must name exactly one file.
+	for _, odd := range []string{"app/[id]/jest.config.js", "docs/a*/conftest.py", "docs/a?/conftest.py"} {
+		t.Run(odd, func(t *testing.T) {
+			w := newCJWorld(t, true)
 
-	w.reader.files = map[int][]github.PullFile{5: added(odd)}
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), odd), bootFiles("v1"))
+			w.reader.files = map[int][]github.PullFile{5: added(odd)}
+			w.scopePull(cjHead2, withFiles(bootFiles("v1"), odd), bootFiles("v1"))
 
-	w.want(5, checks.InProgress, "runner-uncovered", 1)
-	payload := w.runnerPayload(0)
-	if _, hasIgnore := payload["ignore"]; hasIgnore || payload["protect"] == "" {
-		t.Fatalf("payload %v, want a protect declaration and no ignore declaration", payload)
+			w.want(5, checks.InProgress, "runner-uncovered", 1)
+			payload := w.runnerPayload(0)
+			if _, hasIgnore := payload["ignore"]; hasIgnore || payload["protect"] == "" {
+				t.Fatalf("payload %v, want a protect declaration and no ignore declaration", payload)
+			}
+		})
 	}
 }
 

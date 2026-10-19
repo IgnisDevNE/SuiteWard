@@ -196,13 +196,25 @@ func (w *pgWorld) seedWithBaseline(base candidate, candidates ...candidate) {
 	}
 }
 
+// seedMergeBaseline is seedWithBaseline for the Suites PromoteMerge decides: the first canonical is "V1".
+func (w *pgWorld) seedMergeBaseline(base candidate, candidates ...candidate) {
+	w.t.Helper()
+	if err := w.store.Seed(w.t.Context(), w.baselineSeedAt("V1", base, candidates...)); err != nil {
+		w.t.Fatalf("seed with a V1 baseline: %v", err)
+	}
+}
+
 // baselineSeed is the seed seedWithBaseline writes, for tests that alter it.
 func (w *pgWorld) baselineSeed(base candidate, candidates ...candidate) governance.Seed {
+	return w.baselineSeedAt("v0", base, candidates...)
+}
+
+func (w *pgWorld) baselineSeedAt(first contract.SuiteVersionID, base candidate, candidates ...candidate) governance.Seed {
 	w.t.Helper()
-	version := must(contract.NewSuiteVersion(fxProject, fxSuite, "v0", base.protected.Manifest()))
-	record := must(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: "seed-promote", VersionID: "v0", Binding: base.proposal.Current().Binding(),
+	version := must(contract.NewSuiteVersion(fxProject, fxSuite, first, base.protected.Manifest()))
+	record := must(contract.NewPromotionRecord(contract.PromotionRecordInput{OperationID: "seed-promote", VersionID: first, Binding: base.proposal.Current().Binding(),
 		Carrier: base.carrier, Source: base.merged, Target: fxTarget, RecordedAt: fxRecordedAt}))
-	canonical := must(contract.NewCanonicalSnapshot(must(contract.NewSuite(fxProject, fxSuite, "v0", 3)), version, base.protected, record))
+	canonical := must(contract.NewCanonicalSnapshot(must(contract.NewSuite(fxProject, fxSuite, first, 3)), version, base.protected, record))
 	seed := governance.Seed{History: []contract.HistoricalCanonical{must(contract.NewHistoricalCanonical(version, record))}}
 	seed.Proposals = append(seed.Proposals, governance.SeedProposal{Proposal: base.proposal, Assessments: base.assessments})
 	for _, c := range candidates {

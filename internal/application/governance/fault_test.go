@@ -84,6 +84,17 @@ func (t *faultTx) RecordAssessment(ctx context.Context, write governance.Assessm
 	return t.Tx.RecordAssessment(ctx, write)
 }
 
+// RecordPromotion writes through and then fails, so the failure comes with a promotion the unit of work has to undo.
+func (t *faultTx) RecordPromotion(ctx context.Context, write governance.PromotionWrite) error {
+	if err := t.Tx.RecordPromotion(ctx, write); err != nil {
+		return err
+	}
+	if t.hits("RecordPromotion") {
+		return t.fault.err
+	}
+	return nil
+}
+
 func (t *faultTx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
 	if t.hits("ChangeProposalFor") {
 		return "", false, t.failure()
@@ -267,4 +278,36 @@ func TestPromoteMergeSurfacesTheFailureToLoadTheProposalOfTheFirstVersion(t *tes
 		t.Fatalf("error = %v, want the injected failure", err)
 	}
 	w.requireWrites(before, 0)
+}
+
+// The promotion is the last write of a merge: the assessment of the merge commit and the promotion itself are rolled back
+// with it, and the merge can be decided again.
+func TestPromoteMergeRollsBackWhenThePromotionWriteFails(t *testing.T) {
+	e := newHeadEnv(t)
+	e.approve(e.other)
+	tree := headTree("other", "package main\n")
+	before := e.revision()
+	uow := faulting(e.mem, "RecordPromotion", 1)
+
+	_, err := governance.PromoteMerge(context.Background(), uow, e.writer, e.mergeRequest(e.other, tree))
+
+	if !errors.Is(err, uow.err) {
+		t.Fatalf("error = %v, want the injected failure", err)
+	}
+	e.requireWrites(before, 0)
+	if _, found, outcomeErr := governance.MergeOutcomeOf(context.Background(), e.mem, projectID, suiteID, e.other.carrier); outcomeErr != nil || found {
+		t.Fatalf("a merge outcome outlived the failed merge: found %v, error %v", found, outcomeErr)
+	}
+	if _, found := e.receipt("merge:" + string(e.other.carrier)); found {
+		t.Fatal("a failed promotion left a receipt")
+	}
+	if _, found := e.assessment(e.other.current(), "merge-sha-px"); found {
+		t.Fatal("the assessment of the merge commit outlived the failed promotion")
+	}
+	if e.currentVersion() != e.first {
+		t.Fatalf("current version = %q, want %q kept", e.currentVersion(), e.first)
+	}
+	if retry := e.merge(e.other, tree, governance.MergePromoted); retry.Duplicate {
+		t.Fatalf("retry = %+v, want a fresh promotion", retry)
+	}
 }

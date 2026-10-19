@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
@@ -68,7 +69,7 @@ type headEnv struct {
 	reader *fakeReader
 	other  candidate // an approved candidate that can move the canonical to V2
 	order  contract.CommandOrder
-	first  contract.SuiteVersionID  // the id of the first canonical: V1, which PromoteMerge needs
+	first  contract.SuiteVersionID   // the id of the first canonical: V1, which PromoteMerge needs
 	boot   governance.PromoteRequest // the bootstrap that made it
 }
 
@@ -117,6 +118,25 @@ func (e *headEnv) approveRef(reference contract.ProposalReference, carrier contr
 	if response := e.consent(command); !response.Receipt.CurrentApprovalEligible {
 		e.t.Fatalf("approval of %v is not eligible: %v", reference, response.Receipt.Result.Reason())
 	}
+}
+
+// mergeRequest is the merge of c, whose merge commit has tree, observed when the first canonical was recorded.
+func (e *headEnv) mergeRequest(c candidate, tree inventory.Tree) governance.MergeRequest {
+	return governance.MergeRequest{Project: projectID, Suite: suiteID, Carrier: c.carrier, Source: contract.SourceRevision("merge-sha-" + c.id), Target: target,
+		ObservedAt: recordedAt, Tree: tree, RecordedAt: recordedAt.Add(time.Hour), Message: noMessage}
+}
+
+// merge records the merge of c and requires the outcome to be the given kind.
+func (e *headEnv) merge(c candidate, tree inventory.Tree, kind governance.MergeKind) governance.MergeResult {
+	e.t.Helper()
+	result, err := governance.PromoteMerge(context.Background(), e.mem, e.writer, e.mergeRequest(c, tree))
+	if err != nil {
+		e.t.Fatalf("promote merge of %s: %v", c.id, err)
+	}
+	if result.Kind != kind {
+		e.t.Fatalf("merge of %s = %+v, want %s", c.id, result.MergeOutcome, kind)
+	}
+	return result
 }
 
 func (e *headEnv) request(carrier contract.ApprovalCarrierID, head string, tree inventory.Tree) governance.HeadRequest {
@@ -559,4 +579,18 @@ func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAssessHeadOfAnUnknownSuiteIsNotFound(t *testing.T) {
+	e := newHeadEnv(t)
+	before := e.revision()
+	request := e.request(prA, "head-a", headTree("v2", "package main\n"))
+	request.Suite = "nowhere"
+
+	_, err := governance.AssessHead(context.Background(), e.mem, e.reader, e.writer, request)
+
+	if !errors.Is(err, governance.ErrNotFound) {
+		t.Fatalf("error = %v, want not found", err)
+	}
+	e.requireWrites(before, 0)
 }

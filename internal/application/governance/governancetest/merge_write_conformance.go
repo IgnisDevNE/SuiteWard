@@ -293,3 +293,28 @@ func mcCorrectionContextReused(e *cfEnv) {
 		Source: mcSource(fix), Version: "V2", Reference: mcRef(fix)})
 	e.requireWrites(before, 1)
 }
+
+func mcCorrectionMessageFailure(e *cfEnv) {
+	fix := mcCandidate("fix", "V2", "v1") // restores V1's content on top of V2
+	e.mcSeed(true, fix)
+	e.approve(fix)
+	before := e.revision()
+	boom := errors.New("message cannot be built")
+
+	err := e.mergeErr(mcRequest(fix, "v1", &mcMessages{fail: boom}))
+
+	if !errors.Is(err, boom) {
+		e.t.Fatalf("error = %v, want the message error", err)
+	}
+	if _, found := e.outcomeOf(fix.carrier); found || e.currentVersion() != "V2" {
+		e.t.Fatalf("outcome recorded %v, current version %q; want neither", found, e.currentVersion())
+	}
+	if _, found := e.version("V3"); found {
+		e.t.Fatal("the corrected version survived the rollback")
+	}
+	if _, found := e.assessmentAt(fix.current(), mcSource(fix)); found {
+		e.t.Fatal("the assessment of the merge commit survived the rollback")
+	}
+	e.requireWrites(before, 0)
+	e.requireQueued(nil, nil)
+}

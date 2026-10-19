@@ -259,6 +259,7 @@ func mergeCases() []struct {
 		{"MergeCannotSucceedACurrentVersionThatIsNotNumbered", mcUnnumberedCurrent},
 		{"MergeNeedsVersionV1WhileACanonicalExists", mcMissingFirstVersion},
 		{"MergeMessageFailureRollsBackThePromotionAndTheOutcome", mcMessageFailure},
+		{"MergeMessageFailureRollsBackACorrection", mcCorrectionMessageFailure},
 		{"MergeOutboxConflictRollsBackTheOutcome", mcOutboxConflict},
 		{"ConcurrentMergesOfOneCarrierWriteOneOutcome", mcConcurrent},
 		{"MergeOutcomeOfAnUnknownCarrierOrSuite", mcOutcomeOfUnknown},
@@ -335,22 +336,43 @@ func mcCorrects(e *cfEnv) {
 	e.mcSeed(true, fix)
 	e.approve(fix)
 	before := e.revision()
+	v1, _ := e.version("V1")
+	v2, _ := e.version("V2")
+	messages := &mcMessages{}
 
-	result := e.merge(mcRequest(fix, "v1", &mcMessages{}))
+	result := e.merge(mcRequest(fix, "v1", messages))
 
 	e.requireOutcome(fix.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeCorrected, Source: mcSource(fix), Version: "V3", Corrects: "V2", Reference: mcRef(fix)})
+	if result.Duplicate || messages.calls != 1 || messages.last.Kind != governance.MergeCorrected {
+		e.t.Fatalf("duplicate %v, message calls %d (last %v); want a new outcome and one message about the correction", result.Duplicate, messages.calls, messages.last.Kind)
+	}
 	e.requireWrites(before, 2)
 	historical, found := e.version("V3")
 	if !found || historical.Record().CorrectsVersionID() != "V2" || e.currentVersion() != "V3" {
 		e.t.Fatalf("version V3 = %+v (found %v), current %q; want a correction of V2 that is current", historical.Record(), found, e.currentVersion())
 	}
+	for _, earlier := range []contract.HistoricalCanonical{v1, v2} { // a correction adds a version and rewrites none
+		if now, found := e.version(earlier.Version().ID()); !found || !cfSameHistory(earlier, now) {
+			e.t.Fatalf("%s changed or went missing after the correction", earlier.Version().ID())
+		}
+	}
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		receipt, found, err := tx.Receipt(ctx, "merge:"+contract.OperationID(fix.carrier))
-		if err != nil || !found || receipt.Kind != governance.OperationCorrect {
-			return fmt.Errorf("receipt = %+v, %v, %v; want a correction", receipt, found, err)
+		if err != nil || !found || receipt.Kind != governance.OperationCorrect || receipt.Promotion == nil || receipt.Promotion.Identity.CorrectsVersionID != "V2" {
+			return fmt.Errorf("receipt = %+v, %v, %v; want a correction of V2", receipt, found, err)
 		}
 		return nil
 	})
+	e.requireQueued(nil, []string{"comment/" + string(fix.carrier)})
+
+	again := &mcMessages{} // the replay asks for nothing and writes nothing
+	replay := e.merge(mcRequest(fix, "v1", again))
+	e.requireOutcome(fix.carrier, replay.MergeOutcome, result.MergeOutcome)
+	if !replay.Duplicate || again.calls != 0 {
+		e.t.Fatalf("replay duplicate %v, message calls %d; want a duplicate that calls no message", replay.Duplicate, again.calls)
+	}
+	e.requireWrites(before, 2)
+	e.requireQueued(nil, []string{"comment/" + string(fix.carrier)})
 }
 
 // mcSecondPR merges a, which promotes V2, and then b, which was approved against V1 as well.

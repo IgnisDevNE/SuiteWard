@@ -855,46 +855,50 @@ func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testin
 		"quotes":        `"`,
 	}
 	for name, unit := range units {
-		t.Run(name, func(t *testing.T) {
-			target := commentTarget{RepositoryID: 1<<62 + 1, Repo: strings.Repeat("o", 39) + "/" + strings.Repeat("n", 100), Pull: 1<<31 - 1}
+		t.Run(name, func(t *testing.T) { requireSummaryWithinTheOutboxLimit(t, unit) })
+	}
+}
 
-			message, err := newSummaryMessage(target, worstCase(unit))
-			if err != nil {
-				t.Fatal(err)
-			}
+// requireSummaryWithinTheOutboxLimit requires the summary of the worst case made of unit to fit the outbox, keep 20 of each list cut with a marker, and render under GitHub's limit.
+func requireSummaryWithinTheOutboxLimit(t *testing.T, unit string) {
+	t.Helper()
+	target := commentTarget{RepositoryID: 1<<62 + 1, Repo: strings.Repeat("o", 39) + "/" + strings.Repeat("n", 100), Pull: 1<<31 - 1}
 
-			if len(message.Payload) > 64<<10 {
-				t.Fatalf("payload is %d bytes, over the 64 KiB outbox limit", len(message.Payload))
-			}
-			if err := message.Validate(); err != nil {
-				t.Fatalf("the outbox rejects the message: %v", err)
-			}
-			var decoded bootstrapSummaryPayload
-			if err := json.Unmarshal(message.Payload, &decoded); err != nil {
-				t.Fatal(err)
-			}
-			if len(decoded.Summary.Paths) != 20 || len(decoded.Summary.Include) != 20 || len(decoded.Summary.Runner) != 20 || len(decoded.Summary.Exclude) != 20 || decoded.Summary.RunnerTotal != 40 {
-				t.Fatalf("payload keeps %d paths, %d include and %d exclude rules, want 20 each", len(decoded.Summary.Paths), len(decoded.Summary.Include), len(decoded.Summary.Exclude))
-			}
-			if decoded.Summary.Branch == "" {
-				t.Fatal("the branch was cut to nothing")
-			}
-			if decoded.Summary.IncludeTotal != 40 || decoded.Summary.ExcludeTotal != 40 {
-				t.Fatalf("totals are %d and %d, want the 40 rules each list had", decoded.Summary.IncludeTotal, decoded.Summary.ExcludeTotal)
-			}
-			for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Runner, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
-				if !strings.HasSuffix(entry, "…") {
-					t.Fatalf("a cut entry has no marker: %q", entry)
-				}
-			}
-			rendered, err := decoded.Summary.summary()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if body := commandtext.BootstrapSummary(rendered); len(body) >= 65536 {
-				t.Fatalf("the rendered comment is %d bytes, over GitHub's limit", len(body))
-			}
-		})
+	message, err := newSummaryMessage(target, worstCase(unit))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(message.Payload) > 64<<10 {
+		t.Fatalf("payload is %d bytes, over the 64 KiB outbox limit", len(message.Payload))
+	}
+	if err := message.Validate(); err != nil {
+		t.Fatalf("the outbox rejects the message: %v", err)
+	}
+	var decoded bootstrapSummaryPayload
+	if err := json.Unmarshal(message.Payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Summary.Paths) != 20 || len(decoded.Summary.Include) != 20 || len(decoded.Summary.Runner) != 20 || len(decoded.Summary.Exclude) != 20 || decoded.Summary.RunnerTotal != 40 {
+		t.Fatalf("payload keeps %d paths, %d include and %d exclude rules, want 20 each", len(decoded.Summary.Paths), len(decoded.Summary.Include), len(decoded.Summary.Exclude))
+	}
+	if decoded.Summary.Branch == "" {
+		t.Fatal("the branch was cut to nothing")
+	}
+	if decoded.Summary.IncludeTotal != 40 || decoded.Summary.ExcludeTotal != 40 {
+		t.Fatalf("totals are %d and %d, want the 40 rules each list had", decoded.Summary.IncludeTotal, decoded.Summary.ExcludeTotal)
+	}
+	for _, entry := range slices.Concat(decoded.Summary.Paths, decoded.Summary.Include, decoded.Summary.Runner, decoded.Summary.Exclude, []string{decoded.Summary.Branch}) {
+		if !strings.HasSuffix(entry, "…") {
+			t.Fatalf("a cut entry has no marker: %q", entry)
+		}
+	}
+	rendered, err := decoded.Summary.summary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := commandtext.BootstrapSummary(rendered); len(body) >= 65536 {
+		t.Fatalf("the rendered comment is %d bytes, over GitHub's limit", len(body))
 	}
 }
 

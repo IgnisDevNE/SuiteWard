@@ -261,22 +261,8 @@ func TestAFailedCycleShowsOnlyItsClassification(t *testing.T) {
 			if strings.Contains(s.logs.String(), fakeErrorBody) || strings.Contains(s.logs.String(), fakeToken) {
 				t.Fatalf("the logs carry text GitHub sent or the token:\n%s", s.logs.String())
 			}
-			// One warn line per recorded failure: repo, kind and status, nothing GitHub sent.
 			kind, status, _ := strings.Cut(strings.TrimSuffix(test.wantError, ")"), " (HTTP ")
-			var warnings int
-			for _, line := range strings.Split(s.logs.String(), "\n") {
-				var entry map[string]any
-				if json.Unmarshal([]byte(line), &entry) != nil || entry["msg"] != "github synchronization failed" {
-					continue
-				}
-				warnings++
-				if entry["level"] != "WARN" || entry["repo"] != "acme/widgets" || entry["kind"] != kind || fmt.Sprint(entry["status"]) != status {
-					t.Errorf("failure log = %v; want a warning with repo acme/widgets, kind %s and status %s", entry, kind, status)
-				}
-			}
-			if warnings != 1 {
-				t.Fatalf("%d failure log lines; want exactly one:\n%s", warnings, s.logs.String())
-			}
+			requireOneFailureLog(t, s.logs.String(), kind, status)
 		})
 	}
 }
@@ -345,4 +331,23 @@ func toAny(values []string) []any {
 		out[i] = v
 	}
 	return out
+}
+
+// requireOneFailureLog requires one warn line per recorded failure: repo, kind and status, nothing GitHub sent.
+func requireOneFailureLog(t *testing.T, logs, kind, status string) {
+	t.Helper()
+	var warnings int
+	for _, line := range strings.Split(logs, "\n") {
+		var entry map[string]any
+		if json.Unmarshal([]byte(line), &entry) != nil || entry["msg"] != "github synchronization failed" {
+			continue
+		}
+		warnings++
+		if entry["level"] != "WARN" || entry["repo"] != "acme/widgets" || entry["kind"] != kind || fmt.Sprint(entry["status"]) != status {
+			t.Errorf("failure log = %v; want a warning with repo acme/widgets, kind %s and status %s", entry, kind, status)
+		}
+	}
+	if warnings != 1 {
+		t.Fatalf("%d failure log lines; want exactly one:\n%s", warnings, logs)
+	}
 }

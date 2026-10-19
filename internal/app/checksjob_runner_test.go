@@ -602,7 +602,7 @@ func TestChecksKeepTheRunnerReviewApartFromTheScopeNoticesReview(t *testing.T) {
 func TestChecksLeaveTheIgnoreChoiceOutWhenAPathCannotBeNamedInExclude(t *testing.T) {
 	// A bracket is a character class in a pattern, so the path would never match itself; a star or a question mark makes the pattern match the path but
 	// also other files, and an ignore choice must name exactly one file.
-	for _, odd := range []string{"app/[id]/jest.config.js", "docs/a*/conftest.py", "docs/a?/conftest.py"} {
+	for _, odd := range []string{"app/[id]/jest.config.js", "docs/a*/conftest.py", "docs/a?/conftest.py", "!app/conftest.py"} {
 		t.Run(odd, func(t *testing.T) {
 			w := newCJWorld(t, true)
 
@@ -613,6 +613,11 @@ func TestChecksLeaveTheIgnoreChoiceOutWhenAPathCannotBeNamedInExclude(t *testing
 			payload := w.runnerPayload(0)
 			if _, hasIgnore := payload["ignore"]; hasIgnore || payload["protect"] == "" {
 				t.Fatalf("payload %v, want a protect declaration and no ignore declaration", payload)
+			}
+			w.mustCheck() // a decided head is not decided again, and never fails the job
+			w.mustCheck()
+			if keys := w.scopeKeys("runner-uncovered:"); len(keys) != 1 {
+				t.Fatalf("runner comments %v after two more runs, want the one of the first", keys)
 			}
 		})
 	}

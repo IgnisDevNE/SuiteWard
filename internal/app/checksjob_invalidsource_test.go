@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -358,4 +359,59 @@ func TestChecksPostANewLinkCommentWhenTheHeadsDeclarationChanges(t *testing.T) {
 	w.sync(map[int]string{4: bootHead, 5: cjHead4})
 	w.mustCheck()
 	w.wantInvalidSource(first, invalidKeyOf(5, "link", "spec_link", acceptingDeclaration(t, reachable+"# edited\n", "spec_link")))
+}
+
+// declarationReadFails is a tree whose declaration reads after the first one fail with err: the first is the head's own build, the
+// second is the read that offers the accepting declaration.
+type declarationReadFails struct {
+	inventory.Tree
+	err   error
+	reads int
+}
+
+func (t *declarationReadFails) Read(ctx context.Context, path string) ([]byte, error) {
+	if path == ".suiteward.yml" {
+		if t.reads++; t.reads > 1 {
+			return nil, t.err
+		}
+	}
+	return t.Tree.Read(ctx, path)
+}
+
+func (w *cjJobWorld) linkHeadReadFailing(err error) {
+	w.linkHead(cjHead2, "spec_link")
+	repo := w.reader.repos[bootRepo]
+	repo.trees[cjHead2] = &declarationReadFails{Tree: repo.trees[cjHead2], err: err}
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+}
+
+// A cancelled or timed-out read of the head's declaration is the run's error, so the job retries, instead of a comment without it.
+func TestChecksReturnACancelledReadOfTheDeclarationThatAcceptsTheLink(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			w := newCJWorld(t, true)
+			w.linkHeadReadFailing(fmt.Errorf("read the head: %w", cause))
+
+			err := w.runChecks()
+
+			if !errors.Is(err, cause) {
+				t.Fatalf("checks run error = %v, want %v", err, cause)
+			}
+			w.wantInvalidSource()
+		})
+	}
+}
+
+// Any other failure to read it only leaves the declaration out: the check and the comment are otherwise the same, and the log says why.
+func TestChecksLeaveOutTheDeclarationWhenItCannotBeRead(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.linkHeadReadFailing(errors.New("the blob is gone"))
+
+	w.mustCheck()
+
+	w.wantInvalidSource(invalidKeyOf(5, "link", "spec_link"))
+	if declaration, found := w.invalidSourcePayload(0)["declaration"]; found {
+		t.Fatalf("declaration %q, want none", declaration)
+	}
+	w.logged("declaration skipped")
 }

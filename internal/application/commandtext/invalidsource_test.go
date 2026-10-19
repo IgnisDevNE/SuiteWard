@@ -150,3 +150,27 @@ func TestInvalidSourceCommentDoesNotOfferToAcceptALinkNoPatternNamesExactly(t *t
 		}
 	}
 }
+
+// A path that the caller cut is not the link's path, so the one-line pattern would name another path: the comment offers to accept the
+// link only with a declaration, which the caller built from the whole path.
+func TestInvalidSourceCommentOffersTheCutLinkOnlyWithItsDeclaration(t *testing.T) {
+	cut := strings.Repeat("l", 140) + "…"
+	without := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: cut, PathCut: true})
+	})
+	if strings.Contains(without, "accept") || strings.Contains(without, "/"+cut) || !strings.Contains(without, "remove the link or point it to a regular file, and push") {
+		t.Errorf("the comment for a cut path without a declaration offers to accept it or lacks the other step:\n%s", without)
+	}
+
+	const declaration = "version: 1\nexclude:\n  - /whole-path\n"
+	with := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: cut, PathCut: true, Declaration: []byte(declaration)})
+	})
+	if !strings.Contains(with, "accept the link") || !strings.Contains(with, "```\n"+declaration+"```") || strings.Contains(with, "/"+cut) {
+		t.Errorf("the comment for a cut path with a declaration lacks the offer or shows the cut pattern:\n%s", with)
+	}
+
+	if err := commandtext.ValidateInvalidSource(commandtext.InvalidSourceNotice{Problem: commandtext.DeclarationProblem, PathCut: true}); err == nil {
+		t.Error("ValidateInvalidSource accepted a cut path on a declaration problem")
+	}
+}

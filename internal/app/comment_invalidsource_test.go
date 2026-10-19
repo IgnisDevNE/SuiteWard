@@ -166,3 +166,36 @@ func TestInvalidSourceMessageCarriesTheDeclarationAndDropsOneOverTheBound(t *tes
 		})
 	}
 }
+
+// The payload says that its path was cut, so the comment does not offer the cut path as an exclude pattern.
+func TestInvalidSourceMessageMarksACutPathAndTheCommentOffersNoCutPattern(t *testing.T) {
+	target := commentTarget{RepositoryID: cmtRepoID, Repo: cmtRepo, Pull: cmtPull}
+	long := strings.Repeat("l", 200) + "_link"
+	for _, tc := range []struct {
+		name        string
+		path        string
+		declaration []byte
+		cut, offers bool
+	}{
+		{"a short path", "spec_link", nil, false, true},
+		{"a long path", long, nil, true, false},
+		{"a long path with its declaration", long, []byte("version: 1\nexclude:\n  - /whole\n"), true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message, err := newInvalidSourceMessage(target, sourceProblem{kind: sourceLink, path: tc.path, declaration: tc.declaration})
+			if err != nil {
+				t.Fatalf("newInvalidSourceMessage: %v", err)
+			}
+			p, err := decodePayload[invalidSourcePayload](githubCommentKind, message.Key, message.Payload)
+			if err != nil || p.PathCut != tc.cut {
+				t.Fatalf("decoded payload %+v, %v; want pathCut %v", p, err, tc.cut)
+			}
+
+			text := commandtext.InvalidSourceComment(p.source())
+
+			if offers := strings.Contains(text, "accept the link"); offers != tc.offers {
+				t.Errorf("the comment offers to accept the link: %v, want %v:\n%s", offers, tc.offers, text)
+			}
+		})
+	}
+}

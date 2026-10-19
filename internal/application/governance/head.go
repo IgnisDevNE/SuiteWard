@@ -335,14 +335,19 @@ func HeadEvidence(inv inventory.Inventory, binding contract.ApprovalBinding, sou
 	return evidence, nil
 }
 
+// numbered is n of an id spelled prefix and then n in canonical decimal (no sign, no leading zero), and false for any other spelling.
+func numbered(id, prefix string) (uint64, bool) {
+	digits, ok := strings.CutPrefix(id, prefix)
+	n, err := strconv.ParseUint(digits, 10, 64)
+	return n, ok && err == nil && strconv.FormatUint(n, 10) == digits
+}
+
 // proposalNumber is n of a proposal named P<n> in canonical decimal, and 0 for any other name.
 func proposalNumber(id contract.ProposalID) uint64 {
-	digits, ok := strings.CutPrefix(string(id), "P")
-	n, err := strconv.ParseUint(digits, 10, 64)
-	if !ok || err != nil || strconv.FormatUint(n, 10) != digits {
-		return 0
+	if n, ok := numbered(string(id), "P"); ok {
+		return n
 	}
-	return n
+	return 0
 }
 
 // NextNumberedProposalID returns P<n+1>, n being the highest number among ids named P<number> in canonical

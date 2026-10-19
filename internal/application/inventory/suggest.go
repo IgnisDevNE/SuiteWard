@@ -54,9 +54,16 @@ var (
 	mixedNames = []string{"package.json", "pyproject.toml", "setup.cfg", "tox.ini", "Cargo.toml", "CMakeLists.txt"}
 )
 
-// nameMatches reports whether any glob matches the base name; every glob is a constant of this file.
+// nameMatches reports whether any glob matches the base name; every glob is a constant of this file, so a malformed one is a
+// programming error.
 func nameMatches(globs []string, name string) bool {
-	return slices.ContainsFunc(globs, func(glob string) bool { ok, _ := path.Match(glob, name); return ok })
+	return slices.ContainsFunc(globs, func(glob string) bool {
+		ok, err := path.Match(glob, name)
+		if err != nil {
+			panic(fmt.Sprintf("inventory: glob %q is malformed: %v", glob, err))
+		}
+		return ok
+	})
 }
 
 // splitFile returns the directories and the base name of a file path, and false under a vendored directory.

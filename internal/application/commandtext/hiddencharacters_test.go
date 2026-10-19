@@ -82,3 +82,24 @@ func TestAHiddenCharacterInADeclarationPanicsTheCommentsAndNamesNoValue(t *testi
 		t.Errorf("the error is %v, want one that does not repeat the declaration", err)
 	}
 }
+
+// The pattern that accepts a link is shown to be pasted into exclude. A path with a character that is not graphic is shown escaped,
+// which is not the pattern, so the comment offers the pattern alone only for a path shown as it is; the head's own declaration is
+// exact whatever the path, so an offer that holds it stays.
+func TestInvalidSourceCommentDoesNotOfferAPatternForAPathThatIsShownEscaped(t *testing.T) {
+	const declaration = "version: 1\nexclude:\n  - /some_link\n"
+	for _, path := range []string{"a\u202eb", "a\nb", "a\xffb", "a\u200bb"} {
+		without := render(t, func() string {
+			return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: path})
+		})
+		if strings.Contains(without, "accept") || !strings.Contains(without, "remove the link or point it to a regular file, and push") {
+			t.Errorf("the comment for %q offers the pattern or lacks the other step:\n%s", path, without)
+		}
+		with := render(t, func() string {
+			return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: path, Declaration: []byte(declaration)})
+		})
+		if !strings.Contains(with, "accept the link") || !strings.Contains(with, "```\n"+declaration+"```") {
+			t.Errorf("the comment for %q with a declaration lacks the offer:\n%s", path, with)
+		}
+	}
+}

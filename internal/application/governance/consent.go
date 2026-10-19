@@ -25,7 +25,7 @@ func ProcessConsent(ctx context.Context, uow UnitOfWork, request ConsentRequest)
 			if !isCommandReceipt(stored, command) {
 				return ErrOperationConflict
 			}
-			response = ConsentResponse{Receipt: *stored.Consent, Committed: true, Duplicate: true}
+			response = ConsentResponse{Receipt: *stored.Consent, Duplicate: true}
 			return nil
 		}
 		original, sourceKnown, err := tx.ReceiptBySource(ctx, command.SourceCommandID())
@@ -56,7 +56,7 @@ func ProcessConsent(ctx context.Context, uow UnitOfWork, request ConsentRequest)
 			if err := tx.AppendConsent(ctx, ConsentWrite{OperationID: command.OperationID(), Result: result, Receipt: *original.Consent, Alias: true}); err != nil {
 				return fmt.Errorf("record consent alias: %w", err)
 			}
-			response = ConsentResponse{Receipt: *original.Consent, Committed: true, Duplicate: true}
+			response = ConsentResponse{Receipt: *original.Consent, Duplicate: true}
 			return nil
 		}
 		var promoted contract.SuiteVersionID
@@ -77,7 +77,7 @@ func ProcessConsent(ctx context.Context, uow UnitOfWork, request ConsentRequest)
 		if err := writeOutbox(ctx, tx, request.Outbox); err != nil {
 			return err
 		}
-		response = ConsentResponse{Receipt: receipt, Committed: true}
+		response = ConsentResponse{Receipt: receipt}
 		return nil
 	})
 	if err != nil {

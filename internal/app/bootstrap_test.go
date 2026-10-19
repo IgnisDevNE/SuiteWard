@@ -737,8 +737,11 @@ func TestBootstrapKeepsTheProblemOfAPromotionThatCannotProceed(t *testing.T) {
 
 func TestBootstrapBlockedReasonsHaveDistinctCodes(t *testing.T) {
 	seen := map[string]contract.PromotionReason{}
-	for reason := contract.PromotionReasonContextMismatch; reason <= contract.PromotionReasonCorrectionContextReused; reason++ {
-		code := blockedCode(reason)
+	for reason := contract.PromotionReasonContextMismatch; reason <= contract.PromotionReasonEmptyInventory; reason++ {
+		code, err := blockedCode(reason)
+		if err != nil {
+			t.Errorf("reason %d: %v", reason, err)
+		}
 		if !strings.HasPrefix(code, "blocked-") || len(code) == len("blocked-") {
 			t.Errorf("reason %d has code %q, want blocked-<reason>", reason, code)
 		}
@@ -746,6 +749,15 @@ func TestBootstrapBlockedReasonsHaveDistinctCodes(t *testing.T) {
 			t.Errorf("reasons %d and %d share the code %q", other, reason, code)
 		}
 		seen[code] = reason
+	}
+}
+
+// A bootstrap never gives no reason or the reason of a correction, so a blocked bootstrap naming one is an error, not a code.
+func TestBootstrapBlockedForAReasonItCannotGiveIsAnError(t *testing.T) {
+	for _, reason := range []contract.PromotionReason{contract.PromotionReasonNone, contract.PromotionReasonCorrectionContextReused} {
+		if code, err := blockedCode(reason); err == nil {
+			t.Errorf("reason %d has the code %q, want an error", reason, code)
+		}
 	}
 }
 

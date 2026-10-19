@@ -35,7 +35,7 @@ type BaselineResult struct {
 // commit as the Suite's first canonical. Content is stored before the
 // database is touched: an orphan blob after a later failure is harmless, a
 // version row without its bytes is not. A baseline of coverage the proposal
-// already has changes nothing, as with ReviseProposal.
+// already has changes nothing, as for a head assessment.
 func ProposeBaseline(ctx context.Context, uow UnitOfWork, content ContentWriter, request BaselineRequest) (BaselineResult, error) {
 	switch {
 	case uow == nil:
@@ -91,7 +91,7 @@ func reviseBaselineWithin(ctx context.Context, tx Tx, state SuiteState, referenc
 	if err != nil {
 		return ReviseResult{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	return reviseWithin(ctx, tx, state, revision)
+	return reviseWithin(ctx, tx, revision)
 }
 
 // storeContent reads every entry of manifest from tree, checks the bytes against the manifest and stores them.

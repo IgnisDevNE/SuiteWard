@@ -574,8 +574,12 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 		return fmt.Errorf("bootstrap the first canonical: %w", err)
 	}
 	if result.Outcome != contract.PromotionProposed {
+		code, err := blockedCode(result.Reason)
+		if err != nil {
+			return err
+		}
 		b.logger.WarnContext(ctx, "github bootstrap blocked", "repo", p.Repo, "proposal", s.reference.ProposalID, "reason", result.Reason)
-		return bootstrapStop(blockedCode(result.Reason))
+		return bootstrapStop(code)
 	}
 	b.promoted = true
 	b.logger.InfoContext(ctx, "github baseline promoted", "repo", p.Repo, "reference", reference, "version", string(firstVersion), "replayed", result.Duplicate)
@@ -584,26 +588,27 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 
 // blockedReasons name the reasons of a blocked promotion in the codes of /status.
 var blockedReasons = map[contract.PromotionReason]string{
-	contract.PromotionReasonContextMismatch:         "context-mismatch",
-	contract.PromotionReasonProposalNotCurrent:      "proposal-not-current",
-	contract.PromotionReasonCanonicalChanged:        "canonical-changed",
-	contract.PromotionReasonPolicyChanged:           "policy-changed",
-	contract.PromotionReasonApprovalMissing:         "approval-missing",
-	contract.PromotionReasonAssessmentMismatch:      "assessment-mismatch",
-	contract.PromotionReasonIntegrityNotPassed:      "integrity-not-passed",
-	contract.PromotionReasonIntegrationMissing:      "integration-missing",
-	contract.PromotionReasonIntegrationMismatch:     "integration-mismatch",
-	contract.PromotionReasonCanonicalPresent:        "canonical-present",
-	contract.PromotionReasonEmptyInventory:          "empty-inventory",
-	contract.PromotionReasonCorrectionContextReused: "correction-context-reused",
+	contract.PromotionReasonContextMismatch:     "context-mismatch",
+	contract.PromotionReasonProposalNotCurrent:  "proposal-not-current",
+	contract.PromotionReasonCanonicalChanged:    "canonical-changed",
+	contract.PromotionReasonPolicyChanged:       "policy-changed",
+	contract.PromotionReasonApprovalMissing:     "approval-missing",
+	contract.PromotionReasonAssessmentMismatch:  "assessment-mismatch",
+	contract.PromotionReasonIntegrityNotPassed:  "integrity-not-passed",
+	contract.PromotionReasonIntegrationMissing:  "integration-missing",
+	contract.PromotionReasonIntegrationMismatch: "integration-mismatch",
+	contract.PromotionReasonCanonicalPresent:    "canonical-present",
+	contract.PromotionReasonEmptyInventory:      "empty-inventory",
 }
 
-// blockedCode is the classification code of a blocked promotion, naming the reason.
-func blockedCode(reason contract.PromotionReason) string {
-	if name, known := blockedReasons[reason]; known {
-		return "blocked-" + name
+// blockedCode is the classification code of a blocked bootstrap, naming the reason. A reason a bootstrap cannot give
+// (none, or the correction's) is an error, not a code.
+func blockedCode(reason contract.PromotionReason) (string, error) {
+	name, known := blockedReasons[reason]
+	if !known {
+		return "", fmt.Errorf("a bootstrap was blocked for the reason %d, which it cannot give", reason)
 	}
-	return "blocked"
+	return "blocked-" + name, nil
 }
 
 // bootstrapStop is why a project's bootstrap stopped or is waiting, without failing the run: a fixed classification code for

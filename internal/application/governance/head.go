@@ -214,7 +214,7 @@ func keepProposalCurrent(ctx context.Context, tx Tx, state SuiteState, request H
 	if err != nil {
 		return ReviseResult{}, nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	revised, err = reviseWithin(ctx, tx, state, revision)
+	revised, err = reviseWithin(ctx, tx, revision)
 	if err != nil {
 		return ReviseResult{}, nil, err
 	}
@@ -273,8 +273,8 @@ func governingOf(ctx context.Context, reader ContentReader, canonical contract.C
 }
 
 // HeadEvidence is the integrity evidence of the service about source: Passed when the protected inventory
-// of source equals what binding covers (manifest and scope), Failed otherwise. AssessHead and the bootstrap
-// share it.
+// of source equals what binding covers (manifest and scope), Failed otherwise. AssessHead, AssessBootstrapHead and
+// PromoteMerge share it.
 func HeadEvidence(inv inventory.Inventory, binding contract.ApprovalBinding, source contract.SourceRevision) (contract.IntegrityEvidence, error) {
 	outcome := contract.IntegrityFailed
 	if inv.Manifest().Digest() == binding.ManifestDigest() && inv.Scope().Digest() == binding.ScopeDigest() {

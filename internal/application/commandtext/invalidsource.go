@@ -21,11 +21,12 @@ const (
 // shows the pattern alone. Repo (owner/name) and Branch (the pull request's head ref) build the editor link; both or neither, and a
 // comment without them has no link. The comment quotes no other file content.
 type InvalidSourceNotice struct {
-	Problem      SourceProblem
-	Path         string
-	Declaration  []byte
-	PathCut      bool // Path was cut by the caller: it is not the link's path, so the comment offers the exclude only with a Declaration
-	Repo, Branch string
+	Problem       SourceProblem
+	Path          string
+	Declaration   []byte
+	PathCut       bool // Path was cut by the caller: it is not the link's path, so the comment offers the exclude only with a Declaration
+	Repo, Branch  string
+	NoDeclaration bool // LinkProblem only: the head has no .suiteward.yml (no Declaration either), so the link opens GitHub's new-file page, not an editor that would be a 404
 }
 
 // ValidateInvalidSource reports why InvalidSourceComment would panic on s, as an error.
@@ -39,6 +40,8 @@ func ValidateInvalidSource(s InvalidSourceNotice) error {
 		return errors.New("commandtext: only a link problem carries a declaration or a cut path")
 	case len(s.Declaration) > MaxDeclaration || !utf8.Valid(s.Declaration):
 		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or not UTF-8", len(s.Declaration), MaxDeclaration)
+	case s.NoDeclaration && (s.Problem != LinkProblem || len(s.Declaration) > 0):
+		return errors.New("commandtext: only a link problem of a head with no declaration says so, and it carries no declaration")
 	case s.Repo != "" || s.Branch != "":
 		return checkRepoAndBranch(s.Repo, s.Branch)
 	}
@@ -75,7 +78,11 @@ func editSentence(s InvalidSourceNotice, lead string) string {
 	if s.Branch == "" {
 		return ""
 	}
-	return "\n\n" + lead + ", [open GitHub's editor for it](" + editLink(s.Repo, s.Branch) + "). SuiteWard never commits it for you: the commit is yours."
+	link := "[open GitHub's editor for it](" + editLink(s.Repo, s.Branch) + ")"
+	if s.NoDeclaration {
+		link = "[open GitHub's editor for a new file](" + newLink(s.Repo, s.Branch) + ")"
+	}
+	return "\n\n" + lead + ", " + link + ". SuiteWard never commits it for you: the commit is yours."
 }
 
 // acceptLink is the paragraphs that offer to accept the link of s with an exact anchored exclude, and warn what that means; none when

@@ -628,14 +628,11 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 // refuses): a fact about the source, so it is never retried.
 var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 
-// errDeclarationTooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration).
-var errDeclarationTooLarge = errors.New("the suggested declaration is too large")
-
-// tooLarge is errDeclarationTooLarge that also says which base declaration was compared, so a refusal links the editor of the right file.
+// tooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration), and says which base declaration was compared,
+// so a refusal links the editor of the right file.
 type tooLarge struct{ base string }
 
-func (e *tooLarge) Error() string { return errDeclarationTooLarge.Error() }
-func (e *tooLarge) Unwrap() error { return errDeclarationTooLarge }
+func (e *tooLarge) Error() string { return "the suggested declaration is too large" }
 
 // The codes of the base of a suggest (ackPayload.Base): what the head was compared with.
 const (
@@ -701,11 +698,14 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	switch {
 	case errors.As(err, &large):
 		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
-		branch := view.pull.HeadRef // the default branch's file is not on it: that refusal links to no editor
+		base, branch := "", view.pull.HeadRef // the base names the file only when it is the default branch's
 		if large.base == baseDefaultBranch {
-			branch = ""
+			base = baseDefaultBranch
+			if branch, err = editBranch(view, base); err != nil {
+				return &opaque{what: "read the default branch", cause: err}
+			}
 		}
-		return refuse(reasonDeclarationTooLarge, "", branch)
+		return refuse(reasonDeclarationTooLarge, base, branch)
 	case errors.As(err, &invalid):
 		j.logger.InfoContext(ctx, "github suggest refused: the base declaration is not valid", "repo", c.Repo, "comment", m.CommentID, "base", invalid.base)
 		branch, err := editBranch(view, invalid.base)

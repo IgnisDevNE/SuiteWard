@@ -139,7 +139,7 @@ var (
 )
 
 // scopeBases are the codes of Base in a scope-notice payload.
-var scopeBases = map[string]commandtext.ScopeBase{"pull": commandtext.BasePull, "default-branch": commandtext.BaseDefaultBranch, "contract": commandtext.BaseContract}
+var scopeBases = map[string]commandtext.ScopeBase{basePull: commandtext.BasePull, baseDefaultBranch: commandtext.BaseDefaultBranch, baseContract: commandtext.BaseContract}
 
 // rejectedOutcomes maps the dispositions that get an acknowledgment without a receipt.
 var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
@@ -203,12 +203,18 @@ func (a ackPayload) nothingUncovered() bool {
 // namesFile is whether the payload is the refusal of a suggest whose base file is not a valid declaration, or of a propose whose source is invalid,
 // which names the file in Base: the head's or the default branch's. The contract is no file of a branch.
 func (a ackPayload) namesFile() bool {
-	return a.Reason == refusalInvalidSource && (a.Disposition == string(commands.SuggestRefused) || a.Disposition == string(commands.ProposeRefused) && a.Base != "contract")
+	return a.Reason == refusalInvalidSource && (a.Disposition == string(commands.SuggestRefused) || a.Disposition == string(commands.ProposeRefused) && a.Base != baseContract)
 }
 
 // editable is whether the payload may carry the Branch of the file to edit: a refusal that names its file, or a suggest whose declaration is too large.
 func (a ackPayload) editable() bool {
-	return (a.namesFile() && (a.Base == "pull" || a.Base == "default-branch")) || (a.Disposition == string(commands.SuggestRefused) && a.Reason == reasonDeclarationTooLarge)
+	return (a.namesFile() && (a.Base == basePull || a.Base == baseDefaultBranch)) || (a.tooLarge() && (a.Base == "" || a.Base == baseDefaultBranch))
+}
+
+// tooLarge is whether the payload is the refusal of a suggest whose suggested declaration is too large for a comment. Its Base is none for the
+// pull request's file, or the default branch's when that was the base.
+func (a ackPayload) tooLarge() bool {
+	return a.Disposition == string(commands.SuggestRefused) && a.Reason == reasonDeclarationTooLarge
 }
 
 // hasNotice is whether the payload holds any field that only a scope notice uses. Base is not one: nothing-uncovered names it too.
@@ -269,7 +275,7 @@ func (a ackPayload) validate() error {
 	case a.scopeNotice():
 		return a.validateNotice()
 	case !a.declarationMissing():
-		if (a.Branch != "" && !a.editable()) || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered() && !a.namesFile()) {
+		if (a.Branch != "" && !a.editable()) || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered() && !a.namesFile() && !a.tooLarge()) {
 			return errors.New("the branch, the suggestion and the notice fit only a missing declaration, a scope notice or a refusal that names its file")
 		}
 		if a.Branch != "" && commandtext.ValidateEditTarget(a.Repo, a.Branch) != nil {
@@ -1002,15 +1008,16 @@ var sourceProblems = map[string]commandtext.SourceProblem{sourceDeclaration: com
 // reproduce, so the publisher checks only its shape.
 type invalidSourcePayload struct {
 	commentTarget
-	Kind        string `json:"kind"`
-	Path        string `json:"path,omitempty"`        // a link only
-	Declaration string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
-	PathCut     bool   `json:"pathCut,omitempty"`
-	Branch      string `json:"branch,omitempty"` // the pull request's head ref, for the editor link; none in a payload written before M1.9-E12, which then has no link
+	Kind          string `json:"kind"`
+	Path          string `json:"path,omitempty"`        // a link only
+	Declaration   string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
+	PathCut       bool   `json:"pathCut,omitempty"`
+	Branch        string `json:"branch,omitempty"`        // the pull request's head ref, for the editor link; none in a payload written before M1.9-E12, which then has no link
+	NoDeclaration bool   `json:"noDeclaration,omitempty"` // a link only: the head has no .suiteward.yml, so the link goes to the new-file page of GitHub's editor
 }
 
 func (p invalidSourcePayload) source() commandtext.InvalidSourceNotice {
-	n := commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, PathCut: p.PathCut, Declaration: []byte(p.Declaration)}
+	n := commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, PathCut: p.PathCut, Declaration: []byte(p.Declaration), NoDeclaration: p.NoDeclaration}
 	if p.Branch != "" { // every payload has the repo, but only a branch makes the link
 		n.Repo, n.Branch = p.Repo, p.Branch
 	}
@@ -1047,7 +1054,7 @@ func invalidSourceDigest(kind, path string, declaration []byte) string {
 // newInvalidSourceMessage builds the comment that explains one problem of a pull request's source. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
 func newInvalidSourceMessage(target commentTarget, branch string, s sourceProblem) (governance.OutboxMessage, error) {
-	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText, Branch: branch}
+	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText, Branch: branch, NoDeclaration: s.noDeclaration}
 	if len(s.declaration) <= commandtext.MaxDeclaration { // a choice that cannot be shown is left out: the comment then shows the pattern alone
 		p.Declaration = string(s.declaration)
 	}

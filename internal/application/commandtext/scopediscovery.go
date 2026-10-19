@@ -190,6 +190,11 @@ func editLink(repo, branch string) string {
 	return "https://github.com/" + repo + "/edit/" + pathEscape(branch) + "/.suiteward.yml"
 }
 
+// newLink is GitHub's new-file page for .suiteward.yml on a branch, with no content: the file does not exist there yet.
+func newLink(repo, branch string) string {
+	return "https://github.com/" + repo + "/new/" + pathEscape(branch) + "?filename=.suiteward.yml"
+}
+
 func pathEscape(branch string) string {
 	segments := strings.Split(branch, "/")
 	for i, segment := range segments {

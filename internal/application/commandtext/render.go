@@ -281,7 +281,7 @@ func checkAck(a Ack) {
 		panic(fmt.Sprintf("commandtext: malformed reason %d does not fit outcome %d", a.Malformed, a.Outcome))
 	case (a.Outcome == BootstrapPromoted) != (a.Version != 0):
 		panic(fmt.Sprintf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome))
-	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && !namesFile(a)) || (a.Outcome == ProposeRefused && a.Base == BaseContract):
+	case a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && !namesFile(a) && !tooLargeAgainstDefault(a)) || (a.Outcome == ProposeRefused && a.Base == BaseContract):
 		panic(fmt.Sprintf("commandtext: base %d does not fit outcome %d", a.Base, a.Outcome))
 	case !refusalFits(a.Outcome, a.Refusal):
 		panic(fmt.Sprintf("commandtext: refusal %d does not fit outcome %d", a.Refusal, a.Outcome))
@@ -299,9 +299,14 @@ func checkAck(a Ack) {
 // editorFits reports whether a may carry an editor link: a refusal that names a file of a branch, or a suggest whose declaration is too large.
 func editorFits(a Ack) bool {
 	if a.Outcome == SuggestRefused && a.Refusal == DeclarationTooLarge {
-		return true
+		return true // a Base, if any, is the default branch: checkAck refuses another
 	}
 	return namesFile(a) && (a.Base == BasePull || a.Base == BaseDefaultBranch)
+}
+
+// tooLargeAgainstDefault reports whether a is the refusal of a suggested declaration too large for the default branch's file, which is the one Base it names.
+func tooLargeAgainstDefault(a Ack) bool {
+	return a.Outcome == SuggestRefused && a.Refusal == DeclarationTooLarge && a.Base == BaseDefaultBranch
 }
 
 // namesFile reports whether a is the refusal of an invalid source of a suggest or a propose, which may name the file refused in Base.
@@ -834,7 +839,7 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 		parts = append(parts, submodulesWarning(a.Submodules))
 	}
 	// QueryEscape writes a space as +, which the editor may keep; %20 is read the same everywhere.
-	link := "https://github.com/" + a.Repo + "/new/" + pathEscape(a.Branch) + "?filename=.suiteward.yml&value=" +
+	link := newLink(a.Repo, a.Branch) + "&value=" +
 		strings.ReplaceAll(url.QueryEscape(declaration), "+", "%20")
 	return replyTo(paragraphs(append(parts,
 		"To add it on this pull request's branch, [open GitHub's editor with this file filled in]("+link+"). SuiteWard never commits it for you: the commit is yours.",

@@ -31,25 +31,13 @@ type syncTickArgs struct{}
 
 func (syncTickArgs) Kind() string { return SyncTickKind }
 
-type syncTickWorker struct {
-	riverqueue.WorkerDefaults[syncTickArgs]
-	run   func(ctx context.Context) (Wake, error)
-	waker *waker
-}
-
-func (w *syncTickWorker) Work(ctx context.Context, _ *riverqueue.Job[syncTickArgs]) error {
-	wake, err := w.run(ctx)
-	w.waker.wake(ctx, wake)
-	return err
-}
-
 type syncRepoArgs struct {
 	Repo string `json:"repo"`
 }
 
 func (syncRepoArgs) Kind() string { return SyncRepoKind }
 
-// InsertOpts coalesces the requests for one repository while one is pending.
+// InsertOpts coalesces the requests for one repository while one is unfinished.
 func (syncRepoArgs) InsertOpts() riverqueue.InsertOpts {
 	return riverqueue.InsertOpts{UniqueOpts: riverqueue.UniqueOpts{ByArgs: true, ByState: uniqueWhileActive}}
 }
@@ -66,36 +54,23 @@ func (w *syncRepoWorker) Work(ctx context.Context, job *riverqueue.Job[syncRepoA
 	return err
 }
 
-// addSync registers the synchronization jobs of config in workers and returns
-// their periodic jobs (none when config has no synchronization).
-func addSync(workers *riverqueue.Workers, config Config, waker *waker) (jobs []*riverqueue.PeriodicJob, err error) {
+// addSyncRepo checks that config has both synchronization handlers or neither, and registers the repository
+// synchronization worker when it has them; the tick is a periodic job of the table.
+func addSyncRepo(workers *riverqueue.Workers, config Config, waker *waker) error {
 	if (config.SyncTick == nil) != (config.SyncRepo == nil) {
-		return nil, errors.New("river runtime requires both synchronization handlers or neither")
+		return errors.New("river runtime requires both synchronization handlers or neither")
 	}
-	if config.SyncTick == nil {
-		return jobs, nil
-	}
-	if err := riverqueue.AddWorkerSafely(workers, &syncTickWorker{run: config.SyncTick, waker: waker}); err != nil {
-		return nil, fmt.Errorf("register the synchronization tick: %w", err)
+	if config.SyncRepo == nil {
+		return nil
 	}
 	if err := riverqueue.AddWorkerSafely(workers, &syncRepoWorker{run: config.SyncRepo, waker: waker}); err != nil {
-		return nil, fmt.Errorf("register the repository synchronization: %w", err)
+		return fmt.Errorf("register the repository synchronization: %w", err)
 	}
-	interval := config.SyncInterval
-	if interval <= 0 {
-		interval = defaultSyncInterval
-	}
-	tick := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(interval),
-		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			// Periodic ticks coalesce while one is unfinished (the kind has a queue of one worker); one that failed is not retried, the next tick is.
-			return syncTickArgs{}, &riverqueue.InsertOpts{Queue: SyncTickKind, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
-		},
-		&riverqueue.PeriodicJobOpts{ID: SyncTickKind, RunOnStart: true})
-	return append(jobs, tick), nil
+	return nil
 }
 
 // InsertSyncRepo queues a github_sync_repo job for repo. It reports false when
-// one for the same repo is still pending, which then covers the request.
+// one for the same repo is still unfinished, which then covers the request.
 func (r *Runtime) InsertSyncRepo(ctx context.Context, repo string) (inserted bool, err error) {
 	if !r.sync {
 		return false, errors.New("river runtime has no synchronization jobs")

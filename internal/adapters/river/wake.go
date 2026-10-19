@@ -14,14 +14,6 @@ import (
 // (docs/contracts/runtime.md, "Queues and wake-ups").
 type Wake []string
 
-// wakeable is the job kinds a run may wake. Each runs on a queue named after its kind.
-var wakeable = map[string]riverqueue.JobArgs{
-	CommandsKind:  commandsArgs{},
-	ChecksKind:    checksArgs{},
-	MergesKind:    mergesArgs{},
-	BootstrapKind: bootstrapArgs{},
-}
-
 // wakeTimeout bounds the check and the insert of one wake-up, which run even when the job's own context ended.
 const wakeTimeout = 10 * time.Second
 

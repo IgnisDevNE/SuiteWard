@@ -449,3 +449,27 @@ func TestRevisionCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
 		})
 	}
 }
+
+// A stored payload that says its reduction detail was left out, and still holds some, or that omits the detail of a change that reduces nothing,
+// cannot be rendered: the publisher refuses it without posting a comment.
+func TestCommentPublisherRefusesAnInconsistentOmittedReductionDetail(t *testing.T) {
+	const head = `{"repositoryId":1001,"repo":"acme/widgets","pull":7,"reference":"P2-R2","previous":"P2-R1","canonical":"V1","added":[],"modified":[],"removed":[],` +
+		`"addedTotal":0,"modifiedTotal":0,"removedTotal":0,"tier":"isolated"`
+	for name, payload := range map[string]string{
+		"omitted with rules":          head + `,"reduced":true,"reducedOmitted":true,"reducedRules":["rule /a/**"],"reducedPathsTotal":1}`,
+		"omitted with paths":          head + `,"reduced":true,"reducedOmitted":true,"reducedPaths":["tests/a_test.go"],"reducedPathsTotal":1}`,
+		"omitted without a reduction": head + `,"reduced":false,"reducedOmitted":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+
+			if err := w.pub.publish(t.Context(), cmtRevisionKey, json.RawMessage(payload)); err == nil {
+				t.Fatal("the publisher rendered an inconsistent payload")
+			}
+
+			if posts := w.writer.posts(); len(posts) != 0 {
+				t.Fatalf("posted %d comments, want none", len(posts))
+			}
+		})
+	}
+}

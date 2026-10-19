@@ -64,6 +64,10 @@ Accepted 2026-10-05.
     - **A symlink to a directory, to a path outside the repository, or to nothing** is unchanged: it is unsafe when the scope covers it or may cover a path below it.
     - **A submodule** is outside the scope. Its content is not protected and is never read. The declaration stays valid, and the replies that suggest a declaration warn about every submodule that a pattern would have reached.
     - The target is read only for a link that would otherwise be unsafe. It is resolved on the same tree that is being assessed, so it decides only whether that tree is safe and grants nothing.
+  - **Amended 2026-10-19 (owner, M1.9 live run): an accepted link.** An `exclude` pattern naming exactly the link's own path, anchored (`/spec_link`) or with an interior slash, accepts that link. The link no longer makes the declaration invalid, and nothing reached through it is protected.
+    - Because it is an exclude, it is a scope reduction and needs the owner's approval like any other.
+    - Other excludes, such as a broader pattern or one that only matches below the link, still do not make a link safe.
+    - The `invalid-source` comment for a link offers this choice with a warning, after removing the link or pointing it to a file. It does not suggest narrowing the include patterns, because that is a wider reduction the owner decides alone.
 - Approval binds the raw declaration bytes plus the normalized rules.
 - A candidate omission cannot remove existing protection; reducing the scope requires approval like any other change (ADR 0013).
 

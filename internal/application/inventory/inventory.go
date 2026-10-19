@@ -107,15 +107,9 @@ func (i Inventory) Contract() (contract.ProtectedContract, error) {
 	return contract.NewProtectedContract(i.manifest, i.scope.Digest(), map[string]string{})
 }
 
-// Evaluate resolves the manifest of tree under the governing scope instead of
-// the tree's own declaration, so that the governing rules decide which
-// existing protection is checked (ADR 0013).
-func Evaluate(ctx context.Context, tree Tree, governing scope.Scope) (artifact.Manifest, error) {
-	return evaluate(ctx, tree, governing, governing)
-}
-
-// evaluate is Evaluate for a tree whose links are also accepted by the exact excludes of accepting: the candidate's own scope, whose
-// exclude is the reduction the owner approves (D-SCOPE, an accepted link).
+// evaluate resolves the manifest of tree under the governing scope instead of the tree's own declaration, so that the governing
+// rules decide which existing protection is checked (ADR 0013). The links of tree are also accepted by the exact excludes of
+// accepting: the candidate's own scope, whose exclude is the reduction the owner approves (D-SCOPE, an accepted link).
 func evaluate(ctx context.Context, tree Tree, governing, accepting scope.Scope) (artifact.Manifest, error) {
 	entries, err := ListEntries(ctx, tree)
 	if err != nil {

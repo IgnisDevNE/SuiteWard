@@ -55,7 +55,9 @@ func (m *Memory) Latest(ctx context.Context, project contract.ProjectID, id cont
 	return r, found, nil
 }
 
-// next is the record kept when r is recorded over current (found false: there is none). Times are kept at
+// next is the record kept when r is recorded over current (found false: there is none): r, except that "unavailable" never
+// replaces "failed" for the same version, where only CheckedAt moves. The PostgreSQL store writes the same rule as one
+// statement, so that concurrent writers cannot lose a confirmed failure; the conformance suite pins both. Times are kept at
 // microseconds, all PostgreSQL stores.
 func next(current integrity.Record, found bool, r integrity.Record) integrity.Record {
 	r.CheckedAt = r.CheckedAt.UTC().Truncate(time.Microsecond)

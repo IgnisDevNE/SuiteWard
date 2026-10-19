@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // UncoveredRunners is Uncovered for the runner families only (D-SCOPE-DISCOVERY, "Uncovered runner files block"): a test file is
@@ -60,5 +61,16 @@ func TestRunnerPatternsAreTheGroupsOfTheRunnerFamiliesFound(t *testing.T) {
 				t.Fatalf("RunnerPatterns = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// Every runner glob becomes a pattern of a suggested declaration, so each one must parse as a scope pattern.
+func TestEveryRunnerGlobParsesAsAScopePattern(t *testing.T) {
+	for _, group := range inventory.RunnerGroups() {
+		for _, glob := range group {
+			if _, err := scope.ParsePattern(glob); err != nil {
+				t.Errorf("runner glob %q: %v", glob, err)
+			}
+		}
 	}
 }

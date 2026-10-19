@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -52,6 +53,19 @@ func (s Scope) Covers(path string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// ExcludesExactly reports whether an exclude pattern names path itself: no glob character, no trailing slash, anchored (a leading
+// "/" or an interior slash), and equal to path once its leading "/" is dropped. A broader pattern does not (D-SCOPE, an accepted link).
+func (s Scope) ExcludesExactly(path string) bool {
+	if path == DeclarationPath { // no exclude removes the declaration file (D-SCOPE-DEFAULTS)
+		return false
+	}
+	return slices.ContainsFunc(s.declaration.exclude, func(p Pattern) bool {
+		raw := p.String()
+		anchored := raw[0] == '/' || strings.Contains(raw, "/")
+		return anchored && !strings.ContainsAny(raw, `*?[\`) && !strings.HasSuffix(raw, "/") && strings.TrimPrefix(raw, "/") == path
+	})
 }
 
 func matchAny(patterns []Pattern, path string) (bool, error) {

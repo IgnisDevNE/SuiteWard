@@ -81,7 +81,7 @@ var checkReasons = map[string]checkReason{
 	"invalid-source": {CheckFailure, "Invalid contract source",
 		"The contract declaration or the protected source of this head is invalid, for example an invalid `.suiteward.yml` " +
 			"or a symlink that the protected scope reaches. The canonical contract stays in force.",
-		"Next: fix `.suiteward.yml`, or remove the symlink, point it to a file or narrow the pattern that reaches it, and push."},
+		"Next: fix `.suiteward.yml`, or remove the symlink or point it to a regular file, or accept the symlink by adding its exact anchored path to `exclude`, a scope reduction that the owner approves and that leaves nothing reached through it protected, and push."},
 	"integrity-failed": {CheckFailure, "Canonical contract failed its integrity check",
 		"SuiteWard's stored canonical contract failed its integrity verification, so SuiteWard cannot trust it and blocks every pull request of this repository until it is restored.",
 		"Next: the operator must restore the artifact store from a backup or re-bootstrap the repository. Pushing to this pull request does not help."},

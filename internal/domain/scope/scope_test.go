@@ -223,3 +223,39 @@ func TestScopeMayCoverBelowRejectsInvalidDir(t *testing.T) {
 		})
 	}
 }
+
+// An exclude accepts a link only when it names exactly the link's own path (D-SCOPE, an accepted link).
+func TestScopeExcludesExactly(t *testing.T) {
+	tests := []struct {
+		name    string
+		exclude string
+		path    string
+		want    bool
+	}{
+		{"anchored", "/spec_link", "spec_link", true},
+		{"interior slash", "a/l", "a/l", true},
+		{"anchored with an interior slash", "/a/l", "a/l", true},
+		{"unanchored name", "spec_link", "spec_link", false},
+		{"glob", "spec_*", "spec_link", false},
+		{"question mark", "/spec_?ink", "spec_link", false},
+		{"character class", "/spec_[l]ink", "spec_link", false},
+		{"recursive glob", "/spec_link/**", "spec_link", false},
+		{"directory pattern", "/spec_link/", "spec_link", false},
+		{"another path", "/other", "spec_link", false},
+		{"a parent of the path", "/a", "a/l", false},
+		{"the path below the pattern", "/a/l", "a", false},
+		{"the declaration file", "/.suiteward.yml", ".suiteward.yml", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := scopeOf(t, "version: 1\ninclude: ['**']\nexclude: ['"+tc.exclude+"']\n")
+
+			if got := s.ExcludesExactly(tc.path); got != tc.want {
+				t.Errorf("ExcludesExactly(%q) with exclude %q = %v, want %v", tc.path, tc.exclude, got, tc.want)
+			}
+		})
+	}
+	if scopeOf(t, absent).ExcludesExactly("spec_link") {
+		t.Error("a scope without a declaration excludes nothing")
+	}
+}

@@ -18,7 +18,7 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 		{"declaration", commandtext.InvalidSourceNotice{Problem: commandtext.DeclarationProblem},
 			[]string{"`.suiteward.yml` of this pull request's head is not a valid declaration", "fix `.suiteward.yml`"}},
 		{"link", commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link"},
-			[]string{"symbolic link", "```\nspec_link\n```", "remove the link, point it to a file, or narrow the pattern that reaches it"}},
+			[]string{"symbolic link", "```\nspec_link\n```", "remove the link or point it to a regular file, and push"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -29,7 +29,7 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 					t.Errorf("the comment lacks %q:\n%s", want, body)
 				}
 			}
-			if strings.Contains(strings.ToLower(body), "submodule") || !strings.HasSuffix(body, "\n") || strings.Contains(body, "<!--") {
+			if strings.Contains(strings.ToLower(body), "narrow") || strings.Contains(strings.ToLower(body), "submodule") || !strings.HasSuffix(body, "\n") || strings.Contains(body, "<!--") {
 				t.Errorf("the comment mentions submodules, lacks its final newline or holds a marker:\n%s", body)
 			}
 		})
@@ -49,10 +49,13 @@ func TestInvalidSourceCommentShowsThePathInAnEscapedFence(t *testing.T) {
 
 func TestInvalidSourceCommentRefusesWhatItCannotRender(t *testing.T) {
 	tests := map[string]commandtext.InvalidSourceNotice{
-		"no problem":              {},
-		"an unknown problem":      {Problem: commandtext.LinkProblem + 1},
-		"a link without a path":   {Problem: commandtext.LinkProblem},
-		"a declaration with path": {Problem: commandtext.DeclarationProblem, Path: ".suiteward.yml"},
+		"no problem":                               {},
+		"an unknown problem":                       {Problem: commandtext.LinkProblem + 1},
+		"a link without a path":                    {Problem: commandtext.LinkProblem},
+		"a declaration with path":                  {Problem: commandtext.DeclarationProblem, Path: ".suiteward.yml"},
+		"a declaration problem with a declaration": {Problem: commandtext.DeclarationProblem, Declaration: []byte("version: 1\n")},
+		"a declaration over the bound":             {Problem: commandtext.LinkProblem, Path: "l", Declaration: make([]byte, commandtext.MaxDeclaration+1)},
+		"a declaration that is not UTF-8":          {Problem: commandtext.LinkProblem, Path: "l", Declaration: []byte{0xff}},
 	}
 	for name, problem := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -76,12 +79,98 @@ func TestTheInvalidSourceCheckSummaryNamesLinksAndTheDeclarationButNoSubmodule(t
 	if title != "Invalid contract source" {
 		t.Errorf("title %q, want %q", title, "Invalid contract source")
 	}
-	for _, want := range []string{"`.suiteward.yml`", "symlink", "The canonical contract stays in force.", "and push"} {
+	for _, want := range []string{"`.suiteward.yml`", "symlink", "The canonical contract stays in force.", "remove the symlink or point it to a regular file", "exact anchored path to `exclude`", "scope reduction that the owner approves", "and push"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, summary)
 		}
 	}
-	if strings.Contains(strings.ToLower(summary), "submodule") {
-		t.Errorf("the summary mentions submodules:\n%s", summary)
+	if strings.Contains(strings.ToLower(summary), "submodule") || strings.Contains(strings.ToLower(summary), "narrow") {
+		t.Errorf("the summary mentions submodules or narrowing:\n%s", summary)
+	}
+}
+
+// D-SCOPE, an accepted link: the comment offers to accept the link with an exact anchored exclude, warns that nothing reached through
+// the link is protected, and never suggests narrowing the include patterns.
+func TestInvalidSourceCommentOffersToAcceptTheLink(t *testing.T) {
+	const declaration = "version: 1\ninclude:\n  - '**/test_*.py'\nexclude:\n  - /spec_link\n"
+	tests := []struct {
+		name        string
+		declaration []byte
+		block       string
+	}{
+		{"with the head's declaration", []byte(declaration), "```\n" + declaration + "```"},
+		{"without a declaration", nil, "```\n/spec_link\n```"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := render(t, func() string {
+				return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link", Declaration: tc.declaration})
+			})
+
+			for _, want := range []string{"remove the link or point it to a regular file, and push", "accept the link", "`exclude`", tc.block,
+				"nothing reached through the link is protected", "scope reduction", "the owner approves"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("the comment lacks %q:\n%s", want, body)
+				}
+			}
+			if strings.Contains(strings.ToLower(body), "narrow") {
+				t.Errorf("the comment suggests narrowing the pattern:\n%s", body)
+			}
+		})
+	}
+}
+
+// The declaration is the head's own file, so it is fenced against backticks, and so is the one-line pattern of a path with them.
+func TestInvalidSourceCommentFencesTheDeclarationAndThePatternAgainstBackticks(t *testing.T) {
+	declaration := "version: 1\n# ```\nexclude:\n  - /a```b\n"
+	withDeclaration := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "a```b", Declaration: []byte(declaration)})
+	})
+	if !strings.Contains(withDeclaration, "````\n"+declaration+"````") {
+		t.Errorf("the declaration is not inside a longer fence:\n%s", withDeclaration)
+	}
+
+	pattern := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "a```b"})
+	})
+	if !strings.Contains(pattern, "````\n/a```b\n````\n") {
+		t.Errorf("the pattern is not inside a longer fence:\n%s", pattern)
+	}
+}
+
+// A path with a character that exclude reads as a pattern cannot be named exactly, so the comment does not offer to accept it.
+func TestInvalidSourceCommentDoesNotOfferToAcceptALinkNoPatternNamesExactly(t *testing.T) {
+	for _, path := range []string{"spec_*", "spec_?", "spec_[a]", `spec\link`} {
+		body := render(t, func() string {
+			return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: path})
+		})
+
+		if strings.Contains(body, "accept") || !strings.Contains(body, "remove the link or point it to a regular file, and push") {
+			t.Errorf("the comment for %q offers to accept the link or lacks the other step:\n%s", path, body)
+		}
+	}
+}
+
+// A path that the caller cut is not the link's path, so the one-line pattern would name another path: the comment offers to accept the
+// link only with a declaration, which the caller built from the whole path.
+func TestInvalidSourceCommentOffersTheCutLinkOnlyWithItsDeclaration(t *testing.T) {
+	cut := strings.Repeat("l", 140) + "…"
+	without := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: cut, PathCut: true})
+	})
+	if strings.Contains(without, "accept") || strings.Contains(without, "/"+cut) || !strings.Contains(without, "remove the link or point it to a regular file, and push") {
+		t.Errorf("the comment for a cut path without a declaration offers to accept it or lacks the other step:\n%s", without)
+	}
+
+	const declaration = "version: 1\nexclude:\n  - /whole-path\n"
+	with := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: cut, PathCut: true, Declaration: []byte(declaration)})
+	})
+	if !strings.Contains(with, "accept the link") || !strings.Contains(with, "```\n"+declaration+"```") || strings.Contains(with, "/"+cut) {
+		t.Errorf("the comment for a cut path with a declaration lacks the offer or shows the cut pattern:\n%s", with)
+	}
+
+	if err := commandtext.ValidateInvalidSource(commandtext.InvalidSourceNotice{Problem: commandtext.DeclarationProblem, PathCut: true}); err == nil {
+		t.Error("ValidateInvalidSource accepted a cut path on a declaration problem")
 	}
 }

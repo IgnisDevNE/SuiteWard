@@ -969,16 +969,18 @@ const (
 var sourceProblems = map[string]commandtext.SourceProblem{sourceDeclaration: commandtext.DeclarationProblem, sourceLink: commandtext.LinkProblem}
 
 // invalidSourcePayload is the payload of invalid-source:<repository id>:<pull>:<problem digest>. It holds a code and, for a link, the
-// path cut to maxSummaryText bytes, never file content. The key's digest is that of the whole path, which the cut one cannot
+// path cut to maxSummaryText bytes and the head's declaration that accepts it, the only file content a comment quotes. The key's digest is that of the whole path, which the cut one cannot
 // reproduce, so the publisher checks only its shape.
 type invalidSourcePayload struct {
 	commentTarget
-	Kind string `json:"kind"`
-	Path string `json:"path,omitempty"` // a link only
+	Kind        string `json:"kind"`
+	Path        string `json:"path,omitempty"`        // a link only
+	Declaration string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
+	PathCut     bool   `json:"pathCut,omitempty"`
 }
 
 func (p invalidSourcePayload) source() commandtext.InvalidSourceNotice {
-	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path}
+	return commandtext.InvalidSourceNotice{Problem: sourceProblems[p.Kind], Path: p.Path, PathCut: p.PathCut, Declaration: []byte(p.Declaration)}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -995,16 +997,26 @@ func (p invalidSourcePayload) validate() error {
 	return nil
 }
 
-// invalidSourceDigest is the SHA-256 hex digest of the kind, a newline and the whole path.
-func invalidSourceDigest(kind, path string) string {
-	sum := sha256.Sum256([]byte(kind + "\n" + path))
+// invalidSourceDigest is the SHA-256 hex digest of the kind, a newline and the whole path. A link that carries the head's declaration
+// (the file with the link excluded, before the payload bound) adds a newline and that declaration's hex SHA-256: the comment shows it, so
+// an edited .suiteward.yml is a new problem with a new comment. Without one, the digest is what it was.
+func invalidSourceDigest(kind, path string, declaration []byte) string {
+	text := kind + "\n" + path
+	if len(declaration) > 0 {
+		inner := sha256.Sum256(declaration)
+		text += "\n" + hex.EncodeToString(inner[:])
+	}
+	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
 }
 
 // newInvalidSourceMessage builds the comment that explains one problem of a pull request's source. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
 func newInvalidSourceMessage(target commentTarget, s sourceProblem) (governance.OutboxMessage, error) {
-	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText)}
+	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText}
+	if len(s.declaration) <= commandtext.MaxDeclaration { // a choice that cannot be shown is left out: the comment then shows the pattern alone
+		p.Declaration = string(s.declaration)
+	}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("invalid-source comment: %w", err)
 	}
@@ -1012,7 +1024,7 @@ func newInvalidSourceMessage(target commentTarget, s sourceProblem) (governance.
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the invalid-source comment: %w", err)
 	}
-	key := fmt.Sprintf("%s:%d:%d:%s", invalidSourceKey, target.RepositoryID, target.Pull, invalidSourceDigest(s.kind, s.path))
+	key := fmt.Sprintf("%s:%d:%d:%s", invalidSourceKey, target.RepositoryID, target.Pull, invalidSourceDigest(s.kind, s.path, s.declaration))
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 

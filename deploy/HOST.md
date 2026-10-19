@@ -27,6 +27,10 @@ systemctl --user is-system-running
 
 The lines are short on purpose: long lines pasted into a Session Manager terminal can break. `is-system-running` must print `running` (or `degraded`); if the bus socket is missing, wait a few seconds and retry. Start every new session this way. Every block below runs as `suiteward` unless it says otherwise.
 
+## 2. (Removed in M1.10)
+
+This section removed the S1 spike from the host. That is done, so it was dropped; the numbers of the later sections are kept so references to them stay valid.
+
 ## 3. Create the database secrets
 
 One chained command generates the password and creates both Podman secrets from it, so you never see or type it and the two cannot disagree: `suiteward-db-password` (read by PostgreSQL) and `suiteward-database-url` (the full URL, read by the service). A line ending in `&&` or `|` continues on the next one, and the chain stops at the first failure.

@@ -920,7 +920,8 @@ type revisionPayload struct {
 	ModifiedTotal int      `json:"modifiedTotal"`
 	RemovedTotal  int      `json:"removedTotal"`
 	Reduced       bool     `json:"reduced"`
-	// ReducedRules, ReducedPaths and ReducedPathsTotal detail a reduction, bounded like the lists above; only with Reduced.
+	// ReducedRules, ReducedPaths and ReducedPathsTotal detail a reduction, bounded like the lists above; only with Reduced. ReducedOmitted says that the detail was
+	// left out because the payload would not fit the outbox: the total stays, the lists are empty.
 	ReducedRules      []string `json:"reducedRules,omitempty"`
 	ReducedPaths      []string `json:"reducedPaths,omitempty"`
 	ReducedPathsTotal int      `json:"reducedPathsTotal,omitempty"`
@@ -942,12 +943,15 @@ func (p revisionPayload) revision() (commandtext.Revision, error) {
 	if p.validate() != nil || !validReference || !validCanonical || tier == 0 || min(p.AddedTotal, p.ModifiedTotal, p.RemovedTotal, p.ReducedPathsTotal) < 0 {
 		return commandtext.Revision{}, errors.New("the reference, the base version, a total or the tier is invalid")
 	}
-	if !p.Reduced && (len(p.ReducedRules) > 0 || len(p.ReducedPaths) > 0 || p.ReducedPathsTotal != 0) {
+	if !p.Reduced && (len(p.ReducedRules) > 0 || len(p.ReducedPaths) > 0 || p.ReducedPathsTotal != 0 || p.ReducedOmitted) {
 		return commandtext.Revision{}, errors.New("reduction detail on a revision that does not reduce the scope")
+	}
+	if p.ReducedOmitted && (len(p.ReducedRules) > 0 || len(p.ReducedPaths) > 0) {
+		return commandtext.Revision{}, errors.New("reduction detail that is also omitted")
 	}
 	return commandtext.Revision{Proposal: proposal, Revision: revision, Previous: p.Previous, Canonical: canonical, Added: p.Added, Modified: p.Modified, Removed: p.Removed,
 		AddedTotal: p.AddedTotal, ModifiedTotal: p.ModifiedTotal, RemovedTotal: p.RemovedTotal, Reduced: p.Reduced, Tier: tier,
-		ReducedRules: p.ReducedRules, ReducedPaths: p.ReducedPaths, ReducedPathsTotal: p.ReducedPathsTotal}, nil
+		ReducedRules: p.ReducedRules, ReducedPaths: p.ReducedPaths, ReducedPathsTotal: p.ReducedPathsTotal, ReducedOmitted: p.ReducedOmitted}, nil
 }
 
 // text renders the comment of the payload stored under key, without quoting the payload in an error.
@@ -977,7 +981,14 @@ func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, 
 		return governance.OutboxMessage{}, err
 	}
 	key := fmt.Sprintf("%s:%d:%s", revisionKey, target.RepositoryID, p.Reference)
-	payload, err := json.Marshal(p)
+	payload, err := marshalPayload(p)
+	if err != nil && p.Reduced {
+		// The revision must exist, or the owner cannot approve it, so what gives way is the detail of the reduction: evidence for the owner, not the
+		// change itself. The three lists of files hold at most 20 entries of 150 bytes, 54000 bytes when every byte is escaped, so without the
+		// detail the payload always fits and no further cut exists.
+		p.ReducedRules, p.ReducedPaths, p.ReducedOmitted = nil, nil, true
+		payload, err = marshalPayload(p)
+	}
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the revision message: %w", err)
 	}

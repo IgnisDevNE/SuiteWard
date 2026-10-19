@@ -737,7 +737,7 @@ func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
 	r := revision(commandtext.Isolated)
 	r.Reduced, r.ReducedOmitted, r.ReducedPathsTotal = true, true, 52
 	body := revisionText(t, r)
-	for _, want := range []string{"**This revision reduces the protected scope.**", "omitted", "52 paths"} {
+	for _, want := range []string{"**This revision reduces the protected scope.**", "omitted", "no longer covered: 52"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}

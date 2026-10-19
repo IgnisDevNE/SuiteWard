@@ -42,7 +42,7 @@ const (
 	carrierPrefix                              = "github-pr:"
 	maxSummaryRun                              = 20  // paths, include, runner and exclude rules the summary carries
 	maxSummaryText                             = 150 // bytes of one path, one rule or the branch in the payload
-	maxRunnerText                              = 64  // bytes of one runner rule: a fourth list must still fit the outbox limit when every byte of every entry is escaped
+	maxRunnerText                              = 48  // bytes of one runner rule: three lists of 150 bytes, the branch and 20 of these are 59.9 KB when every byte is escaped, under maxOutboxPayload
 )
 
 // commentTarget is what every github_comment payload carries: the repository
@@ -170,7 +170,7 @@ func newSummaryMessage(target commentTarget, inputs bootstrapSummaryInputs) (gov
 	inputs.IncludeTotal, inputs.RunnerTotal, inputs.ExcludeTotal = len(inputs.Include), len(inputs.Runner), len(inputs.Exclude) // what the owner is told is left out
 	inputs.Branch = cutBytes(inputs.Branch, maxSummaryText)
 	inputs.Paths, inputs.Include, inputs.Runner, inputs.Exclude = boundedText(inputs.Paths), boundedText(inputs.Include), boundedTextTo(inputs.Runner, maxRunnerText), boundedText(inputs.Exclude)
-	payload, err := json.Marshal(bootstrapSummaryPayload{commentTarget: target, Summary: inputs})
+	payload, err := marshalPayload(bootstrapSummaryPayload{commentTarget: target, Summary: inputs})
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the bootstrap summary: %w", err)
 	}

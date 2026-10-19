@@ -480,7 +480,7 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 			j.logger.InfoContext(ctx, "github checks invalid-source comment skipped: the problem cannot be named", "repo", p.Repo, "pull", pull.Number)
 		}
 		if source.kind == sourceLink {
-			if source.declaration, source.noDeclaration, err = j.acceptingDeclaration(ctx, tree, source.path); err != nil {
+			if source.declaration, source.noDeclaration, err = j.acceptingDeclaration(ctx, p.Repo, tree, source.path); err != nil {
 				return checks.Result{}, "", false, sourceProblem{}, err
 			}
 		}
@@ -523,34 +523,34 @@ func sourceProblemOf(err error) (sourceProblem, bool) {
 // nil when the head has none (then noFile is true), when the path has a character that exclude reads as a pattern (the pattern would name more than the link),
 // or when the file cannot be read or rewritten: the comment is advice, so it then shows the pattern alone and the check is the same.
 // A cancelled or timed-out read is the error instead, so the job retries rather than posting the comment without it.
-func (j *checksJob) acceptingDeclaration(ctx context.Context, tree inventory.Tree, link string) (declaration []byte, noFile bool, err error) {
+func (j *checksJob) acceptingDeclaration(ctx context.Context, repo string, tree inventory.Tree, link string) (declaration []byte, noFile bool, err error) {
 	if strings.ContainsAny(link, `*?[\`) {
 		return nil, false, nil
 	}
 	entries, err := tree.Entries(ctx)
 	if err != nil {
-		return nil, false, j.declarationReadFailed(ctx, "list the head's files", err)
+		return nil, false, j.declarationReadFailed(ctx, repo, "list the head's files", err)
 	}
 	if !hasDeclaration(entries) {
 		return nil, true, nil
 	}
 	raw, err := tree.Read(ctx, scope.DeclarationPath)
 	if err != nil {
-		return nil, false, j.declarationReadFailed(ctx, "read the head's declaration", err)
+		return nil, false, j.declarationReadFailed(ctx, repo, "read the head's declaration", err)
 	}
 	if declaration, err = scope.AddExcludes(raw, []string{"/" + link}); err != nil {
-		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the exclude cannot be added", "reason", err.Error())
+		j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: the exclude cannot be added", "repo", repo) // its text may quote the head's file
 		return nil, false, nil
 	}
 	return declaration, false, nil
 }
 
 // declarationReadFailed is the error of a read that was cancelled or timed out, and nil, after a log line, for any other failure.
-func (j *checksJob) declarationReadFailed(ctx context.Context, what string, err error) error {
+func (j *checksJob) declarationReadFailed(ctx context.Context, repo, what string, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%s: %w", what, err)
 	}
-	j.logger.WarnContext(ctx, "github checks invalid-source declaration skipped: "+what+" failed", "reason", err.Error())
+	logReadFailure(ctx, j.logger, "github checks invalid-source declaration skipped: "+what+" failed", repo, err)
 	return nil
 }
 

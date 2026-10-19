@@ -31,7 +31,7 @@ func TestChecksLogNothingTheDeclarationReadOrTheHeadsFileSaid(t *testing.T) {
 		j := &checksJob{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
 		tree := &bootTree{files: map[string]string{".suiteward.yml": "version: 1\n" + bootSecret + ": 1\n"}}
 
-		declaration, noFile, err := j.acceptingDeclaration(t.Context(), tree, "spec_link")
+		declaration, noFile, err := j.acceptingDeclaration(t.Context(), bootRepo, tree, "spec_link")
 
 		if declaration != nil || noFile || err != nil {
 			t.Fatalf("declaration %q, no file %v, error %v, want the pattern alone", declaration, noFile, err)

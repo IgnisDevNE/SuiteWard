@@ -270,7 +270,7 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 | in_progress, `assessment-pending` | SuiteWard is still reading the pull request. Wait a few minutes. |
 | failure, `invalid-source` | `.suiteward.yml` is invalid, or a symbolic link that the scope reaches points at a directory, outside the repository or nowhere, or the scope covers the link itself (section 8). Fix it. A submodule never causes this: its contents are not protected. |
 | failure, `integrity-failed` | A canonical artifact no longer matches its integrity record. SuiteWard fails the check on every pull request of that repository and does not promote; it does not block merges by itself — your branch protection does that, if you require the check. Restore the artifact from a trusted copy or a backup, never edit the database, and restart the service: it re-verifies at once. On the isolated host, use the restart command of step 11.3. On the co-located PC, run the `./deploy/local.ps1` command of step 5.3 again, with the same `-Image` and the three GitHub parameters. |
-| failure, `owner-command-rejected` | Your last `approve` or `revoke` was rejected. Post a valid command, or push a new head. |
+| failure, `owner-command-rejected` | Your last command had a wrong or reused confirmation code. Post it again with a current code from your authenticator, or push a new head. Any other wrong command only gets a reply and changes nothing. |
 
 A success means that the protected files match what the owner approved, except `bootstrap-skipped`, where nothing was assessed. It never means that your tests ran or passed. Your own test check decides that.
 

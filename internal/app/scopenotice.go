@@ -305,7 +305,8 @@ type headScope struct {
 	Mixed []string
 	// Submodules are the submodules of the head (at most 20) that the patterns Suggest builds from the head reach: their contents are outside the scope.
 	Submodules []string
-	base       []byte // the base declaration, which a suggested declaration starts from: never the head's file after the first contract
+	base       []byte      // the base declaration, which a suggested declaration starts from: never the head's file after the first contract
+	governing  scope.Scope // the scope that base declares
 }
 
 // discoverHead finds the uncovered test-like paths of tree, the head of a pull request, under the canonical of project.
@@ -350,7 +351,7 @@ func discoverUnder(ctx context.Context, tree inventory.Tree, raw []byte, governi
 		return headScope{}, fmt.Errorf("find the uncovered paths: %w", err)
 	}
 	suggested := inventory.Suggest(entries)
-	return headScope{entries: entries, Paths: paths, Mixed: suggested.Mixed, Submodules: suggested.Submodules, base: raw}, nil
+	return headScope{entries: entries, Paths: paths, Mixed: suggested.Mixed, Submodules: suggested.Submodules, base: raw, governing: governing}, nil
 }
 
 // withoutCovered returns the paths that s does not cover, in order.
@@ -371,16 +372,25 @@ func withoutCovered(paths []string, s scope.Scope) ([]string, error) {
 // declaration returns the base declaration with the new patterns for paths added, and the suggestion those patterns
 // come from. After the first contract the base is the canonical's, never the head's file.
 func (h headScope) declaration(paths []string) (inventory.Suggestion, []byte, error) {
-	return h.declarationWith(pathsSuggestion(paths), nil)
+	suggestion, err := h.pathsSuggestion(paths)
+	if err != nil {
+		return inventory.Suggestion{}, nil, err
+	}
+	return h.declarationWith(suggestion, nil)
 }
 
-// pathsSuggestion is the suggestion for the files at paths.
-func pathsSuggestion(paths []string) inventory.Suggestion {
+// pathsSuggestion is the suggestion for the files at paths, without the runner patterns the base lists or covers: a Python test file brings the
+// pytest family, which the base may hold already.
+func (h headScope) pathsSuggestion(paths []string) (inventory.Suggestion, error) {
 	entries := make([]inventory.Entry, len(paths))
 	for i, path := range paths {
 		entries[i] = inventory.Entry{Path: path, Kind: inventory.File}
 	}
-	return inventory.Suggest(entries)
+	suggestion, err := inventory.SuggestAgainst(entries, h.governing)
+	if err != nil {
+		return inventory.Suggestion{}, fmt.Errorf("suggest the patterns for the paths: %w", err)
+	}
+	return suggestion, nil
 }
 
 // declarationWith returns the base declaration with the patterns of suggestion and the runner patterns extra added, and the suggestion

@@ -415,3 +415,25 @@ func TestChecksLeaveCutOutOfAScopeNoticeThatWasNotCut(t *testing.T) {
 		t.Fatalf("payload %v carries cut", payload)
 	}
 }
+
+// The runner names the canonical lists take no room from the limit of 20: 16 test files bring 16 include patterns and the 5 pytest names, 21 in all.
+func TestChecksDoNotSayCutForRunnerNamesTheCanonicalAlreadyLists(t *testing.T) {
+	canonical := "version: 1\ninclude: [/tests/**]\nrunner: [.pytest.ini, .pytest.toml, pytest.ini, pytest.toml, conftest.py]\n"
+	files := []string{"a_test.go", "a.test.js", "a.spec.js", "a.cy.js", "a_spec.rb", "a_test.rb", "a_test.exs", "a_test.dart", "ATest.java", "ATests.java", "ATest.kt", "ATests.cs", "ATest.php", "test_a.py", "a_test.py", "tests.py"}
+	base := withDeclaration(bootFiles("v1"), canonical)
+	w := newCJWorldOf(t, base)
+
+	w.scopePull(cjHead2, withFiles(base, files...), base)
+
+	messages := w.scopeMessages("scope-notice:")
+	if len(messages) != 1 {
+		t.Fatalf("notices %v, want one\nlogs: %s", w.scopeKeys("scope-notice:"), w.logs)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(messages[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, cut := payload["cut"]; cut {
+		t.Fatalf("payload %v, want no cut: the 16 missing patterns fit the limit", payload)
+	}
+}

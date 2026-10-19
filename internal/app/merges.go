@@ -253,15 +253,35 @@ func (j *mergesJob) decide(ctx context.Context, run mergeRun) (problem string, e
 
 // decideMerge decides one merge. stop is true when it cannot be decided yet, with the problem that says why.
 func (j *mergesJob) decideMerge(ctx context.Context, run mergeRun, m githubsync.MergedPull, sharesCommit bool) (problem string, stop bool, err error) {
-	number, resolution := m.PullState.Number, m.Resolution
+	number := m.PullState.Number
 	carrier := carrierID(run.p.RepositoryID, number)
 	if _, recorded, err := governance.MergeOutcomeOf(ctx, j.suites, run.project, defaultSuite, carrier); err != nil {
 		return "", false, fmt.Errorf("read the merge outcome of pull %d: %w", number, err)
 	} else if recorded { // an earlier run decided it and could not mark it
 		return "", false, j.mark(ctx, run, number)
 	}
+	request, problem, stop, err := j.mergeRequest(ctx, run, m, sharesCommit, carrier)
+	if stop || err != nil {
+		return problem, stop, err
+	}
+	result, problem, stop, err := j.promoteMerge(ctx, run, request, number)
+	if stop || err != nil {
+		return problem, stop, err
+	}
+	j.logger.InfoContext(ctx, "github merge decided", "repo", run.p.Repo, "pull", number, "kind", string(result.Kind), "reason", string(result.Reason), "duplicate", result.Duplicate)
+	j.promoted = j.promoted || result.Kind == governance.MergePromoted || result.Kind == governance.MergeCorrected // a correction records a new canonical version too
+	if result.Reason == governance.MergeReasonAssessmentConflict {
+		problem = problemAssessmentConflict
+	}
+	return problem, false, j.mark(ctx, run, number)
+}
+
+// mergeRequest is the request that decides a merge: with its refusal when the merge cannot be integrated, or with the tree of its merge commit. stop is true
+// when the tree cannot be read yet.
+func (j *mergesJob) mergeRequest(ctx context.Context, run mergeRun, m githubsync.MergedPull, sharesCommit bool, carrier contract.ApprovalCarrierID) (request governance.MergeRequest, problem string, stop bool, err error) {
+	number, resolution := m.PullState.Number, m.Resolution
 	target := commentTarget{RepositoryID: run.p.RepositoryID, Repo: run.p.Repo, Pull: number}
-	request := governance.MergeRequest{Project: run.project, Suite: defaultSuite, Carrier: carrier, Source: contract.SourceRevision(resolution.MergeCommitSHA),
+	request = governance.MergeRequest{Project: run.project, Suite: defaultSuite, Carrier: carrier, Source: contract.SourceRevision(resolution.MergeCommitSHA),
 		Target: contract.IntegrationTargetID(targetPrefix + resolution.BaseRef), ObservedAt: resolution.NotOpenSince, RecordedAt: run.at,
 		Message: func(o governance.MergeOutcome) (governance.OutboxMessage, bool, error) {
 			return newMergeMessage(target, o, run.tier)
@@ -282,44 +302,43 @@ func (j *mergesJob) decideMerge(ctx context.Context, run mergeRun, m githubsync.
 		case err == nil:
 			request.Tree = tree
 		case ctx.Err() != nil:
-			return "", false, ctx.Err()
+			return request, "", false, ctx.Err()
 		case unreadableYet(err):
 			if run.at.Before(resolution.NotOpenSince.Add(mergeBound)) {
-				return problemWaiting, true, nil
+				return request, problemWaiting, true, nil
 			}
 			request.Refusal = governance.MergeReasonIntegrationUnreadable
 		case errors.Is(err, errGitHubRead):
 			problem, cancelled := j.readFailed(ctx, "github merges tree read failed", run.p.Repo, err)
-			return problem, true, cancelled
+			return request, problem, true, cancelled
 		case errors.Is(err, inventory.ErrInvalidTree): // a fact about the commit
 			request.Tree = invalidTree{err: err}
 		default:
-			return "", false, &opaque{what: fmt.Sprintf("read the tree of pull %d", number), cause: err}
+			return request, "", false, &opaque{what: fmt.Sprintf("read the tree of pull %d", number), cause: err}
 		}
 	}
-	result, err := governance.PromoteMerge(ctx, j.suites, j.content, request)
-	if blobUnreadableYet(err) && !run.at.Before(resolution.NotOpenSince.Add(mergeBound)) { // the bound of the tree applies to its blobs
+	return request, "", false, nil
+}
+
+// promoteMerge decides the merge through governance. stop is true when a blob of the tree cannot be read yet.
+func (j *mergesJob) promoteMerge(ctx context.Context, run mergeRun, request governance.MergeRequest, number int) (result governance.MergeResult, problem string, stop bool, err error) {
+	result, err = governance.PromoteMerge(ctx, j.suites, j.content, request)
+	if blobUnreadableYet(err) && !run.at.Before(request.ObservedAt.Add(mergeBound)) { // the bound of the tree applies to its blobs
 		request.Refusal, request.Tree = governance.MergeReasonIntegrationUnreadable, nil
 		result, err = governance.PromoteMerge(ctx, j.suites, j.content, request)
 	}
 	switch {
 	case err == nil:
+		return result, "", false, nil
 	case ctx.Err() != nil:
-		return "", false, ctx.Err()
+		return result, "", false, ctx.Err()
 	case blobUnreadableYet(err): // the bound is not reached
-		return problemWaiting, true, nil
+		return result, problemWaiting, true, nil
 	case errors.Is(err, errGitHubRead): // a blob of the tree: the commit is not known to be invalid, so nothing is decided
 		problem, cancelled := j.readFailed(ctx, "github merges blob read failed", run.p.Repo, err)
-		return problem, true, cancelled
-	default:
-		return "", false, &opaque{what: fmt.Sprintf("decide the merge of pull %d", number), cause: err}
+		return result, problem, true, cancelled
 	}
-	j.logger.InfoContext(ctx, "github merge decided", "repo", run.p.Repo, "pull", number, "kind", string(result.Kind), "reason", string(result.Reason), "duplicate", result.Duplicate)
-	j.promoted = j.promoted || result.Kind == governance.MergePromoted || result.Kind == governance.MergeCorrected // a correction records a new canonical version too
-	if result.Reason == governance.MergeReasonAssessmentConflict {
-		problem = problemAssessmentConflict
-	}
-	return problem, false, j.mark(ctx, run, number)
+	return result, "", false, &opaque{what: fmt.Sprintf("decide the merge of pull %d", number), cause: err}
 }
 
 // mark records that the merge has its outcome, which only saves the next run a read.

@@ -1,6 +1,6 @@
 # Build context is the repository root. Build: podman build -f deploy/Containerfile --build-arg VERSION=sha-<commit> -t localhost/suiteward:local .
 # GO_VERSION must equal .go-version; CI passes it with --build-arg, the default is for local builds.
-ARG GO_VERSION=1.27.2
+ARG GO_VERSION=1.27.3
 
 # The compiler runs natively and cross-compiles, so the arm64 build needs no emulated Go toolchain.
 FROM --platform=$BUILDPLATFORM docker.io/library/golang:${GO_VERSION}-alpine AS build

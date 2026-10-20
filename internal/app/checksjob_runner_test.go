@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -61,8 +59,12 @@ func runnerDeclarations(t *testing.T, base string, paths ...string) (protect, ig
 	return string(p), string(i)
 }
 
-func runnerDigest(head string, paths ...string) string {
-	return wantReviewDigest(head, paths...)
+// runnerDigest is the digest of a runner-uncovered key: the paths, the head's file, and the declarations the comment shows, which are the canonical's
+// (cjDecl) with the runner patterns added and with the paths excluded.
+func runnerDigest(t *testing.T, head string, paths ...string) string {
+	t.Helper()
+	protect, ignore := runnerDeclarations(t, cjDecl, paths...)
+	return contentDigest([]string{scopeDigest(paths...), head, protect, ignore})
 }
 
 func (w *cjJobWorld) runnerPayload(index int) map[string]any {
@@ -97,7 +99,7 @@ func TestChecksBlockANewRunnerFileOutsideTheScopeAndWriteOneCommentWithBothDecla
 	if payload["state"] != "in_progress" || payload["reason"] != "runner-uncovered" || payload["headSha"] != cjHead2 {
 		t.Fatalf("check payload %v", payload)
 	}
-	w.wantRunnerKeys("runner-uncovered:1001:5:" + runnerDigest(bootFiles("v1")[".suiteward.yml"], cjJest))
+	w.wantRunnerKeys("runner-uncovered:1001:5:" + runnerDigest(t, bootFiles("v1")[".suiteward.yml"], cjJest))
 	protect, ignore := runnerDeclarations(t, cjDecl, cjJest)
 	want := map[string]any{"repositoryId": float64(bootRepoID), "repo": bootRepo, "pull": float64(5), "head": cjHead2, "branch": "feature",
 		"paths": []any{cjJest}, "pathsTotal": float64(1), "protect": protect, "ignore": ignore}
@@ -147,7 +149,7 @@ func TestChecksWriteANewRunnerCommentWhenTheHeadsDeclarationChanges(t *testing.T
 	w.mustCheck()
 
 	w.want(5, checks.InProgress, "runner-uncovered", 3)
-	w.wantRunnerKeys("runner-uncovered:1001:5:"+runnerDigest(bootFiles("v1")[".suiteward.yml"], cjJest), "runner-uncovered:1001:5:"+runnerDigest(reviewDecl, cjJest))
+	w.wantRunnerKeys("runner-uncovered:1001:5:"+runnerDigest(t, bootFiles("v1")[".suiteward.yml"], cjJest), "runner-uncovered:1001:5:"+runnerDigest(t, reviewDecl, cjJest))
 }
 
 func TestChecksKeepApprovalMissingFirstAndBlockOnlyAfterTheApprovalOfTheSameHead(t *testing.T) {
@@ -345,7 +347,7 @@ func TestChecksNeverKeepABlockWhenTheFilesCannotBeReadAfterARestart(t *testing.T
 	w.reader.filesErr = nil
 	w.mustCheck()
 	w.want(5, checks.InProgress, "runner-uncovered", 3)
-	w.wantRunnerKeys("runner-uncovered:1001:5:" + runnerDigest(bootFiles("v1")[".suiteward.yml"], cjJest)) // the comment of the first decision stands
+	w.wantRunnerKeys("runner-uncovered:1001:5:" + runnerDigest(t, bootFiles("v1")[".suiteward.yml"], cjJest)) // the comment of the first decision stands
 }
 
 func TestChecksDecideAgainAfterARestartWithoutAnotherComment(t *testing.T) {
@@ -418,27 +420,36 @@ func apply(t *testing.T, file string, s scopeSuggestion) string {
 	return strings.Join(lines, "\n")
 }
 
-// runnerReviewOf returns the suggestions of the review message with key, which must exist: the scope notice may write a review of its own.
-func (w *cjJobWorld) runnerReviewOf(key string) []scopeSuggestion {
+// runnerReviewOf returns the suggestions of the review of the choices, which must exist, and requires its key to digest them with the head's file:
+// the scope notice may write a review of its own, whose lists are include and runner.
+func (w *cjJobWorld) runnerReviewOf(head string) []scopeSuggestion {
 	w.t.Helper()
 	for _, m := range w.scopeMessages("scope-review:") {
-		if m.Key == key {
-			return decodeSuggestions(w.t, m.Payload)
+		suggestions := decodeSuggestions(w.t, m.Payload)
+		if suggestions[0].List != "protect" && suggestions[0].List != "ignore" {
+			continue
 		}
+		if want := runnerReviewKey(head, suggestions); m.Key != want {
+			w.t.Fatalf("review key %s, want %s", m.Key, want)
+		}
+		return suggestions
 	}
-	w.t.Fatalf("review messages %v, want %s\nlogs: %s", w.scopeKeys("scope-review:"), key, w.logs)
+	w.t.Fatalf("review messages %v, want one of the choices\nlogs: %s", w.scopeKeys("scope-review:"), w.logs)
 	return nil
 }
 
-// runnerReviewKey is the key of the review of the choices for paths under the head's file.
-func runnerReviewKey(head string, paths ...string) string {
-	sum := sha256.Sum256([]byte("runner-uncovered:" + scopeDigest(paths...) + "\n" + head))
-	return "scope-review:1001:5:" + hex.EncodeToString(sum[:])
+// runnerReviewKey is the key of the review of the choices: the digest of the head's file and the suggestions, as for every review.
+func runnerReviewKey(head string, suggestions []scopeSuggestion) string {
+	digest, err := suggestionsDigest([]byte(head), suggestions)
+	if err != nil {
+		panic(err)
+	}
+	return "scope-review:1001:5:" + digest
 }
 
-func (w *cjJobWorld) wantRunnerReview(head string, paths []string, suggestions ...scopeSuggestion) []scopeSuggestion {
+func (w *cjJobWorld) wantRunnerReview(head string, suggestions ...scopeSuggestion) []scopeSuggestion {
 	w.t.Helper()
-	got := w.runnerReviewOf(runnerReviewKey(head, paths...))
+	got := w.runnerReviewOf(head)
 	if !reflect.DeepEqual(got, suggestions) {
 		w.t.Fatalf("suggestions %+v, want %+v", got, suggestions)
 	}
@@ -462,7 +473,7 @@ func TestChecksSuggestBothChoicesThatCreateTheirListAfterTheLastItemInTheDiff(t 
 
 	w.approvedRunnerPull(reviewDecl, "@@ -1,3 +1,3 @@")
 
-	got := w.wantRunnerReview(reviewDecl, []string{cjJest},
+	got := w.wantRunnerReview(reviewDecl,
 		scopeSuggestion{List: "protect", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"jest.config.*"}, NewList: "runner"},
 		scopeSuggestion{List: "ignore", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"/" + cjJest}, NewList: "exclude"})
 	protect, ignore := runnerDeclarations(t, cjDecl, cjJest)
@@ -497,7 +508,7 @@ func TestChecksSuggestBothChoicesOnTheItemsOfTheListsThatExist(t *testing.T) {
 
 	w.approvedRunnerPull(declaration, "@@ -1,7 +1,7 @@")
 
-	got := w.wantRunnerReview(declaration, []string{cjJest},
+	got := w.wantRunnerReview(declaration,
 		scopeSuggestion{List: "protect", Line: 5, Anchor: "  - pytest.toml", Patterns: []string{"jest.config.*"}, Quoting: commandtext.QuotingPlain},
 		scopeSuggestion{List: "ignore", Line: 7, Anchor: "  - gen/", Patterns: []string{"/" + cjJest}, Quoting: commandtext.QuotingPlain})
 	if applied := apply(t, declaration, got[0]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\n  - jest.config.*\nexclude:\n  - gen/\n" {
@@ -533,7 +544,7 @@ func TestChecksAnchorACreatedListOnlyOnTheLastItemOfALastLine(t *testing.T) {
 
 			w.approvedRunnerPull(tc.declaration, tc.hunk)
 
-			got := w.runnerReviewOf(runnerReviewKey(tc.declaration, cjJest))
+			got := w.runnerReviewOf(tc.declaration)
 			if tc.line == 0 { // an exclude list exists but its item is outside the diff: only protect can be created, after the include item
 				if len(got) != 1 || got[0].List != "protect" || got[0].NewList != "runner" || got[0].Line != 3 {
 					t.Fatalf("suggestions %+v, want only protect, created after the include item on line 3", got)
@@ -695,7 +706,7 @@ func TestChecksLogTheChoiceThatCannotBeSuggested(t *testing.T) {
 	w.mustCheck()
 
 	w.want(5, checks.InProgress, "runner-uncovered", 2)
-	got := w.runnerReviewOf(runnerReviewKey(reviewDecl, quoted))
+	got := w.runnerReviewOf(reviewDecl)
 	if len(got) != 1 || got[0].List != "protect" {
 		t.Fatalf("suggestions %+v, want only protect", got)
 	}

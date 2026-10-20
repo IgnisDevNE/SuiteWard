@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -35,12 +33,6 @@ func reviewFiles(declaration string, extra ...string) map[string]string {
 // changed is the PullFiles entry of .suiteward.yml whose diff has one hunk of the given header.
 func changed(header string) []github.PullFile {
 	return []github.PullFile{{Path: ".suiteward.yml", Status: "modified", Patch: header + "\n context\n-old\n+new"}}
-}
-
-// wantReviewDigest is the digest of a review key: the SHA-256 hex digest of the set digest, a newline and the head's file.
-func wantReviewDigest(declaration string, paths ...string) string {
-	sum := sha256.Sum256([]byte(scopeDigest(paths...) + "\n" + declaration))
-	return hex.EncodeToString(sum[:])
 }
 
 // wantSuggestionsDigest is the digest of a review key: the SHA-256 hex digest of the head's file, a newline and the suggestions as JSON.
@@ -114,7 +106,7 @@ func TestChecksWriteAScopeReviewOnTheIncludeLineInsideTheDiff(t *testing.T) {
 
 	w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 
-	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{"scope-notice:1001:5:" + scopeDigest(cjUtilTst)}) {
+	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)}) {
 		t.Fatalf("notices %v, want the one of the added path", keys)
 	}
 	w.wantReview(reviewDecl, suggestion("include", 3, "  - /tests/**", "*_test.go"))
@@ -168,7 +160,7 @@ func TestChecksWriteAScopeNoticeButNoReviewWhenTheDiffGivesNoLineToSuggestOn(t *
 
 			w.scopePull(reviewFiles(tc.decl, cjUtilTst), bootFiles("v1"))
 
-			if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{"scope-notice:1001:5:" + scopeDigest(cjUtilTst)}) {
+			if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)}) {
 				t.Fatalf("notices %v, want the one of the added path\nlogs: %s", keys, w.logs)
 			}
 			if keys := w.scopeKeys("scope-review:"); len(keys) != 0 {

@@ -21,6 +21,12 @@ var (
 	canonicalPull   = githubsync.PullState{Number: 5, HeadSHA: cjHead2, HeadRef: "feature", BaseRef: "main", BaseSHA: cjBase}
 )
 
+// noticeKey is the key of the notice of paths whose comment shows the canonical's declaration, cjDecl, with these patterns added.
+func noticeKey(t *testing.T, include, runner []string, paths ...string) string {
+	t.Helper()
+	return "scope-notice:1001:5:" + contentDigest([]string{scopeDigest(paths...), addPatterns(t, cjDecl, include, runner), "0"})
+}
+
 // noticeKeyUnder is the key of the scope notice for a head that adds one test path, under a canonical that declares declaration.
 func noticeKeyUnder(t *testing.T, declaration string) string {
 	t.Helper()

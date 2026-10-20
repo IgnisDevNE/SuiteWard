@@ -32,13 +32,13 @@ import (
 
 const (
 	scopeNoticeKey = "scope-notice" // scope-notice:<repository id>:<pull>:<set digest>
-	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<review digest>: the set and the head's file in one digest
+	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<review digest>: the head's file and the suggestions in one digest
 )
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// scopeNoticePayload is the payload of scope-notice:<repository id>:<pull>:<set digest>. The key's digest is that of the
-// whole set of added paths, which the bounded list below cannot reproduce, so the publisher checks only its shape.
+// scopeNoticePayload is the payload of scope-notice:<repository id>:<pull>:<notice digest>. The key's digest is that of the
+// whole set of added paths and of the declaration shown, or else the patterns, which the bounded list below cannot reproduce, so the publisher checks only its shape.
 type scopeNoticePayload struct {
 	commentTarget
 	Head        string   `json:"head"`
@@ -108,7 +108,8 @@ func newScopeNoticeMessage(target commentTarget, head, branch string, paths []st
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the scope notice: %w", err)
 	}
-	key := fmt.Sprintf("%s:%d:%d:%s", scopeNoticeKey, target.RepositoryID, target.Pull, setDigest(paths))
+	shown := slices.Concat([]string{setDigest(paths), p.Declaration, strconv.Itoa(len(p.AddInclude))}, p.AddInclude, p.AddRunner) // the paths, and the declaration or else the patterns
+	key := fmt.Sprintf("%s:%d:%d:%s", scopeNoticeKey, target.RepositoryID, target.Pull, contentDigest(shown))
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
@@ -212,11 +213,14 @@ func (p scopeReviewPayload) validate() error {
 	return nil
 }
 
-// reviewDigest is the SHA-256 hex digest of the set digest, a newline and the head's .suiteward.yml. A review is anchored to one
-// version of that file: a later suggest after the file changed is a fresh review, a repeat on the same file is not.
-func reviewDigest(set string, file []byte) string {
-	sum := sha256.Sum256(append([]byte(set+"\n"), file...))
-	return hex.EncodeToString(sum[:])
+// contentDigest is the SHA-256 hex digest of the parts, each with its length in front so that no two lists of parts collide. A comment's key digests what
+// the comment shows, and never the Suite's version: a promotion would otherwise post a new comment on every open pull request.
+func contentDigest(parts []string) string {
+	sum := sha256.New()
+	for _, part := range parts {
+		fmt.Fprintf(sum, "%d:%s", len(part), part)
+	}
+	return hex.EncodeToString(sum.Sum(nil))
 }
 
 // suggestionsDigest is the SHA-256 hex digest of the head's .suiteward.yml, a newline and the suggestions as JSON: what a review posts, and nothing
@@ -427,7 +431,7 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 	if j.scoped[key] == at {
 		return nil
 	}
-	err := j.decideScope(ctx, p, pull)
+	err := j.decideScope(ctx, p, pull, canonical)
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()
@@ -450,7 +454,7 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 // decideScope reads the head tree, then the base tree only when the head has uncovered paths that no earlier head of the pull
 // request had, and writes the notice. The set of uncovered paths of the head, which is the added set when the pull request
 // adds them all, is remembered once decided: a push that leaves it as it was reads nothing more.
-func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState) error {
+func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, canonical contract.SuiteVersionID) error {
 	read, err := j.reader.Tree(ctx, p.Repo, pull.HeadSHA)
 	if err != nil {
 		return githubRead(err)
@@ -460,7 +464,7 @@ func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil || len(found.Paths) == 0 {
 		return err
 	}
-	decided := fmt.Sprintf("scope-set:%d:%d:%s", p.RepositoryID, pull.Number, setDigest(found.Paths))
+	decided := fmt.Sprintf("scope-set:%d:%d:%s:%s", p.RepositoryID, pull.Number, canonical, setDigest(found.Paths)) // a new canonical may show other text
 	if j.announced[decided] {
 		return nil
 	}

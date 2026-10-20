@@ -297,7 +297,7 @@ Keep these points in mind:
 - The suggested file starts from the approved `.suiteward.yml` and only adds patterns. It may be re-indented and lose blank lines.
 - Comments in `.suiteward.yml` are part of the approved bytes. A pull request that edits only a comment is a protected change and needs your approval. Compare the suggested file with your own before you commit it, because it may have lost a comment.
 - A pull request whose own `.suiteward.yml` is valid and already covers the files gets no notice. That widening still needs your approval.
-- A declaration larger than 8192 bytes cannot be put in a comment: SuiteWard then posts no notice, and logs that it skipped it.
+- A declaration that cannot be shown, because it is larger than 8192 bytes or holds a character you cannot see (a zero-width or bidirectional control character, for example), is never put in a comment. The comment then lists the new patterns alone, as lines to copy under the `include` and `runner` lists, with the same link to the editor. This holds for the notice, for the reply of `/suiteward suggest` and for the runner comment.
 
 **A suggestion on the diff.** SuiteWard also posts a review comment, together with the notice, when all of these hold: the pull request changes `.suiteward.yml`, the file in its head is a valid declaration in block style, and the diff shows an item line of the `include:` list or the `runner:` list. The comment sits on that line, with the line and the new patterns as a suggestion. Use GitHub's "Commit suggestion" button to accept it. It leaves out the patterns that the file already lists. A list written as `include: [a, b]`, or a list with no item line in the diff, gets no suggestion: copy the block from the notice instead.
 
@@ -310,7 +310,6 @@ Keep these points in mind:
   - `fork`: the pull request comes from a fork, and forks are not supported in this release.
   - `not-open`: the pull request is no longer open.
   - `invalid-source`: SuiteWard cannot read the head well enough. Its tree is invalid or truncated, the approved contract has no declaration, or the reply cannot be written (an unusable branch name, for example).
-  - `declaration-too-large`: the suggested declaration would be over 8192 bytes, which does not fit a comment. Add the missing patterns to `.suiteward.yml` yourself.
 
   If the approved contract fails its integrity check, the command gets no reply: SuiteWard retries it and then records it as failed.
 

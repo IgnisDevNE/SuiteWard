@@ -682,12 +682,6 @@ func (j *commandsJob) writeProposal(ctx context.Context, enrollment owner.State,
 // refuses): a fact about the source, so it is never retried.
 var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
 
-// tooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration), and says which base declaration was compared,
-// so a refusal links the editor of the right file.
-type tooLarge struct{ base string }
-
-func (e *tooLarge) Error() string { return "the suggested declaration is too large" }
-
 // The codes of the base of a suggest (ackPayload.Base): what the head was compared with.
 const (
 	basePull          = "pull"           // the head's own .suiteward.yml, before the first contract
@@ -711,8 +705,8 @@ func (e *invalidBase) Unwrap() error { return e.err }
 // first contract with no declaration anywhere it is the suggestion of a propose that finds none, in the words of a suggest. A scope review, when the pull
 // request's diff gives a line for it, is written before the acknowledgment: the ledger takes one message, and a recorded command is never retried. A GitHub or store
 // failure is an error of this candidate, like a propose. A source that cannot be answered from is recorded as suggest-refused with a fixed reason and
-// never retried: invalid-source (an invalid tree or declaration, a canonical without a declaration, a notice that cannot be rendered) or
-// declaration-too-large. Neither disposition is a command for the check.
+// never retried: invalid-source (an invalid tree or declaration, a canonical without a declaration, a notice that cannot be rendered). A declaration that cannot
+// be shown (hidden characters, or over the size of a notice) is no refusal: the reply lists the patterns alone. Neither disposition is a command for the check.
 func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
 	m, login := c.Comment, enrollment.Owner.Login
 	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
@@ -748,18 +742,7 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	}
 	ack, reviews, err := j.suggestion(ctx, target, c, login, view)
 	var invalid *invalidBase
-	var large *tooLarge
 	switch {
-	case errors.As(err, &large):
-		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
-		base, branch := "", view.pull.HeadRef // the base names the file only when it is the default branch's
-		if large.base == baseDefaultBranch {
-			base = baseDefaultBranch
-			if branch, err = editBranch(view, base); err != nil {
-				return &opaque{what: "read the default branch", cause: err}
-			}
-		}
-		return refuse(reasonDeclarationTooLarge, base, branch)
 	case errors.As(err, &invalid):
 		j.logger.InfoContext(ctx, "github suggest refused: the base declaration is not valid", "repo", c.Repo, "comment", m.CommentID, "base", invalid.base)
 		branch, err := editBranch(view, invalid.base)
@@ -850,9 +833,6 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 	suggested, declaration, err := found.declarationWith(fromPaths, unexplained)
 	if err != nil {
 		return governance.OutboxMessage{}, nil, err
-	}
-	if len(declaration) > commandtext.MaxDeclaration {
-		return governance.OutboxMessage{}, nil, &tooLarge{base: base}
 	}
 	var defaultBranch string // the reply for the default branch links to that branch's editor
 	if base == baseDefaultBranch {

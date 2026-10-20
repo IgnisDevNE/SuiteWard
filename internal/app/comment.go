@@ -120,7 +120,7 @@ const (
 	reasonEmptyInventory      = "empty-inventory"
 	refusalInvalidSource      = "invalid-source" // named like the bootstrap job's status code
 	reasonCarrier             = "carrier"
-	reasonDeclarationTooLarge = "declaration-too-large" // suggest-refused: the suggested declaration is over the size of a notice
+	reasonDeclarationTooLarge = "declaration-too-large" // suggest-refused, no longer written: a queued acknowledgment of v0.1.1 holds it and must still render
 	reasonDeclarationMissing  = "declaration-missing"   // rendered by commandtext.SuggestDeclaration, which is not an Ack
 	reasonScopeNotice         = "scope-notice"          // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
 	reasonNothingUncovered    = "nothing-uncovered"     // a suggested reply that every test-like path of the head is in the scope
@@ -334,9 +334,13 @@ func declarationMissingPayload(target commentTarget, comment int64, ownerLogin, 
 // the notice cannot be rendered.
 // defaultBranch, for the base default-branch, is the branch whose file the reply links to.
 func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch, base, defaultBranch string, paths []string, declaration []byte, suggested inventory.Suggestion, mixed, submodules []string) (governance.OutboxMessage, error) {
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
-		Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut,
-		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner), DefaultBranch: defaultBranch})
+	p := ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
+		Paths: boundedText(paths), PathsTotal: len(paths), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut,
+		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner), DefaultBranch: defaultBranch}
+	if quotable(declaration) { // one that cannot be shown is left out: the reply then lists the patterns alone
+		p.Declaration = string(declaration)
+	}
+	return newAck(p)
 }
 
 // newSuggestRefusedAck builds the refusal of a suggest. base, when not empty, says which file is not a valid declaration (invalid-source only).

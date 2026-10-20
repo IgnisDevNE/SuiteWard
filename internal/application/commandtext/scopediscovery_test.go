@@ -516,7 +516,7 @@ var suggestionBlock = regexp.MustCompile("(?s)```suggestion\n(.*)\n```\n$")
 
 func suggestionBody(t *testing.T, anchor, indent string, patterns []string) string {
 	t.Helper()
-	return render(t, func() string { return commandtext.ScopeSuggestionBody(anchor, indent, patterns) })
+	return render(t, func() string { return commandtext.ScopeSuggestionBody(anchor, indent, patterns, "") })
 }
 
 func TestScopeSuggestionBodyHoldsTheAnchorAndTheNewPatterns(t *testing.T) {
@@ -599,13 +599,13 @@ func TestScopeSuggestionBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			mustPanic(t, func() { commandtext.ScopeSuggestionBody(c.anchor, c.indent, c.patterns) })
-			if commandtext.ValidateScopeSuggestion(c.anchor, c.indent, c.patterns) == nil {
+			mustPanic(t, func() { commandtext.ScopeSuggestionBody(c.anchor, c.indent, c.patterns, "") })
+			if commandtext.ValidateScopeSuggestion(c.anchor, c.indent, c.patterns, "") == nil {
 				t.Error("ValidateScopeSuggestion accepts it")
 			}
 		})
 	}
-	if err := commandtext.ValidateScopeSuggestion(`  - "a"`, "  ", slices.Repeat([]string{strings.Repeat("a", 100)}, 20)); err != nil {
+	if err := commandtext.ValidateScopeSuggestion(`  - "a"`, "  ", slices.Repeat([]string{strings.Repeat("a", 100)}, 20), ""); err != nil {
 		t.Errorf("the largest suggestion is refused: %v", err)
 	}
 }

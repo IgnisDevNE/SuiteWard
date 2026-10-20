@@ -31,7 +31,8 @@ const (
 // the editor link. Paths holds at most 20 of the PathsTotal test-like paths that the current contract does not protect,
 // each already cut by the caller; a total below the list is taken as its length. Declaration is the full declaration to
 // commit, Mixed (at most 20) the mixed files found and Submodules (at most 20) the submodules whose contents the patterns
-// do not protect. Source is the id of the command comment that asked for the notice, zero when a job writes it unprompted.
+// do not protect. Source is the id of the command comment that asked for the notice, zero when a job writes it unprompted. Declaration
+// is empty when the full file cannot be shown (see MaxDeclaration): the comment then lists AddInclude and AddRunner, which it needs, as lines to copy.
 type ScopeNotice struct {
 	Source      int64
 	Repo        string
@@ -43,7 +44,7 @@ type ScopeNotice struct {
 	Submodules  []string
 	Cut         bool // the limit of 20 patterns cut the new patterns, so the declaration may lack some
 	// Base, with a Source, makes the notice the reply of /suiteward suggest: it names the base, lists AddInclude and AddRunner
-	// (the patterns the base lacks, at most 20 together) and ends with the next step. Without a base both lists stay empty. With a base
+	// (the patterns the base lacks, at most 20 together) and ends with the next step. Without a base both lists stay empty, unless there is no Declaration. With a base
 	// Paths may be empty: a runner name can be missing before any file of that name exists.
 	Base       ScopeBase
 	AddInclude []string
@@ -64,8 +65,11 @@ func ValidateScopeNotice(n ScopeNotice) error {
 	if err := validateNoticeLists(n); err != nil {
 		return err
 	}
-	if len(n.Declaration) == 0 || len(n.Declaration) > MaxDeclaration || !verbatim(n.Declaration) {
-		return fmt.Errorf("commandtext: a declaration of %d bytes is empty, over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Declaration), MaxDeclaration)
+	switch {
+	case len(n.Declaration) == 0 && len(n.AddInclude)+len(n.AddRunner) == 0:
+		return errors.New("commandtext: a notice with no declaration lists the patterns to add, and has none")
+	case len(n.Declaration) > MaxDeclaration || !verbatim(n.Declaration):
+		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Declaration), MaxDeclaration)
 	}
 	return validateNoticeBase(n)
 }
@@ -85,8 +89,8 @@ func validateNoticeBase(n ScopeNotice) error {
 		return fmt.Errorf("commandtext: base %d is unknown", n.Base)
 	case n.Base != 0 && n.Source == 0:
 		return errors.New("commandtext: a base states the reply to a command")
-	case n.Base == 0 && len(n.AddInclude)+len(n.AddRunner) > 0:
-		return errors.New("commandtext: new patterns are listed only with a base")
+	case n.Base == 0 && len(n.Declaration) > 0 && len(n.AddInclude)+len(n.AddRunner) > 0:
+		return errors.New("commandtext: new patterns are listed only with a base, or in place of the declaration")
 	case n.DefaultBranch != "" && (n.Base != BaseDefaultBranch || !gitBranch(n.DefaultBranch)):
 		return errors.New("commandtext: a default branch fits only the reply for the default branch, and must be a git branch name")
 	}
@@ -102,16 +106,16 @@ func validateNoticeBase(n ScopeNotice) error {
 // ValidateScopeNotice).
 func ScopeNoticeComment(n ScopeNotice) string {
 	must(ValidateScopeNotice(n))
-	declaration := withNewline(n.Declaration)
 	if n.Base != 0 {
-		return scopeSuggestReply(n, declaration)
+		return scopeSuggestReply(n)
 	}
 	parts := []string{
 		"**SuiteWard scope notice**",
 		listingAndMore("Test-like files in this pull request's head that the current contract does not protect", n.Paths, n.PathsTotal),
 		"These files are not protected by the current contract: SuiteWard assesses only the protected files, so a change to them needs no approval.",
-		"SuiteWard suggests this declaration, the current canonical `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n" + fenced(declaration),
 	}
+	parts = append(parts, missingLists(n)...)
+	parts = append(parts, suggestedDeclaration("the current canonical `.suiteward.yml`", "new", n.Declaration))
 	if n.Cut {
 		parts = append(parts, cutWarning)
 	}
@@ -122,7 +126,7 @@ func ScopeNoticeComment(n ScopeNotice) string {
 		parts = append(parts, submodulesWarning(n.Submodules))
 	}
 	parts = append(parts,
-		pasteStep(n.Repo, n.Branch),
+		pasteStep(n.Repo, n.Branch, pasteAction(len(n.Declaration) > 0, len(n.Declaration) == 0)),
 		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.",
 		"This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.",
 	)
@@ -140,10 +144,37 @@ func baseNames(base ScopeBase) (subject, file string) {
 	return "the current contract", "the current canonical `.suiteward.yml`"
 }
 
+// missingLists is the paragraphs that list the patterns that the base lacks, each list as lines to copy.
+func missingLists(n ScopeNotice) []string {
+	var parts []string
+	if len(n.AddInclude) > 0 {
+		parts = append(parts, "Patterns missing from the `include` list:\n\n"+fencedLines(n.AddInclude))
+	}
+	if len(n.AddRunner) > 0 {
+		parts = append(parts, "Patterns missing from the `runner` list:\n\n"+fencedLines(n.AddRunner),
+			"Runner names matter before a file of that name exists: a file with one of these names, added later, can change how the tests run.")
+	}
+	return parts
+}
+
+// suggestedDeclaration is the paragraph that offers declaration, file (named by file) with the patterns (called adjective) added, or, for no
+// declaration, offers the patterns alone: the lists above it are all it has to show.
+func suggestedDeclaration(file, adjective string, declaration []byte) string {
+	if len(declaration) == 0 {
+		return "SuiteWard suggests adding the " + adjective + " patterns to " + file + ". Review them and change them as needed."
+	}
+	return "SuiteWard suggests this declaration, " + file + " with the " + adjective + " patterns added. Review it and change it as needed:\n\n" + fenced(withNewline(declaration))
+}
+
 // scopeSuggestReply renders the notice as the reply of /suiteward suggest: it names the base the head was compared with, shows
-// the patterns that base lacks and the declaration with them, and ends with the next step. declaration ends with a newline.
-func scopeSuggestReply(n ScopeNotice, declaration string) string {
+// the patterns that base lacks and the declaration with them, if there is one, and ends with the next step.
+func scopeSuggestReply(n ScopeNotice) string {
 	subject, file := baseNames(n.Base)
+	has := len(n.Declaration) > 0
+	action, put := pasteAction(has, !has), "this declaration"
+	if !has {
+		put = "these patterns"
+	}
 	var parts []string
 	if len(n.Paths) == 0 {
 		parts = []string{"`/suiteward suggest`: compared with " + subject + ", no test-like file of the head of this pull request is uncovered, but some patterns are missing. Nothing changed."}
@@ -153,14 +184,8 @@ func scopeSuggestReply(n ScopeNotice, declaration string) string {
 			listingAndMore("Test-like files in this pull request's head that "+subject+" does not cover", n.Paths, n.PathsTotal),
 		}
 	}
-	if len(n.AddInclude) > 0 {
-		parts = append(parts, "Patterns missing from the `include` list:\n\n"+fencedLines(n.AddInclude))
-	}
-	if len(n.AddRunner) > 0 {
-		parts = append(parts, "Patterns missing from the `runner` list:\n\n"+fencedLines(n.AddRunner),
-			"Runner names matter before a file of that name exists: a file with one of these names, added later, can change how the tests run.")
-	}
-	parts = append(parts, "SuiteWard suggests this declaration, "+file+" with the missing patterns added. Review it and change it as needed:\n\n"+fenced(declaration))
+	parts = append(parts, missingLists(n)...)
+	parts = append(parts, suggestedDeclaration(file, "missing", n.Declaration))
 	if n.Cut {
 		parts = append(parts, cutWarning)
 	}
@@ -171,10 +196,10 @@ func scopeSuggestReply(n ScopeNotice, declaration string) string {
 		parts = append(parts, submodulesWarning(n.Submodules))
 	}
 	if n.Base != BaseDefaultBranch { // that file is neither on this pull request's branch nor in its diff: no link to edit it here, no review on it
-		parts = append(parts, pasteStep(n.Repo, n.Branch),
+		parts = append(parts, pasteStep(n.Repo, n.Branch, action),
 			"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts these lines as a review comment, and GitHub's **Commit suggestion** button applies them in one click.")
 	} else if n.DefaultBranch != "" {
-		parts = append(parts, "To change `.suiteward.yml` on the default branch, [open GitHub's editor for it]("+editLink(n.Repo, n.DefaultBranch)+") and paste the declaration. "+
+		parts = append(parts, "To change `.suiteward.yml` on the default branch, [open GitHub's editor for it]("+editLink(n.Repo, n.DefaultBranch)+") and "+action+". "+
 			"GitHub offers a new branch and a pull request when the default branch is protected.")
 	}
 	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
@@ -186,7 +211,7 @@ func scopeSuggestReply(n ScopeNotice, declaration string) string {
 			"Once the file is committed on this branch, comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	case BaseDefaultBranch:
 		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
-			"The first contract is proposed from the default branch's `.suiteward.yml`, so put this declaration on the default branch first: commit or merge it there. "+commitNote+" "+
+			"The first contract is proposed from the default branch's `.suiteward.yml`, so put "+put+" on the default branch first: commit or merge it there. "+commitNote+" "+
 				"Then comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	}
 	return replyTo(paragraphs(parts...), n.Source)
@@ -212,18 +237,38 @@ func pathEscape(branch string) string {
 
 // ScopeSuggestionBody renders the body of a review comment that suggests new patterns for a list of .suiteward.yml: one
 // sentence, then a suggestion block that holds anchorLine (the list item the comment is on) unchanged, followed by one item
-// per pattern at the same indentation, in the quoting of the anchor, as scope.AddPatterns writes it (see suggestedItems). An
+// per pattern at the same indentation, in the quoting that quoting names (see Quoting), as scope.AddPatterns writes it (see suggestedItems). An
 // input that does not fit panics (see ValidateScopeSuggestion).
-func ScopeSuggestionBody(anchorLine, indent string, patterns []string) string {
-	must(ValidateScopeSuggestion(anchorLine, indent, patterns))
-	content := anchorLine + suggestedItems(patterns, indent, quotingOf(anchorLine))
+func ScopeSuggestionBody(anchorLine, indent string, patterns []string, quoting Quoting) string {
+	must(ValidateScopeSuggestion(anchorLine, indent, patterns, quoting))
+	content := anchorLine + suggestedItems(patterns, indent, quoting.styleOf(anchorLine))
 	return paragraphs("SuiteWard suggests adding these patterns to this list; committing the suggestion is a protected change that needs the owner's approval.",
 		fence("suggestion", content+"\n"))
 }
 
-// quotingOf is the quoting of the item that anchorLine holds: double, single or plain. The line is an item of the list that the
-// suggestion extends (see ValidateScopeSuggestion), which is all the caller carries of it. A list of mixed quoting thus follows the
-// quoting of that item, where scope.AddPatterns writes plain.
+// styleOf is the quoting of the items to write: the one q names, or for the zero value the quoting of the item that anchorLine holds, which is all that a
+// payload written before the style was carried knows of the list: a list of mixed quoting then follows that item, where scope.AddPatterns writes plain.
+func (q Quoting) styleOf(anchorLine string) yaml.Style {
+	switch q {
+	case QuotingPlain:
+		return 0
+	case QuotingSingle:
+		return yaml.SingleQuotedStyle
+	case QuotingDouble:
+		return yaml.DoubleQuotedStyle
+	}
+	return quotingOf(anchorLine)
+}
+
+// validate reports a style that is none of the three and not the zero value.
+func (q Quoting) validate() error {
+	if q != "" && q != QuotingPlain && q != QuotingSingle && q != QuotingDouble {
+		return fmt.Errorf("commandtext: quoting %q is unknown", q)
+	}
+	return nil
+}
+
+// quotingOf is the quoting of the item that anchorLine holds: double, single or plain.
 func quotingOf(anchorLine string) yaml.Style {
 	item := strings.TrimLeft(strings.TrimPrefix(strings.TrimLeft(anchorLine, " "), "-"), " ")
 	switch {
@@ -252,9 +297,12 @@ func suggestedItems(patterns []string, indent string, style yaml.Style) string {
 }
 
 // ValidateScopeSuggestion reports why ScopeSuggestionBody would panic on its arguments, as an error. The items are written in the
-// style of the anchor (see quotingOf), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
+// style quoting names (see Quoting), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
 // out: the caller decides what to do.
-func ValidateScopeSuggestion(anchorLine, indent string, patterns []string) error {
+func ValidateScopeSuggestion(anchorLine, indent string, patterns []string, quoting Quoting) error {
+	if err := quoting.validate(); err != nil {
+		return err
+	}
 	switch {
 	case len(patterns) == 0 || len(patterns) > maxListed:
 		return fmt.Errorf("commandtext: %d suggested patterns, want 1 to %d", len(patterns), maxListed)
@@ -272,3 +320,14 @@ func ValidateScopeSuggestion(anchorLine, indent string, patterns []string) error
 	}
 	return nil
 }
+
+// Quoting is the quoting style of the list that a review suggestion extends, as scope.AddPatterns would write its new items: the quoting
+// that every existing item shares, plain when they differ. The zero value follows the anchor line, which is all that a payload written before
+// the style was carried knows of the list.
+type Quoting string
+
+const (
+	QuotingPlain  Quoting = "plain"
+	QuotingSingle Quoting = "single"
+	QuotingDouble Quoting = "double"
+)

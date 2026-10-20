@@ -274,10 +274,6 @@ func TestSuggestIsNotTheOwnersLatestCommand(t *testing.T) {
 // A source the suggestion cannot be built from is a fact about the commit: the command is recorded at once as refused, with a fixed reason, and never retried.
 func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T) {
 	truncated := fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
-	tooLong := "version: 1\ninclude:\n"
-	for i := range 400 {
-		tooLong += fmt.Sprintf("  - \"tests/directory%03d/**\"\n", i)
-	}
 	for _, tc := range []struct {
 		name   string
 		reason string
@@ -309,10 +305,6 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			w.reader.repo(cjRepo1).trees[cjHead] = &bootTree{files: withFiles(bootFiles("v1"), "te:sts/test_a.py")}
 			return cjID1
 		}},
-		{"a declaration over the limit of a notice", "declaration-too-large", func(w *cjWorld) int64 {
-			w.seedDeclared(tooLong, withFiles(bootFiles("v1"), cjUtilTst))
-			return cjID2
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -324,11 +316,7 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			}
 			w.mustRun()
 
-			payload := map[string]any{"reason": tc.reason}
-			if tc.reason == "declaration-too-large" { // the editor link goes to the pull request's branch
-				payload["branch"] = cjBranch
-			}
-			w.requireAckPayload(repository, 500, commands.SuggestRefused, payload)
+			w.requireAckPayload(repository, 500, commands.SuggestRefused, map[string]any{"reason": tc.reason})
 			if !strings.Contains(w.logs.String(), "github suggest refused") {
 				t.Fatalf("no log line says the suggestion was refused\nlogs: %s", w.logs)
 			}
@@ -367,20 +355,4 @@ func TestSuggestRetriesAGitHubFailureAndIsFailedAfterFiveAttemptsLoggingOnlyKind
 			w.requireNothingLeaked(bootSecret)
 		})
 	}
-}
-
-// Before the first contract the default branch's file can be the base, and the refusal asks to fix that file: the acknowledgment names the
-// base and links to the editor of the default branch, not of the pull request's branch.
-func TestSuggestRefusesADeclarationTooLargeForTheDefaultBranchWithItsEditorLink(t *testing.T) {
-	tooLong := "version: 1\ninclude:\n"
-	for i := range 400 {
-		tooLong += fmt.Sprintf("  - \"tests/directory%03d/**\"\n", i)
-	}
-	w := newCjWorld(t)
-	w.trees(withDeclaration(bootFiles("v1"), tooLong), map[string]string{cjUtilTst: "x"})
-	w.pullFiles(nil)
-	w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
-	w.mustRun()
-
-	w.requireAckPayload(cjID1, 500, commands.SuggestRefused, map[string]any{"reason": "declaration-too-large", "base": "default-branch", "branch": "main"})
 }

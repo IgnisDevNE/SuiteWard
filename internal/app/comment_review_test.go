@@ -32,11 +32,11 @@ func cmtReviewPayload(lists []map[string]any, change func(map[string]any)) json.
 func cmtTrimmed(text string) string { return strings.TrimRight(text, "\n") }
 
 func cmtIncludeBody() string {
-	return cmtTrimmed(commandtext.ScopeSuggestionBody("  - /tests/**", "  ", []string{"*_test.go"})) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":include")
+	return cmtTrimmed(commandtext.ScopeSuggestionBody("  - /tests/**", "  ", []string{"*_test.go"}, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":include")
 }
 
 func cmtRunnerBody() string {
-	return cmtTrimmed(commandtext.ScopeSuggestionBody("- conftest.py", "", []string{".pytest.ini", "pytest.ini"})) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":runner")
+	return cmtTrimmed(commandtext.ScopeSuggestionBody("- conftest.py", "", []string{".pytest.ini", "pytest.ini"}, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":runner")
 }
 
 func TestCommentPublisherPostsTheScopeReviewOnTheLineOfTheList(t *testing.T) {

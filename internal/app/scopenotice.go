@@ -45,14 +45,16 @@ type scopeNoticePayload struct {
 	Branch      string   `json:"branch"`
 	Paths       []string `json:"paths"` // at most 20, each cut to 150 bytes
 	PathsTotal  int      `json:"pathsTotal"`
-	Declaration string   `json:"declaration"` // the canonical declaration with the new patterns added, at most 8192 bytes
+	Declaration string   `json:"declaration,omitempty"` // the canonical declaration with the new patterns added, at most 8192 bytes; none when it cannot be shown
 	Mixed       []string `json:"mixed,omitempty"`
 	Submodules  []string `json:"submodules,omitempty"` // the submodules a suggested pattern reaches, whose contents are not protected
 	Cut         bool     `json:"cut,omitempty"`        // the limit of 20 patterns cut the declaration's new patterns
+	AddInclude  []string `json:"addInclude,omitempty"` // with no declaration: the include patterns it adds,
+	AddRunner   []string `json:"addRunner,omitempty"`  // and the runner patterns, at most 20 together
 }
 
 func (p scopeNoticePayload) notice() commandtext.ScopeNotice {
-	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed, Submodules: p.Submodules, Cut: p.Cut}
+	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed, Submodules: p.Submodules, Cut: p.Cut, AddInclude: p.AddInclude, AddRunner: p.AddRunner}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -66,7 +68,7 @@ func (p scopeNoticePayload) validate() error {
 	case p.PathsTotal < len(p.Paths):
 		return errors.New("the total is below the listed paths")
 	}
-	for _, text := range slices.Concat(p.Paths, p.Mixed, p.Submodules) {
+	for _, text := range slices.Concat(p.Paths, p.Mixed, p.Submodules, p.AddInclude, p.AddRunner) {
 		if len(text) > maxSummaryText {
 			return errors.New("a path is too long")
 		}
@@ -89,10 +91,16 @@ func setDigest(paths []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// newScopeNoticeMessage builds the notice of the added uncovered paths, bounding the repository text it carries. A payload
-// the publisher could not render is an error, so nobody writes a message that nobody can post.
-func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed, submodules []string, cut bool) (governance.OutboxMessage, error) {
-	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: cut}
+// newScopeNoticeMessage builds the notice of the added uncovered paths, bounding the repository text it carries. A declaration that cannot be shown
+// (see quotable) is left out and the notice lists the patterns of suggested alone. A payload the publisher could not render is an error, so
+// nobody writes a message that nobody can post.
+func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed, submodules []string, suggested inventory.Suggestion) (governance.OutboxMessage, error) {
+	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut}
+	if quotable(declaration) {
+		p.Declaration = string(declaration)
+	} else {
+		p.AddInclude, p.AddRunner = boundedText(suggested.Include), boundedText(suggested.Runner)
+	}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope notice: %w", err)
 	}
@@ -127,6 +135,8 @@ type scopeSuggestion struct {
 	// KeyIndent is then the spaces before its key.
 	NewList   string `json:"newList,omitempty"`
 	KeyIndent string `json:"keyIndent,omitempty"`
+	// Quoting is the quoting style of the list the suggestion extends (what scope.AddPatterns writes for it); none for a created list, and in a payload written before the style was carried, which follows the anchor.
+	Quoting commandtext.Quoting `json:"quoting,omitempty"`
 }
 
 // choices are the lists of a runner-uncovered check's review suggestions, each the commandtext choice it renders.
@@ -155,9 +165,9 @@ func (s scopeSuggestion) validate() error {
 	}
 	var err error
 	if isChoice {
-		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, s.Quoting)
 	} else {
-		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns)
+		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns, s.Quoting)
 	}
 	if err != nil { // its text quotes the anchor line and the patterns
 		return errors.New("the anchor line, its indent or the patterns do not fit the suggestion")
@@ -168,9 +178,9 @@ func (s scopeSuggestion) validate() error {
 // body renders the review comment of the suggestion; it panics on one that does not validate.
 func (s scopeSuggestion) body() string {
 	if choice, isChoice := choices[s.List]; isChoice {
-		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, s.Quoting)
 	}
-	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns)
+	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns, s.Quoting)
 }
 
 // scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<review digest>: one or two suggestions, the include
@@ -464,12 +474,8 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil {
 		return err
 	}
-	if len(declaration) > commandtext.MaxDeclaration {
-		j.logger.InfoContext(ctx, "github checks scope notice skipped: the declaration is over the limit", "repo", p.Repo, "pull", pull.Number)
-		return nil
-	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
-	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed, found.Submodules, suggestion.Cut)
+	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed, found.Submodules, suggestion)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
@@ -572,11 +578,31 @@ func listSuggestion(top *yaml.Node, lines []string, name string, patterns []stri
 			}
 			anchor := strings.TrimSuffix(lines[item.Line-1], "\r")
 			if singleLineItem(anchor, item) {
-				return scopeSuggestion{List: name, Line: item.Line, Anchor: anchor, Patterns: fresh}, true
+				return scopeSuggestion{List: name, Line: item.Line, Anchor: anchor, Patterns: fresh, Quoting: listQuoting(list)}, true
 			}
 		}
 	}
 	return scopeSuggestion{}, false
+}
+
+// listQuoting is the quoting that scope.AddPatterns gives the items it adds to list: the one that every item shares, plain when they differ.
+func listQuoting(list *yaml.Node) commandtext.Quoting {
+	quoting := func(item *yaml.Node) commandtext.Quoting {
+		switch item.Style & (yaml.DoubleQuotedStyle | yaml.SingleQuotedStyle) {
+		case yaml.DoubleQuotedStyle:
+			return commandtext.QuotingDouble
+		case yaml.SingleQuotedStyle:
+			return commandtext.QuotingSingle
+		}
+		return commandtext.QuotingPlain
+	}
+	shared := quoting(list.Content[0])
+	for _, item := range list.Content[1:] {
+		if quoting(item) != shared {
+			return commandtext.QuotingPlain
+		}
+	}
+	return shared
 }
 
 // singleLineItem reports whether the line is a whole list item that holds item's value: a scalar that spans lines, or a block

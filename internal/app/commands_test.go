@@ -718,14 +718,16 @@ func TestCommandsJobDoesNothingWhileARepositoryHasNeverSynchronized(t *testing.T
 	}
 }
 
-func TestCommandsJobStillWaitsForAnEnrolledRepositoryThatIsNotConfiguredAndWarnsOnce(t *testing.T) {
+func TestCommandsJobSkipsAnEnrolledRepositoryThatIsNotConfiguredAndWarnsOnce(t *testing.T) {
 	w := newCjWorld(t)
 	w.job.repos = []string{cjRepo1} // repository 2 was removed from GITHUB_REPOSITORIES without re-running setup
 	w.observe(cjID1, cjSync, ownerCommand(500, cjAt(40), "approve", "P1-R2", 0))
-	w.observe(cjID2, cjSync.Add(-30*time.Minute))
+	w.observe(cjID2, cjSync.Add(-30*time.Minute)) // its stale cycle must not hold the watermark back
 	w.mustRun()
 	w.mustRun()
-	w.requireNoEntry(cjID1, 500) // fail closed: the stale cycle of the removed repository still holds the watermark back
+	if _, _, found := w.recorded(cjID1, 500); !found {
+		t.Fatalf("the command of the configured repository was held back by the unconfigured one\nlogs: %s", w.logs)
+	}
 	warnings := 0
 	for _, line := range strings.Split(w.logs.String(), "\n") {
 		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "not configured") && strings.Contains(line, cjRepo2) {
@@ -737,6 +739,19 @@ func TestCommandsJobStillWaitsForAnEnrolledRepositoryThatIsNotConfiguredAndWarns
 	}
 	if warnings != 1 {
 		t.Fatalf("%d warnings name the unconfigured repository %s over two runs; want 1; logs: %s", warnings, cjRepo2, w.logs)
+	}
+}
+
+func TestCommandsJobHorizonIsNotReadyWithoutAConfiguredEnrolledRepository(t *testing.T) {
+	w := newCjWorld(t)
+	w.job.repos = []string{"acme/other"} // neither enrolled repository is configured
+	w.syncAll(nil)
+	enrollment, _, err := w.owners.Current(w.t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if horizon, ready, err := w.job.horizon(w.t.Context(), enrollment); err != nil || ready || !horizon.IsZero() {
+		t.Fatalf("horizon = %v, ready %v, err %v; want a zero horizon, not ready: nothing configured can be decided", horizon, ready, err)
 	}
 }
 

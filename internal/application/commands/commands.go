@@ -31,7 +31,7 @@ type Disposition string
 
 // The dispositions (D-COMMANDS).
 const (
-	NotCommand       Disposition = "not-command"       // no /suiteward line, SuiteWard's own comment, or a command on a pull request that is not open (nothing is decided and no step is used)
+	NotCommand       Disposition = "not-command"       // no /suiteward line, SuiteWard's own comment, or an approve, revoke or skip created after its pull request stopped being open (nothing is decided and no step is used)
 	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
 	NoSuite          Disposition = "no-suite"          // owner-authored command for a project whose Suite does not exist yet
 	EditedFirst      Disposition = "edited-first"      // owner-authored, first observed version already edited (updated_at != created_at); no step used

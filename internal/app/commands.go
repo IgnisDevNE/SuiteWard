@@ -229,14 +229,17 @@ func ignoredDisposition(enrollment owner.State, botID int64, m githubsync.Commen
 // rejectFunc records a command as rejected with its acknowledgment.
 type rejectFunc func(d commands.Disposition, reason commandtext.Reason, reference string) error
 
-// consent decides an approve, a revoke or a skip: it ignores one on a pull request that is not open, refuses an approve or a revoke
+// consent decides an approve, a revoke or a skip: it ignores one created after its pull request stopped being open, refuses an approve or a revoke
 // for a proposal that another pull request carries, and otherwise verifies and consumes the code, then applies the command.
 func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, reject rejectFunc) error {
 	pull, err := j.observedPull(ctx, c)
 	if err != nil {
 		return err
 	}
-	if !pull.NotOpenSince.IsZero() { // nothing is decided on a pull request that is closed: no step, no consent, no acknowledgment
+	// A command posted while the pull request was open is still decided after it closes. created_at is GitHub's clock and NotOpenSince the
+	// sync's own at the first cycle that missed the pull, which is never earlier than the close, so a comment between the close and that
+	// cycle counts as posted while open, and equal times count as closed. No step, no consent, no acknowledgment.
+	if !pull.NotOpenSince.IsZero() && !c.Comment.CreatedAt.Before(pull.NotOpenSince) {
 		return j.record(ctx, c, commands.NotCommand, "", nil)
 	}
 	var reference string // a skip names no proposal

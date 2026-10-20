@@ -499,9 +499,9 @@ func TestCommandsJobAcceptsTheCodesOfTheToleranceAndNoOther(t *testing.T) {
 	}
 }
 
-// The offsets of the owner's codes are logged to measure the window before M1.8: a verified code with its distance in
-// steps from the comment's step, a rejected one with whether a window of 2 steps would have accepted it. Never the code.
-func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
+// Every code gets a line, verified or rejected, with the repository and the comment. A line carries no distance from
+// the comment's step: it would tell a reader how close a wrong code came. Never the code.
+func TestCommandsJobLogsEveryCodeWithoutItsOffsetAndNeverTheCode(t *testing.T) {
 	w := newCjWorld(t)
 	offsets := []int64{-3, -2, -1, 0, 1, 2, 3}
 	var comments []cjComment
@@ -521,20 +521,20 @@ func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
 	}
 	for i, offset := range offsets {
 		entry := logged[int64(500+i)]
+		want := "github command code rejected"
+		if offset >= -1 && offset <= 1 {
+			want = "github command code verified"
+		}
 		switch {
 		case entry == nil:
 			t.Errorf("offset %d: no log line for the code; logs: %s", offset, w.logs)
-		case offset >= -1 && offset <= 1: // accepted
-			if entry["msg"] != "github command code verified" || entry["offset"] != float64(offset) {
-				t.Errorf("offset %d: log %v, want a verified code at that offset", offset, entry)
-			}
-		case offset >= -2 && offset <= 2: // rejected, but inside the window of 2
-			if entry["msg"] != "github command code rejected" || entry["would_match"] != true || entry["offset"] != float64(offset) {
-				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would accept at that offset", offset, entry)
-			}
+		case entry["msg"] != want || entry["repo"] != cjRepo1:
+			t.Errorf("offset %d: log %v, want %q for %s", offset, entry, want, cjRepo1)
 		default:
-			if entry["msg"] != "github command code rejected" || entry["would_match"] != false || entry["offset"] != nil {
-				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would not accept", offset, entry)
+			for _, field := range []string{"offset", "would_match"} {
+				if _, present := entry[field]; present {
+					t.Errorf("offset %d: log %v carries %q", offset, entry, field)
+				}
 			}
 		}
 	}

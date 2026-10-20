@@ -416,10 +416,12 @@ func TestAddExcludesWithNothingNewReturnsTheBytesUnchangedAndRejectsInvalidInput
 func TestAddPatternsAndAddExcludesQuoteWhatYAMLWouldReadAsAnotherValue(t *testing.T) {
 	patterns := []string{"<<", "y", "No", "ON"}
 	for name, add := range map[string]func(raw []byte) ([]byte, error){
-		"include":  func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, patterns, nil) },
-		"runner":   func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, nil, patterns) },
-		"exclude":  func(raw []byte) ([]byte, error) { return scope.AddExcludes(raw, patterns) },
-		"existing": func(raw []byte) ([]byte, error) { return scope.AddExcludes(append(raw, "exclude:\n  - a\n"...), patterns) },
+		"include": func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, patterns, nil) },
+		"runner":  func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, nil, patterns) },
+		"exclude": func(raw []byte) ([]byte, error) { return scope.AddExcludes(raw, patterns) },
+		"existing": func(raw []byte) ([]byte, error) {
+			return scope.AddExcludes(append(raw, "exclude:\n  - a\n"...), patterns)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := add([]byte("version: 1\n"))

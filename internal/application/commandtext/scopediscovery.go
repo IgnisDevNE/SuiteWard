@@ -8,10 +8,13 @@ import (
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // MaxDeclaration bounds the declaration bytes a notice shows. Fenced against a run of backticks the block can take
-// three times its size, which with the other lists keeps the notice below three quarters of GitHub's comment limit.
+// three times its size. With the other lists at their caps the worst notice measures close to 58,000 bytes, below
+// GitHub's comment limit of 65,536 but not below three quarters of it.
 const MaxDeclaration = 8192
 
 // cutWarning is the line that SuggestDeclaration shows for a list cut at the limit, word for word.
@@ -286,7 +289,7 @@ func quotingOf(anchorLine string) yaml.Style {
 func suggestedItems(patterns []string, indent string, style yaml.Style) string {
 	var items strings.Builder
 	for _, p := range patterns {
-		item := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: style}}}
+		item := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: scope.ItemStyle(p, style)}}}
 		line, err := yaml.Marshal(item)
 		if err != nil {
 			panic(fmt.Sprintf("commandtext: a validated pattern %q cannot be written as a list item: %v", p, err))

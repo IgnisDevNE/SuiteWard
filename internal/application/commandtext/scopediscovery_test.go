@@ -674,7 +674,7 @@ func TestRevisionCommentCountsTheReducedPathsItDoesNotList(t *testing.T) {
 
 func TestRevisionCommentShowsTheReductionOnlyInsideCode(t *testing.T) {
 	r := reduced()
-	r.ReducedRules = []string{"rule a\nb/**", "rule ‮**", "exclude tick```/**"}
+	r.ReducedRules = []string{"rule a\nb/**", "rule \u202e**", "exclude tick```/**"}
 	r.ReducedPaths, r.ReducedPathsTotal = []string{"x\ny_test.go", "\xff_test.go"}, 2
 	body := revisionText(t, r)
 	for _, w := range []string{`"a\nb/**"`, `\u202e`, "tick```/**\n````", `"x\ny_test.go"`, `\xff`} {

@@ -136,8 +136,12 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 	if !quotable(ignore) { // a choice that cannot be shown is left out; protecting stays
 		ignore = nil
 	}
+	var protectPatterns []string
+	if !quotable(protect) { // protecting stays too, as the patterns alone
+		protect, protectPatterns = nil, inventory.RunnerPatterns(set.paths)
+	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
-	comment, err := newRunnerUncoveredMessage(target, pull.HeadSHA, pull.HeadRef, set.paths, protect, ignore, reviewDigest(setDigest(set.paths), set.declared))
+	comment, err := newRunnerUncoveredMessage(target, pull.HeadSHA, pull.HeadRef, set.paths, protect, protectPatterns, ignore, reviewDigest(setDigest(set.paths), set.declared))
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
@@ -277,12 +281,14 @@ type runnerUncoveredPayload struct {
 	Branch     string   `json:"branch"`
 	Paths      []string `json:"paths"` // at most 20, each cut to 150 bytes
 	PathsTotal int      `json:"pathsTotal"`
-	Protect    string   `json:"protect"`          // the canonical declaration with the runner patterns added, at most 8192 bytes
-	Ignore     string   `json:"ignore,omitempty"` // the canonical declaration with the paths excluded, at most 8192 bytes; none when they cannot be named there
+	Protect    string   `json:"protect,omitempty"` // the canonical declaration with the runner patterns added, at most 8192 bytes; none when it cannot be shown
+	// ProtectPatterns, with no Protect, are the runner patterns the comment lists to add instead.
+	ProtectPatterns []string `json:"protectPatterns,omitempty"`
+	Ignore          string   `json:"ignore,omitempty"` // the canonical declaration with the paths excluded, at most 8192 bytes; none when they cannot be named there or shown
 }
 
 func (p runnerUncoveredPayload) notice() commandtext.RunnerUncovered {
-	return commandtext.RunnerUncovered{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Protect: []byte(p.Protect), Ignore: []byte(p.Ignore)}
+	return commandtext.RunnerUncovered{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Protect: []byte(p.Protect), ProtectPatterns: p.ProtectPatterns, Ignore: []byte(p.Ignore)}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -293,7 +299,7 @@ func (p runnerUncoveredPayload) validate() error {
 	if !headPattern.MatchString(p.Head) {
 		return errors.New("the head is not a commit SHA")
 	}
-	for _, path := range p.Paths {
+	for _, path := range slices.Concat(p.Paths, p.ProtectPatterns) {
 		if len(path) > maxSummaryText {
 			return errors.New("a path is too long")
 		}
@@ -306,11 +312,11 @@ func (p runnerUncoveredPayload) validate() error {
 
 // newRunnerUncoveredMessage builds the comment of a blocked head, bounding the repository text it carries. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
-func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths []string, protect, ignore []byte, digest string) (governance.OutboxMessage, error) {
+func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths []string, protect []byte, protectPatterns []string, ignore []byte, digest string) (governance.OutboxMessage, error) {
 	if !digestPattern.MatchString(digest) {
 		return governance.OutboxMessage{}, errors.New("runner-uncovered comment: the digest is not SHA-256 hex")
 	}
-	p := runnerUncoveredPayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Protect: string(protect), Ignore: string(ignore)}
+	p := runnerUncoveredPayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Protect: string(protect), ProtectPatterns: protectPatterns, Ignore: string(ignore)}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("runner-uncovered comment: %w", err)
 	}

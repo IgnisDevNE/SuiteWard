@@ -323,7 +323,7 @@ func TestChecksDecideOnceForABaseCommitThatCanNeverBeRead(t *testing.T) {
 	}
 }
 
-func TestChecksWriteNoScopeNoticeForADeclarationTooLargeToShow(t *testing.T) {
+func TestChecksOfferThePatternsAloneForADeclarationTooLargeToShow(t *testing.T) {
 	var declaration strings.Builder
 	declaration.WriteString("version: 1\ninclude:\n  - /tests/**\n")
 	for i := range 700 {
@@ -334,9 +334,9 @@ func TestChecksWriteNoScopeNoticeForADeclarationTooLargeToShow(t *testing.T) {
 
 	w.scopePull(withFiles(files, cjUtilTst), files)
 
-	w.wantNoScopeMessages()
-	if !strings.Contains(w.logs.String(), "scope notice skipped") {
-		t.Fatalf("no log line says the notice was skipped\nlogs: %s", w.logs)
+	stored, text := w.postedScopeNotice()
+	if _, found := stored["declaration"]; found || !reflect.DeepEqual(stored["addInclude"], []any{"*_test.go"}) || !strings.Contains(text, "```\n*_test.go\n```") {
+		t.Fatalf("payload %v and text\n%s\nwant the pattern alone", stored, text)
 	}
 	w.want(5, checks.Success, "unchanged", 1)
 }

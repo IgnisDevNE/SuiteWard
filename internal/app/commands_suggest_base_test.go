@@ -449,7 +449,7 @@ func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 		if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{}, mixed, submodules); err == nil {
 			t.Errorf("unit %q: the acknowledgment is accepted", unit)
 		}
-		if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err == nil {
+		if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, inventory.Suggestion{}); err == nil {
 			t.Errorf("unit %q: the scope notice is accepted", unit)
 		}
 	}
@@ -458,7 +458,7 @@ func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 	if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{Include: paths}, mixed, submodules); err != nil {
 		t.Errorf("the acknowledgment of plain text: %v", err)
 	}
-	if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err != nil {
+	if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, inventory.Suggestion{}); err != nil {
 		t.Errorf("the scope notice of plain text: %v", err)
 	}
 	var suggestions []scopeSuggestion

@@ -216,11 +216,12 @@ func (p scopeReviewPayload) validate() error {
 // contentDigest is the SHA-256 hex digest of the parts, each with its length in front so that no two lists of parts collide. A comment's key digests what
 // the comment shows, and never the Suite's version: a promotion would otherwise post a new comment on every open pull request.
 func contentDigest(parts []string) string {
-	sum := sha256.New()
+	var all strings.Builder
 	for _, part := range parts {
-		fmt.Fprintf(sum, "%d:%s", len(part), part)
+		all.WriteString(strconv.Itoa(len(part)) + ":" + part)
 	}
-	return hex.EncodeToString(sum.Sum(nil))
+	sum := sha256.Sum256([]byte(all.String()))
+	return hex.EncodeToString(sum[:])
 }
 
 // suggestionsDigest is the SHA-256 hex digest of the head's .suiteward.yml, a newline and the suggestions as JSON: what a review posts, and nothing

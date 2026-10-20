@@ -60,7 +60,8 @@ try {
             $dbLock = [IO.File]::Open((Join-Path $context.State 'database.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
             try {
                 $container = Get-DevContainer $context
-                if ($container) { & podman stop $context.Container; if ($LASTEXITCODE -ne 0) { throw 'Could not stop checkout database.' } }
+                # PostgreSQL checkpoints on a fast shutdown; podman's default 10 s kills it mid-way and the next start spends minutes in recovery.
+                if ($container) { & podman stop --time 120 $context.Container; if ($LASTEXITCODE -ne 0) { throw 'Could not stop checkout database.' } }
             } finally { $dbLock.Dispose() }
             Write-Host 'Checkout database stopped; its data volume is preserved.'
         }

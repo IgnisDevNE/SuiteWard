@@ -82,6 +82,8 @@ func TestAPathThatCollidesInCaseWithAProtectedPathIsProtected(t *testing.T) {
 	files := baseFiles()
 	files["Tests/a_test.go"] = regular("Tests/a_test.go", "other")
 	files["Tests/c_test.go"] = regular("Tests/c_test.go", "new")
+	files["Tests/README.md"] = regular("Tests/README.md", "docs")
+	files[".GitHub/README.md"] = regular(".GitHub/README.md", "docs")
 	files["makefile"] = regular("makefile", "x")
 	files[".GitHub/workflows/CI.yml"] = regular(".GitHub/workflows/CI.yml", "x")
 	files["t\u0435sts/a_test.go"] = regular("t\u0435sts/a_test.go", "cyrillic") // Cyrillic e
@@ -98,7 +100,7 @@ func TestAPathThatCollidesInCaseWithAProtectedPathIsProtected(t *testing.T) {
 		protected[entry.Path] = true
 	}
 	for path, want := range map[string]bool{
-		"tests/a_test.go": true, "Tests/a_test.go": true, "Tests/c_test.go": true, "makefile": true, ".GitHub/workflows/CI.yml": true,
+		"tests/a_test.go": true, "Tests/a_test.go": true, "Tests/c_test.go": true, "Tests/README.md": true, ".GitHub/README.md": false, "makefile": true, ".GitHub/workflows/CI.yml": true,
 		"t\u0435sts/a_test.go": false, "\uff54ests/a_test.go": false, "SRC/main.go": false, "src/main.go": false,
 	} {
 		if protected[path] != want {
@@ -167,11 +169,56 @@ func TestALinkThatCollidesInCaseWithAProtectedPathIsRejected(t *testing.T) {
 			}
 		})
 	}
-	for name, path := range map[string]string{"a Cyrillic e": "t\u0435sts/a_test.go", "an unrelated name": "docs/Tests"} {
+	for name, path := range map[string]string{"a Cyrillic e": "t\u0435sts/a_test.go", "an unrelated name": "docs/Tests", "a twin directory that nothing protects": ".GitHub/link"} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := classifyChange(t, func(files map[string]file) { files[path] = link(path, "../src/main.go") }); err != nil {
 				t.Fatalf("Classify: %v", err)
 			}
 		})
+	}
+}
+
+// A path in a case-twin directory is protected when its path in the real-case directory would be covered, not for the directory
+// alone: a pattern that covers only some files of tests/ leaves the other files of Tests/ out.
+func TestACaseTwinDirectoryIsProtectedOnlyWhereTheRealDirectoryWouldBe(t *testing.T) {
+	files := map[string]file{}
+	for _, f := range []file{
+		regular(declaration, "version: 1\ninclude: [\"**/*_test.go\"]\n"),
+		regular("tests/a_test.go", "a"), regular("tests/README.md", "r"),
+		regular("Tests/b_test.go", "b"), regular("Tests/README.md", "r"),
+		regular("TESTS/Sub/README.md", "r"), regular("tests/Sub/c_test.go", "c"), regular("TESTS/Sub/d_test.go", "d"),
+	} {
+		files[f.path] = f
+	}
+	built, err := inventory.Build(context.Background(), treeOf(t, files))
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	protected := map[string]bool{}
+	for _, entry := range built.Manifest().Entries() {
+		protected[entry.Path] = true
+	}
+	for path, want := range map[string]bool{
+		"tests/a_test.go": true, "Tests/b_test.go": true, "TESTS/Sub/d_test.go": true,
+		"tests/README.md": false, "Tests/README.md": false, "TESTS/Sub/README.md": false,
+	} {
+		if protected[path] != want {
+			t.Errorf("%q protected = %v, want %v", path, protected[path], want)
+		}
+	}
+}
+
+// When several directories fold together, the path is protected if any rewrite onto one of them is covered.
+func TestAPathUnderDirectoriesThatFoldTogetherIsProtectedWhenAnyRewriteIsCovered(t *testing.T) {
+	got, err := classifyChange(t, func(files map[string]file) {
+		files["Tests/seed"] = regular("Tests/seed", "x") // a second real-case directory beside tests/
+		files["TESTS/new.go"] = regular("TESTS/new.go", "y")
+	})
+	if err != nil {
+		t.Fatalf("Classify: %v", err)
+	}
+	want := complete(inventory.Classification{Change: inventory.ProtectedChange, Added: []string{"TESTS/new.go", "Tests/seed"}})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("classification = %+v, want %+v", got, want)
 	}
 }

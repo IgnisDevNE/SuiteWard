@@ -80,7 +80,7 @@ type Store interface {
 	// Pending returns the first observed version of every comment that has no ledger entry, across all enrolled
 	// repositories, ordered by created_at then comment id, at most limit, and only comments created before
 	// horizon. The caller computes horizon from the sync watermark (D-COMMANDS): the earliest last successful
-	// cycle among the enrolled repositories, minus JOB_TIMEOUT and 30 s.
+	// cycle among the configured enrolled repositories, minus the listing margin (10 s).
 	Pending(ctx context.Context, horizon time.Time, limit int) ([]Candidate, error)
 	// Record stores the decision for one comment and, when ack is not nil, its acknowledgment outbox message in
 	// the same transaction (for dispositions that never reach ProcessConsent). That message is a system outbox

@@ -109,7 +109,7 @@ var periodicSpecs = []periodicSpec{
 		config: func(c Config) (runFunc, time.Duration) { return plain(c.Checks), c.ChecksInterval }}),
 	spec[mergesArgs](periodicSpec{label: "the merges job", defaultEvery: defaultMergesInterval, queued: true, wakeable: true,
 		config: func(c Config) (runFunc, time.Duration) { return c.Merges, c.MergesInterval }}),
-	spec[integrityArgs](periodicSpec{label: "the integrity job", defaultEvery: defaultIntegrityInterval,
+	spec[integrityArgs](periodicSpec{label: "the integrity job", defaultEvery: defaultIntegrityInterval, queued: true, wakeable: true,
 		config: func(c Config) (runFunc, time.Duration) { return plain(c.Integrity), c.IntegrityInterval }}),
 }
 

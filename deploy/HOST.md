@@ -782,19 +782,13 @@ M1.8 is the MVP's acceptance: a fresh install, from [the install guide](../docs/
 
 Follow [backup.md section 2](../docs/backup.md#2-back-up), then [section 3](../docs/backup.md#3-restore), on the running host. Expect `/status` to match before and after: `version`, `schemaVersion`, each repository's `integrity` `passed`, `outbox.failed` 0, and the same `owner`. Keep this backup, with its off-host copy (backup.md section 2): it is the only copy of SuiteWardQ's V12 and SuiteWardQ2's state.
 
-### 6g.3 TOTP offsets
+### 6g.3 TOTP offsets (retired)
 
-As `suiteward` (section 1), grep the journal for `github command code rejected`, in the journal command form of [6f.5](#6f5-listing-lag-detector-host):
-
-```
-journalctl --user -u suiteward.service --no-pager | grep "github command code rejected"
-```
-
-Paste back only the `would_match` and `offset` fields, not the `repo` or `comment` values those lines also carry. The orchestrator reads them for the [D-COMMANDS](../docs/plan/decisions.md) TOTP decision: keep ±1, and widen only on a near miss.
+Nothing to do. The measurement is over: the rejected-code lines no longer carry `would_match` or `offset`, and the window stays ±1 ([D-COMMANDS](../docs/plan/decisions.md)).
 
 ### 6g.4 Purge the host (owner's explicit yes in chat first)
 
-Do this only after 6g.2 and 6g.3 are done and the backup's off-host copy exists (6g.9), and only with your explicit yes in chat.
+Do this only after 6g.2 is done and the backup's off-host copy exists (6g.9), and only with your explicit yes in chat.
 1. Follow the purge of [backup.md section 4](../docs/backup.md#4-re-bootstrap-from-the-protected-default-branch). It removes the data volumes only.
 2. The four Podman secrets stay; their names are in backup.md section 1. The old App key among them belongs to the old App, and `podman secret create` refuses a name that exists. So remove the four secrets now, with the `podman secret rm <name>` that install.md section 10.8 names.
 3. `github.env` and the quadlets need nothing: install.md 10.6 and 10.9 overwrite them.
@@ -845,7 +839,6 @@ Run 6g.6 steps 2 to 4 on `<local-repo>`, except that step 4 expects `tier` `co-l
 - the PR numbers;
 - the first line of each SuiteWard comment;
 - the `/status` before and after for 6g.2;
-- the 6g.3 fields;
 - from 6g.6 step 4, the `/status` `version`, `source` and `tier` of each target (`isolated` on the host, `co-located` locally), and the result of the `/licenses` check on the host;
 - from 6g.6 step 5, the proposal's origin commit, and the `/status` after V1;
 - the list of guide gaps.
@@ -854,7 +847,7 @@ Never a code, a token, an `otpauth://` URI or setup output.
 
 ### 6g.9 Never
 
-Keep the warnings of 6e.6, and add: never purge before 6g.2 and 6g.3 are done and the backup has an off-host copy, and never run the purge of 6g.6 step 5 without a fresh backup.
+Keep the warnings of 6e.6, and add: never purge before 6g.2 is done and the backup has an off-host copy, and never run the purge of 6g.6 step 5 without a fresh backup.
 
 ## 7. Reach `/status`
 

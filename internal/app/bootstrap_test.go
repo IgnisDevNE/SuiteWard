@@ -596,7 +596,7 @@ func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
 	}
 }
 
-func TestBootstrapWakesChecksAfterPromotingV1(t *testing.T) {
+func TestBootstrapWakesChecksAndIntegrityAfterPromotingV1(t *testing.T) {
 	w := approvedWorld(t)
 	w.openPulls(bootRepo)
 
@@ -604,7 +604,7 @@ func TestBootstrapWakesChecksAfterPromotingV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\nlogs: %s", err, w.logs)
 	}
-	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+	if want := (river.Wake{river.ChecksKind, river.IntegrityKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that promoted V1 woke %v; want %v", wake, want)
 	}
 	if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 { // the canonical exists now: nothing is promoted again

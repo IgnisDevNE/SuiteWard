@@ -101,6 +101,9 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		body["owner"] = map[string]any{"login": enrollment.Owner.Login, "accountId": enrollment.Owner.AccountID, "enrolledAt": enrollment.EnrolledAt.UTC().Format(time.RFC3339)}
 	}
 	if a.github != nil {
+		if names := unconfiguredRepositories(a.github.repos, enrollment); len(names) > 0 {
+			body["unconfiguredRepositories"] = names
+		}
 		protections, err := storedProtection(ctx, a.owners, a.github.ids, a.github.repos)
 		if err != nil {
 			a.storeFailed(w, r, err)

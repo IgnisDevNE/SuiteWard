@@ -47,6 +47,7 @@ func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
 		return mcp.StatusView{}, b.failed(ctx, "read the owner", "", err)
 	}
 	view := mcp.StatusView{GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
+	view.UnconfiguredRepositories = unconfiguredRepositories(b.repos, enrollment)
 	view.Tier, view.TierNote = effectiveTier(b.tier, enrollment, enrolled)
 	if enrolled {
 		view.Owner = &mcp.OwnerStatus{Login: enrollment.Owner.Login, AccountID: enrollment.Owner.AccountID, EnrolledAt: enrollment.EnrolledAt.UTC()}

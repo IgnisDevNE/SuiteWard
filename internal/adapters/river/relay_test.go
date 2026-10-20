@@ -290,11 +290,11 @@ func TestRelayTreatsAPublisherPanicAsAPublishError(t *testing.T) {
 		}
 	}
 	got := w.row("k2")
-	if !strings.HasPrefix(got, "pending 1 publisher panicked: kaboom") || len(got) > 1100 {
-		t.Errorf("k2 = %.80q (%d bytes), want a retry after a truncated panic text", got, len(got))
+	if !strings.HasPrefix(got, "pending 1 publisher panicked (digest ") || strings.Contains(got, "kaboom") {
+		t.Errorf("k2 = %.80q (%d bytes), want a retry after a classification and digest without the panic text", got, len(got))
 	}
-	if strings.Contains(logs.String(), strings.Repeat("x", 2000)) {
-		t.Error("the log carries the whole panic value")
+	if strings.Contains(logs.String(), "kaboom") {
+		t.Error("the log carries the panic text")
 	}
 }
 

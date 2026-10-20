@@ -52,7 +52,7 @@ func TestCommandsJobOnPostgreSQLDecidesACommentOnlyOnceACycleStartedTenSecondsAf
 			t.Fatal(err)
 		}
 	}
-	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, pulls: store, repos: []string{bootRepo}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now: func() time.Time { return created.Add(3 * time.Hour) }, bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	decided := func() string {
 		return scalar(t, databaseURL, "SELECT count(*)::text FROM pr_commands WHERE comment_id = 101")

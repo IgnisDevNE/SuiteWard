@@ -25,7 +25,7 @@ func TestParseProposeAndSkip(t *testing.T) {
 		want commandtext.Parsed
 	}{
 		{"propose", "/suiteward propose", propose},
-		{"propose with spaces, tabs and CRLF", " \t/suiteward \t propose \t\r\nthanks\r\n", propose},
+		{"propose with spaces, tabs and CRLF", " /suiteward \t propose \t\r\nthanks\r\n", propose},
 		{"propose on a later line", "Let's start.\n\n/suiteward propose", propose},
 		{"propose after a closed fence", "```\n/suiteward propose extra\n```\n/suiteward propose", propose},
 		{"propose only inside a fence", "```\n/suiteward propose\n```", notCommand},
@@ -35,7 +35,7 @@ func TestParseProposeAndSkip(t *testing.T) {
 		{"propose is case-insensitive", "/suiteward Propose", propose},
 		{"proposed is another verb", "/suiteward proposed", malformed(commandtext.UnknownVerb)},
 		{"suggest", "/suiteward suggest", suggest},
-		{"suggest with spaces, tabs and CRLF", " \t/suiteward \t suggest \t\r\nthanks\r\n", suggest},
+		{"suggest with spaces, tabs and CRLF", " /suiteward \t suggest \t\r\nthanks\r\n", suggest},
 		{"suggest on a later line", "Which tests?\n\n/suiteward suggest", suggest},
 		{"suggest only inside a fence", "```\n/suiteward suggest\n```", notCommand},
 		{"suggest with a word after it", "/suiteward suggest now", malformed(commandtext.ExtraText)},
@@ -46,7 +46,7 @@ func TestParseProposeAndSkip(t *testing.T) {
 
 		{"skip", "/suiteward skip 123456", skip("123456")},
 		{"skip with leading zeros", "/suiteward skip 000012", skip("000012")},
-		{"skip with spaces, tabs and CRLF", "\t/suiteward  skip\t 654321 \r\n", skip("654321")},
+		{"skip with spaces, tabs and CRLF", "/suiteward  skip\t 654321 \r\n", skip("654321")},
 		{"skip without a code", "/suiteward skip", malformed(commandtext.MissingCode)},
 		{"skip with a short code", "/suiteward skip 12345", malformed(commandtext.BadCode)},
 		{"skip with a long code", "/suiteward skip 1234567", malformed(commandtext.BadCode)},

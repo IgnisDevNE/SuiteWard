@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -40,7 +41,11 @@ func TestACommandOnAnotherPullRequestThanTheProposalCarrierIsRefusedBeforeTheSte
 			w.syncAll([]cjComment{comment})
 			w.mustRun()
 
-			w.requireRejected(cjID1, 500, commands.OtherPull, 0, "P1-R2")
+			_, ack := w.requireDisposition(cjID1, 500, commands.OtherPull)
+			want := cjMust(newRejectedAck(commentTarget{RepositoryID: cjID1, Repo: cjRepo1, Pull: 5}, 500, cjLogin, commands.OtherPull, 0, "P1-R2"))
+			if ack == nil || ack.Key != want.Key || ack.Kind != want.Kind || !bytes.Equal(ack.Payload, want.Payload) {
+				t.Errorf("acknowledgment %+v, want %+v", ack, want)
+			}
 			if len(w.owners.consumed) != 0 {
 				t.Errorf("the job consumed %d steps, want none", len(w.owners.consumed))
 			}

@@ -11,7 +11,7 @@
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
 // InvalidCode, ReplayedCode, NoSuite, EditedFirst, BootstrapPromoted,
-// RevokedAfterPromotion, ApprovedAfterPromotion, ProposeRefused, SkipRefused or SuggestRefused with a Refusal, AlreadyProposed,
+// RevokedAfterPromotion, ApprovedAfterPromotion, OtherPullRequest, ProposeRefused, SkipRefused or SuggestRefused with a Refusal, AlreadyProposed,
 // ProposeFailed, Skipped or NothingUncovered), BootstrapSummary renders
 // a Summary (from the default branch or from a pull request; at most 20 entries per listing, each shortened to 300 bytes),
 // RevisionComment renders a Revision the same way (with the rules and paths a reduction removes), and BootstrapNotice and
@@ -91,25 +91,45 @@ type Parsed struct {
 const prefix = "/suiteward"
 
 // Parse reads the command line of a comment body (D-COMMANDS): the first line
-// outside fenced code blocks whose text, trimmed of spaces and tabs, starts
+// that GitHub shows as text whose own text, trimmed of spaces and tabs, starts
 // with /suiteward followed by a space, a tab or the end of the line. Other
-// lines are ignored. A fence opens on a line whose trimmed text starts with
-// three or more backticks or tildes and closes on a line holding only at least
-// as many of the same character; an unclosed fence runs to the end of the
-// body. The prefix and the verb match without regard to ASCII case, the reference keeps its P<n>-R<m> form, and only
+// lines are ignored. GitHub shows no text in a fenced code block, in an HTML
+// comment or in an indented code block, so Parse skips them. A fence opens on a
+// line whose trimmed text starts with three or more backticks or tildes and
+// closes on a line holding only at least as many of the same character; an
+// unclosed fence runs to the end of the body. An HTML comment hides every line
+// from one that contains <!-- up to and including the next that contains -->,
+// or to the end of the body, and a comment that closes on the line it opens on
+// hides only that line; a fence marker inside a comment opens nothing, and a
+// comment marker inside a fence is code. A line indented four or more columns,
+// a tab counting as four and measured before trimming, is an indented code
+// block. The prefix and the verb match without regard to ASCII case, the reference keeps its P<n>-R<m> form, and only
 // spaces and tabs separate tokens.
 func Parse(body string) Parsed {
 	var fence string
+	inComment := false
 	for line := range strings.SplitSeq(body, "\n") {
-		text := strings.Trim(strings.TrimSuffix(line, "\r"), " \t")
+		line = strings.TrimSuffix(line, "\r")
+		if inComment {
+			inComment = !strings.Contains(line, "-->")
+			continue
+		}
+		text := strings.Trim(line, " \t")
 		if fence != "" {
 			if strings.HasPrefix(text, fence) && strings.Trim(text, fence[:1]) == "" {
 				fence = ""
 			}
 			continue
 		}
+		if _, after, opens := strings.Cut(line, "<!--"); opens {
+			inComment = !strings.Contains(after, "-->")
+			continue
+		}
 		if f := openingFence(text); f != "" {
 			fence = f
+			continue
+		}
+		if indent(line) >= 4 {
 			continue
 		}
 		if len(text) >= len(prefix) && asciiLower(text[:len(prefix)]) == prefix {
@@ -120,6 +140,21 @@ func Parse(body string) Parsed {
 		}
 	}
 	return Parsed{Kind: KindNotCommand}
+}
+
+// indent is the width of the spaces and tabs that start the line, a tab counting as four columns.
+func indent(line string) (columns int) {
+	for _, c := range line {
+		switch c {
+		case ' ':
+			columns++
+		case '\t':
+			columns += 4
+		default:
+			return columns
+		}
+	}
+	return columns
 }
 
 // openingFence returns the run of fence characters that opens a code block,

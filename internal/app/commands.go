@@ -229,11 +229,26 @@ func ignoredDisposition(enrollment owner.State, botID int64, m githubsync.Commen
 // rejectFunc records a command as rejected with its acknowledgment.
 type rejectFunc func(d commands.Disposition, reason commandtext.Reason, reference string) error
 
-// consent decides an approve, a revoke or a skip: it verifies and consumes the code, then applies the command.
+// consent decides an approve, a revoke or a skip: it ignores one on a pull request that is not open, refuses an approve or a revoke
+// for a proposal that another pull request carries, and otherwise verifies and consumes the code, then applies the command.
 func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, reject rejectFunc) error {
+	pull, err := j.observedPull(ctx, c)
+	if err != nil {
+		return err
+	}
+	if !pull.NotOpenSince.IsZero() { // nothing is decided on a pull request that is closed: no step, no consent, no acknowledgment
+		return j.record(ctx, c, commands.NotCommand, "", nil)
+	}
 	var reference string // a skip names no proposal
 	if command.Verb != commandtext.Skip {
 		reference = commandtext.Reference(command.Proposal, command.Revision)
+		elsewhere, err := j.carriedElsewhere(ctx, c, command)
+		if err != nil {
+			return err
+		}
+		if elsewhere {
+			return reject(commands.OtherPull, 0, reference)
+		}
 	}
 	source := commentSource(c.Comment.CommentID)
 	if verified, err := j.verifyCode(ctx, enrollment, c, command, source, reference, reject); !verified {
@@ -243,6 +258,26 @@ func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c com
 		return j.skip(ctx, enrollment, c)
 	}
 	return j.process(ctx, enrollment, c, command, source, reference, reject)
+}
+
+// carriedElsewhere reports whether the proposal the command names exists and is carried by another pull request than the
+// comment's. A missing Suite or proposal is not: the consent that follows answers it.
+func (j *commandsJob) carriedElsewhere(ctx context.Context, c commands.Candidate, command commandtext.Command) (elsewhere bool, err error) {
+	err = j.suites.Do(ctx, owner.ProjectID(c.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		proposal, _, err := tx.Proposal(ctx, proposalID(command.Proposal))
+		if err != nil {
+			return err
+		}
+		elsewhere = proposal.Current().Carrier() != carrierID(c.RepositoryID, c.PullNumber)
+		return nil
+	})
+	if errors.Is(err, governance.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &opaque{what: "look for the proposal", cause: err}
+	}
+	return elsewhere, nil
 }
 
 // verifyCode checks the code of the command and consumes its step. verified is false when the command was recorded as rejected, or the step failed:

@@ -144,6 +144,7 @@ var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.SkipRefused: commandtext.SkipRefused, commands.Failed: commandtext.ProposeFailed, // a failed command is acknowledged only when it was a propose
 	// A suggest that finds a declaration to suggest is rendered by its own texts, so Suggested here is the one that finds nothing to add.
 	commands.Suggested: commandtext.NothingUncovered, commands.SuggestRefused: commandtext.SuggestRefused,
+	commands.OtherPull: commandtext.OtherPullRequest,
 }
 
 // reasonFits reports whether reason is one a payload of d may carry.

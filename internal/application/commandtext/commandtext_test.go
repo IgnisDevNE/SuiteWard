@@ -67,7 +67,7 @@ func TestParse(t *testing.T) {
 		{"after a comment that closes on its own line", "<!-- note -->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a comment block", "<!--\nnote\n-->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"a fence inside an HTML comment opens nothing", "<!--\n```\n-->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
-		{"after an indented line","    code\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"after an indented line", "    code\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"a comment marker inside a fence is code", "```\n<!--\n```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"CRLF", "/suiteward revoke P5-R1 111111\r\nthanks\r\n", command(commandtext.Revoke, 5, 1, "111111")},
 		{"CRLF on a later line", "Looks good.\r\n/suiteward approve P5-R1 111111\r\n", command(commandtext.Approve, 5, 1, "111111")},

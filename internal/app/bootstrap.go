@@ -140,6 +140,10 @@ func cutBytes(s string, limit int) string {
 // JSON writes <, > and & as six bytes, so text that is long in escapes could fill it. A payload over it cannot be rendered.
 const maxOutboxPayload = 60 << 10
 
+// maxDeclarationBytes caps the .suiteward.yml of an untrusted tree before it is parsed: a real declaration is a few
+// lines, and the YAML parser should not be handed whatever a head branch puts there.
+const maxDeclarationBytes = 64 << 10
+
 // marshalPayload encodes a payload, and refuses one over maxOutboxPayload.
 func marshalPayload(payload any) ([]byte, error) {
 	raw, err := json.Marshal(payload)

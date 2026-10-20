@@ -27,6 +27,11 @@ const (
 	forceGrace = 5 * time.Second
 )
 
+// newHTTPServer is the one place an HTTP server of the service is built.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+}
+
 // newLogger is the structured JSON logger of the runtime contract.
 func newLogger(w io.Writer, level slog.Level) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}))
@@ -132,7 +137,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		return fmt.Errorf("start the job runtime: %w", err)
 	}
 	backend.inserter = runtime
-	srv := &http.Server{Handler: newRouter(a), ReadHeaderTimeout: readHeaderTimeout}
+	srv := newHTTPServer(newRouter(a))
 	var (
 		mcpServers []*http.Server
 		mcpFailed  <-chan error // nil without MCP: never ready
@@ -160,7 +165,7 @@ func startMCP(settings config.MCP, backend mcp.Backend, logger *slog.Logger) (sr
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen on %s for MCP: %w", settings.Addr, err)
 	}
-	srv = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	srv = newHTTPServer(handler)
 	stopped := make(chan error, 1)
 	go func() { stopped <- srv.Serve(listener) }()
 	logger.Info("mcp listening", "addr", listener.Addr().String())

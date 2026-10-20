@@ -542,7 +542,7 @@ package commands
 type Disposition string // the codes below
 
 const (
-	NotCommand      Disposition = "not-command"     // no /suiteward line, SuiteWard's own comment, or an approve, revoke or skip created after its pull request stopped being open (no step used, never acknowledged)
+	NotCommand      Disposition = "not-command"     // no /suiteward line, SuiteWard's own comment, or an approve, revoke or skip first observed after its pull request stopped being open (no step used, never acknowledged)
 	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
 	NoSuite         Disposition = "no-suite"        // owner-authored command for a project whose Suite does not exist yet
 	EditedFirst     Disposition = "edited-first"    // owner-authored, first observed version already edited (updated_at != created_at); no step used

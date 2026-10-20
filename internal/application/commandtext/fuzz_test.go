@@ -142,8 +142,14 @@ func FuzzValidLogin(f *testing.F) {
 	})
 }
 
+// invisible restates, independently of production, the runes no comment may show raw: not graphic, or graphic to Unicode and drawing nothing.
+func invisible(r rune) bool {
+	return !strconv.IsGraphic(r) || r == 0x034f || r == 0x115f || r == 0x1160 || r == 0x17b4 || r == 0x17b5 || 0x180b <= r && r <= 0x180f ||
+		r == 0x2800 || r == 0x3164 || 0xfe00 <= r && r <= 0xfe0f || r == 0xffa0 || 0xe0100 <= r && r <= 0xe01ef
+}
+
 // FuzzCanShow checks CanShow against a rune-wise statement of it: at most MaxDeclaration bytes of UTF-8 whose only
-// characters that are not graphic are line feeds, tabs and carriage returns that a line feed follows.
+// characters that are not visible are line feeds, tabs and carriage returns that a line feed follows.
 func FuzzCanShow(f *testing.F) {
 	for _, seed := range []string{"", "include:\r\n  - a\r\n", "include:\n\t- a\n", "include:\r  - a\n", "a\u200bb", "a\u202eb", "a\xffb", "\u2800", strings.Repeat("a", commandtext.MaxDeclaration+1)} {
 		f.Add([]byte(seed))
@@ -157,7 +163,7 @@ func FuzzCanShow(f *testing.F) {
 			case '\r':
 				want = want && i+1 < len(text) && text[i+1] == '\n'
 			default:
-				want = want && strconv.IsGraphic(r)
+				want = want && !invisible(r)
 			}
 		}
 		if got := commandtext.CanShow(declaration); got != want {
@@ -422,7 +428,7 @@ func checkRendered(t *testing.T, r rendered) {
 	}
 	shown := strings.ReplaceAll(strings.ReplaceAll(out, r.anchor, ""), "\r\n", "\n")
 	for _, c := range shown {
-		if c != '\n' && !strconv.IsGraphic(c) && (!r.layout || c != '\t') {
+		if c != '\n' && invisible(c) && (!r.layout || c != '\t') {
 			t.Fatalf("U+%04X is emitted raw in %q", c, out)
 		}
 	}

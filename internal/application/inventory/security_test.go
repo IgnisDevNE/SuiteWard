@@ -154,3 +154,24 @@ func TestAddingALookAlikePathIsUnchanged(t *testing.T) {
 		})
 	}
 }
+
+// A link at a path that collides in case with a protected path is as unsafe as a link at the protected path: on a case-insensitive
+// checkout it would stand where the protected file or directory is. A link at a look-alike path is accepted as any other.
+func TestALinkThatCollidesInCaseWithAProtectedPathIsRejected(t *testing.T) {
+	for name, path := range map[string]string{"the twin of a file": "Tests/a_test.go", "a file in the twin directory": "Tests/new_link", "the twin directory": "Tests", "the twin of the runner": "makefile"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := classifyChange(t, func(files map[string]file) { files[path] = link(path, "../src/main.go") })
+			var unsafe *inventory.UnsafeEntryError
+			if !errors.Is(err, inventory.ErrUnsafeEntry) || !errors.As(err, &unsafe) || unsafe.Path != path {
+				t.Fatalf("Classify error = %v, want an UnsafeEntryError for %q", err, path)
+			}
+		})
+	}
+	for name, path := range map[string]string{"a Cyrillic e": "t\u0435sts/a_test.go", "an unrelated name": "docs/Tests"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := classifyChange(t, func(files map[string]file) { files[path] = link(path, "../src/main.go") }); err != nil {
+				t.Fatalf("Classify: %v", err)
+			}
+		})
+	}
+}

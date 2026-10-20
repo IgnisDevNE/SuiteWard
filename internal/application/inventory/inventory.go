@@ -192,10 +192,11 @@ func unsafeLink(ctx context.Context, tree Tree, index layout, targets map[string
 		return true, nil
 	}
 	resolved, known := false, false
-	for _, candidate := range append([]string{link}, collisions.rewrites(link, true)...) {
-		covered, err := effective.Covers(candidate)
-		if err != nil || covered {
-			return covered, err
+	for i, candidate := range append([]string{link}, collisions.rewrites(link, true)...) {
+		if i > 0 { // covers answered for the link itself
+			if covered, err := effective.Covers(candidate); err != nil || covered {
+				return covered, err
+			}
 		}
 		below, err := effective.MayCoverBelow(candidate)
 		if err != nil {
@@ -415,35 +416,58 @@ func compare(governing, proposed artifact.Manifest) (added, removed, modified []
 	return added, removed, modified
 }
 
+// maxSpellings bounds the spellings of one case-folded name in a tree: every spelling of a directory is a path to rewrite onto, so an
+// untrusted tree with thousands would make the work grow with the square of its size. A tree beyond it is invalid.
+const maxSpellings = 8
+
 // collider finds the paths that a case-insensitive checkout could put on a covered path (D-SCOPE, case-sensitive matching). A path is
 // protected too when it case-folds equal to a covered file, or when rewriting a directory prefix of it onto a real directory of the same
 // tree that differs from it only in case gives a path the scope covers. Matching stays case-sensitive and a look-alike character folds
 // to nothing (Unicode simple folding), so only the tree's own paths decide.
 type collider struct {
-	files map[string]bool     // the folded covered files
-	dirs  map[string][]string // the directories of the tree, by folded path
+	direct map[string]bool            // the entries the scope covers
+	files  map[string]bool            // the folded covered files
+	dirs   map[string]map[string]bool // the directories of the tree, by folded path
 }
 
-// newCollider indexes the covered regular files and the directories of entries.
+// newCollider indexes the covered entries and the directories of entries. It refuses a tree that holds more than maxSpellings
+// spellings of one folded directory or entry path.
 func newCollider(entries []Entry, effective scope.Scope) (collider, error) {
-	c := collider{files: map[string]bool{}, dirs: map[string][]string{}}
+	c := collider{direct: map[string]bool{}, files: map[string]bool{}, dirs: map[string]map[string]bool{}}
+	spelled := map[string]int{} // the entries by folded path
 	for _, entry := range entries {
 		covers, err := effective.Covers(entry.Path)
 		if err != nil {
 			return collider{}, err
 		}
+		key := foldKey(entry.Path)
+		if spelled[key]++; spelled[key] > maxSpellings {
+			return collider{}, tooManySpellings(entry.Path)
+		}
+		if covers {
+			c.direct[entry.Path] = true
+		}
 		if entry.Kind == File && covers {
-			c.files[foldKey(entry.Path)] = true
+			c.files[key] = true
 		}
 		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
 			key := foldKey(dir)
-			if slices.Contains(c.dirs[key], dir) {
+			if c.dirs[key][dir] {
 				break // its parents are in already
 			}
-			c.dirs[key] = append(c.dirs[key], dir)
+			if c.dirs[key] == nil {
+				c.dirs[key] = map[string]bool{}
+			}
+			if c.dirs[key][dir] = true; len(c.dirs[key]) > maxSpellings {
+				return collider{}, tooManySpellings(dir)
+			}
 		}
 	}
 	return c, nil
+}
+
+func tooManySpellings(p string) error {
+	return fmt.Errorf("%w: more than %d spellings of %q that differ only in case", ErrInvalidTree, maxSpellings, p)
 }
 
 // rewrites lists the paths p becomes when a directory prefix of p is replaced by a real directory of the tree that differs from it in
@@ -454,7 +478,7 @@ func (c collider) rewrites(p string, self bool) []string {
 		if end < len(p) && p[end] != '/' || end == len(p) && !self {
 			continue
 		}
-		for _, dir := range c.dirs[foldKey(p[:end])] {
+		for dir := range c.dirs[foldKey(p[:end])] {
 			if dir != p[:end] {
 				rewritten = append(rewritten, dir+p[end:])
 			}
@@ -463,17 +487,13 @@ func (c collider) rewrites(p string, self bool) []string {
 	return rewritten
 }
 
-// covers reports whether effective covers p or p collides with a path it covers.
+// covers reports whether the scope covers p or p collides with a path it covers.
 func (c collider) covers(effective scope.Scope, p string) (bool, error) {
-	covers, err := effective.Covers(p)
-	if err != nil || covers {
-		return covers, err
-	}
-	if c.files[foldKey(p)] {
+	if c.direct[p] || c.files[foldKey(p)] {
 		return true, nil
 	}
 	for _, rewritten := range c.rewrites(p, false) {
-		if covers, err = effective.Covers(rewritten); err != nil || covers {
+		if covers, err := effective.Covers(rewritten); err != nil || covers {
 			return covers, err
 		}
 	}

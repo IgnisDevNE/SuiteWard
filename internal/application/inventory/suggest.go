@@ -111,16 +111,16 @@ func classify(p string) (include, runner []string) {
 // the test files and directories of the frameworks' conventions, runner patterns for the runner files found, and the mixed
 // files that may hold test settings. Submodules, sorted, are the non-vendored ones that a kept pattern covers or may cover
 // below, because their content is outside the scope. The lists are never nil. Include is the directory patterns then the file
-// patterns, each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut
-// is set. Mixed and Submodules have their own limit.
+// patterns, each sorted, and the sorted runner patterns. The limit of maxSuggestions holds for both together: the runner patterns, which
+// no base declaration lists, keep their room (see limit) and the include patterns give way, the first being kept, and Cut is set when
+// anything is dropped. Mixed and Submodules have their own limit.
 func Suggest(entries []Entry) Suggestion {
-	return suggest(entries, func(string) bool { return true }, false)
+	return suggest(entries, func(string) bool { return true })
 }
 
 // SuggestAgainst is Suggest for a base declaration s: a runner pattern that s lists or covers (the rule of MissingRunner) is left out before
 // the limit applies, so it neither takes room nor sets Cut. Include patterns are not filtered: a file they come from is one s does not cover.
-// The runner patterns that remain are missing from s, and they are not pushed out by include patterns: they keep their room within the limit
-// (see limit), and the include patterns give way.
+// The runner patterns that remain are missing from s, and keep their room within the limit as in Suggest.
 func SuggestAgainst(entries []Entry, s scope.Scope) (Suggestion, error) {
 	handled := runnerHandled(s)
 	var failed error
@@ -128,7 +128,7 @@ func SuggestAgainst(entries []Entry, s scope.Scope) (Suggestion, error) {
 		done, err := handled(pattern)
 		failed = cmp.Or(failed, err)
 		return !done
-	}, true)
+	})
 	if failed != nil {
 		return Suggestion{}, failed
 	}
@@ -179,23 +179,19 @@ func gather(entries []Entry, keepRunner func(pattern string) bool) candidates {
 	return found
 }
 
-// limit applies maxSuggestions to the include and the runner patterns together: the runner patterns keep at most runnerRoom of the room, and the
-// include patterns take the rest. cut says that some pattern was dropped.
-func limit(include, runner []string, runnerRoom int) (keptInclude, keptRunner []string, cut bool) {
-	keptRunner = runner[:min(len(runner), runnerRoom)]
+// limit applies maxSuggestions to the include and the runner patterns together: the runner patterns come first, at most maxSuggestions of them, and the
+// include patterns take the rest. The runner patterns offered are the ones missing, so a missing runner is never hidden by include patterns.
+// cut says that some pattern was dropped.
+func limit(include, runner []string) (keptInclude, keptRunner []string, cut bool) {
+	keptRunner = runner[:min(len(runner), maxSuggestions)]
 	keptInclude = include[:min(len(include), maxSuggestions-len(keptRunner))]
 	return append([]string{}, keptInclude...), append([]string{}, keptRunner...), len(keptInclude)+len(keptRunner) < len(include)+len(runner)
 }
 
-// suggest is Suggest keeping only the runner patterns that keepRunner accepts. With reserveRunner the runner patterns may take the whole limit
-// and the include patterns give way; without it they take only the room the include patterns leave.
-func suggest(entries []Entry, keepRunner func(pattern string) bool, reserveRunner bool) Suggestion {
+// suggest is Suggest keeping only the runner patterns that keepRunner accepts.
+func suggest(entries []Entry, keepRunner func(pattern string) bool) Suggestion {
 	found := gather(entries, keepRunner)
-	runnerRoom := max(0, maxSuggestions-len(found.include))
-	if reserveRunner {
-		runnerRoom = maxSuggestions
-	}
-	include, runner, cut := limit(found.include, found.runner, runnerRoom)
+	include, runner, cut := limit(found.include, found.runner)
 	return Suggestion{
 		Include:    include,
 		Runner:     runner,
@@ -364,7 +360,7 @@ func runnerHandled(s scope.Scope) func(pattern string) (bool, error) {
 // patterns together holds: the runner patterns, which s lacks, keep their room, the include patterns past the limit are dropped, and Cut is set.
 func (s Suggestion) WithRunner(extra []string) Suggestion {
 	runner := slices.Compact(slices.Sorted(slices.Values(slices.Concat(s.Runner, extra))))
-	include, runner, cut := limit(s.Include, runner, maxSuggestions)
+	include, runner, cut := limit(s.Include, runner)
 	s.Include, s.Runner, s.Cut = include, runner, s.Cut || cut
 	return s
 }

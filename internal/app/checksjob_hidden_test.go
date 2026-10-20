@@ -178,3 +178,16 @@ func TestChecksOfferOnlyTheProtectChoiceWhenTheIgnoreDeclarationHoldsAHiddenChar
 		t.Fatalf("payload %v, want a protect declaration and no ignore declaration", payload)
 	}
 }
+
+// The patterns alone are the ones the declaration would add: a runner pattern that the canonical already lists is not missing, and is not offered.
+func TestChecksOfferOnlyTheRunnerPatternsTheCanonicalLacks(t *testing.T) {
+	files := withDeclaration(bootFiles("v1"), "version: 1\ninclude: [/tests/**]\nrunner: [pytest.ini]\n"+hiddenComment)
+	w := newCJWorldOf(t, files)
+
+	w.runnerPull(withFiles(files, "conftest.py"), added("conftest.py")...)
+
+	stored, _ := w.postedRunnerComment()
+	if want := []any{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.toml"}; !reflect.DeepEqual(stored["protectPatterns"], want) {
+		t.Fatalf("protectPatterns %v, want %v: pytest.ini is in the canonical's runner list", stored["protectPatterns"], want)
+	}
+}

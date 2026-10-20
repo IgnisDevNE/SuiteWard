@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,6 +129,7 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 	if err != nil {
 		return "", fmt.Errorf("read the observed pull requests: %w", err)
 	}
+	j.forget(p.RepositoryID, pulls)
 	suite, err := j.suite(ctx, p)
 	if err != nil {
 		return "", fmt.Errorf("read the suite: %w", err)
@@ -467,7 +470,11 @@ func (j *checksJob) announce(ctx context.Context, p owner.ProjectPolicy, pull in
 	if err != nil {
 		return err
 	}
-	if j.announced[message.Key] {
+	memory := message.Key
+	if reference != "" { // the key of the cancelled comment names the proposal revision, not the pull request: the memory key does, so it can be forgotten with it
+		memory = fmt.Sprintf("%s:%d:%d:%s", bootstrapCancelledKey, p.RepositoryID, pull, reference)
+	}
+	if j.announced[memory] {
 		return nil
 	}
 	err = j.suites.Do(ctx, owner.ProjectID(p.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, message) })
@@ -477,7 +484,7 @@ func (j *checksJob) announce(ctx context.Context, p owner.ProjectPolicy, pull in
 	if j.announced == nil {
 		j.announced = map[string]bool{}
 	}
-	j.announced[message.Key] = true
+	j.announced[memory] = true
 	return nil
 }
 
@@ -722,4 +729,28 @@ func (j *checksJob) wrongCode(ctx context.Context, p owner.ProjectPolicy, ownerI
 		}
 	}
 	return false, nil
+}
+
+// forget drops what the job remembers of the pull requests of a repository that are not open in pulls, the complete observation this run
+// starts from (a failed read ends the run before this): a closed pull request is never decided again, and a reopened one costs one more
+// decision. The job runs on one worker, so no other goroutine reads these maps. Every key of announced is <kind>:<repository>:<pull>[:...];
+// one that is not names no pull request and stays.
+func (j *checksJob) forget(repositoryID int64, pulls []githubsync.PullState) {
+	open := map[int]bool{}
+	for _, pull := range pulls {
+		open[pull.Number] = pull.NotOpenSince.IsZero()
+	}
+	closed := func(k checkPull) bool { return k.repositoryID == repositoryID && !open[k.number] }
+	maps.DeleteFunc(j.unchanged, func(k checkPull, _ unchangedAt) bool { return closed(k) })
+	maps.DeleteFunc(j.scoped, func(k checkPull, _ unchangedAt) bool { return closed(k) })
+	maps.DeleteFunc(j.runners, func(k checkPull, _ *runnerSet) bool { return closed(k) })
+	maps.DeleteFunc(j.announced, func(key string, _ bool) bool {
+		parts := strings.Split(key, ":")
+		if len(parts) < 3 {
+			return false
+		}
+		id, idErr := strconv.ParseInt(parts[1], 10, 64)
+		number, numberErr := strconv.Atoi(parts[2])
+		return idErr == nil && numberErr == nil && closed(checkPull{id, number})
+	})
 }

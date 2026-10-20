@@ -50,6 +50,9 @@ var (
 // maxBody bounds any response body read into memory; a variable only so tests can lower it.
 var maxBody int64 = 64 << 20
 
+// maxCacheEntries bounds the ETag cache by paths; a variable only so tests can lower it.
+var maxCacheEntries = 4096
+
 // maxClockOffset bounds the offset a Date header may set: windows last at most
 // an hour, so a Date further from the local clock is a stale or broken
 // intermediary and is ignored.
@@ -188,6 +191,7 @@ func (b *Budget) record(status int, h http.Header) {
 type cached struct {
 	etag string
 	body []byte
+	used uint64 // the client's tick at its last use: the smallest is the first to go
 }
 
 // Client performs conditional GETs against one GitHub API base URL. It is
@@ -200,7 +204,8 @@ type Client struct {
 
 	mu       sync.Mutex
 	identity string            // token identity the cache belongs to
-	cache    map[string]cached // by request path
+	cache    map[string]cached // by request path, at most maxCacheEntries
+	tick     uint64
 }
 
 // NewClient returns a client; baseURL must be absolute and carry no query,
@@ -322,6 +327,11 @@ func (c *Client) send(ctx context.Context, method, path string, payload []byte, 
 			c.identity, c.cache = identity, map[string]cached{}
 		}
 		entry, hadCache = c.cache[path]
+		if hadCache {
+			c.tick++
+			entry.used = c.tick
+			c.cache[path] = entry
+		}
 		c.mu.Unlock()
 	}
 
@@ -368,7 +378,7 @@ func (c *Client) interpret(a answer) (Response, error) {
 			c.mu.Lock()
 			if a.identity == c.identity {
 				if etag != "" {
-					c.cache[a.path] = cached{etag: etag, body: bytes.Clone(a.body)}
+					c.store(a.path, etag, a.body)
 				} else {
 					delete(c.cache, a.path)
 				}
@@ -412,4 +422,23 @@ func (c *Client) retryTime(retryAfter []string, reset string) time.Time {
 		return c.budget.local(time.Unix(r, 0))
 	}
 	return time.Time{}
+}
+
+// store keeps the ETag and body of path, first dropping the entry used least recently when a new path would pass maxCacheEntries; the caller
+// holds c.mu. The bound is by paths: a polling cycle reads about three for each open pull request (its two comment listings and, when
+// asked, its file listing) and a few for each repository (the open and closed listings, branch heads), so 4096 holds a cycle over some
+// thirteen hundred open pull requests, far more than one installation observes. An entry dropped early costs one full read, never a stale
+// answer. The scan is linear, once for each stored response, which follows a network round trip.
+func (c *Client) store(path, etag string, body []byte) {
+	if _, known := c.cache[path]; !known && len(c.cache) >= maxCacheEntries {
+		oldest, found := "", false
+		for p, e := range c.cache {
+			if !found || e.used < c.cache[oldest].used {
+				oldest, found = p, true
+			}
+		}
+		delete(c.cache, oldest)
+	}
+	c.tick++
+	c.cache[path] = cached{etag: etag, body: bytes.Clone(body), used: c.tick}
 }

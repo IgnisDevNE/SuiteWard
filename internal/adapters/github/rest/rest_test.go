@@ -1279,3 +1279,54 @@ func TestResponseDateIsZeroWhenMissingOrUnparsable(t *testing.T) {
 		})
 	}
 }
+
+// The ETag cache holds at most maxCacheEntries paths: past that the path used least recently is dropped, which costs one full read
+// when it is asked again, never a wrong answer. A path used just now keeps its ETag.
+func TestETagCacheIsBoundedAndKeepsTheRecentlyUsed(t *testing.T) {
+	rest.LimitCacheTo(t, 3)
+	var mu sync.Mutex
+	conditional := map[string]bool{} // the last request of each path carried If-None-Match
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		etag := `"` + r.URL.Path + `"`
+		mu.Lock()
+		conditional[r.URL.Path] = r.Header.Get("If-None-Match") == etag
+		mu.Unlock()
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+	get := func(path string) bool {
+		t.Helper()
+		if _, err := c.Get(context.Background(), path); err != nil {
+			t.Fatalf("Get %s: %v", path, err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return conditional[path]
+	}
+
+	for _, path := range []string{"/a", "/b", "/c"} {
+		get(path)
+	}
+	if !get("/a") { // used again: now the most recent
+		t.Fatal("/a sent no If-None-Match before the bound was reached")
+	}
+	get("/d") // over the bound: /b, the least recently used, goes
+	if got := c.CacheLen(); got != 3 {
+		t.Fatalf("the cache holds %d paths after inserting past the bound of 3", got)
+	}
+	if !get("/a") || !get("/d") {
+		t.Error("a recently used path lost its ETag")
+	}
+	if get("/b") {
+		t.Error("/b, the least recently used, still sent If-None-Match after the bound dropped it")
+	}
+	if got := c.CacheLen(); got != 3 {
+		t.Fatalf("the cache holds %d paths after the dropped one came back; want the bound of 3", got)
+	}
+}

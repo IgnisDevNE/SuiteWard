@@ -292,7 +292,7 @@ The scope is the list of paths that `.suiteward.yml` protects. A test directory 
 Keep these points in mind:
 
 - The check does not change, and the comment never says that tests ran.
-- The comment appears once for each set of new files, not for each push. A later push that adds no new uncovered file posts nothing.
+- The comment appears once for each set of new files, not for each push. A later push that adds no new uncovered file posts nothing. A new approved contract that changes the suggested file posts the notice again, once; one that leaves the suggested text as it is posts nothing.
 - A path that matches an `exclude` of your scope is never reported: the exclusion is your choice.
 - The suggested file starts from the approved `.suiteward.yml` and only adds patterns. It may be re-indented and lose blank lines.
 - Comments in `.suiteward.yml` are part of the approved bytes. A pull request that edits only a comment is a protected change and needs your approval. Compare the suggested file with your own before you commit it, because it may have lost a comment.

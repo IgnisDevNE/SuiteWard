@@ -148,8 +148,11 @@ func (s *Store) SystemStatus(ctx context.Context, jobID int64, outboxKey string)
 // counts the attempt and hides the message until the lease expires. Pending
 // messages that used every attempt are failed instead of claimed.
 func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (ClaimOutboxResult, error) {
+	if params.MaxAttempts < 1 || params.MaxAttempts > math.MaxInt32 || params.Limit < 1 || params.Limit > math.MaxInt32 {
+		return ClaimOutboxResult{}, fmt.Errorf("claim outbox: max attempts %d and limit %d must each be between 1 and %d", params.MaxAttempts, params.Limit, math.MaxInt32)
+	}
 	q := dbgen.New(s.pool)
-	maxAttempts, batch := int32(min(params.MaxAttempts, math.MaxInt32)), int32(min(params.Limit, math.MaxInt32)) // an oversized bound must not wrap
+	maxAttempts, batch := int32(params.MaxAttempts), int32(params.Limit)
 	abandoned, err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: maxAttempts})
 	if err != nil {
 		return ClaimOutboxResult{}, fmt.Errorf("fail exhausted outbox messages: %w", err)

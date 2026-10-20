@@ -827,6 +827,13 @@ func TestProposeRefusesASourceThatCannotBeReadAsAContract(t *testing.T) {
 			w.trees(bootFiles("v1"), bootFiles("v1"))
 			w.reader.repo(cjRepo1).treeErr[bootHead] = fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
 		}, nil},
+		// With no declaration anywhere the suggestion is built from these trees' paths, so they are validated as the inventory would.
+		{"a head path with a colon and no declaration anywhere", func(w *cjWorld) {
+			w.trees(map[string]string{"src/main.go": "y"}, map[string]string{"te:sts/test_a.py": "x", "src/main.go": "y"})
+		}, nil},
+		{"a default branch path with a colon and no declaration anywhere", func(w *cjWorld) {
+			w.trees(map[string]string{"te:sts/test_a.py": "x", "src/main.go": "y"}, map[string]string{"src/main.go": "y"})
+		}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)

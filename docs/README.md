@@ -15,3 +15,5 @@ The [local development guide](local-development.md) explains the project-local t
 The [CI and coverage guide](ci-and-coverage.md) records the quality gates, required checks, and Codecov policy.
 
 The [install guide](install.md) installs SuiteWard, creates its GitHub App and runs the owner setup. The [backup runbook](backup.md) backs up, restores and re-bootstraps an instance. The [quickstart](quickstart.md) is the short co-located path, and [agent-install](agent-install.md) sets what a coding agent may and may not do during an installation.
+
+The [threat model](security/threat-model.md) lists SuiteWard's assets, actors and trust boundaries, and the control and test behind each threat.

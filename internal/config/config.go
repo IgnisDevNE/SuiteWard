@@ -28,6 +28,9 @@ const (
 )
 
 // GitHub caps an owner at 39 characters and a name at 100: the size of a payload that carries the repository is measured with that longest name.
+// A role name is quoted wherever it is used; the pattern keeps it to what an operator would create without quotes.
+var databaseRole = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
+
 var gitHubRepository = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`)
 
 // toolingPrefixes name variables that development shells and CI set; they are never warned about.
@@ -59,8 +62,9 @@ const (
 
 // Config holds every validated setting.
 type Config struct {
+	// DatabaseURL is the connection of the service, which runs as the least-privilege application role; it never migrates.
 	DatabaseURL Secret
-	// MigrationDatabaseURL is the connection of the role that owns the schema, used by `suiteward migrate` only.
+	// MigrationDatabaseURL is the connection of the role that owns the schema, used by `suiteward migrate` only. Empty when unset.
 	MigrationDatabaseURL Secret
 	// DatabaseAppRole is the role `suiteward migrate` grants access to: the user of DatabaseURL.
 	DatabaseAppRole    string
@@ -120,6 +124,16 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	if c.DatabaseURL != "" && !validDatabaseURL(c.DatabaseURL.Reveal()) {
 		// No cause: url.Parse errors quote the whole URL, password included.
 		l.fail("DATABASE_URL", errors.New("must be a postgres:// or postgresql:// URL"))
+	}
+	if v, ok := l.present("MIGRATION_DATABASE_URL", true); ok {
+		c.MigrationDatabaseURL = Secret(v)
+		if v != "" && !validDatabaseURL(v) {
+			l.fail("MIGRATION_DATABASE_URL", errors.New("must be a postgres:// or postgresql:// URL"))
+		}
+	}
+	c.DatabaseAppRole = l.optional("DATABASE_APP_ROLE", "suiteward_app")
+	if !databaseRole.MatchString(c.DatabaseAppRole) {
+		l.fail("DATABASE_APP_ROLE", errors.New("must be a PostgreSQL role name of at most 63 letters, digits and underscores, not starting with a digit"))
 	}
 	c.ArtifactDir = l.required("ARTIFACT_DIR", false)
 	if c.ArtifactDir != "" && !filepath.IsAbs(c.ArtifactDir) {

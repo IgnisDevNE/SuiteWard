@@ -22,6 +22,7 @@ var Version = "dev"
 var Source string
 
 const usage = `usage: suiteward serve
+       suiteward migrate
        suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
        suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]
 `
@@ -42,7 +43,7 @@ func OSEnv() Env {
 }
 
 // Run executes one command (args without the program name) and returns the
-// process exit code of the runtime contract. serve logs JSON to stdout; probe
+// process exit code of the runtime contract. serve and migrate log JSON to stdout; probe
 // prints JSON lines to stdout; setup prints only the TOTP enrollment to stdout
 // and logs JSON to stderr; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
@@ -55,7 +56,7 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		flags setupFlags
 	)
 	switch command {
-	case "serve":
+	case "serve", "migrate":
 		if len(args) != 1 {
 			return usageError(stderr)
 		}
@@ -79,7 +80,7 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		logs = stderr
 	}
 	logger := newLogger(logs, cfg.LogLevel)
-	if command == "serve" {
+	if command == "serve" || command == "migrate" {
 		for _, name := range warnings {
 			logger.Warn("unrecognized setting", "name", name)
 		}
@@ -104,9 +105,21 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		reportf(stderr, "invalid settings:\nSUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string\n")
 		return 1
 	}
+	if command == "migrate" {
+		if cfg.MigrationDatabaseURL == "" {
+			reportf(stderr, "migrate needs the owner connection (SUITEWARD_MIGRATION_DATABASE_URL)\n")
+			return usageError(stderr)
+		}
+		if _, err := pgxpool.ParseConfig(cfg.MigrationDatabaseURL.Reveal()); err != nil {
+			reportf(stderr, "invalid settings:\nSUITEWARD_MIGRATION_DATABASE_URL is not a valid PostgreSQL connection string\n")
+			return 1
+		}
+	}
 	switch command {
 	case "serve":
 		return serve(ctx, cfg, logger, nil)
+	case "migrate":
+		return runMigrate(ctx, cfg, stderr, logger)
 	case "setup":
 		return runSetup(ctx, cfg, setupOpts, env.Stdin, stdout, stderr, logger)
 	}

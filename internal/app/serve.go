@@ -15,7 +15,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
@@ -69,6 +68,10 @@ func connectWithArtifacts(ctx context.Context, cfg config.Config) (*pgxpool.Pool
 	store, err := postgres.NewStore(pool, artifacts, inserter)
 	if err != nil {
 		pool.Close()
+		if errors.Is(err, postgres.ErrSchemaNotReady) {
+			// The service connects as a role that cannot migrate: the owner does, with `suiteward migrate`.
+			err = fmt.Errorf("%w: run `suiteward migrate` with the migration settings, then start again", err)
+		}
 		return nil, nil, nil, err
 	}
 	return pool, store, artifacts, nil
@@ -86,9 +89,6 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, handlers
 }
 
 func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, handlers map[string]river.Handler) error {
-	if err := migrations.Up(ctx, cfg.DatabaseURL.Reveal()); err != nil {
-		return fmt.Errorf("migrate the database: %w", err)
-	}
 	pool, store, artifacts, err := connectWithArtifacts(ctx, cfg)
 	if err != nil {
 		return err

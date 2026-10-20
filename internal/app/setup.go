@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -404,13 +403,9 @@ func protectionChecks(checks []github.Check) []protection.Check {
 	return out
 }
 
-// runSetup migrates the database, composes the store and the GitHub readers
+// runSetup composes the store (the database is migrated by `suiteward migrate`) and the GitHub readers
 // of cfg (whose GitHub settings Run has checked) and runs setup.
 func runSetup(ctx context.Context, cfg config.Config, o setupOptions, stdin io.Reader, stdout, stderr io.Writer, logger *slog.Logger) int {
-	if err := migrations.Up(ctx, cfg.DatabaseURL.Reveal()); err != nil {
-		reportf(stderr, "migrate the database: %v\n", err)
-		return 1
-	}
 	pool, store, err := connect(ctx, cfg)
 	if err != nil {
 		reportf(stderr, "%v\n", err)

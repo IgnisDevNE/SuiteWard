@@ -58,7 +58,11 @@ func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier, jobs JobInserter) 
 	defer cancel()
 	version, err := dbgen.New(pool).GetSchemaVersion(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: read schema version: %w", ErrSchemaNotReady, err)
+		var answered *pgconn.PgError
+		if errors.As(err, &answered) { // the server answered: the schema is not there, or the role may not read it
+			return nil, fmt.Errorf("%w: read schema version: %w", ErrSchemaNotReady, err)
+		}
+		return nil, fmt.Errorf("read schema version: %w", err)
 	}
 	if err := supportedSchema(version); err != nil {
 		return nil, err

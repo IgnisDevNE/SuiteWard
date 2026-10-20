@@ -178,5 +178,8 @@ func clientConfig(config Config, workers *riverqueue.Workers, periodicJobs []*ri
 		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
 		Queues:       queues(config.Workers),
 		PeriodicJobs: periodicJobs,
+		// River reindexes its own indexes every day (REINDEX INDEX CONCURRENTLY), which needs the owner of the schema,
+		// and the service is not: an empty list, unlike nil (River's defaults), leaves it nothing to do.
+		ReindexerIndexNames: []string{},
 	}
 }

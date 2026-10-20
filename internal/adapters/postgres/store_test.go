@@ -779,6 +779,7 @@ const bootstrapContenders = 4
 // contendBootstraps has the callers bootstrap one approved baseline at the same moment, each with its own operation
 // and version ids, and returns their results once exactly one version was recorded.
 func contendBootstraps(t *testing.T, operations func(int) string, versions func(int) contract.SuiteVersionID) []governance.PromoteResult {
+	t.Helper()
 	const contenders = bootstrapContenders
 	w := newPGWorld(t)
 	base := newCandidate("p0", "", w.protected("contended"))
@@ -825,7 +826,7 @@ func TestConcurrentBootstrapsRecordExactlyOneVersion(t *testing.T) {
 			}
 		}
 		if winners != 1 || settled != bootstrapContenders-1 {
-			t.Fatalf("%d winners and %d settled losers among %d bootstrapContenders; want 1 and %d", winners, settled, bootstrapContenders, bootstrapContenders-1)
+			t.Fatalf("%d winners and %d settled losers among %d contenders; want 1 and %d", winners, settled, bootstrapContenders, bootstrapContenders-1)
 		}
 	})
 	t.Run("the same operation", func(t *testing.T) {

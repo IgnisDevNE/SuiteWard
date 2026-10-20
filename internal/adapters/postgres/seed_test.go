@@ -249,3 +249,6 @@ func seedAssessment(ctx context.Context, q *dbgen.Queries, assessment contract.I
 func sameCurrent(canonical contract.CanonicalSnapshot, stored contract.HistoricalCanonical) bool {
 	return canonical.Version().Manifest().Digest() == stored.Version().Manifest().Digest() && canonical.Record().Equal(stored.Record())
 }
+
+// exactMicroseconds reports whether PostgreSQL's timestamptz keeps the time exactly.
+func exactMicroseconds(moment time.Time) bool { return moment.Equal(moment.Truncate(time.Microsecond)) }

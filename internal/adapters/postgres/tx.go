@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -509,9 +508,6 @@ func (t *tx) AppendProposalRevision(ctx context.Context, write governance.Propos
 	}
 	return t.bump(ctx, pgtype.Text{})
 }
-
-// exactMicroseconds reports whether PostgreSQL's timestamptz keeps the time exactly.
-func exactMicroseconds(moment time.Time) bool { return moment.Equal(moment.Truncate(time.Microsecond)) }
 
 func (t *tx) verifyArtifacts(ctx context.Context, manifest artifact.Manifest) error {
 	verified := map[artifact.Digest]struct{}{}

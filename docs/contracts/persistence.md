@@ -778,7 +778,7 @@ type ClosedPull struct {
   - It sets `resolved_for = not_open_since`, the merge facts and `resolved_at`. It refreshes the head and base columns and `head_repo` from the read, because a push between the last cycle and the merge is not otherwise seen.
   - A pull that reopens is upserted by the cycle, which clears `not_open_since`. A later absence is then unresolved again (`resolved_for <> not_open_since`). A merged pull cannot reopen.
 - **Closed listing.**
-  - `RecordClosed` keeps a per-repository watermark (`github_repositories.closed_watermark`), which is GitHub's greatest `updated_at` seen in the listing, except after the first call.
+  - `RecordClosed` keeps a per-repository watermark (`github_repositories.closed_watermark`), which is GitHub's greatest `updated_at` seen in the listing; the first call sets it one microsecond past that value instead.
   - **The first call is exclusive.** The first call for a repository only sets the watermark, one microsecond past its newest item. What it listed is history and is never inserted later, so a merge from before enrollment is not backfilled. A merge in the exact moment of that newest item that is listed only later is history too.
   - A later call inserts each merged item with `updated_at` at or above the watermark (inclusive from the second call on: a pull merged in the same second as the item that raised the watermark is not lost, and a seen pull is left alone) and no `github_pulls` row: a new row with `first_seen = last_seen = not_open_since = at` and no resolution, which the merges job then resolves with `Reader.Pull`. Then it raises the watermark.
   - Existing rows and unmerged items are left alone.

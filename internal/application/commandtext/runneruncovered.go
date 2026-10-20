@@ -128,9 +128,10 @@ func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns [
 // style quoting names (see Quoting), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
 // out: the caller decides what to do.
 func ValidateRunnerChoice(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string, quoting Quoting) error {
+	if err := quoting.validate(); err != nil {
+		return err
+	}
 	switch {
-	case quoting.validate() != nil:
-		return quoting.validate()
 	case choice != ProtectChoice && choice != IgnoreChoice:
 		return fmt.Errorf("commandtext: runner choice %d is unknown", choice)
 	case len(patterns) == 0 || len(patterns) > maxListed:

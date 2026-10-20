@@ -300,9 +300,10 @@ func suggestedItems(patterns []string, indent string, style yaml.Style) string {
 // style quoting names (see Quoting), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
 // out: the caller decides what to do.
 func ValidateScopeSuggestion(anchorLine, indent string, patterns []string, quoting Quoting) error {
+	if err := quoting.validate(); err != nil {
+		return err
+	}
 	switch {
-	case quoting.validate() != nil:
-		return quoting.validate()
 	case len(patterns) == 0 || len(patterns) > maxListed:
 		return fmt.Errorf("commandtext: %d suggested patterns, want 1 to %d", len(patterns), maxListed)
 	case strings.Trim(indent, " ") != "":

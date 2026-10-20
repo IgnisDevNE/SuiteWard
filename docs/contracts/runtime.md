@@ -422,7 +422,7 @@ A declaration that holds a character that is not graphic besides newline (LF or 
 - **`suggest`, the `scope-notice` reply**: no `declaration`; the reply keeps its lists of missing patterns (`addInclude`, `addRunner`) and drops the declaration paragraph. Its next steps say "these patterns" where they said "this declaration". The same holds for a declaration over the size limit.
 - **`runner-uncovered`**: the protect choice lists the runner patterns (`protectPatterns`); the ignore choice is offered only when its own declaration can be shown, and the text then says that a declaration that cannot be shown is not offered. When neither can be shown, the comment lists the patterns alone and the editor step says to add them.
 - **`invalid-source`** (kind `link`): the comment shows the one-line pattern, as before.
-- **The commandtext validators** accept an empty declaration in these forms only when the patterns are given, and refuse a declaration and its patterns together.
+- **The commandtext validators** accept an empty declaration in these forms only when the patterns are given. The checks job's notice and the runner comment refuse a declaration and its patterns together; the `/suiteward suggest` reply carries both when the declaration can be shown.
 
 **Outbox `github_comment`, key `scope-review:<repository id>:<pull>:<set digest>` (new).**
 - **When it is written.** Only together with a `scope-notice`. `Reader.PullFiles` must show `.suiteward.yml` among the PR's changed files, the head's file must be a valid declaration in block style, and a hunk must contain an item line of the `include:` list, the `runner:` list, or both.

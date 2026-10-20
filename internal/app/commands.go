@@ -850,7 +850,7 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 	if base == baseDefaultBranch {
 		return ack, nil, nil
 	}
-	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested, setDigest(slices.Concat(found.Paths, unexplained)))
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested)
 	return ack, reviews, err
 }
 

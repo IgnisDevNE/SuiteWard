@@ -219,6 +219,17 @@ func reviewDigest(set string, file []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// suggestionsDigest is the SHA-256 hex digest of the head's .suiteward.yml, a newline and the suggestions as JSON: what a review posts, and nothing
+// else. Suggestions that say the same on the same file share a key, whichever paths, head or command produced them.
+func suggestionsDigest(file []byte, suggestions []scopeSuggestion) (string, error) {
+	raw, err := json.Marshal(suggestions)
+	if err != nil {
+		return "", fmt.Errorf("encode the suggestions: %w", err)
+	}
+	sum := sha256.Sum256(slices.Concat(file, []byte{'\n'}, raw))
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // newScopeReviewMessage builds the review of the suggestions of the review digest. A payload the publisher could not render is
 // an error.
 func newScopeReviewMessage(target commentTarget, head, digest string, suggestions []scopeSuggestion) (governance.OutboxMessage, error) {
@@ -480,7 +491,7 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
 	}
-	reviews, err := scopeReview(ctx, j.reader, j.logger, "github checks scope review", target, pull.HeadSHA, head, found, suggestion, setDigest(added))
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github checks scope review", target, pull.HeadSHA, head, found, suggestion)
 	if err != nil {
 		return err
 	}
@@ -492,13 +503,13 @@ type pullFileReader interface {
 	PullFiles(ctx context.Context, repo string, number int) ([]github.PullFile, error)
 }
 
-// scopeReview builds the review suggestions that go with a notice, as at most one message, keyed by the set digest and the head's file: for each list of the head's
+// scopeReview builds the review suggestions that go with a notice, as at most one message, keyed by the head's file and the suggestions (see suggestionsDigest): for each list of the head's
 // .suiteward.yml, the new patterns that the head's list lacks, after a list item inside a hunk of the pull request's diff
 // (GitHub accepts a review comment only on such a line). This is the only place that starts from the head's file. A list in flow
 // style, a head whose file is invalid or missing from the diff, and a list with no new pattern or no item in a hunk give none.
 // A failed read of the pull request's files costs only the review, unless it says to wait.
 // The checks job and the suggest command share it, each with its own prefix for the log lines.
-func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger, logPrefix string, target commentTarget, headSHA string, head *githubTree, found headScope, s inventory.Suggestion, digest string) ([]governance.OutboxMessage, error) {
+func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger, logPrefix string, target commentTarget, headSHA string, head *githubTree, found headScope, s inventory.Suggestion) ([]governance.OutboxMessage, error) {
 	if !hasDeclaration(found.entries) {
 		return nil, nil
 	}
@@ -546,7 +557,11 @@ func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger,
 	if len(suggestions) == 0 {
 		return nil, nil
 	}
-	message, err := newScopeReviewMessage(target, headSHA, reviewDigest(digest, own), suggestions)
+	digest, err := suggestionsDigest(own, suggestions)
+	if err != nil {
+		return nil, err
+	}
+	message, err := newScopeReviewMessage(target, headSHA, digest, suggestions)
 	if err != nil {
 		logger.WarnContext(ctx, logPrefix+" skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
 		return nil, nil

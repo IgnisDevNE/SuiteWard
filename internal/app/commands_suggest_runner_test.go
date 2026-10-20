@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestSuggestReportsARunnerNameTheBaseLacksEvenWhenNoFileIsUncovered(t *testi
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull",
 		"declaration": addPatterns(t, pytestMinusConftest, nil, []string{"conftest.py"}), "addRunner": []string{"conftest.py"}})
-	w.requireReview(cjID1, pytestMinusConftest, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	w.requireReview(cjID1, pytestMinusConftest, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
 	w.requireNoNoticeKey()
 }
 
@@ -81,7 +82,7 @@ func TestSuggestAfterTheFirstContractReportsARunnerNameTheCanonicalLacks(t *test
 
 	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract",
 		"declaration": addPatterns(t, pytestMinusConftest, nil, []string{"conftest.py"}), "addRunner": []string{"conftest.py"}})
-	w.requireReview(cjID2, pytestMinusConftest, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	w.requireReview(cjID2, pytestMinusConftest, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
 }
 
 // A review of one set of paths is not the review of the same paths plus a runner name, so a name the paths do not explain is part of the key.
@@ -95,8 +96,10 @@ func TestSuggestKeysTheReviewOfRunnerNamesApartFromTheReviewOfThePathsAlone(t *t
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": addPatterns(t, decl, []string{"*_test.go"}, []string{"conftest.py"}), "addInclude": []string{"*_test.go"}, "addRunner": []string{"conftest.py"}})
-	if keys := w.scopeMessagesKeys("scope-review:"); len(keys) != 1 || keys[0] == reviewKey(decl, cjUtilTst) {
-		t.Fatalf("review keys %v; want one that is not the key of the paths alone, %s", keys, reviewKey(decl, cjUtilTst))
+	include := suggestion("include", 3, "  - \"test_*.py\"", "*_test.go")
+	w.requireReview(cjID1, decl, include, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	if alone := fmt.Sprintf("scope-review:%d:%d:%s", cjID1, cjPull, wantSuggestionsDigest(decl, include)); slices.Contains(w.scopeMessagesKeys("scope-review:"), alone) {
+		t.Fatalf("the review has the key of the include suggestion alone, %s", alone)
 	}
 }
 

@@ -172,21 +172,9 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective, acce
 		if accepting.ExcludesExactly(entry.Path) {
 			continue
 		}
-		// D-SCOPE: a link the scope covers makes the declaration invalid. A link that a pattern may reach below does too,
-		// unless it resolves to a regular file of the tree, which behaves as a file.
-		unsafe := covers
-		if !unsafe {
-			below, err := effective.MayCoverBelow(entry.Path)
-			if err != nil {
-				return artifact.Manifest{}, err
-			}
-			if below {
-				resolved, err := resolvesToFile(ctx, tree, index, targets, entry.Path)
-				if err != nil {
-					return artifact.Manifest{}, err
-				}
-				unsafe = !resolved
-			}
+		unsafe, err := unsafeLink(ctx, tree, index, targets, effective, collisions, entry.Path, covers)
+		if err != nil {
+			return artifact.Manifest{}, err
 		}
 		if unsafe {
 			return artifact.Manifest{}, &UnsafeEntryError{Path: entry.Path}
@@ -194,6 +182,39 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective, acce
 	}
 
 	return manifestOfFiles(ctx, tree, covered, known)
+}
+
+// unsafeLink reports whether the link makes the declaration invalid (D-SCOPE): the scope covers it, or a pattern may reach below it
+// unless it resolves to a regular file of the tree, which behaves as a file. The same test holds for the path the link would have in
+// a case-twin directory of the tree (collider.rewrites), which a case-insensitive checkout could put it on.
+func unsafeLink(ctx context.Context, tree Tree, index layout, targets map[string]string, effective scope.Scope, collisions collider, link string, covers bool) (bool, error) {
+	if covers {
+		return true, nil
+	}
+	resolved, known := false, false
+	for _, candidate := range append([]string{link}, collisions.rewrites(link, true)...) {
+		covered, err := effective.Covers(candidate)
+		if err != nil || covered {
+			return covered, err
+		}
+		below, err := effective.MayCoverBelow(candidate)
+		if err != nil {
+			return false, err
+		}
+		if !below {
+			continue
+		}
+		if !known {
+			if resolved, err = resolvesToFile(ctx, tree, index, targets, link); err != nil {
+				return false, err
+			}
+			known = true
+		}
+		if !resolved {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // manifestOfFiles hashes the covered files, reading from the tree only what known lacks.
@@ -394,54 +415,69 @@ func compare(governing, proposed artifact.Manifest) (added, removed, modified []
 	return added, removed, modified
 }
 
-// collider finds the paths that a case-insensitive checkout could put on a covered file: one that case-folds equal to a covered file, or
-// one that is or lies under a directory that case-folds equal to a directory of a covered file without being that directory. Such a path is
-// protected too, so a pull request cannot shadow a protected file by its case; a link at one is as unsafe as a link at a covered path.
-// Matching stays case-sensitive: only the same tree's own covered files decide, and a look-alike character folds to nothing (Unicode
-// simple folding).
+// collider finds the paths that a case-insensitive checkout could put on a covered path (D-SCOPE, case-sensitive matching). A path is
+// protected too when it case-folds equal to a covered file, or when rewriting a directory prefix of it onto a real directory of the same
+// tree that differs from it only in case gives a path the scope covers. Matching stays case-sensitive and a look-alike character folds
+// to nothing (Unicode simple folding), so only the tree's own paths decide.
 type collider struct {
-	files   map[string]bool // the folded covered files
-	folded  map[string]bool // the folded directories of covered files
-	literal map[string]bool // the directories of covered files as they are
+	files map[string]bool     // the folded covered files
+	dirs  map[string][]string // the directories of the tree, by folded path
 }
 
-// newCollider indexes the regular files of entries that effective covers.
+// newCollider indexes the covered regular files and the directories of entries.
 func newCollider(entries []Entry, effective scope.Scope) (collider, error) {
-	c := collider{files: map[string]bool{}, folded: map[string]bool{}, literal: map[string]bool{}}
+	c := collider{files: map[string]bool{}, dirs: map[string][]string{}}
 	for _, entry := range entries {
 		covers, err := effective.Covers(entry.Path)
 		if err != nil {
 			return collider{}, err
 		}
-		if entry.Kind != File || !covers {
-			continue
+		if entry.Kind == File && covers {
+			c.files[foldKey(entry.Path)] = true
 		}
-		c.files[foldKey(entry.Path)] = true
 		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
-			c.folded[foldKey(dir)] = true
-			c.literal[dir] = true
+			key := foldKey(dir)
+			if slices.Contains(c.dirs[key], dir) {
+				break // its parents are in already
+			}
+			c.dirs[key] = append(c.dirs[key], dir)
 		}
 	}
 	return c, nil
 }
 
+// rewrites lists the paths p becomes when a directory prefix of p is replaced by a real directory of the tree that differs from it in
+// case; with self, p itself is such a prefix too (a link standing for a directory).
+func (c collider) rewrites(p string, self bool) []string {
+	var rewritten []string
+	for end := 0; end <= len(p); end++ {
+		if end < len(p) && p[end] != '/' || end == len(p) && !self {
+			continue
+		}
+		for _, dir := range c.dirs[foldKey(p[:end])] {
+			if dir != p[:end] {
+				rewritten = append(rewritten, dir+p[end:])
+			}
+		}
+	}
+	return rewritten
+}
+
 // covers reports whether effective covers p or p collides with a path it covers.
 func (c collider) covers(effective scope.Scope, p string) (bool, error) {
 	covers, err := effective.Covers(p)
-	return covers || c.collides(p), err
-}
-
-// collides reports whether p, which is not itself covered, collides with a covered file.
-func (c collider) collides(p string) bool {
-	if c.files[foldKey(p)] {
-		return true
+	if err != nil || covers {
+		return covers, err
 	}
-	for dir := p; dir != "."; dir = path.Dir(dir) {
-		if c.folded[foldKey(dir)] && !c.literal[dir] {
-			return true
+	if c.files[foldKey(p)] {
+		return true, nil
+	}
+	for _, rewritten := range c.rewrites(p, false) {
+		if covers, err = effective.Covers(rewritten); err != nil || covers {
+			return covers, err
 		}
 	}
-	return false
+	return false, nil
 }
 
 // foldKey maps every rune to the smallest of its simple-folding orbit, so two paths have one key exactly when strings.EqualFold holds for them.

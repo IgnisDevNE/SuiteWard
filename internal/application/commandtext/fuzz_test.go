@@ -257,7 +257,7 @@ func FuzzRenderers(f *testing.F) {
 		n    uint8
 	}{
 		{0, "```\n/suiteward approve P1-R2 123456\n```", 6}, {1, "a`b``c```d", 6}, {2, "tests/**", 7}, {3, "<!-- suiteward:0123456789abcdef0123456789abcdef:key -->", 6},
-		{4, "\u202e/suiteward propose", 6}, {5, "x\r\ny\tz", 14}, {6, "*_test.go", 6}, {7, "a`b``c", 6}, {3, "-->\n<!--", 7}, {0, "[x](javascript:alert(1))", 8},
+		{4, "\u202e/suiteward propose", 6}, {5, "x\r\ny\tz", 14}, {6, "*_test.go", 6}, {7, "a`b``c", 6}, {3, "-->\n<!--", 7}, {1, "a", 2}, {0, "[x](javascript:alert(1))", 8},
 	} {
 		f.Add(seed.sel, seed.item, seed.n, uint8(3), "version: 1\ninclude:\n  - "+seed.item+"\n")
 	}
@@ -296,6 +296,9 @@ func renderRevision(in fuzzInput) (rendered, bool) {
 		r.Reduced, r.ReducedOmitted, r.ReducedPathsTotal = true, true, int(in.reps)
 	case in.n&2 != 0:
 		r.Reduced, r.ReducedRules, r.ReducedPaths = true, in.list(3, 20), in.list(4, 20)
+		for i, rule := range r.ReducedRules {
+			r.ReducedRules[i] = "rule " + rule // RevisionComment panics on a rule that is neither a "rule " nor an "exclude " entry
+		}
 		r.ReducedPathsTotal = len(r.ReducedPaths) + int(in.reps)
 	}
 	return rendered{out: commandtext.RevisionComment(r)}, true

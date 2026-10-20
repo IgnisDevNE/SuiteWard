@@ -304,7 +304,7 @@ func TestMergesPromoteAnApprovedMergeAndSayItInOneMessage(t *testing.T) {
 	w.wantProblem("")
 }
 
-func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
+func TestMergesWakeChecksAndIntegrityAfterAPromotion(t *testing.T) {
 	w := newMgWorld(t)
 	w.approved(5, cjHead2, "v2", 2, 201)
 	w.leave(5)
@@ -316,7 +316,7 @@ func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
 		t.Fatalf("merges run: %v\nlogs: %s", err, w.logs)
 	}
 	w.wantOutcome(5, governance.MergePromoted, "")
-	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+	if want := (river.Wake{river.ChecksKind, river.IntegrityKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that promoted woke %v; want %v", wake, want)
 	}
 	if wake, err := w.merges.run(t.Context()); err != nil || len(wake) != 0 { // each run starts with no wake-ups
@@ -324,7 +324,7 @@ func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
 	}
 }
 
-func TestMergesWakeChecksAfterACorrection(t *testing.T) {
+func TestMergesWakeChecksAndIntegrityAfterACorrection(t *testing.T) {
 	w := newMgWorld(t)
 	w.approved(5, cjHead2, "v2", 2, 201)
 	w.leave(5)
@@ -341,7 +341,7 @@ func TestMergesWakeChecksAfterACorrection(t *testing.T) {
 		t.Fatalf("merges run: %v\nlogs: %s", err, w.logs)
 	}
 	w.wantOutcome(6, governance.MergeCorrected, "")
-	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+	if want := (river.Wake{river.ChecksKind, river.IntegrityKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that corrected woke %v; want %v", wake, want)
 	}
 	if wake, err := w.merges.run(t.Context()); err != nil || len(wake) != 0 {

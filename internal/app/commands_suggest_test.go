@@ -309,6 +309,11 @@ func TestSuggestRecordsASourceItCannotReadAsRefusedWithAFixedReason(t *testing.T
 			w.trees(map[string]string{"src/main.go": "y"}, map[string]string{"te:sts/test_a.py": "x", "src/main.go": "y"})
 			return cjID1
 		}},
+		// The default branch's tree is the fallback of the suggestion when the head gives no pattern, so its paths are as untrusted as the head's.
+		{"a default branch path with a colon before the first contract and no declaration anywhere", "invalid-source", func(w *cjWorld) int64 {
+			w.trees(map[string]string{"te:sts/test_a.py": "x", "src/main.go": "y"}, map[string]string{"src/main.go": "y"})
+			return cjID1
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)

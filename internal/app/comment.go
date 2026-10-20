@@ -63,11 +63,11 @@ type ackPayload struct {
 	Project       contract.ProjectID   `json:"project,omitempty"`       // processed: the project of the Suite
 	Suite         contract.SuiteID     `json:"suite,omitempty"`         // processed: the Suite whose receipt is read
 	Operation     contract.OperationID `json:"operation,omitempty"`     // processed: the operation of the consent receipt
-	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
+	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, other-pull, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
 	Comment       int64                `json:"comment"`                 // the id of the command comment
 	Owner         string               `json:"owner"`                   // the owner's GitHub login at processing time
 	Reason        string               `json:"reason,omitempty"`        // malformed: the reason code; propose-refused, skip-refused and suggest-refused: the refusal; suggested: declaration-missing, scope-notice or nothing-uncovered
-	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
+	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal, other-pull and proposed: P<n>-R<m>
 	Branch        string               `json:"branch,omitempty"`        // declaration-missing and scope-notice: the pull request's head ref. Also a refusal that asks to fix .suiteward.yml: the branch of the file to edit
 	Suggestion    []string             `json:"suggestion,omitempty"`    // declaration-missing: the include patterns inventory.Suggest found
 	Runner        []string             `json:"runner,omitempty"`        // and the runner patterns,
@@ -144,6 +144,7 @@ var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.SkipRefused: commandtext.SkipRefused, commands.Failed: commandtext.ProposeFailed, // a failed command is acknowledged only when it was a propose
 	// A suggest that finds a declaration to suggest is rendered by its own texts, so Suggested here is the one that finds nothing to add.
 	commands.Suggested: commandtext.NothingUncovered, commands.SuggestRefused: commandtext.SuggestRefused,
+	commands.OtherPull: commandtext.OtherPullRequest,
 }
 
 // reasonFits reports whether reason is one a payload of d may carry.
@@ -295,8 +296,8 @@ func newProcessedAck(target commentTarget, comment int64, ownerLogin string, pro
 }
 
 // newRejectedAck builds the acknowledgment of a command the job rejected before ProcessConsent: disposition is
-// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal or EditedFirst. reference (P<n>-R<m>) is the
-// parsed command's: required for UnknownProposal, optional for InvalidCode, ReplayedCode and NoSuite (a skip or a
+// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal, OtherPull or EditedFirst. reference (P<n>-R<m>) is the
+// parsed command's: required for UnknownProposal and OtherPull, optional for InvalidCode, ReplayedCode and NoSuite (a skip or a
 // propose has none) and empty otherwise.
 func newRejectedAck(target commentTarget, comment int64, ownerLogin string, disposition commands.Disposition, reason commandtext.Reason, reference string) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reasonCode(reason), Reference: reference})

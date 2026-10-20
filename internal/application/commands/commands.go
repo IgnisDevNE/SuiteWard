@@ -31,7 +31,7 @@ type Disposition string
 
 // The dispositions (D-COMMANDS).
 const (
-	NotCommand       Disposition = "not-command"       // no /suiteward line, or SuiteWard's own comment
+	NotCommand       Disposition = "not-command"       // no /suiteward line, SuiteWard's own comment, or an approve, revoke or skip first observed after its pull request stopped being open (nothing is decided and no step is used)
 	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
 	NoSuite          Disposition = "no-suite"          // owner-authored command for a project whose Suite does not exist yet
 	EditedFirst      Disposition = "edited-first"      // owner-authored, first observed version already edited (updated_at != created_at); no step used
@@ -48,9 +48,10 @@ const (
 	SkipRefused      Disposition = "skip-refused"      // owner-authored /suiteward skip that was refused; no operation id
 	Suggested        Disposition = "suggested"         // owner-authored /suiteward suggest that was answered, or that found no Suite yet (the acknowledgment says the bootstrap is pending); no operation id, never a command for the check
 	SuggestRefused   Disposition = "suggest-refused"   // owner-authored /suiteward suggest on a fork or a closed pull request, or from a source it cannot answer from; always acknowledged; no operation id, never a command for the check
+	OtherPull        Disposition = "other-pull"        // owner-authored approve or revoke whose reference names a proposal carried by another pull request; refused before a step is used; no operation id, never a command for the check
 )
 
-var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused}
+var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused, OtherPull}
 
 // Entry is the decision about the first observed version of one comment.
 type Entry struct {

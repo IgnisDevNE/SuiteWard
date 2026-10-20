@@ -542,7 +542,7 @@ package commands
 type Disposition string // the codes below
 
 const (
-	NotCommand      Disposition = "not-command"     // no /suiteward line, or SuiteWard's own comment
+	NotCommand      Disposition = "not-command"     // no /suiteward line, SuiteWard's own comment, or an approve, revoke or skip first observed after its pull request stopped being open (no step used, never acknowledged)
 	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
 	NoSuite         Disposition = "no-suite"        // owner-authored command for a project whose Suite does not exist yet
 	EditedFirst     Disposition = "edited-first"    // owner-authored, first observed version already edited (updated_at != created_at); no step used
@@ -553,6 +553,7 @@ const (
 	ReplayedCode    Disposition = "replayed-code"   // owner-authored, the step was used by another command
 	UnknownProposal Disposition = "unknown-proposal" // owner-authored, valid code, for a proposal that does not exist on an existing Suite; the step stays consumed
 	Processed       Disposition = "processed"       // passed to ProcessConsent; Receipt holds the outcome
+	OtherPull       Disposition = "other-pull"      // owner-authored approve or revoke for a proposal that another pull request carries; refused before its step is used (migration 00020); acknowledged, no operation id, never counted by LatestOwnerCommand
 )
 
 type Entry struct {
@@ -598,7 +599,7 @@ type Candidate struct { // the first observed version of one comment
 
   `edited-first` is recorded like a rejected disposition, with an acknowledgment, and uses up no step.
 
-  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
+  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal`, `other-pull`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
 - **Keys.** Observations are keyed by `owner/name` (M1.4) and projects by repository id. `Pending` joins them through the enrolled projects (`owner.State.Projects`), so a repository that is not enrolled has no candidates.
 
 ### Consumed steps bound to their command
@@ -1182,7 +1183,7 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
   - it uses the same classifier as `Suggest`.
 - A declaration whose runner pattern matches no file still parses, and `Covers` and the integrity check accept it.
 - `AddPatterns`, by round trip: the output parses, keeps every original pattern, and adds exactly the requested new ones.
-- `suggested` and `suggest-refused` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
+- `suggested`, `suggest-refused` and `other-pull` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
 - Payloads: an ack or revision payload of the `v0.1.0` shape still decodes.
 
 ## Cycle start (M1.7c; normative)
@@ -1232,7 +1233,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9, `00020` the other-pull disposition)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |

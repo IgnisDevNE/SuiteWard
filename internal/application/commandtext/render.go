@@ -38,6 +38,8 @@ const (
 	NothingUncovered
 	// SuggestRefused carries a Refusal: Fork, NotOpen, InvalidSource or DeclarationTooLarge.
 	SuggestRefused
+	// OtherPullRequest answers an approve or a revoke whose reference names a proposal that another pull request carries.
+	OtherPullRequest
 )
 
 // Refusal is the reason of a ProposeRefused, SkipRefused or SuggestRefused outcome.
@@ -164,7 +166,7 @@ func acknowledgment(a Ack) string {
 	switch a.Outcome {
 	case Approved, Revoked, NoActiveApproval, Rejected, RevokedAfterPromotion, ApprovedAfterPromotion:
 		return consentAck(a)
-	case InvalidCode, ReplayedCode, NoSuite, MalformedCommand, EditedFirst:
+	case InvalidCode, ReplayedCode, NoSuite, MalformedCommand, EditedFirst, OtherPullRequest:
 		return commandAck(a)
 	case ProposeRefused, SkipRefused, SuggestRefused:
 		return refusal(a)
@@ -261,6 +263,8 @@ func commandAck(a Ack) string {
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
 			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>` or `/suiteward suggest`, " +
 			"with a current code from your authenticator app where the command takes one.")
+	case OtherPullRequest:
+		return paragraphs(ref + " belongs to another pull request; comment the command on that pull request. Nothing changed.")
 	case EditedFirst:
 		return paragraphs("Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.\n" +
 			"Post the command as a new comment with a current code. Edits to a command comment are never processed.")

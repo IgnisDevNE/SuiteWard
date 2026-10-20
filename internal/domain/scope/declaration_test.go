@@ -444,3 +444,21 @@ func TestAddPatternsAndAddExcludesQuoteWhatYAMLWouldReadAsAnotherValue(t *testin
 		})
 	}
 }
+
+// A pattern that is only a YAML 1.1 boolean is quoted on its own, without the merge key to force it, and reads back as the same string.
+func TestAddPatternsQuotesAYAMLBooleanOnItsOwn(t *testing.T) {
+	for _, pattern := range []string{"y", "Off"} {
+		t.Run(pattern, func(t *testing.T) {
+			got, err := scope.AddPatterns([]byte("version: 1\n"), []string{pattern}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "version: 1\ninclude:\n  - \"" + pattern + "\"\n"; string(got) != want {
+				t.Errorf("AddPatterns = %q, want %q", got, want)
+			}
+			if d := mustParse(t, got); !reflect.DeepEqual(patternStrings(d.Include()), []string{pattern}) {
+				t.Errorf("the declaration holds %q, want %q", patternStrings(d.Include()), pattern)
+			}
+		})
+	}
+}

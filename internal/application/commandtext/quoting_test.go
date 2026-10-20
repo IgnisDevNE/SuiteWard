@@ -107,3 +107,28 @@ func TestSuggestionItemsStayStringsWhenCommitted(t *testing.T) {
 		})
 	}
 }
+
+// A pattern that is only a YAML 1.1 boolean is double-quoted in a plain list's suggestion, as scope.AddPatterns writes it, and reads back as the same string.
+func TestSuggestionQuotesAYAMLBooleanOnItsOwn(t *testing.T) {
+	for _, pattern := range []string{"y", "Off"} {
+		t.Run(pattern, func(t *testing.T) {
+			item := `  - "` + pattern + `"`
+			for name, body := range map[string]string{
+				"include": suggestionBody(t, "  - a/**", "  ", []string{pattern}),
+				"runner":  choiceBody(t, commandtext.ProtectChoice, "  - a/**", "  ", []string{pattern}, ""),
+			} {
+				block := suggestionBlock.FindStringSubmatch(body)
+				if len(block) < 2 || block[1] != "  - a/**\n"+item {
+					t.Fatalf("%s: the block is %q, want the anchor and %s", name, block, item)
+				}
+				d, err := scope.ParseDeclaration([]byte("version: 1\ninclude:\n" + block[1] + "\n"))
+				if err != nil {
+					t.Fatalf("%s: the suggestion is not a declaration: %v", name, err)
+				}
+				if got := d.Include(); len(got) != 2 || got[1].String() != pattern {
+					t.Errorf("%s: the declaration holds %v, want a/** and %q", name, got, pattern)
+				}
+			}
+		})
+	}
+}

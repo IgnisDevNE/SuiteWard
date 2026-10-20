@@ -784,7 +784,7 @@ func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
 }
 
 // MaxDeclaration promises a notice below GitHub's limit of 65,536 characters, not below three quarters of it: the two worst comments, with
-// declarations of backticks (which the fence outgrows at both ends) and every other list at its cap, measure close to 58,000 bytes.
+// declarations of backticks (which the fence outgrows at both ends) and every other list at its cap, measure up to about 58,000 bytes.
 // This test characterizes that bound; it does not guard a changed behavior.
 func TestTheWorstNoticesStayBelowGitHubsLimit(t *testing.T) {
 	long := func(i int) string { return strings.Repeat("\u20ac`\n", 400) + string(rune('a'+i)) }

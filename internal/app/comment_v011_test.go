@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
@@ -65,5 +66,31 @@ func TestCommentPublisherPostsAV011ScopeReviewWithoutQuotingFollowingItsAnchor(t
 		if body := cmtTrimmed(want.text) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":"+want.list); posted[i].body != body {
 			t.Errorf("%s review comment =\n%s\nwant\n%s", want.list, posted[i].body, body)
 		}
+	}
+}
+
+// v0.1.1 stored a revision's removed rules and added excludes in one list, each marked "rule <p>" or "exclude <p>". A message queued then and
+// delivered after an upgrade renders them under their own headings, without the marks.
+func TestCommentPublisherSplitsTheReductionOfAV011RevisionPayload(t *testing.T) {
+	payload := json.RawMessage(`{"repositoryId":1001,"repo":"acme/widgets","pull":7,"reference":"P2-R2","previous":"P2-R1","canonical":"V1",` +
+		`"added":["tests/new_test.go"],"modified":["tests/a_test.go"],"removed":[],"addedTotal":1,"modifiedTotal":1,"removedTotal":0,"reduced":true,` +
+		`"reducedRules":["rule x","exclude y"],"reducedPaths":["x","y"],"reducedPathsTotal":2,"tier":"isolated"}`)
+	w := newCmtWorld(t)
+
+	if err := w.pub.publish(t.Context(), cmtRevisionKey, payload); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	posts := w.writer.posts()
+	if len(posts) != 1 {
+		t.Fatalf("posted %d comments, want 1", len(posts))
+	}
+	for _, want := range []string{"Rules removed from the scope:\n\n```\nx\n```", "Excludes added:\n\n```\ny\n```"} {
+		if !strings.Contains(posts[0].body, want) {
+			t.Errorf("the comment lacks %q:\n%s", want, posts[0].body)
+		}
+	}
+	if strings.Contains(posts[0].body, "rule x") || strings.Contains(posts[0].body, "exclude y") {
+		t.Errorf("the comment shows the marks that sort the entries:\n%s", posts[0].body)
 	}
 }

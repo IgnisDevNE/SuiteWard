@@ -792,8 +792,10 @@ func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c co
 	case hasDeclaration(headEntries):
 		base, source = basePull, head
 	default: // nothing to compare with: the suggestion of a propose that finds no declaration
-		if _, err := inventory.ListEntries(ctx, head); err != nil { // the head is untrusted: an invalid path is an invalid source here too
-			return governance.OutboxMessage{}, nil, err
+		for _, tree := range []*githubTree{head, main} { // both are untrusted, and the default branch's is the fallback: an invalid path is an invalid source here too
+			if _, err := inventory.ListEntries(ctx, tree); err != nil {
+				return governance.OutboxMessage{}, nil, err
+			}
 		}
 		ack, err := declarationMissing(target, c, login, view.pull.HeadRef, headEntries, mainEntries)
 		return ack, nil, err

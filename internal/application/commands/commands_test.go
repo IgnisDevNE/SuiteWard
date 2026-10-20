@@ -62,12 +62,18 @@ func TestEveryDeclaredDispositionIsInTheList(t *testing.T) {
 		}
 	}
 	listed := commands.Dispositions()
-	if len(declared) == 0 || len(declared) != len(listed) {
-		t.Fatalf("commands.go declares %d dispositions and Dispositions() lists %d; want the same codes", len(declared), len(listed))
+	if len(declared) == 0 {
+		t.Fatal("commands.go declares no disposition")
 	}
+	// Both ways, as sets: a list with a duplicate keeps its length while it drops a code.
 	for _, d := range listed {
 		if !declared[d] {
 			t.Fatalf("Dispositions() lists %q, which commands.go does not declare", d)
+		}
+	}
+	for d := range declared {
+		if !slices.Contains(listed, d) {
+			t.Fatalf("commands.go declares %q, which Dispositions() does not list", d)
 		}
 	}
 }

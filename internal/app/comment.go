@@ -296,8 +296,8 @@ func newProcessedAck(target commentTarget, comment int64, ownerLogin string, pro
 }
 
 // newRejectedAck builds the acknowledgment of a command the job rejected before ProcessConsent: disposition is
-// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal or EditedFirst. reference (P<n>-R<m>) is the
-// parsed command's: required for UnknownProposal, optional for InvalidCode, ReplayedCode and NoSuite (a skip or a
+// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal, OtherPull or EditedFirst. reference (P<n>-R<m>) is the
+// parsed command's: required for UnknownProposal and OtherPull, optional for InvalidCode, ReplayedCode and NoSuite (a skip or a
 // propose has none) and empty otherwise.
 func newRejectedAck(target commentTarget, comment int64, ownerLogin string, disposition commands.Disposition, reason commandtext.Reason, reference string) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reasonCode(reason), Reference: reference})

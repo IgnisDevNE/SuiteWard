@@ -111,6 +111,8 @@ func TestParse(t *testing.T) {
 		{"after an unclosed HTML comment", "<!--\n/suiteward approve P1-R1 123456", notCommand},
 		{"in an HTML comment on one line", "<!-- /suiteward approve P1-R1 123456 -->", notCommand},
 		{"after text and an unclosed comment opener on the same line", "note <!-- x\n/suiteward approve P1-R1 123456", notCommand},
+		{"a comment that closes and reopens on one line", "<!--\nx --> y <!--\n/suiteward approve P1-R1 123456\n-->", notCommand},
+		{"a comment that closes and reopens unclosed on its opening line", "<!-- a --> b <!-- c\n/suiteward approve P1-R1 123456\n-->", notCommand},
 		{"indented four spaces", "    /suiteward approve P1-R1 123456", notCommand},
 		{"indented a tab", "\t/suiteward approve P1-R1 123456", notCommand},
 		{"indented two spaces and a tab", "  \t/suiteward approve P1-R1 123456", notCommand},

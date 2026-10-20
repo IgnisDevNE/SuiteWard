@@ -111,7 +111,8 @@ func Parse(body string) Parsed {
 	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if inComment {
-			inComment = !strings.Contains(line, "-->")
+			closed := strings.Index(line, "-->")
+			inComment = closed < 0 || opensComment(line[closed+len("-->"):])
 			continue
 		}
 		text := strings.Trim(line, " \t")
@@ -121,8 +122,8 @@ func Parse(body string) Parsed {
 			}
 			continue
 		}
-		if _, after, opens := strings.Cut(line, "<!--"); opens {
-			inComment = !strings.Contains(after, "-->")
+		if strings.Contains(line, "<!--") {
+			inComment = opensComment(line)
 			continue
 		}
 		if f := openingFence(text); f != "" {
@@ -140,6 +141,12 @@ func Parse(body string) Parsed {
 		}
 	}
 	return Parsed{Kind: KindNotCommand}
+}
+
+// opensComment reports whether the last <!-- in s has no --> after it, so the text that follows s is inside a comment.
+func opensComment(s string) bool {
+	i := strings.LastIndex(s, "<!--")
+	return i >= 0 && !strings.Contains(s[i+len("<!--"):], "-->")
 }
 
 // indent is the width of the spaces and tabs that start the line, a tab counting as four columns.

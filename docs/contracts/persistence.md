@@ -1183,7 +1183,7 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
   - it uses the same classifier as `Suggest`.
 - A declaration whose runner pattern matches no file still parses, and `Covers` and the integrity check accept it.
 - `AddPatterns`, by round trip: the output parses, keeps every original pattern, and adds exactly the requested new ones.
-- `suggested` and `suggest-refused` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
+- `suggested`, `suggest-refused` and `other-pull` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
 - Payloads: an ack or revision payload of the `v0.1.0` shape still decodes.
 
 ## Cycle start (M1.7c; normative)

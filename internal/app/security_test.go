@@ -77,19 +77,20 @@ func TestACommandPostedWhileThePullRequestWasOpenIsProcessedAfterItClosed(t *tes
 	}
 }
 
-// An owner approve, revoke or skip whose comment was created at or after the moment the pull request was first seen not open
-// is ignored: it uses no step, records no consent and posts no acknowledgment. The comment time is GitHub's clock and
-// not_open_since is the sync's own, so this happens when the sync's clock runs behind GitHub's; equal times count as closed.
-func TestACommandCreatedAfterThePullRequestClosedIsIgnored(t *testing.T) {
+// An owner approve, revoke or skip that the sync first observed at or after the moment it first saw the pull request not open is
+// ignored: it uses no step, records no consent and posts no acknowledgment. Both times are the sync's own clock; equal times count
+// as closed. A pull request that lists a comment is open in that cycle, so this needs a cycle that runs behind an earlier one,
+// which the test builds by recording the cycle that observes the comment before the one that closes the pull request.
+func TestACommandFirstObservedAfterThePullRequestClosedIsIgnored(t *testing.T) {
 	closedAt := cjSync.Add(10 * time.Minute)
-	for _, created := range []struct {
+	for _, observed := range []struct {
 		name string
 		at   time.Time
 	}{{"after", closedAt.Add(time.Minute)}, {"at the same time", closedAt}} {
 		for _, command := range []struct{ verb, reference string }{{"approve", "P1-R2"}, {"revoke", "P1-R2"}, {"skip", ""}} {
-			t.Run(created.name+"/"+command.verb, func(t *testing.T) {
+			t.Run(observed.name+"/"+command.verb, func(t *testing.T) {
 				w := newCjWorld(t)
-				w.observe(cjID1, cjSync, ownerCommand(500, created.at, command.verb, command.reference, 0))
+				w.observe(cjID1, observed.at, ownerCommand(500, cjAt(10), command.verb, command.reference, 0))
 				w.observe(cjID2, cjSync.Add(20*time.Minute))
 				w.closePull(cjID1, closedAt)
 				w.closePull(cjID1, cjSync.Add(20*time.Minute))
@@ -110,4 +111,18 @@ func TestACommandCreatedAfterThePullRequestClosedIsIgnored(t *testing.T) {
 			})
 		}
 	}
+}
+
+// A comment whose creation time is after the moment the pull request closed, as the sync's clock reads it, but that the sync first
+// observed while the pull request was open, is processed: the two clocks are never compared.
+func TestACommandWithAGitHubTimeAfterTheCloseIsProcessedWhenFirstObservedOpen(t *testing.T) {
+	w := newCjWorld(t)
+	closedAt := cjSync.Add(time.Minute)
+	w.syncAll([]cjComment{ownerCommand(500, closedAt.Add(30*time.Minute), "approve", "P1-R2", 0)})
+	w.closePull(cjID1, closedAt)
+	w.closePull(cjID1, cjSync.Add(2*time.Hour))
+	w.observe(cjID2, cjSync.Add(2*time.Hour))
+	w.mustRun()
+
+	w.requireProcessed(cjID1, 500)
 }

@@ -149,6 +149,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
   - **Lost publication.** When the current generation's message ended `failed` in the outbox, `Publish` re-sends the same state under the next generation.
   - Publish through `checks.Store.Publish` with a `github_check` message.
 - A store error fails the run after every repository was tried. The last error per repository is kept in memory and shown in `/status` (`github[].checks`).
+- Memory is bounded (M1.10-M11). What the job remembers per pull request (unchanged heads, scope decisions, announced comments, runner files) is dropped for the pull requests of a repository that the observation read at the start of its run does not list as open; a repository whose observation could not be read keeps its entries, and a reopened pull request costs one more decision. The ETag cache of the REST client is bounded too ([GitHub contract](github.md)).
 
 **Outbox kind `github_check`**
 - Key `check:<repository id>:<pull>:<generation>`. A system row (no project or Suite).

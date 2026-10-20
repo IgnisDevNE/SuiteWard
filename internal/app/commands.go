@@ -296,14 +296,14 @@ func (j *commandsJob) verifyCode(ctx context.Context, enrollment owner.State, c 
 	m := c.Comment
 	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
 	if errors.Is(err, totp.ErrInvalidCode) {
-		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
+		j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", m.CommentID)
 		return false, reject(commands.InvalidCode, 0, reference)
 	}
 	if err != nil {
 		return false, &opaque{what: "verify the code", cause: err}
 	}
 	// Logged before the step is consumed, so a replayed code also logs "verified" and is then rejected.
-	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
+	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID)
 	// The comment's own time keeps a retry after a crash identical to the first call.
 	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {
 	case errors.Is(err, owner.ErrStepUsed):
@@ -354,20 +354,6 @@ func (j *commandsJob) process(ctx context.Context, enrollment owner.State, c com
 		return &opaque{what: "process the consent", cause: err}
 	}
 	return j.record(ctx, c, commands.Processed, operation, nil)
-}
-
-// measuredTolerance is how far logRejectedOffset looks, to measure whether commandTolerance is too narrow.
-const measuredTolerance = 2
-
-// logRejectedOffset logs, for measurement only, whether a wider window would have accepted a rejected code and at which
-// offset in steps from the comment's step. The result never changes the decision, and neither the code nor the secret is logged.
-func (j *commandsJob) logRejectedOffset(ctx context.Context, secret []byte, code string, c commands.Candidate) {
-	step, err := totp.Verify(secret, code, c.Comment.CreatedAt, measuredTolerance)
-	if err != nil {
-		j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", c.Comment.CommentID, "would_match", false)
-		return
-	}
-	j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", c.Comment.CommentID, "would_match", true, "offset", step-totp.Step(c.Comment.CreatedAt))
 }
 
 // consentRequest is the command of the owner's comment with the identifiers of D-COMMANDS.

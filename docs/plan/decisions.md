@@ -194,7 +194,7 @@ Accepted 2026-10-13 (owner answers, M1.6a planning), within ADRs 0002, 0010, 001
 **TOTP**
 - The code is verified against the comment's `created_at` with a tolerance of one 30-second step either side (owner answer 2026-10-13).
   - **Data for the decision before M1.8.** In the M1.7b live run (2026-10-16), one approval code was refused because of timing, per the owner. The offset was not captured.
-  - The commands job logs, for every rejected code, whether a window of 2 steps would have matched and at which offset (`github command code rejected`, `would_match`). The decision reads those lines from the host journal.
+  - The commands job logged, for every rejected code, whether a window of 2 steps would have matched and at which offset (`github command code rejected`, `would_match`). The decision read those lines from the host journal. The measurement is over and the fields were removed in SH-H5.
   - **Decided 2026-10-17 (owner, M1.8 planning): keep ±1.** The M1.8 acceptance reads the host's `would_match` lines. Only near misses there widen the window to ±2, as a new owner decision.
   - **Confirmed by the M1.8 acceptance (2026-10-17): the window stays ±1.**
     - The host's journal held 20 rejected codes from 2026-10-15 to 2026-10-17, and every one had `would_match` false. These were wrong codes, not late ones: dead authenticator entries and one mistyped code.

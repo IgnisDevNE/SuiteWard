@@ -92,11 +92,11 @@ func setDigest(paths []string) string {
 }
 
 // newScopeNoticeMessage builds the notice of the added uncovered paths, bounding the repository text it carries. A declaration that cannot be shown
-// (see quotable) is left out and the notice lists the patterns of suggested alone. A payload the publisher could not render is an error, so
+// (see commandtext.CanShow) is left out and the notice lists the patterns of suggested alone. A payload the publisher could not render is an error, so
 // nobody writes a message that nobody can post.
 func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed, submodules []string, suggested inventory.Suggestion) (governance.OutboxMessage, error) {
 	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut}
-	if quotable(declaration) {
+	if commandtext.CanShow(declaration) {
 		p.Declaration = string(declaration)
 	} else {
 		p.AddInclude, p.AddRunner = boundedText(suggested.Include), boundedText(suggested.Runner)

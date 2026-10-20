@@ -337,7 +337,7 @@ func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch, 
 	p := ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
 		Paths: boundedText(paths), PathsTotal: len(paths), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut,
 		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner), DefaultBranch: defaultBranch}
-	if quotable(declaration) { // one that cannot be shown is left out: the reply then lists the patterns alone
+	if commandtext.CanShow(declaration) { // one that cannot be shown is left out: the reply then lists the patterns alone
 		p.Declaration = string(declaration)
 	}
 	return newAck(p)
@@ -1014,17 +1014,11 @@ func invalidSourceDigest(kind, path string, declaration []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// quotable reports whether a comment can show declaration (decision 7 of M1.10): it is within the size a notice holds and holds no character that is not
-// graphic besides newline and tab. commandtext decides that when it validates a notice, so a probe through it follows the rule.
-func quotable(declaration []byte) bool {
-	return commandtext.ValidateInvalidSource(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "x", Declaration: declaration}) == nil
-}
-
 // newInvalidSourceMessage builds the comment that explains one problem of a pull request's source. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
 func newInvalidSourceMessage(target commentTarget, branch string, s sourceProblem) (governance.OutboxMessage, error) {
 	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText, Branch: branch, NoDeclaration: s.noDeclaration}
-	if quotable(s.declaration) { // a choice that cannot be shown is left out: the comment then shows the pattern alone
+	if commandtext.CanShow(s.declaration) { // a choice that cannot be shown is left out: the comment then shows the pattern alone
 		p.Declaration = string(s.declaration)
 	}
 	if err := p.validate(); err != nil {

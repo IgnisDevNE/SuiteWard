@@ -39,9 +39,9 @@ func ValidateRunnerUncovered(n RunnerUncovered) error {
 		return fmt.Errorf("commandtext: a notice with no protect declaration lists 1 to %d runner patterns, none empty, and has %d", maxRunnerPatterns, len(n.ProtectPatterns))
 	case len(n.Protect) > 0 && len(n.ProtectPatterns) > 0:
 		return errors.New("commandtext: a notice offers the protect choice as a declaration or as patterns, not both")
-	case len(n.Protect) > MaxDeclaration || !verbatim(n.Protect):
+	case !CanShow(n.Protect):
 		return fmt.Errorf("commandtext: a protect declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Protect), MaxDeclaration)
-	case len(n.Ignore) > MaxDeclaration || !verbatim(n.Ignore):
+	case !CanShow(n.Ignore):
 		return fmt.Errorf("commandtext: an ignore declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Ignore), MaxDeclaration)
 	}
 	return nil

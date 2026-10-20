@@ -68,7 +68,7 @@ func ValidateScopeNotice(n ScopeNotice) error {
 	switch {
 	case len(n.Declaration) == 0 && len(n.AddInclude)+len(n.AddRunner) == 0:
 		return errors.New("commandtext: a notice with no declaration lists the patterns to add, and has none")
-	case len(n.Declaration) > MaxDeclaration || !verbatim(n.Declaration):
+	case !CanShow(n.Declaration):
 		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(n.Declaration), MaxDeclaration)
 	}
 	return validateNoticeBase(n)

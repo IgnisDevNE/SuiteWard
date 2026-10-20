@@ -32,12 +32,12 @@ func ProcessConsent(ctx context.Context, uow UnitOfWork, request ConsentRequest)
 func processConsent(ctx context.Context, tx Tx, request ConsentRequest) (ConsentResponse, error) {
 	command := request.Command
 	reference := command.Reference()
-	byOperation, bySource, err := consentReceipts(ctx, tx, command)
+	stored, found, viaSource, err := consentReceipts(ctx, tx, command)
 	if err != nil {
 		return ConsentResponse{}, err
 	}
-	if byOperation != nil {
-		return ConsentResponse{Receipt: *byOperation, Duplicate: true}, nil
+	if found && !viaSource {
+		return ConsentResponse{Receipt: stored, Duplicate: true}, nil
 	}
 	state, err := tx.Suite(ctx)
 	if err != nil {
@@ -54,13 +54,13 @@ func processConsent(ctx context.Context, tx Tx, request ConsentRequest) (Consent
 	switch {
 	case result.Reason() == contract.ConsentReasonCommandConflict:
 		return ConsentResponse{}, fmt.Errorf("%w: the operation or the source command of %q belongs to another command", ErrOperationConflict, command.OperationID())
-	case result.Duplicate() != (bySource != nil):
+	case result.Duplicate() != found:
 		return ConsentResponse{}, fmt.Errorf("%w: consent history and receipts disagree about source command %q", ErrInvalidState, command.SourceCommandID())
 	case result.Duplicate():
-		if err := tx.AppendConsent(ctx, ConsentWrite{OperationID: command.OperationID(), Result: result, Receipt: *bySource, Alias: true}); err != nil {
+		if err := tx.AppendConsent(ctx, ConsentWrite{OperationID: command.OperationID(), Result: result, Receipt: stored, Alias: true}); err != nil {
 			return ConsentResponse{}, fmt.Errorf("record consent alias: %w", err)
 		}
-		return ConsentResponse{Receipt: *bySource, Duplicate: true}, nil
+		return ConsentResponse{Receipt: stored, Duplicate: true}, nil
 	}
 	var promoted contract.SuiteVersionID
 	record, promotedFound, err := tx.PromotionFor(ctx, reference)
@@ -84,43 +84,42 @@ func processConsent(ctx context.Context, tx Tx, request ConsentRequest) (Consent
 }
 
 // consentReceipts reads the receipt of the command's operation id and, when there is none, the receipt of its source
-// command. A receipt of the operation is the answer to a replay; a receipt of the source command is the original the
-// command repeats under a new operation id. Either one that is not the receipt of this command conflicts.
-func consentReceipts(ctx context.Context, tx Tx, command contract.Command) (byOperation, bySource *ConsentReceipt, err error) {
+// command. A receipt of the operation is the answer to a replay; a receipt of the source command (viaSource) is the
+// original the command repeats under a new operation id. Either one that is not the receipt of this command conflicts.
+func consentReceipts(ctx context.Context, tx Tx, command contract.Command) (receipt ConsentReceipt, found, viaSource bool, err error) {
 	stored, found, err := tx.Receipt(ctx, command.OperationID())
 	if err != nil {
-		return nil, nil, fmt.Errorf("load operation receipt: %w", err)
-	}
-	if found {
-		byOperation, err = commandReceipt(stored, command)
-		return byOperation, nil, err
-	}
-	original, found, err := tx.ReceiptBySource(ctx, command.SourceCommandID())
-	if err != nil {
-		return nil, nil, fmt.Errorf("load source command receipt: %w", err)
+		return ConsentReceipt{}, false, false, fmt.Errorf("load operation receipt: %w", err)
 	}
 	if !found {
-		return nil, nil, nil
+		stored, found, err = tx.ReceiptBySource(ctx, command.SourceCommandID())
+		if err != nil {
+			return ConsentReceipt{}, false, false, fmt.Errorf("load source command receipt: %w", err)
+		}
+		if !found {
+			return ConsentReceipt{}, false, false, nil
+		}
+		viaSource = true
 	}
-	bySource, err = commandReceipt(original, command)
-	return nil, bySource, err
+	receipt, err = commandReceipt(stored, command)
+	return receipt, true, viaSource, err
 }
 
 // commandReceipt returns the consent receipt in stored when it is the receipt of the same source command, actor and
 // proposal as command. Anything else, another kind of receipt included, is an operation conflict; a consent receipt
 // without its body is damaged stored state.
-func commandReceipt(stored OperationReceipt, command contract.Command) (*ConsentReceipt, error) {
+func commandReceipt(stored OperationReceipt, command contract.Command) (ConsentReceipt, error) {
 	if stored.Kind != OperationConsent {
-		return nil, fmt.Errorf("%w: the receipt is not a consent receipt", ErrOperationConflict)
+		return ConsentReceipt{}, fmt.Errorf("%w: the receipt is not a consent receipt", ErrOperationConflict)
 	}
 	if stored.Consent == nil {
-		return nil, fmt.Errorf("%w: a consent receipt without its body", ErrInvalidState)
+		return ConsentReceipt{}, fmt.Errorf("%w: a consent receipt without its body", ErrInvalidState)
 	}
 	original := stored.Consent.Result.Command()
 	wanted := command.Reference()
 	if stored.ProjectID != wanted.ProjectID || stored.SuiteID != wanted.SuiteID || original.Reference().ProposalID != wanted.ProposalID ||
 		original.SourceCommandID() != command.SourceCommandID() || original.Actor() != command.Actor() {
-		return nil, fmt.Errorf("%w: the receipt belongs to another source command, actor or proposal", ErrOperationConflict)
+		return ConsentReceipt{}, fmt.Errorf("%w: the receipt belongs to another source command, actor or proposal", ErrOperationConflict)
 	}
-	return stored.Consent, nil
+	return *stored.Consent, nil
 }

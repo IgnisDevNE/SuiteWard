@@ -28,7 +28,7 @@ Final numbers come from the S1 walking skeleton.
 **Amendment (2026-10-15, after M1.7; owner).** *Latency.*
 - **Measured.** The M1.7 verification measured 20 s to 2 min from an event to its check. The M1.7b live run measured about 2 to 3 minutes from a command to its answer. After M1.7c (2026-10-17), on both targets, a command took 16–35 s to its answer, an approval 17–36 s to its check, and a push 12–31 s to its check. Before M1.7c the floor for a command was the D-COMMANDS watermark: the earliest synchronization success minus `JOB_TIMEOUT` minus 30 s, about 90 s. Since M1.7c it is the earliest cycle start in GitHub's clock minus 10 s (D-COMMANDS amendment of 2026-10-16).
 - **Approved for phase M1.7c (before M1.8):**
-  - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction;
+  - chain the jobs, so an approve or revoke, a promotion, or a sync that sees new comments enqueues the next job in the same transaction (as decided then; M1.10 amended [ADR 0005](../decisions/0005-river-background-jobs.md): the outbox carries the transactional guarantee);
   - shorten the synchronization poll to about 20–30 s.
 - **Needed first.** A D-COMMANDS decision on the watermark, for example a horizon measured from the cycle's start, because chaining alone cannot beat the watermark.
 - **Webhooks** come after the MVP, because they need an inbound route and changes to ADR 0001 and D-SYNC.

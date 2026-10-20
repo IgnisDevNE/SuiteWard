@@ -293,6 +293,9 @@ func (t *githubTree) Read(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, githubRead(err)
 	}
+	if path == scope.DeclarationPath && len(data) > maxDeclarationBytes {
+		return nil, fmt.Errorf("%w: larger than %d bytes", scope.ErrInvalidDeclaration, maxDeclarationBytes)
+	}
 	t.files[path] = data
 	return data, nil
 }

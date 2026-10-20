@@ -94,7 +94,7 @@ func TestCheckRowsAreUpdatedInPlaceNeverDeleted(t *testing.T) {
 		t.Fatalf("an update in place failed: %v", err)
 	}
 	for _, statement := range []string{"DELETE FROM pr_checks", "TRUNCATE pr_checks"} {
-		_, err := w.pool.Exec(t.Context(), statement)
+		err := w.mutateHistory(statement)
 		schemaRequireError(t, err, "23514", "immutable_history")
 	}
 	if ownerCount(w, "SELECT count(*) FROM pr_checks") != 1 {

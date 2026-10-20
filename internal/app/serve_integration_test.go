@@ -25,7 +25,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-func TestServeMigratesAFreshDatabaseAndReports(t *testing.T) {
+func TestServeStartsOnAMigratedDatabaseAndReports(t *testing.T) {
 	databaseURL := newDatabase(t)
 	s := startRun(t, serveVars(t, databaseURL))
 	s.waitReady()
@@ -254,10 +254,7 @@ func TestReadinessFollowsTheDatabase(t *testing.T) {
 func TestFatalStartupErrorsExitWithOne(t *testing.T) {
 	t.Run("schema newer than supported", func(t *testing.T) {
 		databaseURL := newDatabase(t)
-		if err := migrations.Up(t.Context(), databaseURL); err != nil {
-			t.Fatal(err)
-		}
-		exec(t, databaseURL, "INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)", migrations.SupportedVersion+1)
+		exec(t, asOwner(t, databaseURL), "INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)", migrations.SupportedVersion+1)
 		code, stdout, _ := run([]string{"serve"}, testEnv(serveVars(t, databaseURL)))
 		if code != 1 || !strings.Contains(stdout, `"level":"ERROR"`) {
 			t.Fatalf("serve on a newer schema exited %d, stdout %q; want 1 and a logged error", code, stdout)
@@ -347,7 +344,7 @@ func TestProbeErrorsExitWithOne(t *testing.T) {
 		}
 	})
 	t.Run("schema not migrated", func(t *testing.T) {
-		unmigrated := serveVars(t, newDatabase(t))
+		unmigrated := serveVars(t, newEmptyDatabase(t))
 		if code, _, stderr := run([]string{"probe"}, testEnv(unmigrated)); code != 1 || !strings.Contains(stderr, "suiteward:") {
 			t.Fatalf("probe on an unmigrated database exited %d, stderr %q; want 1", code, stderr)
 		}
@@ -437,9 +434,6 @@ func TestReadinessTurnsUnavailableBeforeTheServerDrains(t *testing.T) {
 	env := testEnv(serveVars(t, databaseURL))
 	cfg, _, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.Up(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
 	pool, store, err := connect(t.Context(), cfg)

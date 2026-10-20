@@ -59,7 +59,11 @@ const (
 
 // Config holds every validated setting.
 type Config struct {
-	DatabaseURL        Secret
+	DatabaseURL Secret
+	// MigrationDatabaseURL is the connection of the role that owns the schema, used by `suiteward migrate` only.
+	MigrationDatabaseURL Secret
+	// DatabaseAppRole is the role `suiteward migrate` grants access to: the user of DatabaseURL.
+	DatabaseAppRole    string
 	ArtifactDir        string
 	HTTPAddr           string
 	ShutdownTimeout    time.Duration

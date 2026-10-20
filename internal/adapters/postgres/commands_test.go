@@ -73,7 +73,7 @@ func TestCommandHistoryRejectsMutation(t *testing.T) {
 		{"instance truncate", "TRUNCATE suiteward_instance"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := w.pool.Exec(t.Context(), test.statement)
+			err := w.mutateHistory(test.statement)
 			schemaRequireError(t, err, "23514", "immutable_history")
 		})
 	}

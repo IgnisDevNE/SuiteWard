@@ -1103,3 +1103,19 @@ func TestReadsRejectStoredStateThatContradictsItself(t *testing.T) {
 		return nil
 	})
 }
+
+func TestNewStoreOnAnUnreachableDatabaseIsNotASchemaProblem(t *testing.T) {
+	pool, err := pgxpool.New(t.Context(), "postgres://nobody@127.0.0.1:1/none?sslmode=disable&connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	content, err := filesystem.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The caller tells the operator to migrate when the schema is not ready: not when the database is down.
+	if _, err := postgres.NewStore(pool, content, testInserter()); err == nil || errors.Is(err, postgres.ErrSchemaNotReady) {
+		t.Fatalf("NewStore on an unreachable database = %v; want an error that is not ErrSchemaNotReady", err)
+	}
+}

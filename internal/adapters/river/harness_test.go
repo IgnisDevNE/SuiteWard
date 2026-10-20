@@ -20,6 +20,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/pgtest"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 )
@@ -63,7 +64,7 @@ func newWorld(t *testing.T, maxAttempts int) *world {
 	if err := migrations.Up(t.Context(), parsed.String()); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(t.Context(), parsed.String())
+	pool, err := pgxpool.New(t.Context(), pgtest.AppURL(t, parsed.String())) // the service connects as the application role
 	if err != nil {
 		t.Fatal(err)
 	}

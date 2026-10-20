@@ -73,6 +73,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 	want := Config{
 		DatabaseURL:        validURL,
+		DatabaseAppRole:    "suiteward_app",
 		ArtifactDir:        vars["SUITEWARD_ARTIFACT_DIR"],
 		HTTPAddr:           "127.0.0.1:8080",
 		ShutdownTimeout:    30 * time.Second,
@@ -112,6 +113,7 @@ func TestLoadReadsEverySetting(t *testing.T) {
 	}
 	want := Config{
 		DatabaseURL:        validURL,
+		DatabaseAppRole:    "suiteward_app",
 		ArtifactDir:        vars["SUITEWARD_ARTIFACT_DIR"],
 		HTTPAddr:           "0.0.0.0:9090",
 		ShutdownTimeout:    45 * time.Second,

@@ -66,3 +66,4 @@ Deferred by the R1 amendments, in no fixed order until the MVP is in use:
   - a full report on the check's Details page, built from the bytes SuiteWard compared, with the removed and added lines;
   - deterministic markers to look at, never verdicts: removed assertions, added skips, deleted test functions, changed runner files;
   - an HTML report served by the managed service, behind its sign-in.
+- A single store read by manifest digest in `nextMergeVersion`, which today reads one version per step (M1.10).

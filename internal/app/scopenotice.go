@@ -127,6 +127,8 @@ type scopeSuggestion struct {
 	// KeyIndent is then the spaces before its key.
 	NewList   string `json:"newList,omitempty"`
 	KeyIndent string `json:"keyIndent,omitempty"`
+	// Quoting is the quoting style of the list the suggestion extends (what scope.AddPatterns writes for it); none for a created list, and in a payload written before the style was carried, which follows the anchor.
+	Quoting commandtext.Quoting `json:"quoting,omitempty"`
 }
 
 // choices are the lists of a runner-uncovered check's review suggestions, each the commandtext choice it renders.
@@ -155,9 +157,9 @@ func (s scopeSuggestion) validate() error {
 	}
 	var err error
 	if isChoice {
-		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, "")
+		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, s.Quoting)
 	} else {
-		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns, "")
+		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns, s.Quoting)
 	}
 	if err != nil { // its text quotes the anchor line and the patterns
 		return errors.New("the anchor line, its indent or the patterns do not fit the suggestion")
@@ -168,9 +170,9 @@ func (s scopeSuggestion) validate() error {
 // body renders the review comment of the suggestion; it panics on one that does not validate.
 func (s scopeSuggestion) body() string {
 	if choice, isChoice := choices[s.List]; isChoice {
-		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, "")
+		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, s.Quoting)
 	}
-	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns, "")
+	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns, s.Quoting)
 }
 
 // scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<review digest>: one or two suggestions, the include

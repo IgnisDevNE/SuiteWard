@@ -143,7 +143,7 @@ var (
 	CountedDispositions = []commands.Disposition{commands.InvalidCode, commands.ReplayedCode, commands.Processed}
 	IgnoredDispositions = []commands.Disposition{commands.Malformed, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.NotCommand,
 		commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor, commands.Proposed, commands.ProposeRefused, commands.Skipped,
-		commands.SkipRefused, commands.Suggested, commands.SuggestRefused}
+		commands.SkipRefused, commands.Suggested, commands.SuggestRefused, commands.OtherPull}
 )
 
 func firstComment(id int64) observed {

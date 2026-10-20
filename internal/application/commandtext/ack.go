@@ -94,7 +94,7 @@ func ValidateAck(a Ack) error {
 
 func checkKnown(a Ack) error {
 	switch {
-	case a.Outcome < Approved || a.Outcome > SuggestRefused:
+	case a.Outcome < Approved || a.Outcome > OtherPullRequest:
 		return fmt.Errorf("commandtext: unknown outcome %d", a.Outcome)
 	case a.Rejection > ObsoleteCommand:
 		return fmt.Errorf("commandtext: unknown rejection %d", a.Rejection)

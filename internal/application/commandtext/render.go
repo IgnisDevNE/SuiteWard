@@ -37,6 +37,8 @@ const (
 	NothingUncovered
 	// SuggestRefused carries a Refusal: Fork, NotOpen, InvalidSource or DeclarationTooLarge.
 	SuggestRefused
+	// OtherPullRequest answers an approve or a revoke whose reference names a proposal that another pull request carries.
+	OtherPullRequest
 )
 
 // Refusal is the reason of a ProposeRefused, SkipRefused or SuggestRefused outcome.

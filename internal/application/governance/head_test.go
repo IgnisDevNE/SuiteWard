@@ -597,3 +597,31 @@ func TestAssessHeadOfAnUnknownSuiteIsNotFound(t *testing.T) {
 	}
 	e.requireWrites(before, 0)
 }
+
+// A file that differs from a protected one only in case is a protected change, and the revision comment lists it as added.
+func TestAFileThatCollidesInCaseWithAProtectedFileIsAProtectedChangeListedAsAdded(t *testing.T) {
+	e := newHeadEnv(t)
+	tree := newFakeTree(
+		regularFile(scope.DeclarationPath, declaration),
+		regularFile(".github/workflows/ci.yml", "on: push\n"),
+		regularFile("tests/a_test.go", "v1"),
+		regularFile("Tests/a_test.go", "shadow"),
+		regularFile("src/main.go", "package main\n"),
+	)
+	var notices []governance.RevisionNotice
+	request := e.request(prA, "head-a", tree)
+	request.Revision = func(n governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+		notices = append(notices, n)
+		return governance.OutboxMessage{}, false, nil
+	}
+
+	result, err := governance.AssessHead(context.Background(), e.mem, e.reader, e.writer, request)
+	if err != nil {
+		t.Fatalf("assess head: %v", err)
+	}
+
+	e.requireChange(result, inventory.ProtectedChange, "P2-R1", false, contract.PromotionReasonApprovalMissing)
+	if len(notices) != 1 || strings.Join(notices[0].Added, ",") != "Tests/a_test.go" || len(notices[0].Modified)+len(notices[0].Removed) != 0 {
+		t.Fatalf("notices = %+v, want one that adds Tests/a_test.go only", notices)
+	}
+}

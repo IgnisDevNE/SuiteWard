@@ -11,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -148,9 +149,13 @@ const maxLinkHops = 8
 func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective, accepting scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
 	index := newLayout(entries)
 	targets := map[string]string{} // the blobs of the links read so far
+	collisions, err := newCollider(entries, effective)
+	if err != nil {
+		return artifact.Manifest{}, err
+	}
 	covered := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		covers, err := effective.Covers(entry.Path)
+		covers, err := collisions.covers(effective, entry.Path)
 		if err != nil {
 			return artifact.Manifest{}, err
 		}
@@ -167,27 +172,54 @@ func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective, acce
 		if accepting.ExcludesExactly(entry.Path) {
 			continue
 		}
-		// D-SCOPE: a link the scope covers makes the declaration invalid. A link that a pattern may reach below does too,
-		// unless it resolves to a regular file of the tree, which behaves as a file.
-		unsafe := covers
-		if !unsafe {
-			below, err := effective.MayCoverBelow(entry.Path)
-			if err != nil {
-				return artifact.Manifest{}, err
-			}
-			if below {
-				resolved, err := resolvesToFile(ctx, tree, index, targets, entry.Path)
-				if err != nil {
-					return artifact.Manifest{}, err
-				}
-				unsafe = !resolved
-			}
+		unsafe, err := unsafeLink(ctx, tree, index, targets, effective, collisions, entry.Path, covers)
+		if err != nil {
+			return artifact.Manifest{}, err
 		}
 		if unsafe {
 			return artifact.Manifest{}, &UnsafeEntryError{Path: entry.Path}
 		}
 	}
 
+	return manifestOfFiles(ctx, tree, covered, known)
+}
+
+// unsafeLink reports whether the link makes the declaration invalid (D-SCOPE): the scope covers it, or a pattern may reach below it
+// unless it resolves to a regular file of the tree, which behaves as a file. The same test holds for the path the link would have in
+// a case-twin directory of the tree (collider.rewrites), which a case-insensitive checkout could put it on.
+func unsafeLink(ctx context.Context, tree Tree, index layout, targets map[string]string, effective scope.Scope, collisions collider, link string, covers bool) (bool, error) {
+	if covers {
+		return true, nil
+	}
+	resolved, known := false, false
+	for i, candidate := range append([]string{link}, collisions.rewrites(link, true)...) {
+		if i > 0 { // covers answered for the link itself
+			if covered, err := effective.Covers(candidate); err != nil || covered {
+				return covered, err
+			}
+		}
+		below, err := effective.MayCoverBelow(candidate)
+		if err != nil {
+			return false, err
+		}
+		if !below {
+			continue
+		}
+		if !known {
+			if resolved, err = resolvesToFile(ctx, tree, index, targets, link); err != nil {
+				return false, err
+			}
+			known = true
+		}
+		if !resolved {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// manifestOfFiles hashes the covered files, reading from the tree only what known lacks.
+func manifestOfFiles(ctx context.Context, tree Tree, covered []string, known map[string][]byte) (artifact.Manifest, error) {
 	files := make([]artifact.Entry, 0, len(covered))
 	for _, path := range covered {
 		content, found := known[path]
@@ -324,7 +356,16 @@ func Classify(ctx context.Context, governing Governing, candidate Tree) (Classif
 	}
 
 	reduced := []string{}
+	// A path of the governing inventory that the governing scope does not cover is a case collision, protected with its twin: its removal
+	// is Removed, and the twin carries any reduction.
 	for _, entry := range slices.Concat(underGoverning.Entries(), governing.Manifest.Entries()) {
+		inGoverning, err := governing.Scope.Covers(entry.Path)
+		if err != nil {
+			return Classification{}, Inventory{}, err
+		}
+		if !inGoverning {
+			continue
+		}
 		covers, err := proposed.scope.Covers(entry.Path)
 		if err != nil {
 			return Classification{}, Inventory{}, err
@@ -373,4 +414,99 @@ func compare(governing, proposed artifact.Manifest) (added, removed, modified []
 		}
 	}
 	return added, removed, modified
+}
+
+// maxSpellings bounds the spellings of one case-folded name in a tree: every spelling of a directory is a path to rewrite onto, so an
+// untrusted tree with thousands would make the work grow with the square of its size. A tree beyond it is invalid.
+const maxSpellings = 8
+
+// collider finds the paths that a case-insensitive checkout could put on a covered path (D-SCOPE, case-sensitive matching). A path is
+// protected too when it case-folds equal to a covered file, or when rewriting a directory prefix of it onto a real directory of the same
+// tree that differs from it only in case gives a path the scope covers. Matching stays case-sensitive and a look-alike character folds
+// to nothing (Unicode simple folding), so only the tree's own paths decide.
+type collider struct {
+	direct map[string]bool            // the entries the scope covers
+	files  map[string]bool            // the folded covered files
+	dirs   map[string]map[string]bool // the directories of the tree, by folded path
+}
+
+// newCollider indexes the covered entries and the directories of entries. It refuses a tree that holds more than maxSpellings
+// spellings of one folded directory or entry path.
+func newCollider(entries []Entry, effective scope.Scope) (collider, error) {
+	c := collider{direct: map[string]bool{}, files: map[string]bool{}, dirs: map[string]map[string]bool{}}
+	spelled := map[string]int{} // the entries by folded path
+	for _, entry := range entries {
+		covers, err := effective.Covers(entry.Path)
+		if err != nil {
+			return collider{}, err
+		}
+		key := foldKey(entry.Path)
+		if spelled[key]++; spelled[key] > maxSpellings {
+			return collider{}, tooManySpellings(entry.Path)
+		}
+		if covers {
+			c.direct[entry.Path] = true
+		}
+		if entry.Kind == File && covers {
+			c.files[key] = true
+		}
+		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
+			key := foldKey(dir)
+			if c.dirs[key][dir] {
+				break // its parents are in already
+			}
+			if c.dirs[key] == nil {
+				c.dirs[key] = map[string]bool{}
+			}
+			if c.dirs[key][dir] = true; len(c.dirs[key]) > maxSpellings {
+				return collider{}, tooManySpellings(dir)
+			}
+		}
+	}
+	return c, nil
+}
+
+func tooManySpellings(p string) error {
+	return fmt.Errorf("%w: more than %d spellings of %q that differ only in case", ErrInvalidTree, maxSpellings, p)
+}
+
+// rewrites lists the paths p becomes when a directory prefix of p is replaced by a real directory of the tree that differs from it in
+// case; with self, p itself is such a prefix too (a link standing for a directory).
+func (c collider) rewrites(p string, self bool) []string {
+	var rewritten []string
+	for end := 0; end <= len(p); end++ {
+		if end < len(p) && p[end] != '/' || end == len(p) && !self {
+			continue
+		}
+		for dir := range c.dirs[foldKey(p[:end])] {
+			if dir != p[:end] {
+				rewritten = append(rewritten, dir+p[end:])
+			}
+		}
+	}
+	return rewritten
+}
+
+// covers reports whether the scope covers p or p collides with a path it covers.
+func (c collider) covers(effective scope.Scope, p string) (bool, error) {
+	if c.direct[p] || c.files[foldKey(p)] {
+		return true, nil
+	}
+	for _, rewritten := range c.rewrites(p, false) {
+		if covers, err := effective.Covers(rewritten); err != nil || covers {
+			return covers, err
+		}
+	}
+	return false, nil
+}
+
+// foldKey maps every rune to the smallest of its simple-folding orbit, so two paths have one key exactly when strings.EqualFold holds for them.
+func foldKey(s string) string {
+	return strings.Map(func(r rune) rune {
+		smallest := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			smallest = min(smallest, f)
+		}
+		return smallest
+	}, s)
 }

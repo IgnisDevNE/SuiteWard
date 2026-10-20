@@ -1,9 +1,13 @@
 package app
 
 import (
+	"context"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 )
@@ -105,5 +109,60 @@ func TestAScopeNoticeThatListsThePatternsAloneIsKeyedByThem(t *testing.T) {
 	}
 	if a, b := key("version: 1\x00\n", "*_test.go"), key("version: 1\x00\n", "*_test.go", "*.spec.*"); a == b {
 		t.Fatalf("the notice key %s is the same for other patterns", a)
+	}
+}
+
+// seedOutbox writes a message as an earlier run, or the suggest command, would have.
+func (w *cjJobWorld) seedOutbox(message governance.OutboxMessage) {
+	w.t.Helper()
+	err := w.suites.Do(w.t.Context(), owner.ProjectID(bootRepoID), defaultSuite, func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, message) })
+	if err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// A review whose key exists (the suggestion is the same on the same file) never keeps its comment from being written: the new canonical or the other
+// producer changed the comment, not the review. The two are written apart, the comment first.
+func TestChecksWriteTheScopeNoticeWhenItsReviewWasWrittenAlready(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
+	include := scopeSuggestion{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}, Quoting: commandtext.QuotingPlain}
+	digest, err := suggestionsDigest([]byte(reviewDecl), []scopeSuggestion{include})
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := newScopeReviewMessage(commentTarget{RepositoryID: bootRepoID, Repo: bootRepo, Pull: 5}, cjHead2, digest, []scopeSuggestion{include})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.seedOutbox(review)
+
+	w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
+
+	if keys := w.scopeKeys("scope-notice:"); len(keys) != 1 {
+		t.Fatalf("scope notices %v; want the one of the added path, though its review exists\nlogs: %s", keys, w.logs)
+	}
+}
+
+func TestChecksWriteTheRunnerCommentWhenItsReviewWasWrittenAlready(t *testing.T) {
+	w := newCJWorld(t, true)
+	choices := []scopeSuggestion{
+		{List: "protect", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"jest.config.*"}, NewList: "runner"},
+		{List: "ignore", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"/" + cjJest}, NewList: "exclude"},
+	}
+	digest, err := suggestionsDigest([]byte(reviewDecl), choices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := newScopeReviewMessage(commentTarget{RepositoryID: bootRepoID, Repo: bootRepo, Pull: 5}, cjHead2, digest, choices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.seedOutbox(review)
+
+	w.approvedRunnerPull(reviewDecl, "@@ -1,3 +1,3 @@")
+
+	if keys := w.scopeKeys("runner-uncovered:"); len(keys) != 1 {
+		t.Fatalf("runner-uncovered comments %v; want one, though its review exists\nlogs: %s", keys, w.logs)
 	}
 }

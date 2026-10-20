@@ -446,6 +446,7 @@ A declaration that holds a character that is not graphic besides newline (LF or 
 
 **Keys after the v0.1.2 upgrade, and a read that fails after a restart** (M1.10-M10, decision 16).
 - The keys of the `scope-notice`, of the `runner-uncovered` comment and of every `scope-review` changed format (see the digests above). After the upgrade, an open PR that still warrants a notice, a runner comment or a review gets it once more, under its new key; the release notes of v0.1.2 say so. Nothing is migrated.
+- A notice or a runner comment and its review are written one after the other, each in its own unit of work, the comment first, and a key that exists is skipped. An existing review (the same suggestion on the same file, from the other producer or under the previous canonical) never keeps the new comment from being written; a failed write is retried and skips what was written.
 - L2 is kept, not fixed. The checks job remembers in memory which head it found runner files for. After a restart, one failed read of `PullFiles` leaves a green head `in_progress` (`assessment-pending`) until the next run, 30 seconds later. It never yields a false `success`, and no new state is stored.
 
 **Command `/suiteward suggest`.** It is owner only and takes no code. The parser accepts the verb without argument. An extra token is `ExtraText`, as for `propose`.

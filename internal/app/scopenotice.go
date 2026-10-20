@@ -653,22 +653,15 @@ func (j *checksJob) absentFromBase(ctx context.Context, repo, baseSHA string, pa
 	return slices.DeleteFunc(slices.Clone(paths), func(path string) bool { return inBase[path] }), nil
 }
 
-// outboxOnce writes the messages in one unit of work, unless the key of the first exists: a repeated decision writes nothing.
-// The first is the notice, written before the messages that depend on it, so its conflict undoes nothing else. No message is no write.
+// outboxOnce writes each message in a unit of work of its own, in order, and skips one whose key exists: a repeated decision writes nothing new.
+// The keys digest what each message shows, so an existing review must never undo the comment it goes with: a conflict on one message undoes
+// no other. A failed write returns, and the retry skips what was written. No message is no write.
 func outboxOnce(ctx context.Context, suites governance.UnitOfWork, project contract.ProjectID, messages []governance.OutboxMessage) error {
-	if len(messages) == 0 {
-		return nil
-	}
-	err := suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
-		for _, message := range messages {
-			if err := tx.Outbox(ctx, message); err != nil {
-				return err
-			}
+	for _, message := range messages {
+		err := suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, message) })
+		if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
+			return fmt.Errorf("write the comment %s: %w", message.Key, err)
 		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
-		return fmt.Errorf("write the comment %s: %w", messages[0].Key, err)
 	}
 	return nil
 }

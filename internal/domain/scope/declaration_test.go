@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -408,5 +409,36 @@ func TestAddExcludesWithNothingNewReturnsTheBytesUnchangedAndRejectsInvalidInput
 		if got, err := scope.AddExcludes([]byte("version: 1\n"), []string{pattern}); !errors.Is(err, scope.ErrInvalidPattern) || got != nil {
 			t.Errorf("exclude %q: AddExcludes = %q, %v; want ErrInvalidPattern", pattern, got, err)
 		}
+	}
+}
+
+// A pattern that YAML reads as another scalar or as the merge key must be written quoted, so the result stays a declaration that holds it.
+func TestAddPatternsAndAddExcludesQuoteWhatYAMLWouldReadAsAnotherValue(t *testing.T) {
+	patterns := []string{"<<", "y", "No", "ON"}
+	for name, add := range map[string]func(raw []byte) ([]byte, error){
+		"include":  func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, patterns, nil) },
+		"runner":   func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, nil, patterns) },
+		"exclude":  func(raw []byte) ([]byte, error) { return scope.AddExcludes(raw, patterns) },
+		"existing": func(raw []byte) ([]byte, error) { return scope.AddExcludes(append(raw, "exclude:\n  - a\n"...), patterns) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := add([]byte("version: 1\n"))
+			if err != nil {
+				t.Fatalf("the library cannot add the patterns: %v", err)
+			}
+			d, err := scope.ParseDeclaration(got)
+			if err != nil {
+				t.Fatalf("the result is not a declaration: %v\n%s", err, got)
+			}
+			var held []string
+			for _, list := range [][]scope.Pattern{d.Include(), d.Runner(), d.Exclude()} {
+				held = append(held, patternStrings(list)...)
+			}
+			for _, p := range patterns {
+				if !slices.Contains(held, p) {
+					t.Errorf("the declaration lacks %q:\n%s", p, got)
+				}
+			}
+		})
 	}
 }

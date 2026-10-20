@@ -482,7 +482,7 @@ const (
 // applies to the shown text, which is valid UTF-8, so it never splits a rune.
 func display(s string) string {
 	if notGraphic(s) {
-		s = strconv.QuoteToGraphic(s)
+		s = escapeHidden(strconv.QuoteToGraphic(s))
 	}
 	if len(s) <= maxShown {
 		return s
@@ -494,19 +494,43 @@ func display(s string) string {
 	return s[:cut] + "… [shortened]"
 }
 
-// notGraphic reports whether s is not UTF-8 or holds a rune that is not graphic: display quotes such a string.
+// hidden reports whether r must never reach the owner unescaped: a rune that is not graphic, or one that is graphic to Unicode and
+// draws nothing (a combining grapheme joiner, a Hangul or Khmer filler, a variation selector, a braille blank).
+func hidden(r rune) bool {
+	return !strconv.IsGraphic(r) || r == 0x034f || r == 0x115f || r == 0x1160 || r == 0x17b4 || r == 0x17b5 || r >= 0x180b && r <= 0x180f ||
+		r == 0x2800 || r == 0x3164 || r >= 0xfe00 && r <= 0xfe0f || r == 0xffa0 || r >= 0xe0100 && r <= 0xe01ef
+}
+
+// escapeHidden escapes the hidden runes of a Go-quoted string, which strconv.QuoteToGraphic leaves as they are when they are graphic.
+func escapeHidden(quoted string) string {
+	var b strings.Builder
+	for _, r := range quoted {
+		switch {
+		case !hidden(r):
+			b.WriteRune(r)
+		case r < 0x10000:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			fmt.Fprintf(&b, `\U%08x`, r)
+		}
+	}
+	return b.String()
+}
+
+// notGraphic reports whether s is not UTF-8 or holds a hidden rune: display quotes such a string.
 func notGraphic(s string) bool {
-	return !utf8.ValidString(s) || strings.IndexFunc(s, func(r rune) bool { return !strconv.IsGraphic(r) }) >= 0
+	return !utf8.ValidString(s) || strings.IndexFunc(s, hidden) >= 0
 }
 
 // declarationLayout removes the layout of a declaration: a CRLF line ending (the form of a file written on Windows), a newline and a tab.
 // A carriage return that no line feed follows is not layout.
 var declarationLayout = strings.NewReplacer("\r\n", "", "\n", "", "\t", "")
 
-// verbatim reports whether a declaration can be shown in a fence as it is: UTF-8 whose only characters that are not graphic are line
+// verbatim reports whether a declaration can be shown in a fence as it is: UTF-8 whose only characters that are hidden are line
 // endings (LF or CRLF) and tabs. A fence shows no escape, so a bidi control or a zero-width space in it would reach the owner's clipboard unseen.
+// The raw bytes must be UTF-8 before the layout is removed: removing it can join the halves of a broken sequence.
 func verbatim(declaration []byte) bool {
-	return !notGraphic(declarationLayout.Replace(string(declaration)))
+	return utf8.Valid(declaration) && !notGraphic(declarationLayout.Replace(string(declaration)))
 }
 
 // CanShow reports whether a notice can show declaration: it is at most MaxDeclaration bytes and verbatim. The notices validate their
@@ -910,7 +934,7 @@ func yamlList(key string, patterns []string) string {
 
 // suggestable reports whether p can be written inside a double-quoted YAML scalar and a URL as it is.
 func suggestable(p string) bool {
-	return len(p) <= maxPattern && utf8.ValidString(p) && !strings.ContainsFunc(p, func(r rune) bool { return !strconv.IsGraphic(r) || r == '"' || r == '\\' })
+	return len(p) <= maxPattern && utf8.ValidString(p) && !strings.ContainsFunc(p, func(r rune) bool { return hidden(r) || r == '"' || r == '\\' })
 }
 
 // ValidateSuggestion reports why SuggestDeclaration would panic on a: the same checks, as an error that quotes the

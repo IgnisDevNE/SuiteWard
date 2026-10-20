@@ -72,7 +72,7 @@ type StatusView struct {
 	GitHubConfigured bool               `json:"githubConfigured"`
 	Repositories     []RepositoryStatus `json:"repositories"`
 	// UnconfiguredRepositories lists the enrolled repositories that GITHUB_REPOSITORIES does not name: SuiteWard
-	// ignores them until the setting names them again or setup is run without them.
+	// skips them until the setting names them again or setup is run without them.
 	UnconfiguredRepositories []string `json:"unconfiguredRepositories,omitempty"`
 }
 

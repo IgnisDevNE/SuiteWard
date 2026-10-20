@@ -48,3 +48,16 @@ func TestChecksFailAHeadWhoseDeclarationExceedsTheCap(t *testing.T) {
 
 	w.want(5, checks.Failure, "invalid-source", 1)
 }
+
+func TestChecksAcceptAHeadWhoseDeclarationIsExactlyTheCap(t *testing.T) {
+	w := newCJBootWorld(t)
+	files := bootFiles("v1")
+	files[scope.DeclarationPath] = declarationOfSize(maxDeclarationBytes)
+	w.tree(cjHead2, files)
+	w.sync(map[int]string{5: cjHead2})
+	w.pullProposal(5, cjHead2, bootFiles("v1"))
+
+	w.mustCheck()
+
+	w.want(5, checks.InProgress, "bootstrap-awaiting", 1)
+}

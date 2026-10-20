@@ -327,7 +327,7 @@ A correction puts an earlier version's protected files back, for example the pre
 
 ### Stop protecting a repository
 
-A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard skips it: nothing is synchronized or decided there, and the commands of the other repositories keep working. `/status` and the MCP `status` tool name it in `unconfiguredRepositories`, and the log warns once. Deleting the repository on GitHub has the same effect.
+A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard skips it: nothing is synchronized or checked there, and the commands of the other repositories keep working. A command it had already observed there can still be decided, and its reply may fail. `/status` and the MCP `status` tool name it in `unconfiguredRepositories`, and the log warns once. Deleting the repository on GitHub has the same effect.
 1. Remove the repository from the list: `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env` on an isolated host (then restart the service), or `-GitHubRepositories` when you run `deploy/local.ps1` again on a co-located PC.
 2. Run setup again (section 6) with one `--test-check` for each repository you keep. Setup replaces the TOTP secret, so add the new entry to your authenticator app and delete the old one.
 3. Comment your command again. A command written before the new setup is ignored and gets no reply.

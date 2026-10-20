@@ -742,6 +742,19 @@ func TestCommandsJobSkipsAnEnrolledRepositoryThatIsNotConfiguredAndWarnsOnce(t *
 	}
 }
 
+// Skipping the repository in the horizon does not filter its comments: one it observed before it left the
+// configuration is decided under the horizon of the configured repositories, like any other pending comment.
+func TestCommandsJobStillDecidesACommandObservedInAnUnconfiguredEnrolledRepository(t *testing.T) {
+	w := newCjWorld(t)
+	w.job.repos = []string{cjRepo1}
+	w.observe(cjID1, cjSync)
+	w.observe(cjID2, cjSync.Add(-30*time.Minute), ownerCommand(600, cjAt(10), "approve", "P1-R2", 0))
+	w.mustRun()
+	if _, _, found := w.recorded(cjID2, 600); !found {
+		t.Fatalf("the observed command of the unconfigured repository was not decided\nlogs: %s", w.logs)
+	}
+}
+
 func TestCommandsJobHorizonIsNotReadyWithoutAConfiguredEnrolledRepository(t *testing.T) {
 	w := newCjWorld(t)
 	w.job.repos = []string{"acme/other"} // neither enrolled repository is configured

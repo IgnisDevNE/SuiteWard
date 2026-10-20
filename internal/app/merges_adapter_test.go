@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"crypto/sha1" //nolint:gosec // the fake GitHub names blobs the way git does
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,7 +31,7 @@ func realMergeReader(t *testing.T, treeAnswer, blobAnswer mergeAnswer) *github.R
 		bootTime.Add(2*time.Hour).Format(time.RFC3339), mgSHA5, bootTime.Add(2*time.Hour).Format(time.RFC3339), cjHead2, bootRepo, bootHead)
 	var entries []string
 	for path, content := range bootFiles("v2") {
-		entries = append(entries, fmt.Sprintf(`{"path": %q, "mode": "100644", "type": "blob", "sha": "%x"}`, path, sha1.Sum([]byte(content)))) //nolint:gosec // see the import
+		entries = append(entries, fmt.Sprintf(`{"path": %q, "mode": "100644", "type": "blob", "sha": "%x"}`, path, sha1.Sum([]byte(content))))
 	}
 	answers := map[string]mergeAnswer{
 		"/repos/" + bootRepo + "/pulls/5":             {http.StatusOK, pull},

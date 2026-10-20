@@ -4,7 +4,7 @@ package app
 
 import (
 	"context"
-	"crypto/sha1" //nolint:gosec // the fake GitHub names blobs the way git does
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -44,7 +44,7 @@ func newMergeGitHub() *mergeGitHub {
 	return &mergeGitHub{pulls: map[int]map[string]any{}, trees: map[string]map[string]string{}, blobs: map[string]string{}, comments: map[int][]string{}}
 }
 
-func blobSHA(content string) string { return fmt.Sprintf("%x", sha1.Sum([]byte(content))) } //nolint:gosec // see the import
+func blobSHA(content string) string { return fmt.Sprintf("%x", sha1.Sum([]byte(content))) }
 
 // merge makes GitHub report pull request number as merged at mergedAt into the commit sha, whose tree holds files.
 func (g *mergeGitHub) merge(number int, head, sha string, files map[string]string, mergedAt time.Time) {

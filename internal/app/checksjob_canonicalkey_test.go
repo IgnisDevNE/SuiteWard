@@ -166,3 +166,16 @@ func TestChecksWriteTheRunnerCommentWhenItsReviewWasWrittenAlready(t *testing.T)
 		t.Fatalf("runner-uncovered comments %v; want one, though its review exists\nlogs: %s", keys, w.logs)
 	}
 }
+
+// Each part has its length in front, so no two lists of parts share a digest: not when a boundary moves, and not when a part is empty.
+func TestContentDigestKeepsThePartsApart(t *testing.T) {
+	lists := [][]string{{"ab", "c"}, {"a", "bc"}, {"abc"}, {"abc", ""}, {"", "abc"}, {"", "", "abc"}, {}, {""}, {"", ""}, {"1:a"}, {"a", "1:b"}}
+	seen := map[string]int{}
+	for i, parts := range lists {
+		digest := contentDigest(parts)
+		if j, taken := seen[digest]; taken {
+			t.Errorf("the parts %q and %q have the digest %s", lists[j], parts, digest)
+		}
+		seen[digest] = i
+	}
+}

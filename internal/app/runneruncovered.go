@@ -133,11 +133,11 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 			return &opaque{what: "add the excludes", cause: err}
 		}
 	}
-	if !quotable(ignore) { // a choice that cannot be shown is left out; protecting stays
+	if !commandtext.CanShow(ignore) { // a choice that cannot be shown is left out; protecting stays
 		ignore = nil
 	}
 	var protectPatterns []string
-	if !quotable(protect) { // protecting stays too, as the patterns alone
+	if !commandtext.CanShow(protect) { // protecting stays too, as the patterns alone
 		protect = nil
 		if protectPatterns, err = missingRunner(base, inventory.RunnerPatterns(set.paths)); err != nil { // AddPatterns parsed it
 			return &opaque{what: "read the canonical runner list", cause: err}

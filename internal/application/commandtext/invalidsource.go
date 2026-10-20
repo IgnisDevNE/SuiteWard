@@ -37,7 +37,7 @@ func ValidateInvalidSource(s InvalidSourceNotice) error {
 		return errors.New("commandtext: only a link problem names a path, and it must")
 	case (len(s.Declaration) > 0 || s.PathCut) && s.Problem != LinkProblem:
 		return errors.New("commandtext: only a link problem carries a declaration or a cut path")
-	case len(s.Declaration) > MaxDeclaration || !verbatim(s.Declaration):
+	case !CanShow(s.Declaration):
 		return fmt.Errorf("commandtext: a declaration of %d bytes is over %d bytes or holds a character that is not graphic besides newline (LF or CRLF) and tab", len(s.Declaration), MaxDeclaration)
 	case s.NoDeclaration && (s.Problem != LinkProblem || len(s.Declaration) > 0):
 		return errors.New("commandtext: only a link problem of a head with no declaration says so, and it carries no declaration")

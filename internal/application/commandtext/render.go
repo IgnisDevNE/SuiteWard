@@ -509,6 +509,12 @@ func verbatim(declaration []byte) bool {
 	return !notGraphic(declarationLayout.Replace(string(declaration)))
 }
 
+// CanShow reports whether a notice can show declaration: it is at most MaxDeclaration bytes and verbatim. The notices validate their
+// declarations with it, so a caller that probes it decides what validation will.
+func CanShow(declaration []byte) bool {
+	return len(declaration) <= MaxDeclaration && verbatim(declaration)
+}
+
 func codeSpan(s string) string {
 	delimiter := strings.Repeat("`", longestBacktickRun(s)+1)
 	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") {

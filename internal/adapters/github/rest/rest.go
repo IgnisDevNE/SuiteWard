@@ -50,6 +50,9 @@ var (
 // maxBody bounds any response body read into memory; a variable only so tests can lower it.
 var maxBody int64 = 64 << 20
 
+// maxCacheEntries bounds the ETag cache by paths; a variable only so tests can lower it.
+var maxCacheEntries = 4096
+
 // maxClockOffset bounds the offset a Date header may set: windows last at most
 // an hour, so a Date further from the local clock is a stale or broken
 // intermediary and is ignored.

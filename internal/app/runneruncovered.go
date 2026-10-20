@@ -144,7 +144,7 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 		}
 	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
-	comment, err := newRunnerUncoveredMessage(target, pull.HeadSHA, pull.HeadRef, set.paths, protect, protectPatterns, ignore, reviewDigest(setDigest(set.paths), set.declared))
+	comment, err := newRunnerUncoveredMessage(target, pull.HeadSHA, pull.HeadRef, set.paths, protect, protectPatterns, ignore, set.declared)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
@@ -198,8 +198,8 @@ func excludable(paths []string) bool {
 	})
 }
 
-// runnerReview builds the review of the choices: one message, or none (an empty list). Its key digests a salt with the set and the head's file, so it never
-// collides with the review of the scope notice for the same set, whose comment would be lost with it.
+// runnerReview builds the review of the choices: one message, or none (an empty list). Its key digests the head's file and the suggestions (see suggestionsDigest); the lists protect and ignore
+// keep it apart from the review of the scope notice, whose lists are include and runner.
 func (j *checksJob) runnerReview(ctx context.Context, target commentTarget, head string, set *runnerSet, ignorable bool) []governance.OutboxMessage {
 	var ignore []string
 	if ignorable {
@@ -213,7 +213,12 @@ func (j *checksJob) runnerReview(ctx context.Context, target commentTarget, head
 	if len(suggestions) == 0 {
 		return []governance.OutboxMessage{}
 	}
-	message, err := newScopeReviewMessage(target, head, reviewDigest("runner-uncovered:"+setDigest(set.paths), set.declared), suggestions)
+	digest, err := suggestionsDigest(set.declared, suggestions)
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks runner-uncovered review skipped: it cannot be keyed", "repo", target.Repo, "pull", target.Pull)
+		return []governance.OutboxMessage{}
+	}
+	message, err := newScopeReviewMessage(target, head, digest, suggestions)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks runner-uncovered review skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
 		return []governance.OutboxMessage{}
@@ -294,7 +299,7 @@ func newListSuggestion(top *yaml.Node, lines []string, key string, patterns []st
 }
 
 // runnerUncoveredPayload is the payload of runner-uncovered:<repository id>:<pull>:<review digest>. The key's digest is that of the whole
-// set of paths and the head's file, which the bounded list below cannot reproduce, so the publisher checks only its shape.
+// set of paths, the head's file and the declarations shown, which the bounded list below cannot reproduce, so the publisher checks only its shape.
 type runnerUncoveredPayload struct {
 	commentTarget
 	Head       string   `json:"head"`
@@ -332,10 +337,7 @@ func (p runnerUncoveredPayload) validate() error {
 
 // newRunnerUncoveredMessage builds the comment of a blocked head, bounding the repository text it carries. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
-func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths []string, protect []byte, protectPatterns []string, ignore []byte, digest string) (governance.OutboxMessage, error) {
-	if !digestPattern.MatchString(digest) {
-		return governance.OutboxMessage{}, errors.New("runner-uncovered comment: the digest is not SHA-256 hex")
-	}
+func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths []string, protect []byte, protectPatterns []string, ignore, declared []byte) (governance.OutboxMessage, error) {
 	p := runnerUncoveredPayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Protect: string(protect), ProtectPatterns: protectPatterns, Ignore: string(ignore)}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("runner-uncovered comment: %w", err)
@@ -344,7 +346,9 @@ func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths 
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the runner-uncovered comment: %w", err)
 	}
-	key := fmt.Sprintf("%s:%d:%d:%s", runnerUncoveredKey, target.RepositoryID, target.Pull, digest)
+	// The key digests the paths, the head's file (the review is anchored to it) and the declarations or patterns the comment shows.
+	shown := slices.Concat([]string{setDigest(paths), string(declared), string(protect), string(ignore)}, protectPatterns)
+	key := fmt.Sprintf("%s:%d:%d:%s", runnerUncoveredKey, target.RepositoryID, target.Pull, contentDigest(shown))
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 

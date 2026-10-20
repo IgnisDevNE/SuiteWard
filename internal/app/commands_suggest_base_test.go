@@ -52,10 +52,10 @@ func (w *cjWorld) scopeMessages(prefix string) []governance.OutboxMessage {
 	return found
 }
 
-func (w *cjWorld) requireReview(repositoryID int64, declaration string, paths []string, suggestions ...map[string]any) {
+func (w *cjWorld) requireReview(repositoryID int64, declaration string, suggestions ...map[string]any) {
 	w.t.Helper()
 	messages := w.scopeMessages("scope-review:")
-	want := fmt.Sprintf("scope-review:%d:%d:%s", repositoryID, cjPull, wantReviewDigest(declaration, paths...))
+	want := fmt.Sprintf("scope-review:%d:%d:%s", repositoryID, cjPull, wantSuggestionsDigest(declaration, suggestions...))
 	if len(messages) != 1 || messages[0].Key != want || messages[0].Kind != githubCommentKind {
 		w.t.Fatalf("review messages %v; want exactly %s\nlogs: %s", w.scopeMessagesKeys("scope-review:"), want, w.logs)
 	}
@@ -108,7 +108,7 @@ func TestSuggestBeforeTheFirstContractComparesTheHeadWithItsOwnDeclarationWhenTh
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": addPatterns(t, reviewDecl, []string{"*_test.go"}, nil), "addInclude": []string{"*_test.go"}})
-	w.requireReview(cjID1, reviewDecl, []string{cjUtilTst}, suggestInclude)
+	w.requireReview(cjID1, reviewDecl, suggestInclude)
 	w.requireNoNoticeKey()
 	if reader.calls != 1 || w.reader.calls["head"] != 1 {
 		t.Fatalf("%d reads of the changed files and %d of the default branch; want 1 and 1: the default branch is read first, and has no file", reader.calls, w.reader.calls["head"])
@@ -130,7 +130,7 @@ func TestSuggestBeforeTheFirstContractListsTheMissingRunnerPatternsToo(t *testin
 	runner := []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"}
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{"conftest.py", cjUtilTst}, "pathsTotal": 2,
 		"declaration": addPatterns(t, reviewBoth, []string{"*_test.go"}, runner), "addInclude": []string{"*_test.go"}, "addRunner": runner})
-	w.requireReview(cjID1, reviewBoth, []string{"conftest.py", cjUtilTst}, suggestInclude, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
+	w.requireReview(cjID1, reviewBoth, suggestInclude, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
 }
 
 func TestSuggestWritesNoReviewWhenThePullRequestGivesNoLineToSuggestOn(t *testing.T) {
@@ -268,7 +268,7 @@ func TestSuggestAfterTheFirstContractNeverStartsTheDeclarationFromTheHeadsFile(t
 	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": declaration, "addInclude": []string{"*_test.go"}})
 	// The review edits the head's file, the only place a line of it can be: the lines come from the head, the declaration does not.
-	w.requireReview(cjID2, reviewDecl, []string{cjUtilTst}, suggestInclude)
+	w.requireReview(cjID2, reviewDecl, suggestInclude)
 	w.requireNoNoticeKey()
 	if len(w.owners.consumed) != 0 {
 		t.Fatalf("consumed %v; a suggestion uses no code", w.owners.consumed)
@@ -299,7 +299,7 @@ func TestSuggestAfterTheFirstContractAddsNoSecondReviewForASetTheChecksJobReview
 	w := newCjWorld(t)
 	w.seedDeclared(cjDecl, reviewFiles(reviewDecl, cjUtilTst))
 	w.pullFiles(changed("@@ -1,3 +1,3 @@"))
-	existing, err := newScopeReviewMessage(cjTarget(cjID2), cjHead, wantReviewDigest(reviewDecl, cjUtilTst), []scopeSuggestion{{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}}})
+	existing, err := newScopeReviewMessage(cjTarget(cjID2), cjHead, wantSuggestionsDigest(reviewDecl, suggestInclude), []scopeSuggestion{{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		reader.err = nil // the limit ended
 		w.mustRun()
 		w.requireDisposition(cjID1, 500, commands.Suggested)
-		w.requireReview(cjID1, reviewDecl, []string{cjUtilTst}, suggestInclude)
+		w.requireReview(cjID1, reviewDecl, suggestInclude)
 	})
 }
 
@@ -522,11 +522,11 @@ func TestSuggestWritesNoSecondReviewWhenTheHeadsFileIsTheSame(t *testing.T) {
 func TestSuggestWritesANewReviewForTheSameSetWhenTheHeadsFileChanged(t *testing.T) {
 	first := "version: 1\ninclude:\n  - /docs/**\n  - /tests/**\n"
 	second := "version: 1\ninclude:\n  - /docs/**\n  - /api/**\n  - /tests/**\n"
-	want := func(decl string) string {
-		return fmt.Sprintf("scope-review:%d:%d:%s", cjID1, cjPull, wantReviewDigest(decl, cjUtilTst))
+	want := func(decl, anchor string) string { // the last include item inside the hunk of lines 1 to 4
+		return fmt.Sprintf("scope-review:%d:%d:%s", cjID1, cjPull, wantSuggestionsDigest(decl, suggestion("include", 4, anchor, "*_test.go")))
 	}
 	keys := slices.Sorted(slices.Values(suggestTwiceKeys(t, first, second)))
-	if wantKeys := slices.Sorted(slices.Values([]string{want(first), want(second)})); !slices.Equal(keys, wantKeys) {
+	if wantKeys := slices.Sorted(slices.Values([]string{want(first, "  - /tests/**"), want(second, "  - /api/**")})); !slices.Equal(keys, wantKeys) {
 		t.Fatalf("reviews %v; want one for each version of the file, %v", keys, wantKeys)
 	}
 }

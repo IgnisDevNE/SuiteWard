@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -37,21 +35,32 @@ func changed(header string) []github.PullFile {
 	return []github.PullFile{{Path: ".suiteward.yml", Status: "modified", Patch: header + "\n context\n-old\n+new"}}
 }
 
-// wantReviewDigest is the digest of a review key: the SHA-256 hex digest of the set digest, a newline and the head's file.
-func wantReviewDigest(declaration string, paths ...string) string {
-	sum := sha256.Sum256([]byte(scopeDigest(paths...) + "\n" + declaration))
-	return hex.EncodeToString(sum[:])
+// wantSuggestionsDigest is the digest of a review key: the SHA-256 hex digest of the head's file, a newline and the suggestions as JSON.
+func wantSuggestionsDigest(declaration string, suggestions ...map[string]any) string {
+	raw, err := json.Marshal(suggestions)
+	if err != nil {
+		panic(err)
+	}
+	var decoded []scopeSuggestion
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		panic(err)
+	}
+	digest, err := suggestionsDigest([]byte(declaration), decoded)
+	if err != nil {
+		panic(err)
+	}
+	return digest
 }
 
-func reviewKey(declaration string, paths ...string) string {
-	return "scope-review:1001:5:" + wantReviewDigest(declaration, paths...)
+func reviewKey(declaration string, suggestions ...map[string]any) string {
+	return "scope-review:1001:5:" + wantSuggestionsDigest(declaration, suggestions...)
 }
 
-func (w *cjJobWorld) wantReview(declaration string, paths []string, suggestions ...map[string]any) {
+func (w *cjJobWorld) wantReview(declaration string, suggestions ...map[string]any) {
 	w.t.Helper()
 	messages := w.scopeMessages("scope-review:")
-	if len(messages) != 1 || messages[0].Key != reviewKey(declaration, paths...) || messages[0].Kind != githubCommentKind {
-		w.t.Fatalf("review messages %v, want exactly %s\nlogs: %s", w.scopeKeys("scope-review:"), reviewKey(declaration, paths...), w.logs)
+	if len(messages) != 1 || messages[0].Key != reviewKey(declaration, suggestions...) || messages[0].Kind != githubCommentKind {
+		w.t.Fatalf("review messages %v, want exactly %s\nlogs: %s", w.scopeKeys("scope-review:"), reviewKey(declaration, suggestions...), w.logs)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(messages[0].Payload, &payload); err != nil {
@@ -97,10 +106,10 @@ func TestChecksWriteAScopeReviewOnTheIncludeLineInsideTheDiff(t *testing.T) {
 
 	w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 
-	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{"scope-notice:1001:5:" + scopeDigest(cjUtilTst)}) {
+	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)}) {
 		t.Fatalf("notices %v, want the one of the added path", keys)
 	}
-	w.wantReview(reviewDecl, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
+	w.wantReview(reviewDecl, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 }
 
 func TestChecksWriteOneScopeReviewForBothListsWithoutThePatternsTheHeadAlreadyHas(t *testing.T) {
@@ -109,8 +118,7 @@ func TestChecksWriteOneScopeReviewForBothListsWithoutThePatternsTheHeadAlreadyHa
 
 	w.scopePull(reviewFiles(reviewBoth, cjUtilTst, "conftest.py"), bootFiles("v1"))
 
-	paths := []string{"conftest.py", cjUtilTst}
-	w.wantReview(reviewBoth, paths, suggestion("include", 3, "  - /tests/**", "*_test.go"),
+	w.wantReview(reviewBoth, suggestion("include", 3, "  - /tests/**", "*_test.go"),
 		suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini")) // pytest.toml is in the head's list
 }
 
@@ -120,7 +128,7 @@ func TestChecksWriteAScopeReviewOnlyForTheListWithALineInsideTheDiff(t *testing.
 
 	w.scopePull(reviewFiles(reviewBoth, cjUtilTst, "conftest.py"), bootFiles("v1"))
 
-	w.wantReview(reviewBoth, []string{"conftest.py", cjUtilTst}, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
+	w.wantReview(reviewBoth, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
 }
 
 func TestChecksStripTheLineBreakOfAWindowsFileFromTheAnchor(t *testing.T) {
@@ -130,7 +138,7 @@ func TestChecksStripTheLineBreakOfAWindowsFileFromTheAnchor(t *testing.T) {
 	windows := strings.ReplaceAll(reviewDecl, "\n", "\r\n")
 	w.scopePull(reviewFiles(windows, cjUtilTst), bootFiles("v1"))
 
-	w.wantReview(windows, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
+	w.wantReview(windows, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 }
 
 func TestChecksWriteAScopeNoticeButNoReviewWhenTheDiffGivesNoLineToSuggestOn(t *testing.T) {
@@ -152,7 +160,7 @@ func TestChecksWriteAScopeNoticeButNoReviewWhenTheDiffGivesNoLineToSuggestOn(t *
 
 			w.scopePull(reviewFiles(tc.decl, cjUtilTst), bootFiles("v1"))
 
-			if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{"scope-notice:1001:5:" + scopeDigest(cjUtilTst)}) {
+			if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)}) {
 				t.Fatalf("notices %v, want the one of the added path\nlogs: %s", keys, w.logs)
 			}
 			if keys := w.scopeKeys("scope-review:"); len(keys) != 0 {
@@ -166,7 +174,7 @@ func TestChecksWriteNoScopeReviewWithoutANewScopeNotice(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,3 +1,3 @@")}
 	w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
-	w.wantReview(reviewDecl, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
+	w.wantReview(reviewDecl, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 	fileReads := w.reader.fileReads
 
 	// Another head with the same added path: the notice exists, so there is nothing new to suggest on.
@@ -207,7 +215,7 @@ func TestChecksWriteTheScopeNoticeWhenTheListOfFilesCannotBeRead(t *testing.T) {
 		w.wantNoScopeMessages()
 		w.reader.filesErr = nil // the limit ended
 		w.mustCheck()
-		w.wantReview(reviewDecl, []string{cjUtilTst}, suggestion("include", 3, "  - /tests/**", "*_test.go"))
+		w.wantReview(reviewDecl, suggestion("include", 3, "  - /tests/**", "*_test.go"))
 	})
 }
 
@@ -260,7 +268,7 @@ func TestChecksSuggestOnAMixedListInTheStyleOfScopeAddPatterns(t *testing.T) {
 
 	w.scopePull(reviewFiles(declaration, cjUtilTst), bootFiles("v1"))
 
-	w.wantReview(declaration, []string{cjUtilTst}, map[string]any{"list": "include", "line": 4, "anchor": `  - "/tests/**"`, "patterns": []string{"*_test.go"}, "quoting": "plain"})
+	w.wantReview(declaration, map[string]any{"list": "include", "line": 4, "anchor": `  - "/tests/**"`, "patterns": []string{"*_test.go"}, "quoting": "plain"})
 	got := decodeSuggestions(t, w.scopeMessages("scope-review:")[0].Payload)
 	if applied, want := apply(t, declaration, got[0]), addPatterns(t, declaration, []string{"*_test.go"}, nil); applied != want {
 		t.Errorf("the suggestion applied gives\n%s\nwant what AddPatterns writes\n%s", applied, want)

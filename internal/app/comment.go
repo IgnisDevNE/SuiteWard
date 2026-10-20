@@ -77,7 +77,7 @@ type ackPayload struct {
 	Paths         []string             `json:"paths,omitempty"`         // scope-notice: at most 20 uncovered test-like paths of the head, each cut to 150 bytes,
 	PathsTotal    int                  `json:"pathsTotal,omitempty"`    // how many there are,
 	Declaration   string               `json:"declaration,omitempty"`   // and the canonical declaration with the new patterns added, at most 8192 bytes
-	Declared      bool                 `json:"declared,omitempty"`      // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded)
+	Declared      bool                 `json:"declared,omitempty"`      // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded; removed with reasonDeclarationTooLarge once no host can hold a payload from before v0.1.2)
 	Base          string               `json:"base,omitempty"`          // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; none in a notice written before M1.9-E5. Also an invalid-source suggest-refused, for the file that is not a valid declaration
 	AddInclude    []string             `json:"addInclude,omitempty"`    // with a base: the include patterns the base lacks,
 	AddRunner     []string             `json:"addRunner,omitempty"`     // and the runner patterns, at most 20 together
@@ -120,7 +120,7 @@ const (
 	reasonEmptyInventory      = "empty-inventory"
 	refusalInvalidSource      = "invalid-source" // named like the bootstrap job's status code
 	reasonCarrier             = "carrier"
-	reasonDeclarationTooLarge = "declaration-too-large" // suggest-refused, no longer written: a queued acknowledgment of v0.1.1 holds it and must still render
+	reasonDeclarationTooLarge = "declaration-too-large" // suggest-refused, no longer written: a queued acknowledgment of v0.1.1 holds it and must still render; removed with the Declared field once no host can hold a payload from before v0.1.2
 	reasonDeclarationMissing  = "declaration-missing"   // rendered by commandtext.SuggestDeclaration, which is not an Ack
 	reasonScopeNotice         = "scope-notice"          // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
 	reasonNothingUncovered    = "nothing-uncovered"     // a suggested reply that every test-like path of the head is in the scope

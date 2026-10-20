@@ -80,7 +80,7 @@ func TestChecksWriteOneScopeNoticeForANewTestFileOutsideTheScope(t *testing.T) {
 
 	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 
-	wantKey := "scope-notice:1001:5:" + scopeDigest(cjUtilTst)
+	wantKey := noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)
 	if keys := w.scopeKeys("scope-"); !slices.Equal(keys, []string{wantKey}) {
 		t.Fatalf("scope messages %v, want exactly %s\nlogs: %s", keys, wantKey, w.logs)
 	}
@@ -155,7 +155,7 @@ func TestChecksReportARunnerFileOutsideTheScope(t *testing.T) {
 
 	w.scopePull(withFiles(bootFiles("v1"), "conftest.py"), bootFiles("v1"))
 
-	wantKey := "scope-notice:1001:5:" + scopeDigest("conftest.py")
+	wantKey := noticeKey(t, nil, []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}, "conftest.py")
 	if keys := w.scopeKeys("scope-"); !slices.Equal(keys, []string{wantKey}) {
 		t.Fatalf("scope messages %v, want exactly %s\nlogs: %s", keys, wantKey, w.logs)
 	}
@@ -258,7 +258,7 @@ func TestChecksWriteNoScopeNoticeForAForkAClosedPullRequestOrASuiteWithoutACanon
 func TestChecksWriteOneScopeNoticePerSetOfAddedPaths(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
-	first := "scope-notice:1001:5:" + scopeDigest(cjUtilTst)
+	first := noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)
 
 	// A later head with the same added path, and one more implementation change.
 	w.tree(cjHead3, withFiles(bootFiles("v1"), cjUtilTst, "src/more.go"))
@@ -277,7 +277,7 @@ func TestChecksWriteOneScopeNoticePerSetOfAddedPaths(t *testing.T) {
 	w.sync(map[int]string{4: bootHead, 5: cjHead4})
 	w.mustCheck()
 
-	second := "scope-notice:1001:5:" + scopeDigest("pkg/other_test.go", cjUtilTst)
+	second := noticeKey(t, []string{"*_test.go"}, nil, "pkg/other_test.go", cjUtilTst)
 	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{first, second}) {
 		t.Fatalf("notices %v, want %s then %s", keys, first, second)
 	}

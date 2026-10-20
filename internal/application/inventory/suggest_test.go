@@ -135,9 +135,9 @@ func TestSuggestCapsIncludeAndRunnerTogether(t *testing.T) {
 		"*.cy.*", "*.spec.*", "*.test.*", "*Test.java", "*Test.kt", "*Test.php", "*Tests.cs", "*Tests.java",
 		"*_spec.rb", "*_test.dart", "*_test.exs", "*_test.go", "*_test.py", "*_test.rb", "tests.py", "test_*.py",
 	}))
-	t.Run("directories, then files, then the cut", func(t *testing.T) {
-		got := inventory.Suggest(entriesOf(allIncludeSources()...))
-		want := inventory.Suggestion{Submodules: none, Include: slices.Concat(directories, files)[:20], Runner: none, Mixed: none, Cut: true}
+	t.Run("directories, then files, then the cut, after the room of the runner patterns", func(t *testing.T) {
+		got := inventory.Suggest(entriesOf(allIncludeSources()...)) // the Python files bring the 5 pytest names, which keep their room
+		want := inventory.Suggestion{Submodules: none, Include: slices.Concat(directories, files)[:15], Runner: pytestGroup, Mixed: none, Cut: true}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("Suggest = %#v, want %#v", got, want)
 		}
@@ -153,11 +153,11 @@ func TestSuggestCapsIncludeAndRunnerTogether(t *testing.T) {
 			t.Fatalf("Suggest = %#v, want 15 include, 5 runner and no cut", got)
 		}
 	})
-	t.Run("the runner patterns are cut first, in sorted order", func(t *testing.T) {
+	t.Run("the include patterns give way to the runner patterns, which are kept in sorted order", func(t *testing.T) {
 		got := inventory.Suggest(entriesOf(append(slices.Clone(base), regulars("playwright.config.ts")...)...))
-		wantRunner := []string{".mocharc.*", "jest.config.*", "karma.conf.*", "playwright.config.*", "vitest.config.*"} // vitest.workspace.* is dropped
-		if !reflect.DeepEqual(got.Runner, wantRunner) || len(got.Include) != 15 || !got.Cut {
-			t.Fatalf("Suggest = %#v, want 15 include patterns, the first 5 runner patterns and a cut", got)
+		wantRunner := []string{".mocharc.*", "jest.config.*", "karma.conf.*", "playwright.config.*", "vitest.config.*", "vitest.workspace.*"}
+		if !reflect.DeepEqual(got.Runner, wantRunner) || len(got.Include) != 14 || !got.Cut {
+			t.Fatalf("Suggest = %#v, want 14 include patterns, all 6 runner patterns and a cut", got)
 		}
 	})
 }

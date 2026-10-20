@@ -40,9 +40,10 @@ func TestWithRunnerAddsSortedWithoutRepeatsAndKeepsTheLimit(t *testing.T) {
 	for i := range include {
 		include[i] = fmt.Sprintf("d%02d/", i)
 	}
+	// The runner patterns the base lacks keep their room: the include patterns give way, and the cut is reported.
 	got = inventory.Suggestion{Include: include}.WithRunner([]string{"x", "y", "z"})
-	if want := []string{"x", "y"}; !slices.Equal(got.Runner, want) || !got.Cut {
-		t.Errorf("runner %v cut %v; want %v cut at 20 patterns in all", got.Runner, got.Cut, want)
+	if want := []string{"x", "y", "z"}; !slices.Equal(got.Runner, want) || len(got.Include) != 17 || !got.Cut {
+		t.Errorf("runner %v, %d include, cut %v; want %v, 17 include and a cut at 20 patterns in all", got.Runner, len(got.Include), got.Cut, want)
 	}
 }
 
@@ -84,15 +85,17 @@ func TestSuggestAgainstCutsOnlyWhatIsStillMissing(t *testing.T) {
 	for name, tc := range map[string]struct {
 		declaration string
 		runner      []string
+		includes    int
 		cut         bool
 	}{
-		"nothing handled":   {"version: 1\n", []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"}, true},
-		"one name handled":  {"version: 1\nrunner: [pytest.toml]\n", []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"}, false},
-		"the family listed": {"version: 1\nrunner: [pytest.toml, .pytest.toml, pytest.ini, .pytest.ini, conftest.py]\n", none, false},
+		// The missing runner patterns keep their room: the include patterns give way, one over the limit.
+		"nothing handled":   {"version: 1\n", pytestGroup, 15, true},
+		"one name handled":  {"version: 1\nrunner: [pytest.toml]\n", []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"}, 16, false},
+		"the family listed": {"version: 1\nrunner: [pytest.toml, .pytest.toml, pytest.ini, .pytest.ini, conftest.py]\n", none, 16, false},
 	} {
 		got, err := inventory.SuggestAgainst(entries, scopeOf(t, tc.declaration))
-		if err != nil || got.Cut != tc.cut || !slices.Equal(got.Runner, tc.runner) || len(got.Include) != 16 {
-			t.Errorf("%s: runner %v, cut %v, %d includes, %v; want runner %v, cut %v, 16 includes", name, got.Runner, got.Cut, len(got.Include), err, tc.runner, tc.cut)
+		if err != nil || got.Cut != tc.cut || !slices.Equal(got.Runner, tc.runner) || len(got.Include) != tc.includes {
+			t.Errorf("%s: runner %v, cut %v, %d includes, %v; want runner %v, cut %v, %d includes", name, got.Runner, got.Cut, len(got.Include), err, tc.runner, tc.cut, tc.includes)
 		}
 	}
 }

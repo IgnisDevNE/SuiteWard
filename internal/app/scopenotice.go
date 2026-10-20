@@ -32,13 +32,13 @@ import (
 
 const (
 	scopeNoticeKey = "scope-notice" // scope-notice:<repository id>:<pull>:<set digest>
-	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<review digest>: the set and the head's file in one digest
+	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<review digest>: the head's file and the suggestions in one digest
 )
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// scopeNoticePayload is the payload of scope-notice:<repository id>:<pull>:<set digest>. The key's digest is that of the
-// whole set of added paths, which the bounded list below cannot reproduce, so the publisher checks only its shape.
+// scopeNoticePayload is the payload of scope-notice:<repository id>:<pull>:<notice digest>. The key's digest is that of the
+// whole set of added paths and of the declaration shown, or else the patterns, which the bounded list below cannot reproduce, so the publisher checks only its shape.
 type scopeNoticePayload struct {
 	commentTarget
 	Head        string   `json:"head"`
@@ -108,7 +108,8 @@ func newScopeNoticeMessage(target commentTarget, head, branch string, paths []st
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the scope notice: %w", err)
 	}
-	key := fmt.Sprintf("%s:%d:%d:%s", scopeNoticeKey, target.RepositoryID, target.Pull, setDigest(paths))
+	shown := slices.Concat([]string{setDigest(paths), p.Declaration, strconv.Itoa(len(p.AddInclude))}, p.AddInclude, p.AddRunner) // the paths, and the declaration or else the patterns
+	key := fmt.Sprintf("%s:%d:%d:%s", scopeNoticeKey, target.RepositoryID, target.Pull, contentDigest(shown))
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
@@ -212,11 +213,26 @@ func (p scopeReviewPayload) validate() error {
 	return nil
 }
 
-// reviewDigest is the SHA-256 hex digest of the set digest, a newline and the head's .suiteward.yml. A review is anchored to one
-// version of that file: a later suggest after the file changed is a fresh review, a repeat on the same file is not.
-func reviewDigest(set string, file []byte) string {
-	sum := sha256.Sum256(append([]byte(set+"\n"), file...))
+// contentDigest is the SHA-256 hex digest of the parts, each with its length in front so that no two lists of parts collide. A comment's key digests what
+// the comment shows, and never the Suite's version: a promotion would otherwise post a new comment on every open pull request.
+func contentDigest(parts []string) string {
+	var all strings.Builder
+	for _, part := range parts {
+		all.WriteString(strconv.Itoa(len(part)) + ":" + part)
+	}
+	sum := sha256.Sum256([]byte(all.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+// suggestionsDigest is the SHA-256 hex digest of the head's .suiteward.yml, a newline and the suggestions as JSON: what a review posts, and nothing
+// else. Suggestions that say the same on the same file share a key, whichever paths, head or command produced them.
+func suggestionsDigest(file []byte, suggestions []scopeSuggestion) (string, error) {
+	raw, err := json.Marshal(suggestions)
+	if err != nil {
+		return "", fmt.Errorf("encode the suggestions: %w", err)
+	}
+	sum := sha256.Sum256(slices.Concat(file, []byte{'\n'}, raw))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // newScopeReviewMessage builds the review of the suggestions of the review digest. A payload the publisher could not render is
@@ -416,7 +432,7 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 	if j.scoped[key] == at {
 		return nil
 	}
-	err := j.decideScope(ctx, p, pull)
+	err := j.decideScope(ctx, p, pull, canonical)
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()
@@ -439,7 +455,7 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 // decideScope reads the head tree, then the base tree only when the head has uncovered paths that no earlier head of the pull
 // request had, and writes the notice. The set of uncovered paths of the head, which is the added set when the pull request
 // adds them all, is remembered once decided: a push that leaves it as it was reads nothing more.
-func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState) error {
+func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, canonical contract.SuiteVersionID) error {
 	read, err := j.reader.Tree(ctx, p.Repo, pull.HeadSHA)
 	if err != nil {
 		return githubRead(err)
@@ -449,7 +465,7 @@ func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil || len(found.Paths) == 0 {
 		return err
 	}
-	decided := fmt.Sprintf("scope-set:%d:%d:%s", p.RepositoryID, pull.Number, setDigest(found.Paths))
+	decided := fmt.Sprintf("scope-set:%d:%d:%s:%s", p.RepositoryID, pull.Number, canonical, setDigest(found.Paths)) // a new canonical may show other text
 	if j.announced[decided] {
 		return nil
 	}
@@ -480,7 +496,7 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
 	}
-	reviews, err := scopeReview(ctx, j.reader, j.logger, "github checks scope review", target, pull.HeadSHA, head, found, suggestion, setDigest(added))
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github checks scope review", target, pull.HeadSHA, head, found, suggestion)
 	if err != nil {
 		return err
 	}
@@ -492,13 +508,13 @@ type pullFileReader interface {
 	PullFiles(ctx context.Context, repo string, number int) ([]github.PullFile, error)
 }
 
-// scopeReview builds the review suggestions that go with a notice, as at most one message, keyed by the set digest and the head's file: for each list of the head's
+// scopeReview builds the review suggestions that go with a notice, as at most one message, keyed by the head's file and the suggestions (see suggestionsDigest): for each list of the head's
 // .suiteward.yml, the new patterns that the head's list lacks, after a list item inside a hunk of the pull request's diff
 // (GitHub accepts a review comment only on such a line). This is the only place that starts from the head's file. A list in flow
 // style, a head whose file is invalid or missing from the diff, and a list with no new pattern or no item in a hunk give none.
 // A failed read of the pull request's files costs only the review, unless it says to wait.
 // The checks job and the suggest command share it, each with its own prefix for the log lines.
-func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger, logPrefix string, target commentTarget, headSHA string, head *githubTree, found headScope, s inventory.Suggestion, digest string) ([]governance.OutboxMessage, error) {
+func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger, logPrefix string, target commentTarget, headSHA string, head *githubTree, found headScope, s inventory.Suggestion) ([]governance.OutboxMessage, error) {
 	if !hasDeclaration(found.entries) {
 		return nil, nil
 	}
@@ -546,7 +562,11 @@ func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger,
 	if len(suggestions) == 0 {
 		return nil, nil
 	}
-	message, err := newScopeReviewMessage(target, headSHA, reviewDigest(digest, own), suggestions)
+	digest, err := suggestionsDigest(own, suggestions)
+	if err != nil {
+		return nil, err
+	}
+	message, err := newScopeReviewMessage(target, headSHA, digest, suggestions)
 	if err != nil {
 		logger.WarnContext(ctx, logPrefix+" skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
 		return nil, nil
@@ -633,22 +653,15 @@ func (j *checksJob) absentFromBase(ctx context.Context, repo, baseSHA string, pa
 	return slices.DeleteFunc(slices.Clone(paths), func(path string) bool { return inBase[path] }), nil
 }
 
-// outboxOnce writes the messages in one unit of work, unless the key of the first exists: a repeated decision writes nothing.
-// The first is the notice, written before the messages that depend on it, so its conflict undoes nothing else. No message is no write.
+// outboxOnce writes each message in a unit of work of its own, in order, and skips one whose key exists: a repeated decision writes nothing new.
+// The keys digest what each message shows, so an existing review must never undo the comment it goes with: a conflict on one message undoes
+// no other. A failed write returns, and the retry skips what was written. No message is no write.
 func outboxOnce(ctx context.Context, suites governance.UnitOfWork, project contract.ProjectID, messages []governance.OutboxMessage) error {
-	if len(messages) == 0 {
-		return nil
-	}
-	err := suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
-		for _, message := range messages {
-			if err := tx.Outbox(ctx, message); err != nil {
-				return err
-			}
+	for _, message := range messages {
+		err := suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, message) })
+		if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
+			return fmt.Errorf("write the comment %s: %w", message.Key, err)
 		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
-		return fmt.Errorf("write the comment %s: %w", messages[0].Key, err)
 	}
 	return nil
 }

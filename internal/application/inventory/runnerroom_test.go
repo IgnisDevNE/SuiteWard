@@ -2,24 +2,30 @@ package inventory_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 )
 
-// Test files of 27 include patterns and one runner file: a runner pattern the base lacks is not pushed out by the include patterns.
+// withRunnerFile is 24 include patterns (no Python, which brings the pytest names too) and one runner file.
+func withRunnerFile() []inventory.Entry {
+	sources := slices.DeleteFunc(allIncludeSources(), func(f file) bool { return strings.HasSuffix(f.path, ".py") })
+	return entriesOf(append(sources, regulars("jest.config.js")...)...)
+}
+
+// A runner pattern the base lacks is not pushed out by the include patterns.
 func TestSuggestAgainstKeepsTheMissingRunnerPatternInsideTheLimit(t *testing.T) {
-	entries := entriesOf(append(allIncludeSources(), regulars("jest.config.js")...)...)
+	entries := withRunnerFile()
 	got, err := inventory.SuggestAgainst(entries, scopeOf(t, "version: 1\n"))
 	if err != nil || !slices.Equal(got.Runner, []string{"jest.config.*"}) || len(got.Include) != 19 || !got.Cut {
 		t.Fatalf("SuggestAgainst = %+v, %v; want the runner pattern, 19 include patterns (20 in all) and a cut", got, err)
 	}
 }
 
-// MissingRunner reads the runner patterns before any limit: 27 include patterns used to hide the missing runner pattern.
+// MissingRunner reads the runner patterns before any limit: 24 include patterns used to hide the missing runner pattern.
 func TestMissingRunnerSeesARunnerPatternWhateverTheIncludeCount(t *testing.T) {
-	entries := entriesOf(append(allIncludeSources(), regulars("jest.config.js")...)...)
-	got, err := inventory.MissingRunner(entries, scopeOf(t, "version: 1\n"))
+	got, err := inventory.MissingRunner(withRunnerFile(), scopeOf(t, "version: 1\n"))
 	if err != nil || !slices.Equal(got, []string{"jest.config.*"}) {
 		t.Fatalf("MissingRunner = %v, %v; want jest.config.*", got, err)
 	}

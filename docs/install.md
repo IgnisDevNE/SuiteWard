@@ -325,6 +325,15 @@ A correction puts an earlier version's protected files back, for example the pre
 - **What is kept:** the corrected version stays. SuiteWard erases no version ([ADR 0018](decisions/0018-corrective-pr-rollback-and-audit-history.md)).
 - **Anything else:** protected files that match no earlier version exactly make an ordinary promotion, not a correction.
 
+### Stop protecting a repository
+
+A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard cannot tell what happened there, so it holds back the commands of **every** repository: no `approve`, `revoke`, `propose`, `skip` or `suggest` gets an answer. Deleting the repository on GitHub has the same effect.
+1. Remove the repository from the list: `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env` on an isolated host (then restart the service), or `-GitHubRepositories` when you run `deploy/local.ps1` again on a co-located PC.
+2. Run setup again (section 6) with one `--test-check` for each repository you keep. Setup replaces the TOTP secret, so add the new entry to your authenticator app and delete the old one.
+3. Comment your command again. A command written before the new setup is ignored and gets no reply.
+
+SuiteWard changes nothing on GitHub: remove the App from the repository, and the ruleset rule that requires `SuiteWard / Contract`, yourself.
+
 ## 10. Running on a separate host (operators)
 
 This installs the isolated tier (section 2), unless step 10.9 sets the tier to `co-located`: SuiteWard on a separate host that your coding agent cannot reach, for whoever self-hosts on a machine the agent cannot reach. It gives the full assurance. The host runs Podman 4.9.3 and the units from `deploy/quadlet/` in the release source.
@@ -887,6 +896,7 @@ Common problems:
 - **Setup exits with code 1.** A lookup failed. The owner login may not be a user account, the App may not be installed on every configured repository, or GitHub could not be reached. Nothing was written.
 - **`propose` was refused.** The acknowledgment names the reason: `canonical-present` (the repository already has a contract; `propose` only works before the first one), `fork` (pull requests from forks are not supported), `not-open` (the pull request is no longer open), `base-not-target` (the pull request's base branch is not the repository's default branch, so merging it could never decide the first contract), `declaration-missing` (no `.suiteward.yml` was found on the default branch or the pull request head; see the suggested file and link, section 8), or `invalid-source` (`.suiteward.yml` is invalid, a symbolic link that the scope reaches points at a directory, outside the repository or nowhere (section 8), or GitHub truncated the tree, which happens with very large monorepos and cannot be protected in this release).
 - **A command gets no reply.** Check that the first line starts with `/suiteward`, outside a code block, that it comes from your account, that you did not edit it, and that the pull request is still open. Another account's command gets no reply by design.
+- **No command gets a reply, in any repository,** and the log says `github commands wait for an enrolled repository that is not configured in GITHUB_REPOSITORIES`. A repository you removed from the configuration, or deleted on GitHub, is still enrolled. See [Stop protecting a repository](#stop-protecting-a-repository).
 - **An approval is rejected.** The reply gives the reason: an invalid, replayed or expired code, or an unknown revision. Use a fresh code, and check the reference against the newest revision comment.
 - **The check shows `approval-missing` after a push.** The push changed a protected file, which creates a new revision. Approve the revision named in the newest comment.
 - **The new image does not start after an update.** Do not start an older image, because after a migration it refuses to run. Read the logs and report them to the project. To return to the earlier state, restore your backup, as described in [the backup runbook](backup.md).

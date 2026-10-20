@@ -62,7 +62,13 @@ func TestParse(t *testing.T) {
 		{"approve", "/suiteward approve P1-R1 123456", command(commandtext.Approve, 1, 1, "123456")},
 		{"revoke", "/suiteward revoke P42-R3 654321", command(commandtext.Revoke, 42, 3, "654321")},
 		{"largest ids", "/suiteward approve P999999999-R999999999 000000", command(commandtext.Approve, 999999999, 999999999, "000000")},
-		{"extra spaces and tabs", " \t /suiteward \t approve  \tP7-R2\t\t 012345 \t", command(commandtext.Approve, 7, 2, "012345")},
+		{"extra spaces and tabs", "  /suiteward \t approve  \tP7-R2\t\t 012345 \t", command(commandtext.Approve, 7, 2, "012345")},
+		{"indented three columns", "   /suiteward approve P7-R2 012345", command(commandtext.Approve, 7, 2, "012345")},
+		{"after a comment that closes on its own line", "<!-- note -->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"after a comment block", "<!--\nnote\n-->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"a fence inside an HTML comment opens nothing", "<!--\n```\n-->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"after an indented line","    code\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"a comment marker inside a fence is code", "```\n<!--\n```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"CRLF", "/suiteward revoke P5-R1 111111\r\nthanks\r\n", command(commandtext.Revoke, 5, 1, "111111")},
 		{"CRLF on a later line", "Looks good.\r\n/suiteward approve P5-R1 111111\r\n", command(commandtext.Approve, 5, 1, "111111")},
 		{"command on a later line", "Reviewed the inventory.\n\n/suiteward approve P2-R4 222222", command(commandtext.Approve, 2, 4, "222222")},
@@ -97,6 +103,19 @@ func TestParse(t *testing.T) {
 		{"long s is not an s", "/ſuiteward suggest", notCommand},
 		{"no-break space after the prefix", "/suiteward\u00a0approve P1-R1 123456", notCommand},
 		{"quoted", "> /suiteward approve P1-R1 123456", notCommand},
+
+		// GitHub shows no command in a hidden comment or in an indented code block.
+		{"inside an HTML comment block", "<!--\n/suiteward approve P1-R1 123456\n-->", notCommand},
+		{"on the line that opens an HTML comment", "<!-- /suiteward approve P1-R1 123456\nnote\n-->", notCommand},
+		{"on the line that closes an HTML comment", "<!--\nnote\n--> /suiteward approve P1-R1 123456", notCommand},
+		{"after an unclosed HTML comment", "<!--\n/suiteward approve P1-R1 123456", notCommand},
+		{"in an HTML comment on one line", "<!-- /suiteward approve P1-R1 123456 -->", notCommand},
+		{"after text and an unclosed comment opener on the same line", "note <!-- x\n/suiteward approve P1-R1 123456", notCommand},
+		{"indented four spaces", "    /suiteward approve P1-R1 123456", notCommand},
+		{"indented a tab", "\t/suiteward approve P1-R1 123456", notCommand},
+		{"indented two spaces and a tab", "  \t/suiteward approve P1-R1 123456", notCommand},
+		{"indented a space and a tab", " \t /suiteward approve P7-R2 012345", notCommand},
+		{"indented four spaces on a later line, CRLF", "text\r\n    /suiteward approve P1-R1 123456\r\n", notCommand},
 
 		// Fences.
 		{"unclosed fence hides the rest", "```\nsome code\n/suiteward approve P1-R1 123456\nmore", notCommand},
@@ -349,6 +368,12 @@ func TestAcknowledge(t *testing.T) {
 			commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1, Source: source, Owner: owner},
 			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "comment `/suiteward propose`"},
 			[]string{"eligible"},
+		},
+		{
+			"other pull request",
+			commandtext.Ack{Outcome: commandtext.OtherPullRequest, Proposal: 4, Revision: 2, Source: source, Owner: owner},
+			[]string{"P4-R2 belongs to another pull request; comment the command on that pull request. Nothing changed."},
+			[]string{"eligible", "check"},
 		},
 		{
 			"edited first",
@@ -729,7 +754,7 @@ func TestRenderedBodiesNeverEchoTheComment(t *testing.T) {
 	bodies := []string{}
 	for _, outcome := range []commandtext.Outcome{
 		commandtext.Approved, commandtext.Revoked, commandtext.NoActiveApproval,
-		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite, commandtext.RevokedAfterPromotion, commandtext.ApprovedAfterPromotion,
+		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite, commandtext.RevokedAfterPromotion, commandtext.ApprovedAfterPromotion, commandtext.OtherPullRequest,
 	} {
 		bodies = append(bodies, render(t, func() string {
 			return commandtext.Acknowledge(commandtext.Ack{Outcome: outcome, Proposal: c.Proposal, Revision: c.Revision, Source: source, Owner: owner})

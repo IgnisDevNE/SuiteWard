@@ -98,6 +98,7 @@ func TestValidateAckAcceptsEveryOutcomeThatAcknowledgeRenders(t *testing.T) {
 		commandtext.ReplayedCode:           ref,
 		commandtext.NoSuite:                ref,
 		commandtext.AlreadyProposed:        ref,
+		commandtext.OtherPullRequest:       ref,
 		commandtext.Rejected:               {Rejection: commandtext.Unauthorized, Proposal: 4, Revision: 2, Source: source, Owner: owner},
 		commandtext.MalformedCommand:       {Malformed: commandtext.ExtraText, Source: source, Owner: owner},
 		commandtext.EditedFirst:            bare,

@@ -701,9 +701,21 @@ func editorStep(lead, link string) string {
 	return "\n\n" + lead + ", " + link + ". " + commitNote
 }
 
-// pasteStep is the sentence that sends the owner to the editor of .suiteward.yml on the pull request's branch to paste a declaration.
-func pasteStep(repo, branch string) string {
-	return "To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](" + editLink(repo, branch) + ") and paste the declaration. " + commitNote
+// pasteStep is the sentence that sends the owner to the editor of .suiteward.yml on the pull request's branch to do action (see pasteAction).
+func pasteStep(repo, branch, action string) string {
+	return "To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](" + editLink(repo, branch) + ") and " + action + ". " + commitNote
+}
+
+// pasteAction is what the owner does in the editor: paste a declaration that the comment shows, add the patterns that it lists, or
+// either, when it shows a declaration for one choice and patterns for the other.
+func pasteAction(declaration, patterns bool) string {
+	switch {
+	case declaration && patterns:
+		return "paste a declaration or add the patterns to its lists"
+	case patterns:
+		return "add the patterns to its lists"
+	}
+	return "paste the declaration"
 }
 
 // refusalStep is the paragraph that links to GitHub's editor for .suiteward.yml on the branch of the file a refusal asks to fix, led by lead; none

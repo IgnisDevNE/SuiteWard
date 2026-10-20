@@ -133,8 +133,10 @@ func TestRunnerUncoveredCommentWithoutAProtectDeclarationOffersTheRunnerPatterns
 
 func TestRunnerUncoveredCommentWithoutAProtectDeclarationNeedsRunnerPatterns(t *testing.T) {
 	for name, mutate := range map[string]func(*commandtext.RunnerUncovered){
-		"no patterns":                func(n *commandtext.RunnerUncovered) { n.ProtectPatterns = nil },
-		"26 patterns":                func(n *commandtext.RunnerUncovered) { n.ProtectPatterns = append(slices.Clone(protectPatterns), "x") },
+		"no patterns": func(n *commandtext.RunnerUncovered) { n.ProtectPatterns = nil },
+		"31 patterns": func(n *commandtext.RunnerUncovered) {
+			n.ProtectPatterns = append(slices.Repeat([]string{"x"}, 6), protectPatterns...)
+		},
 		"patterns and a declaration": func(n *commandtext.RunnerUncovered) { n.Protect = []byte("version: 1\n") },
 		"an empty pattern":           func(n *commandtext.RunnerUncovered) { n.ProtectPatterns = []string{""} },
 	} {

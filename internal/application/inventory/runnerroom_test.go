@@ -45,3 +45,11 @@ func TestRunnerPatternsAloneMayExceedTheLimit(t *testing.T) {
 		t.Fatalf("SuggestAgainst = %d include, %d runner, cut %v, %v; want 20 runner patterns in all and a cut", len(got.Include), len(got.Runner), got.Cut, err)
 	}
 }
+
+// With no base every runner pattern is missing, so Suggest gives them the same room: the include patterns give way and the cut is reported.
+func TestSuggestKeepsTheRunnerPatternInsideTheLimit(t *testing.T) {
+	got := inventory.Suggest(withRunnerFile())
+	if !slices.Equal(got.Runner, []string{"jest.config.*"}) || len(got.Include) != 19 || !got.Cut {
+		t.Fatalf("Suggest = %+v; want the runner pattern, 19 include patterns (20 in all) and a cut", got)
+	}
+}

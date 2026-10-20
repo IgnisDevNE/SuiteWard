@@ -58,3 +58,42 @@ func TestSuggestAnswersARunnerSetOverTheLimitWithTheFirstTwentyAndACut(t *testin
 		t.Fatalf("reason %s, %d include and %d runner patterns, cut %v; want a scope notice of 20 patterns and a cut", got.Reason, len(got.AddInclude), len(got.AddRunner), got.Cut)
 	}
 }
+
+// Before the first contract the runner pattern found has the same room as after it: with 24 include candidates it is in the reply of a suggest and in the
+// refusal of a propose, which say the same for the same trees.
+func TestBeforeTheFirstContractTheRunnerPatternKeepsItsRoomInTheSuggestionAndTheProposal(t *testing.T) {
+	head := map[string]string{"src/main.go": "y", "jest.config.js": "x"}
+	for _, path := range []string{"a/testdata/x", "a/__tests__/x", "a/__snapshots__/x", "a/__mocks__/x", "a/__fixtures__/x", "a/cypress/x", "a/src/test/x", "a/src/it/x", "tests/x", "test/x", "spec/x",
+		"a/x.cy.ts", "a/x.spec.ts", "a/x.test.ts", "a/XTest.java", "a/XTest.kt", "a/XTest.php", "a/XTests.cs", "a/XTests.java", "a/x_spec.rb", "a/x_test.dart", "a/x_test.exs", "a/x_test.go", "a/x_test.rb"} {
+		head[path] = "x"
+	}
+	for _, tc := range []struct {
+		name        string
+		comment     cjComment
+		disposition commands.Disposition
+	}{
+		{"suggest", cjSuggest(500, cjAt(10)), commands.Suggested},
+		{"propose", cjPropose(500, cjAt(10)), commands.ProposeRefused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCjWorld(t)
+			w.trees(map[string]string{"README.md": "x"}, head)
+			w.syncAll([]cjComment{tc.comment})
+			w.mustRun()
+
+			_, ack := w.requireDisposition(cjID1, 500, tc.disposition)
+			var got struct {
+				Reason     string   `json:"reason"`
+				Suggestion []string `json:"suggestion"`
+				Runner     []string `json:"runner"`
+				Cut        bool     `json:"cut"`
+			}
+			if ack == nil || json.Unmarshal(ack.Payload, &got) != nil {
+				t.Fatalf("no acknowledgment to read: %+v", ack)
+			}
+			if got.Reason != "declaration-missing" || !slices.Equal(got.Runner, []string{"jest.config.*"}) || len(got.Suggestion)+len(got.Runner) != 20 || !got.Cut {
+				t.Fatalf("reason %s, %d include patterns, runner %v, cut %v; want 19 include patterns, jest.config.* and a cut", got.Reason, len(got.Suggestion), got.Runner, got.Cut)
+			}
+		})
+	}
+}

@@ -211,7 +211,7 @@ Check the backup before anything is replaced:
    curl -sS http://127.0.0.1:8081/status
    ```
 
-   Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts and then every hour, so wait for it or restart the service. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup. Co-located: `curl.exe` in place of `curl`, or the machine commands of section 2, step 5 when `127.0.0.1:8081` does not answer from Windows.
+   Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts, right after each promotion and then every hour, so wait a moment for it. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup. Co-located: `curl.exe` in place of `curl`, or the machine commands of section 2, step 5 when `127.0.0.1:8081` does not answer from Windows.
 
 9. Return `Image=` to your update path. Step 3 pinned it to the backup's version, and the service stays on that version until you change the line. The install guide's [Updating](install.md#11-updating) gives both paths: if you update by hand, update when you choose, with a fresh backup first; if you chose automatic updates, put back the `Image=` line that it gives. After any change to the line, reload the units and restart the service:
 

@@ -138,7 +138,10 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 	}
 	var protectPatterns []string
 	if !quotable(protect) { // protecting stays too, as the patterns alone
-		protect, protectPatterns = nil, inventory.RunnerPatterns(set.paths)
+		protect = nil
+		if protectPatterns, err = missingRunner(base, inventory.RunnerPatterns(set.paths)); err != nil { // AddPatterns parsed it
+			return &opaque{what: "read the canonical runner list", cause: err}
+		}
 	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
 	comment, err := newRunnerUncoveredMessage(target, pull.HeadSHA, pull.HeadRef, set.paths, protect, protectPatterns, ignore, reviewDigest(setDigest(set.paths), set.declared))
@@ -149,6 +152,23 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 	messages := []governance.OutboxMessage{comment}
 	messages = append(messages, j.runnerReview(ctx, target, pull.HeadSHA, set, ignore != nil)...)
 	return outboxOnce(ctx, j.suites, owner.ProjectID(p.RepositoryID), messages)
+}
+
+// missingRunner returns the patterns that the runner list of the declaration base lacks, which is what scope.AddPatterns would add. When it lists them all,
+// protecting the files restores what the head's own declaration dropped, and all of them are returned: the comment always has a pattern to offer.
+func missingRunner(base []byte, patterns []string) ([]string, error) {
+	declaration, err := scope.ParseDeclaration(base)
+	if err != nil {
+		return nil, err
+	}
+	listed := map[string]bool{}
+	for _, p := range declaration.Runner() {
+		listed[p.String()] = true
+	}
+	if missing := slices.DeleteFunc(slices.Clone(patterns), func(p string) bool { return listed[p] }); len(missing) > 0 {
+		return missing, nil
+	}
+	return patterns, nil
 }
 
 // excludePatterns returns the exclude patterns that name exactly the files at paths: a name without a slash would match at every depth, so it gets a

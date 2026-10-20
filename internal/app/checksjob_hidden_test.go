@@ -6,10 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
 // A declaration shown for copying could carry invisible characters from a comment of the owner's .suiteward.yml (docs/contracts/runtime.md, decision 7 of
@@ -189,5 +191,22 @@ func TestChecksOfferOnlyTheRunnerPatternsTheCanonicalLacks(t *testing.T) {
 	stored, _ := w.postedRunnerComment()
 	if want := []any{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.toml"}; !reflect.DeepEqual(stored["protectPatterns"], want) {
 		t.Fatalf("protectPatterns %v, want %v: pytest.ini is in the canonical's runner list", stored["protectPatterns"], want)
+	}
+}
+
+// A canonical that lists every pattern of the family leaves nothing missing, and the comment still offers them: the head's approved declaration dropped them.
+func TestChecksOfferTheWholeRunnerFamilyWhenTheCanonicalListsItAll(t *testing.T) {
+	canonical := withDeclaration(bootFiles("v1"), "version: 1\ninclude: [/tests/**]\nrunner: [.pytest.ini, .pytest.toml, conftest.py, pytest.ini, pytest.toml]\n"+hiddenComment)
+	w := newCJWorldOf(t, canonical)
+	w.reader.files = map[int][]github.PullFile{5: added("conftest.py")}
+	w.scopePull(withFiles(withDeclaration(canonical, reviewDecl), "conftest.py"), canonical)
+	w.want(5, checks.InProgress, "approval-missing", 1)
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+	w.mustCheck()
+
+	w.want(5, checks.InProgress, "runner-uncovered", 2)
+	stored, _ := w.postedRunnerComment()
+	if want := []any{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}; !reflect.DeepEqual(stored["protectPatterns"], want) {
+		t.Fatalf("protectPatterns %v, want %v", stored["protectPatterns"], want)
 	}
 }

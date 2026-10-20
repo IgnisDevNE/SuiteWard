@@ -10,7 +10,7 @@ SuiteWard reaches GitHub outbound only, as the operator's GitHub App installed o
 - `internal/adapters/github/appauth` (A1): the App's JWT and installation tokens.
 - `internal/adapters/github/rest` (A2): HTTP transport with conditional requests, the shared budget and typed errors. It takes the token as a function value (`TokenFunc`), so it never imports `appauth`; the composition (A4) adapts `(*appauth.Installation).Token` to it in one function literal.
 - `internal/adapters/github` (A3): typed reads used by M1.4–M1.7 and an `inventory.Tree` over the git trees API, built on `rest`.
-- `spikes/s1` may be read as a reference and is never imported; anything taken from it is redone test-first.
+- The S1 spike code was removed in M1.10 and lives in git history (last present at commit `0aaba8818a3f2fce96eb0f5d49f811d029e66854`, under `spikes/s1`). It may be read there as a reference and is never imported; anything taken from it is redone test-first.
 
 ## Permissions (D-GITHUB-ACCESS)
 
@@ -40,7 +40,7 @@ func (t Token) ExpiresAt() time.Time
 - The JWT is RS256 with the standard library: `iat` = now − 60 s, `exp` = now + 9 min, `iss` = app id. The key is PKCS#1 or PKCS#8 PEM; anything else is an error naming the format, never the content.
 - Time comes only from the injected clock. Concurrent `Token` calls mint at most once.
 - The token value never appears in an error, a log line, `String()`, `GoString()` or `%v` output (the same pattern as `internal/config`'s secret type). `Identity` is derived from the token (for example a SHA-256 prefix), not the value itself.
-- A non-201 answer from `POST /app/installations/{id}/access_tokens` is a typed error with the status; a granted permission map narrower or wider than requested is an error.
+- A non-201 answer from `POST /app/installations/{id}/access_tokens` is a typed error with the status (the answer is drained and its text dropped); a granted permission map narrower or wider than requested is an error.
 - Tests generate their RSA key with `rsa.GenerateKey`; nothing is read from `.local/` or any PEM on disk. GitHub is an `httptest.Server`.
 
 ## A2: REST client (`rest`)
@@ -68,11 +68,11 @@ func NewBudget(fraction float64, clock func() time.Time) (*Budget, error) // D-S
 
 `NewClient` rejects a nil `token`, `httpClient` or `budget` and a base URL that is not absolute or carries a query, a fragment or user info; its errors never print the URL.
 
-- The ETag cache is keyed by request path and scoped to the token identity: when the identity changes, the cache is dropped (GitHub answers `Vary: Authorization`, so an ETag does not survive a rotation). Returned bodies are copies of what the cache holds. SHA-addressed reads use `GetImmutable`, so the cache only holds mutable listings.
+- The ETag cache is keyed by request path and scoped to the token identity: when the identity changes, the cache is dropped (GitHub answers `Vary: Authorization`, so an ETag does not survive a rotation). The cache holds at most 4096 paths and drops the one used least recently, which costs one full read when it is asked again (about three paths per open pull request polled and a few per repository, so the bound covers some thirteen hundred open pull requests). Returned bodies are copies of what the cache holds. SHA-addressed reads use `GetImmutable`, so the cache only holds mutable listings.
 - A response body is read up to 64 MiB; a larger one is an error, never a silent truncation.
 - The budget reads `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` of each response; requests used are `limit − remaining` as GitHub reports them, so other consumers of the same installation count. Once the requests used in the current window reach `fraction × limit`, `Get` returns `ErrBudgetExhausted` until the reset, without calling GitHub. A 304 costs nothing on GitHub's side and is not counted. Before the first response of a window the cap is unknown, so the requests already in flight pass (about one per repository at startup and after each reset). Windows are compared in server time: each response with a `Date` header within one hour of the local clock updates the offset between the local clock and GitHub's (a `Date` further off is ignored, since a window lasts at most an hour), and a window ends when the local time minus that offset reaches its reset, so a skewed clock neither disables the cap nor stops it for good. A response with the same reset refreshes the count, a later reset replaces the window, an earlier one is ignored. `BudgetExhaustedError.Reset` is in local time (reset plus offset). The budget is per process (one instance serves at most 20 repositories, D-SYNC).
 - A secondary rate limit (403 or 429 with `Retry-After` while `Remaining` is above zero) is returned as `ErrRateLimited` and not fed to the budget: the caller (the reconciliation of M1.4-B) waits until `RateLimitedError.Until` before calling again. `Until` is in local time whatever its source (`X-RateLimit-Reset` and an HTTP-date `Retry-After` are shifted by the offset; a numeric `Retry-After` counts from the local clock).
-- Typed errors, matched with `errors.Is`/`errors.As`: `ErrUnauthorized` (401), `ErrForbidden` (403 without rate-limit headers), `ErrNotFound` (404), `ErrUnprocessable` (422), `ErrRateLimited` (403 or 429 with `X-RateLimit-Remaining: 0` or `Retry-After` in seconds or as an HTTP date, carrying the time to wait until). Other non-2xx statuses carry the status. Bodies in errors are truncated to 512 bytes on a UTF-8 boundary and never include request headers or the token.
+- Typed errors, matched with `errors.Is`/`errors.As`: `ErrUnauthorized` (401), `ErrForbidden` (403 without rate-limit headers), `ErrNotFound` (404), `ErrUnprocessable` (422), `ErrRateLimited` (403 or 429 with `X-RateLimit-Remaining: 0` or `Retry-After` in seconds or as an HTTP date, carrying the time to wait until). Other non-2xx statuses carry the status. An error carries the status and, for a rate limit, the time to wait until; never GitHub's answer text, a request header or the token.
 - Headers sent: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `If-None-Match` when cached. No retries inside the client.
 
 ## A3: typed reads (`github`)
@@ -97,7 +97,7 @@ Measured 2026-10-13 by `TestLiveProtectionReads` (`-tags=live`) on the S1 test r
   - `Classic`: `Absent` (404), `Unreadable` (403), or present with each required check's context and app id, the strict flag and `enforce_admins`;
   - `RulesForbidden`: the effective rules answered 403 (the private-repository-on-Free case of D-PROTECTION).
 
-  Any other status is a `rest` error. Bodies are bounded and decoded into these types only; a decode failure names only the path. A wrapped `rest` status error can still carry part of GitHub's answer (token redacted), so callers never print or store a read error: they record `protection.Unknown()` and log only the repository and the status. The effective rules are read with `per_page=100` and followed page by page up to the listings' page bound.
+  Any other status is a `rest` error. Bodies are bounded and decoded into these types only; a decode failure names only the path. A `rest` error carries no part of GitHub's answer, only the status; callers still record `protection.Unknown()` and log only the repository and the status. The effective rules are read with `per_page=100` and followed page by page up to the listings' page bound.
 - **Evaluation** is a pure function outside the adapter (the D-PROTECTION results and findings; M1.5-C2).
 - **Paths:** the branch name is path-escaped (`url.PathEscape`), so a branch with `/` is read correctly.
 

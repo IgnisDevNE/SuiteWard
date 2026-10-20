@@ -74,6 +74,9 @@ func TestRefusalsThatAskToFixTheDeclarationLinkToTheEditorOfTheFileRefused(t *te
 			"https://github.com/octo-org/widgets/edit/main/.suiteward.yml", "the default branch", "If the declaration is the problem"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if err := commandtext.ValidateAck(tc.ack); err != nil {
+				t.Errorf("ValidateAck refuses it: %v", err)
+			}
 			body := render(t, func() string { return commandtext.Acknowledge(tc.ack) })
 
 			if raw, _ := editorLink(t, body); raw != tc.link {
@@ -116,6 +119,9 @@ func TestAcknowledgeRefusesAnEditorLinkThatDoesNotFit(t *testing.T) {
 		"a repository without a branch":   {Outcome: commandtext.SuggestRefused, Refusal: commandtext.DeclarationTooLarge, Owner: owner, Source: source, Repo: repository},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if commandtext.ValidateAck(ack) == nil {
+				t.Error("ValidateAck accepts it")
+			}
 			defer func() {
 				if recover() == nil {
 					t.Error("Acknowledge did not panic")

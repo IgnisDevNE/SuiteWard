@@ -48,7 +48,7 @@ func TestBootstrapDoesNothingForALatestPullProposal(t *testing.T) {
 			if version, found := w.canonical(); found {
 				t.Fatalf("canonical = %q, want none: a pull proposal becomes canonical only by its merge", version)
 			}
-			if _, found := w.assessmentOutcome(1, bootMovedHead); found {
+			if _, found := w.assessmentOutcome(bootMovedHead); found {
 				t.Fatal("the bootstrap job assessed a pull proposal: the checks job does")
 			}
 			w.requireOutbox("bootstrap-summary:1001:P1-R1")
@@ -73,7 +73,7 @@ func TestBootstrapNeverPromotesASupersededBranchProposal(t *testing.T) {
 	if version, found := w.canonical(); found {
 		t.Fatalf("canonical = %q, want none: the approved branch proposal is superseded by the newer pull proposal", version)
 	}
-	if _, found := w.assessmentOutcome(1, bootHead); found {
+	if _, found := w.assessmentOutcome(bootHead); found {
 		t.Fatal("the superseded branch proposal was assessed")
 	}
 	w.requireOutbox("bootstrap-summary:1001:P1-R1", "bootstrap-summary:1001:P2-R1")

@@ -90,6 +90,24 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 	s.waitGitHubStatus("the first cycle", func(e map[string]any) bool { return e["lastSuccess"] != nil })
 	session := s.mcpSession()
 
+	requireMCPTools(t, session)
+	requireMCPStatus(t, session)
+	requireMCPSyncCoalesces(t, session, databaseURL, fake)
+	requireMCPSyncRefusesAnUnknownRepository(t, session, databaseURL)
+
+	if code := s.stop(); code != 0 {
+		t.Fatalf("a clean stop exited %d:\n%s", code, s.logs.String())
+	}
+	for what, secret := range map[string]string{"the MCP token": integrationMCPToken, "a comment body": fakeCommentBody, "the installation token": fakeToken} {
+		if strings.Contains(s.logs.String(), secret) {
+			t.Errorf("the logs contain %s:\n%s", what, s.logs.String())
+		}
+	}
+}
+
+// requireMCPTools requires the server to list status and sync, and nothing else.
+func requireMCPTools(t *testing.T, session *sdk.ClientSession) {
+	t.Helper()
 	tools, err := session.ListTools(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +120,11 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 	if !slices.Equal(names, []string{"status", "sync"}) {
 		t.Fatalf("tools/list = %v; want status and sync", names)
 	}
+}
 
+// requireMCPStatus requires the status of the synchronized repository, with the configured tier and no comment body.
+func requireMCPStatus(t *testing.T, session *sdk.ClientSession) {
+	t.Helper()
 	_, text := callMCP(t, session, "status", nil)
 	var view struct {
 		Tier             string `json:"tier"`
@@ -136,8 +158,11 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 	if strings.Contains(text, fakeCommentBody) {
 		t.Fatalf("status carries a comment body: %s", text)
 	}
+}
 
-	// The job waits on the gate, so the second request meets an unfinished one.
+// requireMCPSyncCoalesces requires a second sync request to meet the unfinished first one, which waits on the gate, and then lets the job finish.
+func requireMCPSyncCoalesces(t *testing.T, session *sdk.ClientSession, databaseURL string, fake *fakeGitHub) {
+	t.Helper()
 	result, text := callMCP(t, session, "sync", map[string]any{"repo": "acme/widgets"})
 	if result.IsError || !strings.Contains(text, `"queued":true`) {
 		t.Fatalf("first sync = %v %s; want queued", result.IsError, text)
@@ -153,22 +178,17 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 		t.Fatalf("%s sync jobs; want the second request coalesced into the first", got)
 	}
 	fake.gate <- struct{}{} // let the job finish
+}
 
-	result, text = callMCP(t, session, "sync", map[string]any{"repo": "someone/else"})
+// requireMCPSyncRefusesAnUnknownRepository requires a tool error for a repository that is not configured, and no job for it.
+func requireMCPSyncRefusesAnUnknownRepository(t *testing.T, session *sdk.ClientSession, databaseURL string) {
+	t.Helper()
+	result, text := callMCP(t, session, "sync", map[string]any{"repo": "someone/else"})
 	if !result.IsError || !strings.Contains(text, "unknown repository") {
 		t.Fatalf("sync of an unknown repository = %v %s; want a tool error", result.IsError, text)
 	}
 	if got := scalar(t, databaseURL, "SELECT count(*)::text FROM river_job WHERE kind = 'github_sync_repo'"); got != "1" {
 		t.Fatalf("%s sync jobs after an unknown repository; want nothing inserted for it", got)
-	}
-
-	if code := s.stop(); code != 0 {
-		t.Fatalf("a clean stop exited %d:\n%s", code, s.logs.String())
-	}
-	for what, secret := range map[string]string{"the MCP token": integrationMCPToken, "a comment body": fakeCommentBody, "the installation token": fakeToken} {
-		if strings.Contains(s.logs.String(), secret) {
-			t.Errorf("the logs contain %s:\n%s", what, s.logs.String())
-		}
 	}
 }
 

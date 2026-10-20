@@ -62,9 +62,7 @@ func (s Scope) ExcludesExactly(path string) bool {
 		return false
 	}
 	return slices.ContainsFunc(s.declaration.exclude, func(p Pattern) bool {
-		raw := p.String()
-		anchored := raw[0] == '/' || strings.Contains(raw, "/")
-		return anchored && !strings.ContainsAny(raw, `*?[\`) && !strings.HasSuffix(raw, "/") && strings.TrimPrefix(raw, "/") == path
+		return p.anchored && !p.isDir && !strings.ContainsAny(p.raw, `*?[\`) && strings.TrimPrefix(p.raw, "/") == path
 	})
 }
 
@@ -147,9 +145,10 @@ func patternSet(patterns []Pattern) []string {
 }
 
 // MayCoverBelow reports whether some file path beneath dir may be in the
-// effective scope: true when any default, include or runner pattern
-// MayMatchBelow dir. Excludes are ignored on purpose: an exclude cannot make a
-// link inside dir safe, because the link target is outside SuiteWard's view.
+// effective scope: true when any default, include or runner pattern may match
+// below dir (Pattern.MayMatchBelow). Excludes are ignored on purpose: an exclude
+// cannot make a link inside dir safe, because the link target is outside
+// SuiteWard's view.
 // An invalid dir returns artifact.ErrInvalidPath.
 func (s Scope) MayCoverBelow(dir string) (bool, error) {
 	if !artifact.ValidPath(dir) {

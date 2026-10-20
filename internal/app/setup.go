@@ -171,7 +171,7 @@ func (s *setup) run(ctx context.Context) int {
 func (s *setup) lookups(ctx context.Context) (resolved, bool) {
 	user, err := s.readers.read.User(ctx, s.options.owner)
 	if err != nil {
-		s.logRead(ctx, "github lookup failed", "", err)
+		logReadFailure(ctx, s.logger, "github lookup failed", "", err)
 		reportf(s.stderr, "could not look up the owner %q on GitHub; see the log\n", s.options.owner)
 		return resolved{}, false
 	}
@@ -182,7 +182,7 @@ func (s *setup) lookups(ctx context.Context) (resolved, bool) {
 	repos := make([]github.Repository, len(s.cfg.GitHub.Repositories))
 	for i, name := range s.cfg.GitHub.Repositories {
 		if repos[i], err = s.readers.read.Repository(ctx, name); err != nil {
-			s.logRead(ctx, "github lookup failed", name, err)
+			logReadFailure(ctx, s.logger, "github lookup failed", name, err)
 			reportf(s.stderr, "could not look up the repository %s on GitHub: check that the configured installation covers it; see the log\n", name)
 			return resolved{}, false
 		}
@@ -190,11 +190,7 @@ func (s *setup) lookups(ctx context.Context) (resolved, bool) {
 	return resolved{user: user, repos: repos}, true
 }
 
-// logRead logs a failed GitHub read: the repository, the classification and the HTTP status.
-func (s *setup) logRead(ctx context.Context, msg, repo string, err error) {
-	logReadFailure(ctx, s.logger, msg, repo, err)
-}
-
+// logReadFailure logs a failed GitHub read: the repository, the classification and the HTTP status, never text GitHub sent.
 func logReadFailure(ctx context.Context, logger *slog.Logger, msg, repo string, err error) {
 	failure := readFailure(err)
 	logger.WarnContext(ctx, msg, "repo", repo, "kind", string(failure.Kind), "status", failure.Status)

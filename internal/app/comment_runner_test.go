@@ -109,22 +109,22 @@ func TestCommentPublisherRefusesARunnerUncoveredCommentThatDoesNotMatchItsKeyOrC
 
 // A message that no publisher could post is never written: the builder refuses a payload over the outbox bound and a key that is no marker.
 func TestNewRunnerUncoveredMessageIsRefusedWhenItCannotBePosted(t *testing.T) {
+	digestKey := regexp.MustCompile(`^runner-uncovered:1001:7:[0-9a-f]{64}$`)
 	target := commentTarget{RepositoryID: 1001, Repo: "octo-org/widgets", Pull: 7}
-	digest := cmtScopeDigest
 	paths := []string{"jest.config.js"}
 	big := []byte("version: 1\n#" + strings.Repeat("<", commandtext.MaxDeclaration-13) + "\n") // JSON writes each < as six bytes
 
-	message, err := newRunnerUncoveredMessage(target, cmtScopeHead, "feature/x", paths, []byte(cmtRunnerProtect), []byte(cmtRunnerIgnore), digest)
+	message, err := newRunnerUncoveredMessage(target, cmtScopeHead, "feature/x", paths, []byte(cmtRunnerProtect), nil, []byte(cmtRunnerIgnore), nil)
 	if err != nil {
 		t.Fatalf("a plain message is refused: %v", err)
 	}
-	if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9:_-]{0,199}$`).MatchString(message.Key) || message.Key != "runner-uncovered:1001:7:"+digest || message.Kind != githubCommentKind {
-		t.Fatalf("message %+v, want the comment key with its digest", message)
+	if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9:_-]{0,199}$`).MatchString(message.Key) || !digestKey.MatchString(message.Key) || message.Kind != githubCommentKind {
+		t.Fatalf("message %+v, want the comment key with a SHA-256 digest", message)
 	}
-	if _, err := newRunnerUncoveredMessage(target, cmtScopeHead, "feature/x", paths, big, big, digest); err == nil || strings.Contains(err.Error(), "<<<<") {
+	if _, err := newRunnerUncoveredMessage(target, cmtScopeHead, "feature/x", paths, big, nil, big, nil); err == nil || strings.Contains(err.Error(), "<<<<") {
 		t.Fatalf("a payload over the outbox bound is accepted, or its error quotes it: %v", err)
 	}
-	if _, err := newRunnerUncoveredMessage(target, cmtScopeHead, "a..b", paths, []byte(cmtRunnerProtect), nil, digest); err == nil {
+	if _, err := newRunnerUncoveredMessage(target, cmtScopeHead, "a..b", paths, []byte(cmtRunnerProtect), nil, nil, nil); err == nil {
 		t.Fatal("a branch that is no git ref is accepted")
 	}
 }
@@ -139,7 +139,7 @@ var (
 )
 
 func cmtChoiceBody(choice commandtext.RunnerChoice, anchor, indent string, patterns []string, newList, suffix string) string {
-	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList)) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
+	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
 }
 
 func TestCommentPublisherPostsTheProtectAndIgnoreSuggestionsEachWithItsOwnMarker(t *testing.T) {

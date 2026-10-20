@@ -21,8 +21,8 @@ func TestApprovalOfCurrentRevisionMakesItEligible(t *testing.T) {
 
 	response := w.consent(w.command(c, "revision-1", "approve-1", "comment-1", contract.ApproveConsent, 1))
 
-	if !response.Committed || response.Duplicate {
-		t.Fatalf("response = %+v, want a new committed outcome", response)
+	if response.Duplicate {
+		t.Fatalf("response = %+v, want a new outcome", response)
 	}
 	if response.Receipt.Result.Outcome() != contract.ConsentApproved || !response.Receipt.CurrentApprovalEligible {
 		t.Fatalf("receipt = %+v, want an eligible approval", response.Receipt)
@@ -70,9 +70,9 @@ func TestRevocationRemovesEligibility(t *testing.T) {
 	if response.Receipt.Result.Outcome() != contract.ConsentRevoked || response.Receipt.CurrentApprovalEligible {
 		t.Fatalf("receipt = %+v, want a revocation without eligibility", response.Receipt)
 	}
-	blocked := w.promote(c.mergedRequest(t, "promote-1", "version-1"))
+	blocked := w.bootstrap(c.baselineRequest(t, "bootstrap-1", "version-1"))
 	if blocked.Outcome != contract.PromotionBlocked || blocked.Reason != contract.PromotionReasonApprovalMissing {
-		t.Fatalf("promotion after revocation = %v/%v, want blocked/approval missing", blocked.Outcome, blocked.Reason)
+		t.Fatalf("bootstrap after revocation = %v/%v, want blocked/approval missing", blocked.Outcome, blocked.Reason)
 	}
 }
 
@@ -84,8 +84,8 @@ func TestReplayByOperationIDReturnsOriginalReceiptWithoutWriting(t *testing.T) {
 
 	replay := w.consent(command)
 
-	if !replay.Duplicate || !replay.Committed || replay.Receipt != original.Receipt {
-		t.Fatalf("replay = %+v, want the original receipt as a committed duplicate", replay)
+	if !replay.Duplicate || replay.Receipt != original.Receipt {
+		t.Fatalf("replay = %+v, want the original receipt as a duplicate", replay)
 	}
 	w.requireWrites(before, 0)
 }
@@ -98,8 +98,8 @@ func TestSameSourceCommandWithNewOperationRecordsAliasAndReturnsOriginalReceipt(
 
 	alias := w.consent(retry)
 
-	if !alias.Duplicate || !alias.Committed || alias.Receipt != original.Receipt {
-		t.Fatalf("alias = %+v, want the original receipt as a committed duplicate", alias)
+	if !alias.Duplicate || alias.Receipt != original.Receipt {
+		t.Fatalf("alias = %+v, want the original receipt as a duplicate", alias)
 	}
 	w.requireWrites(before, 1)
 	again := w.consent(retry)
@@ -127,4 +127,24 @@ func TestReusedOperationIDOrReplayedSourceCommandConflicts(t *testing.T) {
 		})
 	}
 	w.requireWrites(before, 0)
+}
+
+func TestFailingConsentWriteRollsBackEverythingInTheUnitOfWork(t *testing.T) {
+	w, c := consentWorld(t)
+	command := w.command(c, "revision-1", "approve-1", "comment-1", contract.ApproveConsent, 1)
+	before := w.revision()
+	boom := errors.New("write failed")
+	w.mem.FailNext(boom)
+
+	if _, err := governance.ProcessConsent(context.Background(), w.mem, governance.ConsentRequest{Command: command}); !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want the write failure", err)
+	}
+
+	w.requireWrites(before, 0)
+	if _, found := w.receipt("approve-1"); found {
+		t.Fatal("a failed consent left a receipt")
+	}
+	if retry := w.consent(command); retry.Duplicate || !retry.Receipt.CurrentApprovalEligible {
+		t.Fatalf("retry = %+v, want a fresh eligible approval", retry)
+	}
 }

@@ -186,19 +186,12 @@ func (j *commandsJob) record(ctx context.Context, c commands.Candidate, d comman
 // or a code: the log and river_job.errors keep only the step that failed.
 func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID int64, c commands.Candidate) error {
 	m := c.Comment
-	if m.CreatedAt.Before(enrollment.EnrolledAt) {
-		return j.record(ctx, c, commands.BeforeEnrollment, "", nil)
-	}
 	parsed := commandtext.Parse(m.Body)
-	if m.AuthorID == botID || parsed.Kind == commandtext.KindNotCommand {
-		return j.record(ctx, c, commands.NotCommand, "", nil)
+	if d, ignored := ignoredDisposition(enrollment, botID, m, parsed); ignored {
+		return j.record(ctx, c, d, "", nil)
 	}
-	if m.AuthorID != enrollment.Owner.AccountID {
-		return j.record(ctx, c, commands.IgnoredAuthor, "", nil)
-	}
-	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
 	reject := func(d commands.Disposition, reason commandtext.Reason, reference string) error {
-		ack, err := newRejectedAck(target, m.CommentID, enrollment.Owner.Login, d, reason, reference)
+		ack, err := newRejectedAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, m.CommentID, enrollment.Owner.Login, d, reason, reference)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
@@ -210,40 +203,77 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	case parsed.Kind == commandtext.KindMalformed:
 		return reject(commands.Malformed, parsed.Reason, "")
 	}
-	command := parsed.Command
-	if command.Verb == commandtext.Propose { // no code, no reference
+	switch command := parsed.Command; command.Verb {
+	case commandtext.Propose: // no code, no reference
 		return j.propose(ctx, enrollment, c)
-	}
-	if command.Verb == commandtext.Suggest { // no code, no reference: it reads no step and grants nothing
+	case commandtext.Suggest: // no code, no reference: it reads no step and grants nothing
 		return j.suggest(ctx, enrollment, c)
+	default:
+		return j.consent(ctx, enrollment, c, command, reject)
 	}
+}
+
+// ignoredDisposition is the disposition of a comment that is not a command of the owner's, and whether it is one.
+func ignoredDisposition(enrollment owner.State, botID int64, m githubsync.CommentVersion, parsed commandtext.Parsed) (commands.Disposition, bool) {
+	switch {
+	case m.CreatedAt.Before(enrollment.EnrolledAt):
+		return commands.BeforeEnrollment, true
+	case m.AuthorID == botID || parsed.Kind == commandtext.KindNotCommand:
+		return commands.NotCommand, true
+	case m.AuthorID != enrollment.Owner.AccountID:
+		return commands.IgnoredAuthor, true
+	}
+	return "", false
+}
+
+// rejectFunc records a command as rejected with its acknowledgment.
+type rejectFunc func(d commands.Disposition, reason commandtext.Reason, reference string) error
+
+// consent decides an approve, a revoke or a skip: it verifies and consumes the code, then applies the command.
+func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, reject rejectFunc) error {
 	var reference string // a skip names no proposal
 	if command.Verb != commandtext.Skip {
 		reference = commandtext.Reference(command.Proposal, command.Revision)
 	}
-	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
-	if errors.Is(err, totp.ErrInvalidCode) {
-		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
-		return reject(commands.InvalidCode, 0, reference)
-	}
-	if err != nil {
-		return &opaque{what: "verify the code", cause: err}
-	}
-	// Logged before the step is consumed, so a replayed code also logs "verified" and is then rejected.
-	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
-	source := commentSource(m.CommentID)
-	// The comment's own time keeps a retry after a crash identical to the first call.
-	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {
-	case errors.Is(err, owner.ErrStepUsed):
-		return reject(commands.ReplayedCode, 0, reference)
-	case err != nil:
-		return &opaque{what: "consume the step", cause: err}
+	source := commentSource(c.Comment.CommentID)
+	if verified, err := j.verifyCode(ctx, enrollment, c, command, source, reference, reject); !verified {
+		return err
 	}
 	if command.Verb == commandtext.Skip {
 		return j.skip(ctx, enrollment, c)
 	}
+	return j.process(ctx, enrollment, c, command, source, reference, reject)
+}
+
+// verifyCode checks the code of the command and consumes its step. verified is false when the command was recorded as rejected, or the step failed:
+// err is then the result of that.
+func (j *commandsJob) verifyCode(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, source contract.SourceCommandID, reference string, reject rejectFunc) (verified bool, err error) {
+	m := c.Comment
+	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
+	if errors.Is(err, totp.ErrInvalidCode) {
+		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
+		return false, reject(commands.InvalidCode, 0, reference)
+	}
+	if err != nil {
+		return false, &opaque{what: "verify the code", cause: err}
+	}
+	// Logged before the step is consumed, so a replayed code also logs "verified" and is then rejected.
+	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
+	// The comment's own time keeps a retry after a crash identical to the first call.
+	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {
+	case errors.Is(err, owner.ErrStepUsed):
+		return false, reject(commands.ReplayedCode, 0, reference)
+	case err != nil:
+		return false, &opaque{what: "consume the step", cause: err}
+	}
+	return true, nil
+}
+
+// process applies a verified approve or revoke through ProcessConsent and records the command.
+func (j *commandsJob) process(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, source contract.SourceCommandID, reference string, reject rejectFunc) error {
+	m := c.Comment
 	project, operation := owner.ProjectID(c.RepositoryID), contract.OperationID("consent:"+string(source))
-	ack, err := newProcessedAck(target, m.CommentID, enrollment.Owner.Login, project, defaultSuite, operation)
+	ack, err := newProcessedAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, m.CommentID, enrollment.Owner.Login, project, defaultSuite, operation)
 	if err != nil {
 		return &opaque{what: "build the acknowledgment", cause: err}
 	}
@@ -281,7 +311,7 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 	return j.record(ctx, c, commands.Processed, operation, nil)
 }
 
-// measuredTolerance is how far logRejectedOffset looks, to measure whether commandTolerance is too narrow (before M1.8).
+// measuredTolerance is how far logRejectedOffset looks, to measure whether commandTolerance is too narrow.
 const measuredTolerance = 2
 
 // logRejectedOffset logs, for measurement only, whether a wider window would have accepted a rejected code and at which
@@ -321,7 +351,7 @@ func (j *commandsJob) recordFailed(ctx context.Context, enrollment owner.State, 
 	m := c.Comment
 	parsed := commandtext.Parse(m.Body)
 	ownerPropose := parsed.Kind == commandtext.KindCommand && parsed.Command.Verb == commandtext.Propose && m.AuthorID == enrollment.Owner.AccountID &&
-		!m.CreatedAt.Before(enrollment.EnrolledAt) && m.UpdatedAt.Equal(m.CreatedAt) // the checks decide made before it reached propose
+		!m.CreatedAt.Before(enrollment.EnrolledAt) && m.UpdatedAt.Equal(m.CreatedAt) // the same conditions as decide, before it reaches propose
 	if !ownerPropose {
 		return j.record(ctx, c, commands.Failed, "", nil)
 	}
@@ -341,6 +371,15 @@ type bootstrapView struct {
 	hasLatest bool
 	next      contract.ProposalID // P<n+1>, free only under the Suite lock: propose uses it in the one proposing call
 	pull      githubsync.PullState
+}
+
+// targetBranch is the default branch that the Suite targets.
+func (v bootstrapView) targetBranch() (string, error) {
+	branch, ok := strings.CutPrefix(string(v.target), targetPrefix)
+	if !ok {
+		return "", errors.New("the suite does not target a branch")
+	}
+	return branch, nil
 }
 
 // bootstrapView reads the Suite and the observed pull request of the candidate. governance.ErrNotFound means the Suite
@@ -468,27 +507,32 @@ func hasDeclaration(entries []inventory.Entry) bool {
 // when that has it. found is false when neither does, with the suggestion built from the pull request's tree, or the
 // default branch's when the pull request's gives no pattern.
 func (j *commandsJob) source(ctx context.Context, c commands.Candidate, view bootstrapView) (src bootstrapSource, suggestion inventory.Suggestion, found bool, err error) {
-	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
-	if !ok {
-		return bootstrapSource{}, inventory.Suggestion{}, false, errors.New("the suite does not target a branch")
+	branch, err := view.targetBranch()
+	if err != nil {
+		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	head, err := j.reader.BranchHead(ctx, c.Repo, branch)
 	if err != nil {
 		return bootstrapSource{}, inventory.Suggestion{}, false, &opaque{what: "read the default branch head", cause: githubRead(err)}
 	}
-	tree, mainEntries, err := j.tree(ctx, c.Repo, head)
+	mainTree, mainEntries, err := j.tree(ctx, c.Repo, head)
 	if err != nil {
 		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	if hasDeclaration(mainEntries) {
-		return bootstrapSource{kind: contract.OriginBranch, origin: head, branch: branch, tree: tree}, inventory.Suggestion{}, true, nil
+		return bootstrapSource{kind: contract.OriginBranch, origin: head, branch: branch, tree: mainTree}, inventory.Suggestion{}, true, nil
 	}
-	tree, pullEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
+	pullTree, pullEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
 	if err != nil {
 		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	if hasDeclaration(pullEntries) {
-		return bootstrapSource{kind: contract.OriginPull, origin: view.pull.HeadSHA, tree: tree}, inventory.Suggestion{}, true, nil
+		return bootstrapSource{kind: contract.OriginPull, origin: view.pull.HeadSHA, tree: pullTree}, inventory.Suggestion{}, true, nil
+	}
+	for _, tree := range []*githubTree{pullTree, mainTree} { // the suggestion is built from their paths, which are untrusted: an invalid one is an invalid source
+		if _, err := inventory.ListEntries(ctx, tree); err != nil {
+			return bootstrapSource{}, inventory.Suggestion{}, false, err
+		}
 	}
 	if suggestion = inventory.Suggest(pullEntries); len(suggestion.Include)+len(suggestion.Runner) == 0 {
 		suggestion = inventory.Suggest(mainEntries)
@@ -530,8 +574,6 @@ func (j *commandsJob) refusePropose(ctx context.Context, enrollment owner.State,
 // attempts, records it as failed with the propose-failed acknowledgment. A source that cannot be read as a contract (an
 // invalid declaration, a link in the protected files, a truncated tree) is refused with invalid-source.
 func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
-	m, login := c.Comment, enrollment.Owner.Login
-	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
 	view, done, err := j.gate(ctx, enrollment, c, commands.ProposeRefused)
 	if done || err != nil {
 		return err
@@ -543,44 +585,9 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	case contract.IntegrationTargetID(targetPrefix+view.pull.BaseRef) != view.target:
 		return j.refusePropose(ctx, enrollment, c, reasonBaseNotTarget)
 	}
-	// A source that cannot be read as a contract is a fact about the commit, so it is refused and never retried.
-	// base and branch name the file that failed when the source was found; none when it could not be read at all.
-	refuseSource := func(base, branch string) error {
-		j.logger.WarnContext(ctx, "github propose refused: the source cannot be read as a contract", "repo", c.Repo, "comment", m.CommentID)
-		ack, err := newProposeInvalidSourceAck(target, m.CommentID, login, base, branch)
-		if err != nil {
-			return &opaque{what: "build the acknowledgment", cause: err}
-		}
-		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
-	}
-	src, suggestion, found, err := j.source(ctx, c, view)
-	if invalidSource(err) {
-		return refuseSource("", "")
-	}
-	if err != nil {
+	src, inv, done, err := j.proposalSource(ctx, enrollment, c, view)
+	if done || err != nil {
 		return err
-	}
-	if !found {
-		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion, commands.ProposeRefused)
-		if err != nil {
-			return &opaque{what: "build the acknowledgment", cause: err}
-		}
-		return j.record(ctx, c, commands.ProposeRefused, "", &ack)
-	}
-	inv, err := inventory.Build(ctx, src.tree)
-	if invalidSource(err) { // the source is known: the file that holds the declaration is the one to fix
-		if src.kind == contract.OriginBranch {
-			return refuseSource(baseDefaultBranch, src.branch)
-		}
-		return refuseSource(basePull, view.pull.HeadRef)
-	}
-	if err != nil {
-		return &opaque{what: "inventory of the source", cause: err}
-	}
-	// ADR 0010: never manufacture an empty canonical suite. A source holds .suiteward.yml, which covers itself, so its
-	// inventory is never empty: this is an impossible state, not the empty-inventory refusal.
-	if len(inv.Manifest().Entries()) == 0 {
-		return &opaque{what: "inventory of the source", cause: governance.ErrInvalidState}
 	}
 	proposed, err := inv.Contract()
 	if err != nil {
@@ -592,12 +599,64 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 		return &opaque{what: "compare the proposal", cause: err}
 	}
 	if reused { // a retry after a crash between the proposal and the ledger, or a repeated command on an unchanged pull request
-		ack, err := newBootstrapAck(target, m.CommentID, login, commands.Proposed, "", reference)
+		ack, err := newBootstrapAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, c.Comment.CommentID, enrollment.Owner.Login, commands.Proposed, "", reference)
 		if err != nil {
 			return &opaque{what: "build the acknowledgment", cause: err}
 		}
 		return j.record(ctx, c, commands.Proposed, "", &ack)
 	}
+	return j.writeProposal(ctx, enrollment, c, view, src, inv)
+}
+
+// proposalSource reads the source a propose proposes and its inventory. done is true when it recorded a refusal instead: a source that cannot be read as a
+// contract is a fact about the commit, so it is refused with invalid-source and never retried, and a source with no declaration gets the suggestion of one.
+func (j *commandsJob) proposalSource(ctx context.Context, enrollment owner.State, c commands.Candidate, view bootstrapView) (src bootstrapSource, inv inventory.Inventory, done bool, err error) {
+	m, login := c.Comment, enrollment.Owner.Login
+	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
+	// base and branch name the file that failed when the source was found; none when it could not be read at all.
+	refuseSource := func(base, branch string) (bootstrapSource, inventory.Inventory, bool, error) {
+		j.logger.WarnContext(ctx, "github propose refused: the source cannot be read as a contract", "repo", c.Repo, "comment", m.CommentID)
+		ack, err := newProposeInvalidSourceAck(target, m.CommentID, login, base, branch)
+		if err != nil {
+			return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return bootstrapSource{}, inventory.Inventory{}, true, j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	}
+	src, suggestion, found, err := j.source(ctx, c, view)
+	if invalidSource(err) {
+		return refuseSource("", "")
+	}
+	if err != nil {
+		return bootstrapSource{}, inventory.Inventory{}, false, err
+	}
+	if !found {
+		ack, err := newDeclarationMissingAck(target, m.CommentID, login, view.pull.HeadRef, suggestion, commands.ProposeRefused)
+		if err != nil {
+			return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "build the acknowledgment", cause: err}
+		}
+		return bootstrapSource{}, inventory.Inventory{}, true, j.record(ctx, c, commands.ProposeRefused, "", &ack)
+	}
+	inv, err = inventory.Build(ctx, src.tree)
+	if invalidSource(err) { // the source is known: the file that holds the declaration is the one to fix
+		if src.kind == contract.OriginBranch {
+			return refuseSource(baseDefaultBranch, src.branch)
+		}
+		return refuseSource(basePull, view.pull.HeadRef)
+	}
+	if err != nil {
+		return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "inventory of the source", cause: err}
+	}
+	// ADR 0010: never manufacture an empty canonical suite. A source holds .suiteward.yml, which covers itself, so its
+	// inventory is never empty: this is an impossible state, not the empty-inventory refusal.
+	if len(inv.Manifest().Entries()) == 0 {
+		return bootstrapSource{}, inventory.Inventory{}, false, &opaque{what: "inventory of the source", cause: governance.ErrInvalidState}
+	}
+	return src, inv, false, nil
+}
+
+// writeProposal proposes the baseline of src as the next proposal, with its bootstrap summary, and records the command.
+func (j *commandsJob) writeProposal(ctx context.Context, enrollment owner.State, c commands.Candidate, view bootstrapView, src bootstrapSource, inv inventory.Inventory) error {
+	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
 	number, err := strconv.Atoi(strings.TrimPrefix(string(view.next), "P"))
 	if err != nil {
 		return &opaque{what: "number the proposal", cause: err}
@@ -613,7 +672,7 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 	}
 	result, err := governance.ProposeBaseline(ctx, j.suites, j.content, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(c.RepositoryID), SuiteID: defaultSuite, ProposalID: view.next, RevisionID: firstRevision},
-		Carrier:   carrier, Origin: contract.SourceRevision(src.origin), OriginKind: src.kind, Tree: src.tree, Outbox: []governance.OutboxMessage{message}})
+		Carrier:   carrierID(c.RepositoryID, c.PullNumber), Origin: contract.SourceRevision(src.origin), OriginKind: src.kind, Tree: src.tree, Outbox: []governance.OutboxMessage{message}})
 	if err != nil {
 		return &opaque{what: "propose the baseline", cause: err}
 	}
@@ -627,12 +686,6 @@ func (j *commandsJob) propose(ctx context.Context, enrollment owner.State, c com
 // errAnswerNotRenderable marks a suggestion whose acknowledgment cannot be rendered (a declaration over the limit, a branch the renderer
 // refuses): a fact about the source, so it is never retried.
 var errAnswerNotRenderable = errors.New("the answer cannot be rendered")
-
-// tooLarge marks a suggested declaration over the size a notice holds (commandtext.MaxDeclaration), and says which base declaration was compared,
-// so a refusal links the editor of the right file.
-type tooLarge struct{ base string }
-
-func (e *tooLarge) Error() string { return "the suggested declaration is too large" }
 
 // The codes of the base of a suggest (ackPayload.Base): what the head was compared with.
 const (
@@ -657,8 +710,8 @@ func (e *invalidBase) Unwrap() error { return e.err }
 // first contract with no declaration anywhere it is the suggestion of a propose that finds none, in the words of a suggest. A scope review, when the pull
 // request's diff gives a line for it, is written before the acknowledgment: the ledger takes one message, and a recorded command is never retried. A GitHub or store
 // failure is an error of this candidate, like a propose. A source that cannot be answered from is recorded as suggest-refused with a fixed reason and
-// never retried: invalid-source (an invalid tree or declaration, a canonical without a declaration, a notice that cannot be rendered) or
-// declaration-too-large. Neither disposition is a command for the check.
+// never retried: invalid-source (an invalid tree or declaration, a canonical without a declaration, a notice that cannot be rendered). A declaration that cannot
+// be shown (hidden characters, or over the size of a notice) is no refusal: the reply lists the patterns alone. Neither disposition is a command for the check.
 func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c commands.Candidate) error {
 	m, login := c.Comment, enrollment.Owner.Login
 	target := commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}
@@ -694,18 +747,7 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 	}
 	ack, reviews, err := j.suggestion(ctx, target, c, login, view)
 	var invalid *invalidBase
-	var large *tooLarge
 	switch {
-	case errors.As(err, &large):
-		j.logger.InfoContext(ctx, "github suggest refused: the suggested declaration is too large", "repo", c.Repo, "comment", m.CommentID)
-		base, branch := "", view.pull.HeadRef // the base names the file only when it is the default branch's
-		if large.base == baseDefaultBranch {
-			base = baseDefaultBranch
-			if branch, err = editBranch(view, base); err != nil {
-				return &opaque{what: "read the default branch", cause: err}
-			}
-		}
-		return refuse(reasonDeclarationTooLarge, base, branch)
 	case errors.As(err, &invalid):
 		j.logger.InfoContext(ctx, "github suggest refused: the base declaration is not valid", "repo", c.Repo, "comment", m.CommentID, "base", invalid.base)
 		branch, err := editBranch(view, invalid.base)
@@ -713,7 +755,7 @@ func (j *commandsJob) suggest(ctx context.Context, enrollment owner.State, c com
 			return &opaque{what: "read the default branch", cause: err}
 		}
 		return refuse(refusalInvalidSource, invalid.base, branch)
-	case invalidSource(err) || errors.Is(err, errNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
+	case invalidSource(err) || errors.Is(err, governance.ErrNoCanonicalDeclaration) || errors.Is(err, errAnswerNotRenderable):
 		j.logger.InfoContext(ctx, "github suggest refused: the source cannot be answered from", "repo", c.Repo, "comment", m.CommentID)
 		return refuse(refusalInvalidSource, "", "")
 	case errors.Is(err, errGitHubRead):
@@ -755,6 +797,11 @@ func (j *commandsJob) suggestion(ctx context.Context, target commentTarget, c co
 	case hasDeclaration(headEntries):
 		base, source = basePull, head
 	default: // nothing to compare with: the suggestion of a propose that finds no declaration
+		for _, tree := range []*githubTree{head, main} { // both are untrusted, and the default branch's is the fallback: an invalid path is an invalid source here too
+			if _, err := inventory.ListEntries(ctx, tree); err != nil {
+				return governance.OutboxMessage{}, nil, err
+			}
+		}
 		ack, err := declarationMissing(target, c, login, view.pull.HeadRef, headEntries, mainEntries)
 		return ack, nil, err
 	}
@@ -797,9 +844,6 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 	if err != nil {
 		return governance.OutboxMessage{}, nil, err
 	}
-	if len(declaration) > commandtext.MaxDeclaration {
-		return governance.OutboxMessage{}, nil, &tooLarge{base: base}
-	}
 	var defaultBranch string // the reply for the default branch links to that branch's editor
 	if base == baseDefaultBranch {
 		if defaultBranch, err = editBranch(view, base); err != nil {
@@ -813,7 +857,7 @@ func (j *commandsJob) compare(ctx context.Context, target commentTarget, c comma
 	if base == baseDefaultBranch {
 		return ack, nil, nil
 	}
-	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested, setDigest(slices.Concat(found.Paths, unexplained)))
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github suggest scope review", target, view.pull.HeadSHA, head, found, suggested)
 	return ack, reviews, err
 }
 
@@ -822,18 +866,14 @@ func editBranch(view bootstrapView, base string) (string, error) {
 	if base != baseDefaultBranch {
 		return view.pull.HeadRef, nil
 	}
-	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
-	if !ok {
-		return "", errors.New("the suite does not target a branch")
-	}
-	return branch, nil
+	return view.targetBranch()
 }
 
 // defaultBranchTree reads the tree of the head of the Suite's target branch, the default branch.
 func (j *commandsJob) defaultBranchTree(ctx context.Context, c commands.Candidate, view bootstrapView) (*githubTree, []inventory.Entry, error) {
-	branch, ok := strings.CutPrefix(string(view.target), targetPrefix)
-	if !ok {
-		return nil, nil, errors.New("the suite does not target a branch")
+	branch, err := view.targetBranch()
+	if err != nil {
+		return nil, nil, err
 	}
 	sha, err := j.reader.BranchHead(ctx, c.Repo, branch)
 	if err != nil {

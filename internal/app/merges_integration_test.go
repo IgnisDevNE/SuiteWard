@@ -4,7 +4,7 @@ package app
 
 import (
 	"context"
-	"crypto/sha1" //nolint:gosec // the fake GitHub names blobs the way git does
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -44,7 +44,7 @@ func newMergeGitHub() *mergeGitHub {
 	return &mergeGitHub{pulls: map[int]map[string]any{}, trees: map[string]map[string]string{}, blobs: map[string]string{}, comments: map[int][]string{}}
 }
 
-func blobSHA(content string) string { return fmt.Sprintf("%x", sha1.Sum([]byte(content))) } //nolint:gosec // see the import
+func blobSHA(content string) string { return fmt.Sprintf("%x", sha1.Sum([]byte(content))) }
 
 // merge makes GitHub report pull request number as merged at mergedAt into the commit sha, whose tree holds files.
 func (g *mergeGitHub) merge(number int, head, sha string, files map[string]string, mergedAt time.Time) {
@@ -127,6 +127,30 @@ func (g *mergeGitHub) posted(number int) []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return append([]string(nil), g.comments[number]...)
+}
+
+// requireMergeComment requires pull to hold the revision comment of its change proposal and the outcome comment of its merge, which ends with the marker of key
+// and says every phrase of want.
+func requireMergeComment(t *testing.T, gh *mergeGitHub, instance string, pull int, key string, want ...string) {
+	t.Helper()
+	posted := gh.posted(pull)
+	if len(posted) != 2 { // the revision comment of its change proposal, and the outcome of its merge
+		t.Fatalf("pull %d: %d comments, want the revision comment and one outcome comment", pull, len(posted))
+	}
+	var outcome string
+	for _, body := range posted {
+		if commandtext.HasMarker(body, instance, key) {
+			outcome = body
+		}
+	}
+	if outcome == "" {
+		t.Fatalf("pull %d: no comment ends with the marker of %s: %v", pull, key, posted)
+	}
+	for _, phrase := range want {
+		if !strings.Contains(outcome, phrase) {
+			t.Fatalf("pull %d: the comment lacks %q:\n%s", pull, phrase, outcome)
+		}
+	}
 }
 
 // TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay runs the whole of M1.7 against the real stores and a GitHub
@@ -251,27 +275,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	for range 2 {
 		pass()
 	}
-	check := func(pull int, key string, want ...string) {
-		t.Helper()
-		posted := gh.posted(pull)
-		if len(posted) != 2 { // the revision comment of its change proposal, and the outcome of its merge
-			t.Fatalf("pull %d: %d comments, want the revision comment and one outcome comment", pull, len(posted))
-		}
-		var outcome string
-		for _, body := range posted {
-			if commandtext.HasMarker(body, instance, key) {
-				outcome = body
-			}
-		}
-		if outcome == "" {
-			t.Fatalf("pull %d: no comment ends with the marker of %s: %v", pull, key, posted)
-		}
-		for _, phrase := range want {
-			if !strings.Contains(outcome, phrase) {
-				t.Fatalf("pull %d: the comment lacks %q:\n%s", pull, phrase, outcome)
-			}
-		}
-	}
+	check := func(pull int, key string, want ...string) { requireMergeComment(t, gh, instance, pull, key, want...) }
 	check(6, "merge:1001:6", "V2", mgSHA6, "did not run the tests")
 	check(5, "merge:1001:5", "stays at V2", "canonical contract changed after")
 

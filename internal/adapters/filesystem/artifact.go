@@ -67,7 +67,7 @@ func NewStore(root string) (*Store, error) {
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("inspect artifact root: %w", err)
-	} else if !info.IsDir() || info.Mode()&fs.ModeSymlink != 0 {
+	} else if !info.IsDir() { // Lstat reports a symlink as not a directory
 		return nil, fmt.Errorf("artifact root must be a directory without a symlink: %w", fs.ErrInvalid)
 	}
 	if err := removeOrphanStages(abs); err != nil {
@@ -155,7 +155,7 @@ func (s *Store) Read(ctx context.Context, digest artifact.Digest) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("open artifact root: %w", err)
 	}
-	// A root is a directory handle: written data is synced and its close error joined, and durability goes through syncDir.
+	// The root is only read through: a close error of the directory handle cannot change the outcome.
 	defer func() { _ = root.Close() }()
 	info, err := s.io.lstat(root, name)
 	if err != nil {
@@ -216,7 +216,7 @@ func removeOrphanStages(abs string) error {
 	if err != nil {
 		return fmt.Errorf("open artifact root: %w", err)
 	}
-	// A root is a directory handle: written data is synced and its close error joined, and durability goes through syncDir.
+	// Every removal below is checked; a close error of the directory handle cannot change the outcome.
 	defer func() { _ = root.Close() }()
 	dir, err := root.Open(".")
 	if err != nil {

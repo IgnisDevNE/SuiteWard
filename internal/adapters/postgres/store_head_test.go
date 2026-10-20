@@ -79,8 +79,8 @@ func TestHeadAssessmentFollowsConsentAcrossPushes(t *testing.T) {
 	integration := must(contract.NewIntegration(fxProject, fxTarget, "pinned", "", contract.IntegrationExistingBaseline))
 	promoted, err := governance.Bootstrap(t.Context(), w.store, governance.PromoteRequest{OperationID: "bootstrap-P1-R1", Reference: baseline.Revise.Current, Carrier: bootstrapCarrier,
 		Proposed: baseline.Contract, AssessmentSource: "pinned", Integration: integration, NewVersionID: "V1", RecordedAt: fxRecordedAt})
-	if err != nil || !promoted.Committed {
-		t.Fatalf("bootstrap = %+v, %v", promoted, err)
+	if err != nil || promoted.Outcome != contract.PromotionProposed || w.currentVersion() != "V1" {
+		t.Fatalf("bootstrap = %+v, %v, current %q", promoted, err, w.currentVersion())
 	}
 
 	first := assess(pull, "head-a", headTree("v2", "package main\n"))
@@ -150,7 +150,7 @@ func (r *hookReader) Read(ctx context.Context, digest artifact.Digest) ([]byte, 
 // error is ErrCanonicalMoved, which is also an ErrConflict.
 func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
 	w := newPGWorld(t)
-	other := newCandidate("px", "V1", w.protected("other"))
+	other := w.treeCandidate("px", "V1", treeOf("other"))
 	w.seedSuite(fxProject, fxSuite, other)
 	const bootstrapCarrier = contract.ApprovalCarrierID("github-pr:1/1")
 	baseline, err := governance.ProposeBaseline(t.Context(), w.store, w.content, governance.BaselineRequest{
@@ -170,14 +170,12 @@ func TestHeadAssessmentReportsACanonicalThatMovedDuringTheCall(t *testing.T) {
 	w.recordAssessment(baseline.Revise.Current, "pinned", binding, contract.IntegrityPassed)
 	integration := must(contract.NewIntegration(fxProject, fxTarget, "pinned", "", contract.IntegrationExistingBaseline))
 	if promoted, err := governance.Bootstrap(t.Context(), w.store, governance.PromoteRequest{OperationID: "bootstrap-P1-R1", Reference: baseline.Revise.Current, Carrier: bootstrapCarrier,
-		Proposed: baseline.Contract, AssessmentSource: "pinned", Integration: integration, NewVersionID: "V1", RecordedAt: fxRecordedAt}); err != nil || !promoted.Committed {
-		t.Fatalf("bootstrap = %+v, %v", promoted, err)
+		Proposed: baseline.Contract, AssessmentSource: "pinned", Integration: integration, NewVersionID: "V1", RecordedAt: fxRecordedAt}); err != nil || promoted.Outcome != contract.PromotionProposed || w.currentVersion() != "V1" {
+		t.Fatalf("bootstrap = %+v, %v, current %q", promoted, err, w.currentVersion())
 	}
 	reader := &hookReader{inner: w.content, onRead: func() {
 		w.approve(other)
-		if promoted, err := governance.Promote(t.Context(), w.store, other.mergedRequest("promote-px", "V2")); err != nil || !promoted.Committed {
-			t.Errorf("promote the other change = %+v, %v", promoted, err)
-		}
+		w.merge(other, treeOf("other"), governance.MergePromoted)
 	}}
 
 	_, err = governance.AssessHead(t.Context(), w.store, reader, w.content, governance.HeadRequest{Project: fxProject, Suite: fxSuite,

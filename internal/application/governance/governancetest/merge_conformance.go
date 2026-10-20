@@ -259,6 +259,9 @@ func mergeCases() []struct {
 		{"MergeCannotSucceedACurrentVersionThatIsNotNumbered", mcUnnumberedCurrent},
 		{"MergeNeedsVersionV1WhileACanonicalExists", mcMissingFirstVersion},
 		{"MergeMessageFailureRollsBackThePromotionAndTheOutcome", mcMessageFailure},
+		{"MergeMessageFailureRollsBackACorrection", mcCorrectionMessageFailure},
+		{"MergeOperationIDBelongsToItsKind", mcOperationAcrossKinds},
+		{"MergeRollsBackWhenAWriteFails", mcWriteFailure},
 		{"MergeOutboxConflictRollsBackTheOutcome", mcOutboxConflict},
 		{"ConcurrentMergesOfOneCarrierWriteOneOutcome", mcConcurrent},
 		{"MergeOutcomeOfAnUnknownCarrierOrSuite", mcOutcomeOfUnknown},
@@ -292,21 +295,28 @@ func mcPromotes(e *cfEnv) {
 		record.Target() != cfTarget || record.CorrectsVersionID() != "" || !record.RecordedAt().Equal(cfRecordedAt.Add(2*time.Hour)) {
 		e.t.Fatalf("promotion record = %+v (found %v); want operation merge:%s at %s, source %s, no correction", record, found, pr.carrier, mcSource(pr), cfRecordedAt.Add(2*time.Hour))
 	}
+	if !e.state().Canonical.Contract().Equal(pr.protected) {
+		e.t.Fatal("the canonical contract is not the merged contract")
+	}
+	integration := cfMust(contract.NewIntegration(cfProject, cfTarget, mcSource(pr), pr.carrier, contract.IntegrationMergedChange))
+	wantReceipt := governance.OperationReceipt{Kind: governance.OperationPromote, ProjectID: cfProject, SuiteID: cfSuite, Promotion: &governance.PromotionReceipt{
+		Identity: governance.PromotionIdentity{Kind: governance.OperationPromote, Binding: pr.proposal.Current().Binding(), Request: governance.PromoteRequest{
+			OperationID: record.OperationID(), Reference: pr.current(), Carrier: pr.carrier, Proposed: pr.protected, AssessmentSource: mcSource(pr), Integration: integration,
+			NewVersionID: "V2", RecordedAt: cfRecordedAt.Add(2 * time.Hour)}}, Record: record}}
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		receipt, found, err := tx.Receipt(ctx, record.OperationID())
-		if err != nil || !found || receipt.Kind != governance.OperationPromote || receipt.Promotion == nil {
-			return fmt.Errorf("receipt = %+v, %v, %v; want a promotion", receipt, found, err)
+		if err != nil || !found || !cfSameReceipt(receipt, wantReceipt) {
+			return fmt.Errorf("receipt = %+v, %v, %v; want the promotion of the merged change at %s", receipt, found, err, mcSource(pr))
 		}
-		integration := receipt.Promotion.Identity.Request.Integration
-		if integration.Kind() != contract.IntegrationMergedChange || integration.Source() != mcSource(pr) || integration.Carrier() != pr.carrier || integration.Target() != cfTarget {
-			return fmt.Errorf("integration = %+v, want the merged change at %s", integration, mcSource(pr))
+		if _, found, err := tx.ReceiptBySource(ctx, contract.SourceCommandID(record.OperationID())); err != nil || found {
+			return fmt.Errorf("a merge promotion has a source command receipt: found %v, %v", found, err)
 		}
 		return nil
 	})
 	if assessment, found := e.assessmentAt(pr.current(), mcSource(pr)); !found || !assessment.Passed() {
 		e.t.Fatalf("assessment of the merge commit = %+v (found %v), want a passed one", assessment, found)
 	}
-	e.requireQueued(nil, []string{"comment/" + string(pr.carrier)})
+	e.requireOutbox([]string{"comment/" + string(pr.carrier)})
 }
 
 func mcReplay(e *cfEnv) {
@@ -327,7 +337,7 @@ func mcReplay(e *cfEnv) {
 		e.t.Fatalf("replay duplicate %v, message calls %d; want a duplicate that calls no message", replay.Duplicate, again.calls)
 	}
 	e.requireWrites(after, 0)
-	e.requireQueued(nil, []string{"comment/" + string(pr.carrier)})
+	e.requireOutbox([]string{"comment/" + string(pr.carrier)})
 }
 
 func mcCorrects(e *cfEnv) {
@@ -335,22 +345,43 @@ func mcCorrects(e *cfEnv) {
 	e.mcSeed(true, fix)
 	e.approve(fix)
 	before := e.revision()
+	v1, _ := e.version("V1")
+	v2, _ := e.version("V2")
+	messages := &mcMessages{}
 
-	result := e.merge(mcRequest(fix, "v1", &mcMessages{}))
+	result := e.merge(mcRequest(fix, "v1", messages))
 
 	e.requireOutcome(fix.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeCorrected, Source: mcSource(fix), Version: "V3", Corrects: "V2", Reference: mcRef(fix)})
+	if result.Duplicate || messages.calls != 1 || messages.last.Kind != governance.MergeCorrected {
+		e.t.Fatalf("duplicate %v, message calls %d (last %v); want a new outcome and one message about the correction", result.Duplicate, messages.calls, messages.last.Kind)
+	}
 	e.requireWrites(before, 2)
 	historical, found := e.version("V3")
 	if !found || historical.Record().CorrectsVersionID() != "V2" || e.currentVersion() != "V3" {
 		e.t.Fatalf("version V3 = %+v (found %v), current %q; want a correction of V2 that is current", historical.Record(), found, e.currentVersion())
 	}
+	for _, earlier := range []contract.HistoricalCanonical{v1, v2} { // a correction adds a version and rewrites none
+		if now, found := e.version(earlier.Version().ID()); !found || !cfSameHistory(earlier, now) {
+			e.t.Fatalf("%s changed or went missing after the correction", earlier.Version().ID())
+		}
+	}
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		receipt, found, err := tx.Receipt(ctx, "merge:"+contract.OperationID(fix.carrier))
-		if err != nil || !found || receipt.Kind != governance.OperationCorrect {
-			return fmt.Errorf("receipt = %+v, %v, %v; want a correction", receipt, found, err)
+		if err != nil || !found || receipt.Kind != governance.OperationCorrect || receipt.Promotion == nil || receipt.Promotion.Identity.CorrectsVersionID != "V2" {
+			return fmt.Errorf("receipt = %+v, %v, %v; want a correction of V2", receipt, found, err)
 		}
 		return nil
 	})
+	e.requireOutbox([]string{"comment/" + string(fix.carrier)})
+
+	again := &mcMessages{} // the replay asks for nothing and writes nothing
+	replay := e.merge(mcRequest(fix, "v1", again))
+	e.requireOutcome(fix.carrier, replay.MergeOutcome, result.MergeOutcome)
+	if !replay.Duplicate || again.calls != 0 {
+		e.t.Fatalf("replay duplicate %v, message calls %d; want a duplicate that calls no message", replay.Duplicate, again.calls)
+	}
+	e.requireWrites(before, 2)
+	e.requireOutbox([]string{"comment/" + string(fix.carrier)})
 }
 
 // mcSecondPR merges a, which promotes V2, and then b, which was approved against V1 as well.
@@ -384,6 +415,15 @@ func mcSecondPRBlocked(e *cfEnv) {
 	if got := e.currentVersion(); got != "V2" {
 		e.t.Fatalf("current version = %q, want V2 kept", got)
 	}
+	e.read(func(ctx context.Context, tx governance.Tx) error {
+		if _, found, err := tx.Receipt(ctx, "merge:"+contract.OperationID(b.carrier)); err != nil || found {
+			return fmt.Errorf("the blocked merge left a promotion receipt: found %v, %v", found, err)
+		}
+		if _, found, err := tx.PromotionFor(ctx, b.current()); err != nil || found {
+			return fmt.Errorf("the blocked merge's revision was promoted: found %v, %v", found, err)
+		}
+		return nil
+	})
 }
 
 func mcRebasedPRBlocked(e *cfEnv) {
@@ -512,7 +552,7 @@ func mcNotTarget(e *cfEnv) {
 		e.t.Fatalf("message calls = %d, want the message function asked once", messages.calls)
 	}
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func mcBeforeCanonical(e *cfEnv) {
@@ -527,7 +567,7 @@ func mcBeforeCanonical(e *cfEnv) {
 
 	e.requireOutcome(early.carrier, result.MergeOutcome, governance.MergeOutcome{Kind: governance.MergeBeforeCanonical, Source: mcSource(early), Version: "V1"})
 	e.requireWrites(before, 0)
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 	// Observed at the very moment V1 was recorded is not before it: the merge is judged on its content.
 	request = mcRequest(atTheEdge, "v1", &mcMessages{})
 	request.ObservedAt = cfRecordedAt

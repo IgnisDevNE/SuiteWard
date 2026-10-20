@@ -208,7 +208,8 @@ func TestAWakeUpAndAPeriodicRunQueuedTogetherDoNotOverlap(t *testing.T) {
 	waitUntil(t, "a periodic run to queue behind the running wake-up", func() bool {
 		return w.count("kind='github_checks' AND state='available' AND unique_key IS NOT NULL") == "1"
 	})
-	time.Sleep(500 * time.Millisecond) // a negative assertion: the queued run must not start beside the running one
+	waitUntil(t, "the wake-up to start running", func() bool { return checks.running.Load() == 1 }) // River fetches about once a second; without this the sleep below can end before it
+	time.Sleep(500 * time.Millisecond)                                                              // a negative assertion: the queued run must not start beside the running one
 
 	if got, peak := checks.running.Load(), checks.peak.Load(); got != 1 || peak != 1 {
 		t.Fatalf("%d checks runs at once, peak %d; want runs of one kind never to overlap", got, peak)

@@ -67,7 +67,6 @@ type data struct {
 	suites   map[suiteKey]*suiteData
 	byOp     map[contract.OperationID]governance.OperationReceipt
 	bySource map[contract.SourceCommandID]governance.OperationReceipt
-	jobs     []governance.Job
 	outbox   map[string]governance.OutboxMessage
 }
 
@@ -89,7 +88,7 @@ type proposalData struct {
 }
 
 func (d data) clone() data {
-	c := data{suites: map[suiteKey]*suiteData{}, byOp: maps.Clone(d.byOp), bySource: maps.Clone(d.bySource), jobs: slices.Clone(d.jobs), outbox: maps.Clone(d.outbox)}
+	c := data{suites: map[suiteKey]*suiteData{}, byOp: maps.Clone(d.byOp), bySource: maps.Clone(d.bySource), outbox: maps.Clone(d.outbox)}
 	for key, s := range d.suites {
 		next := *s
 		next.history = maps.Clone(s.history)
@@ -356,12 +355,15 @@ func (t *tx) AppendConsent(ctx context.Context, w governance.ConsentWrite) error
 	if err := t.live(ctx); err != nil {
 		return err
 	}
+	if err := w.Validate(t.key.project, t.key.suite); err != nil {
+		return err
+	}
 	command := w.Result.Command()
 	p, ok := t.s.proposals[command.Reference().ProposalID]
 	if !ok {
 		return governance.ErrNotFound
 	}
-	if _, taken := t.d.byOp[w.OperationID]; taken || w.Result.Duplicate() != w.Alias || (!w.Alias && w.OperationID != command.OperationID()) {
+	if _, taken := t.d.byOp[w.OperationID]; taken {
 		return governance.ErrOperationConflict
 	}
 	receipt := w.Receipt
@@ -386,6 +388,9 @@ func (t *tx) AppendConsent(ctx context.Context, w governance.ConsentWrite) error
 
 func (t *tx) RecordPromotion(ctx context.Context, w governance.PromotionWrite) error {
 	if err := t.live(ctx); err != nil {
+		return err
+	}
+	if err := w.Validate(t.key.project, t.key.suite); err != nil {
 		return err
 	}
 	record := w.Receipt.Record
@@ -482,34 +487,12 @@ func revisionBinding(proposal contract.Proposal, id contract.ProposalRevisionID)
 	return contract.ApprovalBinding{}, false
 }
 
-var _ QueueInspector = (*Memory)(nil)
-
-func (m *Memory) QueuedJobKinds(context.Context) ([]string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	kinds := make([]string, len(m.data.jobs))
-	for i, job := range m.data.jobs {
-		kinds[i] = job.Kind
-	}
-	slices.Sort(kinds)
-	return kinds, nil
-}
+var _ OutboxInspector = (*Memory)(nil)
 
 func (m *Memory) OutboxKeys(context.Context) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Sorted(maps.Keys(m.data.outbox)), nil
-}
-
-func (t *tx) Enqueue(ctx context.Context, job governance.Job) error {
-	if err := t.live(ctx); err != nil {
-		return err
-	}
-	if err := job.Validate(); err != nil {
-		return err
-	}
-	t.d.jobs = append(t.d.jobs, job)
-	return t.injected()
 }
 
 func (t *tx) Outbox(ctx context.Context, message governance.OutboxMessage) error {

@@ -32,27 +32,29 @@ import (
 
 const (
 	scopeNoticeKey = "scope-notice" // scope-notice:<repository id>:<pull>:<set digest>
-	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<review digest>: the set and the head's file in one digest
+	scopeReviewKey = "scope-review" // scope-review:<repository id>:<pull>:<review digest>: the head's file and the suggestions in one digest
 )
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// scopeNoticePayload is the payload of scope-notice:<repository id>:<pull>:<set digest>. The key's digest is that of the
-// whole set of added paths, which the bounded list below cannot reproduce, so the publisher checks only its shape.
+// scopeNoticePayload is the payload of scope-notice:<repository id>:<pull>:<notice digest>. The key's digest is that of the
+// whole set of added paths and of the declaration shown, or else the patterns, which the bounded list below cannot reproduce, so the publisher checks only its shape.
 type scopeNoticePayload struct {
 	commentTarget
 	Head        string   `json:"head"`
 	Branch      string   `json:"branch"`
 	Paths       []string `json:"paths"` // at most 20, each cut to 150 bytes
 	PathsTotal  int      `json:"pathsTotal"`
-	Declaration string   `json:"declaration"` // the canonical declaration with the new patterns added, at most 8192 bytes
+	Declaration string   `json:"declaration,omitempty"` // the canonical declaration with the new patterns added, at most 8192 bytes; none when it cannot be shown
 	Mixed       []string `json:"mixed,omitempty"`
 	Submodules  []string `json:"submodules,omitempty"` // the submodules a suggested pattern reaches, whose contents are not protected
 	Cut         bool     `json:"cut,omitempty"`        // the limit of 20 patterns cut the declaration's new patterns
+	AddInclude  []string `json:"addInclude,omitempty"` // with no declaration: the include patterns it adds,
+	AddRunner   []string `json:"addRunner,omitempty"`  // and the runner patterns, at most 20 together
 }
 
 func (p scopeNoticePayload) notice() commandtext.ScopeNotice {
-	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed, Submodules: p.Submodules, Cut: p.Cut}
+	return commandtext.ScopeNotice{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Declaration: []byte(p.Declaration), Mixed: p.Mixed, Submodules: p.Submodules, Cut: p.Cut, AddInclude: p.AddInclude, AddRunner: p.AddRunner}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -66,7 +68,7 @@ func (p scopeNoticePayload) validate() error {
 	case p.PathsTotal < len(p.Paths):
 		return errors.New("the total is below the listed paths")
 	}
-	for _, text := range slices.Concat(p.Paths, p.Mixed, p.Submodules) {
+	for _, text := range slices.Concat(p.Paths, p.Mixed, p.Submodules, p.AddInclude, p.AddRunner) {
 		if len(text) > maxSummaryText {
 			return errors.New("a path is too long")
 		}
@@ -89,10 +91,16 @@ func setDigest(paths []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// newScopeNoticeMessage builds the notice of the added uncovered paths, bounding the repository text it carries. A payload
-// the publisher could not render is an error, so nobody writes a message that nobody can post.
-func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed, submodules []string, cut bool) (governance.OutboxMessage, error) {
-	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: cut}
+// newScopeNoticeMessage builds the notice of the added uncovered paths, bounding the repository text it carries. A declaration that cannot be shown
+// (see commandtext.CanShow) is left out and the notice lists the patterns of suggested alone. A payload the publisher could not render is an error, so
+// nobody writes a message that nobody can post.
+func newScopeNoticeMessage(target commentTarget, head, branch string, paths []string, declaration []byte, mixed, submodules []string, suggested inventory.Suggestion) (governance.OutboxMessage, error) {
+	p := scopeNoticePayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut}
+	if commandtext.CanShow(declaration) {
+		p.Declaration = string(declaration)
+	} else {
+		p.AddInclude, p.AddRunner = boundedText(suggested.Include), boundedText(suggested.Runner)
+	}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("scope notice: %w", err)
 	}
@@ -100,11 +108,12 @@ func newScopeNoticeMessage(target commentTarget, head, branch string, paths []st
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the scope notice: %w", err)
 	}
-	key := fmt.Sprintf("%s:%d:%d:%s", scopeNoticeKey, target.RepositoryID, target.Pull, setDigest(paths))
+	shown := slices.Concat([]string{setDigest(paths), p.Declaration, strconv.Itoa(len(p.AddInclude))}, p.AddInclude, p.AddRunner) // the paths, and the declaration or else the patterns
+	key := fmt.Sprintf("%s:%d:%d:%s", scopeNoticeKey, target.RepositoryID, target.Pull, contentDigest(shown))
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) scopeNotice(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) scopeNotice(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	n, err := decodePayload[scopeNoticePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -127,6 +136,8 @@ type scopeSuggestion struct {
 	// KeyIndent is then the spaces before its key.
 	NewList   string `json:"newList,omitempty"`
 	KeyIndent string `json:"keyIndent,omitempty"`
+	// Quoting is the quoting style of the list the suggestion extends (what scope.AddPatterns writes for it); none for a created list, and in a payload written before the style was carried, which follows the anchor.
+	Quoting commandtext.Quoting `json:"quoting,omitempty"`
 }
 
 // choices are the lists of a runner-uncovered check's review suggestions, each the commandtext choice it renders.
@@ -155,9 +166,9 @@ func (s scopeSuggestion) validate() error {
 	}
 	var err error
 	if isChoice {
-		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+		err = commandtext.ValidateRunnerChoice(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, s.Quoting)
 	} else {
-		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns)
+		err = commandtext.ValidateScopeSuggestion(s.Anchor, s.indent(), s.Patterns, s.Quoting)
 	}
 	if err != nil { // its text quotes the anchor line and the patterns
 		return errors.New("the anchor line, its indent or the patterns do not fit the suggestion")
@@ -168,9 +179,9 @@ func (s scopeSuggestion) validate() error {
 // body renders the review comment of the suggestion; it panics on one that does not validate.
 func (s scopeSuggestion) body() string {
 	if choice, isChoice := choices[s.List]; isChoice {
-		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList)
+		return commandtext.RunnerChoiceBody(choice, s.Anchor, s.indent(), s.Patterns, s.NewList, s.Quoting)
 	}
-	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns)
+	return commandtext.ScopeSuggestionBody(s.Anchor, s.indent(), s.Patterns, s.Quoting)
 }
 
 // scopeReviewPayload is the payload of scope-review:<repository id>:<pull>:<review digest>: one or two suggestions, the include
@@ -202,11 +213,26 @@ func (p scopeReviewPayload) validate() error {
 	return nil
 }
 
-// reviewDigest is the SHA-256 hex digest of the set digest, a newline and the head's .suiteward.yml. A review is anchored to one
-// version of that file: a later suggest after the file changed is a fresh review, a repeat on the same file is not.
-func reviewDigest(set string, file []byte) string {
-	sum := sha256.Sum256(append([]byte(set+"\n"), file...))
+// contentDigest is the SHA-256 hex digest of the parts, each with its length in front so that no two lists of parts collide. A comment's key digests what
+// the comment shows, and never the Suite's version: a promotion would otherwise post a new comment on every open pull request.
+func contentDigest(parts []string) string {
+	var all strings.Builder
+	for _, part := range parts {
+		all.WriteString(strconv.Itoa(len(part)) + ":" + part)
+	}
+	sum := sha256.Sum256([]byte(all.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+// suggestionsDigest is the SHA-256 hex digest of the head's .suiteward.yml, a newline and the suggestions as JSON: what a review posts, and nothing
+// else. Suggestions that say the same on the same file share a key, whichever paths, head or command produced them.
+func suggestionsDigest(file []byte, suggestions []scopeSuggestion) (string, error) {
+	raw, err := json.Marshal(suggestions)
+	if err != nil {
+		return "", fmt.Errorf("encode the suggestions: %w", err)
+	}
+	sum := sha256.Sum256(slices.Concat(file, []byte{'\n'}, raw))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // newScopeReviewMessage builds the review of the suggestions of the review digest. A payload the publisher could not render is
@@ -268,9 +294,6 @@ func (p *commentPublisher) publishReview(ctx context.Context, key string, reposi
 	}
 	return nil
 }
-
-// errNoCanonicalDeclaration says that the canonical holds no .suiteward.yml, so there is no declaration to widen.
-var errNoCanonicalDeclaration = governance.ErrNoCanonicalDeclaration
 
 // canonicalDeclaration returns the bytes of the canonical's own .suiteward.yml and the scope they declare. It reads the
 // canonical as AssessHead does and verifies the bytes against the scope digest the canonical was approved with.
@@ -409,12 +432,12 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 	if j.scoped[key] == at {
 		return nil
 	}
-	err := j.decideScope(ctx, p, pull)
+	err := j.decideScope(ctx, p, pull, canonical)
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()
 	// Before the read failure, which wraps an invalid argument such as a base commit that is not a SHA: that will never succeed.
-	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, errNoCanonicalDeclaration):
+	case invalidSource(err) || errors.Is(err, github.ErrInvalidArgument) || errors.Is(err, governance.ErrNoCanonicalDeclaration):
 		j.logger.InfoContext(ctx, "github checks scope notice skipped: the source cannot be read", "repo", p.Repo, "pull", pull.Number)
 	case errors.Is(err, errGitHubRead):
 		logReadFailure(ctx, j.logger, "github checks scope notice read failed", p.Repo, err)
@@ -432,7 +455,7 @@ func (j *checksJob) scopeNotice(ctx context.Context, p owner.ProjectPolicy, pull
 // decideScope reads the head tree, then the base tree only when the head has uncovered paths that no earlier head of the pull
 // request had, and writes the notice. The set of uncovered paths of the head, which is the added set when the pull request
 // adds them all, is remembered once decided: a push that leaves it as it was reads nothing more.
-func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState) error {
+func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, canonical contract.SuiteVersionID) error {
 	read, err := j.reader.Tree(ctx, p.Repo, pull.HeadSHA)
 	if err != nil {
 		return githubRead(err)
@@ -442,7 +465,7 @@ func (j *checksJob) decideScope(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil || len(found.Paths) == 0 {
 		return err
 	}
-	decided := fmt.Sprintf("scope-set:%d:%d:%s", p.RepositoryID, pull.Number, setDigest(found.Paths))
+	decided := fmt.Sprintf("scope-set:%d:%d:%s:%s", p.RepositoryID, pull.Number, canonical, setDigest(found.Paths)) // a new canonical may show other text
 	if j.announced[decided] {
 		return nil
 	}
@@ -467,17 +490,13 @@ func (j *checksJob) reportAdded(ctx context.Context, p owner.ProjectPolicy, pull
 	if err != nil {
 		return err
 	}
-	if len(declaration) > commandtext.MaxDeclaration {
-		j.logger.InfoContext(ctx, "github checks scope notice skipped: the declaration is over the limit", "repo", p.Repo, "pull", pull.Number)
-		return nil
-	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
-	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed, found.Submodules, suggestion.Cut)
+	notice, err := newScopeNoticeMessage(target, pull.HeadSHA, pull.HeadRef, added, declaration, found.Mixed, found.Submodules, suggestion)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks scope notice skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
 	}
-	reviews, err := scopeReview(ctx, j.reader, j.logger, "github checks scope review", target, pull.HeadSHA, head, found, suggestion, setDigest(added))
+	reviews, err := scopeReview(ctx, j.reader, j.logger, "github checks scope review", target, pull.HeadSHA, head, found, suggestion)
 	if err != nil {
 		return err
 	}
@@ -489,13 +508,13 @@ type pullFileReader interface {
 	PullFiles(ctx context.Context, repo string, number int) ([]github.PullFile, error)
 }
 
-// scopeReview builds the review suggestions that go with a notice, as at most one message, keyed by the set digest and the head's file: for each list of the head's
+// scopeReview builds the review suggestions that go with a notice, as at most one message, keyed by the head's file and the suggestions (see suggestionsDigest): for each list of the head's
 // .suiteward.yml, the new patterns that the head's list lacks, after a list item inside a hunk of the pull request's diff
 // (GitHub accepts a review comment only on such a line). This is the only place that starts from the head's file. A list in flow
 // style, a head whose file is invalid or missing from the diff, and a list with no new pattern or no item in a hunk give none.
 // A failed read of the pull request's files costs only the review, unless it says to wait.
 // The checks job and the suggest command share it, each with its own prefix for the log lines.
-func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger, logPrefix string, target commentTarget, headSHA string, head *githubTree, found headScope, s inventory.Suggestion, digest string) ([]governance.OutboxMessage, error) {
+func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger, logPrefix string, target commentTarget, headSHA string, head *githubTree, found headScope, s inventory.Suggestion) ([]governance.OutboxMessage, error) {
 	if !hasDeclaration(found.entries) {
 		return nil, nil
 	}
@@ -528,7 +547,7 @@ func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger,
 	}
 	hunks, err := changed[i].NewLineRanges()
 	if err != nil {
-		logger.WarnContext(ctx, logPrefix+" skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull)
+		logger.WarnContext(ctx, logPrefix+" skipped: the diff of the declaration cannot be read", "repo", target.Repo, "pull", target.Pull, "reason", err.Error()) // the text names only the constant path of the declaration
 		return nil, nil
 	}
 	var suggestions []scopeSuggestion
@@ -543,7 +562,11 @@ func scopeReview(ctx context.Context, files pullFileReader, logger *slog.Logger,
 	if len(suggestions) == 0 {
 		return nil, nil
 	}
-	message, err := newScopeReviewMessage(target, headSHA, reviewDigest(digest, own), suggestions)
+	digest, err := suggestionsDigest(own, suggestions)
+	if err != nil {
+		return nil, err
+	}
+	message, err := newScopeReviewMessage(target, headSHA, digest, suggestions)
 	if err != nil {
 		logger.WarnContext(ctx, logPrefix+" skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
 		return nil, nil
@@ -575,11 +598,31 @@ func listSuggestion(top *yaml.Node, lines []string, name string, patterns []stri
 			}
 			anchor := strings.TrimSuffix(lines[item.Line-1], "\r")
 			if singleLineItem(anchor, item) {
-				return scopeSuggestion{List: name, Line: item.Line, Anchor: anchor, Patterns: fresh}, true
+				return scopeSuggestion{List: name, Line: item.Line, Anchor: anchor, Patterns: fresh, Quoting: listQuoting(list)}, true
 			}
 		}
 	}
 	return scopeSuggestion{}, false
+}
+
+// listQuoting is the quoting that scope.AddPatterns gives the items it adds to list: the one that every item shares, plain when they differ.
+func listQuoting(list *yaml.Node) commandtext.Quoting {
+	quoting := func(item *yaml.Node) commandtext.Quoting {
+		switch item.Style & (yaml.DoubleQuotedStyle | yaml.SingleQuotedStyle) {
+		case yaml.DoubleQuotedStyle:
+			return commandtext.QuotingDouble
+		case yaml.SingleQuotedStyle:
+			return commandtext.QuotingSingle
+		}
+		return commandtext.QuotingPlain
+	}
+	shared := quoting(list.Content[0])
+	for _, item := range list.Content[1:] {
+		if quoting(item) != shared {
+			return commandtext.QuotingPlain
+		}
+	}
+	return shared
 }
 
 // singleLineItem reports whether the line is a whole list item that holds item's value: a scalar that spans lines, or a block
@@ -610,22 +653,15 @@ func (j *checksJob) absentFromBase(ctx context.Context, repo, baseSHA string, pa
 	return slices.DeleteFunc(slices.Clone(paths), func(path string) bool { return inBase[path] }), nil
 }
 
-// outboxOnce writes the messages in one unit of work, unless the key of the first exists: a repeated decision writes nothing.
-// The first is the notice, written before the messages that depend on it, so its conflict undoes nothing else. No message is no write.
+// outboxOnce writes each message in a unit of work of its own, in order, and skips one whose key exists: a repeated decision writes nothing new.
+// The keys digest what each message shows, so an existing review must never undo the comment it goes with: a conflict on one message undoes
+// no other. A failed write returns, and the retry skips what was written. No message is no write.
 func outboxOnce(ctx context.Context, suites governance.UnitOfWork, project contract.ProjectID, messages []governance.OutboxMessage) error {
-	if len(messages) == 0 {
-		return nil
-	}
-	err := suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
-		for _, message := range messages {
-			if err := tx.Outbox(ctx, message); err != nil {
-				return err
-			}
+	for _, message := range messages {
+		err := suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error { return tx.Outbox(ctx, message) })
+		if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
+			return fmt.Errorf("write the comment %s: %w", message.Key, err)
 		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, governance.ErrOperationConflict) {
-		return fmt.Errorf("write the comment %s: %w", messages[0].Key, err)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -96,8 +97,7 @@ func insertOutbox(ctx context.Context, q *dbgen.Queries, project, suite pgtype.T
 }
 
 // EnqueueSystem inserts a job and an outbox message with no Suite in one
-// transaction, using the statements of Tx.Enqueue and Tx.Outbox. It returns
-// the job id.
+// transaction, with the statement of Tx.Outbox and the job inserter. It returns the job id.
 func (s *Store) EnqueueSystem(ctx context.Context, job governance.Job, message governance.OutboxMessage) (int64, error) {
 	transaction, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -148,12 +148,16 @@ func (s *Store) SystemStatus(ctx context.Context, jobID int64, outboxKey string)
 // counts the attempt and hides the message until the lease expires. Pending
 // messages that used every attempt are failed instead of claimed.
 func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (ClaimOutboxResult, error) {
+	if params.MaxAttempts < 1 || params.MaxAttempts > math.MaxInt32 || params.Limit < 1 || params.Limit > math.MaxInt32 {
+		return ClaimOutboxResult{}, fmt.Errorf("claim outbox: max attempts %d and limit %d must each be between 1 and %d", params.MaxAttempts, params.Limit, math.MaxInt32)
+	}
 	q := dbgen.New(s.pool)
-	abandoned, err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: int32(params.MaxAttempts)})
+	maxAttempts, batch := int32(params.MaxAttempts), int32(params.Limit)
+	abandoned, err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: maxAttempts})
 	if err != nil {
 		return ClaimOutboxResult{}, fmt.Errorf("fail exhausted outbox messages: %w", err)
 	}
-	rows, err := q.ClaimOutbox(ctx, dbgen.ClaimOutboxParams{Now: timestamp(params.Now), LeaseUntil: timestamp(params.Now.Add(params.Lease)), MaxAttempts: int32(params.MaxAttempts), Batch: int32(params.Limit)})
+	rows, err := q.ClaimOutbox(ctx, dbgen.ClaimOutboxParams{Now: timestamp(params.Now), LeaseUntil: timestamp(params.Now.Add(params.Lease)), MaxAttempts: maxAttempts, Batch: batch})
 	if err != nil {
 		return ClaimOutboxResult{}, fmt.Errorf("claim outbox messages: %w", err)
 	}

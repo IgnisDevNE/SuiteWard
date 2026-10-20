@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
@@ -54,13 +55,22 @@ func headTree(test, src string) *fakeTree {
 	)
 }
 
-// headEnv is a Suite whose first canonical (version-1) came from the baseline PR, with every content blob in writer.
+// treeContract is the contract the inventory of tree yields: what a merge of that tree proposes, and so the only
+// contract a candidate that reaches PromoteMerge can have.
+func treeContract(t *testing.T, tree inventory.Tree) contract.ProtectedContract {
+	t.Helper()
+	return must(must(inventory.Build(context.Background(), tree)).Contract())
+}
+
+// headEnv is a Suite whose first canonical (V1) came from the baseline PR, with every content blob in writer.
 type headEnv struct {
 	*world
 	writer *fakeWriter
 	reader *fakeReader
-	other  candidate // an approved candidate that can move the canonical to version-2
+	other  candidate // an approved candidate that can move the canonical to V2
 	order  contract.CommandOrder
+	first  contract.SuiteVersionID   // the id of the first canonical: V1, which PromoteMerge needs
+	boot   governance.PromoteRequest // the bootstrap that made it
 }
 
 // newHeadEnv seeds extra proposals next to the one that can move the canonical.
@@ -72,9 +82,15 @@ func newHeadEnv(t *testing.T, extra ...candidate) *headEnv {
 // newHeadEnvOn is newHeadEnv with the baseline of the first canonical taken from baseline.
 func newHeadEnvOn(t *testing.T, baseline inventory.Tree, extra ...candidate) *headEnv {
 	t.Helper()
+	return newHeadEnvFirst(t, "V1", baseline, extra...)
+}
+
+// newHeadEnvFirst is newHeadEnvOn with another id for the first canonical, for a Suite PromoteMerge cannot succeed.
+func newHeadEnvFirst(t *testing.T, first contract.SuiteVersionID, baseline inventory.Tree, extra ...candidate) *headEnv {
+	t.Helper()
 	// A real inventory, so that once promoted its declaration is readable and hashes to its scope.
-	other := newCandidate(t, "px", "version-1", must(must(inventory.Build(context.Background(), headTree("other", "package main\n"))).Contract()))
-	e := &headEnv{world: newWorld(t, append([]candidate{other}, extra...)...), writer: newFakeWriter(), other: other}
+	other := newCandidate(t, "px", first, treeContract(t, headTree("other", "package main\n")))
+	e := &headEnv{world: newWorld(t, append([]candidate{other}, extra...)...), writer: newFakeWriter(), other: other, first: first}
 	e.reader = &fakeReader{writer: e.writer}
 	result := e.propose(e.writer, governance.BaselineRequest{
 		Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P1", RevisionID: "R1"},
@@ -83,10 +99,11 @@ func newHeadEnvOn(t *testing.T, baseline inventory.Tree, extra ...candidate) *he
 	e.approveRef(result.Revise.Current, bootstrapCarrier)
 	e.recordAssessment(result.Revise.Current, "pinned", contract.IntegrityPassed)
 	integration := must(contract.NewIntegration(projectID, target, "pinned", "", contract.IntegrationExistingBaseline))
-	promoted := e.bootstrap(governance.PromoteRequest{OperationID: "bootstrap-P1-R1", Reference: result.Revise.Current, Carrier: bootstrapCarrier,
-		Proposed: result.Contract, AssessmentSource: "pinned", Integration: integration, NewVersionID: "version-1", RecordedAt: recordedAt})
-	if !promoted.Committed {
-		t.Fatalf("bootstrap = %+v, want a first canonical", promoted)
+	e.boot = governance.PromoteRequest{OperationID: "bootstrap-P1-R1", Reference: result.Revise.Current, Carrier: bootstrapCarrier,
+		Proposed: result.Contract, AssessmentSource: "pinned", Integration: integration, NewVersionID: first, RecordedAt: recordedAt}
+	promoted := e.bootstrap(e.boot)
+	if promoted.Outcome != contract.PromotionProposed || promoted.Duplicate || e.currentVersion() != first {
+		t.Fatalf("bootstrap = %+v, current version %q, want a first canonical %q", promoted, e.currentVersion(), first)
 	}
 	return e
 }
@@ -101,6 +118,25 @@ func (e *headEnv) approveRef(reference contract.ProposalReference, carrier contr
 	if response := e.consent(command); !response.Receipt.CurrentApprovalEligible {
 		e.t.Fatalf("approval of %v is not eligible: %v", reference, response.Receipt.Result.Reason())
 	}
+}
+
+// mergeRequest is the merge of c, whose merge commit has tree, observed when the first canonical was recorded.
+func (e *headEnv) mergeRequest(c candidate, tree inventory.Tree) governance.MergeRequest {
+	return governance.MergeRequest{Project: projectID, Suite: suiteID, Carrier: c.carrier, Source: contract.SourceRevision("merge-sha-" + c.id), Target: target,
+		ObservedAt: recordedAt, Tree: tree, RecordedAt: recordedAt.Add(time.Hour), Message: noMessage}
+}
+
+// merge records the merge of c and requires the outcome to be the given kind.
+func (e *headEnv) merge(c candidate, tree inventory.Tree, kind governance.MergeKind) governance.MergeResult {
+	e.t.Helper()
+	result, err := governance.PromoteMerge(context.Background(), e.mem, e.writer, e.mergeRequest(c, tree))
+	if err != nil {
+		e.t.Fatalf("promote merge of %s: %v", c.id, err)
+	}
+	if result.Kind != kind {
+		e.t.Fatalf("merge of %s = %+v, want %s", c.id, result.MergeOutcome, kind)
+	}
+	return result
 }
 
 func (e *headEnv) request(carrier contract.ApprovalCarrierID, head string, tree inventory.Tree) governance.HeadRequest {
@@ -163,8 +199,8 @@ func TestAssessHeadOfAnUnchangedTreeWritesNothing(t *testing.T) {
 			result := e.assess(prA, "head-a", tree)
 
 			e.requireChange(result, inventory.Unchanged, "none", false, contract.PromotionReasonNone)
-			if result.Canonical != "version-1" || result.Revision != int64(before) {
-				t.Fatalf("result = canonical %q at revision %d, want version-1 at %d", result.Canonical, result.Revision, before)
+			if result.Canonical != "V1" || result.Revision != int64(before) {
+				t.Fatalf("result = canonical %q at revision %d, want V1 at %d", result.Canonical, result.Revision, before)
 			}
 			e.requireWrites(before, 0)
 			if e.hasProposal("P2") || len(e.writer.stored) != blobs {
@@ -254,12 +290,12 @@ func TestFirstProtectedChangeOfAPullCreatesTheNextProposal(t *testing.T) {
 	result := e.assess(prA, "head-a", headTree("v2", "package main\n"))
 
 	e.requireChange(result, inventory.ProtectedChange, "P2-R1", false, contract.PromotionReasonApprovalMissing)
-	if result.Canonical != "version-1" {
-		t.Fatalf("canonical = %q, want version-1", result.Canonical)
+	if result.Canonical != "V1" {
+		t.Fatalf("canonical = %q, want V1", result.Canonical)
 	}
 	revision := e.proposal("P2").Current()
-	if revision.Carrier() != prA || revision.Origin() != "head-a" || revision.Binding().ExpectedCanonical() != "version-1" || len(revision.Binding().CoveredInputs()) != 0 {
-		t.Fatalf("stored revision = carrier %q origin %q expects %q, want carrier %q origin head-a expecting version-1", revision.Carrier(), revision.Origin(), revision.Binding().ExpectedCanonical(), prA)
+	if revision.Carrier() != prA || revision.Origin() != "head-a" || revision.Binding().ExpectedCanonical() != "V1" || len(revision.Binding().CoveredInputs()) != 0 {
+		t.Fatalf("stored revision = carrier %q origin %q expects %q, want carrier %q origin head-a expecting V1", revision.Carrier(), revision.Origin(), revision.Binding().ExpectedCanonical(), prA)
 	}
 	assessment, found := e.assessment(*result.Reference, "head-a")
 	if !found || !assessment.Passed() {
@@ -365,10 +401,7 @@ func TestConcurrentAssessmentsOfTwoPullsAllocateDistinctProposals(t *testing.T) 
 
 func TestAssessHeadReportsAMovedCanonicalAsAConflict(t *testing.T) {
 	e := newHeadEnv(t)
-	e.reader.onRead = func() {
-		e.approve(e.other)
-		e.promote(e.other.mergedRequest(t, "promote-px", "version-2"))
-	}
+	e.reader.onRead = e.movedCanonical
 	before := e.revision()
 
 	err := e.assessErr(prA, "head-a", headTree("v2", "package main\n"))
@@ -379,7 +412,7 @@ func TestAssessHeadReportsAMovedCanonicalAsAConflict(t *testing.T) {
 	if e.hasProposal("P2") {
 		t.Fatal("a proposal was bound to a canonical the head was not classified against")
 	}
-	if e.currentVersion() != "version-2" || e.revision() <= before {
+	if e.currentVersion() != "V2" || e.revision() <= before {
 		t.Fatalf("the hook did not move the canonical: version %q", e.currentVersion())
 	}
 }
@@ -401,7 +434,7 @@ func TestHeadEvidenceComparesTheInventoryToTheBinding(t *testing.T) {
 	inv := must(inventory.Build(context.Background(), headTree("v1", "package main\n")))
 	reference := contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P2", RevisionID: "R1"}
 	bind := func(manifest, scopeDigest artifact.Digest) contract.ApprovalBinding {
-		return must(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: "version-1", Manifest: manifest,
+		return must(contract.NewApprovalBinding(contract.BindingInput{Reference: reference, ExpectedCanonical: "V1", Manifest: manifest,
 			Scope: scopeDigest, PolicyRevision: policyID, CoveredInputs: map[string]string{}}))
 	}
 	other := artifact.Hash([]byte("other"))
@@ -459,11 +492,11 @@ func TestAssessHeadRejectsMissingCollaborators(t *testing.T) {
 
 // The tests below pin behavior that already held when they were written.
 
-// movedCanonical promotes the other candidate, so version-2 becomes the canonical.
+// movedCanonical promotes the other candidate, so V2 becomes the canonical.
 func (e *headEnv) movedCanonical() {
 	e.t.Helper()
 	e.approve(e.other)
-	e.promote(e.other.mergedRequest(e.t, "promote-px", "version-2"))
+	e.merge(e.other, headTree("other", "package main\n"), governance.MergePromoted)
 }
 
 func TestApprovedPullNeedsAFreshApprovalOnceTheCanonicalMoves(t *testing.T) {
@@ -477,15 +510,15 @@ func TestApprovedPullNeedsAFreshApprovalOnceTheCanonicalMoves(t *testing.T) {
 	moved := e.assess(prA, "head-a", tree)
 
 	e.requireChange(moved, inventory.ProtectedChange, "P2-R2", false, contract.PromotionReasonApprovalMissing)
-	if moved.Canonical != "version-2" || e.proposal("P2").Current().Binding().ExpectedCanonical() != "version-2" {
-		t.Fatalf("canonical = %q, revision expects %q, want both version-2", moved.Canonical, e.proposal("P2").Current().Binding().ExpectedCanonical())
+	if moved.Canonical != "V2" || e.proposal("P2").Current().Binding().ExpectedCanonical() != "V2" {
+		t.Fatalf("canonical = %q, revision expects %q, want both V2", moved.Canonical, e.proposal("P2").Current().Binding().ExpectedCanonical())
 	}
 }
 
 func TestPullBoundToAnOlderPolicyGetsARevisionUnderTheGoverningOne(t *testing.T) {
 	protected := must(must(inventory.Build(context.Background(), headTree("v2", "package main\n"))).Contract())
 	older := sealRevision(contract.BindingInput{Reference: contract.ProposalReference{ProjectID: projectID, SuiteID: suiteID, ProposalID: "P2", RevisionID: "R1"},
-		ExpectedCanonical: "version-1", Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "policy-0", CoveredInputs: protected.CoveredInputs()}, "head-a", prA)
+		ExpectedCanonical: "V1", Manifest: protected.Manifest().Digest(), Scope: protected.ScopeDigest(), PolicyRevision: "policy-0", CoveredInputs: protected.CoveredInputs()}, "head-a", prA)
 	e := newHeadEnv(t, candidate{project: projectID, suite: suiteID, id: "P2", protected: protected, proposal: must(contract.NewProposal(older)), carrier: prA})
 
 	result := e.assess(prA, "head-a", headTree("v2", "package main\n"))
@@ -515,18 +548,24 @@ func TestScopeReductionGetsAProposalLikeAProtectedChange(t *testing.T) {
 
 func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
 	ctx := context.Background()
+	// scope.Declaration has no accessor for presence in production: a scope's digest covers the presence byte and the raw bytes.
+	digestOf := func(d scope.Declaration) artifact.Digest { return scope.NewScope(d).Digest() }
 	t.Run("valid", func(t *testing.T) {
 		e := newHeadEnv(t)
 		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
-		if err != nil || string(raw) != declaration || !d.Present() {
-			t.Fatalf("raw = %q, present = %v, error = %v; want the stored declaration", raw, d.Present(), err)
+		stored, parseErr := scope.ParseDeclaration([]byte(declaration))
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		if err != nil || string(raw) != declaration || digestOf(d) != digestOf(stored) {
+			t.Fatalf("raw = %q, error = %v; want the stored declaration, parsed", raw, err)
 		}
 	})
 	t.Run("no entry", func(t *testing.T) {
 		e := newHeadEnvOn(t, newFakeTree(regularFile(".github/workflows/ci.yml", "on: push\n")))
 		raw, d, err := governance.CanonicalDeclaration(ctx, e.reader, e.state().Canonical)
-		if !errors.Is(err, governance.ErrNoCanonicalDeclaration) || raw != nil || d.Present() {
-			t.Fatalf("raw = %q, present = %v, error = %v; want no bytes, no declaration and ErrNoCanonicalDeclaration", raw, d.Present(), err)
+		if !errors.Is(err, governance.ErrNoCanonicalDeclaration) || raw != nil || digestOf(d) != digestOf(scope.NoDeclaration()) {
+			t.Fatalf("raw = %q, error = %v; want no bytes, no declaration and ErrNoCanonicalDeclaration", raw, err)
 		}
 	})
 	stored := artifact.Hash([]byte(declaration))
@@ -543,4 +582,18 @@ func TestCanonicalDeclarationReadsAndVerifiesTheCanonicalsFile(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAssessHeadOfAnUnknownSuiteIsNotFound(t *testing.T) {
+	e := newHeadEnv(t)
+	before := e.revision()
+	request := e.request(prA, "head-a", headTree("v2", "package main\n"))
+	request.Suite = "nowhere"
+
+	_, err := governance.AssessHead(context.Background(), e.mem, e.reader, e.writer, request)
+
+	if !errors.Is(err, governance.ErrNotFound) {
+		t.Fatalf("error = %v, want not found", err)
+	}
+	e.requireWrites(before, 0)
 }

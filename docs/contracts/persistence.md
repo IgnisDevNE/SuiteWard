@@ -49,16 +49,17 @@ type Tx interface {
 	// AppendProposalRevision (M1.3); see "Proposal revisions".
 	AppendProposalRevision(context.Context, ProposalWrite) error
 
-	// Enqueue and Outbox are written in the same transaction as the facts
-	// above (M1.2); see "Jobs and outbox".
-	Enqueue(context.Context, Job) error
+	// Outbox is written in the same transaction as the facts above (M1.2); see
+	// "Jobs and outbox". It is the transactional guarantee of an external effect.
 	Outbox(context.Context, OutboxMessage) error
 }
 
 // Seeder writes trusted initial state: policies, assessments and historical
-// versions. It is no longer their only writer: the owner enrollment writes
-// policies (Enroll), CreateSuite creates Suites and RecordAssessment records
-// assessments (M1.6a); proposals also have AppendProposalRevision (M1.3).
+// versions. Only tests use it: the PostgreSQL store implements it in
+// `internal/adapters/postgres/seed_test.go`, so no production path can seed.
+// Enrollment writes policies (Enroll), CreateSuite creates Suites and
+// RecordAssessment records assessments (M1.6a); proposals also have
+// AppendProposalRevision (M1.3).
 type Seeder interface {
 	Seed(context.Context, Seed) error
 }
@@ -104,11 +105,6 @@ type PromoteRequest struct {
 	RecordedAt       time.Time
 }
 
-type CorrectionRequest struct {
-	Promotion       PromoteRequest
-	TargetVersionID contract.SuiteVersionID
-}
-
 type PromotionIdentity struct {
 	Kind              OperationKind
 	Request           PromoteRequest
@@ -151,16 +147,13 @@ type PromotionWrite struct {
 type PromoteResult struct {
 	Outcome   contract.PromotionOutcome
 	Reason    contract.PromotionReason
-	Record    contract.PromotionRecord // set when Outcome is PromotionProposed
-	Committed bool
-	Duplicate bool
+	Duplicate bool // the bootstrap was already recorded
 }
 
 type ConsentRequest struct{ Command contract.Command }
 
 type ConsentResponse struct {
 	Receipt   ConsentReceipt
-	Committed bool
 	Duplicate bool
 }
 
@@ -173,22 +166,45 @@ var (
 )
 ```
 
-Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `Promote(ctx, UnitOfWork, PromoteRequest)`, `Bootstrap(ctx, UnitOfWork, PromoteRequest)` (existing-baseline only), `Correct(ctx, UnitOfWork, CorrectionRequest)`, and since M1.3 `ReviseProposal(ctx, UnitOfWork, ReviseRequest)` (see "Proposal revisions"). Errors from the domain or the store are wrapped with `%w`, preserving the cause.
+The use cases are `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `Bootstrap(ctx, UnitOfWork, PromoteRequest)` (existing-baseline only), `PromoteMerge` (see "Merge outcome") and, since M1.3, `ProposeBaseline` and `AssessHead`, which share the proposal revision rule (see "Proposal revisions"). `Promote`, `Correct` and `ReviseProposal` were removed in M1.10: no production path called them, and a promotion or a correction is now only a merge. Errors from the domain or the store are wrapped with `%w`, preserving the cause.
 
 ### Use-case semantics
 
-- **Consent:** inside `Do`: look up `Receipt(operationID)`. A consent receipt for the same Suite, proposal, source command and actor is returned as a duplicate; anything else is `ErrOperationConflict`. Then look up `ReceiptBySource(sourceCommandID)`: source command ids are global and the domain sees only one proposal's history, so a receipt there that is not a consent receipt for the same Suite, proposal and actor is `ErrOperationConflict`. Then load the proposal and consent, apply the command with the governing policy, and:
-  - `ConsentReasonCommandConflict` → `ErrOperationConflict`, nothing written;
+- **Consent:** inside `Do`: look up `Receipt(operationID)`. A consent receipt for the same Suite, proposal, source command and actor is returned as a duplicate; any other receipt is `ErrOperationConflict`, except a consent receipt without its body, which is damaged stored state and `ErrInvalidState`. Then look up `ReceiptBySource(sourceCommandID)`: source command ids are global and the domain sees only one proposal's history, so a receipt there that is not a consent receipt for the same Suite, proposal and actor is `ErrOperationConflict` (a body-less one is `ErrInvalidState`), before the Suite or the proposal is read. The steps are `consentReceipts` (with `commandReceipt`) and `processConsent`. Then load the proposal and consent, apply the command with the governing policy, and:
+  - `ConsentReasonCommandConflict` → `ErrOperationConflict`, nothing written, and checked before the next case;
+  - a result whose duplicate flag disagrees with whether `ReceiptBySource` knew the source command → `ErrInvalidState` (history and receipts disagree);
   - a duplicate result (same source command, new operation id) → `AppendConsent` with `Alias: true` and the original receipt from `ReceiptBySource`;
   - otherwise build the receipt (eligibility from `Consent.HasApproval`; `PromotedVersionID` from `PromotionFor(reference)`) and `AppendConsent`.
-- **Promotion, bootstrap, correction:** inside `Do`: replay by `Receipt(operationID)` compares the stored identity with the request (same kind, reference, carrier, proposed contract, assessment source, integration, new version id, corrected version); mismatch is `ErrOperationConflict`. Otherwise load suite state, proposal, consent, assessment and (for correction) the target version; decide in the domain. Only a `PromotionProposed` decision writes, through `RecordPromotion`. Blocked and no-change outcomes are returned without writing. There is no admission gate: proposals based on the same canonical version are all promotable, the first promotion wins, and the canonical compare-and-set blocks the others with `PromotionReasonCanonicalChanged` until they have a new revision against the new canonical and a fresh exact approval.
+- **Bootstrap:** inside `Do`: replay by `Receipt(operationID)` compares the stored identity with the request (same kind, reference, carrier, proposed contract, assessment source, integration, new version id); mismatch, including an operation id held by a consent command or a merge, is `ErrOperationConflict`. Otherwise load suite state, proposal, consent and assessment; decide in the domain. Only a `PromotionProposed` decision writes, through `RecordPromotion`, then the request's outbox. Blocked outcomes are returned without writing. A merge decides through the same function over `Tx` (see "Merge outcome"), replays by carrier, and corrects only the current version. There is no admission gate: proposals based on the same canonical version are all promotable, the first promotion wins, and the canonical compare-and-set blocks the others with `PromotionReasonCanonicalChanged` until they have a new revision against the new canonical and a fresh exact approval.
+
+### Impossible states are errors
+
+A state that no valid input reaches is an error, not a decision (the [nil-check rule](../development-guide.md#nil-checks)):
+- `Consent.Apply` returns an error wrapping `contract.ErrInvalidConsent` when the proposal cannot answer a command's reference (`ErrInvalidReference` or `ErrInvalidProposal` from `Resolve` or `Lookup`), which a command built by `NewCommand` never causes. It never records that as a context mismatch. A reference of another carrier is a reachable `ConsentReasonContextMismatch`.
+- `AssessIntegrity` returns an error wrapping `contract.ErrInvalidIntegrityAssessment` for evidence whose outcome is none of the three, which `NewIntegrityEvidence` never builds. It no longer answers "missing".
+- `promoteWithin` returns `ErrInvalidState` for an operation kind other than bootstrap, promotion or correction.
+- `ProcessConsent` returns `ErrInvalidState` for a consent receipt without its body, and when the consent history and the receipts disagree about a source command.
+
+`scope.Declaration.Present` and `Raw`, and `contract.PromotionEffect.ExpectedCanonicalID` and `Suite`, are read only by tests and live in `export_test.go` files. Production code compares declarations by `scope.NewScope(declaration).Digest()`, which covers the presence byte and the raw bytes.
 
 ### Store write semantics
 
+- `AppendConsent` and `RecordPromotion` start with `ConsentWrite.Validate(project, suite)` and `PromotionWrite.Validate(project, suite)` (`internal/application/governance/validate.go`), called by the PostgreSQL `Tx` and by `governancetest.Memory` alike, before they read or write anything. The refusals, in this order:
+  - `ConsentWrite.Validate`:
+    - `ErrInvalidRequest` when the write has no operation id or its result's command has none;
+    - `ErrInvalidRequest` when the command's reference is not in the locked Suite;
+    - `ErrOperationConflict` when `Result.Duplicate()` differs from `Alias`, or when it is not an alias and the write's operation id is not the command's;
+    - `ErrInvalidRequest` when the receipt's result belongs to another source command.
+  - `PromotionWrite.Validate`, all `ErrInvalidRequest`:
+    - the record is zero or the version id is empty;
+    - the record's reference or the version's project or Suite is not the locked Suite;
+    - the receipt's request names another operation than the record;
+    - the receipt identity's `CorrectsVersionID` or binding differs from the record's;
+    - `RecordedAt` has finer than microsecond precision (the rule below).
 - `AppendConsent` (not alias): insert the command result and an operation row carrying the receipt; bump the revision.
 - `AppendConsent` (alias): insert only an operation row keyed by `ConsentWrite.OperationID` pointing at `Result.Command().SourceCommandID()` (never at `Result.Command().OperationID()`, which is the original operation), with a copy of the original receipt; bump the revision.
 - `RecordPromotion`: verify the version's manifest bytes in the content store; insert the version, the promotion, and the operation row; set the Suite's current version; bump the revision. A duplicate version id or promoted reference is `ErrVersionConflict`.
-- Time values are stored with microsecond precision (PostgreSQL `timestamptz`). Stores reject a `PromotionRecord.RecordedAt` with finer precision rather than truncating it, so callers building a `PromoteRequest` must truncate their clock to microseconds (`time.Now().UTC().Truncate(time.Microsecond)`).
+- Time values are stored with microsecond precision (PostgreSQL `timestamptz`). `PromotionWrite.Validate` (and `MergeWrite.Validate` for a merge outcome) rejects a `RecordedAt` with finer precision as `ErrInvalidRequest` rather than truncating it, in every store, so callers building a `PromoteRequest` must truncate their clock to microseconds (`time.Now().UTC().Truncate(time.Microsecond)`).
 - `Seed` stores the given state as is, including the Suite revision carried by `Canonical.Suite().Revision()`; it does not reset counters.
 - `Do` must not commit when its context is canceled, even if `fn` returned nil; a `Tx` is unusable after `fn` returns.
 - Reads reconstitute: proposals via `NewProposal` + `Revise` in sequence order; consent via `ReconstituteConsent` from stored results and aliases; assessments via `AssessIntegrity` over stored evidence; canonical and history via `NewSuite`, `NewSuiteVersion`, `NewPromotionRecord`, `NewCanonicalSnapshot`, `NewHistoricalCanonical`.
@@ -198,8 +214,9 @@ Use cases keep their names: `ProcessConsent(ctx, UnitOfWork, ConsentRequest)`, `
 Declared in `internal/application/governance/uow.go` next to `Tx`. River types never appear in `governance`.
 
 ```go
-// Job is follow-up work for a background worker. Args reference scoped
-// records and immutable revisions; they never carry credentials.
+// Job is follow-up work for a background worker, enqueued with an outbox message
+// outside any Suite by the store's EnqueueSystem. Args reference scoped records
+// and immutable revisions; they never carry credentials.
 type Job struct {
 	Kind        string          // ^[a-z][a-z0-9_.]*$, at most 64 bytes, for example "probe"
 	Args        json.RawMessage // a JSON object, at most 64 KiB
@@ -218,12 +235,12 @@ type OutboxMessage struct {
 
 Semantics:
 
-- `Job.Validate()` and `OutboxMessage.Validate()` (in `internal/application/governance/queue.go`) apply the limits above and are shared by every implementation of `Tx`, so the fake and the adapter reject the same inputs.
-- `Enqueue` inserts the job and `Outbox` inserts the message through the unit of work's own `pgx.Tx`. They commit or roll back with the facts; there is no enqueue after commit. Neither advances the Suite revision (the revision counts governance facts only) and neither takes a lock beyond the Suite's.
+- `Job.Validate()` and `OutboxMessage.Validate()` (in `internal/application/governance/queue.go`) apply the limits above. `OutboxMessage.Validate()` is shared by every implementation of `Tx`, and so are `ConsentWrite.Validate`, `PromotionWrite.Validate`, `AssessmentWrite.Validate` and `MergeWrite.Validate` (see "Store write semantics"), so the fake and the adapter reject the same inputs; `Job.Validate()` guards the system enqueue.
+- `Outbox` inserts the message through the unit of work's own `pgx.Tx`. It commits or rolls back with the facts; there is no write after commit. It does not advance the Suite revision (the revision counts governance facts only) and takes no lock beyond the Suite's. There is no `Tx.Enqueue`: a job committed with a fact had no caller, and the outbox plus its relay carry the guarantee that a committed fact has its follow-up (removed in M1.10; see the amendment to [ADR 0005](../decisions/0005-river-background-jobs.md)).
 - A malformed kind, a non-object or oversized `Args`/`Payload`, or an empty key is `ErrInvalidRequest`. A repeated `Key` is `ErrOperationConflict`; use cases replay by receipt before they write, so a repeated key means a genuine conflict.
 - Retry limits, timeouts and backoff are runtime settings per kind (see [runtime](runtime.md)), not part of the port.
 - A job's terminal state is River's `discarded` (retries exhausted) or `completed`; both stay in `river_job` and are counted by the runtime status endpoint until River's cleaner removes them. The runtime sets no retention, so River v0.49.0's defaults apply: completed and cancelled jobs are removed after 24 hours and discarded jobs after 7 days. The job counts of `/status` therefore describe the retained jobs, not the history.
-- `outbox.project_id` and `outbox.suite_id` are both set (a message written through `Tx.Outbox`) or both null (a system message, for example the diagnostic `probe` written through the non-port `Store.EnqueueSystem`, which reuses the same insert statements without taking a Suite lock); a `CHECK` enforces it.
+- `outbox.project_id` and `outbox.suite_id` are both set (a message written through `Tx.Outbox`) or both null (a system message, for example the diagnostic `probe` written through the non-port `Store.EnqueueSystem`, which reuses the outbox insert statement and inserts a job in the same transaction without taking a Suite lock); a `CHECK` enforces it.
 - The outbox row is the single owner of delivery state (it is not mirrored by a River job per message). A relay, itself a periodic River job that runs at startup and then on `OUTBOX_POLL_INTERVAL`, claims due rows with `FOR UPDATE SKIP LOCKED`, increments `attempts`, sets `next_attempt_at` to now plus `OUTBOX_LEASE` and commits; it then calls the publisher registered for the row's kind outside any transaction. An outcome update is conditional on the claim (`WHERE key = $1 AND state = 'pending' AND attempts = <attempts at claim>`): when a publish outlasts the lease and another relay has reclaimed the row, the late outcome updates nothing and is logged, never an error and never overwriting the newer claim. Success sets `state = delivered`. An error sets `last_error`; at `OUTBOX_MAX_ATTEMPTS` the state becomes `failed` (terminal, visible), otherwise `next_attempt_at` is now plus a capped exponential backoff. A crash between claim and outcome leaves the row pending until the lease expires, so it is redelivered. A row whose kind has no registered publisher stays pending. Until M1.7 it failed at once; M1.7 changes that:
 - the relay releases the claim, restoring the attempt, and defers the row by the backoff cap;
 - it logs a Warn naming the kind, once per kind per process;
@@ -232,7 +249,7 @@ Semantics:
 Retried delivery never reverses a committed fact.
 - River schema: River's own migrations are vendored into goose migrations (one migrator and one readiness check, ADR 0026), so `migrations.SupportedVersion` is the highest goose version and covers the River tables and the outbox. A test checks that a database migrated by goose passes River's own migrator validation. Upgrading River means adding a goose migration.
 
-The conformance suite gains: rollback removes the job and the outbox row together with the facts; a duplicate key conflicts; a job and a message written in a unit of work that writes nothing else are committed; neither changes the revision.
+The conformance suite gains: rollback removes the outbox row together with the facts; a duplicate key conflicts; a message written in a unit of work that writes nothing else is committed; it does not change the revision. The system enqueue is tested on PostgreSQL: a job and a message commit together or not at all, and an invalid job is `ErrInvalidRequest`.
 
 ## Proposal revisions (M1.3; normative)
 
@@ -248,28 +265,23 @@ type ProposalWrite struct {
 
 var ErrProposalConflict = errors.New("proposal revision conflict")
 
-type ReviseRequest struct {
-	Revision contract.ProposalRevision // its binding's reference names the proposal and the new revision id
-}
-
 type ReviseResult struct {
 	Current   contract.ProposalReference // the proposal's current revision after the call
 	Committed bool                       // false when nothing was written
 }
 ```
 
-Use case `ReviseProposal(ctx, UnitOfWork, ReviseRequest) (ReviseResult, error)`, inside `Do`:
+The revision rule is one unexported function, `reviseWithin(ctx, tx, revision) (ReviseResult, error)`, that `AssessHead` and `ProposeBaseline` share, inside their own `Do`. There is no public use case for it (`ReviseProposal` was removed in M1.10: nothing called it). Both callers bind the revision to the Suite state they have just read under the lock (the locked project and Suite, the governing policy revision, and the Suite's current version as the expected canonical, none before bootstrap), so the function does not check that binding again. Its steps:
 
-1. The reference's project and Suite must be the locked ones, the binding's policy revision the governing one, and its expected canonical the Suite's current version (no version before bootstrap): a revision is always bound to the state it would be approved against. Otherwise `ErrInvalidRequest`, nothing written.
-2. Load the proposal. `ErrNotFound` → `contract.NewProposal(revision)` and `AppendProposalRevision`.
-3. When the current revision has the same proposal context (project, Suite, proposal) and carrier, and the same coverage (manifest digest, scope digest, covered inputs, expected canonical and policy revision; the origin and the revision id may differ), nothing is written and `Current` is the existing revision: repeated observation and implementation-only pushes create no revision (ADR 0013, D-APPROVAL-CONTEXT). Another carrier never takes this path.
-4. Otherwise `Proposal.Revise(revision)`; its errors are wrapped with `%w` and nothing is written (another carrier is `contract.ErrProposalContextMismatch`, a reused revision id is `contract.ErrRevisionExists`). Then `AppendProposalRevision`.
+1. Load the proposal. `ErrNotFound` → `contract.NewProposal(revision)` and `AppendProposalRevision`.
+2. When the current revision has the same proposal context (project, Suite, proposal) and carrier, and the same coverage (manifest digest, scope digest, covered inputs, expected canonical and policy revision; the origin and the revision id may differ), nothing is written and `Current` is the existing revision: repeated observation and implementation-only pushes create no revision (ADR 0013, D-APPROVAL-CONTEXT). Another carrier never takes this path.
+3. Otherwise `Proposal.Revise(revision)`; its errors are wrapped with `%w` and nothing is written (another carrier is `contract.ErrProposalContextMismatch`, a reused revision id is `contract.ErrRevisionExists`). Then `AppendProposalRevision`.
 
-A revision carries no operation id: identity is the revision id inside its proposal, and a retried request either matches step 3 or fails in step 4.
+A revision carries no operation id: identity is the revision id inside its proposal, and a retried request either matches step 2 or fails in step 3.
 
 Store write semantics of `AppendProposalRevision`: insert the proposal row when it is absent, then the revision with the next sequence number of its proposal; bump the Suite revision once. A reference outside the locked Suite is `ErrInvalidRequest`. A revision id that already exists, or a carrier that differs from the stored proposal's, is `ErrProposalConflict` (the use case rules both out first, so either means a broken caller). Reads of the proposal inside the same unit of work see the new revision.
 
-The conformance suite gains: the first revision creates the proposal; a second revision becomes current and older ones stay resolvable; a duplicate revision id and another carrier conflict; a foreign Suite is rejected; each append advances the revision by exactly one; rollback removes the proposal and its revisions. The use-case tests add: an unchanged coverage writes nothing; the same coverage under another carrier is rejected, not ignored; a policy or canonical mismatch is rejected; and a proposal blocked by `PromotionReasonCanonicalChanged` is revised against the new canonical and promotes only after a fresh exact approval of the new revision (R1 used a stand-in proposal for this).
+The conformance suite gains: the first revision creates the proposal; a second revision becomes current and older ones stay resolvable; a duplicate revision id and another carrier conflict; a foreign Suite is rejected; each append advances the revision by exactly one; rollback removes the proposal and its revisions. The use-case tests (through `ProposeBaseline` and `AssessHead`) add: an unchanged coverage writes nothing; the same coverage under another carrier is rejected, not ignored; a reused revision id with other coverage is rejected; and a proposal blocked by `PromotionReasonCanonicalChanged` is revised against the new canonical and promotes only after a fresh exact approval of the new revision (R1 used a stand-in proposal for this).
 
 ## Baseline proposals (M1.3; normative)
 
@@ -299,7 +311,7 @@ Use case `ProposeBaseline(ctx, UnitOfWork, ContentWriter, BaselineRequest) (Base
 
 1. `inventory.Build(ctx, request.Tree)`; its errors are wrapped with `%w` (an invalid declaration or an unsafe entry writes nothing).
 2. For every manifest entry, read the bytes from the tree, re-hash them, and `Put` them. A digest that does not match the manifest entry fails before that entry is stored and with nothing written to the database (entries stored before it stay in the store, as orphans). Content is stored before any database write: an orphan blob after a later failure is harmless, a version row without its bytes is not.
-3. Inside one `Do`: the Suite must have no current canonical (otherwise `ErrInvalidRequest`: a baseline is only for bootstrap). Build the binding from the reference, `ExpectedCanonical` empty, the inventory's manifest digest and scope digest, the governing policy revision, and covered inputs `{}`; `contract.NewProposalRevision(binding, Origin, Carrier)`. Then apply exactly the logic of `ReviseProposal` steps 1–4, through one unexported function shared by both use cases, so a repeated baseline with the same coverage writes nothing.
+3. Inside one `Do`: the Suite must have no current canonical (otherwise `ErrInvalidRequest`: a baseline is only for bootstrap). Build the binding from the reference, `ExpectedCanonical` empty, the inventory's manifest digest and scope digest, the governing policy revision, and covered inputs `{}`; `contract.NewProposalRevision(binding, Origin, Carrier)`. Then apply `reviseWithin` (see "Proposal revisions"), which `AssessHead` shares, so a repeated baseline with the same coverage writes nothing.
 
 There are no new `Tx` methods and no migration. The first canonical is then created by `Bootstrap` with `Integration` of kind existing baseline and `Proposed = BaselineResult.Contract`, after approval and integrity assessment as before.
 
@@ -513,7 +525,7 @@ type AssessmentWrite struct {
 }
 ```
 
-- **Outbox inside the use case.** `ConsentRequest`, `BaselineRequest` and `PromoteRequest` gain `Outbox []OutboxMessage`. `ProcessConsent`, `ProposeBaseline`, and `Promote`/`Bootstrap`/`Correct` write it inside their own transaction, after their facts. Nothing is written when there are no new facts: a duplicate consent (replay by operation id or source), a baseline with unchanged coverage, or a promotion replay. Because the message is written in the same transaction as its facts, an acknowledgment never reports what did not commit (ADR 0011). The payloads are defined in the [runtime contract](runtime.md#command-and-bootstrap-jobs-m16a) (outbox kind `github_comment`).
+- **Outbox inside the use case.** `ConsentRequest`, `BaselineRequest` and `PromoteRequest` gain `Outbox []OutboxMessage`. `ProcessConsent`, `ProposeBaseline` and `Bootstrap` write it inside their own transaction, after their facts (only `Bootstrap` uses `PromoteRequest.Outbox`; a merge writes its message through `MergeRequest.Message`). Nothing is written when there are no new facts: a duplicate consent (replay by operation id or source), a baseline with unchanged coverage, or a bootstrap replay. Because the message is written in the same transaction as its facts, an acknowledgment never reports what did not commit (ADR 0011). The payloads are defined in the [runtime contract](runtime.md#command-and-bootstrap-jobs-m16a) (outbox kind `github_comment`).
 - **Outcomes.** The evidence outcome is:
   - `Passed` when the protected inventory of the exact source equals the revision's binding (manifest and scope digests);
   - `Failed` when it differs;
@@ -766,9 +778,9 @@ type ClosedPull struct {
   - It sets `resolved_for = not_open_since`, the merge facts and `resolved_at`. It refreshes the head and base columns and `head_repo` from the read, because a push between the last cycle and the merge is not otherwise seen.
   - A pull that reopens is upserted by the cycle, which clears `not_open_since`. A later absence is then unresolved again (`resolved_for <> not_open_since`). A merged pull cannot reopen.
 - **Closed listing.**
-  - `RecordClosed` keeps a per-repository watermark (`github_repositories.closed_watermark`), which is GitHub's greatest `updated_at` seen in the listing.
-  - The first call for a repository only sets the watermark.
-  - A later call inserts each merged item with `updated_at` above the watermark and no `github_pulls` row: a new row with `first_seen = last_seen = not_open_since = at` and no resolution, which the merges job then resolves with `Reader.Pull`. Then it raises the watermark.
+  - `RecordClosed` keeps a per-repository watermark (`github_repositories.closed_watermark`), which is GitHub's greatest `updated_at` seen in the listing; the first call sets it one microsecond past that value instead.
+  - **The first call is exclusive.** The first call for a repository only sets the watermark, one microsecond past its newest item. What it listed is history and is never inserted later, so a merge from before enrollment is not backfilled. A merge in the exact moment of that newest item that is listed only later is history too.
+  - A later call inserts each merged item with `updated_at` at or above the watermark (inclusive from the second call on: a pull merged in the same second as the item that raised the watermark is not lost, and a seen pull is left alone) and no `github_pulls` row: a new row with `first_seen = last_seen = not_open_since = at` and no resolution, which the merges job then resolves with `Reader.Pull`. Then it raises the watermark.
   - Existing rows and unmerged items are left alone.
   - Times from GitHub are compared only with times from GitHub.
 - **Processed.** `MarkProcessed` sets `merge_processed`.
@@ -778,7 +790,7 @@ type ClosedPull struct {
 - **Conformance.**
   - Absence, then resolution, then reopen, then a new absence that is unresolved.
   - A stale resolution writes nothing.
-  - The closed listing: first call sets the watermark; an unseen merged item is inserted unresolved; a seen pull and an older item are ignored.
+  - The closed listing: first call sets an exclusive watermark; an item it listed, or one at its newest moment listed only later, is never inserted; an unseen merged item above the watermark is inserted unresolved; a seen pull and an item below the watermark are ignored; on a later call an item at exactly the current watermark is inserted.
   - `Merged` ordering and the `Processed` flag.
   - The head repository round-trips.
 
@@ -843,7 +855,7 @@ func MergeOutcomeOf(ctx context.Context, uow UnitOfWork, project contract.Projec
       - allocate the next version: the current id is `V<n>` and the next is `V<n+1>`; another form of id is `ErrInvalidState`;
       - when an earlier version (`V1`..`V<n-1>`, read with `Tx.Version`) has the integrated manifest digest, decide a correction with target the current version (the version being corrected); otherwise decide a promotion;
       - use operation id `merge:<carrier>` and an `IntegrationMergedChange` integration with source `Source`, carrier `Carrier` and the Suite's target;
-      - decide inside this same `Do`, sharing `runPromotion`'s decision and write logic, which is factored into a function over `Tx`. The behavior of `Promote` and `Correct` is unchanged.
+      - decide inside this same `Do`, sharing the decision and write logic of `Bootstrap` (`promoteWithin`), which is a function over `Tx`.
 
       `PromotionProposed` gives `promoted` or `corrected`. `PromotionBlocked` maps:
       - `ApprovalMissing` to `approval-missing`;
@@ -945,7 +957,7 @@ func (r ProposalRevision) OriginKind() OriginKind
 - an `IntegrationExistingBaseline` integration when the current revision is `OriginBranch`, with source = origin, as before;
 - an `IntegrationMergedChange` integration when the current revision is `OriginPull`, with the carrier of the proposal and the merge commit as source. The source may equal the revision's origin (a fast-forward merge): the kind, not the commit, separates the paths.
 
-Any other combination is `PromotionReasonIntegrationMismatch`. `DecidePromotion` applies the same rule wherever it decides: an `IntegrationExistingBaseline` integration requires an `OriginBranch` revision, so `Promote` cannot make a `pull` head canonical either. A PR head therefore never becomes canonical without its merge.
+Any other combination is `PromotionReasonIntegrationMismatch`. `DecidePromotion` applies the same rule wherever it decides: an `IntegrationExistingBaseline` integration requires an `OriginBranch` revision, so a bootstrap cannot make a `pull` head canonical either. A PR head therefore never becomes canonical without its merge.
 
 Reconstitution and equality include the kind.
 
@@ -1253,4 +1265,4 @@ All enumerations are `text` with `CHECK` constraints. Immutable and append-only 
 
 ## Behaviors that must stay covered
 
-The conformance suite (fake and PostgreSQL) names each of these: replay by operation id and by source command id; the same operation id in another Suite or kind → conflict; a source command replayed by another actor → conflict; an alias advances the revision; rejected results do not consume command order; full rollback when `fn` fails; canceled context; version conflict. PostgreSQL integration tests add: concurrent promotions (exactly one wins), rollback when any statement fails, triggers rejecting history mutation, and missing or corrupt content rejected when a version is written.
+The conformance suite (fake and PostgreSQL) names each of these: replay by operation id and by source command id; the same operation id in another Suite or kind → conflict; a source command replayed by another actor → conflict; an alias advances the revision; rejected results do not consume command order; full rollback when `fn` fails; canceled context; version conflict; and the write guard (`write_guard_conformance.go`), where each invalid write is refused and leaves the visible state unchanged. For `AppendConsent` that is a command of another Suite, a receipt of another source command, no operation id, a result without a command (all `ErrInvalidRequest`), and a duplicate result that is not an alias, an alias of a result that is not a duplicate and an operation id other than the command's (all `ErrOperationConflict`). For `RecordPromotion`, all `ErrInvalidRequest`, it is a promotion of another Suite, a receipt request naming another operation, a receipt identity correcting another version or bound to another revision, a record time finer than a microsecond, no record, no version id, and a version of another Suite under a record of this one. PostgreSQL integration tests add: concurrent merges and concurrent bootstraps (exactly one version is recorded), rollback when any statement fails, triggers rejecting history mutation, and missing or corrupt content rejected when a version is written.

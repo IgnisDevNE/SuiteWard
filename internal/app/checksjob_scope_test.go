@@ -59,12 +59,12 @@ func (w *cjJobWorld) scopeKeys(prefix string) []string {
 }
 
 // scopePull opens pull 5 at head, whose tree is headFiles, over the base commit cjBase, whose tree is baseFiles, and checks once.
-func (w *cjJobWorld) scopePull(head string, headFiles, baseFiles map[string]string) {
+func (w *cjJobWorld) scopePull(headFiles, baseFiles map[string]string) {
 	w.t.Helper()
 	w.bases = map[int]string{5: cjBase}
-	w.tree(head, headFiles)
+	w.tree(cjHead2, headFiles)
 	w.tree(cjBase, baseFiles)
-	w.sync(map[int]string{4: bootHead, 5: head})
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
 	w.mustCheck()
 }
 
@@ -78,9 +78,9 @@ func (w *cjJobWorld) wantNoScopeMessages() {
 func TestChecksWriteOneScopeNoticeForANewTestFileOutsideTheScope(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 
-	wantKey := "scope-notice:1001:5:" + scopeDigest(cjUtilTst)
+	wantKey := noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)
 	if keys := w.scopeKeys("scope-"); !slices.Equal(keys, []string{wantKey}) {
 		t.Fatalf("scope messages %v, want exactly %s\nlogs: %s", keys, wantKey, w.logs)
 	}
@@ -112,7 +112,7 @@ func TestChecksDecideOnceForAHeadTestPathThatIsNoValidPath(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			w := newCJWorld(t, true)
 
-			w.scopePull(cjHead2, withFiles(bootFiles("v1"), path), bootFiles("v1"))
+			w.scopePull(withFiles(bootFiles("v1"), path), bootFiles("v1"))
 
 			w.want(5, checks.Failure, "invalid-source", 1)
 			w.wantNoScopeMessages()
@@ -128,9 +128,9 @@ func TestChecksDecideOnceForAHeadTestPathThatIsNoValidPath(t *testing.T) {
 
 func TestChecksScopeNoticeLeavesTheCheckAsItWas(t *testing.T) {
 	with := newCJWorld(t, true)
-	with.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+	with.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 	without := newCJWorld(t, true)
-	without.scopePull(cjHead2, bootFiles("v1"), bootFiles("v1"))
+	without.scopePull(bootFiles("v1"), bootFiles("v1"))
 
 	if len(with.scopeMessages("scope-notice:")) != 1 || len(without.scopeMessages("scope-")) != 0 {
 		t.Fatalf("scope messages %v with the file and %v without it, want one and none", with.scopeKeys("scope-"), without.scopeKeys("scope-"))
@@ -153,9 +153,9 @@ func TestChecksScopeNoticeLeavesTheCheckAsItWas(t *testing.T) {
 func TestChecksReportARunnerFileOutsideTheScope(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), "conftest.py"), bootFiles("v1"))
+	w.scopePull(withFiles(bootFiles("v1"), "conftest.py"), bootFiles("v1"))
 
-	wantKey := "scope-notice:1001:5:" + scopeDigest("conftest.py")
+	wantKey := noticeKey(t, nil, []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini", "pytest.toml"}, "conftest.py")
 	if keys := w.scopeKeys("scope-"); !slices.Equal(keys, []string{wantKey}) {
 		t.Fatalf("scope messages %v, want exactly %s\nlogs: %s", keys, wantKey, w.logs)
 	}
@@ -202,7 +202,7 @@ func TestChecksWriteNoScopeNoticeWhenThereIsNothingToReport(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := tc.world(t)
 
-			w.scopePull(cjHead2, tc.head, tc.baseFiles)
+			w.scopePull(tc.head, tc.baseFiles)
 
 			w.wantNoScopeMessages()
 			if reads := w.reader.reads[cjBase]; reads != tc.baseReads {
@@ -223,7 +223,7 @@ func TestChecksWriteNoScopeNoticeForAForkAClosedPullRequestOrASuiteWithoutACanon
 		w := newCJWorld(t, true)
 		w.headRepo = map[int]string{5: "evil/widgets"}
 
-		w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+		w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 
 		w.wantNoScopeMessages()
 		if w.reader.reads[cjBase] != 0 || w.reader.reads[cjHead2] != 0 {
@@ -257,8 +257,8 @@ func TestChecksWriteNoScopeNoticeForAForkAClosedPullRequestOrASuiteWithoutACanon
 
 func TestChecksWriteOneScopeNoticePerSetOfAddedPaths(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
-	first := "scope-notice:1001:5:" + scopeDigest(cjUtilTst)
+	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+	first := noticeKey(t, []string{"*_test.go"}, nil, cjUtilTst)
 
 	// A later head with the same added path, and one more implementation change.
 	w.tree(cjHead3, withFiles(bootFiles("v1"), cjUtilTst, "src/more.go"))
@@ -277,7 +277,7 @@ func TestChecksWriteOneScopeNoticePerSetOfAddedPaths(t *testing.T) {
 	w.sync(map[int]string{4: bootHead, 5: cjHead4})
 	w.mustCheck()
 
-	second := "scope-notice:1001:5:" + scopeDigest("pkg/other_test.go", cjUtilTst)
+	second := noticeKey(t, []string{"*_test.go"}, nil, "pkg/other_test.go", cjUtilTst)
 	if keys := w.scopeKeys("scope-notice:"); !slices.Equal(keys, []string{first, second}) {
 		t.Fatalf("notices %v, want %s then %s", keys, first, second)
 	}
@@ -285,7 +285,7 @@ func TestChecksWriteOneScopeNoticePerSetOfAddedPaths(t *testing.T) {
 
 func TestChecksReadTheBaseTreeOnceForEveryHeadAndNeverForATickThatChangesNothing(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 	head, base := w.reader.reads[cjHead2], w.reader.reads[cjBase]
 	if base != 1 {
 		t.Fatalf("the base tree was read %d times for the first head, want once", base)
@@ -312,7 +312,7 @@ func TestChecksDecideOnceForABaseCommitThatCanNeverBeRead(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.reader.repo(bootRepo).treeErr[cjBase] = fmt.Errorf("%w: not a commit SHA", github.ErrInvalidArgument)
 
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 
 	w.wantNoScopeMessages()
 	head, base := w.reader.reads[cjHead2], w.reader.reads[cjBase]
@@ -323,7 +323,7 @@ func TestChecksDecideOnceForABaseCommitThatCanNeverBeRead(t *testing.T) {
 	}
 }
 
-func TestChecksWriteNoScopeNoticeForADeclarationTooLargeToShow(t *testing.T) {
+func TestChecksOfferThePatternsAloneForADeclarationTooLargeToShow(t *testing.T) {
 	var declaration strings.Builder
 	declaration.WriteString("version: 1\ninclude:\n  - /tests/**\n")
 	for i := range 700 {
@@ -332,11 +332,11 @@ func TestChecksWriteNoScopeNoticeForADeclarationTooLargeToShow(t *testing.T) {
 	files := withDeclaration(bootFiles("v1"), declaration.String())
 	w := newCJWorldOf(t, files)
 
-	w.scopePull(cjHead2, withFiles(files, cjUtilTst), files)
+	w.scopePull(withFiles(files, cjUtilTst), files)
 
-	w.wantNoScopeMessages()
-	if !strings.Contains(w.logs.String(), "scope notice skipped") {
-		t.Fatalf("no log line says the notice was skipped\nlogs: %s", w.logs)
+	stored, text := w.postedScopeNotice()
+	if _, found := stored["declaration"]; found || !reflect.DeepEqual(stored["addInclude"], []any{"*_test.go"}) || !strings.Contains(text, "```\n*_test.go\n```") {
+		t.Fatalf("payload %v and text\n%s\nwant the pattern alone", stored, text)
 	}
 	w.want(5, checks.Success, "unchanged", 1)
 }
@@ -390,7 +390,7 @@ func TestChecksLogTheReasonWhenTheNoticeCannotBeRendered(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.refs = map[int]string{5: "a..b"} // not a git ref name
 
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 
 	w.wantNoScopeMessages()
 	line := w.logged("scope notice skipped: it cannot be rendered")
@@ -408,7 +408,7 @@ func TestChecksSayThatTheDeclarationOfAScopeNoticeWasCut(t *testing.T) {
 		"test_helper.rb", "dart_test.yaml", "codecov.yml", "conftest.py"} // 25 runner patterns
 	w := newCJWorld(t, true)
 
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), runners...), bootFiles("v1"))
+	w.scopePull(withFiles(bootFiles("v1"), runners...), bootFiles("v1"))
 
 	messages := w.scopeMessages("scope-notice:")
 	if len(messages) != 1 {
@@ -426,7 +426,7 @@ func TestChecksSayThatTheDeclarationOfAScopeNoticeWasCut(t *testing.T) {
 func TestChecksLeaveCutOutOfAScopeNoticeThatWasNotCut(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.scopePull(cjHead2, withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
+	w.scopePull(withFiles(bootFiles("v1"), cjUtilTst), bootFiles("v1"))
 
 	var payload map[string]any
 	if err := json.Unmarshal(w.scopeMessages("scope-notice:")[0].Payload, &payload); err != nil {
@@ -444,7 +444,7 @@ func TestChecksDoNotSayCutForRunnerNamesTheCanonicalAlreadyLists(t *testing.T) {
 	base := withDeclaration(bootFiles("v1"), canonical)
 	w := newCJWorldOf(t, base)
 
-	w.scopePull(cjHead2, withFiles(base, files...), base)
+	w.scopePull(withFiles(base, files...), base)
 
 	messages := w.scopeMessages("scope-notice:")
 	if len(messages) != 1 {

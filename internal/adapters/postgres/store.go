@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/internal/dbgen"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -34,23 +33,19 @@ type ArtifactVerifier interface {
 	Verify(ctx context.Context, digest artifact.Digest) error
 }
 
-// JobInserter inserts a job through a unit of work's transaction and returns
-// its id. The River adapter implements it.
+// JobInserter inserts a job through the transaction of EnqueueSystem and returns its id. The River adapter implements it.
 type JobInserter interface {
 	Insert(ctx context.Context, tx pgx.Tx, job governance.Job) (int64, error)
 }
 
-// Store implements governance.UnitOfWork and governance.Seeder on PostgreSQL.
+// Store implements governance.UnitOfWork on PostgreSQL. Seed, the test-only governance.Seeder, is in seed_test.go.
 type Store struct {
 	pool      *pgxpool.Pool
 	artifacts ArtifactVerifier
 	jobs      JobInserter
 }
 
-var (
-	_ governance.UnitOfWork = (*Store)(nil)
-	_ governance.Seeder     = (*Store)(nil)
-)
+var _ governance.UnitOfWork = (*Store)(nil)
 
 // NewStore returns a Store after checking that the database is at the schema
 // version this build supports. The artifact verifier is consulted only when a
@@ -65,8 +60,8 @@ func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier, jobs JobInserter) 
 	if err != nil {
 		return nil, fmt.Errorf("%w: read schema version: %w", ErrSchemaNotReady, err)
 	}
-	if version != migrations.SupportedVersion {
-		return nil, fmt.Errorf("%w: schema version %d, this build requires %d", ErrSchemaNotReady, version, migrations.SupportedVersion)
+	if err := supportedSchema(version); err != nil {
+		return nil, err
 	}
 	return &Store{pool: pool, artifacts: artifacts, jobs: jobs}, nil
 }
@@ -92,7 +87,7 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 			rollback(ctx, transaction)
 		}
 	}()
-	work := &tx{q: dbgen.New(transaction), raw: transaction, project: project, suite: suite, artifacts: s.artifacts, jobs: s.jobs}
+	work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
 	if _, err := work.lock(ctx); err != nil {
 		return err
 	}

@@ -36,12 +36,7 @@ const (
 	invalidSourceKey = "invalid-source" // invalid-source:<repository id>:<pull>:<problem digest>
 )
 
-var (
-	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`) // GitHub's caps: a payload is measured with the longest name
-	referencePattern = regexp.MustCompile(`^P([1-9][0-9]{0,8})-R([1-9][0-9]{0,8})$`)
-	// loginPattern is commandtext's: the renderer panics on any other owner.
-	loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$`)
-)
+var repoPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,100}$`) // as config accepts a repository (GitHub's caps): commandtext exports no repository check without a branch
 
 // validate reports why the target cannot name a pull request.
 func (t commentTarget) validate() error {
@@ -82,7 +77,7 @@ type ackPayload struct {
 	Paths         []string             `json:"paths,omitempty"`         // scope-notice: at most 20 uncovered test-like paths of the head, each cut to 150 bytes,
 	PathsTotal    int                  `json:"pathsTotal,omitempty"`    // how many there are,
 	Declaration   string               `json:"declaration,omitempty"`   // and the canonical declaration with the new patterns added, at most 8192 bytes
-	Declared      bool                 `json:"declared,omitempty"`      // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded)
+	Declared      bool                 `json:"declared,omitempty"`      // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded; removed with reasonDeclarationTooLarge once no host can hold a payload from before v0.1.2)
 	Base          string               `json:"base,omitempty"`          // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; none in a notice written before M1.9-E5. Also an invalid-source suggest-refused, for the file that is not a valid declaration
 	AddInclude    []string             `json:"addInclude,omitempty"`    // with a base: the include patterns the base lacks,
 	AddRunner     []string             `json:"addRunner,omitempty"`     // and the runner patterns, at most 20 together
@@ -125,7 +120,7 @@ const (
 	reasonEmptyInventory      = "empty-inventory"
 	refusalInvalidSource      = "invalid-source" // named like the bootstrap job's status code
 	reasonCarrier             = "carrier"
-	reasonDeclarationTooLarge = "declaration-too-large" // suggest-refused: the suggested declaration is over the size of a notice
+	reasonDeclarationTooLarge = "declaration-too-large" // suggest-refused, no longer written: a queued acknowledgment of v0.1.1 holds it and must still render; removed with the Declared field once no host can hold a payload from before v0.1.2
 	reasonDeclarationMissing  = "declaration-missing"   // rendered by commandtext.SuggestDeclaration, which is not an Ack
 	reasonScopeNotice         = "scope-notice"          // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
 	reasonNothingUncovered    = "nothing-uncovered"     // a suggested reply that every test-like path of the head is in the scope
@@ -149,18 +144,6 @@ var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.SkipRefused: commandtext.SkipRefused, commands.Failed: commandtext.ProposeFailed, // a failed command is acknowledged only when it was a propose
 	// A suggest that finds a declaration to suggest is rendered by its own texts, so Suggested here is the one that finds nothing to add.
 	commands.Suggested: commandtext.NothingUncovered, commands.SuggestRefused: commandtext.SuggestRefused,
-}
-
-// referenceRule says whether the acknowledgment of d names a reference: always, never, or only when the command had one
-// (a skip and a propose have none, so their code outcomes and no-suite come without).
-func referenceRule(d commands.Disposition) (required, allowed bool) {
-	switch d {
-	case commands.UnknownProposal, commands.Proposed:
-		return true, true
-	case commands.InvalidCode, commands.ReplayedCode, commands.NoSuite:
-		return false, true
-	}
-	return false, false
 }
 
 // reasonFits reports whether reason is one a payload of d may carry.
@@ -195,28 +178,6 @@ func (a ackPayload) scopeNotice() bool {
 	return a.Disposition == string(commands.Suggested) && a.Reason == reasonScopeNotice
 }
 
-// nothingUncovered is whether the payload is the answer of a suggest that found every test-like path covered.
-func (a ackPayload) nothingUncovered() bool {
-	return a.Disposition == string(commands.Suggested) && a.Reason == reasonNothingUncovered
-}
-
-// namesFile is whether the payload is the refusal of a suggest whose base file is not a valid declaration, or of a propose whose source is invalid,
-// which names the file in Base: the head's or the default branch's. The contract is no file of a branch.
-func (a ackPayload) namesFile() bool {
-	return a.Reason == refusalInvalidSource && (a.Disposition == string(commands.SuggestRefused) || a.Disposition == string(commands.ProposeRefused) && a.Base != baseContract)
-}
-
-// editable is whether the payload may carry the Branch of the file to edit: a refusal that names its file, or a suggest whose declaration is too large.
-func (a ackPayload) editable() bool {
-	return (a.namesFile() && (a.Base == basePull || a.Base == baseDefaultBranch)) || (a.tooLarge() && (a.Base == "" || a.Base == baseDefaultBranch))
-}
-
-// tooLarge is whether the payload is the refusal of a suggest whose suggested declaration is too large for a comment. Its Base is none for the
-// pull request's file, or the default branch's when that was the base.
-func (a ackPayload) tooLarge() bool {
-	return a.Disposition == string(commands.SuggestRefused) && a.Reason == reasonDeclarationTooLarge
-}
-
 // hasNotice is whether the payload holds any field that only a scope notice uses. Base is not one: nothing-uncovered names it too.
 func (a ackPayload) hasNotice() bool {
 	return len(a.Paths) != 0 || a.PathsTotal != 0 || a.Declaration != "" || len(a.AddInclude) != 0 || len(a.AddRunner) != 0 || a.DefaultBranch != ""
@@ -238,12 +199,13 @@ func (a ackPayload) suggestion() commandtext.DeclarationSuggestion {
 	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Submodules: a.Submodules, Cut: a.Cut, Suggest: a.Disposition == string(commands.Suggested), Declared: a.Declared}
 }
 
-// validate reports why the payload cannot be rendered, without quoting it.
+// validate reports why the payload cannot be rendered, without quoting it. The shape of an acknowledgment is commandtext's (ValidateAck); what is
+// checked here is the envelope: which of the shapes the payload is, and the fields that no Ack carries.
 func (a ackPayload) validate() error {
 	if err := a.commentTarget.validate(); err != nil {
 		return err
 	}
-	if a.Comment <= 0 || !loginPattern.MatchString(a.Owner) {
+	if a.Comment <= 0 || !commandtext.ValidLogin(a.Owner) {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
@@ -259,29 +221,37 @@ func (a ackPayload) validate() error {
 	if !reasonFits(d, a.Reason) {
 		return errors.New("the reason does not fit the disposition")
 	}
-	required, allowed := referenceRule(d)
-	if (required && a.Reference == "") || (!allowed && a.Reference != "") {
-		return errors.New("the reference fits only a command that parsed")
-	}
-	if a.Reference != "" {
-		if _, _, ok := parseReference(a.Reference); !ok {
-			return errors.New("the reference is not P<n>-R<m>")
-		}
-	}
 	if _, known := scopeBases[a.Base]; !known && a.Base != "" {
 		return errors.New("the base is unknown")
 	}
 	switch {
 	case a.scopeNotice():
 		return a.validateNotice()
-	case !a.declarationMissing():
-		if (a.Branch != "" && !a.editable()) || a.suggested() || a.hasNotice() || a.Declared || (a.Base != "" && !a.nothingUncovered() && !a.namesFile() && !a.tooLarge()) {
-			return errors.New("the branch, the suggestion and the notice fit only a missing declaration, a scope notice or a refusal that names its file")
-		}
-		if a.Branch != "" && commandtext.ValidateEditTarget(a.Repo, a.Branch) != nil {
-			return errors.New("the repository or the branch does not make an editor link")
-		}
-		return nil
+	case a.declarationMissing():
+		return a.validateMissing()
+	}
+	return a.validateRejected()
+}
+
+// validateRejected reports why the payload of an acknowledgment that has no receipt cannot be rendered.
+func (a ackPayload) validateRejected() error {
+	if a.suggested() || a.hasNotice() || a.Declared {
+		return errors.New("the suggestion and the notice fit only a missing declaration or a scope notice")
+	}
+	if _, _, ok := commandtext.ParseReference(a.Reference); a.Reference != "" && !ok { // an unreadable reference would render as none
+		return errors.New("the reference is not P<n>-R<m>")
+	}
+	if commandtext.ValidateAck(rejectedAckOf(a)) != nil { // its text quotes the owner and the branch, so only a fixed reason is kept
+		return errors.New("the acknowledgment does not fit its disposition")
+	}
+	return nil
+}
+
+// validateMissing reports why a declaration-missing payload cannot be rendered.
+func (a ackPayload) validateMissing() error {
+	switch {
+	case a.Reference != "":
+		return errors.New("a missing declaration names no reference")
 	case a.hasNotice() || a.Base != "":
 		return errors.New("a missing declaration holds no scope notice")
 	case a.Declared && a.Disposition != string(commands.Suggested):
@@ -364,9 +334,13 @@ func declarationMissingPayload(target commentTarget, comment int64, ownerLogin, 
 // the notice cannot be rendered.
 // defaultBranch, for the base default-branch, is the branch whose file the reply links to.
 func newScopeNoticeAck(target commentTarget, comment int64, ownerLogin, branch, base, defaultBranch string, paths []string, declaration []byte, suggested inventory.Suggestion, mixed, submodules []string) (governance.OutboxMessage, error) {
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
-		Paths: boundedText(paths), PathsTotal: len(paths), Declaration: string(declaration), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut,
-		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner), DefaultBranch: defaultBranch})
+	p := ackPayload{commentTarget: target, Disposition: string(commands.Suggested), Comment: comment, Owner: ownerLogin, Reason: reasonScopeNotice, Branch: branch,
+		Paths: boundedText(paths), PathsTotal: len(paths), Mixed: boundedText(mixed), Submodules: boundedText(submodules), Cut: suggested.Cut,
+		Base: base, AddInclude: boundedText(suggested.Include), AddRunner: boundedText(suggested.Runner), DefaultBranch: defaultBranch}
+	if commandtext.CanShow(declaration) { // one that cannot be shown is left out: the reply then lists the patterns alone
+		p.Declaration = string(declaration)
+	}
+	return newAck(p)
 }
 
 // newSuggestRefusedAck builds the refusal of a suggest. base, when not empty, says which file is not a valid declaration (invalid-source only).
@@ -404,16 +378,6 @@ func newAck(p ackPayload) (governance.OutboxMessage, error) {
 	}
 	key := fmt.Sprintf("%s:%d:%d", ackKey, p.RepositoryID, p.Comment)
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
-}
-
-func parseReference(s string) (proposal, revision int, ok bool) {
-	m := referencePattern.FindStringSubmatch(s)
-	if m == nil {
-		return 0, 0, false
-	}
-	proposal, _ = strconv.Atoi(m[1]) // the pattern admits one to nine digits
-	revision, _ = strconv.Atoi(m[2])
-	return proposal, revision, true
 }
 
 // lazy resolves a value on first use and keeps it. A failure is returned and the next call tries again, so
@@ -531,6 +495,15 @@ func render(kind, key string, fn func() string) (text string, err error) {
 	return fn(), nil
 }
 
+// commentHandlers render the body of each github_comment kind but the scope review, which posts on the diff: they decode and check the payload against the
+// key, and return the pull request and the text.
+var commentHandlers = map[string]func(p *commentPublisher, ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error){
+	ackKey: (*commentPublisher).acknowledgment, bootstrapSummaryKey: (*commentPublisher).summary, bootstrapPromotedKey: (*commentPublisher).promoted,
+	bootstrapNoticeKey: (*commentPublisher).notice, bootstrapCancelledKey: (*commentPublisher).cancelled, mergeKey: (*commentPublisher).merge,
+	revisionKey: (*commentPublisher).revision, scopeNoticeKey: (*commentPublisher).scopeNotice, invalidSourceKey: (*commentPublisher).invalidSource,
+	runnerUncoveredKey: (*commentPublisher).runnerUncovered,
+}
+
 // publish delivers one github_comment message: it renders the body from the payload and the facts it names, and
 // posts it unless the bot already commented it (the marker is the idempotency key, so at-least-once delivery
 // posts once).
@@ -542,33 +515,11 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	if kind == scopeReviewKey { // posts on the diff, so it has no issue comment to find or to write
 		return p.publishReview(ctx, key, repositoryID, tail, payload)
 	}
-	var (
-		target commentTarget
-		text   string
-		err    error
-	)
-	switch kind {
-	case ackKey:
-		target, text, err = p.acknowledgment(ctx, key, tail, payload)
-	case bootstrapSummaryKey:
-		target, text, err = p.summary(key, tail, payload)
-	case bootstrapPromotedKey:
-		target, text, err = p.promoted(ctx, key, tail, payload)
-	case bootstrapNoticeKey:
-		target, text, err = p.notice(key, tail, payload)
-	case bootstrapCancelledKey:
-		target, text, err = p.cancelled(key, tail, payload)
-	case mergeKey:
-		target, text, err = p.merge(key, tail, payload)
-	case revisionKey:
-		target, text, err = p.revision(key, tail, payload)
-	case scopeNoticeKey:
-		target, text, err = p.scopeNotice(key, tail, payload)
-	case invalidSourceKey:
-		target, text, err = p.invalidSource(key, tail, payload)
-	case runnerUncoveredKey:
-		target, text, err = p.runnerUncovered(key, tail, payload)
+	handler, known := commentHandlers[kind]
+	if !known {
+		return keyError(githubCommentKind, key, "the kind has no renderer")
 	}
+	target, text, err := handler(p, ctx, key, tail, payload)
 	if err != nil {
 		return err
 	}
@@ -683,7 +634,7 @@ func rejectedAckOf(a ackPayload) commandtext.Ack {
 		ack.Refusal = suggestRefusals[a.Reason]
 	}
 	if a.Reference != "" {
-		ack.Proposal, ack.Revision, _ = parseReference(a.Reference)
+		ack.Proposal, ack.Revision, _ = commandtext.ParseReference(a.Reference)
 	}
 	return ack
 }
@@ -698,7 +649,7 @@ var rejections = map[contract.ConsentReason]commandtext.Rejection{
 // processing time, and the promotion that already happened for a proposal that is canonical.
 func ackOf(receipt governance.ConsentReceipt, ownerLogin string, comment int64) (commandtext.Ack, error) {
 	reference := receipt.Result.Command().Reference()
-	proposal, revision, ok := parseReference(string(reference.ProposalID) + "-" + string(reference.RevisionID))
+	proposal, revision, ok := commandtext.ParseReference(string(reference.ProposalID) + "-" + string(reference.RevisionID))
 	if !ok {
 		return commandtext.Ack{}, errors.New("the receipt does not name a P<n>-R<m> reference")
 	}
@@ -733,12 +684,12 @@ func ackOf(receipt governance.ConsentReceipt, ownerLogin string, comment int64) 
 	return ack, nil
 }
 
-func (p *commentPublisher) summary(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) summary(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	s, err := decodePayload[bootstrapSummaryPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
 	}
-	proposal, revision, ok := parseReference(tail)
+	proposal, revision, ok := commandtext.ParseReference(tail)
 	if !ok || s.validate() != nil || s.Summary.Proposal != proposal || s.Summary.Revision != revision {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
@@ -755,7 +706,7 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 	if err != nil {
 		return commentTarget{}, "", err
 	}
-	proposal, revision, ok := parseReference(tail)
+	proposal, revision, ok := commandtext.ParseReference(tail)
 	if !ok || b.validate() != nil || b.Reference != tail || b.Version != string(firstVersion) {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
@@ -772,7 +723,7 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 	return b.commentTarget, text, err
 }
 
-func (p *commentPublisher) notice(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) notice(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	n, err := decodePayload[bootstrapNoticePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -784,12 +735,12 @@ func (p *commentPublisher) notice(key, tail string, payload json.RawMessage) (co
 	return n.commentTarget, text, err
 }
 
-func (p *commentPublisher) cancelled(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) cancelled(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	c, err := decodePayload[bootstrapCancelledPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
 	}
-	proposal, revision, ok := parseReference(tail)
+	proposal, revision, ok := commandtext.ParseReference(tail)
 	if !ok || c.validate() != nil || c.Reference != tail {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
@@ -842,7 +793,7 @@ func (p mergePayload) merge() (commandtext.Merge, error) {
 	}
 	if p.Reference != "" {
 		var valid bool
-		if m.Proposal, m.Revision, valid = parseReference(p.Reference); !valid {
+		if m.Proposal, m.Revision, valid = commandtext.ParseReference(p.Reference); !valid {
 			return commandtext.Merge{}, errors.New("the reference is not P<n>-R<m>")
 		}
 	}
@@ -893,7 +844,7 @@ func newMergeMessage(target commentTarget, outcome governance.MergeOutcome, tier
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, true, nil
 }
 
-func (p *commentPublisher) merge(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) merge(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	m, err := decodePayload[mergePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -931,7 +882,7 @@ type revisionPayload struct {
 
 // revision maps the payload to the values the renderer takes. The renderer checks the rest and panics on what cannot be stored.
 func (p revisionPayload) revision() (commandtext.Revision, error) {
-	proposal, revision, validReference := parseReference(p.Reference)
+	proposal, revision, validReference := commandtext.ParseReference(p.Reference)
 	canonical, validCanonical := parseVersion(p.Canonical)
 	var tier commandtext.Tier
 	switch p.Tier {
@@ -995,7 +946,7 @@ func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, 
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) revision(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) revision(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	r, err := decodePayload[revisionPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -1067,7 +1018,7 @@ func invalidSourceDigest(kind, path string, declaration []byte) string {
 // render is an error, so nobody writes a message that nobody can post.
 func newInvalidSourceMessage(target commentTarget, branch string, s sourceProblem) (governance.OutboxMessage, error) {
 	p := invalidSourcePayload{commentTarget: target, Kind: s.kind, Path: cutBytes(s.path, maxSummaryText), PathCut: len(s.path) > maxSummaryText, Branch: branch, NoDeclaration: s.noDeclaration}
-	if len(s.declaration) <= commandtext.MaxDeclaration { // a choice that cannot be shown is left out: the comment then shows the pattern alone
+	if commandtext.CanShow(s.declaration) { // a choice that cannot be shown is left out: the comment then shows the pattern alone
 		p.Declaration = string(s.declaration)
 	}
 	if err := p.validate(); err != nil {
@@ -1081,7 +1032,7 @@ func newInvalidSourceMessage(target commentTarget, branch string, s sourceProble
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) invalidSource(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) invalidSource(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	s, err := decodePayload[invalidSourcePayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err

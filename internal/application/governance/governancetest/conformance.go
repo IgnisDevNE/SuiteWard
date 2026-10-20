@@ -85,14 +85,14 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"ProposalRevisionOutsideTheLockedSuiteIsInvalid", cfProposalForeignSuite},
 		{"ProposalRevisionsAdvanceTheRevisionByOne", cfProposalRevisionAdvances},
 		{"ProposalRevisionsRollBack", cfProposalRollback},
-		{"QueuedWorkCommitsWithTheFact", cfQueueCommitsWithTheFact},
-		{"QueuedWorkRollsBackWithTheFact", cfQueueRollsBackWithTheFact},
-		{"QueuedWorkAloneCommitsWithoutAdvancingTheRevision", cfQueueAloneCommits},
-		{"InvalidQueuedWorkIsRejected", cfInvalidQueueWritesAreRejected},
+		{"OutboxCommitsWithTheFact", cfOutboxCommitsWithTheFact},
+		{"OutboxRollsBackWithTheFact", cfOutboxRollsBackWithTheFact},
+		{"OutboxAloneCommitsWithoutAdvancingTheRevision", cfOutboxAloneCommits},
+		{"InvalidOutboxWritesAreRejected", cfInvalidOutboxWritesAreRejected},
 		{"DuplicateOutboxKeyConflicts", cfDuplicateOutboxKeyConflicts},
-		{"QueueWriteFailureRollsBack", cfQueueWriteFailureRollsBack},
-		{"QueuedWorkIsNotCommittedOnCancellation", cfQueueIsNotCommittedOnCancellation},
-		{"QueueIsUnusableAfterTheUnitOfWork", cfQueueIsUnusableAfterTheUnitOfWork},
+		{"OutboxWriteFailureRollsBack", cfOutboxWriteFailureRollsBack},
+		{"OutboxIsNotCommittedOnCancellation", cfOutboxIsNotCommittedOnCancellation},
+		{"OutboxIsUnusableAfterTheUnitOfWork", cfOutboxIsUnusableAfterTheUnitOfWork},
 		{"CreateSuiteCreatesAnEmptySuite", cfCreateSuiteCreatesAnEmptySuite},
 		{"CreateSuiteIsIdempotent", cfCreateSuiteIsIdempotent},
 		{"CreateSuiteConflictsWithAnotherPolicyOrTarget", cfCreateSuiteConflicts},
@@ -108,9 +108,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"ConsentWritesItsOutboxOnlyForNewResults", cfConsentOutbox},
 		{"ConsentOutboxFailureRollsBackTheFact", cfConsentOutboxFailureRollsBackTheFact},
 		{"BootstrapWritesItsOutboxOnlyWithTheFact", cfPromotionOutbox},
-		{"PromotionWritesItsOutbox", cfPromoteOutbox},
 		{"PromotionOutboxFailureRollsBackTheFact", cfPromotionOutboxFailureRollsBackTheFact},
-		{"CorrectionWritesItsOutboxOnlyWithTheFact", cfCorrectOutbox},
 		{"ChangeProposalForFindsTheOpenChangeOfACarrier", cfChangeProposalForFindsTheOpenChangeOfACarrier},
 		{"ChangeProposalForSkipsABaselineProposal", cfChangeProposalForSkipsABaselineProposal},
 		{"ChangeProposalForIgnoresAnotherSuite", cfChangeProposalForIgnoresAnotherSuite},
@@ -118,7 +116,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Store) {
 		{"NextProposalIDIsOnePastTheHighestNumber", cfNextProposalIDIsOnePastTheHighestNumber},
 		{"NextProposalIDSeesItsOwnTransactionAndOnlyItsSuite", cfNextProposalIDSeesItsOwnTransactionAndOnlyItsSuite},
 	}
-	for _, tc := range slices.Concat(cases, mergeCases(), bootstrapCases(), bootstrapHeadCases(), revisionCases(), mergeBootstrapCases()) {
+	for _, tc := range slices.Concat(cases, mergeCases(), bootstrapCases(), bootstrapHeadCases(), revisionCases(), mergeBootstrapCases(), writeGuardCases()) {
 		t.Run(tc.name, func(t *testing.T) {
 			defer cfGuard(t)
 			owner := cfMust(contract.NewPrincipal("owner", contract.Human))
@@ -378,11 +376,11 @@ func (e *cfEnv) approve(c cfCandidate) governance.ConsentResponse {
 	return response
 }
 
-func (e *cfEnv) promote(request governance.PromoteRequest) governance.PromoteResult {
+func (e *cfEnv) bootstrap(request governance.PromoteRequest) governance.PromoteResult {
 	e.t.Helper()
-	result, err := governance.Promote(context.Background(), e.store, request)
+	result, err := governance.Bootstrap(context.Background(), e.store, request)
 	if err != nil {
-		e.t.Fatalf("promote %q: %v", request.OperationID, err)
+		e.t.Fatalf("bootstrap %q: %v", request.OperationID, err)
 	}
 	return result
 }
@@ -751,14 +749,7 @@ func cfReceiptReplay(e *cfEnv) {
 	c := e.candidate("p1", "", "v1")
 	e.seedSimple(cfProject, cfSuite, c)
 	consent := e.approve(c)
-	request := c.mergedRequest("promote-1", "version-1")
-	result := e.promote(request)
-	if !result.Committed || result.Outcome != contract.PromotionProposed {
-		e.t.Fatalf("promotion = %+v, want a committed proposal", result)
-	}
 	wantConsent := governance.OperationReceipt{Kind: governance.OperationConsent, ProjectID: cfProject, SuiteID: cfSuite, Consent: &consent.Receipt}
-	wantPromotion := governance.OperationReceipt{Kind: governance.OperationPromote, ProjectID: cfProject, SuiteID: cfSuite, Promotion: &governance.PromotionReceipt{
-		Identity: governance.PromotionIdentity{Kind: governance.OperationPromote, Request: request, Binding: c.proposal.Current().Binding()}, Record: result.Record}}
 
 	e.read(func(ctx context.Context, tx governance.Tx) error {
 		byOperation, found, err := tx.Receipt(ctx, "approve-p1")
@@ -769,26 +760,14 @@ func cfReceiptReplay(e *cfEnv) {
 		if err != nil || !found || !cfSameReceipt(bySource, wantConsent) {
 			e.t.Errorf("receipt of the source command = %+v found %v, %v, want the stored consent receipt", bySource, found, err)
 		}
-		promotion, found, err := tx.Receipt(ctx, "promote-1")
-		if err != nil || !found || !cfSameReceipt(promotion, wantPromotion) {
-			e.t.Errorf("receipt of the promotion = %+v found %v, %v, want the stored promotion receipt", promotion, found, err)
-		}
 		if _, found, err := tx.Receipt(ctx, "comment-p1"); err != nil || found {
 			e.t.Errorf("receipt by a source command id as an operation id = found %v, %v, want not found", found, err)
 		}
 		if _, found, err := tx.ReceiptBySource(ctx, "approve-p1"); err != nil || found {
 			e.t.Errorf("receipt by an operation id as a source command id = found %v, %v, want not found", found, err)
 		}
-		if _, found, err := tx.ReceiptBySource(ctx, "promote-1"); err != nil || found {
-			e.t.Errorf("a promotion operation has a source command receipt: found %v, %v", found, err)
-		}
 		return nil
 	})
-
-	replay, err := governance.Promote(context.Background(), e.store, request)
-	if err != nil || !replay.Duplicate || !replay.Committed || !replay.Record.Equal(result.Record) {
-		e.t.Errorf("promotion replay = %+v, %v, want the original record as a duplicate", replay, err)
-	}
 }
 
 func cfBootstrapReceipt(e *cfEnv) {
@@ -796,17 +775,34 @@ func cfBootstrapReceipt(e *cfEnv) {
 	e.seedSimple(cfProject, cfSuite, c)
 	e.approve(c)
 	request := c.baselineRequest("bootstrap-1", "version-1")
+	before := e.revision()
 	result, err := governance.Bootstrap(context.Background(), e.store, request)
-	if err != nil || !result.Committed {
-		e.t.Fatalf("bootstrap = %+v, %v, want a committed promotion", result, err)
+	if err != nil || result.Outcome != contract.PromotionProposed || result.Duplicate {
+		e.t.Fatalf("bootstrap = %+v, %v, want a new proposed promotion", result, err)
 	}
+	e.requireWrites(before, 1)
 	e.read(func(ctx context.Context, tx governance.Tx) error {
+		record, found, err := tx.PromotionFor(ctx, c.current())
+		if err != nil || !found {
+			e.t.Errorf("promotion for the reference = found %v, %v, want the bootstrap's record", found, err)
+			return nil
+		}
+		want := governance.OperationReceipt{Kind: governance.OperationBootstrap, ProjectID: cfProject, SuiteID: cfSuite, Promotion: &governance.PromotionReceipt{
+			Identity: governance.PromotionIdentity{Kind: governance.OperationBootstrap, Request: request, Binding: c.proposal.Current().Binding()}, Record: record}}
 		receipt, found, err := tx.Receipt(ctx, "bootstrap-1")
-		if err != nil || !found || receipt.Kind != governance.OperationBootstrap || receipt.Promotion == nil || receipt.Promotion.Identity.Kind != governance.OperationBootstrap {
-			e.t.Errorf("receipt = %+v found %v, %v, want a bootstrap receipt", receipt, found, err)
+		if err != nil || !found || !cfSameReceipt(receipt, want) {
+			e.t.Errorf("receipt = %+v found %v, %v, want the stored bootstrap receipt", receipt, found, err)
+		}
+		if _, found, err := tx.ReceiptBySource(ctx, "bootstrap-1"); err != nil || found {
+			e.t.Errorf("a bootstrap operation has a source command receipt: found %v, %v", found, err)
 		}
 		return nil
 	})
+	replay, err := governance.Bootstrap(context.Background(), e.store, request)
+	if err != nil || !replay.Duplicate || replay.Outcome != contract.PromotionProposed {
+		e.t.Errorf("bootstrap replay = %+v, %v, want the original outcome as a duplicate", replay, err)
+	}
+	e.requireWrites(before, 1)
 }
 
 // cfOtherSuite seeds a Suite of another project with one candidate.
@@ -875,32 +871,28 @@ func cfOperationAcrossKinds(e *cfEnv) {
 	fresh := e.candidate("p2", "", "v2") // never promoted: only its operation id can conflict
 	e.seedSimple(cfProject, cfSuite, c, fresh)
 	e.approve(c)
-	e.promote(c.mergedRequest("promote-1", "version-1"))
-	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"approve-p1", "promote-1"}, sources: []contract.SourceCommandID{"comment-other"},
+	if first := e.bootstrap(c.baselineRequest("bootstrap-1", "version-1")); first.Outcome != contract.PromotionProposed || first.Duplicate {
+		e.t.Fatalf("bootstrap = %+v, want a new proposed promotion", first)
+	}
+	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"approve-p1", "bootstrap-1"}, sources: []contract.SourceCommandID{"comment-other"},
 		versions: []contract.SuiteVersionID{"version-2"}, references: []contract.ProposalReference{c.current(), fresh.current()}}
 	before := e.view(probe)
 
-	e.run("a consent operation id used by a promotion", func(e *cfEnv) {
-		_, err := governance.Promote(context.Background(), e.store, c.mergedRequest("approve-p1", "version-2"))
+	e.run("a consent operation id used by a bootstrap", func(e *cfEnv) {
+		_, err := governance.Bootstrap(context.Background(), e.store, c.baselineRequest("approve-p1", "version-2"))
 		if !errors.Is(err, governance.ErrOperationConflict) {
 			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
-	e.run("a promotion operation id used by a consent command", func(e *cfEnv) {
-		command := e.command(c, "revision-1", "promote-1", "comment-other", contract.ApproveConsent, 2)
+	e.run("a bootstrap operation id used by a consent command", func(e *cfEnv) {
+		command := e.command(c, "revision-1", "bootstrap-1", "comment-other", contract.ApproveConsent, 2)
 		_, err := governance.ProcessConsent(context.Background(), e.store, governance.ConsentRequest{Command: command})
 		if !errors.Is(err, governance.ErrOperationConflict) {
 			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
 	})
-	e.run("a promotion operation id used by another promotion kind", func(e *cfEnv) {
-		_, err := governance.Bootstrap(context.Background(), e.store, c.baselineRequest("promote-1", "version-1"))
-		if !errors.Is(err, governance.ErrOperationConflict) {
-			e.t.Fatalf("error = %v, want an operation conflict", err)
-		}
-	})
-	e.run("a promotion operation id used by a changed request", func(e *cfEnv) {
-		_, err := governance.Promote(context.Background(), e.store, c.mergedRequest("promote-1", "version-2"))
+	e.run("a bootstrap operation id used by a changed request", func(e *cfEnv) {
+		_, err := governance.Bootstrap(context.Background(), e.store, c.baselineRequest("bootstrap-1", "version-2"))
 		if !errors.Is(err, governance.ErrOperationConflict) {
 			e.t.Fatalf("error = %v, want an operation conflict", err)
 		}
@@ -952,7 +944,7 @@ func cfAlias(e *cfEnv) {
 	retry := e.command(c, "revision-1", "approve-retry", "comment-p1", contract.ApproveConsent, 1)
 
 	alias := e.consent(retry)
-	if !alias.Duplicate || !alias.Committed || alias.Receipt != original.Receipt {
+	if !alias.Duplicate || alias.Receipt != original.Receipt { // the alias is committed: the revision check below counts its write
 		e.t.Fatalf("alias = %+v, want the original receipt as a committed duplicate", alias)
 	}
 	e.requireWrites(before, 1)
@@ -998,83 +990,18 @@ func cfRevisionAdvances(e *cfEnv) {
 	replay := e.command(c, "revision-1", "op-alias", "src-approve", contract.ApproveConsent, 1)
 
 	err := e.do(func(ctx context.Context, tx governance.Tx) error {
-		at := func(want int, step string) {
-			state, err := tx.Suite(ctx)
-			if err != nil || state.Canonical.Suite().Revision() != before+contract.StateRevision(want) {
-				e.t.Errorf("revision after %s = %d, %v, want %d", step, state.Canonical.Suite().Revision(), err, before+contract.StateRevision(want))
-			}
-		}
-		write, err := e.consentWrite(ctx, tx, approve)
+		steps := cfWriteSteps{e: e, ctx: ctx, tx: tx, before: before}
+		proposal, err := steps.approval(approve)
 		if err != nil {
 			return err
 		}
-		if err := tx.AppendConsent(ctx, write); err != nil {
-			return fmt.Errorf("append approval: %w", err)
-		}
-		at(1, "the approval")
-		if receipt, found, err := tx.Receipt(ctx, "op-approve"); err != nil || !found || receipt.Consent == nil || *receipt.Consent != write.Receipt {
-			e.t.Errorf("own write not visible by operation: found %v, %v", found, err)
-		}
-		if _, found, err := tx.ReceiptBySource(ctx, "src-approve"); err != nil || !found {
-			e.t.Errorf("own write not visible by source command: found %v, %v", found, err)
-		}
-		proposal, consent, err := tx.Proposal(ctx, "p1")
-		if err != nil {
+		if err := steps.revocation(revoke, proposal); err != nil {
 			return err
 		}
-		if !consent.HasApproval(proposal, e.policy(cfProject)) || len(consent.Results()) != 1 {
-			e.t.Errorf("own approval not visible: results %d", len(consent.Results()))
-		}
-
-		if write, err = e.consentWrite(ctx, tx, revoke); err != nil {
+		if err := steps.alias(replay); err != nil {
 			return err
 		}
-		if err := tx.AppendConsent(ctx, write); err != nil {
-			return fmt.Errorf("append revocation: %w", err)
-		}
-		at(2, "the revocation")
-		if _, consent, err = tx.Proposal(ctx, "p1"); err != nil {
-			return err
-		}
-		if consent.HasApproval(proposal, e.policy(cfProject)) || len(consent.Results()) != 2 {
-			e.t.Errorf("own revocation not visible: results %d", len(consent.Results()))
-		}
-
-		if write, err = e.consentWrite(ctx, tx, replay); err != nil {
-			return err
-		}
-		if !write.Alias {
-			e.t.Error("a replayed source command did not produce an alias write")
-		}
-		if err := tx.AppendConsent(ctx, write); err != nil {
-			return fmt.Errorf("append alias: %w", err)
-		}
-		at(3, "the alias")
-		if _, found, err := tx.Receipt(ctx, "op-alias"); err != nil || !found {
-			e.t.Errorf("own alias not visible: found %v, %v", found, err)
-		}
-
-		if err := tx.RecordPromotion(ctx, e.promotionWrite(c, "op-promote", "version-1", "")); err != nil {
-			return fmt.Errorf("record promotion: %w", err)
-		}
-		at(4, "the promotion")
-		state, err := tx.Suite(ctx)
-		if err != nil {
-			return err
-		}
-		if current, _ := state.Canonical.Suite().CurrentVersionID(); current != "version-1" {
-			e.t.Errorf("own promotion not visible: current version %q", current)
-		}
-		if _, found, err := tx.Version(ctx, "version-1"); err != nil || !found {
-			e.t.Errorf("own version not visible: found %v, %v", found, err)
-		}
-		if _, found, err := tx.PromotionFor(ctx, c.current()); err != nil || !found {
-			e.t.Errorf("own promotion record not visible: found %v, %v", found, err)
-		}
-		if _, found, err := tx.Receipt(ctx, "op-promote"); err != nil || !found {
-			e.t.Errorf("own promotion receipt not visible: found %v, %v", found, err)
-		}
-		return nil
+		return steps.promotion(c)
 	})
 	if err != nil {
 		e.t.Fatal(err)
@@ -1083,6 +1010,112 @@ func cfRevisionAdvances(e *cfEnv) {
 	if got := e.results("p1"); len(got) != 2 {
 		e.t.Errorf("committed results = %d, want the approval and the revocation", len(got))
 	}
+}
+
+// cfWriteSteps are the writes of cfRevisionAdvances in one unit of work: each makes one write, then checks that the
+// revision advanced by exactly one and that the transaction reads what it just wrote.
+type cfWriteSteps struct {
+	e      *cfEnv
+	ctx    context.Context
+	tx     governance.Tx
+	before contract.StateRevision
+}
+
+// at checks that the revision is want writes past where the unit of work began.
+func (s cfWriteSteps) at(want int, step string) {
+	state, err := s.tx.Suite(s.ctx)
+	if err != nil || state.Canonical.Suite().Revision() != s.before+contract.StateRevision(want) {
+		s.e.t.Errorf("revision after %s = %d, %v, want %d", step, state.Canonical.Suite().Revision(), err, s.before+contract.StateRevision(want))
+	}
+}
+
+// approval appends the approval and returns the proposal it approved.
+func (s cfWriteSteps) approval(command contract.Command) (contract.Proposal, error) {
+	write, err := s.e.consentWrite(s.ctx, s.tx, command)
+	if err != nil {
+		return contract.Proposal{}, err
+	}
+	if err := s.tx.AppendConsent(s.ctx, write); err != nil {
+		return contract.Proposal{}, fmt.Errorf("append approval: %w", err)
+	}
+	s.at(1, "the approval")
+	if receipt, found, err := s.tx.Receipt(s.ctx, "op-approve"); err != nil || !found || receipt.Consent == nil || *receipt.Consent != write.Receipt {
+		s.e.t.Errorf("own write not visible by operation: found %v, %v", found, err)
+	}
+	if _, found, err := s.tx.ReceiptBySource(s.ctx, "src-approve"); err != nil || !found {
+		s.e.t.Errorf("own write not visible by source command: found %v, %v", found, err)
+	}
+	proposal, consent, err := s.tx.Proposal(s.ctx, "p1")
+	if err != nil {
+		return contract.Proposal{}, err
+	}
+	if !consent.HasApproval(proposal, s.e.policy(cfProject)) || len(consent.Results()) != 1 {
+		s.e.t.Errorf("own approval not visible: results %d", len(consent.Results()))
+	}
+	return proposal, nil
+}
+
+func (s cfWriteSteps) revocation(command contract.Command, proposal contract.Proposal) error {
+	write, err := s.e.consentWrite(s.ctx, s.tx, command)
+	if err != nil {
+		return err
+	}
+	if err := s.tx.AppendConsent(s.ctx, write); err != nil {
+		return fmt.Errorf("append revocation: %w", err)
+	}
+	s.at(2, "the revocation")
+	_, consent, err := s.tx.Proposal(s.ctx, "p1")
+	if err != nil {
+		return err
+	}
+	if consent.HasApproval(proposal, s.e.policy(cfProject)) || len(consent.Results()) != 2 {
+		s.e.t.Errorf("own revocation not visible: results %d", len(consent.Results()))
+	}
+	return nil
+}
+
+// alias appends the replay of the approval under a new operation id.
+func (s cfWriteSteps) alias(command contract.Command) error {
+	write, err := s.e.consentWrite(s.ctx, s.tx, command)
+	if err != nil {
+		return err
+	}
+	if !write.Alias {
+		s.e.t.Error("a replayed source command did not produce an alias write")
+	}
+	if err := s.tx.AppendConsent(s.ctx, write); err != nil {
+		return fmt.Errorf("append alias: %w", err)
+	}
+	s.at(3, "the alias")
+	if _, found, err := s.tx.Receipt(s.ctx, "op-alias"); err != nil || !found {
+		s.e.t.Errorf("own alias not visible: found %v, %v", found, err)
+	}
+	return nil
+}
+
+// promotion records the promotion of c and checks that the pointer, the version, the record and the receipt are visible.
+func (s cfWriteSteps) promotion(c cfCandidate) error {
+	if err := s.tx.RecordPromotion(s.ctx, s.e.promotionWrite(c, "op-promote", "version-1", "")); err != nil {
+		return fmt.Errorf("record promotion: %w", err)
+	}
+	s.at(4, "the promotion")
+	state, err := s.tx.Suite(s.ctx)
+	if err != nil {
+		return err
+	}
+	if current, _ := state.Canonical.Suite().CurrentVersionID(); current != "version-1" {
+		s.e.t.Errorf("own promotion not visible: current version %q", current)
+	}
+	if _, found, err := s.tx.Version(s.ctx, "version-1"); err != nil || !found {
+		s.e.t.Errorf("own version not visible: found %v, %v", found, err)
+	}
+	if _, found, err := s.tx.PromotionFor(s.ctx, c.current()); err != nil || !found {
+		s.e.t.Errorf("own promotion record not visible: found %v, %v", found, err)
+	}
+	if _, found, err := s.tx.Receipt(s.ctx, "op-promote"); err != nil || !found {
+		s.e.t.Errorf("own promotion receipt not visible: found %v, %v", found, err)
+	}
+	return nil
 }
 
 func cfRejectedResults(e *cfEnv) {
@@ -1122,7 +1155,7 @@ func cfRejectedResults(e *cfEnv) {
 
 	// A rejected command replays by operation id and by source command id.
 	replay := e.consent(wrongCarrier)
-	if !replay.Duplicate || !replay.Committed || replay.Receipt != rejected.Receipt {
+	if !replay.Duplicate || replay.Receipt != rejected.Receipt {
 		e.t.Errorf("replay = %+v, want the original rejection as a duplicate", replay)
 	}
 	e.requireWrites(before, 2)
@@ -1168,9 +1201,11 @@ func cfRollbackOnError(e *cfEnv) {
 	e.requireSameView(before, e.view(probe))
 
 	// Nothing of the failed attempt is left in the way of the same work.
-	if retry := e.consent(approve); !retry.Committed || retry.Duplicate || !retry.Receipt.CurrentApprovalEligible {
-		e.t.Errorf("retry = %+v, want a new committed approval", retry)
+	rolledBack := e.revision()
+	if retry := e.consent(approve); retry.Duplicate || !retry.Receipt.CurrentApprovalEligible {
+		e.t.Errorf("retry = %+v, want a new eligible approval", retry)
 	}
+	e.requireWrites(rolledBack, 1)
 }
 
 func cfRollbackOnWriteFailure(e *cfEnv) {
@@ -1180,7 +1215,7 @@ func cfRollbackOnWriteFailure(e *cfEnv) {
 	}
 	c := e.candidate("p1", "", "v1")
 	e.seedSimple(cfProject, cfSuite, c)
-	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"approve-p1", "promote-1"}, sources: []contract.SourceCommandID{"comment-p1"},
+	probe := cfProbe{proposal: "p1", operations: []contract.OperationID{"approve-p1", "bootstrap-1"}, sources: []contract.SourceCommandID{"comment-p1"},
 		versions: []contract.SuiteVersionID{"version-1"}, references: []contract.ProposalReference{c.current()}}
 	boom := errors.New("conformance: injected write failure")
 	approve := e.command(c, "revision-1", "approve-p1", "comment-p1", contract.ApproveConsent, 1)
@@ -1191,20 +1226,22 @@ func cfRollbackOnWriteFailure(e *cfEnv) {
 		e.t.Fatalf("consent error = %v, want the injected failure", err)
 	}
 	e.requireSameView(before, e.view(probe))
-	if retry := e.consent(approve); !retry.Committed || retry.Duplicate {
-		e.t.Fatalf("consent retry = %+v, want a new committed approval", retry)
+	if retry := e.consent(approve); retry.Duplicate {
+		e.t.Fatalf("consent retry = %+v, want a new approval", retry)
 	}
+	e.requireWrites(before.Revision, 1)
 
 	before = e.view(probe)
-	request := c.mergedRequest("promote-1", "version-1")
+	request := c.baselineRequest("bootstrap-1", "version-1")
 	fail.FailNext(boom)
-	if _, err := governance.Promote(context.Background(), e.store, request); !errors.Is(err, boom) {
-		e.t.Fatalf("promotion error = %v, want the injected failure", err)
+	if _, err := governance.Bootstrap(context.Background(), e.store, request); !errors.Is(err, boom) {
+		e.t.Fatalf("bootstrap error = %v, want the injected failure", err)
 	}
 	e.requireSameView(before, e.view(probe))
-	if retry := e.promote(request); !retry.Committed || retry.Duplicate {
-		e.t.Errorf("promotion retry = %+v, want a new committed promotion", retry)
+	if retry := e.bootstrap(request); retry.Outcome != contract.PromotionProposed || retry.Duplicate {
+		e.t.Errorf("bootstrap retry = %+v, want a new proposed promotion", retry)
 	}
+	e.requireWrites(before.Revision, 1)
 }
 
 func cfCanceledContext(e *cfEnv) {

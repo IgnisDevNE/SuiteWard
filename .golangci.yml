@@ -14,7 +14,16 @@ linters:
     - ineffassign
     - revive
     - gocritic
+    - nilnil
+    - nilerr
+    - dupl
+    - gocyclo
+    - gocognit
   settings:
+    gocyclo:
+      min-complexity: 25
+    gocognit:
+      min-complexity: 30
     revive:
       rules:
         - name: error-return

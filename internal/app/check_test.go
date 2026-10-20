@@ -308,7 +308,7 @@ func TestCheckPublisherTreatsAVanishedHeadAsDelivered(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newChkWorld()
-			set(w.runner, &rest.StatusError{Status: 422, Body: cmtSecretText})
+			set(w.runner, fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, cmtSecretText))
 			m := chkMessage(t, checks.InProgress, "assessment-pending", "")
 			if err := w.deliver(m); err != nil {
 				t.Fatalf("a 422 is an error: %v", err)
@@ -331,9 +331,9 @@ func TestCheckPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 		err    error
 		status string
 	}{
-		{"post answered with a status", func(f *fakeChecks, err error) { f.postErr = err }, &rest.StatusError{Status: 403, Body: cmtSecretText}, "HTTP 403"},
-		{"readback answered with a status", func(f *fakeChecks, err error) { f.runsErr = err }, &rest.StatusError{Status: 502, Body: cmtSecretText}, "HTTP 502"},
-		{"rate limited", func(f *fakeChecks, err error) { f.postErr = err }, &rest.RateLimitedError{Status: 429, Body: cmtSecretText}, "rate_limited"},
+		{"post answered with a status", func(f *fakeChecks, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, cmtSecretText), "HTTP 403"},
+		{"readback answered with a status", func(f *fakeChecks, err error) { f.runsErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText), "HTTP 502"},
+		{"rate limited", func(f *fakeChecks, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 429}, cmtSecretText), "rate_limited"},
 		{"transport failure", func(f *fakeChecks, err error) { f.runsErr = err }, fmt.Errorf("Get https://api.example/%s: connection refused", cmtSecretText), "transport"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

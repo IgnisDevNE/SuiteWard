@@ -14,7 +14,7 @@ func TestConsentReceiptNamesThePromotedVersionOnlyForAPromotedReference(t *testi
 	pending := newCandidate(t, "p2", "version-1", protectedOf(t, "v2"))
 	w := newWorld(t, promoted, pending)
 	w.approve(promoted)
-	w.promote(promoted.mergedRequest(t, "promote-1", "version-1"))
+	w.bootstrap(promoted.baselineRequest(t, "bootstrap-1", "version-1"))
 
 	late := w.consent(w.command(promoted, "revision-1", "revoke-p1", "comment-revoke-p1", contract.RevokeConsent, 2))
 	if late.Receipt.PromotedVersionID != "version-1" {
@@ -77,8 +77,8 @@ func TestAliasWriteFailureRollsBackAndTheRetrySucceeds(t *testing.T) {
 	if _, found := w.receipt("approve-retry"); found {
 		t.Fatal("a failed alias write left a receipt")
 	}
-	if alias := w.consent(retry); !alias.Duplicate || !alias.Committed || alias.Receipt != original.Receipt {
-		t.Fatalf("retry = %+v, want the original receipt as a committed duplicate", alias)
+	if alias := w.consent(retry); !alias.Duplicate || alias.Receipt != original.Receipt {
+		t.Fatalf("retry = %+v, want the original receipt as a duplicate", alias)
 	}
 	w.requireWrites(before, 1)
 }

@@ -7,8 +7,7 @@ Never paste into chat, a file, a PR, or a log: any password or database URL, a G
 ## 0. Before the host steps (GitHub, once)
 
 1. The first run of the `Deploy` workflow creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the first run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment must list `phase/M1.2`, `phase/M1.4`, `phase/M1.5`, `phase/M1.6a`, `phase/M1.6b` (each phase builds from its branch) and `main` (since M1.8, a push to `main` triggers the deployment, and its `promote` waits for your approval like the others) as deployment branches. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
-3. M1.6b (section 6c) needs `phase/M1.6b` in that list before its first `promote`; the other branches stay.
+2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment needs `main` as a deployment branch (the owner can drop the phase branches): since M1.10 only a push to `main` runs the `Deploy` workflow, and its `promote` waits for your approval. A phase branch does not deploy, so the per-phase runs of sections 6a to 6f below that say to push a phase branch describe the earlier flow. The host cannot start until `ghcr.io/ignisdevne/suiteward:deploy` exists.
 
 ## 1. Open a session
 
@@ -28,22 +27,9 @@ systemctl --user is-system-running
 
 The lines are short on purpose: long lines pasted into a Session Manager terminal can break. `is-system-running` must print `running` (or `degraded`); if the bus socket is missing, wait a few seconds and retry. Start every new session this way. Every block below runs as `suiteward` unless it says otherwise.
 
-## 2. Remove the S1 spike (once)
+## 2. (Removed in M1.10)
 
-```
-systemctl --user stop suiteward-s1.service
-rm -f ~/.config/containers/systemd/suiteward-s1.container
-rm -rf ~/.config/suiteward-s1
-rm -rf ~/.config/systemd/user/podman-auto-update.timer.d
-systemctl --user daemon-reload
-systemctl --user restart podman-auto-update.timer
-podman rm -f suiteward-s1
-podman secret rm suiteward-s1-app-key
-podman volume rm suiteward-s1-data
-podman rmi ghcr.io/ignisdevne/suiteward-s1:deploy
-```
-
-`daemon-reload` drops the generated `suiteward-s1.service` once its quadlet file is gone. The `rm -rf` of `podman-auto-update.timer.d` removes the five-minute drop-in that S1 added with `systemctl --user edit`; the restart returns the timer to its daily default. Commands for things already gone (a missing secret, no drop-in) print an error that you can ignore. Then `podman ps -a`, `podman secret ls`, `podman volume ls` must show nothing named `suiteward-s1`.
+This section removed the S1 spike from the host. That is done, so it was dropped; the numbers of the later sections are kept so references to them stay valid.
 
 ## 3. Create the database secrets
 

@@ -76,6 +76,31 @@ func seedWithQueries(t *testing.T, queries *dbgen.Queries) {
 	}
 }
 
+// generatedQueryEnv is the database that TestGovernanceGeneratedQueries seeds once and its cases share.
+type generatedQueryEnv struct {
+	ctx      context.Context
+	database schemaDatabase
+	queries  *dbgen.Queries
+}
+
+// generatedQueryCases run in this order on the one seeded database: the lock case needs the Suite at revision 4,
+// and the bump case moves it to 6.
+var generatedQueryCases = []struct {
+	name string
+	run  func(*testing.T, generatedQueryEnv)
+}{
+	{"lock suite", generatedQueryLockSuite},
+	{"policy", generatedQueryPolicy},
+	{"proposal and revisions in sequence order", generatedQueryProposalRevisions},
+	{"consent results in insertion order with aliases", generatedQueryConsentResults},
+	{"assessment by key", generatedQueryAssessmentByKey},
+	{"version with its promotion and binding", generatedQueryVersionWithPromotion},
+	{"promotion by reference", generatedQueryPromotionByReference},
+	{"operations by id and by source command", generatedQueryOperations},
+	{"bump revision", generatedQueryBumpRevision},
+	{"schema version", generatedQuerySchemaVersion},
+}
+
 func TestGovernanceGeneratedQueries(t *testing.T) {
 	database := newSchemaDatabase(t)
 	if err := migrations.Up(t.Context(), database.url); err != nil {
@@ -87,136 +112,168 @@ func TestGovernanceGeneratedQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = transaction.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
-	queries := dbgen.New(transaction)
 	// The seeded Suite points at v1 and the revision v0 has no row: the deferred
 	// pointer is satisfied at commit and expected_version_id has no foreign key.
-	seedWithQueries(t, queries)
+	seedWithQueries(t, dbgen.New(transaction))
 	if err := transaction.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	queries = dbgen.New(database.conn)
+	env := generatedQueryEnv{ctx: ctx, database: database, queries: dbgen.New(database.conn)}
+	for _, c := range generatedQueryCases {
+		t.Run(c.name, func(t *testing.T) { c.run(t, env) })
+	}
+}
 
-	t.Run("lock suite", func(t *testing.T) {
-		locking, err := database.conn.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = locking.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
-		suite, err := dbgen.New(locking).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"})
-		if err != nil || suite.Revision != 4 || suite.CurrentVersionID.String != "v1" || suite.TargetID != "main" || suite.PolicyRevisionID != "policy-1" {
-			t.Fatalf("locked suite %+v, error %v", suite, err)
-		}
-		other, err := pgx.Connect(ctx, database.url)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = other.Close(context.Background()) }() // cleanup path: a failed close only means the connection is gone
-		deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-		defer cancel()
-		if _, err := dbgen.New(other).LockSuite(deadline, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"}); err == nil {
-			t.Fatal("a second session acquired a lock that the first still holds")
-		}
-		if _, err := dbgen.New(locking).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "missing"}); !errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("unknown suite error = %v; want no rows", err)
-		}
-	})
-	t.Run("policy", func(t *testing.T) {
-		policy, err := queries.GetPolicy(ctx, dbgen.GetPolicyParams{ProjectID: "project", RevisionID: "policy-1"})
-		if err != nil || policy.OwnerID != "owner" || policy.OwnerKind != "human" {
-			t.Fatalf("policy %+v, error %v", policy, err)
-		}
-	})
-	t.Run("proposal and revisions in sequence order", func(t *testing.T) {
-		proposal, err := queries.GetProposal(ctx, dbgen.GetProposalParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
-		if err != nil || proposal.CarrierID != "pr-1" {
-			t.Fatalf("proposal %+v, error %v", proposal, err)
-		}
-		revisions, err := queries.ListProposalRevisions(ctx, dbgen.ListProposalRevisionsParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
-		if err != nil || len(revisions) != 2 || revisions[0].RevisionID != "r1" || revisions[1].RevisionID != "r2" {
-			t.Fatalf("revisions %+v, error %v; want r1 then r2 although r2 was inserted first", revisions, err)
-		}
-		if revisions[0].ExpectedVersionID.String != "v0" || revisions[1].ExpectedVersionID.Valid || string(revisions[1].CoveredInputs) != `{"k": "v"}` {
-			t.Fatalf("revision payloads %+v", revisions)
-		}
-	})
-	t.Run("consent results in insertion order with aliases", func(t *testing.T) {
-		results, err := queries.ListConsentResults(ctx, dbgen.ListConsentResultsParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
-		if err != nil || len(results) != 2 || results[0].SourceCommandID != "src-b" || results[1].SourceCommandID != "src-a" {
-			t.Fatalf("results %+v, error %v; want insertion order src-b then src-a", results, err)
-		}
-		aliases, err := queries.ListConsentAliases(ctx, dbgen.ListConsentAliasesParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
-		if err != nil || len(aliases) != 1 || aliases[0].OperationID != "op-alias" || aliases[0].SourceCommandID != "src-a" {
-			t.Fatalf("aliases %+v, error %v; only the replay operation is an alias", aliases, err)
-		}
-	})
-	t.Run("assessment by key", func(t *testing.T) {
-		assessment, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "sha-1"})
-		if err != nil || assessment.Outcome.String != "passed" || assessment.EvidenceEmitter.String != "ci" || assessment.EvidenceRevisionID.String != "r1" {
-			t.Fatalf("assessment %+v, error %v", assessment, err)
-		}
-		missing, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", Source: "sha-2"})
-		if err != nil || missing.Outcome.Valid || missing.EvidenceEmitter.Valid || missing.EvidenceRevisionID.Valid {
-			t.Fatalf("missing evidence %+v, error %v", missing, err)
-		}
-		if _, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "other"}); !errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("unknown assessment error = %v; want no rows", err)
-		}
-	})
-	t.Run("version with its promotion and binding", func(t *testing.T) {
-		row, err := queries.GetVersion(ctx, dbgen.GetVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v1"})
-		if err != nil || row.SuiteVersion.ManifestDigest != schemaDigest || row.Promotion.OperationID != "op-promote" || row.ProposalRevision.RevisionID != "r1" || row.ProposalRevision.Origin != "origin-1" {
-			t.Fatalf("version %+v, error %v", row, err)
-		}
-		if !row.Promotion.RecordedAt.Time.Equal(time.Date(2026, 10, 2, 12, 0, 0, 123000000, time.UTC)) || row.Promotion.CorrectsVersionID.Valid {
-			t.Fatalf("promotion %+v", row.Promotion)
-		}
-		if _, err := queries.GetVersion(ctx, dbgen.GetVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v9"}); !errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("unknown version error = %v; want no rows", err)
-		}
-	})
-	t.Run("promotion by reference", func(t *testing.T) {
-		row, err := queries.GetPromotionByReference(ctx, dbgen.GetPromotionByReferenceParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1"})
-		if err != nil || row.Promotion.VersionID != "v1" || row.ProposalRevision.ManifestDigest != schemaDigest {
-			t.Fatalf("promotion %+v, error %v", row, err)
-		}
-		if _, err := queries.GetPromotionByReference(ctx, dbgen.GetPromotionByReferenceParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2"}); !errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("unpromoted reference error = %v; want no rows", err)
-		}
-	})
-	t.Run("operations by id and by source command", func(t *testing.T) {
-		operation, err := queries.GetOperation(ctx, "op-alias")
-		if err != nil || operation.Kind != "consent" || operation.SourceCommandID.String != "src-a" {
-			t.Fatalf("operation %+v, error %v", operation, err)
-		}
-		original, err := queries.GetOperationBySource(ctx, "src-a")
-		if err != nil || original.OperationID != "op-a" {
-			t.Fatalf("by source %+v, error %v; want the original operation, not the alias", original, err)
-		}
-		if _, err := queries.GetOperation(ctx, "missing"); !errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("unknown operation error = %v; want no rows", err)
-		}
-	})
-	t.Run("bump revision", func(t *testing.T) {
-		revision, err := queries.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{ProjectID: "project", SuiteID: "suite"})
-		if err != nil || revision != 5 {
-			t.Fatalf("plain bump revision=%d error=%v", revision, err)
-		}
-		if err := queries.InsertSuiteVersion(ctx, dbgen.InsertSuiteVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v2", ManifestDigest: schemaDigest, Manifest: []byte(`{}`)}); err != nil {
-			t.Fatal(err)
-		}
-		revision, err = queries.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{ProjectID: "project", SuiteID: "suite", CurrentVersionID: text("v2")})
-		if err != nil || revision != 6 {
-			t.Fatalf("promoting bump revision=%d error=%v", revision, err)
-		}
-		suite, err := dbgen.New(database.conn).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"})
-		if err != nil || suite.CurrentVersionID.String != "v2" || suite.Revision != 6 || suite.TargetID != "main" {
-			t.Fatalf("bumped suite %+v, error %v", suite, err)
-		}
-	})
-	t.Run("schema version", func(t *testing.T) {
-		version, err := queries.GetSchemaVersion(ctx)
-		if err != nil || version != migrations.SupportedVersion {
-			t.Fatalf("schema version %d, error %v; want %d", version, err, migrations.SupportedVersion)
-		}
-	})
+func generatedQueryLockSuite(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	database := env.database
+	locking, err := database.conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locking.Rollback(context.Background()) }() // cleanup path: a failed rollback only means the connection is gone
+	suite, err := dbgen.New(locking).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"})
+	if err != nil || suite.Revision != 4 || suite.CurrentVersionID.String != "v1" || suite.TargetID != "main" || suite.PolicyRevisionID != "policy-1" {
+		t.Fatalf("locked suite %+v, error %v", suite, err)
+	}
+	other, err := pgx.Connect(ctx, database.url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close(context.Background()) }() // cleanup path: a failed close only means the connection is gone
+	deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if _, err := dbgen.New(other).LockSuite(deadline, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"}); err == nil {
+		t.Fatal("a second session acquired a lock that the first still holds")
+	}
+	if _, err := dbgen.New(locking).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "missing"}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unknown suite error = %v; want no rows", err)
+	}
+}
+
+func generatedQueryPolicy(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	policy, err := queries.GetPolicy(ctx, dbgen.GetPolicyParams{ProjectID: "project", RevisionID: "policy-1"})
+	if err != nil || policy.OwnerID != "owner" || policy.OwnerKind != "human" {
+		t.Fatalf("policy %+v, error %v", policy, err)
+	}
+}
+
+func generatedQueryProposalRevisions(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	proposal, err := queries.GetProposal(ctx, dbgen.GetProposalParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
+	if err != nil || proposal.CarrierID != "pr-1" {
+		t.Fatalf("proposal %+v, error %v", proposal, err)
+	}
+	revisions, err := queries.ListProposalRevisions(ctx, dbgen.ListProposalRevisionsParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
+	if err != nil || len(revisions) != 2 || revisions[0].RevisionID != "r1" || revisions[1].RevisionID != "r2" {
+		t.Fatalf("revisions %+v, error %v; want r1 then r2 although r2 was inserted first", revisions, err)
+	}
+	if revisions[0].ExpectedVersionID.String != "v0" || revisions[1].ExpectedVersionID.Valid || string(revisions[1].CoveredInputs) != `{"k": "v"}` {
+		t.Fatalf("revision payloads %+v", revisions)
+	}
+}
+
+func generatedQueryConsentResults(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	results, err := queries.ListConsentResults(ctx, dbgen.ListConsentResultsParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
+	if err != nil || len(results) != 2 || results[0].SourceCommandID != "src-b" || results[1].SourceCommandID != "src-a" {
+		t.Fatalf("results %+v, error %v; want insertion order src-b then src-a", results, err)
+	}
+	aliases, err := queries.ListConsentAliases(ctx, dbgen.ListConsentAliasesParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1"})
+	if err != nil || len(aliases) != 1 || aliases[0].OperationID != "op-alias" || aliases[0].SourceCommandID != "src-a" {
+		t.Fatalf("aliases %+v, error %v; only the replay operation is an alias", aliases, err)
+	}
+}
+
+func generatedQueryAssessmentByKey(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	assessment, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "sha-1"})
+	if err != nil || assessment.Outcome.String != "passed" || assessment.EvidenceEmitter.String != "ci" || assessment.EvidenceRevisionID.String != "r1" {
+		t.Fatalf("assessment %+v, error %v", assessment, err)
+	}
+	missing, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2", Source: "sha-2"})
+	if err != nil || missing.Outcome.Valid || missing.EvidenceEmitter.Valid || missing.EvidenceRevisionID.Valid {
+		t.Fatalf("missing evidence %+v, error %v", missing, err)
+	}
+	if _, err := queries.GetAssessment(ctx, dbgen.GetAssessmentParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1", Source: "other"}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unknown assessment error = %v; want no rows", err)
+	}
+}
+
+func generatedQueryVersionWithPromotion(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	row, err := queries.GetVersion(ctx, dbgen.GetVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v1"})
+	if err != nil || row.SuiteVersion.ManifestDigest != schemaDigest || row.Promotion.OperationID != "op-promote" || row.ProposalRevision.RevisionID != "r1" || row.ProposalRevision.Origin != "origin-1" {
+		t.Fatalf("version %+v, error %v", row, err)
+	}
+	if !row.Promotion.RecordedAt.Time.Equal(time.Date(2026, 10, 2, 12, 0, 0, 123000000, time.UTC)) || row.Promotion.CorrectsVersionID.Valid {
+		t.Fatalf("promotion %+v", row.Promotion)
+	}
+	if _, err := queries.GetVersion(ctx, dbgen.GetVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v9"}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unknown version error = %v; want no rows", err)
+	}
+}
+
+func generatedQueryPromotionByReference(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	row, err := queries.GetPromotionByReference(ctx, dbgen.GetPromotionByReferenceParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r1"})
+	if err != nil || row.Promotion.VersionID != "v1" || row.ProposalRevision.ManifestDigest != schemaDigest {
+		t.Fatalf("promotion %+v, error %v", row, err)
+	}
+	if _, err := queries.GetPromotionByReference(ctx, dbgen.GetPromotionByReferenceParams{ProjectID: "project", SuiteID: "suite", ProposalID: "p1", RevisionID: "r2"}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unpromoted reference error = %v; want no rows", err)
+	}
+}
+
+func generatedQueryOperations(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	operation, err := queries.GetOperation(ctx, "op-alias")
+	if err != nil || operation.Kind != "consent" || operation.SourceCommandID.String != "src-a" {
+		t.Fatalf("operation %+v, error %v", operation, err)
+	}
+	original, err := queries.GetOperationBySource(ctx, "src-a")
+	if err != nil || original.OperationID != "op-a" {
+		t.Fatalf("by source %+v, error %v; want the original operation, not the alias", original, err)
+	}
+	if _, err := queries.GetOperation(ctx, "missing"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unknown operation error = %v; want no rows", err)
+	}
+}
+
+func generatedQueryBumpRevision(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	database := env.database
+	queries := env.queries
+	revision, err := queries.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{ProjectID: "project", SuiteID: "suite"})
+	if err != nil || revision != 5 {
+		t.Fatalf("plain bump revision=%d error=%v", revision, err)
+	}
+	if err := queries.InsertSuiteVersion(ctx, dbgen.InsertSuiteVersionParams{ProjectID: "project", SuiteID: "suite", VersionID: "v2", ManifestDigest: schemaDigest, Manifest: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	revision, err = queries.BumpSuiteRevision(ctx, dbgen.BumpSuiteRevisionParams{ProjectID: "project", SuiteID: "suite", CurrentVersionID: text("v2")})
+	if err != nil || revision != 6 {
+		t.Fatalf("promoting bump revision=%d error=%v", revision, err)
+	}
+	suite, err := dbgen.New(database.conn).LockSuite(ctx, dbgen.LockSuiteParams{ProjectID: "project", SuiteID: "suite"})
+	if err != nil || suite.CurrentVersionID.String != "v2" || suite.Revision != 6 || suite.TargetID != "main" {
+		t.Fatalf("bumped suite %+v, error %v", suite, err)
+	}
+}
+
+func generatedQuerySchemaVersion(t *testing.T, env generatedQueryEnv) {
+	ctx := env.ctx
+	queries := env.queries
+	version, err := queries.GetSchemaVersion(ctx)
+	if err != nil || version != migrations.SupportedVersion {
+		t.Fatalf("schema version %d, error %v; want %d", version, err, migrations.SupportedVersion)
+	}
 }

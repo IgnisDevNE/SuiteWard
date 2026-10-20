@@ -52,10 +52,10 @@ func (w *cjWorld) scopeMessages(prefix string) []governance.OutboxMessage {
 	return found
 }
 
-func (w *cjWorld) requireReview(repositoryID int64, head, declaration string, paths []string, suggestions ...map[string]any) {
+func (w *cjWorld) requireReview(repositoryID int64, declaration string, suggestions ...map[string]any) {
 	w.t.Helper()
 	messages := w.scopeMessages("scope-review:")
-	want := fmt.Sprintf("scope-review:%d:%d:%s", repositoryID, cjPull, wantReviewDigest(declaration, paths...))
+	want := fmt.Sprintf("scope-review:%d:%d:%s", repositoryID, cjPull, wantSuggestionsDigest(declaration, suggestions...))
 	if len(messages) != 1 || messages[0].Key != want || messages[0].Kind != githubCommentKind {
 		w.t.Fatalf("review messages %v; want exactly %s\nlogs: %s", w.scopeMessagesKeys("scope-review:"), want, w.logs)
 	}
@@ -63,7 +63,7 @@ func (w *cjWorld) requireReview(repositoryID int64, head, declaration string, pa
 	for _, s := range suggestions {
 		lists = append(lists, s)
 	}
-	wantPayload := roundTrip(map[string]any{"repositoryId": repositoryID, "repo": cjRepoName[repositoryID], "pull": cjPull, "head": head, "suggestions": lists})
+	wantPayload := roundTrip(map[string]any{"repositoryId": repositoryID, "repo": cjRepoName[repositoryID], "pull": cjPull, "head": cjHead, "suggestions": lists})
 	var got map[string]any
 	if err := json.Unmarshal(messages[0].Payload, &got); err != nil {
 		w.t.Fatal(err)
@@ -108,7 +108,7 @@ func TestSuggestBeforeTheFirstContractComparesTheHeadWithItsOwnDeclarationWhenTh
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": addPatterns(t, reviewDecl, []string{"*_test.go"}, nil), "addInclude": []string{"*_test.go"}})
-	w.requireReview(cjID1, cjHead, reviewDecl, []string{cjUtilTst}, suggestInclude)
+	w.requireReview(cjID1, reviewDecl, suggestInclude)
 	w.requireNoNoticeKey()
 	if reader.calls != 1 || w.reader.calls["head"] != 1 {
 		t.Fatalf("%d reads of the changed files and %d of the default branch; want 1 and 1: the default branch is read first, and has no file", reader.calls, w.reader.calls["head"])
@@ -130,7 +130,7 @@ func TestSuggestBeforeTheFirstContractListsTheMissingRunnerPatternsToo(t *testin
 	runner := []string{".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"}
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{"conftest.py", cjUtilTst}, "pathsTotal": 2,
 		"declaration": addPatterns(t, reviewBoth, []string{"*_test.go"}, runner), "addInclude": []string{"*_test.go"}, "addRunner": runner})
-	w.requireReview(cjID1, cjHead, reviewBoth, []string{"conftest.py", cjUtilTst}, suggestInclude, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
+	w.requireReview(cjID1, reviewBoth, suggestInclude, suggestion("runner", 5, "  - pytest.toml", ".pytest.ini", ".pytest.toml", "conftest.py", "pytest.ini"))
 }
 
 func TestSuggestWritesNoReviewWhenThePullRequestGivesNoLineToSuggestOn(t *testing.T) {
@@ -256,7 +256,7 @@ func TestSuggestBeforeTheFirstContractRefusesAnInvalidDeclarationAsInvalidSource
 
 func TestSuggestAfterTheFirstContractNeverStartsTheDeclarationFromTheHeadsFile(t *testing.T) {
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl, reviewFiles(reviewDecl, cjUtilTst)) // the canonical's declaration is in flow style, the head's in block style
+	w.seedDeclared(cjDecl, reviewFiles(reviewDecl, cjUtilTst)) // the canonical's declaration is in flow style, the head's in block style
 	w.pullFiles(changed("@@ -1,3 +1,3 @@"))
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
@@ -268,7 +268,7 @@ func TestSuggestAfterTheFirstContractNeverStartsTheDeclarationFromTheHeadsFile(t
 	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": declaration, "addInclude": []string{"*_test.go"}})
 	// The review edits the head's file, the only place a line of it can be: the lines come from the head, the declaration does not.
-	w.requireReview(cjID2, cjHead, reviewDecl, []string{cjUtilTst}, suggestInclude)
+	w.requireReview(cjID2, reviewDecl, suggestInclude)
 	w.requireNoNoticeKey()
 	if len(w.owners.consumed) != 0 {
 		t.Fatalf("consumed %v; a suggestion uses no code", w.owners.consumed)
@@ -280,7 +280,7 @@ func TestSuggestAfterTheFirstContractNeverStartsTheDeclarationFromTheHeadsFile(t
 func TestSuggestAfterTheFirstContractReportsAPathOnlyTheHeadsFileCovers(t *testing.T) {
 	headDecl := "version: 1\ninclude:\n  - /tests/**\n  - \"*_test.go\"\n"
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl, reviewFiles(headDecl, cjUtilTst))
+	w.seedDeclared(cjDecl, reviewFiles(headDecl, cjUtilTst))
 	w.pullFiles(changed("@@ -1,4 +1,4 @@"))
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
@@ -297,9 +297,9 @@ func TestSuggestAfterTheFirstContractReportsAPathOnlyTheHeadsFileCovers(t *testi
 // review stays one.
 func TestSuggestAfterTheFirstContractAddsNoSecondReviewForASetTheChecksJobReviewed(t *testing.T) {
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, cjDecl, reviewFiles(reviewDecl, cjUtilTst))
+	w.seedDeclared(cjDecl, reviewFiles(reviewDecl, cjUtilTst))
 	w.pullFiles(changed("@@ -1,3 +1,3 @@"))
-	existing, err := newScopeReviewMessage(cjTarget(cjID2), cjHead, wantReviewDigest(reviewDecl, cjUtilTst), []scopeSuggestion{{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}}})
+	existing, err := newScopeReviewMessage(cjTarget(cjID2), cjHead, wantSuggestionsDigest(reviewDecl, suggestInclude), []scopeSuggestion{{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		w := newCjWorld(t)
 		w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewDecl, cjUtilTst))
 		reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
-		reader.err = &rest.StatusError{Status: 500, Body: bootSecret}
+		reader.err = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
 		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 		w.mustRun()
 
@@ -357,7 +357,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		reader.err = nil // the limit ended
 		w.mustRun()
 		w.requireDisposition(cjID1, 500, commands.Suggested)
-		w.requireReview(cjID1, cjHead, reviewDecl, []string{cjUtilTst}, suggestInclude)
+		w.requireReview(cjID1, reviewDecl, suggestInclude)
 	})
 }
 
@@ -449,7 +449,7 @@ func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 		if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{}, mixed, submodules); err == nil {
 			t.Errorf("unit %q: the acknowledgment is accepted", unit)
 		}
-		if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err == nil {
+		if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, inventory.Suggestion{}); err == nil {
 			t.Errorf("unit %q: the scope notice is accepted", unit)
 		}
 	}
@@ -458,7 +458,7 @@ func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 	if _, err := newScopeNoticeAck(cmtTarget(), cmtComment, cmtOwner, "feature", "contract", "", paths, declaration, inventory.Suggestion{Include: paths}, mixed, submodules); err != nil {
 		t.Errorf("the acknowledgment of plain text: %v", err)
 	}
-	if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, false); err != nil {
+	if _, err := newScopeNoticeMessage(cmtTarget(), cmtScopeHead, "feature", paths, declaration, mixed, submodules, inventory.Suggestion{}); err != nil {
 		t.Errorf("the scope notice of plain text: %v", err)
 	}
 	var suggestions []scopeSuggestion
@@ -481,7 +481,7 @@ func TestSuggestRefusesAnAnswerTheOutboxCouldNotTake(t *testing.T) {
 	}
 	_, _, _, declaration := escapedWorstCase("<")
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, "version: 1\ninclude: [/tests/**]\n"+strings.TrimPrefix(string(declaration), "version: 1\n"), withFiles(bootFiles("v1"), tests...))
+	w.seedDeclared("version: 1\ninclude: [/tests/**]\n"+strings.TrimPrefix(string(declaration), "version: 1\n"), withFiles(bootFiles("v1"), tests...))
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
 
@@ -522,11 +522,11 @@ func TestSuggestWritesNoSecondReviewWhenTheHeadsFileIsTheSame(t *testing.T) {
 func TestSuggestWritesANewReviewForTheSameSetWhenTheHeadsFileChanged(t *testing.T) {
 	first := "version: 1\ninclude:\n  - /docs/**\n  - /tests/**\n"
 	second := "version: 1\ninclude:\n  - /docs/**\n  - /api/**\n  - /tests/**\n"
-	want := func(decl string) string {
-		return fmt.Sprintf("scope-review:%d:%d:%s", cjID1, cjPull, wantReviewDigest(decl, cjUtilTst))
+	want := func(decl, anchor string) string { // the last include item inside the hunk of lines 1 to 4
+		return fmt.Sprintf("scope-review:%d:%d:%s", cjID1, cjPull, wantSuggestionsDigest(decl, suggestion("include", 4, anchor, "*_test.go")))
 	}
 	keys := slices.Sorted(slices.Values(suggestTwiceKeys(t, first, second)))
-	if wantKeys := slices.Sorted(slices.Values([]string{want(first), want(second)})); !slices.Equal(keys, wantKeys) {
+	if wantKeys := slices.Sorted(slices.Values([]string{want(first, "  - /tests/**"), want(second, "  - /api/**")})); !slices.Equal(keys, wantKeys) {
 		t.Fatalf("reviews %v; want one for each version of the file, %v", keys, wantKeys)
 	}
 }

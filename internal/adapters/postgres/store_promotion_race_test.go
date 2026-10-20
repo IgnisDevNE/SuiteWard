@@ -12,84 +12,130 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// TestDifferentApprovedProposalsRacingToPromoteRecordOneVersion has two
-// approved proposals, both based on the same canonical version, promote at
-// the same moment. The Suite lock lets one commit; the other then finds the
-// canonical version moved on, is blocked by the domain and writes nothing.
-func TestDifferentApprovedProposalsRacingToPromoteRecordOneVersion(t *testing.T) {
+// mergeDeliveries is how many times each contender's merge is delivered.
+const mergeDeliveries = 2
+
+// mergeRaceCounts are the row counts that a merge race changes.
+type mergeRaceCounts struct {
+	revision                                        contract.StateRevision
+	versions, promotions, operations, mergeOutcomes int
+}
+
+func (w *pgWorld) mergeRaceCounts() mergeRaceCounts {
+	return mergeRaceCounts{w.revision(), w.count("suite_versions"), w.count("promotions"), w.count("operations"), w.count("pr_merges")}
+}
+
+// deliverMerges delivers the merge of every contender mergeDeliveries times, all at the same moment, and returns the
+// results of contender i at [i*mergeDeliveries, (i+1)*mergeDeliveries).
+func deliverMerges(t *testing.T, w *pgWorld, contenders []candidate, trees []mapTree) []governance.MergeResult {
+	t.Helper()
+	results := make([]governance.MergeResult, len(contenders)*mergeDeliveries)
+	failures := make([]error, len(results))
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for i := range results {
+		c, tree := contenders[i/mergeDeliveries], trees[i/mergeDeliveries]
+		workers.Go(func() {
+			<-start
+			results[i], failures[i] = governance.PromoteMerge(t.Context(), w.store, w.content, c.mergeRequest(tree))
+		})
+	}
+	close(start)
+	workers.Wait()
+	for i, err := range failures {
+		if err != nil {
+			t.Fatalf("delivery %d of %s: %v", i%mergeDeliveries, contenders[i/mergeDeliveries].id, err)
+		}
+	}
+	return results
+}
+
+// requireOneWinner checks that the deliveries of each contender agree and are one fresh outcome and replays, and
+// returns the indexes of the winner and the loser.
+func requireOneWinner(t *testing.T, contenders []candidate, results []governance.MergeResult) (winner, loser int) {
+	t.Helper()
+	winner, loser = -1, -1
+	for i, c := range contenders {
+		fresh, replays := 0, 0
+		for _, result := range results[i*mergeDeliveries : (i+1)*mergeDeliveries] {
+			if result.Duplicate {
+				replays++
+			} else {
+				fresh++
+			}
+			if result.Kind != results[i*mergeDeliveries].Kind || result.Version != results[i*mergeDeliveries].Version {
+				t.Fatalf("the deliveries of %s disagree: %+v", c.id, results[i*mergeDeliveries:(i+1)*mergeDeliveries])
+			}
+		}
+		if fresh != 1 || replays != mergeDeliveries-1 {
+			t.Fatalf("%s: %d fresh outcomes and %d replays; want 1 and %d", c.id, fresh, replays, mergeDeliveries-1)
+		}
+		switch outcome := results[i*mergeDeliveries].MergeOutcome; {
+		case outcome.Kind == governance.MergePromoted && outcome.Version == "V2":
+			if winner != -1 {
+				t.Fatalf("two pull requests won: %+v", results)
+			}
+			winner = i
+		case outcome.Kind == governance.MergeBlocked && outcome.Reason == governance.MergeReasonCanonicalChanged && outcome.Version == "V2" && outcome.Reference != nil:
+			loser = i
+		default:
+			t.Fatalf("%s ended with %+v; want one promotion to V2 and one block because the canonical changed", c.id, outcome)
+		}
+	}
+	if winner == -1 || loser == -1 {
+		t.Fatalf("results %+v; want exactly one winner and one loser", results)
+	}
+	return winner, loser
+}
+
+// requireOnlyTheWinnerPromoted checks the rows after the race: the winner wrote an assessment and a promotion, the
+// loser an assessment, and the outcomes advance nothing.
+func requireOnlyTheWinnerPromoted(t *testing.T, w *pgWorld, before mergeRaceCounts, won, lost candidate) {
+	t.Helper()
+	after := w.mergeRaceCounts()
+	if after != (mergeRaceCounts{before.revision + 3, before.versions + 1, before.promotions + 1, before.operations + 1, before.mergeOutcomes + 2}) {
+		t.Fatalf("revision %d (was %d), %d versions (was %d), %d promotions (was %d), %d operations (was %d), %d outcomes (was %d); want one promotion's rows and two outcomes",
+			after.revision, before.revision, after.versions, before.versions, after.promotions, before.promotions, after.operations, before.operations, after.mergeOutcomes, before.mergeOutcomes)
+	}
+	if got := w.currentVersion(); got != "V2" {
+		t.Fatalf("current version %q; want V2", got)
+	}
+	w.read(func(ctx context.Context, tx governance.Tx) error {
+		if _, found, err := tx.Receipt(ctx, contract.OperationID("merge:"+string(lost.carrier))); err != nil || found {
+			t.Fatalf("the blocked pull request left a promotion receipt: found=%v err=%v", found, err)
+		}
+		if _, found, err := tx.PromotionFor(ctx, lost.current()); err != nil || found {
+			t.Fatalf("the blocked pull request's revision was promoted: found=%v err=%v", found, err)
+		}
+		if _, found, err := tx.Version(ctx, "V3"); err != nil || found {
+			t.Fatalf("a second version was written: found=%v err=%v", found, err)
+		}
+		if record, found, err := tx.PromotionFor(ctx, won.current()); err != nil || !found || record.VersionID() != "V2" {
+			t.Fatalf("the winner's promotion = %+v found=%v err=%v", record, found, err)
+		}
+		return nil
+	})
+}
+
+// TestTwoApprovedPullRequestsRacingToMergeRecordOneVersion merges two approved pull requests, both bound to V1, at the
+// same moment, each delivered twice. The Suite lock lets one commit; the other finds the canonical moved and is
+// blocked, and a redelivery answers from the recorded outcome.
+func TestTwoApprovedPullRequestsRacingToMergeRecordOneVersion(t *testing.T) {
 	for round := range 5 {
 		t.Run("round "+strconv.Itoa(round+1), func(t *testing.T) {
 			w := newPGWorld(t)
-			base := newCandidate("p0", "", w.protected("baseline"))
-			contenders := []candidate{
-				newCandidate("p1", "v0", w.protected("first change")),
-				newCandidate("p2", "v0", w.protected("second change")),
-			}
-			w.seedWithBaseline(base, contenders...)
+			base := w.treeCandidate("p0", "", treeOf("baseline"))
+			trees := []mapTree{treeOf("first change"), treeOf("second change")}
+			contenders := []candidate{w.treeCandidate("p1", "V1", trees[0]), w.treeCandidate("p2", "V1", trees[1])}
+			w.seedMergeBaseline(base, contenders...)
 			for _, c := range contenders {
 				w.approve(c)
 			}
-			revision, versions, promotions, operations := w.revision(), w.count("suite_versions"), w.count("promotions"), w.count("operations")
+			before := w.mergeRaceCounts()
 
-			results := make([]governance.PromoteResult, len(contenders))
-			failures := make([]error, len(contenders))
-			start := make(chan struct{})
-			var workers sync.WaitGroup
-			for i, c := range contenders {
-				workers.Go(func() {
-					<-start
-					results[i], failures[i] = governance.Promote(t.Context(), w.store, c.mergedRequest("promote-"+c.id, contract.SuiteVersionID("v-"+c.id)))
-				})
-			}
-			close(start)
-			workers.Wait()
-			for i, err := range failures {
-				if err != nil {
-					t.Fatalf("contender %s: %v", contenders[i].id, err)
-				}
-			}
-
-			winner, loser := -1, -1
-			for i, result := range results {
-				switch {
-				case result.Outcome == contract.PromotionProposed && result.Committed && !result.Duplicate:
-					if winner != -1 {
-						t.Fatalf("two contenders won: %+v", results)
-					}
-					winner = i
-				case result.Outcome == contract.PromotionBlocked && result.Reason == contract.PromotionReasonCanonicalChanged && !result.Committed:
-					loser = i
-				default:
-					t.Fatalf("contender %s ended with %+v; want one win and one block because the canonical version changed", contenders[i].id, result)
-				}
-			}
-			if winner == -1 || loser == -1 {
-				t.Fatalf("results %+v; want exactly one winner and one loser", results)
-			}
-			won, lost := contenders[winner], contenders[loser]
-
-			if w.revision() != revision+1 || w.count("suite_versions") != versions+1 || w.count("promotions") != promotions+1 || w.count("operations") != operations+1 {
-				t.Fatalf("revision %d (was %d), %d versions (was %d), %d promotions (was %d), %d operations (was %d); want exactly one promotion's rows",
-					w.revision(), revision, w.count("suite_versions"), versions, w.count("promotions"), promotions, w.count("operations"), operations)
-			}
-			if got, want := w.currentVersion(), contract.SuiteVersionID("v-"+won.id); got != want {
-				t.Fatalf("current version %q; want the winner's %q", got, want)
-			}
-			w.read(func(ctx context.Context, tx governance.Tx) error {
-				if _, found, err := tx.Receipt(ctx, contract.OperationID("promote-"+lost.id)); err != nil || found {
-					t.Fatalf("the blocked contender left a receipt: found=%v err=%v", found, err)
-				}
-				if _, found, err := tx.PromotionFor(ctx, lost.current()); err != nil || found {
-					t.Fatalf("the blocked contender's revision was promoted: found=%v err=%v", found, err)
-				}
-				if _, found, err := tx.Version(ctx, contract.SuiteVersionID("v-"+lost.id)); err != nil || found {
-					t.Fatalf("the blocked contender's version was written: found=%v err=%v", found, err)
-				}
-				if record, found, err := tx.PromotionFor(ctx, won.current()); err != nil || !found || record.VersionID() != contract.SuiteVersionID("v-"+won.id) {
-					t.Fatalf("the winner's promotion = %+v found=%v err=%v", record, found, err)
-				}
-				return nil
-			})
+			results := deliverMerges(t, w, contenders, trees)
+			winner, loser := requireOneWinner(t, contenders, results)
+			requireOnlyTheWinnerPromoted(t, w, before, contenders[winner], contenders[loser])
 		})
 	}
 }

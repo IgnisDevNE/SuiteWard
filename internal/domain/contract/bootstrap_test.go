@@ -294,7 +294,7 @@ func TestBootstrapMergedChangeIsStillBlockedByAnEstablishedCanonical(t *testing.
 	}
 }
 
-// DecidePromotion is reachable without DecideBootstrap (governance.Promote): it must not let a PR head become the first
+// DecidePromotion is a public domain function, reachable without DecideBootstrap: it must not let a PR head become the first
 // canonical through the existing-baseline integration either.
 func TestPromotionOfAPullRevisionRejectsTheExistingBaselineIntegration(t *testing.T) {
 	manifest := lifecycleManifest(t, artifact.Entry{Path: "tests/first.go", Content: artifact.Hash([]byte("first test"))})

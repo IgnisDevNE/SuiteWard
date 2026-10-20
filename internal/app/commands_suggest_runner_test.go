@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestSuggestReportsARunnerNameTheBaseLacksEvenWhenNoFileIsUncovered(t *testi
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull",
 		"declaration": addPatterns(t, pytestMinusConftest, nil, []string{"conftest.py"}), "addRunner": []string{"conftest.py"}})
-	w.requireReview(cjID1, cjHead, pytestMinusConftest, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	w.requireReview(cjID1, pytestMinusConftest, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
 	w.requireNoNoticeKey()
 }
 
@@ -74,14 +75,14 @@ func TestSuggestTreatsARunnerNameAsMissingOnlyWhenTheBaseNeitherListsNorCoversIt
 
 func TestSuggestAfterTheFirstContractReportsARunnerNameTheCanonicalLacks(t *testing.T) {
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, pytestMinusConftest, pythonHead(pytestMinusConftest))
+	w.seedDeclared(pytestMinusConftest, pythonHead(pytestMinusConftest))
 	w.pullFiles(changed("@@ -1,9 +1,9 @@"))
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
 
 	w.requireAckPayload(cjID2, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "contract",
 		"declaration": addPatterns(t, pytestMinusConftest, nil, []string{"conftest.py"}), "addRunner": []string{"conftest.py"}})
-	w.requireReview(cjID2, cjHead, pytestMinusConftest, []string{"conftest.py"}, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	w.requireReview(cjID2, pytestMinusConftest, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
 }
 
 // A review of one set of paths is not the review of the same paths plus a runner name, so a name the paths do not explain is part of the key.
@@ -95,8 +96,10 @@ func TestSuggestKeysTheReviewOfRunnerNamesApartFromTheReviewOfThePathsAlone(t *t
 
 	w.requireAckPayload(cjID1, 500, commands.Suggested, map[string]any{"reason": "scope-notice", "branch": cjBranch, "base": "pull", "paths": []string{cjUtilTst}, "pathsTotal": 1,
 		"declaration": addPatterns(t, decl, []string{"*_test.go"}, []string{"conftest.py"}), "addInclude": []string{"*_test.go"}, "addRunner": []string{"conftest.py"}})
-	if keys := w.scopeMessagesKeys("scope-review:"); len(keys) != 1 || keys[0] == reviewKey(decl, cjUtilTst) {
-		t.Fatalf("review keys %v; want one that is not the key of the paths alone, %s", keys, reviewKey(decl, cjUtilTst))
+	include := suggestion("include", 3, "  - \"test_*.py\"", "*_test.go")
+	w.requireReview(cjID1, decl, include, suggestion("runner", 8, "  - .pytest.ini", "conftest.py"))
+	if alone := fmt.Sprintf("scope-review:%d:%d:%s", cjID1, cjPull, wantSuggestionsDigest(decl, include)); slices.Contains(w.scopeMessagesKeys("scope-review:"), alone) {
+		t.Fatalf("the review has the key of the include suggestion alone, %s", alone)
 	}
 }
 
@@ -106,7 +109,7 @@ func TestChecksWriteNoScopeNoticeForARunnerNameTheCanonicalLacks(t *testing.T) {
 	w := newCJWorldOf(t, withDeclaration(bootFiles("v1"), canonical))
 	files := withFiles(withDeclaration(bootFiles("v1"), canonical), pythonTest)
 
-	w.scopePull(cjHead2, files, files)
+	w.scopePull(files, files)
 
 	w.wantNoScopeMessages()
 }
@@ -116,7 +119,7 @@ func TestChecksWriteNoScopeNoticeForARunnerNameTheCanonicalLacks(t *testing.T) {
 func TestSuggestReportsNoRunnerNameTheBaseAlreadyListsForAnUncoveredTestFile(t *testing.T) {
 	const decl = "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - .pytest.ini\n  - .pytest.toml\n  - pytest.ini\n  - pytest.toml\n  - conftest.py\n  - jest.config.*\n"
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, decl, map[string]string{"README.md": "x", ".suiteward.yml": decl, "app/calc_test.py": "x\n", "web/sum.test.js": "x\n"})
+	w.seedDeclared(decl, map[string]string{"README.md": "x", ".suiteward.yml": decl, "app/calc_test.py": "x\n", "web/sum.test.js": "x\n"})
 	w.pullFiles(nil)
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()
@@ -133,7 +136,7 @@ func TestSuggestDoesNotCutForRunnerNamesTheBaseAlreadyLists(t *testing.T) {
 	files := []string{"a_test.go", "a.test.js", "a.spec.js", "a.cy.js", "a_spec.rb", "a_test.rb", "a_test.exs", "a_test.dart", "ATest.java", "ATests.java", "ATest.kt", "ATests.cs", "ATest.php", "test_a.py", "a_test.py", "tests.py"}
 	include := []string{"*.cy.*", "*.spec.*", "*.test.*", "*Test.java", "*Test.kt", "*Test.php", "*Tests.cs", "*Tests.java", "*_spec.rb", "*_test.dart", "*_test.exs", "*_test.go", "*_test.py", "*_test.rb", "test_*.py", "tests.py"}
 	w := newCjWorld(t)
-	w.seedDeclared(cjID2, decl, withFiles(map[string]string{"README.md": "x", ".suiteward.yml": decl}, files...))
+	w.seedDeclared(decl, withFiles(map[string]string{"README.md": "x", ".suiteward.yml": decl}, files...))
 	w.pullFiles(nil)
 	w.syncAll(nil, cjSuggest(500, cjAt(10)))
 	w.mustRun()

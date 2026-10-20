@@ -54,9 +54,16 @@ var (
 	mixedNames = []string{"package.json", "pyproject.toml", "setup.cfg", "tox.ini", "Cargo.toml", "CMakeLists.txt"}
 )
 
-// nameMatches reports whether any glob matches the base name; every glob is a constant of this file.
+// nameMatches reports whether any glob matches the base name; every glob is a constant of this file, so a malformed one is a
+// programming error.
 func nameMatches(globs []string, name string) bool {
-	return slices.ContainsFunc(globs, func(glob string) bool { ok, _ := path.Match(glob, name); return ok })
+	return slices.ContainsFunc(globs, func(glob string) bool {
+		ok, err := path.Match(glob, name)
+		if err != nil {
+			panic(fmt.Sprintf("inventory: glob %q is malformed: %v", glob, err))
+		}
+		return ok
+	})
 }
 
 // splitFile returns the directories and the base name of a file path, and false under a vendored directory.
@@ -104,14 +111,16 @@ func classify(p string) (include, runner []string) {
 // the test files and directories of the frameworks' conventions, runner patterns for the runner files found, and the mixed
 // files that may hold test settings. Submodules, sorted, are the non-vendored ones that a kept pattern covers or may cover
 // below, because their content is outside the scope. The lists are never nil. Include is the directory patterns then the file
-// patterns, each sorted, followed in the limit by the sorted runner patterns; past maxSuggestions the first are kept and Cut
-// is set. Mixed and Submodules have their own limit.
+// patterns, each sorted, and the sorted runner patterns. The limit of maxSuggestions holds for both together: the runner patterns, which
+// no base declaration lists, keep their room (see limit) and the include patterns give way, the first being kept, and Cut is set when
+// anything is dropped. Mixed and Submodules have their own limit.
 func Suggest(entries []Entry) Suggestion {
 	return suggest(entries, func(string) bool { return true })
 }
 
 // SuggestAgainst is Suggest for a base declaration s: a runner pattern that s lists or covers (the rule of MissingRunner) is left out before
 // the limit applies, so it neither takes room nor sets Cut. Include patterns are not filtered: a file they come from is one s does not cover.
+// The runner patterns that remain are missing from s, and keep their room within the limit as in Suggest.
 func SuggestAgainst(entries []Entry, s scope.Scope) (Suggestion, error) {
 	handled := runnerHandled(s)
 	var failed error
@@ -126,13 +135,19 @@ func SuggestAgainst(entries []Entry, s scope.Scope) (Suggestion, error) {
 	return suggestion, nil
 }
 
-// suggest is Suggest keeping only the runner patterns that keepRunner accepts.
-func suggest(entries []Entry, keepRunner func(pattern string) bool) Suggestion {
+// candidates are what a tree offers before any limit: the include patterns (the directory patterns then the file patterns, each sorted), the sorted
+// runner patterns, the mixed paths and the submodule paths.
+type candidates struct {
+	include, runner, mixed, submodules []string
+}
+
+// gather finds the candidates of entries, keeping only the runner patterns that keepRunner accepts.
+func gather(entries []Entry, keepRunner func(pattern string) bool) candidates {
 	directories, files, runner := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	var mixed, submodules []string
+	var found candidates
 	for _, entry := range entries {
 		if entry.Kind == Submodule && !slices.ContainsFunc(strings.Split(entry.Path, "/"), func(s string) bool { return slices.Contains(vendoredDirectories, s) }) {
-			submodules = append(submodules, entry.Path)
+			found.submodules = append(found.submodules, entry.Path)
 		}
 		if entry.Kind != File {
 			continue
@@ -155,20 +170,34 @@ func suggest(entries []Entry, keepRunner func(pattern string) bool) Suggestion {
 			}
 		}
 		if slices.Contains(mixedNames, name) || strings.HasSuffix(name, ".csproj") {
-			mixed = append(mixed, entry.Path)
+			found.mixed = append(found.mixed, entry.Path)
 		}
 	}
+	found.include = slices.Concat(slices.Sorted(maps.Keys(directories)), slices.Sorted(maps.Keys(files)))
+	found.runner = slices.Sorted(maps.Keys(runner))
+	slices.Sort(found.mixed)
+	return found
+}
 
-	includeCount := len(directories) + len(files)
-	all := slices.Concat(slices.Sorted(maps.Keys(directories)), slices.Sorted(maps.Keys(files)), slices.Sorted(maps.Keys(runner)))
-	kept := all[:min(len(all), maxSuggestions)]
-	slices.Sort(mixed)
+// limit applies maxSuggestions to the include and the runner patterns together: the runner patterns come first, at most maxSuggestions of them, and the
+// include patterns take the rest. The runner patterns offered are the ones missing, so a missing runner is never hidden by include patterns.
+// cut says that some pattern was dropped.
+func limit(include, runner []string) (keptInclude, keptRunner []string, cut bool) {
+	keptRunner = runner[:min(len(runner), maxSuggestions)]
+	keptInclude = include[:min(len(include), maxSuggestions-len(keptRunner))]
+	return append([]string{}, keptInclude...), append([]string{}, keptRunner...), len(keptInclude)+len(keptRunner) < len(include)+len(runner)
+}
+
+// suggest is Suggest keeping only the runner patterns that keepRunner accepts.
+func suggest(entries []Entry, keepRunner func(pattern string) bool) Suggestion {
+	found := gather(entries, keepRunner)
+	include, runner, cut := limit(found.include, found.runner)
 	return Suggestion{
-		Include:    append([]string{}, kept[:min(includeCount, len(kept))]...),
-		Runner:     append([]string{}, kept[min(includeCount, len(kept)):]...),
-		Mixed:      append([]string{}, mixed[:min(len(mixed), maxSuggestions)]...),
-		Submodules: reached(submodules, kept),
-		Cut:        len(all) > len(kept),
+		Include:    include,
+		Runner:     runner,
+		Mixed:      append([]string{}, found.mixed[:min(len(found.mixed), maxSuggestions)]...),
+		Submodules: reached(found.submodules, slices.Concat(include, runner)),
+		Cut:        cut,
 	}
 }
 
@@ -285,12 +314,12 @@ func excludes(s scope.Scope, path string) (bool, error) {
 	return false, nil
 }
 
-// MissingRunner returns the runner patterns Suggest offers for entries that s neither lists nor covers, in Suggest's order. A runner
+// MissingRunner returns the runner patterns Suggest offers for entries that s neither lists nor covers, in Suggest's order and before its limit. A runner
 // name matches no file until someone adds one, so it can be missing while Uncovered finds nothing. See runnerHandled for the rule.
 func MissingRunner(entries []Entry, s scope.Scope) ([]string, error) {
 	handled := runnerHandled(s)
 	missing := []string{}
-	for _, pattern := range Suggest(entries).Runner {
+	for _, pattern := range gather(entries, func(string) bool { return true }).runner { // before any limit: the missing ones are all reported
 		done, err := handled(pattern)
 		if err != nil {
 			return nil, err
@@ -328,12 +357,10 @@ func runnerHandled(s scope.Scope) func(pattern string) (bool, error) {
 }
 
 // WithRunner returns s with the runner patterns extra added, sorted and without repeats. The limit of maxSuggestions include and runner
-// patterns together holds: the patterns past it are dropped and Cut is set.
+// patterns together holds: the runner patterns, which s lacks, keep their room, the include patterns past the limit are dropped, and Cut is set.
 func (s Suggestion) WithRunner(extra []string) Suggestion {
-	runner := append([]string{}, slices.Compact(slices.Sorted(slices.Values(slices.Concat(s.Runner, extra))))...)
-	if room := max(0, maxSuggestions-len(s.Include)); len(runner) > room {
-		runner, s.Cut = runner[:room], true
-	}
-	s.Runner = runner
+	runner := slices.Compact(slices.Sorted(slices.Values(slices.Concat(s.Runner, extra))))
+	include, runner, cut := limit(s.Include, runner)
+	s.Include, s.Runner, s.Cut = include, runner, s.Cut || cut
 	return s
 }

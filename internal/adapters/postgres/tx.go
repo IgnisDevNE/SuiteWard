@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,11 +19,9 @@ import (
 // callback of Store.Do runs.
 type tx struct {
 	q         *dbgen.Queries
-	raw       pgx.Tx
 	project   contract.ProjectID
 	suite     contract.SuiteID
 	artifacts ArtifactVerifier
-	jobs      JobInserter
 }
 
 var _ governance.Tx = (*tx)(nil)
@@ -335,9 +332,6 @@ func (t *tx) ReceiptBySource(ctx context.Context, id contract.SourceCommandID) (
 }
 
 func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCarrierID) (contract.ProposalID, bool, error) {
-	if _, err := t.lock(ctx); err != nil {
-		return "", false, err
-	}
 	ids, err := t.q.ListChangeProposalsOfCarrier(ctx, dbgen.ListChangeProposalsOfCarrierParams{ProjectID: string(t.project), SuiteID: string(t.suite), CarrierID: string(carrier)})
 	switch {
 	case err != nil:
@@ -351,9 +345,6 @@ func (t *tx) ChangeProposalFor(ctx context.Context, carrier contract.ApprovalCar
 }
 
 func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, bool, error) {
-	if _, err := t.lock(ctx); err != nil {
-		return "", false, err
-	}
 	rows, err := t.q.ListBootstrapProposals(ctx, dbgen.ListBootstrapProposalsParams{ProjectID: string(t.project), SuiteID: string(t.suite)})
 	if err != nil {
 		return "", false, fmt.Errorf("list bootstrap proposals: %w", err)
@@ -367,9 +358,6 @@ func (t *tx) LatestBootstrapProposal(ctx context.Context) (contract.ProposalID, 
 }
 
 func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
-	if _, err := t.lock(ctx); err != nil {
-		return "", err
-	}
 	rows, err := t.q.ListProposalIDs(ctx, dbgen.ListProposalIDsParams{ProjectID: string(t.project), SuiteID: string(t.suite)})
 	if err != nil {
 		return "", fmt.Errorf("list proposal ids: %w", err)
@@ -385,17 +373,10 @@ func (t *tx) NextProposalID(ctx context.Context) (contract.ProposalID, error) {
 // one; the use case has already made every decision.
 
 func (t *tx) AppendConsent(ctx context.Context, write governance.ConsentWrite) error {
-	command := write.Result.Command()
-	switch {
-	case write.OperationID == "" || command.OperationID() == "":
-		return fmt.Errorf("%w: a consent write needs its operation and command", governance.ErrInvalidRequest)
-	case !t.inScope(command.Reference()):
-		return fmt.Errorf("%w: command %q belongs to another suite", governance.ErrInvalidRequest, command.SourceCommandID())
-	case write.Result.Duplicate() != write.Alias || (!write.Alias && write.OperationID != command.OperationID()):
-		return fmt.Errorf("%w: operation %q does not match the command result it records", governance.ErrOperationConflict, write.OperationID)
-	case write.Receipt.Result.Command().SourceCommandID() != command.SourceCommandID():
-		return fmt.Errorf("%w: the receipt belongs to another source command", governance.ErrInvalidRequest)
+	if err := write.Validate(t.project, t.suite); err != nil {
+		return err
 	}
+	command := write.Result.Command()
 	kind, receipt, err := encodeReceipt(governance.OperationConsent, &write.Receipt, nil)
 	if err != nil {
 		return invalidRequest("consent receipt", err)
@@ -447,19 +428,10 @@ func (t *tx) consentResultRow(result contract.CommandResult) (dbgen.InsertConsen
 }
 
 func (t *tx) RecordPromotion(ctx context.Context, write governance.PromotionWrite) error {
-	receipt, record := write.Receipt, write.Receipt.Record
-	switch {
-	case record.IsZero() || write.Version.ID() == "":
-		return fmt.Errorf("%w: a promotion write needs its record and version", governance.ErrInvalidRequest)
-	case !t.inScope(record.Binding().Reference()) || write.Version.ProjectID() != t.project || write.Version.SuiteID() != t.suite:
-		return fmt.Errorf("%w: promotion %q belongs to another suite", governance.ErrInvalidRequest, record.OperationID())
-	case receipt.Identity.Request.OperationID != record.OperationID():
-		return fmt.Errorf("%w: the receipt request and the promotion record name different operations", governance.ErrInvalidRequest)
-	case receipt.Identity.CorrectsVersionID != record.CorrectsVersionID() || !receipt.Identity.Binding.Equal(record.Binding()):
-		return fmt.Errorf("%w: the receipt identity and the promotion record disagree about the corrected version or the approval binding", governance.ErrInvalidRequest)
-	case !exactMicroseconds(record.RecordedAt()):
-		return fmt.Errorf("%w: recorded time %s needs sub-microsecond precision that PostgreSQL does not keep", governance.ErrInvalidRequest, record.RecordedAt().Format(time.RFC3339Nano))
+	if err := write.Validate(t.project, t.suite); err != nil {
+		return err
 	}
+	receipt, record := write.Receipt, write.Receipt.Record
 	if _, err := contract.NewHistoricalCanonical(write.Version, record); err != nil {
 		return invalidRequest("version and promotion record", err)
 	}
@@ -537,9 +509,6 @@ func (t *tx) AppendProposalRevision(ctx context.Context, write governance.Propos
 	return t.bump(ctx, pgtype.Text{})
 }
 
-// exactMicroseconds reports whether PostgreSQL's timestamptz keeps the time exactly.
-func exactMicroseconds(moment time.Time) bool { return moment.Equal(moment.Truncate(time.Microsecond)) }
-
 func (t *tx) verifyArtifacts(ctx context.Context, manifest artifact.Manifest) error {
 	verified := map[artifact.Digest]struct{}{}
 	for _, entry := range manifest.Entries() {
@@ -563,15 +532,8 @@ func (t *tx) bump(ctx context.Context, current pgtype.Text) error {
 	return nil
 }
 
-// Enqueue and Outbox write through the unit of work's own transaction, so
-// they commit or roll back with the governance facts and never advance the
-// Suite revision.
-
-func (t *tx) Enqueue(ctx context.Context, job governance.Job) error {
-	_, err := enqueue(ctx, t.jobs, t.raw, job)
-	return err
-}
-
+// Outbox writes through the unit of work's own transaction, so it commits or rolls back with the governance facts and
+// never advances the Suite revision.
 func (t *tx) Outbox(ctx context.Context, message governance.OutboxMessage) error {
 	return insertOutbox(ctx, t.q, pgtype.Text{String: string(t.project), Valid: true}, pgtype.Text{String: string(t.suite), Valid: true}, message)
 }

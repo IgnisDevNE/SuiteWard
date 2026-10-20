@@ -122,7 +122,7 @@ func cfRevisionCommentOncePerRevision(e *cfEnv) {
 		e.t.Fatalf("notices = %d, want one for the new revision", len(notices.calls))
 	}
 	e.requireNotice(notices.calls[0], governance.RevisionNotice{Reference: bsRef("P1", "R1"), Canonical: "V1", Modified: []string{"tests/a.txt"}})
-	e.requireQueued(nil, []string{"revision/P1-R1"})
+	e.requireOutbox([]string{"revision/P1-R1"})
 
 	before := e.revision()
 	e.assessHead(e.headRequest("head-1", mcTreeOf("v2"), notices)) // the same head again
@@ -135,7 +135,7 @@ func cfRevisionCommentOncePerRevision(e *cfEnv) {
 	if len(notices.calls) != 1 {
 		e.t.Fatalf("notices = %d after a repeated head, an implementation-only push and an unchanged head; want still 1", len(notices.calls))
 	}
-	e.requireQueued(nil, []string{"revision/P1-R1"})
+	e.requireOutbox([]string{"revision/P1-R1"})
 
 	second := e.assessHead(e.headRequest("head-4", mcTreeOf("v3"), notices))
 
@@ -144,7 +144,7 @@ func cfRevisionCommentOncePerRevision(e *cfEnv) {
 	}
 	previous := bsRef("P1", "R1")
 	e.requireNotice(notices.calls[1], governance.RevisionNotice{Reference: bsRef("P1", "R2"), Previous: &previous, Canonical: "V1", Modified: []string{"tests/a.txt"}})
-	e.requireQueued(nil, []string{"revision/P1-R1", "revision/P1-R2"})
+	e.requireOutbox([]string{"revision/P1-R1", "revision/P1-R2"})
 }
 
 func cfRevisionNoticeContents(e *cfEnv) {
@@ -181,7 +181,7 @@ func cfRevisionCommentFalse(e *cfEnv) {
 	if result.Reference == nil || len(notices.calls) != 1 {
 		e.t.Fatalf("result = %+v with %d notices, want the revision committed and the function asked once", result, len(notices.calls))
 	}
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func cfRevisionCommentFailure(e *cfEnv) {
@@ -196,7 +196,7 @@ func cfRevisionCommentFailure(e *cfEnv) {
 	}
 	e.requireWrites(before, 0)
 	e.requireChangeProposal(rvCarrier, "")
-	e.requireQueued(nil, nil)
+	e.requireOutbox(nil)
 }
 
 func cfRevisionCommentConflict(e *cfEnv) {
@@ -215,7 +215,7 @@ func cfRevisionCommentConflict(e *cfEnv) {
 	}
 	e.requireWrites(before, 0)
 	e.requireChangeProposal(rvCarrier, "")
-	e.requireQueued(nil, []string{"revision/shared"})
+	e.requireOutbox([]string{"revision/shared"})
 }
 
 func cfAssessHeadNeedsARevisionFunction(e *cfEnv) {

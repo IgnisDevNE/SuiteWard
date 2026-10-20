@@ -168,26 +168,29 @@ func (v *countingVerifier) Verify(ctx context.Context, digest artifact.Digest) e
 	return v.inner.Verify(ctx, digest)
 }
 
-func TestPromotionVerifiesEachDistinctContentOnce(t *testing.T) {
+func TestPromoteMergeVerifiesEachDistinctContentOnce(t *testing.T) {
 	w := newPGWorld(t)
 	verifier := &countingVerifier{inner: w.content}
 	var err error
 	if w.store, err = postgres.NewStore(w.pool, verifier, testInserter()); err != nil {
 		t.Fatal(err)
 	}
-	shared := artifact.Hash([]byte("shared bytes"))
-	if err := w.content.Put(t.Context(), shared, strings.NewReader("shared bytes")); err != nil {
-		t.Fatal(err)
+	tree := treeOf("shared bytes")
+	tree["tests/b_test.go"] = "shared bytes" // two protected entries with the same bytes
+	one := w.treeCandidate("p1", "V1", tree)
+	w.seedMergeBaseline(w.treeCandidate("p0", "", treeOf("baseline")), one)
+	w.approve(one)
+	w.merge(one, tree, governance.MergePromoted)
+	entries := one.protected.Manifest().Entries()
+	distinct := map[artifact.Digest]bool{}
+	for _, entry := range entries {
+		distinct[entry.Content] = true
 	}
-	manifest := must(artifact.NewManifest([]artifact.Entry{{Path: "tests/a.txt", Content: shared}, {Path: "tests/b.txt", Content: shared}}))
-	protected := must(contract.NewProtectedContract(manifest, artifact.Hash([]byte("tests/**")), map[string]string{"runner": "v1"}))
-	one := readyForPromotion(t, w, protected)
-	result, err := governance.Promote(t.Context(), w.store, one.mergedRequest("promote-p1", "v1"))
-	if err != nil || !result.Committed {
-		t.Fatalf("Promote = %+v, %v", result, err)
+	if len(distinct) >= len(entries) {
+		t.Fatalf("the fixture has %d distinct contents in %d entries; want a repeat", len(distinct), len(entries))
 	}
-	if got := verifier.calls.Load(); got != 1 {
-		t.Fatalf("content verified %d times for two entries with the same bytes; want once", got)
+	if got := int(verifier.calls.Load()); got != len(distinct) {
+		t.Fatalf("content verified %d times for %d entries with %d distinct contents; want once each", got, len(entries), len(distinct))
 	}
 }
 

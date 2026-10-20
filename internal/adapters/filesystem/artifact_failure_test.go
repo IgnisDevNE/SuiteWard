@@ -219,20 +219,26 @@ func TestPutOperationalFailuresPreserveExistingObjects(t *testing.T) {
 				if err := store.Put(context.Background(), digest, bytes.NewReader(content)); !errors.Is(err, failure) {
 					t.Fatalf("Put after %s failure = %v, want preserved cause", operation, err)
 				}
-				if existing {
-					got, err := os.ReadFile(testObjectPath(store.root, digest))
-					if err != nil || !bytes.Equal(got, content) {
-						t.Fatalf("failed Put damaged existing object: %q, %v", got, err)
-					}
-					entries, err := os.ReadDir(store.root)
-					if err != nil || len(entries) != 1 {
-						t.Fatalf("failed duplicate left stages: %v, %v", entries, err)
-					}
-				} else {
-					assertNoObjects(t, store.root)
-				}
+				assertFailedPutLeftOnlyTheObject(t, store, digest, content, existing)
 			})
 		}
+	}
+}
+
+// assertFailedPutLeftOnlyTheObject checks that a failed Put left an existing object intact and no stage, or no object at all when none existed.
+func assertFailedPutLeftOnlyTheObject(t *testing.T, store *Store, digest artifact.Digest, content []byte, existing bool) {
+	t.Helper()
+	if !existing {
+		assertNoObjects(t, store.root)
+		return
+	}
+	got, err := os.ReadFile(testObjectPath(store.root, digest))
+	if err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("failed Put damaged existing object: %q, %v", got, err)
+	}
+	entries, err := os.ReadDir(store.root)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("failed duplicate left stages: %v, %v", entries, err)
 	}
 }
 

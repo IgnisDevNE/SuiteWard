@@ -189,7 +189,7 @@ Where `.suiteward.yml` is decides the source of the proposal:
    - `include:` holds patterns for test files and test directories. They match at any depth, so one pattern such as `*_test.go` covers every directory, and `testdata/` counts wherever it is. Files under vendored directories (`node_modules`, `vendor`, `.venv` and similar) never count.
    - `runner:` holds the test runner files it found, plus the files that the same runner reads before them. Those may not exist yet. For example, when it finds `pytest.ini`, it also lists `pytest.toml`, which pytest reads first. Protecting a file that does not exist yet means that a pull request that adds it needs your approval, so nobody can override your runner settings by creating it.
 
-   The list is limited to 20 patterns, `include` and `runner` together. When SuiteWard cut the list, the reply says so. Read the suggestion as a start, and add what is missing before you commit it.
+   The list is limited to 20 patterns, `include` and `runner` together. The runner names it found keep their room, and the `include` patterns give way, so a runner name is never dropped because of a long `include` list. When SuiteWard cut the list, the reply says so. Read the suggestion as a start, and add what is missing before you commit it.
 
    The reply also warns about mixed files: `package.json`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `Cargo.toml`, `*.csproj` and `CMakeLists.txt`. They can hold test settings among other content. SuiteWard names the ones it found and never suggests them, because protecting them would put every dependency update behind an approval. You decide whether to add one.
 
@@ -292,12 +292,12 @@ The scope is the list of paths that `.suiteward.yml` protects. A test directory 
 Keep these points in mind:
 
 - The check does not change, and the comment never says that tests ran.
-- The comment appears once for each set of new files, not for each push. A later push that adds no new uncovered file posts nothing.
+- The comment appears once for each set of new files, not for each push. A later push that adds no new uncovered file posts nothing. A new approved contract that changes the suggested file posts the notice again, once; one that leaves the suggested text as it is posts nothing.
 - A path that matches an `exclude` of your scope is never reported: the exclusion is your choice.
 - The suggested file starts from the approved `.suiteward.yml` and only adds patterns. It may be re-indented and lose blank lines.
 - Comments in `.suiteward.yml` are part of the approved bytes. A pull request that edits only a comment is a protected change and needs your approval. Compare the suggested file with your own before you commit it, because it may have lost a comment.
 - A pull request whose own `.suiteward.yml` is valid and already covers the files gets no notice. That widening still needs your approval.
-- A declaration larger than 8192 bytes cannot be put in a comment: SuiteWard then posts no notice, and logs that it skipped it.
+- A declaration that cannot be shown, because it is larger than 8192 bytes or holds a character you cannot see (a zero-width or bidirectional control character, for example), is never put in a comment. The comment then lists the new patterns alone, as lines to copy under the `include` and `runner` lists, with the same link to the editor. This holds for the notice, for the reply of `/suiteward suggest` and for the runner comment.
 
 **A suggestion on the diff.** SuiteWard also posts a review comment, together with the notice, when all of these hold: the pull request changes `.suiteward.yml`, the file in its head is a valid declaration in block style, and the diff shows an item line of the `include:` list or the `runner:` list. The comment sits on that line, with the line and the new patterns as a suggestion. Use GitHub's "Commit suggestion" button to accept it. It leaves out the patterns that the file already lists. A list written as `include: [a, b]`, or a list with no item line in the diff, gets no suggestion: copy the block from the notice instead.
 
@@ -310,7 +310,6 @@ Keep these points in mind:
   - `fork`: the pull request comes from a fork, and forks are not supported in this release.
   - `not-open`: the pull request is no longer open.
   - `invalid-source`: SuiteWard cannot read the head well enough. Its tree is invalid or truncated, the approved contract has no declaration, or the reply cannot be written (an unusable branch name, for example).
-  - `declaration-too-large`: the suggested declaration would be over 8192 bytes, which does not fit a comment. Add the missing patterns to `.suiteward.yml` yourself.
 
   If the approved contract fails its integrity check, the command gets no reply: SuiteWard retries it and then records it as failed.
 

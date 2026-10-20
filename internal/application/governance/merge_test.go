@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
 func noMessage(governance.MergeOutcome) (governance.OutboxMessage, bool, error) {
@@ -69,7 +71,7 @@ func TestPromoteMergeNeedsAUnitOfWorkAndAContentWriter(t *testing.T) {
 }
 
 func TestPromoteMergeStoresTheContentOfAnIntegratedTreeBeforeThePromotion(t *testing.T) {
-	e := newHeadEnv(t)
+	e := newHeadEnvFirst(t, "version-1", headTree("v1", "package main\n"))
 	request := validMergeRequest()
 	request.Carrier, request.Tree = prA, headTree("v1", "package main\n") // the canonical's own content: no change, content is still stored
 	writer := newFakeWriter()
@@ -83,5 +85,42 @@ func TestPromoteMergeStoresTheContentOfAnIntegratedTreeBeforeThePromotion(t *tes
 	}
 	if len(writer.stored) == 0 {
 		t.Fatal("no content was stored before the unit of work")
+	}
+}
+
+func TestPromoteMergeOfAnUnknownSuiteIsNotFound(t *testing.T) {
+	w := newWorld(t)
+	request := validMergeRequest()
+	request.Suite = "nowhere"
+
+	if _, err := governance.PromoteMerge(context.Background(), w.mem, newFakeWriter(), request); !errors.Is(err, governance.ErrNotFound) {
+		t.Fatalf("error = %v, want not found", err)
+	}
+}
+
+// The first merge moves the canonical, so the second approved pull request is bound to a canonical that is gone: its
+// next head gets a new revision, and only an approval of that exact revision lets its merge promote it.
+func TestRebasedPullRequestIsPromotedOnceItsNewRevisionIsApproved(t *testing.T) {
+	second := newCandidate(t, "pr2", "V1", treeContract(t, headTree("v2", "package main\n")))
+	e := newHeadEnv(t, second)
+	e.approve(e.other)
+	e.approve(second)
+	e.merge(e.other, headTree("other", "package main\n"), governance.MergePromoted)
+
+	rebased := e.assess(second.carrier, "head-rebased", headTree("v2", "package main\n"))
+
+	e.requireChange(rebased, inventory.ProtectedChange, "pr2-R2", false, contract.PromotionReasonApprovalMissing)
+	e.approveRef(*rebased.Reference, second.carrier)
+	e.requireChange(e.assess(second.carrier, "head-rebased", headTree("v2", "package main\n")), inventory.ProtectedChange, "pr2-R2", true, contract.PromotionReasonNone)
+	before := e.revision()
+
+	merged := e.merge(second, headTree("v2", "package main\n"), governance.MergePromoted)
+
+	if merged.Version != "V3" || merged.Reference == nil || *merged.Reference != *rebased.Reference {
+		t.Fatalf("merge = %+v, want V3 promoted from %v", merged.MergeOutcome, rebased.Reference)
+	}
+	e.requireWrites(before, 2) // the assessment of the merge commit and the promotion
+	if e.currentVersion() != "V3" {
+		t.Fatalf("current version = %q, want V3", e.currentVersion())
 	}
 }

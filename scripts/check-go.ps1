@@ -1,4 +1,4 @@
-param([switch]$Coverage, [switch]$Integration)
+param([switch]$Coverage, [switch]$Integration, [switch]$Race)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -42,7 +42,8 @@ try {
         $report = @(Get-Content -LiteralPath 'coverage.out')
         if ($report.Count -lt 2 -or $report[0] -ne 'mode: atomic') { throw 'Empty or invalid coverage report' }
     } else {
-        go test -count=1 @buildTags ./...
+        $raceTag = @(if ($Race) { '-race' })
+        go test -count=1 @raceTag @buildTags ./...
         if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
     }
 } finally {

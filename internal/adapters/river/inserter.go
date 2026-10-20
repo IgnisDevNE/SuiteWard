@@ -1,5 +1,5 @@
-// Package river runs background work on River: the job inserter used inside
-// governance units of work, the dispatcher worker, the outbox relay and the
+// Package river runs background work on River: the job inserter used by the
+// store's system enqueue, the dispatcher worker, the outbox relay and the
 // diagnostic probe.
 package river
 

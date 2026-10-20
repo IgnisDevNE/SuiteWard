@@ -58,6 +58,7 @@ Defensive nil checks inside validated code hide bugs: an impossible state silent
 - Inside a boundary, rely on invariants established by validated constructors (`New*`, `Reconstitute*`); do not re-check what the type already guarantees.
 - An unreachable nil fails loudly: an error naming the broken invariant, or a panic with a message only where the state is genuinely unreachable.
 - Never `if err != nil { return nil }`, never `return nil, nil` for "not found" (return a sentinel such as `ErrNotFound`), and never an empty `default` that swallows an unexpected case.
+- `golangci-lint` enforces part of this with `nilnil` and `nilerr`, next to `dupl`, `gocyclo` (25) and `gocognit` (30). There are no `//nolint` comments and no exclusions: a function over a limit is split.
 
 ## Dependency composition
 

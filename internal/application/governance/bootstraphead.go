@@ -53,73 +53,67 @@ func AssessBootstrapHead(ctx context.Context, uow UnitOfWork, request BootstrapH
 		}
 	}
 	var result BootstrapHeadResult
-	err = uow.Do(ctx, request.Project, request.Suite, func(ctx context.Context, tx Tx) error {
-		state, err := tx.Suite(ctx)
-		if err != nil {
-			return fmt.Errorf("load suite: %w", err)
-		}
-		if current, present := state.Canonical.Suite().CurrentVersionID(); present {
-			return fmt.Errorf("%w: the suite has the canonical %q", ErrCanonicalMoved, current)
-		}
-		cancelled := BootstrapHeadResult{Cancelled: true, Revision: int64(state.Canonical.Suite().Revision())}
-		id, found, err := tx.LatestBootstrapProposal(ctx)
-		if err != nil {
-			return fmt.Errorf("find the latest bootstrap proposal: %w", err)
-		}
-		if !found || !protected {
-			result = cancelled
-			return nil
-		}
-		proposal, consent, err := tx.Proposal(ctx, id)
-		if err != nil {
-			return fmt.Errorf("load proposal: %w", err)
-		}
-		latest := proposal.Current()
-		if latest.Carrier() != request.Carrier || latest.OriginKind() != contract.OriginPull {
-			result = cancelled
-			return nil
-		}
-		current := latest.Binding().Reference()
-		binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: current, Manifest: proposed.Manifest().Digest(),
-			Scope: proposed.ScopeDigest(), PolicyRevision: state.Policy.RevisionID(), CoveredInputs: proposed.CoveredInputs()})
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
-		}
-		if !latest.Binding().SameCoverage(binding) {
-			result = cancelled
-			return nil
-		}
-		evidence, err := HeadEvidence(inv, latest.Binding(), request.Head)
-		if err != nil {
-			return err
-		}
-		if err := tx.RecordAssessment(ctx, AssessmentWrite{Reference: current, Source: request.Head, Evidence: evidence}); err != nil {
-			return fmt.Errorf("record the assessment of the head: %w", err)
-		}
-		assessment, found, err := tx.Assessment(ctx, current, request.Head)
-		if err != nil {
-			return fmt.Errorf("load assessment: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("%w: the assessment of %v at %q is missing right after it was recorded", ErrInvalidState, current, request.Head)
-		}
-		decision, err := contract.CheckPromotionReadiness(contract.PromotionContext{
-			Canonical: state.Canonical, Proposed: proposed, Proposal: proposal, Reference: current, Carrier: request.Carrier,
-			Policy: state.Policy, Consent: consent, Assessment: assessment,
-		}, request.Head)
-		if err != nil {
-			return fmt.Errorf("check readiness: %w", err)
-		}
-		written, err := tx.Suite(ctx) // the revision this answer holds at, after its own writes
-		if err != nil {
-			return fmt.Errorf("load suite: %w", err)
-		}
-		result = BootstrapHeadResult{Reference: &current, Ready: decision.Outcome() == contract.PromotionReady,
-			Reason: decision.Reason(), Revision: int64(written.Canonical.Suite().Revision())}
-		return nil
+	err = uow.Do(ctx, request.Project, request.Suite, func(ctx context.Context, tx Tx) (err error) {
+		result, err = assessBootstrapHead(ctx, tx, request, inv, proposed, protected)
+		return err
 	})
 	if err != nil {
 		return BootstrapHeadResult{}, err
 	}
 	return result, nil
+}
+
+// assessBootstrapHead is the unit of work of AssessBootstrapHead. A cancelled answer holds at the revision read before
+// any write; an assessed one at the revision after its own write.
+func assessBootstrapHead(ctx context.Context, tx Tx, request BootstrapHeadRequest, inv inventory.Inventory, proposed contract.ProtectedContract, protected bool) (BootstrapHeadResult, error) {
+	state, err := tx.Suite(ctx)
+	if err != nil {
+		return BootstrapHeadResult{}, fmt.Errorf("load suite: %w", err)
+	}
+	if current, present := state.Canonical.Suite().CurrentVersionID(); present {
+		return BootstrapHeadResult{}, fmt.Errorf("%w: the suite has the canonical %q", ErrCanonicalMoved, current)
+	}
+	cancelled := BootstrapHeadResult{Cancelled: true, Revision: int64(state.Canonical.Suite().Revision())}
+	proposal, consent, found, err := bootstrapProposalOf(ctx, tx, state, request, proposed, protected)
+	if err != nil {
+		return BootstrapHeadResult{}, err
+	}
+	if !found {
+		return cancelled, nil
+	}
+	reference, decision, revision, err := recordHeadAssessment(ctx, tx, headEvaluation{state: state, proposal: proposal, consent: consent, inv: inv, proposed: proposed, carrier: request.Carrier, head: request.Head})
+	if err != nil {
+		return BootstrapHeadResult{}, err
+	}
+	return BootstrapHeadResult{Reference: &reference, Ready: decision.Outcome() == contract.PromotionReady, Reason: decision.Reason(), Revision: revision}, nil
+}
+
+// bootstrapProposalOf returns the Suite's latest bootstrap proposal with its consent when the head may be assessed
+// against it: the head has protected files, the proposal is a pull proposal carried by request.Carrier, and the head covers
+// what its current revision covers. found is false otherwise.
+func bootstrapProposalOf(ctx context.Context, tx Tx, state SuiteState, request BootstrapHeadRequest, proposed contract.ProtectedContract, protected bool) (contract.Proposal, contract.Consent, bool, error) {
+	id, found, err := tx.LatestBootstrapProposal(ctx)
+	if err != nil {
+		return contract.Proposal{}, contract.Consent{}, false, fmt.Errorf("find the latest bootstrap proposal: %w", err)
+	}
+	if !found || !protected {
+		return contract.Proposal{}, contract.Consent{}, false, nil
+	}
+	proposal, consent, err := tx.Proposal(ctx, id)
+	if err != nil {
+		return contract.Proposal{}, contract.Consent{}, false, fmt.Errorf("load proposal: %w", err)
+	}
+	latest := proposal.Current()
+	if latest.Carrier() != request.Carrier || latest.OriginKind() != contract.OriginPull {
+		return contract.Proposal{}, contract.Consent{}, false, nil
+	}
+	binding, err := contract.NewApprovalBinding(contract.BindingInput{Reference: latest.Binding().Reference(), Manifest: proposed.Manifest().Digest(),
+		Scope: proposed.ScopeDigest(), PolicyRevision: state.Policy.RevisionID(), CoveredInputs: proposed.CoveredInputs()})
+	if err != nil {
+		return contract.Proposal{}, contract.Consent{}, false, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	if !latest.Binding().SameCoverage(binding) {
+		return contract.Proposal{}, contract.Consent{}, false, nil
+	}
+	return proposal, consent, true, nil
 }

@@ -2,18 +2,31 @@ package governance
 
 import (
 	"context"
-	"strings"
+	"fmt"
 )
 
-// Bootstrap establishes the first canonical from an integrated, existing baseline.
+// Bootstrap establishes the first canonical from an integrated, existing baseline: it replays by operation id,
+// otherwise decides in the domain and writes only a proposed promotion with the request's outbox.
 func Bootstrap(ctx context.Context, uow UnitOfWork, request PromoteRequest) (PromoteResult, error) {
-	return runPromotion(ctx, uow, PromotionIdentity{Kind: OperationBootstrap, Request: request})
-}
-
-// Correct proposes a fresh canonical with attribution to a stored version.
-func Correct(ctx context.Context, uow UnitOfWork, request CorrectionRequest) (PromoteResult, error) {
-	if strings.TrimSpace(string(request.TargetVersionID)) == "" {
-		return PromoteResult{}, ErrInvalidRequest
+	if uow == nil || !validPromoteRequest(request) {
+		return PromoteResult{}, fmt.Errorf("%w: a bootstrap needs a unit of work and a complete request", ErrInvalidRequest)
 	}
-	return runPromotion(ctx, uow, PromotionIdentity{Kind: OperationCorrect, Request: request.Promotion, CorrectsVersionID: request.TargetVersionID})
+	identity := PromotionIdentity{Kind: OperationBootstrap, Request: request}
+	var result PromoteResult
+	err := uow.Do(ctx, request.Reference.ProjectID, request.Reference.SuiteID, func(ctx context.Context, tx Tx) error {
+		stored, found, err := tx.Receipt(ctx, request.OperationID)
+		if err != nil {
+			return fmt.Errorf("load operation receipt: %w", err)
+		}
+		if found {
+			result, err = replayPromotion(stored, identity)
+			return err
+		}
+		result, err = promoteWithin(ctx, tx, identity)
+		return err
+	})
+	if err != nil {
+		return PromoteResult{}, err
+	}
+	return result, nil
 }

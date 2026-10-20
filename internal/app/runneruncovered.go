@@ -117,28 +117,34 @@ func (j *checksJob) findRunners(ctx context.Context, p owner.ProjectPolicy, pull
 func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, pull githubsync.PullState, set *runnerSet) error {
 	base, _, err := canonicalDeclaration(ctx, j.suites, j.contents, owner.ProjectID(p.RepositoryID))
 	switch {
-	case errors.Is(err, errNoCanonicalDeclaration):
+	case errors.Is(err, governance.ErrNoCanonicalDeclaration):
 		j.logger.InfoContext(ctx, "github checks runner-uncovered comment skipped: the canonical has no declaration to start from", "repo", p.Repo, "pull", pull.Number)
 		return nil
 	case err != nil:
 		return &opaque{what: "read the canonical declaration", cause: err}
 	}
 	protect, err := scope.AddPatterns(base, nil, inventory.RunnerPatterns(set.paths))
-	if err != nil { // unreachable with a valid canonical; kept so that a defect never fails the job: the comment is advice and the check says the same without it
-		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: the runner patterns cannot be added", "repo", p.Repo, "pull", pull.Number)
-		return nil
+	if err != nil { // no head input reaches it (the canonical is verified and the patterns are constants): a defect fails the job, not the comment
+		return &opaque{what: "add the runner patterns", cause: err}
 	}
 	var ignore []byte
 	if excludable(set.paths) {
-		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // unreachable with a valid canonical and excludable; kept so that a defect never fails the job (ignore is nil then)
-			j.logger.WarnContext(ctx, "github checks runner-uncovered ignore choice skipped: the excludes cannot be added", "repo", p.Repo, "pull", pull.Number)
+		if ignore, err = scope.AddExcludes(base, excludePatterns(set.paths)); err != nil { // excludable parsed the same patterns
+			return &opaque{what: "add the excludes", cause: err}
 		}
 	}
-	if len(ignore) > commandtext.MaxDeclaration { // a choice that cannot be shown is left out; protecting stays
+	if !commandtext.CanShow(ignore) { // a choice that cannot be shown is left out; protecting stays
 		ignore = nil
 	}
+	var protectPatterns []string
+	if !commandtext.CanShow(protect) { // protecting stays too, as the patterns alone
+		protect = nil
+		if protectPatterns, err = missingRunner(base, inventory.RunnerPatterns(set.paths)); err != nil { // AddPatterns parsed it
+			return &opaque{what: "read the canonical runner list", cause: err}
+		}
+	}
 	target := commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull.Number}
-	comment, err := newRunnerUncoveredMessage(target, pull.HeadSHA, pull.HeadRef, set.paths, protect, ignore, reviewDigest(setDigest(set.paths), set.declared))
+	comment, err := newRunnerUncoveredMessage(target, pull.HeadSHA, pull.HeadRef, set.paths, protect, protectPatterns, ignore, set.declared)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks runner-uncovered comment skipped: it cannot be rendered", "repo", p.Repo, "pull", pull.Number, "reason", err.Error())
 		return nil
@@ -146,6 +152,23 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 	messages := []governance.OutboxMessage{comment}
 	messages = append(messages, j.runnerReview(ctx, target, pull.HeadSHA, set, ignore != nil)...)
 	return outboxOnce(ctx, j.suites, owner.ProjectID(p.RepositoryID), messages)
+}
+
+// missingRunner returns the patterns that the runner list of the declaration base lacks, which is what scope.AddPatterns would add. When it lists them all,
+// protecting the files restores what the head's own declaration dropped, and all of them are returned: the comment always has a pattern to offer.
+func missingRunner(base []byte, patterns []string) ([]string, error) {
+	declaration, err := scope.ParseDeclaration(base)
+	if err != nil {
+		return nil, err
+	}
+	listed := map[string]bool{}
+	for _, p := range declaration.Runner() {
+		listed[p.String()] = true
+	}
+	if missing := slices.DeleteFunc(slices.Clone(patterns), func(p string) bool { return listed[p] }); len(missing) > 0 {
+		return missing, nil
+	}
+	return patterns, nil
 }
 
 // excludePatterns returns the exclude patterns that name exactly the files at paths: a name without a slash would match at every depth, so it gets a
@@ -161,18 +184,22 @@ func excludePatterns(paths []string) []string {
 	return patterns
 }
 
+// hasGlobCharacter reports whether path has a character that exclude reads as a pattern ("*?[\"): the pattern it spells would name more than the path, or never the path.
+// Scope.ExcludesExactly and commandtext test the same set.
+func hasGlobCharacter(path string) bool { return strings.ContainsAny(path, `*?[\`) }
+
 // excludable reports whether every path can be excluded by a pattern that names exactly that file: a path with a pattern character
 // ("*?[\", as acceptingDeclaration and Scope.ExcludesExactly test it) either never matches the pattern it spells or matches other files too,
 // and one the pattern syntax refuses (such as a leading "!") cannot be added as an exclude at all.
 func excludable(paths []string) bool {
 	return !slices.ContainsFunc(paths, func(path string) bool {
 		_, err := scope.ParsePattern(excludePatterns([]string{path})[0])
-		return err != nil || strings.ContainsAny(path, `*?[\`)
+		return err != nil || hasGlobCharacter(path)
 	})
 }
 
-// runnerReview builds the review of the choices: one message, or none (an empty list). Its key digests a salt with the set and the head's file, so it never
-// collides with the review of the scope notice for the same set, whose comment would be lost with it.
+// runnerReview builds the review of the choices: one message, or none (an empty list). Its key digests the head's file and the suggestions (see suggestionsDigest); the lists protect and ignore
+// keep it apart from the review of the scope notice, whose lists are include and runner.
 func (j *checksJob) runnerReview(ctx context.Context, target commentTarget, head string, set *runnerSet, ignorable bool) []governance.OutboxMessage {
 	var ignore []string
 	if ignorable {
@@ -186,7 +213,12 @@ func (j *checksJob) runnerReview(ctx context.Context, target commentTarget, head
 	if len(suggestions) == 0 {
 		return []governance.OutboxMessage{}
 	}
-	message, err := newScopeReviewMessage(target, head, reviewDigest("runner-uncovered:"+setDigest(set.paths), set.declared), suggestions)
+	digest, err := suggestionsDigest(set.declared, suggestions)
+	if err != nil {
+		j.logger.WarnContext(ctx, "github checks runner-uncovered review skipped: it cannot be keyed", "repo", target.Repo, "pull", target.Pull)
+		return []governance.OutboxMessage{}
+	}
+	message, err := newScopeReviewMessage(target, head, digest, suggestions)
 	if err != nil {
 		j.logger.WarnContext(ctx, "github checks runner-uncovered review skipped: it cannot be rendered", "repo", target.Repo, "pull", target.Pull, "reason", err.Error())
 		return []governance.OutboxMessage{}
@@ -267,19 +299,21 @@ func newListSuggestion(top *yaml.Node, lines []string, key string, patterns []st
 }
 
 // runnerUncoveredPayload is the payload of runner-uncovered:<repository id>:<pull>:<review digest>. The key's digest is that of the whole
-// set of paths and the head's file, which the bounded list below cannot reproduce, so the publisher checks only its shape.
+// set of paths, the head's file and the declarations shown, which the bounded list below cannot reproduce, so the publisher checks only its shape.
 type runnerUncoveredPayload struct {
 	commentTarget
 	Head       string   `json:"head"`
 	Branch     string   `json:"branch"`
 	Paths      []string `json:"paths"` // at most 20, each cut to 150 bytes
 	PathsTotal int      `json:"pathsTotal"`
-	Protect    string   `json:"protect"`          // the canonical declaration with the runner patterns added, at most 8192 bytes
-	Ignore     string   `json:"ignore,omitempty"` // the canonical declaration with the paths excluded, at most 8192 bytes; none when they cannot be named there
+	Protect    string   `json:"protect,omitempty"` // the canonical declaration with the runner patterns added, at most 8192 bytes; none when it cannot be shown
+	// ProtectPatterns, with no Protect, are the runner patterns the comment lists to add instead.
+	ProtectPatterns []string `json:"protectPatterns,omitempty"`
+	Ignore          string   `json:"ignore,omitempty"` // the canonical declaration with the paths excluded, at most 8192 bytes; none when they cannot be named there or shown
 }
 
 func (p runnerUncoveredPayload) notice() commandtext.RunnerUncovered {
-	return commandtext.RunnerUncovered{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Protect: []byte(p.Protect), Ignore: []byte(p.Ignore)}
+	return commandtext.RunnerUncovered{Repo: p.Repo, Branch: p.Branch, Paths: p.Paths, PathsTotal: p.PathsTotal, Protect: []byte(p.Protect), ProtectPatterns: p.ProtectPatterns, Ignore: []byte(p.Ignore)}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it.
@@ -290,7 +324,7 @@ func (p runnerUncoveredPayload) validate() error {
 	if !headPattern.MatchString(p.Head) {
 		return errors.New("the head is not a commit SHA")
 	}
-	for _, path := range p.Paths {
+	for _, path := range slices.Concat(p.Paths, p.ProtectPatterns) {
 		if len(path) > maxSummaryText {
 			return errors.New("a path is too long")
 		}
@@ -303,11 +337,8 @@ func (p runnerUncoveredPayload) validate() error {
 
 // newRunnerUncoveredMessage builds the comment of a blocked head, bounding the repository text it carries. A payload the publisher could not
 // render is an error, so nobody writes a message that nobody can post.
-func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths []string, protect, ignore []byte, digest string) (governance.OutboxMessage, error) {
-	if !digestPattern.MatchString(digest) {
-		return governance.OutboxMessage{}, errors.New("runner-uncovered comment: the digest is not SHA-256 hex")
-	}
-	p := runnerUncoveredPayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Protect: string(protect), Ignore: string(ignore)}
+func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths []string, protect []byte, protectPatterns []string, ignore, declared []byte) (governance.OutboxMessage, error) {
+	p := runnerUncoveredPayload{commentTarget: target, Head: head, Branch: branch, Paths: boundedText(paths), PathsTotal: len(paths), Protect: string(protect), ProtectPatterns: protectPatterns, Ignore: string(ignore)}
 	if err := p.validate(); err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("runner-uncovered comment: %w", err)
 	}
@@ -315,11 +346,13 @@ func newRunnerUncoveredMessage(target commentTarget, head, branch string, paths 
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the runner-uncovered comment: %w", err)
 	}
-	key := fmt.Sprintf("%s:%d:%d:%s", runnerUncoveredKey, target.RepositoryID, target.Pull, digest)
+	// The key digests the paths, the head's file (the review is anchored to it) and the declarations or patterns the comment shows.
+	shown := slices.Concat([]string{setDigest(paths), string(declared), string(protect), string(ignore)}, protectPatterns)
+	key := fmt.Sprintf("%s:%d:%d:%s", runnerUncoveredKey, target.RepositoryID, target.Pull, contentDigest(shown))
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) runnerUncovered(key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+func (p *commentPublisher) runnerUncovered(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	n, err := decodePayload[runnerUncoveredPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err

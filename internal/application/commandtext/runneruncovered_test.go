@@ -133,13 +133,13 @@ func TestRunnerUncoveredCommentIsRefusedOnAnImpossibleState(t *testing.T) {
 
 func choiceBody(t *testing.T, choice commandtext.RunnerChoice, anchor, indent string, patterns []string, newList string) string {
 	t.Helper()
-	return render(t, func() string { return commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList) })
+	return render(t, func() string { return commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, "") })
 }
 
 func TestRunnerChoiceBodyAddsTheItemsToAnExistingList(t *testing.T) {
 	body := choiceBody(t, commandtext.ProtectChoice, "  - pytest.ini", "  ", []string{"conftest.py", "pytest.toml"}, "")
 	block := suggestionBlock.FindStringSubmatch(body)
-	if len(block) < 2 || block[1] != "  - pytest.ini\n  - \"conftest.py\"\n  - \"pytest.toml\"" {
+	if len(block) < 2 || block[1] != "  - pytest.ini\n  - conftest.py\n  - pytest.toml" {
 		t.Fatalf("the block is %q in\n%s", block, body)
 	}
 	for _, w := range []string{"protecting the runner files", "`runner` list", "needs the owner's approval"} {
@@ -218,10 +218,28 @@ func TestRunnerChoiceBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			mustPanic(t, func() { commandtext.RunnerChoiceBody(c.choice, c.anchor, c.indent, c.patterns, c.newList) })
-			if commandtext.ValidateRunnerChoice(c.choice, c.anchor, c.indent, c.patterns, c.newList) == nil {
+			mustPanic(t, func() { commandtext.RunnerChoiceBody(c.choice, c.anchor, c.indent, c.patterns, c.newList, "") })
+			if commandtext.ValidateRunnerChoice(c.choice, c.anchor, c.indent, c.patterns, c.newList, "") == nil {
 				t.Error("ValidateRunnerChoice accepts it")
 			}
 		})
+	}
+}
+
+// A declaration of exactly the limit is accepted and, in the worst fence (one run of backticks, which the fence outgrows at both ends), the
+// comment with both declarations still fits; one byte more is refused.
+func TestRunnerUncoveredCommentAcceptsDeclarationsOfExactlyTheLimit(t *testing.T) {
+	n := runnerNotice()
+	n.Protect = []byte(strings.Repeat("`", commandtext.MaxDeclaration))
+	n.Ignore = n.Protect
+	if err := commandtext.ValidateRunnerUncovered(n); err != nil {
+		t.Fatalf("declarations of %d bytes are refused: %v", commandtext.MaxDeclaration, err)
+	}
+	if body := runnerText(t, n); body == "" || len(body) >= maxComment || !utf8.ValidString(body) {
+		t.Errorf("body has %d bytes or is not UTF-8, want 0 < n < %d", len(body), maxComment)
+	}
+	n.Protect = append(n.Protect, '`')
+	if commandtext.ValidateRunnerUncovered(n) == nil {
+		t.Errorf("a protect declaration of %d bytes is accepted", len(n.Protect))
 	}
 }

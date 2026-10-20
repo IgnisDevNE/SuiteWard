@@ -25,10 +25,13 @@ func TestFailNextIsConsumedByTheNextUnitOfWork(t *testing.T) {
 
 	e.store.(FailNexter).FailNext(boom)
 	e.read(func(context.Context, governance.Tx) error { return nil }) // a unit of work without a write
+	before := e.revision()
 
-	if response := e.approve(c); !response.Committed {
-		t.Fatalf("response = %+v, want a failure armed for an earlier unit of work not to hit this one", response)
+	if response := e.approve(c); response.Duplicate {
+		t.Fatalf("response = %+v, want a new approval", response)
 	}
+
+	e.requireWrites(before, 1) // a failure armed for an earlier unit of work did not hit this one
 }
 
 func TestAliasWriteRejectsAReceiptOtherThanTheOriginal(t *testing.T) {

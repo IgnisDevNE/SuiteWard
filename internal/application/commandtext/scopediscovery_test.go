@@ -221,42 +221,48 @@ func TestSuggestDeclarationWithRunnerStaysInsideALinkAndAComment(t *testing.T) {
 	for name, unit := range map[string]string{"plain": "a", "3-byte": "\u20ac", "backtick": "`", "space": " ", "percent": "%"} {
 		for _, runners := range []int{0, 1, 10, 19, 20} {
 			t.Run(fmt.Sprintf("%s with %d runner patterns", name, runners), func(t *testing.T) {
-				pattern := func(i int) string {
-					p := strings.Repeat(unit, 99/len(unit))
-					return p + strings.Repeat("x", 100-len(p)-1) + string(rune('a'+i))
-				}
-				var include, runner, mixed, submodules []string
-				for i := range 20 {
-					if i < runners {
-						runner = append(runner, pattern(i))
-					} else {
-						include = append(include, pattern(i))
-					}
-					mixed = append(mixed, strings.Repeat("\u20ac`\n", 400)+string(rune('a'+i)))
-					submodules = append(submodules, strings.Repeat("\u20ac`\n", 400)+string(rune('a'+i)))
-				}
+				include, runner, mixed, submodules := worstSuggestionLists(unit, runners)
 				// Without mixed files the body keeps the bound of M1.7b, a quarter of the limit; with them, half.
-				for bound, withMixed := range map[int][]string{maxComment / 4: nil, maxComment / 2: mixed} {
-					a := missingWith(include, runner, withMixed, true)
-					if withMixed != nil {
-						a.Submodules = submodules
-					}
-					a.Repo = "a" + strings.Repeat("b", 38) + "/" + strings.Repeat("c", 100)
-					a.Branch = strings.Repeat("\u20ac", 85)
-					body := suggestionText(t, a)
-					raw := linkPattern.FindStringSubmatch(body)
-					if raw == nil {
-						t.Fatalf("no link in body:\n%s", body)
-					}
-					if len(raw[1]) > 8000 {
-						t.Errorf("the link has %d bytes", len(raw[1]))
-					}
-					if len(body) > bound || !utf8.ValidString(body) {
-						t.Errorf("the body has %d bytes with %d mixed files or is not UTF-8, want at most %d", len(body), len(withMixed), bound)
-					}
-				}
+				checkWorstSuggestion(t, missingWith(include, runner, nil, true), maxComment/4)
+				a := missingWith(include, runner, mixed, true)
+				a.Submodules = submodules
+				checkWorstSuggestion(t, a, maxComment/2)
 			})
 		}
+	}
+}
+
+// worstSuggestionLists are 20 patterns of 100 bytes of unit, the first runners of them runner patterns, and 20 mixed files and 20 submodules of any length.
+func worstSuggestionLists(unit string, runners int) (include, runner, mixed, submodules []string) {
+	for i := range 20 {
+		p := strings.Repeat(unit, 99/len(unit))
+		p += strings.Repeat("x", 100-len(p)-1) + string(rune('a'+i))
+		if i < runners {
+			runner = append(runner, p)
+		} else {
+			include = append(include, p)
+		}
+		mixed = append(mixed, strings.Repeat("\u20ac`\n", 400)+string(rune('a'+i)))
+		submodules = append(submodules, strings.Repeat("\u20ac`\n", 400)+string(rune('a'+i)))
+	}
+	return include, runner, mixed, submodules
+}
+
+// checkWorstSuggestion renders a on the longest repository and branch and checks the link and the body against their bounds.
+func checkWorstSuggestion(t *testing.T, a commandtext.DeclarationSuggestion, bound int) {
+	t.Helper()
+	a.Repo = "a" + strings.Repeat("b", 38) + "/" + strings.Repeat("c", 100)
+	a.Branch = strings.Repeat("\u20ac", 85)
+	body := suggestionText(t, a)
+	raw := linkPattern.FindStringSubmatch(body)
+	if raw == nil {
+		t.Fatalf("no link in body:\n%s", body)
+	}
+	if len(raw[1]) > 8000 {
+		t.Errorf("the link has %d bytes", len(raw[1]))
+	}
+	if len(body) > bound || !utf8.ValidString(body) {
+		t.Errorf("the body has %d bytes with %d mixed files or is not UTF-8, want at most %d", len(body), len(a.Mixed), bound)
 	}
 }
 
@@ -510,7 +516,7 @@ var suggestionBlock = regexp.MustCompile("(?s)```suggestion\n(.*)\n```\n$")
 
 func suggestionBody(t *testing.T, anchor, indent string, patterns []string) string {
 	t.Helper()
-	return render(t, func() string { return commandtext.ScopeSuggestionBody(anchor, indent, patterns) })
+	return render(t, func() string { return commandtext.ScopeSuggestionBody(anchor, indent, patterns, "") })
 }
 
 func TestScopeSuggestionBodyHoldsTheAnchorAndTheNewPatterns(t *testing.T) {
@@ -566,8 +572,8 @@ func TestScopeSuggestionBodyParsesWhenSplicedAfterTheAnchor(t *testing.T) {
 }
 
 func TestScopeSuggestionBodyFencesAnchorAgainstBackticks(t *testing.T) {
-	body := suggestionBody(t, "  - a/```/b # ```", "  ", []string{"x"})
-	if !strings.Contains(body, "````suggestion\n  - a/```/b # ```\n  - \"x\"\n````") {
+	body := suggestionBody(t, "  - \"a/```/b\" # ```", "  ", []string{"x"})
+	if !strings.Contains(body, "````suggestion\n  - \"a/```/b\" # ```\n  - \"x\"\n````") {
 		t.Errorf("a backtick run can close the block:\n%s", body)
 	}
 }
@@ -593,13 +599,13 @@ func TestScopeSuggestionBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			mustPanic(t, func() { commandtext.ScopeSuggestionBody(c.anchor, c.indent, c.patterns) })
-			if commandtext.ValidateScopeSuggestion(c.anchor, c.indent, c.patterns) == nil {
+			mustPanic(t, func() { commandtext.ScopeSuggestionBody(c.anchor, c.indent, c.patterns, "") })
+			if commandtext.ValidateScopeSuggestion(c.anchor, c.indent, c.patterns, "") == nil {
 				t.Error("ValidateScopeSuggestion accepts it")
 			}
 		})
 	}
-	if err := commandtext.ValidateScopeSuggestion(`  - "a"`, "  ", slices.Repeat([]string{strings.Repeat("a", 100)}, 20)); err != nil {
+	if err := commandtext.ValidateScopeSuggestion(`  - "a"`, "  ", slices.Repeat([]string{strings.Repeat("a", 100)}, 20), ""); err != nil {
 		t.Errorf("the largest suggestion is refused: %v", err)
 	}
 }

@@ -68,14 +68,13 @@ type Tx interface {
 	// which must come first because the outcome may name the version it wrote.
 	RecordMergeOutcome(context.Context, MergeWrite) error
 
-	// Enqueue and Outbox are written in the same transaction as the facts
-	// above. Neither advances the Suite revision.
-	Enqueue(context.Context, Job) error
+	// Outbox is written in the same transaction as the facts above: the transactional guarantee of an external effect
+	// (ADR 0005). It does not advance the Suite revision.
 	Outbox(context.Context, OutboxMessage) error
 }
 
-// Job is follow-up work for a background worker. Args reference scoped
-// records and immutable revisions; they never carry credentials.
+// Job is follow-up work for a background worker, enqueued with an outbox message outside any Suite by the store's
+// EnqueueSystem. Args reference scoped records and immutable revisions; they never carry credentials.
 type Job struct {
 	Kind        string          // ^[a-z][a-z0-9_.]*$, at most 64 bytes, for example "probe"
 	Args        json.RawMessage // a JSON object, at most 64 KiB
@@ -138,12 +137,7 @@ type PromoteRequest struct {
 	Integration      contract.Integration
 	NewVersionID     contract.SuiteVersionID
 	RecordedAt       time.Time
-	Outbox           []OutboxMessage // written with a recorded promotion; never part of its identity or receipt
-}
-
-type CorrectionRequest struct {
-	Promotion       PromoteRequest
-	TargetVersionID contract.SuiteVersionID
+	Outbox           []OutboxMessage // bootstrap only: written with a recorded bootstrap, never part of its identity or receipt
 }
 
 type PromotionIdentity struct {
@@ -193,10 +187,6 @@ type ProposalWrite struct {
 	Revision contract.ProposalRevision
 }
 
-type ReviseRequest struct {
-	Revision contract.ProposalRevision // its binding's reference names the proposal and the new revision id
-}
-
 type ReviseResult struct {
 	Current   contract.ProposalReference // the proposal's current revision after the call
 	Committed bool                       // false when nothing was written
@@ -205,9 +195,7 @@ type ReviseResult struct {
 type PromoteResult struct {
 	Outcome   contract.PromotionOutcome
 	Reason    contract.PromotionReason
-	Record    contract.PromotionRecord // set when Outcome is PromotionProposed
-	Committed bool
-	Duplicate bool
+	Duplicate bool // the bootstrap was already recorded
 }
 
 type ConsentRequest struct {
@@ -217,7 +205,6 @@ type ConsentRequest struct {
 
 type ConsentResponse struct {
 	Receipt   ConsentReceipt
-	Committed bool
 	Duplicate bool
 }
 

@@ -78,9 +78,9 @@ func (w *cjWorld) requireAckPayload(repositoryID, comment int64, d commands.Disp
 	}
 }
 
-func (w *cjWorld) requireNoAck(repositoryID, comment int64, d commands.Disposition) {
+func (w *cjWorld) requireNoAck(repositoryID int64, d commands.Disposition) {
 	w.t.Helper()
-	w.requireSilent(repositoryID, comment, d)
+	w.requireSilent(repositoryID, 500, d)
 }
 
 // message returns the outbox message with this key that a unit of work committed.
@@ -126,15 +126,15 @@ func (w *cjWorld) proposal(repositoryID int64, id contract.ProposalID) (contract
 	return current, found
 }
 
-func (w *cjWorld) requireProposal(id contract.ProposalID, revision contract.ProposalRevisionID, origin string, kind contract.OriginKind, pull int) {
+func (w *cjWorld) requireProposal(id contract.ProposalID, origin string, kind contract.OriginKind, pull int) {
 	w.t.Helper()
 	current, found := w.proposal(cjID1, id)
 	if !found {
 		w.t.Fatalf("proposal %s does not exist\nlogs: %s", id, w.logs)
 	}
-	if current.Binding().Reference().RevisionID != revision || string(current.Origin()) != origin || current.OriginKind() != kind || current.Carrier() != carrierID(cjID1, pull) {
+	if current.Binding().Reference().RevisionID != "R1" || string(current.Origin()) != origin || current.OriginKind() != kind || current.Carrier() != carrierID(cjID1, pull) {
 		w.t.Fatalf("proposal %s current revision = %s from %s (%v) carried by %s; want %s from %s (%v) carried by pull %d", id, current.Binding().Reference().RevisionID,
-			current.Origin(), current.OriginKind(), current.Carrier(), revision, origin, kind, pull)
+			current.Origin(), current.OriginKind(), current.Carrier(), contract.ProposalRevisionID("R1"), origin, kind, pull)
 	}
 }
 
@@ -146,8 +146,9 @@ func (w *cjWorld) requireNoProposal(id contract.ProposalID) {
 }
 
 // seedCanonical gives the repository's project a Suite whose canonical is V1.
-func (w *cjWorld) seedCanonical(repositoryID int64) {
+func (w *cjWorld) seedCanonical() {
 	w.t.Helper()
+	repositoryID := cjID2
 	project, carrier := owner.ProjectID(repositoryID), carrierID(repositoryID, 3)
 	protected := cjMust(contract.NewProtectedContract(cjMust(artifact.NewManifest([]artifact.Entry{{Path: "tests/a_test.go", Content: artifact.Hash([]byte("v1"))}})),
 		artifact.Hash([]byte("tests/**")), map[string]string{}))
@@ -196,8 +197,8 @@ func TestProposeFromTheDefaultBranchWhenItHoldsTheDeclaration(t *testing.T) {
 	w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
 	w.mustRun()
 
-	w.requireNoAck(cjID1, 500, commands.Proposed)
-	w.requireProposal("P2", "R1", bootHead, contract.OriginBranch, cjPull) // beside the seeded P1
+	w.requireNoAck(cjID1, commands.Proposed)
+	w.requireProposal("P2", bootHead, contract.OriginBranch, cjPull) // beside the seeded P1
 	message, found := w.message("bootstrap-summary:1001:P2-R1")
 	if !found {
 		t.Fatalf("no bootstrap summary among %d messages", len(w.suites.messages))
@@ -223,8 +224,8 @@ func TestProposeFromThePullRequestWhenOnlyItHoldsTheDeclaration(t *testing.T) {
 	w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
 	w.mustRun()
 
-	w.requireNoAck(cjID1, 500, commands.Proposed)
-	w.requireProposal("P2", "R1", cjHead, contract.OriginPull, cjPull)
+	w.requireNoAck(cjID1, commands.Proposed)
+	w.requireProposal("P2", cjHead, contract.OriginPull, cjPull)
 	message, found := w.message("bootstrap-summary:1001:P2-R1")
 	if !found {
 		t.Fatal("no bootstrap summary")
@@ -285,8 +286,8 @@ func TestProposeRefusesAForkAndACanonicalAndNoSuite(t *testing.T) {
 		extra      map[string]any
 	}{
 		{"a pull request from a fork", cjID1, func(w *cjWorld) { w.headRepo = "evil/widgets" }, commands.ProposeRefused, map[string]any{"reason": "fork"}},
-		{"a Suite that has a canonical", cjID2, func(w *cjWorld) { w.seedCanonical(cjID2) }, commands.ProposeRefused, map[string]any{"reason": "canonical-present"}},
-		{"a canonical wins over a fork", cjID2, func(w *cjWorld) { w.seedCanonical(cjID2); w.headRepo = "evil/gadgets" }, commands.ProposeRefused, map[string]any{"reason": "canonical-present"}},
+		{"a Suite that has a canonical", cjID2, func(w *cjWorld) { w.seedCanonical() }, commands.ProposeRefused, map[string]any{"reason": "canonical-present"}},
+		{"a canonical wins over a fork", cjID2, func(w *cjWorld) { w.seedCanonical(); w.headRepo = "evil/gadgets" }, commands.ProposeRefused, map[string]any{"reason": "canonical-present"}},
 		{"no Suite", cjID2, func(*cjWorld) {}, commands.NoSuite, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -375,8 +376,8 @@ func TestProposeTakesTheNextNumberBesideOlderProposalsOfEitherKind(t *testing.T)
 	w.syncAll([]cjComment{cjPropose(500, cjAt(10)), cjPropose(501, cjAt(11)).onPull(cjOtherPull)})
 	w.mustRun()
 
-	w.requireProposal("P2", "R1", bootHead, contract.OriginBranch, cjPull)
-	w.requireProposal("P3", "R1", bootHead, contract.OriginBranch, cjOtherPull) // a different carrier: a new proposal, not a reuse
+	w.requireProposal("P2", bootHead, contract.OriginBranch, cjPull)
+	w.requireProposal("P3", bootHead, contract.OriginBranch, cjOtherPull) // a different carrier: a new proposal, not a reuse
 	if w.summaries() != 2 {
 		t.Fatalf("%d summaries; want one for each proposal", w.summaries())
 	}
@@ -388,7 +389,7 @@ func TestProposeAgainOnAnUnchangedPullRequestReusesTheProposal(t *testing.T) {
 	w.syncAll([]cjComment{cjPropose(500, cjAt(10)), cjPropose(501, cjAt(11))})
 	w.mustRun()
 
-	w.requireNoAck(cjID1, 500, commands.Proposed)
+	w.requireNoAck(cjID1, commands.Proposed)
 	w.requireAckPayload(cjID1, 501, commands.Proposed, map[string]any{"reference": "P2-R1"})
 	w.requireNoProposal("P3")
 	if w.summaries() != 1 {
@@ -404,7 +405,7 @@ func TestProposeAfterACrashBetweenTheProposalAndTheLedgerReusesIt(t *testing.T) 
 	if err := w.run(); !errors.Is(err, errLedger) {
 		t.Fatalf("run = %v; want the ledger failure", err)
 	}
-	w.requireProposal("P2", "R1", bootHead, contract.OriginBranch, cjPull) // written before the ledger failed
+	w.requireProposal("P2", bootHead, contract.OriginBranch, cjPull) // written before the ledger failed
 	w.ledger.recordErr = nil
 	w.mustRun()
 
@@ -444,7 +445,7 @@ func TestProposeReusesAProposalOnlyWhenThePolicyRevisionMatchesToo(t *testing.T)
 				}
 				return
 			}
-			w.requireNoAck(cjID2, 500, commands.Proposed)
+			w.requireNoAck(cjID2, commands.Proposed)
 			if _, found := w.message("bootstrap-summary:1002:P2-R1"); !found {
 				t.Fatalf("no summary of P2-R1; the proposal must not be reused\nlogs: %s", w.logs)
 			}
@@ -515,7 +516,7 @@ func TestSkipRefusesAfterUsingTheCode(t *testing.T) {
 		setup      func(w *cjWorld)
 		reason     string
 	}{
-		{"a Suite that has a canonical", cjID2, cjPull, func(w *cjWorld) { w.seedCanonical(cjID2) }, "canonical-present"},
+		{"a Suite that has a canonical", cjID2, cjPull, func(w *cjWorld) { w.seedCanonical() }, "canonical-present"},
 		{"a pull request from a fork", cjID1, cjOtherPull, func(w *cjWorld) { w.headRepo = "evil/widgets" }, "fork"},
 		{"the carrier of the latest bootstrap proposal", cjID1, cjPull, func(*cjWorld) {}, "carrier"},
 	} {
@@ -787,8 +788,8 @@ func TestProposeTakesTheDeclarationOnlyFromAFileEntry(t *testing.T) {
 	w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
 	w.mustRun()
 
-	w.requireNoAck(cjID1, 500, commands.Proposed)
-	w.requireProposal("P2", "R1", cjHead, contract.OriginPull, cjPull)
+	w.requireNoAck(cjID1, commands.Proposed)
+	w.requireProposal("P2", cjHead, contract.OriginPull, cjPull)
 }
 
 // linkedFile is a tree where one path is a symbolic link.
@@ -825,6 +826,13 @@ func TestProposeRefusesASourceThatCannotBeReadAsAContract(t *testing.T) {
 		{"a tree GitHub truncated", func(w *cjWorld) {
 			w.trees(bootFiles("v1"), bootFiles("v1"))
 			w.reader.repo(cjRepo1).treeErr[bootHead] = fmt.Errorf("%w: %w", inventory.ErrInvalidTree, github.ErrTreeTruncated)
+		}, nil},
+		// With no declaration anywhere the suggestion is built from these trees' paths, so they are validated as the inventory would.
+		{"a head path with a colon and no declaration anywhere", func(w *cjWorld) {
+			w.trees(map[string]string{"src/main.go": "y"}, map[string]string{"te:sts/test_a.py": "x", "src/main.go": "y"})
+		}, nil},
+		{"a default branch path with a colon and no declaration anywhere", func(w *cjWorld) {
+			w.trees(map[string]string{"te:sts/test_a.py": "x", "src/main.go": "y"}, map[string]string{"src/main.go": "y"})
 		}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

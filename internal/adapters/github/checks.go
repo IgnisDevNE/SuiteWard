@@ -128,7 +128,7 @@ func (c *Checks) Runs(ctx context.Context, repo, sha, name string, appID int64) 
 	case appID <= 0:
 		return nil, fmt.Errorf("%w: app id %d", ErrInvalidArgument, appID)
 	}
-	raw, err := readPagesOf(ctx, c.client, func(page int) string {
+	raw, _, err := readListing(ctx, c.client, func(page int) string {
 		return fmt.Sprintf("/repos/%s/commits/%s/check-runs?check_name=%s&app_id=%d&per_page=%d&page=%d",
 			repo, sha, url.QueryEscape(name), appID, pageSize, page)
 	}, func(path string, body []byte) ([]checkRunJSON, error) {

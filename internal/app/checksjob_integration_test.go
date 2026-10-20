@@ -82,6 +82,19 @@ func (g *headsGitHub) posted(t *testing.T, instance string) []string {
 	return posted
 }
 
+// tamperWithV1 replaces the stored bytes of the artifact "v1" in dir with others, and returns the path of the object.
+func tamperWithV1(t *testing.T, dir string) string {
+	t.Helper()
+	object := filepath.Join(dir, "sha256-"+strings.TrimPrefix(artifact.Hash([]byte("v1")).String(), "sha256:"))
+	if err := os.Remove(object); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(object, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return object
+}
+
 // TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay runs the check job against the real stores and its messages
 // through the relay and the publisher to a GitHub that lists what was posted: an unchanged pull request succeeds, a
 // protected change waits for approval, an approval makes it succeed and a revocation makes it wait again, and a
@@ -208,13 +221,7 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	// The integrity job against the real stores: bytes of the canonical that no longer match their digest fail
 	// every open pull request, and the verified bytes bring the checks back.
 	integrityJob := &integrityJob{owners: store, suites: store, content: artifacts, store: store.Integrity(), logger: logger, now: time.Now}
-	object := filepath.Join(cfg.ArtifactDir, "sha256-"+strings.TrimPrefix(artifact.Hash([]byte("v1")).String(), "sha256:"))
-	if err := os.Remove(object); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(object, []byte("tampered"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	object := tamperWithV1(t, cfg.ArtifactDir)
 	if err := integrityJob.run(t.Context()); err != nil {
 		t.Fatal(err)
 	}

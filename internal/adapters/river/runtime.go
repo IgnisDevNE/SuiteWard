@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -149,45 +148,23 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1}
 		},
 		&riverqueue.PeriodicJobOpts{ID: "outbox_relay", RunOnStart: true})
-	protectionJobs, err := addProtection(workers, config)
+	periodicJobs, err := addPeriodicJobs(workers, config, wake)
 	if err != nil {
 		return nil, err
 	}
-	bootstrapJobs, err := addBootstrap(workers, config, wake)
-	if err != nil {
-		return nil, err
-	}
-	mergesJobs, err := addMerges(workers, config, wake)
-	if err != nil {
-		return nil, err
-	}
-	checksJobs, err := addChecks(workers, config)
-	if err != nil {
-		return nil, err
-	}
-	integrityJobs, err := addIntegrity(workers, config)
-	if err != nil {
-		return nil, err
-	}
-	commandsJobs, err := addCommands(workers, config, wake)
-	if err != nil {
-		return nil, err
-	}
-	syncJobs, err := addSync(workers, config, wake)
-	if err != nil {
+	if err := addSyncRepo(workers, config, wake); err != nil {
 		return nil, err
 	}
 	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
 		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
-		Queues: map[string]riverqueue.QueueConfig{riverqueue.QueueDefault: {MaxWorkers: config.Workers}, outboxQueue: {MaxWorkers: 1},
-			SyncTickKind: {MaxWorkers: 1}, CommandsKind: {MaxWorkers: 1}, ChecksKind: {MaxWorkers: 1}, MergesKind: {MaxWorkers: 1}, BootstrapKind: {MaxWorkers: 1}},
-		PeriodicJobs: slices.Concat([]*riverqueue.PeriodicJob{relayJob}, syncJobs, protectionJobs, bootstrapJobs, commandsJobs, checksJobs, mergesJobs, integrityJobs),
+		Queues:       queues(config.Workers),
+		PeriodicJobs: append([]*riverqueue.PeriodicJob{relayJob}, periodicJobs...),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create the River client: %w", err)
 	}
 	wake.client = client
-	return &Runtime{client: client, sync: len(syncJobs) > 0}, nil
+	return &Runtime{client: client, sync: config.SyncTick != nil}, nil
 }
 
 // Start begins processing jobs and relaying the outbox. It returns once started.

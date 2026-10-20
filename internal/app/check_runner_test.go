@@ -128,7 +128,7 @@ func TestCheckPublisherRefusesPathsThatDoNotFit(t *testing.T) {
 func TestChecksPublishTheRunnerFilesWithTheRunnerUncoveredCheck(t *testing.T) {
 	w := newCJWorld(t, true)
 
-	w.runnerPull(cjHead2, withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py"), added(cjJest, "pkg/conftest.py")...)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest, "pkg/conftest.py"), added(cjJest, "pkg/conftest.py")...)
 
 	w.want(5, checks.InProgress, "runner-uncovered", 1)
 	var payload struct {

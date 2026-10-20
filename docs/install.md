@@ -327,7 +327,7 @@ A correction puts an earlier version's protected files back, for example the pre
 
 ### Stop protecting a repository
 
-A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard cannot tell what happened there, so it holds back the commands of **every** repository: no `approve`, `revoke`, `propose`, `skip` or `suggest` gets an answer. Deleting the repository on GitHub has the same effect.
+A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard skips it: nothing is synchronized or decided there, and the commands of the other repositories keep working. `/status` and the MCP `status` tool name it in `unconfiguredRepositories`, and the log warns once. Deleting the repository on GitHub has the same effect.
 1. Remove the repository from the list: `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env` on an isolated host (then restart the service), or `-GitHubRepositories` when you run `deploy/local.ps1` again on a co-located PC.
 2. Run setup again (section 6) with one `--test-check` for each repository you keep. Setup replaces the TOTP secret, so add the new entry to your authenticator app and delete the old one.
 3. Comment your command again. A command written before the new setup is ignored and gets no reply.
@@ -875,6 +875,7 @@ These are the `/status` fields you read:
 
 - `tier` is the effective tier. `tierNote` appears when the setting and the enrollment disagree. Run setup again (section 6).
 - `owner` shows the enrolled login. It is absent until setup succeeds.
+- `unconfiguredRepositories` lists the enrolled repositories that the configuration does not name. It is absent when there are none.
 - `github` has one entry per repository:
   - `lastSuccess` is the last successful synchronization.
   - `lastError` is the last synchronization error, as short text without secrets. If `waitUntil` is set, GitHub asked SuiteWard to wait because of a rate limit, and SuiteWard resumes by itself. Otherwise, check that the App is installed on that repository, and that the App ID, the installation ID and the key are the ones from section 4.
@@ -896,7 +897,7 @@ Common problems:
 - **Setup exits with code 1.** A lookup failed. The owner login may not be a user account, the App may not be installed on every configured repository, or GitHub could not be reached. Nothing was written.
 - **`propose` was refused.** The acknowledgment names the reason: `canonical-present` (the repository already has a contract; `propose` only works before the first one), `fork` (pull requests from forks are not supported), `not-open` (the pull request is no longer open), `base-not-target` (the pull request's base branch is not the repository's default branch, so merging it could never decide the first contract), `declaration-missing` (no `.suiteward.yml` was found on the default branch or the pull request head; see the suggested file and link, section 8), or `invalid-source` (`.suiteward.yml` is invalid, a symbolic link that the scope reaches points at a directory, outside the repository or nowhere (section 8), or GitHub truncated the tree, which happens with very large monorepos and cannot be protected in this release).
 - **A command gets no reply.** Check that the first line starts with `/suiteward`, outside a code block, that it comes from your account, that you did not edit it, and that the pull request is still open. Another account's command gets no reply by design.
-- **No command gets a reply, in any repository,** and the log says `github commands wait for an enrolled repository that is not configured in GITHUB_REPOSITORIES`. A repository you removed from the configuration, or deleted on GitHub, is still enrolled. See [Stop protecting a repository](#stop-protecting-a-repository).
+- **A repository gets no reply and no checks,** `/status` lists it in `unconfiguredRepositories`, and the log says `github commands skip an enrolled repository that is not configured in GITHUB_REPOSITORIES`. A repository you removed from the configuration, or deleted on GitHub, is still enrolled, and SuiteWard skips it. See [Stop protecting a repository](#stop-protecting-a-repository), or add it back to the configuration.
 - **An approval is rejected.** The reply gives the reason: an invalid, replayed or expired code, or an unknown revision. Use a fresh code, and check the reference against the newest revision comment.
 - **The check shows `approval-missing` after a push.** The push changed a protected file, which creates a new revision. Approve the revision named in the newest comment.
 - **The new image does not start after an update.** Do not start an older image, because after a migration it refuses to run. Read the logs and report them to the project. To return to the earlier state, restore your backup, as described in [the backup runbook](backup.md).

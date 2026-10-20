@@ -142,18 +142,23 @@ func (j *commandsJob) decidePending(ctx context.Context) error {
 
 // horizon is the sync watermark (D-COMMANDS, "The sync watermark in GitHub's clock", M1.7c): the earliest
 // CycleStartedAt among the enrolled repositories, GitHub's own clock, minus commandListingMargin. ready is false,
-// with a Warn line (every command waits), while an enrolled repository has no recorded cycle start: nothing can be
-// decided before it has been seen. JOB_TIMEOUT and the former clock skew no longer enter the horizon.
+// with a Warn line (every command waits), while a configured enrolled repository has no recorded cycle start: nothing
+// can be decided before it has been seen. An enrolled repository that is not in GITHUB_REPOSITORIES is skipped, once
+// warned: nothing syncs it, so its stale cycle would hold every command back for good; /status names it. Without a
+// configured enrolled repository there is nothing to decide, so it is not ready. JOB_TIMEOUT and the former clock
+// skew no longer enter the horizon.
 func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (horizon time.Time, ready bool, err error) {
 	var earliest time.Time
 	for _, project := range enrollment.Projects {
-		// Fail closed: an enrolled repository holds the watermark back even after it left GITHUB_REPOSITORIES, so say why.
-		if !slices.Contains(j.repos, project.Repo) && !j.warned[project.Repo] {
-			if j.warned == nil {
-				j.warned = map[string]bool{}
+		if !slices.Contains(j.repos, project.Repo) {
+			if !j.warned[project.Repo] {
+				if j.warned == nil {
+					j.warned = map[string]bool{}
+				}
+				j.warned[project.Repo] = true
+				j.logger.WarnContext(ctx, "github commands skip an enrolled repository that is not configured in GITHUB_REPOSITORIES", "repo", project.Repo)
 			}
-			j.warned[project.Repo] = true
-			j.logger.WarnContext(ctx, "github commands wait for an enrolled repository that is not configured in GITHUB_REPOSITORIES", "repo", project.Repo)
+			continue
 		}
 		state, _, err := j.syncs.Repository(ctx, project.Repo)
 		if err != nil {
@@ -166,6 +171,9 @@ func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (hori
 		if earliest.IsZero() || state.CycleStartedAt.Before(earliest) {
 			earliest = state.CycleStartedAt
 		}
+	}
+	if earliest.IsZero() {
+		return time.Time{}, false, nil
 	}
 	return earliest.Add(-commandListingMargin), true, nil
 }

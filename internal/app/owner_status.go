@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"slices"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 )
@@ -25,4 +26,19 @@ func effectiveTier(configured string, enrollment owner.State, enrolled bool) (ti
 		return configured, ""
 	}
 	return owner.TierCoLocated, tierNote
+}
+
+// unconfiguredRepositories lists the enrolled repositories that GITHUB_REPOSITORIES does not name, in enrollment
+// order: the GitHub jobs skip them. Without GitHub settings the integration is off and none is listed.
+func unconfiguredRepositories(configured []string, enrollment owner.State) []string {
+	if len(configured) == 0 {
+		return nil
+	}
+	var names []string
+	for _, project := range enrollment.Projects {
+		if !slices.Contains(configured, project.Repo) {
+			names = append(names, project.Repo)
+		}
+	}
+	return names
 }

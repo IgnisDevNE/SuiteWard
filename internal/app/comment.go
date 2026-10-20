@@ -63,11 +63,11 @@ type ackPayload struct {
 	Project       contract.ProjectID   `json:"project,omitempty"`       // processed: the project of the Suite
 	Suite         contract.SuiteID     `json:"suite,omitempty"`         // processed: the Suite whose receipt is read
 	Operation     contract.OperationID `json:"operation,omitempty"`     // processed: the operation of the consent receipt
-	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
+	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, other-pull, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
 	Comment       int64                `json:"comment"`                 // the id of the command comment
 	Owner         string               `json:"owner"`                   // the owner's GitHub login at processing time
 	Reason        string               `json:"reason,omitempty"`        // malformed: the reason code; propose-refused, skip-refused and suggest-refused: the refusal; suggested: declaration-missing, scope-notice or nothing-uncovered
-	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
+	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal, other-pull and proposed: P<n>-R<m>
 	Branch        string               `json:"branch,omitempty"`        // declaration-missing and scope-notice: the pull request's head ref. Also a refusal that asks to fix .suiteward.yml: the branch of the file to edit
 	Suggestion    []string             `json:"suggestion,omitempty"`    // declaration-missing: the include patterns inventory.Suggest found
 	Runner        []string             `json:"runner,omitempty"`        // and the runner patterns,

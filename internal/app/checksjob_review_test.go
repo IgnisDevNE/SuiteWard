@@ -14,6 +14,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 )
 
 // The review suggestion that goes with a scope notice (docs/contracts/runtime.md, "Scope discovery (M1.9)"): when the pull
@@ -78,8 +79,16 @@ func roundTrip(value map[string]any) map[string]any {
 	return out
 }
 
+// suggestion is the payload of one suggestion on a list whose items are all in the style of the anchor; the payload carries that style.
 func suggestion(list string, line int, anchor string, patterns ...string) map[string]any {
-	return map[string]any{"list": list, "line": line, "anchor": anchor, "patterns": patterns}
+	style := commandtext.QuotingPlain
+	switch {
+	case strings.HasPrefix(strings.TrimLeft(anchor, " -"), `"`):
+		style = commandtext.QuotingDouble
+	case strings.HasPrefix(strings.TrimLeft(anchor, " -"), "'"):
+		style = commandtext.QuotingSingle
+	}
+	return map[string]any{"list": list, "line": line, "anchor": anchor, "patterns": patterns, "quoting": string(style)}
 }
 
 func TestChecksWriteAScopeReviewOnTheIncludeLineInsideTheDiff(t *testing.T) {
@@ -216,7 +225,7 @@ func TestListSuggestionNeverAnchorsOnAScalarThatSpansLines(t *testing.T) {
 
 			got, ok := listSuggestion(root.Content[0], strings.Split(raw, "\n"), "include", []string{"*_test.go"}, []github.LineRange{{Start: 1, End: 6}})
 
-			if want := (scopeSuggestion{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}}); !ok || !reflect.DeepEqual(got, want) {
+			if want := (scopeSuggestion{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}, Quoting: commandtext.QuotingPlain}); !ok || !reflect.DeepEqual(got, want) {
 				t.Fatalf("suggestion %+v (%v), want %+v on the last item that is one line", got, ok, want)
 			}
 		})
@@ -239,5 +248,51 @@ func TestChecksLogTheReasonWhenTheReviewCannotBeRendered(t *testing.T) {
 	}
 	if strings.Contains(w.logs.String(), long) {
 		t.Fatal("the logs quote the anchor line")
+	}
+}
+
+// A list of mixed quoting is extended in plain items, as scope.AddPatterns writes them, whatever the quoting of the item the suggestion sits on
+// (decision 9 of M1.10): the suggestion carries the style of the list, not the anchor's.
+func TestChecksSuggestOnAMixedListInTheStyleOfScopeAddPatterns(t *testing.T) {
+	const declaration = "version: 1\ninclude:\n  - /other/**\n  - \"/tests/**\"\n"
+	w := newCJWorld(t, true)
+	w.reader.files = map[int][]github.PullFile{5: changed("@@ -1,4 +1,4 @@")}
+
+	w.scopePull(reviewFiles(declaration, cjUtilTst), bootFiles("v1"))
+
+	w.wantReview(declaration, []string{cjUtilTst}, map[string]any{"list": "include", "line": 4, "anchor": `  - "/tests/**"`, "patterns": []string{"*_test.go"}, "quoting": "plain"})
+	got := decodeSuggestions(t, w.scopeMessages("scope-review:")[0].Payload)
+	if applied, want := apply(t, declaration, got[0]), addPatterns(t, declaration, []string{"*_test.go"}, nil); applied != want {
+		t.Errorf("the suggestion applied gives\n%s\nwant what AddPatterns writes\n%s", applied, want)
+	}
+}
+
+// Each list takes its own style: a list whose items all share a quoting keeps it, and one that does not is plain.
+func TestListSuggestionCarriesTheQuotingOfTheList(t *testing.T) {
+	for name, c := range map[string]struct {
+		list string
+		want commandtext.Quoting
+	}{
+		"double quoted items":  {"  - \"a/**\"\n  - \"b/**\"", commandtext.QuotingDouble},
+		"single quoted items":  {"  - 'a/**'\n  - 'b/**'", commandtext.QuotingSingle},
+		"plain items":          {"  - a/**\n  - b/**", commandtext.QuotingPlain},
+		"plain then quoted":    {"  - a/**\n  - \"b/**\"", commandtext.QuotingPlain},
+		"quoted then plain":    {"  - \"a/**\"\n  - b/**", commandtext.QuotingPlain},
+		"double then single":   {"  - \"a/**\"\n  - 'b/**'", commandtext.QuotingPlain},
+		"one quoted item only": {"  - \"a/**\"", commandtext.QuotingDouble},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := "version: 1\ninclude:\n" + c.list + "\n"
+			var root yaml.Node
+			if err := yaml.Unmarshal([]byte(raw), &root); err != nil {
+				t.Fatal(err)
+			}
+
+			got, ok := listSuggestion(root.Content[0], strings.Split(raw, "\n"), "include", []string{"c/**"}, []github.LineRange{{Start: 1, End: 6}})
+
+			if !ok || got.Quoting != c.want {
+				t.Fatalf("suggestion %+v (%v), want the quoting %q", got, ok, c.want)
+			}
+		})
 	}
 }

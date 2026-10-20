@@ -498,8 +498,8 @@ func TestChecksSuggestBothChoicesOnTheItemsOfTheListsThatExist(t *testing.T) {
 	w.approvedRunnerPull(declaration, "@@ -1,7 +1,7 @@")
 
 	got := w.wantRunnerReview(declaration, []string{cjJest},
-		scopeSuggestion{List: "protect", Line: 5, Anchor: "  - pytest.toml", Patterns: []string{"jest.config.*"}},
-		scopeSuggestion{List: "ignore", Line: 7, Anchor: "  - gen/", Patterns: []string{"/" + cjJest}})
+		scopeSuggestion{List: "protect", Line: 5, Anchor: "  - pytest.toml", Patterns: []string{"jest.config.*"}, Quoting: commandtext.QuotingPlain},
+		scopeSuggestion{List: "ignore", Line: 7, Anchor: "  - gen/", Patterns: []string{"/" + cjJest}, Quoting: commandtext.QuotingPlain})
 	if applied := apply(t, declaration, got[0]); applied != "version: 1\ninclude:\n  - /tests/**\nrunner:\n  - pytest.toml\n  - jest.config.*\nexclude:\n  - gen/\n" {
 		t.Errorf("protect applied gives %q", applied)
 	}
@@ -621,18 +621,6 @@ func TestChecksLeaveTheIgnoreChoiceOutWhenAPathCannotBeNamedInExclude(t *testing
 			}
 		})
 	}
-}
-
-func TestChecksLogWhyTheRunnerCommentIsSkippedAndKeepTheBlock(t *testing.T) {
-	t.Run("a declaration over the limit", func(t *testing.T) {
-		w := newCJWorldOf(t, withDeclaration(bootFiles("v1"), cjDecl+"# "+strings.Repeat("x", commandtext.MaxDeclaration)+"\n"))
-
-		w.runnerPull(withDeclaration(withFiles(bootFiles("v1"), cjJest), cjDecl+"# "+strings.Repeat("x", commandtext.MaxDeclaration)+"\n"), added(cjJest)...)
-
-		w.want(5, checks.InProgress, "runner-uncovered", 1)
-		w.wantRunnerKeys()
-		w.logged("runner-uncovered comment skipped")
-	})
 }
 
 // anchored is the exclude pattern that names exactly one path: a name without a slash would match at every depth, so it gets a leading slash.

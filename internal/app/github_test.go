@@ -46,7 +46,7 @@ func TestReadErrorsAreClassifiedWithoutTheTextGitHubSent(t *testing.T) {
 		"unknown":          {errors.New("something no adapter names, with " + secret), githubsync.ReadError{Kind: githubsync.FailureTransport}},
 		"token mismatch":   {fmt.Errorf("%w: requested %s", appauth.ErrPermissionsMismatch, secret), githubsync.ReadError{Kind: githubsync.FailureForbidden}},
 		"decode":           {fmt.Errorf("%w: %s", github.ErrInvalidResponse, secret), githubsync.ReadError{Kind: githubsync.FailureDecode}},
-		"transport":        {&url.Error{Op: "Get", URL: "https://api.example/" + secret, Err: &net.OpError{Op: "dial"}}, githubsync.ReadError{Kind: githubsync.FailureTransport}},
+		"transport":        {&url.Error{Op: "Get", URL: "https://api.example/" + secret, Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}}, githubsync.ReadError{Kind: githubsync.FailureTransport}},
 		"client timeout":   {fmt.Errorf("github GET /x: %w", context.DeadlineExceeded), githubsync.ReadError{Kind: githubsync.FailureTransport}},
 	} {
 		t.Run(name, func(t *testing.T) {

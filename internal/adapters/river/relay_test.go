@@ -307,7 +307,7 @@ func TestRelayFailsAMessageWhoseLastAttemptPanics(t *testing.T) {
 	if err := relay.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.row("k1"); got != "failed 1 publisher panicked: boom" {
+	if got := w.row("k1"); !strings.HasPrefix(got, "failed 1 publisher panicked (digest ") || strings.Contains(got, "boom") {
 		t.Fatalf("row = %q, want the last attempt to end in the failed state", got)
 	}
 }

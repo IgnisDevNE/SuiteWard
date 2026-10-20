@@ -343,13 +343,13 @@ type bootstrapJob struct {
 	promoted bool // the current run promoted V1; runs never overlap
 }
 
-// run advances every project and wakes the checks when it promoted V1 (docs/contracts/runtime.md, "Queues and
-// wake-ups"). A run that failed after a promotion still wakes them.
+// run advances every project and wakes the checks, and the integrity job that verifies the new canonical, when it
+// promoted V1 (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed after a promotion still wakes them.
 func (b *bootstrapJob) run(ctx context.Context) (river.Wake, error) {
 	b.promoted = false
 	err := b.advanceAll(ctx)
 	if b.promoted {
-		return river.Wake{river.ChecksKind}, err
+		return river.Wake{river.ChecksKind, river.IntegrityKind}, err
 	}
 	return nil, err
 }

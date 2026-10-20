@@ -596,7 +596,7 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
 - The previous tick's start and request count are kept in memory, and a restart starts at once. A tick that ends early (a deadline or a budget stop) counts the requests it made.
 
 **Queues and wake-ups.**
-- `github_sync_tick`, `github_commands`, `github_checks`, `github_merges` and `github_bootstrap` each run on their own River queue with `MaxWorkers` 1. Runs of one kind never overlap, so "a run does not start while an earlier one runs" no longer needs the unique periodic insert.
+- `github_sync_tick`, `github_commands`, `github_checks`, `github_merges`, `github_bootstrap` and, since SH-H5, `canonical_integrity` each run on their own River queue with `MaxWorkers` 1. Runs of one kind never overlap, so "a run does not start while an earlier one runs" no longer needs the unique periodic insert.
 - The periodic inserts keep their unique options, so periodic runs still coalesce.
 - A **wake-up** is a one-off insert of a job kind with no unique options and `MaxAttempts` 1, made after the waking run's last commit.
   - **It is skipped** when a job of that kind is already `available` or `scheduled`, including a pending periodic run. The River adapter checks this with one query on `river_job`.
@@ -607,7 +607,7 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
   - In `river.Config`, `SyncTick`, `SyncRepo`, `Commands`, `Merges` and `Bootstrap` return `(river.Wake, error)`; `Wake` is the set of job kinds to wake.
   - The River worker inserts those wake-ups after the run returns, whatever its error, because a run that failed late may still have committed work. So "after the commit" holds without passing the runtime to the jobs.
   - `Checks`, `ProtectionCheck` and `Integrity` keep `func(ctx) error`.
-  - A kind outside commands, checks, merges and bootstrap is a programming error. The worker logs it at Error and inserts nothing.
+  - A kind outside commands, checks, merges, bootstrap and integrity is a programming error. The worker logs it at Error and inserts nothing.
 - **Who wakes whom:**
 
   | Run | Wakes | When |
@@ -615,8 +615,8 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
   | `github_sync_tick` | `github_commands` | at least one cycle was recorded, changed or not: a cycle that only moves the horizon can make an observed comment decidable |
   | `github_sync_tick` | `github_checks`, `github_merges` | at least one recorded cycle has `Changed` |
   | `github_commands` | `github_checks`, `github_bootstrap` | the run recorded at least one ledger entry |
-  | `github_merges` | `github_checks` | the run recorded at least one `promoted` or `corrected` outcome; both record a new canonical version |
-  | `github_bootstrap` | `github_checks` | the run promoted V1 |
+  | `github_merges` | `github_checks`, `canonical_integrity` | the run recorded at least one `promoted` or `corrected` outcome; both record a new canonical version, which the integrity job verifies at once instead of within the hour |
+  | `github_bootstrap` | `github_checks`, `canonical_integrity` | the run promoted V1 |
 
 - `github_sync_repo` (MCP) wakes the same kinds as a tick, under the same condition.
 

@@ -626,7 +626,7 @@ func TestRevisionCommentWithoutReductionDetailIsUnchanged(t *testing.T) {
 func reduced() commandtext.Revision {
 	r := revision(commandtext.Isolated)
 	r.Reduced = true
-	r.ReducedRules = []string{"internal/**", "!keep/**"}
+	r.ReducedRules = []string{"rule internal/**", "rule !keep/**", "exclude tests/b_test.go"}
 	r.ReducedPaths, r.ReducedPathsTotal = []string{"internal/a_test.go", "internal/b_test.go"}, 2
 	return r
 }
@@ -634,19 +634,29 @@ func reduced() commandtext.Revision {
 func TestRevisionCommentListsWhatTheReductionRemoves(t *testing.T) {
 	body := revisionText(t, reduced())
 	reduces := strings.Index(body, "**This revision reduces the protected scope.**")
-	rules := strings.Index(body, "```\ninternal/**\n!keep/**\n```")
+	rules := strings.Index(body, "Rules removed from the scope:\n\n```\ninternal/**\n!keep/**\n```")
+	excludes := strings.Index(body, "Excludes added:\n\n```\ntests/b_test.go\n```")
 	paths := strings.Index(body, "```\ninternal/a_test.go\ninternal/b_test.go\n```")
 	record := strings.Index(body, "This comment is a record")
-	if reduces < 0 || rules <= reduces || paths <= rules || record <= paths {
-		t.Errorf("the lists are not between the warning and the record (%d, %d, %d, %d):\n%s", reduces, rules, paths, record, body)
+	if reduces < 0 || rules <= reduces || excludes <= rules || paths <= excludes || record <= paths {
+		t.Errorf("the lists are not between the warning and the record (%d, %d, %d, %d, %d):\n%s", reduces, rules, excludes, paths, record, body)
 	}
-	for _, w := range []string{"no longer", "Rules removed", "Paths"} {
+	for _, w := range []string{"no longer", "Rules removed", "Excludes added", "Paths"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
 	}
-	if strings.Contains(body, "more") {
-		t.Errorf("body counts unlisted entries though all are listed:\n%s", body)
+	if strings.Contains(body, "more") || strings.Contains(body, "rule internal") || strings.Contains(body, "exclude tests") {
+		t.Errorf("body counts unlisted entries though all are listed, or shows the prefix that sorts them:\n%s", body)
+	}
+	r := reduced()
+	r.ReducedRules = []string{"rule internal/**"} // no exclude, so no listing of excludes
+	if body := revisionText(t, r); strings.Contains(body, "Excludes added") {
+		t.Errorf("body lists excludes that there are none of:\n%s", body)
+	}
+	r.ReducedRules = []string{"exclude tests/b_test.go"}
+	if body := revisionText(t, r); strings.Contains(body, "Rules removed") || !strings.Contains(body, "Excludes added") {
+		t.Errorf("an added exclude is listed as a rule removed:\n%s", body)
 	}
 }
 
@@ -664,7 +674,7 @@ func TestRevisionCommentCountsTheReducedPathsItDoesNotList(t *testing.T) {
 
 func TestRevisionCommentShowsTheReductionOnlyInsideCode(t *testing.T) {
 	r := reduced()
-	r.ReducedRules = []string{"a\nb/**", "\u202e**", "tick```/**"}
+	r.ReducedRules = []string{"rule a\nb/**", "rule \u202e**", "exclude tick```/**"}
 	r.ReducedPaths, r.ReducedPathsTotal = []string{"x\ny_test.go", "\xff_test.go"}, 2
 	body := revisionText(t, r)
 	for _, w := range []string{`"a\nb/**"`, `\u202e`, "tick```/**\n````", `"x\ny_test.go"`, `\xff`} {
@@ -680,9 +690,10 @@ func TestRevisionCommentShowsTheReductionOnlyInsideCode(t *testing.T) {
 func TestRevisionCommentRefusesReductionDetailThatDoesNotFit(t *testing.T) {
 	for name, mutate := range map[string]func(*commandtext.Revision){
 		"detail without a reduction": func(r *commandtext.Revision) { r.Reduced = false },
-		"21 rules":                   func(r *commandtext.Revision) { r.ReducedRules = slices.Repeat([]string{"x/**"}, 21) },
+		"21 rules":                   func(r *commandtext.Revision) { r.ReducedRules = slices.Repeat([]string{"rule x/**"}, 21) },
 		"21 paths":                   func(r *commandtext.Revision) { r.ReducedPaths = slices.Repeat([]string{"x_test.go"}, 21) },
 		"a negative paths total":     func(r *commandtext.Revision) { r.ReducedPathsTotal = -1 },
+		"an entry of neither kind":   func(r *commandtext.Revision) { r.ReducedRules = []string{"internal/**"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := reduced()
@@ -709,6 +720,9 @@ func TestRevisionCommentWithReductionDetailFitsInAComment(t *testing.T) {
 			for _, size := range []int{150, 4096} {
 				r.Added, r.Modified, r.Removed = long(size), long(size), long(size)
 				r.ReducedRules, r.ReducedPaths = long(size), long(size)
+				for i := range r.ReducedRules {
+					r.ReducedRules[i] = [...]string{"rule ", "exclude "}[i%2] + r.ReducedRules[i]
+				}
 				body := revisionText(t, r)
 				if body == "" || len(body) >= maxComment*3/4 || !utf8.ValidString(body) {
 					t.Errorf("entries of %d bytes: body has %d bytes or is not UTF-8, want 0 < n < %d", size, len(body), maxComment*3/4)
@@ -757,7 +771,7 @@ func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*commandtext.Revision){
 		"omitted without a reduction": func(r *commandtext.Revision) { r.Reduced = false },
-		"omitted with rules":          func(r *commandtext.Revision) { r.ReducedRules = []string{"x/**"} },
+		"omitted with rules":          func(r *commandtext.Revision) { r.ReducedRules = []string{"rule x/**"} },
 		"omitted with paths":          func(r *commandtext.Revision) { r.ReducedPaths = []string{"x_test.go"} },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -766,5 +780,28 @@ func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
 			mutate(&r)
 			mustPanic(t, func() { commandtext.RevisionComment(r) })
 		})
+	}
+}
+
+// MaxDeclaration promises a notice below GitHub's limit of 65,536 characters, not below three quarters of it: the two worst comments, with
+// declarations of backticks (which the fence outgrows at both ends) and every other list at its cap, measure up to about 58,000 bytes.
+// This test characterizes that bound; it does not guard a changed behavior.
+func TestTheWorstNoticesStayBelowGitHubsLimit(t *testing.T) {
+	long := func(i int) string { return strings.Repeat("\u20ac`\n", 400) + string(rune('a'+i)) }
+	var paths, mixed, submodules, patterns []string
+	for i := range 20 {
+		paths, mixed, submodules, patterns = append(paths, long(i)), append(mixed, long(i)), append(submodules, long(i)), append(patterns, strings.Repeat("`", 99)+string(rune('a'+i)))
+	}
+	declaration := []byte(strings.Repeat("`", commandtext.MaxDeclaration))
+	runner := runnerNotice()
+	runner.Paths, runner.PathsTotal, runner.Protect, runner.Ignore = paths, 1<<62, declaration, declaration
+	scopeNotice := notice()
+	scopeNotice.Paths, scopeNotice.PathsTotal, scopeNotice.Declaration, scopeNotice.Mixed, scopeNotice.Submodules = paths, 1<<62, declaration, mixed, submodules
+	scopeNotice.Base, scopeNotice.Source, scopeNotice.AddInclude, scopeNotice.AddRunner = commandtext.BasePull, 1<<62, patterns[:10], patterns[10:]
+	for name, body := range map[string]string{"RunnerUncoveredComment": runnerText(t, runner), "ScopeNoticeComment": noticeText(t, scopeNotice)} {
+		if len(body) >= maxComment || !utf8.ValidString(body) {
+			t.Errorf("%s: %d bytes or not UTF-8, want below %d", name, len(body), maxComment)
+		}
+		t.Logf("%s: %d bytes", name, len(body))
 	}
 }

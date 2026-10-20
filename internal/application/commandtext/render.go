@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -643,6 +644,8 @@ func validateRevision(r Revision) error {
 		return fmt.Errorf("commandtext: %d reduced rules, %d reduced paths and a total of %d", len(r.ReducedRules), len(r.ReducedPaths), r.ReducedPathsTotal)
 	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
 		return errors.New("commandtext: reduction detail on a revision that does not reduce the scope")
+	case slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") }):
+		return errors.New("commandtext: a reduced rule that is neither a \"rule \" nor an \"exclude \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
 		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
 	}
@@ -661,6 +664,14 @@ func validateRevision(r Revision) error {
 // reductionParts are the paragraphs that say a revision reduces the protected scope, with what it removes.
 func reductionParts(r Revision) []string {
 	parts := []string{"**This revision reduces the protected scope.** Review it carefully before approving."}
+	var rules, excludes []string // scope.Reductions marks each entry "rule <p>" or "exclude <p>"
+	for _, entry := range r.ReducedRules {
+		if p, ok := strings.CutPrefix(entry, "exclude "); ok {
+			excludes = append(excludes, p)
+		} else {
+			rules = append(rules, strings.TrimPrefix(entry, "rule "))
+		}
+	}
 	if r.ReducedOmitted {
 		omitted := "The detail of this reduction was omitted because it did not fit in this comment. Compare `.suiteward.yml` with the canonical one before approving."
 		if r.ReducedPathsTotal > 0 {
@@ -668,8 +679,11 @@ func reductionParts(r Revision) []string {
 		}
 		parts = append(parts, omitted)
 	}
-	if len(r.ReducedRules) > 0 {
-		parts = append(parts, listing("Rules removed from the scope", r.ReducedRules, len(r.ReducedRules)))
+	if len(rules) > 0 {
+		parts = append(parts, listing("Rules removed from the scope", rules, len(rules)))
+	}
+	if len(excludes) > 0 {
+		parts = append(parts, listing("Excludes added", excludes, len(excludes)))
 	}
 	if len(r.ReducedPaths) > 0 {
 		parts = append(parts, listingAndMore("Paths that the scope no longer covers", r.ReducedPaths, r.ReducedPathsTotal))

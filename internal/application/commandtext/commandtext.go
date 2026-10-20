@@ -1,7 +1,7 @@
 // Package commandtext parses the owner's PR command comments and renders the
 // comment bodies SuiteWard posts (D-COMMANDS, ADRs 0010, 0011 and 0027). It
-// takes plain values, returns plain values and imports no other SuiteWard
-// package.
+// takes plain values, returns plain values and depends only on the
+// domain packages (scope).
 //
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
 // (with its Command: Verb Approve, Revoke, Propose, Skip or Suggest, Proposal, Revision and Code; Propose and Suggest have

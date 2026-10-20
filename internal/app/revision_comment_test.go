@@ -378,7 +378,7 @@ func TestRevisionMessageDropsTheReductionDetailThatDoesNotFitTheOutbox(t *testin
 	list := func() []string { return slices.Repeat([]string{strings.Repeat("<", 150)}, 20) }
 	notice := cmtNotice()
 	notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
-	notice.ReducedRules, notice.ReducedPaths = list(), append(list(), "tests/more_test.go")
+	notice.ReducedRules, notice.ReducedPaths = asRules(list()), append(list(), "tests/more_test.go")
 
 	message := cmtRevisionMessage(t, notice, "isolated")
 
@@ -429,7 +429,7 @@ func TestRevisionCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
 			list := func() []string { return slices.Repeat([]string{strings.Repeat(unit, 400)}, 25) }
 			notice := cmtNotice()
 			notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
-			notice.ReducedRules, notice.ReducedPaths = list(), list()
+			notice.ReducedRules, notice.ReducedPaths = asRules(list()), list()
 			target := commentTarget{RepositoryID: cmtRepoID, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: cmtPull}
 			message, err := newRevisionMessage(target, notice, "co-located")
 			if err != nil {
@@ -472,4 +472,13 @@ func TestCommentPublisherRefusesAnInconsistentOmittedReductionDetail(t *testing.
 			}
 		})
 	}
+}
+
+// asRules marks each entry as scope.Reductions marks a removed rule.
+func asRules(entries []string) []string {
+	rules := make([]string, len(entries))
+	for i, e := range entries {
+		rules[i] = "rule " + e
+	}
+	return rules
 }

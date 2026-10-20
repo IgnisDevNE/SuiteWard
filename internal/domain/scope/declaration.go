@@ -230,7 +230,7 @@ func appendToList(top *yaml.Node, key string, patterns []string) bool {
 	for _, pattern := range patterns {
 		if !present[pattern] {
 			present[pattern] = true
-			added = append(added, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: pattern, Style: style})
+			added = append(added, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: pattern, Style: ItemStyle(pattern, style)})
 		}
 	}
 	if len(added) == 0 {
@@ -242,4 +242,22 @@ func appendToList(top *yaml.Node, key string, patterns []string) bool {
 	}
 	list.Content = append(list.Content, added...)
 	return true
+}
+
+// needsQuotes reports whether a plain scalar v would not read back as the string v: the merge key and the YAML 1.1 booleans, which
+// the encoder leaves plain when the node is a string. ItemStyle applies it.
+func needsQuotes(v string) bool {
+	switch v {
+	case "<<", "y", "Y", "yes", "Yes", "YES", "n", "N", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF":
+		return true
+	}
+	return false
+}
+
+// ItemStyle, used by appendToList and by the review suggestions so that both write the same item, is style, or the double-quoted style when style is plain and v needs quotes.
+func ItemStyle(v string, style yaml.Style) yaml.Style {
+	if style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) == 0 && needsQuotes(v) {
+		return yaml.DoubleQuotedStyle
+	}
+	return style
 }

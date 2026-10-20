@@ -50,7 +50,7 @@ const (
 	InvalidSource
 	NotOpen
 	BaseNotTarget
-	DeclarationTooLarge // only for SuggestRefused
+	DeclarationTooLarge // only for SuggestRefused, and no longer written (suggest lists the patterns alone): an acknowledgment queued by v0.1.1 still renders
 )
 
 // Rejection is the domain reason of a Rejected outcome.

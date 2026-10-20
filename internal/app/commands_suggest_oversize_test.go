@@ -32,7 +32,7 @@ func (w *cjWorld) requirePatternsOnlyReply(repository int64, want map[string]any
 	if err := json.Unmarshal(ack.Payload, &p); err != nil || p.validate() != nil {
 		w.t.Fatalf("the stored acknowledgment does not validate at publish: %v, %v", err, p.validate())
 	}
-	if text := commandtext.ScopeNoticeComment(p.notice()); !strings.Contains(text, "```\n*_test.go\n```") || strings.Contains(text, "tests/directory") {
+	if text := commandtext.ScopeNoticeComment(p.notice()); !strings.Contains(text, "Patterns missing from the `include` list:\n\n```\n") || !strings.Contains(text, "*_test.go\n```") || strings.Contains(text, "tests/directory") || strings.Contains(text, "version: 1") {
 		w.t.Fatalf("the reply does not show the pattern alone:\n%s", text)
 	}
 }
@@ -44,7 +44,7 @@ func TestSuggestOffersThePatternsAloneWhenTheCanonicalDeclarationIsOverTheLimit(
 
 	w.mustRun()
 
-	w.requirePatternsOnlyReply(cjID2, map[string]any{"branch": cjBranch, "base": "contract", "paths": []string{cjUtilTst}, "pathsTotal": 1, "addInclude": []string{"*_test.go"}})
+	w.requirePatternsOnlyReply(cjID2, map[string]any{"branch": cjBranch, "base": "contract", "paths": []string{cjUtilTst, "tests/a_test.go"}, "pathsTotal": 2, "addInclude": []string{"/tests/", "*_test.go"}})
 }
 
 // Before the first contract the default branch's file can be the base: the reply names it and links to the editor of the default branch.

@@ -515,19 +515,24 @@ func (j *commandsJob) source(ctx context.Context, c commands.Candidate, view boo
 	if err != nil {
 		return bootstrapSource{}, inventory.Suggestion{}, false, &opaque{what: "read the default branch head", cause: githubRead(err)}
 	}
-	tree, mainEntries, err := j.tree(ctx, c.Repo, head)
+	mainTree, mainEntries, err := j.tree(ctx, c.Repo, head)
 	if err != nil {
 		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	if hasDeclaration(mainEntries) {
-		return bootstrapSource{kind: contract.OriginBranch, origin: head, branch: branch, tree: tree}, inventory.Suggestion{}, true, nil
+		return bootstrapSource{kind: contract.OriginBranch, origin: head, branch: branch, tree: mainTree}, inventory.Suggestion{}, true, nil
 	}
-	tree, pullEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
+	pullTree, pullEntries, err := j.tree(ctx, c.Repo, view.pull.HeadSHA)
 	if err != nil {
 		return bootstrapSource{}, inventory.Suggestion{}, false, err
 	}
 	if hasDeclaration(pullEntries) {
-		return bootstrapSource{kind: contract.OriginPull, origin: view.pull.HeadSHA, tree: tree}, inventory.Suggestion{}, true, nil
+		return bootstrapSource{kind: contract.OriginPull, origin: view.pull.HeadSHA, tree: pullTree}, inventory.Suggestion{}, true, nil
+	}
+	for _, tree := range []*githubTree{pullTree, mainTree} { // the suggestion is built from their paths, which are untrusted: an invalid one is an invalid source
+		if _, err := inventory.ListEntries(ctx, tree); err != nil {
+			return bootstrapSource{}, inventory.Suggestion{}, false, err
+		}
 	}
 	if suggestion = inventory.Suggest(pullEntries); len(suggestion.Include)+len(suggestion.Runner) == 0 {
 		suggestion = inventory.Suggest(mainEntries)

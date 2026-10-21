@@ -240,7 +240,7 @@ func (w *cjJobWorld) consent(action contract.ConsentAction, comment int64, propo
 	w.t.Helper()
 	operation := contract.OperationID(fmt.Sprintf("consent:github-comment:%d", comment))
 	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", comment)),
-		Actor: bootOwnerPrincipal(), Action: action, Order: contract.CommandOrder(comment), Carrier: carrierID(bootRepoID, pull),
+		Actor: bootOwnerPrincipal(), Action: action, Order: testOrder(comment), Carrier: carrierID(bootRepoID, pull),
 		Reference: contract.ProposalReference{ProjectID: w.project(), SuiteID: "default", ProposalID: proposalID(proposal), RevisionID: contract.ProposalRevisionID(fmt.Sprintf("R%d", revision))}}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil {
@@ -808,13 +808,13 @@ func TestChecksNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 // TestTheChecksJobIsTheOnlyWriterOfCheckStates scans the production code: nothing but the job calls Publish of
 // the check ledger (D-CHECKS: a single writer).
 func TestTheChecksJobIsTheOnlyWriterOfCheckStates(t *testing.T) {
-	root := filepath.Join("..", "..", "internal")
+	repository := os.DirFS(filepath.Join("..", ".."))
 	var callers []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(repository, "internal", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(filepath.ToSlash(path), "/checkstest/") { // the in-memory ledger and its conformance suite are test support
 			return err
 		}
-		source, err := os.ReadFile(path)
+		source, err := fs.ReadFile(repository, path)
 		if err != nil {
 			return err
 		}

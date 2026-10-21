@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -586,7 +587,7 @@ func TestErrorsNeverContainTheToken(t *testing.T) {
 					w.Header().Set("Retry-After", "1")
 				}
 				w.WriteHeader(status)
-				_, _ = fmt.Fprintf(w, "echo %v %s", r.Header, r.Header.Get("Authorization"))
+				_, _ = fmt.Fprint(w, html.EscapeString(fmt.Sprintf("echo %v %s", r.Header, r.Header.Get("Authorization"))))
 			}))
 			defer srv.Close()
 			c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))

@@ -1072,11 +1072,12 @@ func TestMergesNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 func TestTheMergesJobIsTheOnlyWriterOfMergeFacts(t *testing.T) {
 	writes := []string{"governance.PromoteMerge(", ".RecordResolution(", ".RecordClosed(", ".MarkProcessed("}
 	var callers []string
-	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+	here := os.DirFS(".")
+	err := fs.WalkDir(here, ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
 		}
-		source, err := os.ReadFile(path)
+		source, err := fs.ReadFile(here, path)
 		if err != nil {
 			return err
 		}

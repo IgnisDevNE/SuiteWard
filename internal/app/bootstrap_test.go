@@ -423,7 +423,7 @@ func (w *bootWorld) approveIn(repositoryID, comment int64, n int, carrierPull in
 	reference := contract.ProposalReference{ProjectID: owner.ProjectID(repositoryID), SuiteID: "default", ProposalID: contract.ProposalID(fmt.Sprintf("P%d", n)), RevisionID: "R1"}
 	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d", comment)),
 		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", comment)), Actor: bootOwnerPrincipal(), Reference: reference,
-		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(comment)}))
+		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: testOrder(comment)}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil || !response.Receipt.CurrentApprovalEligible {
 		w.t.Fatalf("approve P%d-R1: eligible %v, error %v", n, response.Receipt.CurrentApprovalEligible, err)

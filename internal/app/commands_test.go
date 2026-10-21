@@ -330,7 +330,7 @@ func (w *cjWorld) requireProcessed(repositoryID, comment int64) governance.Conse
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	if receipt.Result.Command().Order() != contract.CommandOrder(comment) || receipt.Result.Command().Actor().ID() != owner.PrincipalID(cjOwnerID) ||
+	if receipt.Result.Command().Order() != testOrder(comment) || receipt.Result.Command().Actor().ID() != owner.PrincipalID(cjOwnerID) ||
 		receipt.Result.Command().SourceCommandID() != commentSource(comment) || receipt.Result.Command().Carrier() != carrierID(repositoryID, cjPull) {
 		w.t.Fatalf("the command given to the domain is %+v", receipt.Result.Command())
 	}

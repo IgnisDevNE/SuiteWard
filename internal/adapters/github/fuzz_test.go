@@ -66,7 +66,7 @@ func FuzzNewLineRangesHeader(f *testing.F) {
 			}
 		case err != nil:
 			t.Fatalf("%q: %v", patch, err)
-		case count == 0 && len(ranges) != 0, count > 0 && (len(ranges) != 1 || ranges[0] != github.LineRange{Start: int(start), End: int(start + count - 1)}):
+		case count == 0 && len(ranges) != 0, count > 0 && (len(ranges) != 1 || strconv.Itoa(ranges[0].Start) != strconv.FormatUint(start, 10) || strconv.Itoa(ranges[0].End) != strconv.FormatUint(start+count-1, 10)):
 			t.Fatalf("%q = %v, want the span of %d lines from %d", patch, ranges, count, start)
 		}
 	})

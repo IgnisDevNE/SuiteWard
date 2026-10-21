@@ -232,7 +232,7 @@ func (w *cmtWorld) consent(action contract.ConsentAction, revision contract.Prop
 	w.t.Helper()
 	w.order++
 	operation := contract.OperationID(fmt.Sprintf("op-%d", w.order))
-	command := cmtMust(contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", w.comment(operation, cmtComment+int64(w.order)-1))),
+	command := cmtMust(contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", w.comment(operation, cmtComment+testID(w.order)-1))),
 		Actor: w.principal, Reference: w.reference(revision), Carrier: "github-pr:1001/7", Action: action, Order: w.order}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil {

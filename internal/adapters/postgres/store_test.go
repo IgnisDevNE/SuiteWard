@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -813,7 +814,7 @@ func contendBootstraps(t *testing.T, operations func(int) string, versions func(
 // moment, as one operation four times and as four operations.
 func TestConcurrentBootstrapsRecordExactlyOneVersion(t *testing.T) {
 	t.Run("different operations", func(t *testing.T) {
-		results := contendBootstraps(t, func(i int) string { return "bootstrap-" + string(rune('a'+i)) }, func(i int) contract.SuiteVersionID { return contract.SuiteVersionID("v" + string(rune('1'+i))) })
+		results := contendBootstraps(t, func(i int) string { return fmt.Sprintf("bootstrap-%c", 'a'+i) }, func(i int) contract.SuiteVersionID { return contract.SuiteVersionID(fmt.Sprintf("v%c", '1'+i)) })
 		var winners, settled int
 		for _, result := range results {
 			switch {

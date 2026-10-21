@@ -447,7 +447,7 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/down", InstallationID: 2, At: at, Kind: githubsync.FailureTransport}); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts()}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
@@ -464,13 +464,39 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	}
 }
 
+func TestStatusShowsTheBudgetOnlyWhenKnown(t *testing.T) {
+	reset := time.Date(2026, 10, 11, 13, 0, 0, 0, time.FixedZone("local", 2*3600))
+	for name, test := range map[string]struct {
+		budget fakeBudget
+		want   string
+	}{
+		"known":   {fakeBudget{rest.Window{Remaining: 42, Reset: reset}, true}, `,"budget":{"remaining":42,"reset":"2026-10-11T11:00:00Z"}`},
+		"unknown": {fakeBudget{}, ``},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
+				github: &githubStatus{repos: []string{"acme/ok"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: test.budget}}
+
+			code, body := call(t, a, http.MethodGet, "/status")
+
+			want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
+				"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
+				"outbox":{"pending":0,"delivered":0,"failed":0},
+				"github":[{"repo":"acme/ok"}]` + test.want + `}`
+			if code != http.StatusOK || !jsonEqual(t, body, want) {
+				t.Fatalf("GET /status = %d %s; want 200 %s", code, body, want)
+			}
+		})
+	}
+}
+
 func TestStatusShowsTheLastBootstrapProblemOfARepository(t *testing.T) {
 	problems := &bootstrapProblems{}
 	problems.set("acme/ok", "origin-not-passed")
 	problems.set("acme/down", "read-failed")
 	problems.clear("acme/down")
 	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
-		github: &githubStatus{repos: []string{"acme/ok", "acme/down"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: problems, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts()}}
+		github: &githubStatus{repos: []string{"acme/ok", "acme/down"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: problems, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
@@ -490,7 +516,7 @@ func (failingRepositories) Repository(context.Context, string) (githubsync.Repos
 }
 
 func TestStatusIsUnavailableWhenTheObservationsCannotBeRead(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts()}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 

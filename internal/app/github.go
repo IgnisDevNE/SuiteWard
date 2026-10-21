@@ -57,6 +57,11 @@ type repositoryReader interface {
 	Repository(ctx context.Context, repo string) (githubsync.RepositoryState, bool, error)
 }
 
+// budgetWindow is the part of the GitHub budget the status reads.
+type budgetWindow interface {
+	Window() (rest.Window, bool)
+}
+
 // githubStatus reports what synchronization last saw of the configured repositories.
 type githubStatus struct {
 	repos     []string
@@ -66,6 +71,7 @@ type githubStatus struct {
 	checks    *bootstrapProblems // the check job's problems, the same in-memory map type
 	merges    *bootstrapProblems // the merges job's problems
 	integrity *integrityStatus   // the verdicts of the current canonicals
+	budget    budgetWindow       // the process-wide GitHub budget
 }
 
 // integrityStatus reads the integrity verdict of each enrolled repository's current canonical.
@@ -171,6 +177,7 @@ type githubSync struct {
 	checkRuns  *github.Checks // posts the check runs, with the checks token
 	bot        *botAccount    // SuiteWard's own account id, shared by the comment publisher and the command job
 	appID      int64
+	budget     *rest.Budget // the process-wide budget, for the status
 	repos      []string
 	jobTimeout time.Duration
 	now        func() time.Time // injected clock, for sync pacing (D-SYNC, "Sync pacing", M1.7c)
@@ -313,7 +320,7 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID, now: now, logger: logger}, nil
+	return &githubSync{reconciler: reconciler, budget: access.budget, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID, now: now, logger: logger}, nil
 }
 
 // tick is the github_sync_tick job: one cycle of every configured repository, paced by the previous tick's cost

@@ -35,6 +35,8 @@ type mcpBackend struct {
 	tier     string // the configured installation tier
 	owners   ownerReader
 	ids      *repositoryIDs // learned by the protection check; nil without the GitHub settings
+	instance func(context.Context) (string, error)
+	budget   budgetWindow // the process-wide GitHub budget; nil without the GitHub settings
 }
 
 // Status reports the configured repositories in configuration order, each
@@ -46,7 +48,11 @@ func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
 	if err != nil {
 		return mcp.StatusView{}, b.failed(ctx, "read the owner", "", err)
 	}
-	view := mcp.StatusView{GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
+	instance, err := b.instance(ctx)
+	if err != nil {
+		return mcp.StatusView{}, b.failed(ctx, "read the instance", "", err)
+	}
+	view := mcp.StatusView{Instance: shortInstance(instance), GitHubConfigured: len(b.repos) > 0, Repositories: []mcp.RepositoryStatus{}}
 	view.UnconfiguredRepositories = unconfiguredRepositories(b.repos, enrollment)
 	view.Tier, view.TierNote = effectiveTier(b.tier, enrollment, enrolled)
 	if enrolled {
@@ -54,6 +60,9 @@ func (b *mcpBackend) Status(ctx context.Context) (mcp.StatusView, error) {
 	}
 	if !view.GitHubConfigured {
 		return view, nil
+	}
+	if window, known := b.budget.Window(); known {
+		view.Budget = &mcp.BudgetStatus{Remaining: window.Remaining, Reset: window.Reset.UTC()}
 	}
 	protections, err := storedProtection(ctx, b.owners, b.ids, b.repos)
 	if err != nil {

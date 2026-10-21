@@ -107,6 +107,9 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		body["owner"] = map[string]any{"login": enrollment.Owner.Login, "accountId": enrollment.Owner.AccountID, "enrolledAt": enrollment.EnrolledAt.UTC().Format(time.RFC3339)}
 	}
 	if a.github != nil {
+		if window, known := a.github.budget.Window(); known {
+			body["budget"] = map[string]any{"remaining": window.Remaining, "reset": window.Reset.UTC().Format(time.RFC3339)}
+		}
 		if names := unconfiguredRepositories(a.github.repos, enrollment); len(names) > 0 {
 			body["unconfiguredRepositories"] = names
 		}

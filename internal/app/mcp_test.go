@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync/githubsynctest"
@@ -61,7 +62,7 @@ func (f failingObservations) Pulls(ctx context.Context, _ string) ([]githubsync.
 }
 
 func testBackend(store observations, inserter syncInserter, logs *bytes.Buffer, repos ...string) *mcpBackend {
-	return &mcpBackend{repos: repos, owners: ownertest.NewMemory(), store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug), ids: &repositoryIDs{}}
+	return &mcpBackend{repos: repos, owners: ownertest.NewMemory(), store: store, inserter: inserter, now: func() time.Time { return mcpNow }, timeout: time.Second, logger: newLogger(logs, slog.LevelDebug), ids: &repositoryIDs{}, instance: fakeStore{}.Instance, budget: fakeBudget{}}
 }
 
 func recordCycle(t *testing.T, store *githubsynctest.Memory, repo string, pulls ...int) {
@@ -89,6 +90,52 @@ func TestMCPStatusWithoutGitHubSaysNotConfigured(t *testing.T) {
 	}
 	if view.GitHubConfigured || view.Repositories == nil || len(view.Repositories) != 0 {
 		t.Fatalf("Status = %+v; want not configured and an empty, non-nil repository list", view)
+	}
+}
+
+// fakeBudget is a budget window that is known or not, as a test sets it.
+type fakeBudget struct {
+	window rest.Window
+	known  bool
+}
+
+func (f fakeBudget) Window() (rest.Window, bool) { return f.window, f.known }
+
+func TestMCPStatusReportsTheInstanceAndTheBudgetWindowWhenKnown(t *testing.T) {
+	reset := time.Date(2026, 10, 11, 13, 0, 0, 0, time.FixedZone("local", 2*3600))
+	for name, test := range map[string]struct {
+		repos  []string
+		budget fakeBudget
+		want   *mcp.BudgetStatus
+	}{
+		"known":     {[]string{"acme/ok"}, fakeBudget{rest.Window{Remaining: 42, Reset: reset}, true}, &mcp.BudgetStatus{Remaining: 42, Reset: reset.UTC()}},
+		"unknown":   {[]string{"acme/ok"}, fakeBudget{}, nil},
+		"no GitHub": {nil, fakeBudget{rest.Window{Remaining: 42, Reset: reset}, true}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			b := testBackend(githubsynctest.NewMemory(), &fakeInserter{}, &logs, test.repos...)
+			b.budget = test.budget
+
+			view, err := b.Status(t.Context())
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.Instance != "1a2b3c4d" || !reflect.DeepEqual(view.Budget, test.want) {
+				t.Fatalf("Status instance %q budget %+v; want instance 1a2b3c4d and budget %+v", view.Instance, view.Budget, test.want)
+			}
+		})
+	}
+}
+
+func TestMCPStatusFailsWhenTheInstanceCannotBeRead(t *testing.T) {
+	var logs bytes.Buffer
+	b := testBackend(githubsynctest.NewMemory(), &fakeInserter{}, &logs)
+	b.instance = fakeStore{instanceErr: errors.New("boom")}.Instance
+
+	if _, err := b.Status(t.Context()); err == nil {
+		t.Fatal("Status succeeded without an instance")
 	}
 }
 

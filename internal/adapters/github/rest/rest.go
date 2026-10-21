@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -152,6 +153,24 @@ func (b *Budget) local(t time.Time) time.Time {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return t.Add(b.offset)
+}
+
+// Window is what the budget knows of the current rate-limit window.
+type Window struct {
+	Remaining int       // requests SuiteWard may still send in the window; 0 once refused
+	Reset     time.Time // the end of the window, on the local clock
+}
+
+// Window returns the current window; known is false before the first response
+// and once the window has ended, until the next response, as acquire does not refuse then either.
+func (b *Budget) Window() (w Window, known bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.known || !b.clock().Add(-b.offset).Before(b.reset) {
+		return Window{}, false
+	}
+	allowed := int(math.Ceil(b.fraction * float64(b.limit)))
+	return Window{Remaining: max(0, allowed-b.used-b.inFlight), Reset: b.reset.Add(b.offset)}, true
 }
 
 // release returns a reservation whose request got no response.

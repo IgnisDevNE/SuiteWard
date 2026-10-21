@@ -1181,7 +1181,7 @@ Start with `/status` and the logs.
 
 On AlmaLinux, `journalctl --user` can report that no journal files were opened: user journals are readable only to members of `systemd-journal`. Read the service's own log instead, with `podman logs --since 30m suiteward` (and `suiteward-migrate` or `suiteward-db`).
 
-If the log shows `github_checks` ending in `context deadline exceeded` again and again, then `budget_exhausted`: a first assessment of a large test suite takes longer than `SUITEWARD_JOB_TIMEOUT`, and every cancelled attempt reads the files again and spends the API budget. Raise `SUITEWARD_JOB_TIMEOUT` (section 12; `3m` covered about 250 protected files). The budget recovers when GitHub's hourly window resets, and the queued check is then published by itself.
+If the log shows `github_checks` ending in `context deadline exceeded` again and again, then `budget_exhausted`: a first assessment of a large test suite takes longer than `SUITEWARD_JOB_TIMEOUT`, and every cancelled attempt reads the files again and spends the API budget. Raise `SUITEWARD_JOB_TIMEOUT` (section 12; `3m` covered about 250 protected files). Read `budget` in `/status` (or the MCP `status` tool): `budget.remaining` is what is left and `budget.reset` is when requests resume. The budget recovers when GitHub's hourly window resets, and the queued check is then published by itself.
 
 These are the `/status` fields you read:
 

@@ -292,14 +292,15 @@ func TestParsePatternCapsSegmentsAtSixtyFour(t *testing.T) {
 	}
 }
 
-// The widest pattern the cap allows matches a deep path in bounded work (the bound is generous: it separates
-// polynomial from exponential or quadratic-per-segment blowups, not scheduler noise).
+// The costliest pattern the cap allows (64 segments, 32 of them recursive and none adjacent) matches a deep path in
+// work linear in segments times components. The bound is generous: it separates that from a quadratic walk per
+// recursive segment, not scheduler noise.
 func TestPatternWithManyRecursiveSegmentsMatchesDeepPathQuickly(t *testing.T) {
-	pattern, err := scope.ParsePattern("/" + strings.Repeat("**/", 63) + "x")
+	pattern, err := scope.ParsePattern("/" + strings.Repeat("**/a/", 31) + "**/x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := strings.Repeat("d/", 100) + "y"
+	path := strings.Repeat("a/", 6000) + "y"
 	start := time.Now()
 	got, err := pattern.Match(path)
 	if err != nil || got {

@@ -84,9 +84,15 @@ func NewCanonicalSnapshot(suite Suite, version SuiteVersion, protected Protected
 		if version.ID() != "" || !protected.IsZero() || !record.IsZero() {
 			return CanonicalSnapshot{}, ErrInvalidCanonicalSnapshot
 		}
-	} else if version.ID() != current || version.ProjectID() != suite.ProjectID() || version.SuiteID() != suite.ID() || protected.IsZero() || record.IsZero() ||
-		version.Manifest().Digest() != protected.Manifest().Digest() || record.VersionID() != current || record.Binding().Reference().ProjectID != suite.ProjectID() || record.Binding().Reference().SuiteID != suite.ID() || !protected.matches(record.Binding()) {
-		return CanonicalSnapshot{}, ErrInvalidCanonicalSnapshot
+	} else {
+		if version.ID() != current || version.ProjectID() != suite.ProjectID() || version.SuiteID() != suite.ID() || protected.IsZero() || record.IsZero() {
+			return CanonicalSnapshot{}, ErrInvalidCanonicalSnapshot
+		}
+		reference := record.Binding().Reference()
+		if version.Manifest().Digest() != protected.Manifest().Digest() || record.VersionID() != current ||
+			reference.ProjectID != suite.ProjectID() || reference.SuiteID != suite.ID() || !protected.matches(record.Binding()) {
+			return CanonicalSnapshot{}, ErrInvalidCanonicalSnapshot
+		}
 	}
 	return CanonicalSnapshot{suite: suite, version: version, protected: protected, record: record}, nil
 }
@@ -189,7 +195,8 @@ type PromotionInput struct {
 	OperationID  OperationID
 	NewVersionID SuiteVersionID
 	RecordedAt   time.Time
-	// CorrectsVersionID is the earlier version a correction restores, empty for a promotion that corrects nothing.
+	// CorrectsVersionID is the version a correction corrects (the current one, whose content it replaces with an
+	// earlier version's), empty for a promotion that corrects nothing.
 	// DecideCorrection sets it, DecideBootstrap refuses it, and DecidePromotion only carries it into the record.
 	CorrectsVersionID SuiteVersionID
 }

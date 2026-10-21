@@ -7,5 +7,7 @@ runner:
   - scripts/ci.ps1
   - scripts/check-*.ps1
   - scripts/dev-env.ps1
+  - scripts/dev.ps1
+  - /dev/tools.json
   - /.golangci.yml
   - /codecov.yml

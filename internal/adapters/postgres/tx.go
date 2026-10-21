@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -165,10 +164,14 @@ func (t *tx) consent(ctx context.Context, proposal contract.Proposal, scope dbge
 		if err != nil {
 			return contract.Consent{}, invalidState("consent result "+row.SourceCommandID, err)
 		}
+		order, err := uint64Of(row.CommandOrder)
+		if err != nil {
+			return contract.Consent{}, invalidState("consent result "+row.SourceCommandID, err)
+		}
 		command, err := contract.NewCommand(contract.CommandInput{
 			OperationID: contract.OperationID(row.OperationID), SourceCommandID: contract.SourceCommandID(row.SourceCommandID), Actor: actor,
 			Reference: contract.ProposalReference{ProjectID: contract.ProjectID(row.ProjectID), SuiteID: contract.SuiteID(row.SuiteID), ProposalID: contract.ProposalID(row.ProposalID), RevisionID: contract.ProposalRevisionID(row.RevisionID)},
-			Carrier:   contract.ApprovalCarrierID(row.CarrierID), Action: action, Order: contract.CommandOrder(row.CommandOrder),
+			Carrier:   contract.ApprovalCarrierID(row.CarrierID), Action: action, Order: contract.CommandOrder(order),
 		})
 		if err != nil {
 			return contract.Consent{}, invalidState("consent result "+row.SourceCommandID, err)
@@ -416,14 +419,15 @@ func (t *tx) consentResultRow(result contract.CommandResult) (dbgen.InsertConsen
 	if err != nil {
 		return dbgen.InsertConsentResultParams{}, err
 	}
-	if command.Order() > math.MaxInt64 {
-		return dbgen.InsertConsentResultParams{}, errors.New("command order exceeds the stored range")
+	order, err := int64Of(uint64(command.Order()))
+	if err != nil {
+		return dbgen.InsertConsentResultParams{}, fmt.Errorf("command order: %w", err)
 	}
 	reference := command.Reference()
 	return dbgen.InsertConsentResultParams{
 		SourceCommandID: string(command.SourceCommandID()), OperationID: string(command.OperationID()), ProjectID: string(reference.ProjectID), SuiteID: string(reference.SuiteID),
 		ProposalID: string(reference.ProposalID), RevisionID: string(reference.RevisionID), ActorID: actor.ID, ActorKind: actor.Kind, CarrierID: string(command.Carrier()),
-		Action: action, CommandOrder: int64(command.Order()), Outcome: outcome, Reason: reason,
+		Action: action, CommandOrder: order, Outcome: outcome, Reason: reason,
 	}, nil
 }
 

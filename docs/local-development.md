@@ -27,6 +27,9 @@ Existing host prerequisites are Git, PowerShell 7, and a running Podman engine/m
 | sqlc | 1.31.1 | Official release archive, SHA-256 checked. |
 | actionlint | 1.7.12 | Official release archive, SHA-256 checked. |
 | golangci-lint | 2.14.0 | Official release archive, SHA-256 checked against the release's checksums file. |
+| zizmor | 1.31.1 | Official release archive, SHA-256 recorded from the GitHub release asset digest (upstream publishes no checksums file). |
+| gitleaks | 8.30.1 | Official release archive, SHA-256 checked against the release's checksums file. |
+| trivy | 0.76.0 | Official release archive, SHA-256 checked against the release's checksums file; used by the release workflow, not by `setup`. |
 | govulncheck | 1.8.0 | Exact Go module version, verified using the public Go checksum database. |
 | gopls | 0.23.0 | Exact Go module version, installed like govulncheck. |
 | PostgreSQL | 18.6, Debian trixie | Official image pinned to an immutable multiarchitecture digest. |
@@ -58,7 +61,7 @@ These paths are ignored by Git. Images and named volumes live in Podman's own st
 
 ### Shared tool cache
 
-Pinned archive tools (Go SDK, sqlc, actionlint, golangci-lint), their downloaded archives, and the Go-module tools `govulncheck` and `gopls` (each installed with the wrapper's `GOBIN` set to its own versioned directory) install once per user, so a new worktree does not download them again:
+Pinned archive tools (Go SDK, sqlc, actionlint, golangci-lint, zizmor, gitleaks, trivy), their downloaded archives, and the Go-module tools `govulncheck` and `gopls` (each installed with the wrapper's `GOBIN` set to its own versioned directory) install once per user, so a new worktree does not download them again:
 
 | Platform | Default location |
 | --- | --- |

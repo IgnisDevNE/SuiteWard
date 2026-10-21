@@ -175,9 +175,13 @@ func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (Clai
 // FinishOutbox records the outcome of a claim. It updates nothing, and
 // reports false, when another relay has reclaimed the message since.
 func (s *Store) FinishOutbox(ctx context.Context, claim OutboxClaim, update OutboxUpdate) (bool, error) {
+	attempts, err := int32Of(claim.Attempts)
+	if err != nil {
+		return false, err
+	}
 	updated, err := dbgen.New(s.pool).FinishOutbox(ctx, dbgen.FinishOutboxParams{
 		State: update.State, LastError: optionalText(update.LastError), NextAttemptAt: timestamp(update.NextAttemptAt),
-		FinishedAt: timestamp(update.FinishedAt), Key: claim.Key, Attempts: int32(claim.Attempts),
+		FinishedAt: timestamp(update.FinishedAt), Key: claim.Key, Attempts: attempts,
 	})
 	if err != nil {
 		return false, fmt.Errorf("record outbox outcome: %w", err)
@@ -189,7 +193,11 @@ func (s *Store) FinishOutbox(ctx context.Context, claim OutboxClaim, update Outb
 // attempt and makes the message due at nextAttemptAt. It updates nothing, and
 // reports false, when another relay has reclaimed the message since.
 func (s *Store) ReleaseOutbox(ctx context.Context, claim OutboxClaim, nextAttemptAt time.Time) (bool, error) {
-	updated, err := dbgen.New(s.pool).ReleaseOutbox(ctx, dbgen.ReleaseOutboxParams{NextAttemptAt: timestamp(nextAttemptAt), Key: claim.Key, Attempts: int32(claim.Attempts)})
+	attempts, err := int32Of(claim.Attempts)
+	if err != nil {
+		return false, err
+	}
+	updated, err := dbgen.New(s.pool).ReleaseOutbox(ctx, dbgen.ReleaseOutboxParams{NextAttemptAt: timestamp(nextAttemptAt), Key: claim.Key, Attempts: attempts})
 	if err != nil {
 		return false, fmt.Errorf("release outbox claim: %w", err)
 	}

@@ -123,7 +123,7 @@ func (f *prFlow) cycle(at time.Time, heads map[int]string) {
 func (f *prFlow) consent(comment int64, proposal, pull int) {
 	f.t.Helper()
 	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID("consent:github-comment:" + strconv.FormatInt(comment, 10)),
-		SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: contract.ApproveConsent, Order: contract.CommandOrder(comment),
+		SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: contract.ApproveConsent, Order: testOrder(comment),
 		Carrier: carrierID(bootRepoID, pull), Reference: contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "default", ProposalID: proposalID(proposal), RevisionID: "R1"}}))
 	if response, err := governance.ProcessConsent(f.t.Context(), f.store, governance.ConsentRequest{Command: command}); err != nil || !response.Receipt.CurrentApprovalEligible {
 		f.t.Fatalf("approve P%d-R1: eligible %v, error %v", proposal, response.Receipt.CurrentApprovalEligible, err)

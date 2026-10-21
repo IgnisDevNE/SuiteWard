@@ -331,7 +331,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		w := newCjWorld(t)
 		w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewDecl, cjUtilTst))
 		reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
-		reader.err = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
+		reader.err = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootLeak)
 		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 		w.mustRun()
 
@@ -343,7 +343,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		if !strings.Contains(w.logs.String(), `"kind"`) || !strings.Contains(w.logs.String(), `"status":500`) {
 			t.Fatalf("the log lacks the kind and status of the failure\nlogs: %s", w.logs)
 		}
-		w.requireNothingLeaked(bootSecret)
+		w.requireNothingLeaked(bootLeak)
 	})
 	t.Run("a rate limit waits for the next run", func(t *testing.T) {
 		w := newCjWorld(t)

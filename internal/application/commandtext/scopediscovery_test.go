@@ -787,7 +787,7 @@ func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
 // declarations of backticks (which the fence outgrows at both ends) and every other list at its cap, measure up to about 58,000 bytes.
 // This test characterizes that bound; it does not guard a changed behavior.
 func TestTheWorstNoticesStayBelowGitHubsLimit(t *testing.T) {
-	long := func(i int) string { return strings.Repeat("\u20ac`\n", 400) + string(rune('a'+i)) }
+	long := func(i int) string { return strings.Repeat("\u20ac`\n", 400) + fmt.Sprintf("%c", 'a'+i) }
 	var paths, mixed, submodules, patterns []string
 	for i := range 20 {
 		paths, mixed, submodules, patterns = append(paths, long(i)), append(mixed, long(i)), append(submodules, long(i)), append(patterns, strings.Repeat("`", 99)+string(rune('a'+i)))

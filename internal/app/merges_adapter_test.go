@@ -67,8 +67,8 @@ const (
 func TestMergesMeetTheRealAdapterErrors(t *testing.T) {
 	unreadable := map[string]mergeAnswer{
 		"a truncated tree":     {http.StatusOK, truncatedTree},
-		"a tree not found":     {http.StatusNotFound, fmt.Sprintf(`{"message": %q}`, bootSecret)},
-		"a tree unprocessable": {http.StatusUnprocessableEntity, fmt.Sprintf(`{"message": %q}`, bootSecret)},
+		"a tree not found":     {http.StatusNotFound, fmt.Sprintf(`{"message": %q}`, bootLeak)},
+		"a tree unprocessable": {http.StatusUnprocessableEntity, fmt.Sprintf(`{"message": %q}`, bootLeak)},
 	}
 	for name, answer := range unreadable {
 		t.Run(name, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestMergesMeetTheRealAdapterErrors(t *testing.T) {
 			w.advance(20 * time.Minute)
 			w.mustMerge()
 			w.wantOutcome(5, governance.MergeBlocked, governance.MergeReasonIntegrationUnreadable)
-			if strings.Contains(w.logs.String(), bootSecret) {
+			if strings.Contains(w.logs.String(), bootLeak) {
 				t.Fatalf("a log line carries what GitHub sent: %s", w.logs)
 			}
 		})
@@ -94,7 +94,7 @@ func TestMergesMeetTheRealAdapterErrors(t *testing.T) {
 		w := newMgWorld(t)
 		w.approved(5, cjHead2, "v2", 2, 201)
 		w.leave(5)
-		w.merges.reader = realMergeReader(t, mergeAnswer{http.StatusOK, listedTree}, mergeAnswer{http.StatusBadGateway, mustJSON(map[string]string{"message": bootSecret})})
+		w.merges.reader = realMergeReader(t, mergeAnswer{http.StatusOK, listedTree}, mergeAnswer{http.StatusBadGateway, mustJSON(map[string]string{"message": bootLeak})})
 		w.advance(2 * time.Hour)
 
 		err := w.runMerges()
@@ -104,7 +104,7 @@ func TestMergesMeetTheRealAdapterErrors(t *testing.T) {
 		}
 		w.wantNoOutcome(5)
 		w.wantProblem("read-failed")
-		if strings.Contains(w.logs.String(), bootSecret) {
+		if strings.Contains(w.logs.String(), bootLeak) {
 			t.Fatalf("a log line carries what GitHub sent: %s", w.logs)
 		}
 	})

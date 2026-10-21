@@ -37,7 +37,7 @@ const (
 	FindingMissingTestCheck     = string(protection.MissingTestCheck)
 	FindingNotUpToDate          = string(protection.NotUpToDate)
 	FindingAdminBypass          = string(protection.AdminBypass)
-	CaveatRulesetBypass         = string(protection.RulesetBypassUnverified)
+	CaveatRulesetBypass         = string(protection.RulesetOverrideUnverified)
 )
 
 // MaxTestCheckBytes bounds a project's required test check name.

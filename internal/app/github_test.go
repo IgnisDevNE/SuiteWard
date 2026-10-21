@@ -27,26 +27,26 @@ import (
 
 func TestReadErrorsAreClassifiedWithoutTheTextGitHubSent(t *testing.T) {
 	until := time.Date(2026, 10, 11, 13, 0, 0, 0, time.UTC)
-	const secret = "BODY-GITHUB-SENT"
+	const leak = "BODY-GITHUB-SENT"
 	for name, test := range map[string]struct {
 		err  error
 		want githubsync.ReadError
 	}{
-		"rate limited":     {fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 403, Until: until}, secret), githubsync.ReadError{Kind: githubsync.FailureRateLimited, Status: 403, WaitUntil: until}},
+		"rate limited":     {fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 403, Until: until}, leak), githubsync.ReadError{Kind: githubsync.FailureRateLimited, Status: 403, WaitUntil: until}},
 		"budget exhausted": {&rest.BudgetExhaustedError{Reset: until}, githubsync.ReadError{Kind: githubsync.FailureBudgetExhausted, WaitUntil: until}},
-		"unauthorized":     {fmt.Errorf("%w: %s", &rest.StatusError{Status: 401}, secret), githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
-		"forbidden":        {fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, secret), githubsync.ReadError{Kind: githubsync.FailureForbidden, Status: 403}},
-		"not found":        {fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, secret), githubsync.ReadError{Kind: githubsync.FailureNotFound, Status: 404}},
-		"unprocessable":    {fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, secret), githubsync.ReadError{Kind: githubsync.FailureUnprocessable, Status: 422}},
-		"other status":     {fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, secret), githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 502}},
+		"unauthorized":     {fmt.Errorf("%w: %s", &rest.StatusError{Status: 401}, leak), githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
+		"forbidden":        {fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, leak), githubsync.ReadError{Kind: githubsync.FailureForbidden, Status: 403}},
+		"not found":        {fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, leak), githubsync.ReadError{Kind: githubsync.FailureNotFound, Status: 404}},
+		"unprocessable":    {fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, leak), githubsync.ReadError{Kind: githubsync.FailureUnprocessable, Status: 422}},
+		"other status":     {fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, leak), githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 502}},
 		"token request":    {&appauth.StatusError{Status: 401}, githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
 		"app jwt refused":  {&appauth.StatusError{Endpoint: "app", Status: 401}, githubsync.ReadError{Kind: githubsync.FailureUnauthorized, Status: 401}},
 		"token not found":  {&appauth.StatusError{Status: 404}, githubsync.ReadError{Kind: githubsync.FailureNotFound, Status: 404}},
 		"token server":     {&appauth.StatusError{Status: 503}, githubsync.ReadError{Kind: githubsync.FailureStatus, Status: 503}},
-		"unknown":          {errors.New("something no adapter names, with " + secret), githubsync.ReadError{Kind: githubsync.FailureTransport}},
-		"token mismatch":   {fmt.Errorf("%w: requested %s", appauth.ErrPermissionsMismatch, secret), githubsync.ReadError{Kind: githubsync.FailureForbidden}},
-		"decode":           {fmt.Errorf("%w: %s", github.ErrInvalidResponse, secret), githubsync.ReadError{Kind: githubsync.FailureDecode}},
-		"transport":        {&url.Error{Op: "Get", URL: "https://api.example/" + secret, Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}}, githubsync.ReadError{Kind: githubsync.FailureTransport}},
+		"unknown":          {errors.New("something no adapter names, with " + leak), githubsync.ReadError{Kind: githubsync.FailureTransport}},
+		"token mismatch":   {fmt.Errorf("%w: requested %s", appauth.ErrPermissionsMismatch, leak), githubsync.ReadError{Kind: githubsync.FailureForbidden}},
+		"decode":           {fmt.Errorf("%w: %s", github.ErrInvalidResponse, leak), githubsync.ReadError{Kind: githubsync.FailureDecode}},
+		"transport":        {&url.Error{Op: "Get", URL: "https://api.example/" + leak, Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}}, githubsync.ReadError{Kind: githubsync.FailureTransport}},
 		"client timeout":   {fmt.Errorf("github GET /x: %w", context.DeadlineExceeded), githubsync.ReadError{Kind: githubsync.FailureTransport}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestReadErrorsAreClassifiedWithoutTheTextGitHubSent(t *testing.T) {
 			if got.Kind != test.want.Kind || got.Status != test.want.Status || !got.WaitUntil.Equal(test.want.WaitUntil) {
 				t.Fatalf("classified as %+v; want %+v", *got, test.want)
 			}
-			if strings.Contains(err.Error(), secret) {
+			if strings.Contains(err.Error(), leak) {
 				t.Fatalf("the classified error carries text GitHub sent: %v", err)
 			}
 		})

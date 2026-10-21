@@ -196,7 +196,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	consent := func(comment int64, proposal, pull int) {
 		t.Helper()
 		command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID("consent:github-comment:" + strconv.FormatInt(comment, 10)),
-			SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: contract.ApproveConsent, Order: contract.CommandOrder(comment),
+			SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: contract.ApproveConsent, Order: testOrder(comment),
 			Carrier: carrierID(bootRepoID, pull), Reference: contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "default", ProposalID: proposalID(proposal), RevisionID: "R1"}}))
 		if response, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: command}); err != nil || !response.Receipt.CurrentApprovalEligible {
 			t.Fatalf("approve P%d-R1: eligible %v, error %v", proposal, response.Receipt.CurrentApprovalEligible, err)

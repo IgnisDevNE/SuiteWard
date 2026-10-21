@@ -238,7 +238,7 @@ func TestChecksNeverKeepAStaleIntegrityOrForkResultThroughATransientRead(t *test
 			w.sync(map[int]string{4: bootHead})
 			state, reason := stale(w)
 			w.want(4, state, reason, 1)
-			w.reader.repos[bootRepo].treeErr[bootHead] = errors.New(bootSecret)
+			w.reader.repos[bootRepo].treeErr[bootHead] = errors.New(bootLeak)
 
 			if err := w.runChecks(); err != nil {
 				t.Fatalf("a failed GitHub read must not fail the run: %v", err)

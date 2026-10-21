@@ -1,6 +1,7 @@
 package commandtext_test
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"slices"
@@ -404,7 +405,7 @@ func TestSuggestDeclarationStaysInsideAComment(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			pattern := func(i int) string {
 				p := strings.Repeat(unit, 99/len(unit))
-				return p + strings.Repeat("x", 100-len(p)-1) + string(rune('a'+i))
+				return p + strings.Repeat("x", 100-len(p)-1) + fmt.Sprintf("%c", 'a'+i)
 			}
 			var suggestion []string
 			for i := range 20 {

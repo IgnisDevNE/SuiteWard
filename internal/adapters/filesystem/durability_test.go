@@ -102,7 +102,7 @@ func TestOpeningStoreNeverFollowsPartialSymlinks(t *testing.T) {
 
 	newTestStore(t, root)
 
-	if got, err := os.ReadFile(target); err != nil || string(got) != "not store content" {
+	if got, err := os.ReadFile(filepath.Clean(target)); err != nil || string(got) != "not store content" {
 		t.Fatalf("symlink target outside the store was altered: %q, %v", got, err)
 	}
 }

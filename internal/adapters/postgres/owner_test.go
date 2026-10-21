@@ -217,12 +217,12 @@ func TestOwnerConcurrentEnrollmentsSerialize(t *testing.T) {
 	errs := make(chan error, callers)
 	var group sync.WaitGroup
 	start := make(chan struct{})
-	for i := range callers {
+	for i := range byte(callers) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
 			<-start
-			errs <- w.store.Enroll(t.Context(), ownerEnrollment(7, byte(i+1), int64(100+i), 10))
+			errs <- w.store.Enroll(t.Context(), ownerEnrollment(7, i+1, 100+int64(i), 10))
 		}()
 	}
 	close(start)

@@ -23,12 +23,12 @@ import (
 )
 
 const (
-	fakeToken           = "ghs_FAKE-INSTALLATION-TOKEN-VALUE"
-	fakeProtectionToken = "ghs_FAKE-PROTECTION-TOKEN-VALUE"
-	fakeCommentBody     = "approve this please, comment body GitHub sent"
-	fakeErrorBody       = "SECRET-BODY-GITHUB-SENT-WITH-AN-ERROR"
-	sha40a              = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	sha40b              = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	fakeInstallAuth    = "ghs_FAKE-INSTALLATION-TOKEN-VALUE"
+	fakeProtectionAuth = "ghs_FAKE-PROTECTION-TOKEN-VALUE"
+	fakeCommentBody    = "approve this please, comment body GitHub sent"
+	fakeErrorBody      = "SECRET-BODY-GITHUB-SENT-WITH-AN-ERROR"
+	sha40a             = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	sha40b             = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 // fakeGitHub is the GitHub REST API of one installation with one repository, acme/widgets.
@@ -73,10 +73,10 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		granted, _ := body["permissions"].(map[string]any)
-		token := fakeToken
+		token := fakeInstallAuth
 		if _, protection := granted["administration"]; protection {
 			f.protectionTokenRequests = append(f.protectionTokenRequests, body)
-			token = fakeProtectionToken
+			token = fakeProtectionAuth
 		} else {
 			f.tokenRequests = append(f.tokenRequests, body)
 		}
@@ -182,7 +182,7 @@ func TestServeSynchronizesGitHubAtStart(t *testing.T) {
 		t.Fatalf("token requests = %v; want the read-only map for the repository name without its owner: %v", tokenRequests, wantRequest)
 	}
 	for _, auth := range restAuth {
-		if auth != "Bearer "+fakeToken {
+		if auth != "Bearer "+fakeInstallAuth {
 			t.Fatalf("a REST request carried %q; want the installation token", auth)
 		}
 	}
@@ -195,7 +195,7 @@ func TestServeSynchronizesGitHubAtStart(t *testing.T) {
 	if code := s.stop(); code != 0 {
 		t.Fatalf("a clean stop exited %d:\n%s", code, s.logs.String())
 	}
-	for what, secret := range map[string]string{"the installation token": fakeToken, "the App key": strings.TrimSpace(strings.Split(key, "\n")[1]), "a comment body": fakeCommentBody} {
+	for what, secret := range map[string]string{"the installation token": fakeInstallAuth, "the App key": strings.TrimSpace(strings.Split(key, "\n")[1]), "a comment body": fakeCommentBody} {
 		if strings.Contains(s.logs.String(), secret) {
 			t.Errorf("the logs contain %s:\n%s", what, s.logs.String())
 		}
@@ -258,7 +258,7 @@ func TestAFailedCycleShowsOnlyItsClassification(t *testing.T) {
 			if code := s.stop(); code != 0 {
 				t.Fatalf("a clean stop exited %d:\n%s", code, s.logs.String())
 			}
-			if strings.Contains(s.logs.String(), fakeErrorBody) || strings.Contains(s.logs.String(), fakeToken) {
+			if strings.Contains(s.logs.String(), fakeErrorBody) || strings.Contains(s.logs.String(), fakeInstallAuth) {
 				t.Fatalf("the logs carry text GitHub sent or the token:\n%s", s.logs.String())
 			}
 			kind, status, _ := strings.Cut(strings.TrimSuffix(test.wantError, ")"), " (HTTP ")
@@ -320,7 +320,7 @@ func TestServeVerifiesProtectionAtStartAndReportsItInStatusAndMCP(t *testing.T) 
 	if code := s.stop(); code != 0 {
 		t.Fatalf("a clean stop exited %d:\n%s", code, s.logs.String())
 	}
-	if strings.Contains(s.logs.String(), fakeProtectionToken) {
+	if strings.Contains(s.logs.String(), fakeProtectionAuth) {
 		t.Errorf("the logs contain the protection token:\n%s", s.logs.String())
 	}
 }

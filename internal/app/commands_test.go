@@ -330,7 +330,7 @@ func (w *cjWorld) requireProcessed(repositoryID, comment int64) governance.Conse
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	if receipt.Result.Command().Order() != contract.CommandOrder(comment) || receipt.Result.Command().Actor().ID() != owner.PrincipalID(cjOwnerID) ||
+	if receipt.Result.Command().Order() != testOrder(comment) || receipt.Result.Command().Actor().ID() != owner.PrincipalID(cjOwnerID) ||
 		receipt.Result.Command().SourceCommandID() != commentSource(comment) || receipt.Result.Command().Carrier() != carrierID(repositoryID, cjPull) {
 		w.t.Fatalf("the command given to the domain is %+v", receipt.Result.Command())
 	}
@@ -814,7 +814,7 @@ func (w *cjWorld) botStopEntry() map[string]any {
 }
 
 func TestCommandsJobLogsWhyTheBotAccountCouldNotBeResolved(t *testing.T) {
-	const secret = "GITHUB-SENT-THIS"
+	const leak = "GITHUB-SENT-THIS"
 	for name, test := range map[string]struct {
 		err    error
 		kind   string
@@ -822,7 +822,7 @@ func TestCommandsJobLogsWhyTheBotAccountCouldNotBeResolved(t *testing.T) {
 	}{
 		// BotIdentity wraps appauth's error of GET /app answered 401 to the App JWT (a revoked key).
 		"refused app jwt": {fmt.Errorf("bot identity: %w", &appauth.StatusError{Endpoint: "app", Status: 401}), "unauthorized", 401},
-		"transport":       {fmt.Errorf("bot identity: appauth: request app: %w", errors.New("dial tcp: "+secret)), "transport", 0},
+		"transport":       {fmt.Errorf("bot identity: appauth: request app: %w", errors.New("dial tcp: "+leak)), "transport", 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -835,7 +835,7 @@ func TestCommandsJobLogsWhyTheBotAccountCouldNotBeResolved(t *testing.T) {
 			if entry["kind"] != test.kind || entry["status"] != test.status {
 				t.Fatalf("log entry = %v; want kind %q and status %v", entry, test.kind, test.status)
 			}
-			if strings.Contains(w.logs.String(), secret) {
+			if strings.Contains(w.logs.String(), leak) {
 				t.Fatalf("the log carries text the failure held; logs: %s", w.logs)
 			}
 		})

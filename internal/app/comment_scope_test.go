@@ -76,7 +76,7 @@ func TestCommentPublisherRefusesAScopeNoticeThatDoesNotMatchItsKeyOrCannotBeRend
 		{"a key with five parts", "scope-notice:1001:7:" + cmtScopeDigest + ":1", cmtScopePayload(nil)},
 		{"an acknowledgment key with four parts", "ack:1001:555:1", cmtScopePayload(nil)},
 		{"a revision key with four parts", "revision:1001:P2-R2:1", cmtScopePayload(nil)},
-		{"an unknown field", cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["body"] = cmtSecretText })},
+		{"an unknown field", cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["body"] = cmtLeakText })},
 		{"a head that is not a commit SHA", cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["head"] = "SECRET" })},
 		{"a branch that is not a git ref", cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["branch"] = "a..b" })},
 		{"no paths", cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["paths"] = []string{}; m["pathsTotal"] = 0 })},
@@ -93,7 +93,7 @@ func TestCommentPublisherRefusesAScopeNoticeThatDoesNotMatchItsKeyOrCannotBeRend
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}

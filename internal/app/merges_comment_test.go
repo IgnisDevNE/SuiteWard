@@ -189,22 +189,22 @@ func TestCommentPublisherRefusesAMergePayloadThatDoesNotMatchItsKey(t *testing.T
 	}{
 		{"another pull request", "merge:1001:8", with(func(map[string]any) {})},
 		{"another repository", "merge:1002:7", with(func(map[string]any) {})},
-		{"an unknown field", cmtMergeKey, with(func(m map[string]any) { m["body"] = cmtSecretText })},
-		{"a payload that is not JSON", cmtMergeKey, json.RawMessage(`{"repositoryId": ` + cmtSecretText)},
-		{"trailing data", cmtMergeKey, json.RawMessage(string(with(func(map[string]any) {})) + cmtSecretText)},
+		{"an unknown field", cmtMergeKey, with(func(m map[string]any) { m["body"] = cmtLeakText })},
+		{"a payload that is not JSON", cmtMergeKey, json.RawMessage(`{"repositoryId": ` + cmtLeakText)},
+		{"trailing data", cmtMergeKey, json.RawMessage(string(with(func(map[string]any) {})) + cmtLeakText)},
 		{"a kind that gets no comment", cmtMergeKey, with(func(m map[string]any) { m["kind"] = "no-change" })},
-		{"an unknown kind", cmtMergeKey, with(func(m map[string]any) { m["kind"] = cmtSecretText })},
+		{"an unknown kind", cmtMergeKey, with(func(m map[string]any) { m["kind"] = cmtLeakText })},
 		{"a blocked merge without a reason", cmtMergeKey, with(func(m map[string]any) { m["kind"] = "blocked" })},
 		{"a promotion with a reason", cmtMergeKey, with(func(m map[string]any) { m["reason"] = "canonical-changed" })},
-		{"a reason that is not a code", cmtMergeKey, with(func(m map[string]any) { m["kind"], m["reason"] = "blocked", cmtSecretText })},
+		{"a reason that is not a code", cmtMergeKey, with(func(m map[string]any) { m["kind"], m["reason"] = "blocked", cmtLeakText })},
 		{"a promotion that corrects", cmtMergeKey, with(func(m map[string]any) { m["corrects"] = "V1" })},
 		{"a correction that corrects none", cmtMergeKey, with(func(m map[string]any) { m["kind"] = "corrected" })},
-		{"a version that is not V<n>", cmtMergeKey, with(func(m map[string]any) { m["version"] = cmtSecretText })},
+		{"a version that is not V<n>", cmtMergeKey, with(func(m map[string]any) { m["version"] = cmtLeakText })},
 		{"a version of zero", cmtMergeKey, with(func(m map[string]any) { m["version"] = "V0" })},
-		{"a source that is not a commit", cmtMergeKey, with(func(m map[string]any) { m["source"] = cmtSecretText })},
+		{"a source that is not a commit", cmtMergeKey, with(func(m map[string]any) { m["source"] = cmtLeakText })},
 		{"a promotion without a commit", cmtMergeKey, with(func(m map[string]any) { m["source"] = "" })},
-		{"a reference that is not P<n>-R<m>", cmtMergeKey, with(func(m map[string]any) { m["reference"] = cmtSecretText })},
-		{"a tier that is unknown", cmtMergeKey, with(func(m map[string]any) { m["tier"] = cmtSecretText })},
+		{"a reference that is not P<n>-R<m>", cmtMergeKey, with(func(m map[string]any) { m["reference"] = cmtLeakText })},
+		{"a tier that is unknown", cmtMergeKey, with(func(m map[string]any) { m["tier"] = cmtLeakText })},
 		{"a repository that is not owner/name", cmtMergeKey, with(func(m map[string]any) { m["repo"] = "SECRET" })},
 		{"a pull number of zero", cmtMergeKey, with(func(m map[string]any) { m["pull"] = 0 })},
 		{"an acknowledgment payload under a merge key", cmtMergeKey, ack.Payload},
@@ -219,7 +219,7 @@ func TestCommentPublisherRefusesAMergePayloadThatDoesNotMatchItsKey(t *testing.T
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}

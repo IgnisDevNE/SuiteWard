@@ -366,6 +366,9 @@ func consentRequest(enrollment owner.State, c commands.Candidate, command comman
 	if command.Verb == commandtext.Revoke {
 		action = contract.RevokeConsent
 	}
+	if c.Comment.CommentID < 0 {
+		return governance.ConsentRequest{}, &opaque{what: "build the command order", cause: fmt.Errorf("comment identifier %d is negative", c.Comment.CommentID)}
+	}
 	built, err := contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: source, Actor: actor, Action: action,
 		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(c.RepositoryID), SuiteID: defaultSuite, ProposalID: proposalID(command.Proposal),
 			RevisionID: contract.ProposalRevisionID("R" + strconv.Itoa(command.Revision))},

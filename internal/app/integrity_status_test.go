@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,7 +70,7 @@ func pullsServer(t *testing.T) *github.Reader {
 	t.Helper()
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	pull := func(number int, repo string) string {
-		return `{"number":` + string(rune('0'+number)) + `,"head":{"ref":"feature","sha":"` + sha + `","repo":` + repo + `},"base":{"ref":"main","sha":"` + sha + `"},"updated_at":"2026-10-10T10:00:00Z"}`
+		return `{"number":` + fmt.Sprintf("%c", '0'+number) + `,"head":{"ref":"feature","sha":"` + sha + `","repo":` + repo + `},"base":{"ref":"main","sha":"` + sha + `"},"updated_at":"2026-10-10T10:00:00Z"}`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

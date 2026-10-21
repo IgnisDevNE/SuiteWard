@@ -103,7 +103,11 @@ func recordCycle(ctx context.Context, q *dbgen.Queries, cycle githubsync.Cycle) 
 	pulls, open := make([]pullRow, 0, len(cycle.OpenPulls)), make([]int32, 0, len(cycle.OpenPulls))
 	for _, pull := range cycle.OpenPulls {
 		pulls = append(pulls, pullRow{Number: pull.Number, HeadSHA: pull.HeadSHA, HeadRef: pull.HeadRef, BaseRef: pull.BaseRef, BaseSHA: pull.BaseSHA, UpdatedAt: pull.UpdatedAt, HeadRepo: pull.HeadRepo})
-		open = append(open, int32(pull.Number)) // Validate bounds the number
+		number, err := int32Of(pull.Number)
+		if err != nil {
+			return nil, err
+		}
+		open = append(open, number)
 	}
 	pullsJSON, err := json.Marshal(pulls)
 	if err != nil {
@@ -157,8 +161,12 @@ func (s *Store) RecordFailure(ctx context.Context, failure githubsync.Failure) e
 	if err := failure.Validate(); err != nil {
 		return err
 	}
-	err := dbgen.New(s.pool).UpsertRepositoryFailure(ctx, dbgen.UpsertRepositoryFailureParams{
-		Repo: failure.Repo, InstallationID: failure.InstallationID, LastError: string(failure.Kind), LastStatus: int32(failure.Status), WaitUntil: timestamp(failure.WaitUntil),
+	status, err := int32Of(failure.Status)
+	if err != nil {
+		return err
+	}
+	err = dbgen.New(s.pool).UpsertRepositoryFailure(ctx, dbgen.UpsertRepositoryFailureParams{
+		Repo: failure.Repo, InstallationID: failure.InstallationID, LastError: string(failure.Kind), LastStatus: status, WaitUntil: timestamp(failure.WaitUntil),
 	})
 	if err != nil {
 		return fmt.Errorf("write GitHub failure: %w", err)
@@ -190,7 +198,11 @@ func (s *Store) Comments(ctx context.Context, repo string, number int) ([]github
 	if err := githubsync.ValidatePullNumber(number); err != nil {
 		return nil, err
 	}
-	rows, err := dbgen.New(s.pool).ListGitHubComments(ctx, dbgen.ListGitHubCommentsParams{Repo: repo, PullNumber: int32(number)})
+	pull, err := int32Of(number)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := dbgen.New(s.pool).ListGitHubComments(ctx, dbgen.ListGitHubCommentsParams{Repo: repo, PullNumber: pull})
 	if err != nil {
 		return nil, fmt.Errorf("read GitHub comments: %w", err)
 	}
@@ -257,9 +269,13 @@ func (s *Store) RecordResolution(ctx context.Context, repo string, r githubsync.
 	if err := r.Validate(); err != nil {
 		return err
 	}
+	number, err := int32Of(r.Number)
+	if err != nil {
+		return err
+	}
 	written := int64(0)
 	found, err := s.withRepository(ctx, repo, func(q *dbgen.Queries, _ pgtype.Timestamptz) (err error) {
-		written, err = q.RecordResolution(ctx, dbgen.RecordResolutionParams{Repo: repo, Number: int32(r.Number), NotOpenSince: timestamp(r.NotOpenSince),
+		written, err = q.RecordResolution(ctx, dbgen.RecordResolutionParams{Repo: repo, Number: number, NotOpenSince: timestamp(r.NotOpenSince),
 			HeadSha: r.HeadSHA, HeadRef: r.HeadRef, BaseRef: r.BaseRef, BaseSha: r.BaseSHA, HeadRepo: r.HeadRepo,
 			Merged: r.Merged, MergedAt: timestamp(r.MergedAt), MergeCommitSha: r.MergeCommitSHA, ResolvedAt: timestamp(r.ResolvedAt)})
 		return err
@@ -346,9 +362,13 @@ func (s *Store) MarkProcessed(ctx context.Context, repo string, number int) erro
 	if err := githubsync.ValidatePullNumber(number); err != nil {
 		return err
 	}
+	pull, err := int32Of(number)
+	if err != nil {
+		return err
+	}
 	written := int64(0)
 	found, err := s.withRepository(ctx, repo, func(q *dbgen.Queries, _ pgtype.Timestamptz) (err error) {
-		written, err = q.MarkMergeProcessed(ctx, dbgen.MarkMergeProcessedParams{Repo: repo, Number: int32(number)})
+		written, err = q.MarkMergeProcessed(ctx, dbgen.MarkMergeProcessedParams{Repo: repo, Number: pull})
 		return err
 	})
 	if err != nil {

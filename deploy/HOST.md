@@ -188,7 +188,7 @@ That prints the token to the terminal. If Session Manager session logging (S3 or
 Copy the six files in `deploy/quadlet/` from the repository (on your workstation) into place, one `cat` per file: run the command, wait until the cursor stops, paste the file's content, then press Ctrl-D on an empty line. Pull the images first: the two SuiteWard units pin the image by digest, never by a tag.
 
 ```
-podman pull docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+podman pull docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 podman pull ghcr.io/ignisdevne/suiteward:deploy
 ```
 

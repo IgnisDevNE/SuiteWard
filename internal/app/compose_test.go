@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
@@ -44,7 +45,7 @@ func TestConnectRejectsUnusableSettings(t *testing.T) {
 }
 
 func TestListenAndServeReportsAServerThatStopsOnItsOwn(t *testing.T) {
-	srv := &http.Server{}
+	srv := &http.Server{ReadHeaderTimeout: time.Minute}
 	if err := srv.Close(); err != nil { // a closed server refuses to serve
 		t.Fatal(err)
 	}

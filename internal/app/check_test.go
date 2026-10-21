@@ -308,7 +308,7 @@ func TestCheckPublisherTreatsAVanishedHeadAsDelivered(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newChkWorld()
-			set(w.runner, fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, cmtSecretText))
+			set(w.runner, fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, cmtLeakText))
 			m := chkMessage(t, checks.InProgress, "assessment-pending", "")
 			if err := w.deliver(m); err != nil {
 				t.Fatalf("a 422 is an error: %v", err)
@@ -317,7 +317,7 @@ func TestCheckPublisherTreatsAVanishedHeadAsDelivered(t *testing.T) {
 				t.Fatal("a run was posted for a head that does not exist")
 			}
 			logged := w.logs.String()
-			if !strings.Contains(logged, m.Key) || !strings.Contains(logged, chkHead) || strings.Contains(logged, cmtSecretText) {
+			if !strings.Contains(logged, m.Key) || !strings.Contains(logged, chkHead) || strings.Contains(logged, cmtLeakText) {
 				t.Fatalf("the log should name the key and the head, never GitHub's text: %q", logged)
 			}
 		})
@@ -331,10 +331,10 @@ func TestCheckPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 		err    error
 		status string
 	}{
-		{"post answered with a status", func(f *fakeChecks, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, cmtSecretText), "HTTP 403"},
-		{"readback answered with a status", func(f *fakeChecks, err error) { f.runsErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText), "HTTP 502"},
-		{"rate limited", func(f *fakeChecks, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 429}, cmtSecretText), "rate_limited"},
-		{"transport failure", func(f *fakeChecks, err error) { f.runsErr = err }, fmt.Errorf("Get https://api.example/%s: connection refused", cmtSecretText), "transport"},
+		{"post answered with a status", func(f *fakeChecks, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, cmtLeakText), "HTTP 403"},
+		{"readback answered with a status", func(f *fakeChecks, err error) { f.runsErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtLeakText), "HTTP 502"},
+		{"rate limited", func(f *fakeChecks, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 429}, cmtLeakText), "rate_limited"},
+		{"transport failure", func(f *fakeChecks, err error) { f.runsErr = err }, fmt.Errorf("Get https://api.example/%s: connection refused", cmtLeakText), "transport"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newChkWorld()
@@ -345,10 +345,10 @@ func TestCheckPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 				t.Fatal("publish succeeded")
 			}
 			text := err.Error()
-			if strings.Contains(text, cmtSecretText) || !strings.Contains(text, tc.status) || !strings.Contains(text, "github_check "+m.Key) {
+			if strings.Contains(text, cmtLeakText) || !strings.Contains(text, tc.status) || !strings.Contains(text, "github_check "+m.Key) {
 				t.Fatalf("the error %q holds text GitHub sent, or lacks the kind, the key or %q", text, tc.status)
 			}
-			if strings.Contains(w.logs.String(), cmtSecretText) {
+			if strings.Contains(w.logs.String(), cmtLeakText) {
 				t.Fatalf("the log holds text GitHub sent: %q", w.logs.String())
 			}
 		})
@@ -371,13 +371,13 @@ func TestCheckPublisherRefusesAPayloadThatDoesNotMatchItsKey(t *testing.T) {
 		key     string
 		payload json.RawMessage
 	}{
-		{"an unknown field", good.Key, with(func(m map[string]any) { m["body"] = cmtSecretText })},
-		{"a payload that is not JSON", good.Key, json.RawMessage(`{"repositoryId": ` + cmtSecretText)},
-		{"a payload that is not an object", good.Key, json.RawMessage(`"` + cmtSecretText + `"`)},
-		{"trailing data", good.Key, json.RawMessage(string(same) + cmtSecretText)},
-		{"an unknown state", good.Key, with(func(m map[string]any) { m["state"] = cmtSecretText })},
-		{"a tier that is not a tier", good.Key, with(func(m map[string]any) { m["tier"] = cmtSecretText })},
-		{"a head that is not a SHA", good.Key, with(func(m map[string]any) { m["headSha"] = cmtSecretText })},
+		{"an unknown field", good.Key, with(func(m map[string]any) { m["body"] = cmtLeakText })},
+		{"a payload that is not JSON", good.Key, json.RawMessage(`{"repositoryId": ` + cmtLeakText)},
+		{"a payload that is not an object", good.Key, json.RawMessage(`"` + cmtLeakText + `"`)},
+		{"trailing data", good.Key, json.RawMessage(string(same) + cmtLeakText)},
+		{"an unknown state", good.Key, with(func(m map[string]any) { m["state"] = cmtLeakText })},
+		{"a tier that is not a tier", good.Key, with(func(m map[string]any) { m["tier"] = cmtLeakText })},
+		{"a head that is not a SHA", good.Key, with(func(m map[string]any) { m["headSha"] = cmtLeakText })},
 		{"another repository in the key", "check:1002:7:3", same},
 		{"another pull in the key", "check:1001:8:3", same},
 		{"another generation in the key", "check:1001:7:2", same},
@@ -394,7 +394,7 @@ func TestCheckPublisherRefusesAPayloadThatDoesNotMatchItsKey(t *testing.T) {
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET", cmtRepo, chkHead} {
+			for _, leak := range []string{cmtLeakText, "SECRET", cmtRepo, chkHead} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}
@@ -413,12 +413,12 @@ func TestCheckPublisherRefusesAPayloadThatDoesNotMatchItsKey(t *testing.T) {
 func TestCheckPublisherRefusesACurrentMessageWhoseReasonNobodyCanRender(t *testing.T) {
 	w := newChkWorld()
 	m := chkMessage(t, checks.InProgress, "assessment-pending", "")
-	m.Payload = bytes.Replace(m.Payload, []byte("assessment-pending"), []byte(cmtSecretText), 1)
+	m.Payload = bytes.Replace(m.Payload, []byte("assessment-pending"), []byte(cmtLeakText), 1)
 	err := w.deliver(m)
 	if err == nil {
 		t.Fatal("publish succeeded")
 	}
-	if strings.Contains(err.Error(), cmtSecretText) || !strings.Contains(err.Error(), m.Key) {
+	if strings.Contains(err.Error(), cmtLeakText) || !strings.Contains(err.Error(), m.Key) {
 		t.Fatalf("the error %q holds payload text or does not name the key", err)
 	}
 	if len(w.runner.posts()) != 0 || len(w.runner.listed) != 0 {

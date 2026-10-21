@@ -111,7 +111,7 @@ func TestCommentPublisherPostsAScopeReviewOnceAndOnlyWhatIsMissing(t *testing.T)
 
 func TestCommentPublisherCompletesAScopeReviewThatGitHubRefusesAndLogsOnlyTheKindAndStatus(t *testing.T) {
 	w := newCmtWorld(t)
-	w.writer.reviewPostErrs = []error{fmt.Errorf("post review comment: %w", fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, cmtSecretText))}
+	w.writer.reviewPostErrs = []error{fmt.Errorf("post review comment: %w", fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, cmtLeakText))}
 
 	err := w.pub.publish(t.Context(), cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList, cmtRunnerList}, nil))
 
@@ -122,15 +122,15 @@ func TestCommentPublisherCompletesAScopeReviewThatGitHubRefusesAndLogsOnlyTheKin
 		t.Fatalf("review comments %+v, want the other list still posted", posted)
 	}
 	logs := w.logs.String()
-	if !strings.Contains(logs, `"kind":"unprocessable"`) || !strings.Contains(logs, `"status":422`) || strings.Contains(logs, cmtSecretText) {
+	if !strings.Contains(logs, `"kind":"unprocessable"`) || !strings.Contains(logs, `"status":422`) || strings.Contains(logs, cmtLeakText) {
 		t.Fatalf("logs %s, want the kind and the status of the failure and none of GitHub's text", logs)
 	}
 }
 
 func TestCommentPublisherRetriesAScopeReviewOnAnyOtherFailure(t *testing.T) {
 	for name, failure := range map[string]error{
-		"a server error":  fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, cmtSecretText),
-		"a rate limit":    fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 403}, cmtSecretText),
+		"a server error":  fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, cmtLeakText),
+		"a rate limit":    fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 403}, cmtLeakText),
 		"a transport one": errors.New("connection reset"),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -139,18 +139,18 @@ func TestCommentPublisherRetriesAScopeReviewOnAnyOtherFailure(t *testing.T) {
 
 			err := w.pub.publish(t.Context(), cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList}, nil))
 
-			if err == nil || strings.Contains(err.Error(), cmtSecretText) {
+			if err == nil || strings.Contains(err.Error(), cmtLeakText) {
 				t.Fatalf("publish = %v, want an error that holds none of GitHub's text", err)
 			}
 		})
 	}
 	t.Run("a failed readback", func(t *testing.T) {
 		w := newCmtWorld(t)
-		w.writer.reviewListErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, cmtSecretText)
+		w.writer.reviewListErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, cmtLeakText)
 
 		err := w.pub.publish(t.Context(), cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList}, nil))
 
-		if err == nil || strings.Contains(err.Error(), cmtSecretText) || len(w.writer.reviewPosted) != 0 {
+		if err == nil || strings.Contains(err.Error(), cmtLeakText) || len(w.writer.reviewPosted) != 0 {
 			t.Fatalf("publish = %v with %d posts, want an error and nothing posted", err, len(w.writer.reviewPosted))
 		}
 	})
@@ -174,7 +174,7 @@ func TestCommentPublisherRefusesAScopeReviewThatDoesNotMatchItsKeyOrCannotBeRend
 		{"another repository", "scope-review:1002:7:" + cmtScopeDigest, cmtReviewPayload([]map[string]any{cmtIncludeList}, nil)},
 		{"a key with three parts", "scope-review:1001:7", cmtReviewPayload([]map[string]any{cmtIncludeList}, nil)},
 		{"a digest that is not SHA-256 hex", "scope-review:1001:7:" + strings.Repeat("g", 64), cmtReviewPayload([]map[string]any{cmtIncludeList}, nil)},
-		{"an unknown field", cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList}, func(m map[string]any) { m["body"] = cmtSecretText })},
+		{"an unknown field", cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList}, func(m map[string]any) { m["body"] = cmtLeakText })},
 		{"a head that is not a commit SHA", cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList}, func(m map[string]any) { m["head"] = "SECRET" })},
 		{"no suggestion", cmtReviewKey, cmtReviewPayload(nil, nil)},
 		{"the same list twice", cmtReviewKey, cmtReviewPayload([]map[string]any{cmtIncludeList, cmtIncludeList}, nil)},
@@ -192,7 +192,7 @@ func TestCommentPublisherRefusesAScopeReviewThatDoesNotMatchItsKeyOrCannotBeRend
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}

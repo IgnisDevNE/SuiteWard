@@ -59,6 +59,7 @@ Defensive nil checks inside validated code hide bugs: an impossible state silent
 - An unreachable nil fails loudly: an error naming the broken invariant, or a panic with a message only where the state is genuinely unreachable.
 - Never `if err != nil { return nil }`, never `return nil, nil` for "not found" (return a sentinel such as `ErrNotFound`), and never an empty `default` that swallows an unexpected case.
 - `golangci-lint` enforces part of this with `nilnil` and `nilerr`, next to `dupl`, `gocyclo` (25) and `gocognit` (30). There are no `//nolint` comments and no exclusions: a function over a limit is split.
+- `gosec` runs through `golangci-lint` too. Its only exceptions are two linter settings, G505 and G401 (SHA-1), because RFC 6238 TOTP and git object IDs require SHA-1; there are still no `//nolint` comments and no path exclusions. An integer conversion that can overflow goes through a checked helper that returns an error (`int32Of`, `uint64Of`, `int64Of` in the PostgreSQL adapter), never a wrapping or clamping cast.
 
 ## Dependency composition
 

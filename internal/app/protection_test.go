@@ -100,7 +100,7 @@ func TestProtectionCheckRecordsTheFindingsOfAnUnprotectedBranch(t *testing.T) {
 	if got := r.results(t); !reflect.DeepEqual(got, []owner.ProtectionResult{want}) {
 		t.Fatalf("stored %+v; want %+v", got, want)
 	}
-	if !r.fake.requestedWith("/repos/"+setupWidgetsRepo, setupReadToken) || !r.fake.requestedWith("/repos/"+setupWidgetsRepo+"/rules/branches/main", setupProtToken) {
+	if !r.fake.requestedWith("/repos/"+setupWidgetsRepo, setupReadAuth) || !r.fake.requestedWith("/repos/"+setupWidgetsRepo+"/rules/branches/main", setupProtAuth) {
 		t.Fatal("the repository was not read with the synchronization token and its rules with the protection token")
 	}
 }
@@ -151,7 +151,7 @@ func TestProtectionCheckRecordsUnknownForAReadThatFailsAndNeverKeepsTheErrorText
 				t.Fatal(err)
 			}
 			for where, text := range map[string]string{"the logs": r.logs.String(), "the stored result": string(stored), "/status": r.statusBody(t)} {
-				for _, secret := range []string{setupGitHubBody, setupReadToken, setupProtToken} {
+				for _, secret := range []string{setupGitHubBody, setupReadAuth, setupProtAuth} {
 					if strings.Contains(text, secret) {
 						t.Errorf("%s contain %q:\n%s", where, secret, text)
 					}

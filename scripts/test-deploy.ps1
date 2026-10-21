@@ -75,6 +75,13 @@ $migrateAt = $text.IndexOf('--name suiteward-migrate '); $serveAt = $text.IndexO
 Assert-That ($migrateAt -ge 0 -and $migrateAt -lt $serveAt) 'migrate does not run before serve'
 Assert-That ([regex]::IsMatch($text, 'migrate\r?\n\s*if \(\$LASTEXITCODE -ne 0\) \{ throw')) 'a failed migrate does not stop the script'
 Assert-That ($text.Contains('podman machine ssh --username user "sh -s"')) 'the smoke instruction does not use the rootless ssh user'
+# -JobTimeout reaches the serve container only (an argument array, so the argument check above still holds), and there is no default image.
+$serveCall = [regex]::Match($text, '(?s)--name suiteward --network.*?\$Image \| Out-Null').Value
+$migrateCall = [regex]::Match($text, '(?s)--name suiteward-migrate .*?\$Image migrate').Value
+Assert-That ($serveCall -and $serveCall.Contains('@jobTimeoutArgs')) 'serve does not get the job timeout arguments'
+Assert-That ($migrateCall -and -not $migrateCall.Contains('jobTimeout')) 'migrate gets the job timeout'
+Assert-That ($text -cmatch '"SUITEWARD_JOB_TIMEOUT=\$JobTimeout"') 'the job timeout is not passed as SUITEWARD_JOB_TIMEOUT'
+Assert-That ($text -cnotmatch ':deploy') 'local.ps1 still names the :deploy tag'
 
 # Behavior with a fake podman (a function the script sees): a rootful connection is refused before anything is created; -Down -Purge removes the owner secret too.
 $global:swCalls = [Collections.Generic.List[string]]::new()
@@ -98,6 +105,12 @@ try {
     try { & $localPath -Down } catch { $noAppData = $_.Exception.Message }
     $env:LOCALAPPDATA = $savedAppData
     Assert-That ($noAppData -match 'LOCALAPPDATA') "a missing LOCALAPPDATA was not named (got: $noAppData)"
+    # A start without -Image is refused before any podman call, and the message names the signed index digest.
+    $global:swCalls.Clear()
+    $noImage = $null
+    try { & $localPath } catch { $noImage = $_.Exception.Message }
+    Assert-That ($noImage -match '-Image' -and $noImage -match 'index digest') "a start without -Image was not refused clearly (got: $noImage)"
+    Assert-That ($global:swCalls.Count -eq 0) 'podman was called before the missing -Image was refused'
     $refused = $null
     try { & $localPath -PodmanConnection podman-machine-default-root -Down } catch { $refused = $_.Exception.Message }
     Assert-That ($refused -match 'rootless') "a rootful connection was not refused (got: $refused)"

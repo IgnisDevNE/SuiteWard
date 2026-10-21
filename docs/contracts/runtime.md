@@ -657,7 +657,7 @@ D-SYNC limits MCP to `sync` and `status`, authenticated with a local token. It l
 
   | Build | Image tags | `version` | `source` |
   | --- | --- | --- | --- |
-  | deployment, on a push to `main` or a phase branch | `sha-<commit>`; `deploy` after the `remote-poc` approval | `sha-<commit>` | `https://github.com/IgnisDevNE/SuiteWard/tree/<commit>` |
+  | CI `Image build`, on a pull request or a push to `main` | none: both platforms are built and nothing is pushed, signed or attested; no deployment build or `deploy` tag exists any more | `dev` | empty |
   | release, on a `vX.Y.Z` or `vX.Y.Z-rc.N` tag, after the `release` environment approval | the full tag, `vX.Y.Z` or `vX.Y.Z-rc.N`; `latest-stable` too unless it is a pre-release; a final `vX.Y.Z` only on a commit of `main` | the full tag, `vX.Y.Z` or `vX.Y.Z-rc.N` | `https://github.com/IgnisDevNE/SuiteWard/tree/<tag>` |
 
 - `/licenses/THIRD_PARTY_NOTICES` in the image holds the license text of every module linked into the binary. The build fails when a module has none. `/licenses/LICENSE` is SuiteWard's own license.

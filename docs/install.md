@@ -90,7 +90,7 @@ Expect `true`. Notes:
 - `deploy/local.ps1` uses `$env:CONTAINER_CONNECTION` when it is set. With no variable, it picks the machine's only rootless connection, or stops and asks for `-PodmanConnection <name>` when it finds several. It restores your connection settings when it ends.
 - A rootful store is a different store: it holds none of the containers, volumes or secrets of this stack.
 
-**5.3 Pull the release image.** Pull it by the digest of its image index, which is what the release workflow signs. The release notes of every release name that digest (the owner adds it when publishing). The log of the workflow step "Sign the image index, verify the signature, then move latest-stable" also prints it, in the line `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one.
+**5.3 Pull the release image.** Pull it by the digest of its image index, which is what the release workflow signs. The release notes of every release name that digest: the owner copies the `Index digest:` line from the summary of the release run into them when publishing. The log of the workflow step "Sign the image index, verify the signature, then move latest-stable" also prints it, in the line `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one.
 
 Verify it first, from the release source, on a machine that has cosign 3.x (this PC, for example):
 
@@ -264,7 +264,7 @@ Keep these points in mind:
 - If a protected file changes after the proposal, SuiteWard cancels the proposal and comments. Post `/suiteward propose` again.
 - Pull requests from forks get no proposal. Their check shows `fork-unsupported`, because forks are not supported in this release.
 - SuiteWard cannot read a repository whose tree GitHub truncates, which happens with very large monorepos. `propose` refuses it as `invalid-source`, the bootstrap job stops at `origin-not-passed`, and the check of a pull request shows `source-unavailable` (section 9). Such a repository cannot be protected in this release.
-- Reading a very large test suite can take longer than the job timeout. SuiteWard reads the protected files eight at a time and keeps what it read, so the default of one minute covers about a thousand files, and a pass that is cut off resumes where it stopped. For a suite far beyond that, raise `SUITEWARD_JOB_TIMEOUT` on the isolated host (section 12). `deploy/local.ps1` has no parameter for it, so the co-located stack keeps the default; for a larger test suite, use the isolated host (section 10) instead.
+- Reading a very large test suite can take longer than the job timeout. SuiteWard reads the protected files eight at a time and keeps what it read, so the default of one minute covers about a thousand files, and a pass that is cut off resumes where it stopped. For a suite far beyond that, raise `SUITEWARD_JOB_TIMEOUT` (section 12): on the co-located PC with `-JobTimeout` of `deploy/local.ps1`, on the isolated host in its unit.
 
 ## 9. Day to day
 
@@ -1132,7 +1132,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret can 
 Where you set them:
 
 - **Isolated host:** in the `Environment=` and `Secret=` lines of `suiteward.container` (as `suiteward`), and in `/etc/suiteward/github.env` for the three GitHub values (as the administrator). The two database URLs are also in `suiteward-migrate.container`. After an edit, run `systemctl --user daemon-reload` and `systemctl --user restart suiteward.service` as `suiteward`. After a change in `suiteward-migrate.container`, or to an `Image=` line, restart `suiteward-migrate.service` instead (section 11).
-- **Co-located PC:** `deploy/local.ps1` has parameters only for the image and the GitHub values. The other settings keep their defaults on this PC. Changing one would mean changing the script, which this guide does not cover.
+- **Co-located PC:** `deploy/local.ps1` has parameters only for the image, the GitHub values and `-JobTimeout` (`SUITEWARD_JOB_TIMEOUT`, for the service container only). The other settings keep their defaults on this PC. Changing one would mean changing the script, which this guide does not cover. Give `-JobTimeout` on every run that should have it: a run without it starts the service with the default.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -1143,7 +1143,7 @@ Where you set them:
 | `SUITEWARD_SHUTDOWN_TIMEOUT` | `30s` (1 s to 10 min) | Time allowed for a graceful stop. The container's stop timeout must exceed this by at least 5 s. The units set 45 s, which covers the default. A value of 40 s or more needs a larger stop timeout. |
 | `SUITEWARD_LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, `error`. |
 | `SUITEWARD_JOB_WORKERS` | `4` (1 to 64) | Number of background workers. |
-| `SUITEWARD_JOB_TIMEOUT` | `1m` (1 s to 1 h) | Time limit of one attempt of a background job. A `propose` or a check reads about a thousand protected files per minute of this value (eight at a time, and what was read is kept for the next attempt); raise it only for a very large test suite. Isolated host only: `deploy/local.ps1` has no parameter for it, so the co-located stack always keeps the default (section 8). |
+| `SUITEWARD_JOB_TIMEOUT` | `1m` (1 s to 1 h) | Time limit of one attempt of a background job. A `propose` or a check reads about a thousand protected files per minute of this value (eight at a time, and what was read is kept for the next attempt); raise it only for a very large test suite. On the isolated host, set it in `suiteward.container`; on the co-located PC, pass `-JobTimeout <value>` (for example `3m`) to `./deploy/local.ps1` with the same `-Image` and GitHub parameters as every run (section 5). |
 | `SUITEWARD_JOB_MAX_ATTEMPTS` | `5` (1 to 25) | Attempts before a background job is marked discarded. |
 | `SUITEWARD_OUTBOX_MAX_ATTEMPTS` | `8` (1 to 25) | Attempts to deliver a message to GitHub before it is marked failed. |
 | `SUITEWARD_OUTBOX_POLL_INTERVAL` | `5s` (1 s to 1 h) | How often the relay looks for messages to send. |

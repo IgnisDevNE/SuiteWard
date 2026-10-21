@@ -235,7 +235,7 @@ func TestChecksNeverKeepASkippedSuccessWhenTheSkippedPullCannotBeAssessed(t *tes
 	w.want(4, checks.Success, "bootstrap-skipped", 1)
 
 	w.pullProposal(4, cjHead3, bootFiles("v1")) // the same head becomes the carrier, and GitHub fails
-	w.reader.repos[bootRepo].treeErr[cjHead3] = errors.New(bootSecret)
+	w.reader.repos[bootRepo].treeErr[cjHead3] = errors.New(bootLeak)
 	if err := w.runChecks(); err != nil {
 		t.Fatalf("a failed GitHub read must not fail the run: %v", err)
 	}
@@ -346,12 +346,12 @@ func TestChecksNeverTakeAWaitedRecordAsTheAssessmentOfTheCarrier(t *testing.T) {
 		w.tree(cjHead2, bootFiles("v1"))
 		w.sync(map[int]string{5: cjHead2})
 		w.pullProposal(5, cjHead2, bootFiles("v1"))
-		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 		if err := w.runChecks(); err != nil {
 			t.Fatalf("a failed GitHub read must not fail the run: %v", err)
 		}
 		w.want(5, checks.InProgress, "assessment-pending", 1)
-		if got := w.problems.lookup(bootRepo); got != "read-failed" || strings.Contains(w.logs.String(), bootSecret) {
+		if got := w.problems.lookup(bootRepo); got != "read-failed" || strings.Contains(w.logs.String(), bootLeak) {
 			t.Fatalf("problem %q, logs %s, want read-failed and no GitHub text", got, w.logs)
 		}
 
@@ -562,7 +562,7 @@ type cancelOnTree struct {
 
 func (r cancelOnTree) Tree(context.Context, string, string) (inventory.Tree, error) {
 	r.cancel()
-	return nil, errors.New(bootSecret)
+	return nil, errors.New(bootLeak)
 }
 
 func TestChecksReportACancelledRunInsteadOfAWaitingCheck(t *testing.T) {
@@ -580,7 +580,7 @@ func TestChecksReportACancelledRunInsteadOfAWaitingCheck(t *testing.T) {
 	if _, found := w.record(5); found {
 		t.Fatal("a cancelled run published a check")
 	}
-	if strings.Contains(w.logs.String(), bootSecret) {
+	if strings.Contains(w.logs.String(), bootLeak) {
 		t.Fatalf("logs %s carry GitHub text", w.logs)
 	}
 }

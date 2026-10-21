@@ -455,7 +455,7 @@ func TestProposeReusesAProposalOnlyWhenThePolicyRevisionMatchesToo(t *testing.T)
 
 func TestProposeRetriesAGitHubFailureAndIsFailedAfterFiveAttempts(t *testing.T) {
 	w := newCjWorld(t)
-	w.reader.repo(cjRepo1).headErr = errors.New(bootSecret)
+	w.reader.repo(cjRepo1).headErr = errors.New(bootLeak)
 	w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
 	for attempt := 1; attempt <= 4; attempt++ {
 		if err := w.run(); err != nil {
@@ -466,7 +466,7 @@ func TestProposeRetriesAGitHubFailureAndIsFailedAfterFiveAttempts(t *testing.T) 
 	w.mustRun()
 
 	w.requireAckPayload(cjID1, 500, commands.Failed, nil)
-	w.requireNothingLeaked(bootSecret)
+	w.requireNothingLeaked(bootLeak)
 }
 
 func TestProposeFailureOfAnotherCommandGetsNoAcknowledgment(t *testing.T) {
@@ -853,7 +853,7 @@ func TestProposeRefusesASourceThatCannotBeReadAsAContract(t *testing.T) {
 func TestProposeStillRetriesATransientTreeReadFailure(t *testing.T) {
 	w := newCjWorld(t)
 	w.trees(bootFiles("v1"), bootFiles("v1"))
-	w.reader.repo(cjRepo1).treeErr[bootHead] = errors.New(bootSecret)
+	w.reader.repo(cjRepo1).treeErr[bootHead] = errors.New(bootLeak)
 	w.syncAll([]cjComment{cjPropose(500, cjAt(10))})
 	w.mustRun()
 

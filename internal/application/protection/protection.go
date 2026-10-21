@@ -31,11 +31,11 @@ const (
 type Code string
 
 const (
-	MissingContractCheck    Code = "missing-contract-check"
-	MissingTestCheck        Code = "missing-test-check"
-	NotUpToDate             Code = "not-up-to-date"
-	AdminBypass             Code = "admin-bypass"
-	RulesetBypassUnverified Code = "ruleset-bypass-unverified"
+	MissingContractCheck      Code = "missing-contract-check"
+	MissingTestCheck          Code = "missing-test-check"
+	NotUpToDate               Code = "not-up-to-date"
+	AdminBypass               Code = "admin-bypass"
+	RulesetOverrideUnverified Code = "ruleset-bypass-unverified"
 )
 
 // Check is one required status check. SourceID is the integration id for a
@@ -91,11 +91,11 @@ type Result struct {
 }
 
 var instructions = map[Code]string{
-	MissingContractCheck:    "Require the check " + ContractCheck + " on the default branch, with the SuiteWard App as its source.",
-	MissingTestCheck:        "Require the project's test check on the default branch.",
-	NotUpToDate:             "Require branches to be up to date before merging on the rule that requires " + ContractCheck + ".",
-	AdminBypass:             "Enable enforcement for administrators on the default branch protection.",
-	RulesetBypassUnverified: "A ruleset applies and SuiteWard cannot see its bypass list: check in GitHub that the bypass list is empty.",
+	MissingContractCheck:      "Require the check " + ContractCheck + " on the default branch, with the SuiteWard App as its source.",
+	MissingTestCheck:          "Require the project's test check on the default branch.",
+	NotUpToDate:               "Require branches to be up to date before merging on the rule that requires " + ContractCheck + ".",
+	AdminBypass:               "Enable enforcement for administrators on the default branch protection.",
+	RulesetOverrideUnverified: "A ruleset applies and SuiteWard cannot see its bypass list: check in GitHub that the bypass list is empty.",
 }
 
 const (
@@ -168,7 +168,7 @@ func Evaluate(f Facts, appID int64, testCheck string) Result {
 		findings = append(findings, AdminBypass)
 	}
 	if f.FromRuleset {
-		caveats = append(caveats, RulesetBypassUnverified)
+		caveats = append(caveats, RulesetOverrideUnverified)
 	}
 	slices.Sort(findings)
 

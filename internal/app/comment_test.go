@@ -30,16 +30,16 @@ import (
 )
 
 const (
-	cmtRepo       = "acme/widgets"
-	cmtRepoID     = int64(1001)
-	cmtPull       = 7
-	cmtComment    = int64(555)
-	cmtOwner      = "octo-owner"
-	cmtOwnerID    = int64(7)
-	cmtBotID      = int64(99)
-	cmtInstance   = "0123456789abcdef0123456789abcdef"
-	cmtOtherInst  = "fedcba9876543210fedcba9876543210"
-	cmtSecretText = "SECRET-TEXT-GITHUB-SENT"
+	cmtRepo      = "acme/widgets"
+	cmtRepoID    = int64(1001)
+	cmtPull      = 7
+	cmtComment   = int64(555)
+	cmtOwner     = "octo-owner"
+	cmtOwnerID   = int64(7)
+	cmtBotID     = int64(99)
+	cmtInstance  = "0123456789abcdef0123456789abcdef"
+	cmtOtherInst = "fedcba9876543210fedcba9876543210"
+	cmtLeakText  = "SECRET-TEXT-GITHUB-SENT"
 )
 
 func cmtMust[T any](value T, err error) T {
@@ -508,19 +508,19 @@ func TestCommentPublisherRefusesWhatDoesNotMatchItsKey(t *testing.T) {
 	}{
 		{"another comment", "ack:1001:556", with(func(map[string]any) {})},
 		{"another repository", "ack:1002:555", with(func(map[string]any) {})},
-		{"an unknown field", "ack:1001:555", with(func(m map[string]any) { m["body"] = cmtSecretText })},
+		{"an unknown field", "ack:1001:555", with(func(m map[string]any) { m["body"] = cmtLeakText })},
 		{"a code field", "ack:1001:555", with(func(m map[string]any) { m["code"] = "123456" })},
-		{"a payload that is not JSON", "ack:1001:555", json.RawMessage(`{"repositoryId": ` + cmtSecretText)},
-		{"a payload that is not an object", "ack:1001:555", json.RawMessage(`"` + cmtSecretText + `"`)},
-		{"trailing data", "ack:1001:555", json.RawMessage(string(with(func(map[string]any) {})) + cmtSecretText)},
+		{"a payload that is not JSON", "ack:1001:555", json.RawMessage(`{"repositoryId": ` + cmtLeakText)},
+		{"a payload that is not an object", "ack:1001:555", json.RawMessage(`"` + cmtLeakText + `"`)},
+		{"trailing data", "ack:1001:555", json.RawMessage(string(with(func(map[string]any) {})) + cmtLeakText)},
 		{"an owner that is not a login", "ack:1001:555", with(func(m map[string]any) { m["owner"] = "SECRET text with spaces" })},
 		{"a repository that is not owner/name", "ack:1001:555", with(func(m map[string]any) { m["repo"] = "SECRET" })},
 		{"a pull number of zero", "ack:1001:555", with(func(m map[string]any) { m["pull"] = 0 })},
-		{"an unknown disposition", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = cmtSecretText })},
+		{"an unknown disposition", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = cmtLeakText })},
 		{"a malformed disposition without a reason", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "malformed" })},
-		{"a reason that is not a code", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reason"] = "malformed", cmtSecretText })},
+		{"a reason that is not a code", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reason"] = "malformed", cmtLeakText })},
 		{"an unknown-proposal disposition without a reference", "ack:1001:555", with(func(m map[string]any) { m["disposition"] = "unknown-proposal" })},
-		{"a reference that is not P<n>-R<m>", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reference"] = "no-suite", cmtSecretText })},
+		{"a reference that is not P<n>-R<m>", "ack:1001:555", with(func(m map[string]any) { m["disposition"], m["reference"] = "no-suite", cmtLeakText })},
 		{"a reference on an edited-first disposition", "ack:1001:555", with(func(m map[string]any) { m["reference"] = "P1-R1" })},
 		{"neither a disposition nor an operation", "ack:1001:555", with(func(m map[string]any) { delete(m, "disposition") })},
 		{"an acknowledgment payload under a summary key", "bootstrap-summary:1001:P1-R1", with(func(map[string]any) {})},
@@ -541,7 +541,7 @@ func TestCommentPublisherRefusesWhatDoesNotMatchItsKey(t *testing.T) {
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET", cmtOwner, cmtRepo, "123456"} {
+			for _, leak := range []string{cmtLeakText, "SECRET", cmtOwner, cmtRepo, "123456"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}
@@ -586,10 +586,10 @@ func TestCommentPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 		err    error
 		status string
 	}{
-		{"post answered with a status", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, cmtSecretText), "403"},
-		{"readback answered with a status", func(f *fakeCommentWriter, err error) { f.listErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText), "502"},
-		{"rate limited", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 429}, cmtSecretText), "rate_limited"},
-		{"transport failure", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("Post https://api.example/%s: connection refused", cmtSecretText), "transport"},
+		{"post answered with a status", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 403}, cmtLeakText), "403"},
+		{"readback answered with a status", func(f *fakeCommentWriter, err error) { f.listErr = err }, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtLeakText), "502"},
+		{"rate limited", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("%w: %s", &rest.RateLimitedError{Status: 429}, cmtLeakText), "rate_limited"},
+		{"transport failure", func(f *fakeCommentWriter, err error) { f.postErr = err }, fmt.Errorf("Post https://api.example/%s: connection refused", cmtLeakText), "transport"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCmtWorld(t)
@@ -598,7 +598,7 @@ func TestCommentPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			if strings.Contains(err.Error(), cmtSecretText) {
+			if strings.Contains(err.Error(), cmtLeakText) {
 				t.Fatalf("the error %q holds text GitHub sent", err)
 			}
 			if !strings.Contains(err.Error(), tc.status) {
@@ -614,7 +614,7 @@ func TestBotAccountResolvesOnceAndRetriesAfterAFailure(t *testing.T) {
 	bot := newBotAccount(func(context.Context) (int64, error) {
 		calls++
 		if fail {
-			return 0, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText)
+			return 0, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtLeakText)
 		}
 		return cmtBotID, nil
 	})
@@ -641,14 +641,14 @@ func TestCommentPublisherReturnsABotIdentityFailureAndRetriesIt(t *testing.T) {
 	w.pub.bot = newBotAccount(func(context.Context) (int64, error) {
 		calls.Add(1)
 		if failing.Load() {
-			return 0, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtSecretText)
+			return 0, fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, cmtLeakText)
 		}
 		return cmtBotID, nil
 	})
 	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
 
 	err := w.deliver(message)
-	if err == nil || strings.Contains(err.Error(), cmtSecretText) || !strings.Contains(err.Error(), "502") {
+	if err == nil || strings.Contains(err.Error(), cmtLeakText) || !strings.Contains(err.Error(), "502") {
 		t.Fatalf("publish while the identity fails = %v, want a status-only error", err)
 	}
 	if len(w.writer.posts()) != 0 {
@@ -938,7 +938,7 @@ func (o ownerWith) Current(context.Context) (owner.State, bool, error) {
 // quote it. The behavior already held when this test was written, so it has no RED.
 func TestCommentPublisherDoesNotQuoteAnOwnerLoginTheRendererRefuses(t *testing.T) {
 	w := newCmtWorld(t)
-	w.pub.owners = ownerWith(owner.State{Owner: owner.Owner{AccountID: cmtOwnerID, Login: "bad login " + cmtSecretText}})
+	w.pub.owners = ownerWith(owner.State{Owner: owner.Owner{AccountID: cmtOwnerID, Login: "bad login " + cmtLeakText}})
 	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
 
 	err := w.deliver(message)
@@ -946,7 +946,7 @@ func TestCommentPublisherDoesNotQuoteAnOwnerLoginTheRendererRefuses(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), message.Key) {
 		t.Fatalf("publish = %v, want an error naming the key", err)
 	}
-	if strings.Contains(err.Error(), "bad login") || strings.Contains(err.Error(), cmtSecretText) {
+	if strings.Contains(err.Error(), "bad login") || strings.Contains(err.Error(), cmtLeakText) {
 		t.Fatalf("the error %q holds the login", err)
 	}
 	if len(w.writer.posts()) != 0 {

@@ -128,7 +128,7 @@ func TestIntegrityRecordsPassedWhenEveryDigestVerifies(t *testing.T) {
 
 func TestIntegrityRecordsFailedForCorruptBytesAndLogsOnlyTheProjectAndTheVersion(t *testing.T) {
 	w := newIntWorld(t, true)
-	if err := os.WriteFile(w.object(bootFiles("v1")["tests/a_test.go"]), []byte(bootSecret), 0o600); err != nil {
+	if err := os.WriteFile(w.object(bootFiles("v1")["tests/a_test.go"]), []byte(bootLeak), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,7 +139,7 @@ func TestIntegrityRecordsFailedForCorruptBytesAndLogsOnlyTheProjectAndTheVersion
 	if !strings.Contains(logged, `"level":"ERROR"`) || !strings.Contains(logged, `"project":"`+string(w.project())+`"`) || !strings.Contains(logged, `"version":"V1"`) {
 		t.Fatalf("the failure is not logged at Error with the project and the version: %s", logged)
 	}
-	if strings.Contains(logged, bootSecret) || strings.Contains(logged, "sha256") {
+	if strings.Contains(logged, bootLeak) || strings.Contains(logged, "sha256") {
 		t.Fatalf("the log carries artifact bytes or a digest: %s", logged)
 	}
 }
@@ -158,7 +158,7 @@ func TestIntegrityRecordsFailedForAMissingObject(t *testing.T) {
 func TestIntegrityRecordsUnavailableForAReadErrorAndNeverLogsItsText(t *testing.T) {
 	w := newIntWorld(t, true)
 	digest := artifact.Hash([]byte(bootFiles("v1")[".suiteward.yml"]))
-	w.job = w.newJob(faultyVerifier{w.files, map[artifact.Digest]error{digest: errors.New("disk: " + bootSecret)}})
+	w.job = w.newJob(faultyVerifier{w.files, map[artifact.Digest]error{digest: errors.New("disk: " + bootLeak)}})
 
 	err := w.run()
 
@@ -166,7 +166,7 @@ func TestIntegrityRecordsUnavailableForAReadErrorAndNeverLogsItsText(t *testing.
 		t.Fatalf("an unreadable store failed the run: %v", err)
 	}
 	w.want(integrity.Unavailable)
-	if strings.Contains(w.logs.String(), bootSecret) {
+	if strings.Contains(w.logs.String(), bootLeak) {
 		t.Fatalf("the log carries the text of the read error: %s", w.logs)
 	}
 }

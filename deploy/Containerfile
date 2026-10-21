@@ -10,6 +10,9 @@ ARG TARGETOS TARGETARCH
 ARG VERSION=dev
 # What /status reports as the source (AGPL section 13); CI passes the URL of the exact revision.
 ARG SOURCE=
+# A golang digest that does not match GO_VERSION (a bump that left the digest behind) fails the build here.
+ARG GO_VERSION
+RUN test "$(go env GOVERSION)" = "go${GO_VERSION}"
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

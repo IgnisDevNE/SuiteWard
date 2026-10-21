@@ -75,6 +75,9 @@ func TestParse(t *testing.T) {
 		{"text before and after", "LGTM\n/suiteward approve P3-R1 333333\nShip it.\n/other text", command(commandtext.Approve, 3, 1, "333333")},
 		{"after a closed fence", "```\n/suiteward approve P9-R9 999999\n```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a closed tilde fence", "~~~~sh\n/suiteward revoke P9-R9 999999\n~~~~\n/suiteward revoke P1-R2 121212", command(commandtext.Revoke, 1, 2, "121212")},
+		{"after a list item fence that closes", "- ```\n  code\n  ```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"after a fence closed with three columns", "```\n/suiteward approve P9-R9 999999\n   ```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"a dash that is no list marker opens nothing", "---\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a longer closing fence", "```\n/suiteward approve P9-R9 999999\n`````\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 
 		// The prefix and the verb are case-insensitive; the reference keeps its form.
@@ -125,6 +128,13 @@ func TestParse(t *testing.T) {
 		{"tilde does not close a backtick fence", "```\n~~~\n/suiteward approve P1-R1 123456\n```", notCommand},
 		{"shorter fence does not close", "````\n```\n/suiteward approve P1-R1 123456\n````", notCommand},
 		{"fence with info string does not close", "```\n```go\n/suiteward approve P1-R1 123456\n```", notCommand},
+		{"a closing fence indented four columns does not close", "```\n    ```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a closing fence indented a tab does not close", "```\n\t```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a list item", "- ```\n  /suiteward approve P1-R1 123456\n  ```", notCommand},
+		{"a fence in a numbered list item", "1. ```\n   /suiteward approve P1-R1 123456\n   ```", notCommand},
+		{"a tilde fence in a starred list item", "* ~~~\n  /suiteward revoke P1-R1 123456", notCommand},
+		{"a fence in a block quote skips the line after it", "> ```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a quoted list item", "> - ```\n>   /suiteward approve P1-R1 123456", notCommand},
 
 		// Malformed.
 		{"bare prefix", "/suiteward", malformed(commandtext.UnknownVerb)},

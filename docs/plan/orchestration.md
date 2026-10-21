@@ -16,7 +16,7 @@ Subagents inherit the advisor. The ponytail plugin injects its keep-it-small rul
 
 Two consequences of the configuration:
 
-- Memtrace and gopls index the orchestrator's checkout, so it stays on the phase branch while a phase runs (integration happens there; the phase branch is not checked out in another worktree). Treat their answers as phase-branch state and read the file in your own worktree before editing it. For a task's own changes the orchestrator indexes the task worktree as a Memtrace overlay and subagents pass `worktree` to `find_code` (see `AGENTS.md`).
+- Memtrace and gopls index the orchestrator's checkout, so it stays on the phase branch while a phase runs (integration happens there; the phase branch is not checked out in another worktree). Treat their answers as phase-branch state and read the file in your own worktree before editing it. Memtrace labels that checkout `main` even while it is on the phase branch, so queries pass `branch: "main"`. For a task's own changes the orchestrator indexes the task worktree as a Memtrace overlay and subagents pass `worktree` to `find_code` (see `AGENTS.md`).
 - `CLAUDE_CODE_SUBAGENT_MODEL=haiku` also applies to built-in agents that inherit the model (such as `general-purpose` and `Plan`). Pass `model: "sonnet"` (or `"opus"`) explicitly when using them for design or substantive work.
 
 ## Roles
@@ -58,6 +58,10 @@ Tasks without shared files and with satisfied dependencies run in parallel in on
 ## Worktrees, databases, and ports
 
 Worktrees live at `D:/Repos/SuiteWard-worktrees/<phase>-<task>`, for example `D:/Repos/SuiteWard-worktrees/r1-b1`. Each checkout has its own caches, credentials, database volume, and ports, created through `./scripts/dev.ps1`. No task resets another checkout's database or changes the host Podman default.
+
+**After a phase's PR is merged**, the orchestrator:
+- removes its task worktrees. `git worktree remove` stops at the read-only Go module cache inside a checkout, so delete the folder with `Remove-Item -Recurse -Force` once git no longer lists it;
+- cleans the Memtrace graph: `cleanup_worktrees`, then `cleanup_stale_records` with `check_missing` and `check_stale_spans`, as a dry run first.
 
 ## Reporting to the user
 

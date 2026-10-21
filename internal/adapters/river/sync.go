@@ -37,9 +37,11 @@ type syncRepoArgs struct {
 
 func (syncRepoArgs) Kind() string { return SyncRepoKind }
 
-// InsertOpts coalesces the requests for one repository while one is unfinished.
+// InsertOpts coalesces the requests for one repository while one is unfinished, and runs the job on the tick's queue of
+// one worker: a sync job and a tick never list the same repository at the same time, so neither commits an older listing
+// over a newer one.
 func (syncRepoArgs) InsertOpts() riverqueue.InsertOpts {
-	return riverqueue.InsertOpts{UniqueOpts: riverqueue.UniqueOpts{ByArgs: true, ByState: uniqueWhileActive}}
+	return riverqueue.InsertOpts{Queue: SyncTickKind, UniqueOpts: riverqueue.UniqueOpts{ByArgs: true, ByState: uniqueWhileActive}}
 }
 
 type syncRepoWorker struct {

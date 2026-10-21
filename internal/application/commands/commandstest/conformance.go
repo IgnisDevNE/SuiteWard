@@ -209,7 +209,7 @@ func cmPendingOrder(e *cmdEnv) {
 	e.requirePending(5, 3, inOrder[:3]...)
 	e.requirePending(6, 10, append(slices.Clone(inOrder), candidate(10, 6, c(11, 5)))...)
 	e.requirePending(1, 10)
-	for _, limit := range []int{0, -1} {
+	for _, limit := range []int{0, -1, 1 << 31} { // PostgreSQL's LIMIT here is an int4
 		_, err := e.store.Pending(e.ctx, cmdTime(5), limit)
 		e.requireErr(err, commands.ErrInvalid)
 	}

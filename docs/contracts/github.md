@@ -34,7 +34,6 @@ func (i *Installation) Token(ctx context.Context) (Token, error)
 type Token struct{ /* value, expiry, identity */ }
 func (t Token) Reveal() string        // the bearer value, only for the Authorization header
 func (t Token) Identity() string      // stable id of this token (not the secret), changes on rotation
-func (t Token) ExpiresAt() time.Time
 ```
 
 - The JWT is RS256 with the standard library: `iat` = now − 60 s, `exp` = now + 9 min, `iss` = app id. The key is PKCS#1 or PKCS#8 PEM; anything else is an error naming the format, never the content.
@@ -71,7 +70,7 @@ func NewBudget(fraction float64, clock func() time.Time) (*Budget, error) // D-S
 - The ETag cache is keyed by request path and scoped to the token identity: when the identity changes, the cache is dropped (GitHub answers `Vary: Authorization`, so an ETag does not survive a rotation). The cache holds at most 4096 paths and drops the one used least recently, which costs one full read when it is asked again (about three paths per open pull request polled and a few per repository, so the bound covers some thirteen hundred open pull requests). Returned bodies are copies of what the cache holds. SHA-addressed reads use `GetImmutable`, so the cache only holds mutable listings.
 - A response body is read up to 64 MiB; a larger one is an error, never a silent truncation.
 - The budget reads `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` of each response; requests used are `limit − remaining` as GitHub reports them, so other consumers of the same installation count. Once the requests used in the current window reach `fraction × limit`, `Get` returns `ErrBudgetExhausted` until the reset, without calling GitHub. A 304 costs nothing on GitHub's side and is not counted. Before the first response of a window the cap is unknown, so the requests already in flight pass (about one per repository at startup and after each reset). Windows are compared in server time: each response with a `Date` header within one hour of the local clock updates the offset between the local clock and GitHub's (a `Date` further off is ignored, since a window lasts at most an hour), and a window ends when the local time minus that offset reaches its reset, so a skewed clock neither disables the cap nor stops it for good. A response with the same reset refreshes the count, a later reset replaces the window, an earlier one is ignored. `BudgetExhaustedError.Reset` is in local time (reset plus offset). The budget is per process (one instance serves at most 20 repositories, D-SYNC).
-- A secondary rate limit (403 or 429 with `Retry-After` while `Remaining` is above zero) is returned as `ErrRateLimited` and not fed to the budget: the caller (the reconciliation of M1.4-B) waits until `RateLimitedError.Until` before calling again. `Until` is in local time whatever its source (`X-RateLimit-Reset` and an HTTP-date `Retry-After` are shifted by the offset; a numeric `Retry-After` counts from the local clock).
+- A secondary rate limit (403 or 429 with `Retry-After` while `Remaining` is above zero) is returned as `ErrRateLimited` and not fed to the budget: the caller (the reconciliation of M1.4-B) waits until `RateLimitedError.Until` before calling again. `Until` is in local time whatever its source (`X-RateLimit-Reset` and an HTTP-date `Retry-After` are shifted by the offset; a numeric `Retry-After` counts from the local clock and is clamped to 3600 s).
 - Typed errors, matched with `errors.Is`/`errors.As`: `ErrUnauthorized` (401), `ErrForbidden` (403 without rate-limit headers), `ErrNotFound` (404), `ErrUnprocessable` (422), `ErrRateLimited` (403 or 429 with `X-RateLimit-Remaining: 0` or `Retry-After` in seconds or as an HTTP date, carrying the time to wait until). Other non-2xx statuses carry the status. An error carries the status and, for a rate limit, the time to wait until; never GitHub's answer text, a request header or the token.
 - Headers sent: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `If-None-Match` when cached. No retries inside the client.
 
@@ -111,7 +110,7 @@ The details are settled from the M1.6a-P0 measurement, recorded on the [M1.6a pa
   - It uses no ETag cache and counts in the shared budget.
   - The body is JSON, at most 64 KiB.
   - A 201 is success.
-  - A 403 or 429 carrying the secondary-limit headers, or a `Retry-After` header, is a `RateLimitedError`.
+  - A 403 or 429 carrying the secondary-limit headers, or a `Retry-After` header, is a `RateLimitedError`; a numeric `Retry-After` is clamped to 3600 s.
   - No request body or answer text reaches an error or a log.
 - **`Writer.PostComment(ctx, repo string, number int, body string) (commentID int64, err error)`.**
   - It issues `POST /repos/{r}/issues/{number}/comments`.

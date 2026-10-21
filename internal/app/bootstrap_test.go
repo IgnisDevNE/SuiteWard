@@ -808,7 +808,7 @@ func TestBootstrapSummaryCountsTheRulesItDropsAndMarksWhatItCut(t *testing.T) {
 		return list
 	}
 	message, err := newSummaryMessage(commentTarget{RepositoryID: 1, Repo: "a/b", Pull: 1},
-		bootstrapSummaryInputs{Proposal: 1, Revision: 1, Origin: bootHead, Branch: "main", Protected: 1, Paths: []string{long}, Include: rules(25), Exclude: rules(21), Tier: owner.TierIsolated})
+		bootstrapSummaryInputs{Proposal: 1, Revision: 1, Source: sourceBranch, Origin: bootHead, Branch: "main", Protected: 1, Paths: []string{long}, Include: rules(25), Exclude: rules(21), Tier: owner.TierIsolated})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,7 +843,7 @@ func TestBootstrapSummaryCountsTheRulesItDropsAndMarksWhatItCut(t *testing.T) {
 func worstCase(unit string) bootstrapSummaryInputs {
 	entry := strings.Repeat(unit, 500)
 	list := func() []string { return slices.Repeat([]string{entry}, 40) } // more than the 20 the payload keeps
-	return bootstrapSummaryInputs{Proposal: 999999999, Revision: 1, Origin: bootHead, Branch: entry, Protected: 100000, Paths: list(), Include: list(), Runner: list(), Exclude: list(), Tier: owner.TierCoLocated}
+	return bootstrapSummaryInputs{Proposal: 999999999, Revision: 1, Source: sourceBranch, Origin: bootHead, Branch: entry, Protected: 100000, Paths: list(), Include: list(), Runner: list(), Exclude: list(), Tier: owner.TierCoLocated}
 }
 
 func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testing.T) {

@@ -196,7 +196,7 @@ func TestAQuotingStyleIsCarriedAsGiven(t *testing.T) {
 			t.Errorf("style %q: body lacks %q:\n%s", style, want, got)
 		}
 	}
-	for _, bad := range []commandtext.Quoting{"bold", "Plain"} {
+	for _, bad := range []commandtext.Quoting{"", "bold", "Plain"} {
 		mustPanic(t, func() { commandtext.ScopeSuggestionBody("  - a", "  ", []string{"x"}, bad) })
 		if commandtext.ValidateScopeSuggestion("  - a", "  ", []string{"x"}, bad) == nil {
 			t.Errorf("ValidateScopeSuggestion accepts the style %q", bad)
@@ -204,5 +204,12 @@ func TestAQuotingStyleIsCarriedAsGiven(t *testing.T) {
 		if commandtext.ValidateRunnerChoice(commandtext.ProtectChoice, "  - a", "  ", []string{"x"}, "", bad) == nil {
 			t.Errorf("ValidateRunnerChoice accepts the style %q", bad)
 		}
+	}
+	// A list that a choice creates has no items to follow, so it has no style.
+	if commandtext.ValidateRunnerChoice(commandtext.ProtectChoice, "  - a", "  ", []string{"x"}, "runner", commandtext.QuotingPlain) == nil {
+		t.Error("ValidateRunnerChoice accepts a style for a created list")
+	}
+	if err := commandtext.ValidateRunnerChoice(commandtext.ProtectChoice, "  - a", "  ", []string{"x"}, "runner", ""); err != nil {
+		t.Errorf("ValidateRunnerChoice refuses a created list with no style: %v", err)
 	}
 }

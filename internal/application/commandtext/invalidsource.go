@@ -76,7 +76,7 @@ func editSentence(s InvalidSourceNotice, lead string) string {
 	if s.Branch == "" {
 		return ""
 	}
-	link := "[open GitHub's editor for it](" + editLink(s.Repo, s.Branch) + ")"
+	link := editorLinkText(s.Repo, s.Branch)
 	if s.NoDeclaration {
 		link = "[open GitHub's editor for a new file](" + newLink(s.Repo, s.Branch) + ")"
 	}
@@ -88,7 +88,7 @@ func editSentence(s InvalidSourceNotice, lead string) string {
 // alone is offered, so there is none either for a path that was cut, which is not the link's path, or for one that the fence shows
 // escaped, which is not the pattern to paste.
 func acceptLink(s InvalidSourceNotice) string {
-	if strings.ContainsAny(s.Path, `*?[\`) || (len(s.Declaration) == 0 && (s.PathCut || notGraphic(s.Path))) {
+	if strings.ContainsAny(s.Path, `*?[\`) || (len(s.Declaration) == 0 && (s.PathCut || hasHidden(s.Path))) {
 		return ""
 	}
 	choice := "Or accept the link by adding its exact anchored path to `exclude` in `.suiteward.yml`:\n\n" + fencedLines([]string{"/" + s.Path})

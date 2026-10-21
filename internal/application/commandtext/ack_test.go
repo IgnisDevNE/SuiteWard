@@ -104,10 +104,10 @@ func TestValidateAckAcceptsEveryOutcomeThatAcknowledgeRenders(t *testing.T) {
 		commandtext.EditedFirst:            bare,
 		commandtext.ProposeFailed:          bare,
 		commandtext.Skipped:                bare,
-		commandtext.NothingUncovered:       bare,
+		commandtext.NothingUncovered:       {Base: commandtext.BaseContract, Source: source, Owner: owner},
 		commandtext.ProposeRefused:         {Refusal: commandtext.Fork, Source: source, Owner: owner},
 		commandtext.SkipRefused:            {Refusal: commandtext.Carrier, Source: source, Owner: owner},
-		commandtext.SuggestRefused:         {Refusal: commandtext.DeclarationTooLarge, Source: source, Owner: owner},
+		commandtext.SuggestRefused:         {Refusal: commandtext.Fork, Source: source, Owner: owner},
 		commandtext.BootstrapPromoted:      {Version: 1, Proposal: 4, Revision: 2, Owner: owner},
 	} {
 		ack.Outcome = outcome

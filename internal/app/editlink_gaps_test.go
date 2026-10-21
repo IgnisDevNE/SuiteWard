@@ -31,7 +31,6 @@ func TestCommentPublisherLinksTheEditorOfTheFileTheAcknowledgmentAsksToChange(t 
 		{"scope notice for the default branch", scope, "/edit/release/2%231/.suiteward.yml"},
 		{"suggest refused for the head's declaration", map[string]any{"disposition": "suggest-refused", "reason": "invalid-source", "base": "pull", "branch": "feat/a#b"}, "/edit/feat/a%23b/.suiteward.yml"},
 		{"suggest refused for the default branch's declaration", map[string]any{"disposition": "suggest-refused", "reason": "invalid-source", "base": "default-branch", "branch": "main"}, "/edit/main/.suiteward.yml"},
-		{"suggest refused for a declaration too large", map[string]any{"disposition": "suggest-refused", "reason": "declaration-too-large", "branch": "feat/a#b"}, "/edit/feat/a%23b/.suiteward.yml"},
 		{"propose refused for an invalid source", map[string]any{"disposition": "propose-refused", "reason": "invalid-source", "base": "default-branch", "branch": "main"}, "/edit/main/.suiteward.yml"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,7 +56,6 @@ func TestCommentPublisherRendersTheseAcknowledgmentsQueuedBeforeTheBranchWithout
 	for name, extra := range map[string]map[string]any{
 		"a scope notice for the default branch": {"disposition": "suggested", "reason": "scope-notice", "branch": "feature/x", "base": "default-branch", "declaration": suggestDeclaration, "addInclude": []string{"*_test.go"}, "paths": []string{"a_test.go"}, "pathsTotal": 1},
 		"a suggest refused for a file":          {"disposition": "suggest-refused", "reason": "invalid-source", "base": "pull"},
-		"a suggest refused, too large":          {"disposition": "suggest-refused", "reason": "declaration-too-large"},
 		"a propose refused":                     {"disposition": "propose-refused", "reason": "invalid-source"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -147,13 +145,4 @@ func (w *cmtWorld) publishedInvalidSource(t *testing.T, kind string, extra map[s
 		t.Fatalf("%d posts, want 1", len(posts))
 	}
 	return posts[0].body
-}
-
-// The refusal of a declaration too large for the default branch's file links to that branch's editor, in the words of the default branch.
-func TestCommentPublisherLinksTheDefaultBranchForADeclarationTooLargeAgainstIt(t *testing.T) {
-	body := newCmtWorld(t).publishedAck(t, map[string]any{"disposition": "suggest-refused", "reason": "declaration-too-large", "base": "default-branch", "branch": "main"})
-
-	if want := "[open GitHub's editor for it](https://github.com/" + cmtRepo + "/edit/main/.suiteward.yml)"; !strings.Contains(body, want) || !strings.Contains(body, "on the default branch") {
-		t.Errorf("the body lacks %q or the words of the default branch:\n%s", want, body)
-	}
 }

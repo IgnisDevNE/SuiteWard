@@ -292,7 +292,7 @@ func (w *cmtWorld) wantPost(key, text string) {
 }
 
 func cmtSummaryInputs() bootstrapSummaryInputs {
-	return bootstrapSummaryInputs{Proposal: 1, Revision: 1, Origin: bootHead, Branch: "main", Protected: 2, Paths: []string{"tests/a_test.go", "tests/b_test.go"},
+	return bootstrapSummaryInputs{Proposal: 1, Revision: 1, Source: sourceBranch, Origin: bootHead, Branch: "main", Protected: 2, Paths: []string{"tests/a_test.go", "tests/b_test.go"},
 		Include: []string{"/tests/**"}, Exclude: []string{"/tests/gen/**"}, IncludeTotal: 3, ExcludeTotal: 1, Tier: owner.TierCoLocated}
 }
 

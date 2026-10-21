@@ -72,7 +72,7 @@ type bootstrapSummaryInputs struct {
 	Protected    int      `json:"protected"`        // all protected files, of which Paths lists the first ones
 	Paths        []string `json:"paths"`
 	Include      []string `json:"include"`               // the declared include rules
-	Runner       []string `json:"runner,omitzero"`       // the declared runner rules; nil in a message written before M1.9-E4, which omitempty would not tell from none
+	Runner       []string `json:"runner,omitzero"`       // the declared runner rules; a message of v0.1.0 has none, which reads as none
 	Exclude      []string `json:"exclude"`               // the declared exclude rules
 	IncludeTotal int      `json:"includeTotal"`          // how many include rules the declaration has, of which Include lists the first ones
 	ExcludeTotal int      `json:"excludeTotal"`          // likewise for exclude
@@ -93,7 +93,7 @@ func (s bootstrapSummaryInputs) summary() (commandtext.Summary, error) {
 	}
 	var source commandtext.Source
 	switch s.Source {
-	case "", sourceBranch: // a message written before M1.7b has no source
+	case sourceBranch:
 	case sourcePull:
 		source = commandtext.SourcePull
 	default:

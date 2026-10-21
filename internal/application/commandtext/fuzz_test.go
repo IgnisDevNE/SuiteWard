@@ -21,7 +21,7 @@ func FuzzParse(f *testing.F) {
 		"/suiteward approve P1-R2 123456", "```\n/suiteward approve P1-R2 123456\n```", "~~~\n/suiteward propose\n",
 		"/SUITEWARD Approve P999999999-R1 000000", "/suiteward approve P01-R2 123456", "/suiteward skip 123456",
 		"/suiteward approve P1-R2 12345\u0663", "text\n \t/suiteward\trevoke P1-R1 111111 \t\r\n",
-		"\u017fuiteward approve P1-R1 123456", "````\n```\n/suiteward propose\n````",
+		"\u017fuiteward approve P1-R1 123456", "````\n```\n/suiteward propose\n````", "-->\n/suiteward approve P1-R2 123456", "```\n/suiteward approve P1-R2 123456",
 	} {
 		f.Add(seed)
 	}
@@ -35,10 +35,16 @@ func FuzzParse(f *testing.F) {
 		}
 		for _, mark := range []byte{'`', '~'} {
 			fence := strings.Repeat(string(mark), max(3, longestRun(body, mark)+1))
-			for _, wrapped := range []string{fence + "\n" + body, fence + "\n" + body + "\n" + fence} {
+			for _, wrapped := range []string{fence + "\n" + body, fence + "\n" + body + "\n" + fence, fence + " <!--\n" + body} {
 				if got := commandtext.Parse(wrapped); got.Kind != commandtext.KindNotCommand {
 					t.Fatalf("Parse read %+v inside a fence of %q around %q", got, mark, body)
 				}
+			}
+		}
+		// A fence opened in a list item runs to the end of the body, whatever the body holds.
+		for _, wrapped := range []string{"- ```\n" + body, "1. ```\n  " + body + "\n```", "- item\n  ```\n" + body + "\n```"} {
+			if got := commandtext.Parse(wrapped); got.Kind != commandtext.KindNotCommand {
+				t.Fatalf("Parse read %+v in a list item fence around %q", got, body)
 			}
 		}
 	})
@@ -309,7 +315,6 @@ func renderSuggestDeclaration(in fuzzInput) (rendered, bool) {
 		Source: 7, Repo: "o/r", Branch: in.branch(), Patterns: in.patterns(0, 10), Runner: in.patterns(1, 10),
 		Mixed: in.list(2, 20), Submodules: in.list(3, 20), Cut: in.n&1 != 0, Suggest: in.n&2 != 0,
 	}
-	a.Declared = a.Suggest && in.n&4 != 0
 	if commandtext.ValidateSuggestion(a) != nil {
 		return rendered{}, false
 	}
@@ -383,7 +388,7 @@ func renderInvalidSource(in fuzzInput) (rendered, bool) {
 func (in fuzzInput) suggestion() (anchor, indent string, patterns []string, quoting commandtext.Quoting) {
 	indent = strings.Repeat(" ", int(in.n)%4*2)
 	anchor = indent + "- " + strings.NewReplacer("\r", "", "\n", "").Replace(in.item)
-	return anchor, indent, in.patterns(0, 20), []commandtext.Quoting{"", commandtext.QuotingPlain, commandtext.QuotingSingle, commandtext.QuotingDouble}[in.n>>2%4]
+	return anchor, indent, in.patterns(0, 20), []commandtext.Quoting{commandtext.QuotingPlain, commandtext.QuotingSingle, commandtext.QuotingDouble}[in.n>>2%3]
 }
 
 func renderScopeSuggestion(in fuzzInput) (rendered, bool) {
@@ -402,7 +407,7 @@ func renderRunnerChoice(in fuzzInput) (rendered, bool) {
 		choice = commandtext.IgnoreChoice
 	}
 	if in.reps&2 != 0 {
-		newList = map[commandtext.RunnerChoice]string{commandtext.ProtectChoice: "runner", commandtext.IgnoreChoice: "exclude"}[choice]
+		newList, quoting = map[commandtext.RunnerChoice]string{commandtext.ProtectChoice: "runner", commandtext.IgnoreChoice: "exclude"}[choice], "" // a created list has no quoting
 	}
 	if commandtext.ValidateRunnerChoice(choice, anchor, indent, patterns, newList, quoting) != nil {
 		return rendered{}, false

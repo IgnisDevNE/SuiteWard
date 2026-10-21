@@ -134,12 +134,16 @@ func TestNewRunnerUncoveredMessageIsRefusedWhenItCannotBePosted(t *testing.T) {
 const cmtRunnerReviewKey = "scope-review:1001:7:" + cmtScopeDigest
 
 var (
-	cmtProtectList = map[string]any{"list": "protect", "line": 5, "anchor": "  - pytest.toml", "patterns": []string{"jest.config.*"}}
+	cmtProtectList = map[string]any{"list": "protect", "line": 5, "anchor": "  - pytest.toml", "patterns": []string{"jest.config.*"}, "quoting": "plain"}
 	cmtIgnoreList  = map[string]any{"list": "ignore", "line": 3, "anchor": "  - /tests/**", "patterns": []string{"jest.config.js"}, "newList": "exclude"}
 )
 
 func cmtChoiceBody(choice commandtext.RunnerChoice, anchor, indent string, patterns []string, newList, suffix string) string {
-	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
+	quoting := commandtext.QuotingPlain
+	if newList != "" { // a list that the choice creates has no quoting
+		quoting = ""
+	}
+	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, quoting)) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
 }
 
 func TestCommentPublisherPostsTheProtectAndIgnoreSuggestionsEachWithItsOwnMarker(t *testing.T) {

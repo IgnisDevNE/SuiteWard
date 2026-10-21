@@ -138,8 +138,15 @@ func validateCheck(c Check) (checkReason, error) {
 	if err := checkCheckReference(c); err != nil {
 		return reason, err
 	}
-	if (c.Reason != "runner-uncovered" && (len(c.Paths) > 0 || c.PathsTotal > 0)) || len(c.Paths) > maxListed || c.PathsTotal < len(c.Paths) || (len(c.Paths) == 0 && c.PathsTotal != 0) {
-		return reason, fmt.Errorf("commandtext: reason %q does not fit %d paths of a total of %d: only a runner-uncovered check lists at most %d", c.Reason, len(c.Paths), c.PathsTotal, maxListed)
+	switch {
+	case c.Reason != "runner-uncovered" && (len(c.Paths) > 0 || c.PathsTotal > 0):
+		return reason, fmt.Errorf("commandtext: reason %q lists no paths, but has %d of a total of %d: only a runner-uncovered check lists them", c.Reason, len(c.Paths), c.PathsTotal)
+	case len(c.Paths) > maxListed:
+		return reason, fmt.Errorf("commandtext: %d paths, at most %d", len(c.Paths), maxListed)
+	case c.PathsTotal < len(c.Paths):
+		return reason, fmt.Errorf("commandtext: a total of %d is below the %d paths listed", c.PathsTotal, len(c.Paths))
+	case len(c.Paths) == 0 && c.PathsTotal != 0:
+		return reason, fmt.Errorf("commandtext: a total of %d paths and none listed", c.PathsTotal)
 	}
 	return reason, nil
 }

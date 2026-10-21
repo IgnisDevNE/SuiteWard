@@ -178,15 +178,9 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 			[]string{"`/suiteward propose`"},
 		},
 		{
-			"suggest refused: declaration too large",
-			with(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.DeclarationTooLarge}),
-			[]string{"`/suiteward suggest` was not processed: the suggested declaration would be too large for a comment", "Nothing changed.", "add the missing patterns to `.suiteward.yml` yourself"},
-			[]string{"`/suiteward propose`"},
-		},
-		{
 			"nothing uncovered",
-			with(commandtext.Ack{Outcome: commandtext.NothingUncovered}),
-			[]string{"every test-like path in this pull request's head is in the scope already", "nothing to suggest", "Nothing changed.", "not an approval", "does not run tests"},
+			with(commandtext.Ack{Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract}),
+			[]string{"every test-like path in this pull request's head is covered by the current contract already", "nothing to suggest", "Nothing changed.", "not an approval", "does not run tests"},
 			[]string{" for P", "P0"},
 		},
 		{
@@ -461,17 +455,16 @@ func TestAcknowledgeProposeAndSkipPanicsOnImpossibleState(t *testing.T) {
 		"a replayed code with a reference out of range":  {Outcome: commandtext.ReplayedCode, Proposal: 1, Revision: 1000000000, Source: source, Owner: owner},
 		"no suite with half a reference":                 {Outcome: commandtext.NoSuite, Revision: 1, Source: source, Owner: owner},
 		"approved without a reference":                   {Outcome: commandtext.Approved, Source: source, Owner: owner},
-		"a reference on nothing uncovered":               {Outcome: commandtext.NothingUncovered, Proposal: 1, Revision: 1, Source: source, Owner: owner},
-		"a refusal on nothing uncovered":                 refused(commandtext.NothingUncovered, commandtext.Fork),
-		"eligibility on nothing uncovered":               {Outcome: commandtext.NothingUncovered, Source: source, Owner: owner, Eligible: true},
-		"no source command on nothing uncovered":         {Outcome: commandtext.NothingUncovered, Owner: owner},
+		"a reference on nothing uncovered":               {Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract, Proposal: 1, Revision: 1, Source: source, Owner: owner},
+		"a refusal on nothing uncovered":                 {Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract, Refusal: commandtext.Fork, Source: source, Owner: owner},
+		"eligibility on nothing uncovered":               {Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract, Source: source, Owner: owner, Eligible: true},
+		"no source command on nothing uncovered":         {Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract, Owner: owner},
+		"no base on nothing uncovered":                   {Outcome: commandtext.NothingUncovered, Source: source, Owner: owner},
 		"suggest refused without a reason":               refused(commandtext.SuggestRefused, 0),
 		"suggest refused for a canonical":                refused(commandtext.SuggestRefused, commandtext.CanonicalPresent),
 		"suggest refused for a base that is not target":  refused(commandtext.SuggestRefused, commandtext.BaseNotTarget),
 		"suggest refused for a carrier":                  refused(commandtext.SuggestRefused, commandtext.Carrier),
 		"a reference on a suggest refusal":               {Outcome: commandtext.SuggestRefused, Refusal: commandtext.Fork, Proposal: 1, Revision: 1, Source: source, Owner: owner},
-		"declaration too large on a propose refusal":     refused(commandtext.ProposeRefused, commandtext.DeclarationTooLarge),
-		"declaration too large on a skip refusal":        refused(commandtext.SkipRefused, commandtext.DeclarationTooLarge),
 	}
 	for name, ack := range cases {
 		t.Run(name, func(t *testing.T) {

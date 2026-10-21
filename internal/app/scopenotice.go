@@ -136,7 +136,7 @@ type scopeSuggestion struct {
 	// KeyIndent is then the spaces before its key.
 	NewList   string `json:"newList,omitempty"`
 	KeyIndent string `json:"keyIndent,omitempty"`
-	// Quoting is the quoting style of the list the suggestion extends (what scope.AddPatterns writes for it); none for a created list, and in a payload written before the style was carried, which follows the anchor.
+	// Quoting is the quoting style of the list the suggestion extends (what scope.AddPatterns writes for it); required, except for a created list, which has none.
 	Quoting commandtext.Quoting `json:"quoting,omitempty"`
 }
 

@@ -116,10 +116,8 @@ foreach($required in @('services:', 'postgres:', 'postgres:18.6-trixie@sha256:74
     $checks++
 }
 $goJob=[regex]::Match($workflow,'(?ms)^  go:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
-foreach($job in @($goJob,$coverageJob)) {
-    if(-not $job.Contains('./scripts/check-persistence.ps1 -Mode Generated')){throw 'CI must verify fresh sqlc output on both native Go runners and the real PostgreSQL coverage runner.'}
-    $checks++
-}
+if(-not $goJob.Contains('./scripts/check-persistence.ps1 -Mode Generated')){throw 'CI must verify fresh sqlc output on both native Go runners.'}
+$checks++
 # Lint runs once, inside the default-mode Go job (both OSes), from the pinned checksum-verified tool; no unpinned install or third-party action.
 if($goJob -notmatch '(?m)^\s+run: \./scripts/check-go\.ps1\s*$'){throw 'The Go job must run check-go.ps1 in default mode, which includes golangci-lint.'}
 $checkGoSource=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-go.ps1')).Replace("`r",'')

@@ -163,7 +163,7 @@ Setup then works through these steps:
 
 1. It looks up your login, which must be a user account, and every configured repository. If one lookup fails, it exits with code 1 before it writes anything.
 2. It prints a warning and waits. Press Enter to continue. End of input or Ctrl-C exits with code 1, before any secret is created.
-3. It prints the `otpauth://` URI and the base32 secret, once. Scan the URI with your authenticator, or type the secret in.
+3. It prints the `otpauth://` URI and the base32 secret, once. Scan the URI with your authenticator, or type the secret in. The entry is named `SuiteWard:<login> (<tier> <instance>)`, for example `SuiteWard:magalz (isolated 1a2b3c4d)`: `<instance>` is the first 8 characters of this instance's id, which `/status` shows as `instance`, so each instance has its own entry. Setup says the same on stderr. If you type the secret in, give the entry that name yourself.
 4. It asks for the current 6-digit code. You get three attempts. Three wrong codes exit with code 1 and write nothing.
 5. It stores the owner and the secret, records each repository's test check, and checks protection for each repository (section 7).
 
@@ -173,7 +173,7 @@ Afterwards, check the result. On the co-located PC, use the `podman machine ssh 
 
 Only a setup that prints the protection result of each repository and exits with code 0 counts. Confirm it with `/status`: `owner.enrolledAt` changes on every successful run, so a value that did not change means that setup did not complete. An interrupted setup can leave an authenticator entry that matches nothing: delete it.
 
-Running setup again replaces the TOTP secret. Delete the old authenticator entry and add the new secret. Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
+Running setup again replaces the TOTP secret, and the new entry has the same name as the old one of this instance. Once the new entry gives a code that setup accepts, delete the old entry (the entries of other instances have another `<instance>`, so leave them). Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
 
 ## 7. Create the ruleset
 
@@ -359,7 +359,7 @@ A correction puts an earlier version's protected files back, for example the pre
 
 A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard skips it: nothing is synchronized or checked there, and the commands of the other repositories keep working. A command it had already observed there can still be decided, and its reply may fail. `/status` and the MCP `status` tool name it in `unconfiguredRepositories`, and the log warns once. Deleting the repository on GitHub has the same effect.
 1. Remove the repository from the list: `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env` on an isolated host (then restart the service), or `-GitHubRepositories` when you run `deploy/local.ps1` again on a co-located PC.
-2. Run setup again (section 6) with one `--test-check` for each repository you keep. Setup replaces the TOTP secret, so add the new entry to your authenticator app and delete the old one.
+2. Run setup again (section 6) with one `--test-check` for each repository you keep. Setup replaces the TOTP secret, so add the new entry to your authenticator app and, once it gives a valid code, delete the old one of this instance (same `<tier> <instance>` in its name).
 3. Comment your command again. A command written before the new setup is ignored and gets no reply.
 
 SuiteWard changes nothing on GitHub: remove the App from the repository, and the ruleset rule that requires `SuiteWard / Contract`, yourself.

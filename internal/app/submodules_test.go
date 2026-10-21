@@ -86,7 +86,7 @@ func TestCommentPublisherRendersPayloadsWithoutSubmodulesWithoutTheWarning(t *te
 		"a declaration-missing ack of v0.1.0": {key, json.RawMessage(`{"repositoryId":1001,"repo":"acme/widgets","pull":7,"disposition":"propose-refused","comment":555,"owner":"octo-owner",` +
 			`"reason":"declaration-missing","branch":"feature/x","suggestion":["tests/**"]}`)},
 		"a declaration-missing ack of M1.9": {key, cmtAckPayload(map[string]any{"disposition": "suggested", "reason": "declaration-missing", "branch": "feature/x", "suggestion": []string{"tests/**"},
-			"runner": []string{"conftest.py"}, "mixed": []string{"package.json"}, "cut": true, "declared": true})},
+			"runner": []string{"conftest.py"}, "mixed": []string{"package.json"}, "cut": true})},
 		"a scope-notice ack of M1.9": {key, cmtAckPayload(map[string]any{"disposition": "suggested", "reason": "scope-notice", "branch": "feature/x", "paths": []string{"a_test.go"}, "pathsTotal": 1,
 			"declaration": suggestDeclaration, "mixed": []string{"package.json"}, "cut": true})},
 		"a scope-notice message of M1.9": {cmtScopeKey, cmtScopePayload(func(m map[string]any) { m["cut"] = true })},

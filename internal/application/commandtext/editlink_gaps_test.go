@@ -68,7 +68,6 @@ func TestRefusalsThatAskToFixTheDeclarationLinkToTheEditorOfTheFileRefused(t *te
 		{"suggest, the head's declaration", refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BasePull, "feat/a#b%c"), pullLink, "this pull request's branch", "Fix the declaration"},
 		{"suggest, the default branch's declaration", refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BaseDefaultBranch, "main"),
 			"https://github.com/octo-org/widgets/edit/main/.suiteward.yml", "the default branch", "Fix the declaration"},
-		{"suggest, a declaration too large", refusal(commandtext.SuggestRefused, commandtext.DeclarationTooLarge, 0, "feat/a#b%c"), pullLink, "this pull request's branch", "add the missing patterns"},
 		{"propose, the source declaration", refusal(commandtext.ProposeRefused, commandtext.InvalidSource, commandtext.BasePull, "feat/a#b%c"), pullLink, "this pull request's branch", "If the declaration is the problem"},
 		{"propose, the default branch's declaration", refusal(commandtext.ProposeRefused, commandtext.InvalidSource, commandtext.BaseDefaultBranch, "main"),
 			"https://github.com/octo-org/widgets/edit/main/.suiteward.yml", "the default branch", "If the declaration is the problem"},
@@ -95,7 +94,6 @@ func TestRefusalsThatAskToFixTheDeclarationLinkToTheEditorOfTheFileRefused(t *te
 func TestRefusalsWithoutARepositoryAndABranchHaveNoLink(t *testing.T) {
 	for _, ack := range []commandtext.Ack{
 		refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BasePull, ""),
-		refusal(commandtext.SuggestRefused, commandtext.DeclarationTooLarge, 0, ""),
 		refusal(commandtext.ProposeRefused, commandtext.InvalidSource, 0, ""),
 	} {
 		body := render(t, func() string { return commandtext.Acknowledge(ack) })
@@ -114,9 +112,9 @@ func TestAcknowledgeRefusesAnEditorLinkThatDoesNotFit(t *testing.T) {
 		"a suggest with another file":     refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BaseContract, "feature"),
 		"an invalid suggest with no base": refusal(commandtext.SuggestRefused, commandtext.InvalidSource, 0, "feature"),
 		"a skip":                          refusal(commandtext.SkipRefused, commandtext.Fork, 0, "feature"),
-		"a branch that is no ref":         refusal(commandtext.SuggestRefused, commandtext.DeclarationTooLarge, 0, "a b"),
-		"a branch without a repository":   {Outcome: commandtext.SuggestRefused, Refusal: commandtext.DeclarationTooLarge, Owner: owner, Source: source, Branch: "feature"},
-		"a repository without a branch":   {Outcome: commandtext.SuggestRefused, Refusal: commandtext.DeclarationTooLarge, Owner: owner, Source: source, Repo: repository},
+		"a branch that is no ref":         refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BasePull, "a b"),
+		"a branch without a repository":   {Outcome: commandtext.SuggestRefused, Refusal: commandtext.InvalidSource, Base: commandtext.BasePull, Owner: owner, Source: source, Branch: "feature"},
+		"a repository without a branch":   {Outcome: commandtext.SuggestRefused, Refusal: commandtext.InvalidSource, Base: commandtext.BasePull, Owner: owner, Source: source, Repo: repository},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if commandtext.ValidateAck(ack) == nil {
@@ -153,20 +151,4 @@ func TestInvalidSourceCommentLinksTheNewFilePageForAHeadWithoutADeclaration(t *t
 			t.Errorf("ValidateInvalidSource accepted NoDeclaration %s", name)
 		}
 	}
-}
-
-func TestDeclarationTooLargeAgainstTheDefaultBranchLinksItsEditor(t *testing.T) {
-	body := render(t, func() string {
-		return commandtext.Acknowledge(refusal(commandtext.SuggestRefused, commandtext.DeclarationTooLarge, commandtext.BaseDefaultBranch, "main"))
-	})
-
-	if raw, _ := editorLink(t, body); raw != "https://github.com/octo-org/widgets/edit/main/.suiteward.yml" || !strings.Contains(body, "on the default branch") {
-		t.Errorf("the link is %q or the words are not the default branch's:\n%s", raw, body)
-	}
-	defer func() {
-		if recover() == nil {
-			t.Error("Acknowledge did not panic for a pull base on a declaration too large")
-		}
-	}()
-	commandtext.Acknowledge(refusal(commandtext.SuggestRefused, commandtext.DeclarationTooLarge, commandtext.BasePull, "feature"))
 }

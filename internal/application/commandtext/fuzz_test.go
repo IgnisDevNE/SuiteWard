@@ -309,7 +309,6 @@ func renderSuggestDeclaration(in fuzzInput) (rendered, bool) {
 		Source: 7, Repo: "o/r", Branch: in.branch(), Patterns: in.patterns(0, 10), Runner: in.patterns(1, 10),
 		Mixed: in.list(2, 20), Submodules: in.list(3, 20), Cut: in.n&1 != 0, Suggest: in.n&2 != 0,
 	}
-	a.Declared = a.Suggest && in.n&4 != 0
 	if commandtext.ValidateSuggestion(a) != nil {
 		return rendered{}, false
 	}
@@ -383,7 +382,7 @@ func renderInvalidSource(in fuzzInput) (rendered, bool) {
 func (in fuzzInput) suggestion() (anchor, indent string, patterns []string, quoting commandtext.Quoting) {
 	indent = strings.Repeat(" ", int(in.n)%4*2)
 	anchor = indent + "- " + strings.NewReplacer("\r", "", "\n", "").Replace(in.item)
-	return anchor, indent, in.patterns(0, 20), []commandtext.Quoting{"", commandtext.QuotingPlain, commandtext.QuotingSingle, commandtext.QuotingDouble}[in.n>>2%4]
+	return anchor, indent, in.patterns(0, 20), []commandtext.Quoting{commandtext.QuotingPlain, commandtext.QuotingSingle, commandtext.QuotingDouble}[in.n>>2%3]
 }
 
 func renderScopeSuggestion(in fuzzInput) (rendered, bool) {
@@ -402,7 +401,7 @@ func renderRunnerChoice(in fuzzInput) (rendered, bool) {
 		choice = commandtext.IgnoreChoice
 	}
 	if in.reps&2 != 0 {
-		newList = map[commandtext.RunnerChoice]string{commandtext.ProtectChoice: "runner", commandtext.IgnoreChoice: "exclude"}[choice]
+		newList, quoting = map[commandtext.RunnerChoice]string{commandtext.ProtectChoice: "runner", commandtext.IgnoreChoice: "exclude"}[choice], "" // a created list has no quoting
 	}
 	if commandtext.ValidateRunnerChoice(choice, anchor, indent, patterns, newList, quoting) != nil {
 		return rendered{}, false

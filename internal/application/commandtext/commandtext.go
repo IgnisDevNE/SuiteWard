@@ -69,6 +69,8 @@ const (
 	MissingCode
 	BadCode
 	ExtraText
+	// lastReason is no reason: it ends the list (see lastOutcome in render.go).
+	lastReason
 )
 
 // Command is a well-formed command line. Code is the TOTP code; it is never
@@ -182,7 +184,7 @@ func stripMarkers(text string) string {
 		if !ok {
 			return text
 		}
-		text = strings.TrimLeft(rest, " 	")
+		text = strings.TrimLeft(rest, " \t")
 	}
 }
 
@@ -193,13 +195,13 @@ func stripMarker(text string) (rest string, ok bool) {
 	case text[0] == '>':
 		return text[1:], true
 	case strings.ContainsRune("-*+", rune(text[0])):
-		return text[1:], len(text) > 1 && (text[1] == ' ' || text[1] == '	')
+		return text[1:], len(text) > 1 && (text[1] == ' ' || text[1] == '\t')
 	}
 	n := 0
 	for n < len(text) && text[n] >= '0' && text[n] <= '9' {
 		n++
 	}
-	if n == 0 || n+1 >= len(text) || (text[n] != '.' && text[n] != ')') || (text[n+1] != ' ' && text[n+1] != '	') {
+	if n == 0 || n+1 >= len(text) || (text[n] != '.' && text[n] != ')') || (text[n+1] != ' ' && text[n+1] != '\t') {
 		return "", false
 	}
 	return text[n+1:], true

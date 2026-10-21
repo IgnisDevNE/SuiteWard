@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode/utf8"
 )
 
 // RunnerUncovered is what the comment of a runner-uncovered check states (docs/contracts/runtime.md, "Check reason runner-uncovered").
@@ -108,12 +107,14 @@ const maxKeyIndent = 40
 // RunnerChoiceBody renders the body of a review comment that suggests one choice on .suiteward.yml: one sentence, then a suggestion
 // block that holds anchorLine (the list item the comment is on) unchanged, followed by one item per pattern, written as scope.AddPatterns
 // writes it (see suggestedItems). With newList empty the items follow the anchor's list at indent, the spaces before its dash, in the
-// quoting that quoting names (see Quoting). With newList (runner for the protect choice, exclude for the ignore choice) the anchor ends another list, and the block continues with that key at indent and its items two spaces deeper.
+// quoting that quoting names (see Quoting). With newList (runner for the protect choice, exclude for the ignore choice) the anchor ends another list, and the block continues with that key at indent and its items two spaces deeper, in plain style: quoting is then empty.
 // An input that does not fit panics (see ValidateRunnerChoice).
 func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string, quoting Quoting) string {
 	must(ValidateRunnerChoice(choice, anchorLine, indent, patterns, newList, quoting))
-	items := suggestedItems(patterns, indent, quoting.styleOf(anchorLine))
-	if newList != "" { // a list the block creates has no items to follow
+	var items string
+	if newList == "" {
+		items = suggestedItems(patterns, indent, quoting.style())
+	} else { // a list the block creates has no items to follow
 		items = "\n" + indent + newList + ":" + suggestedItems(patterns, indent+"  ", 0)
 	}
 	content := anchorLine + items
@@ -124,33 +125,38 @@ func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns [
 	return paragraphs(sentence, fence("suggestion", content+"\n"))
 }
 
+// choiceLists are the lists that the choices create: the runner list for the protect choice, the exclude list for the ignore choice.
+var choiceLists = map[RunnerChoice]string{ProtectChoice: "runner", IgnoreChoice: "exclude"}
+
 // ValidateRunnerChoice reports why RunnerChoiceBody would panic on its arguments, as an error. The items are written in the
 // style quoting names (see Quoting), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
 // out: the caller decides what to do.
 func ValidateRunnerChoice(choice RunnerChoice, anchorLine, indent string, patterns []string, newList string, quoting Quoting) error {
-	if err := quoting.validate(); err != nil {
+	if err := errors.Join(validateChoiceQuoting(quoting, newList), validatePatterns(patterns), validateAnchor(anchorLine)); err != nil {
 		return err
 	}
 	switch {
 	case choice != ProtectChoice && choice != IgnoreChoice:
 		return fmt.Errorf("commandtext: runner choice %d is unknown", choice)
-	case len(patterns) == 0 || len(patterns) > maxListed:
-		return fmt.Errorf("commandtext: %d suggested patterns, want 1 to %d", len(patterns), maxListed)
 	case strings.Trim(indent, " ") != "" || len(indent) > maxKeyIndent:
 		return fmt.Errorf("commandtext: indent %q is not at most %d spaces", indent, maxKeyIndent)
-	case len(anchorLine) > 1000 || !utf8.ValidString(anchorLine) || strings.ContainsAny(anchorLine, "\r\n"):
-		return errors.New("commandtext: the anchor line is over 1000 bytes, not UTF-8 or not one line")
 	case newList == "" && !strings.HasPrefix(anchorLine, indent+"- "):
 		return fmt.Errorf("commandtext: the anchor line %q is not a list item at indent %q", anchorLine, indent)
 	case newList != "" && !strings.HasPrefix(strings.TrimLeft(anchorLine, " "), "- "):
 		return fmt.Errorf("commandtext: the anchor line %q is not a list item", anchorLine)
-	case newList != "" && newList != map[RunnerChoice]string{ProtectChoice: "runner", IgnoreChoice: "exclude"}[choice]:
+	case newList != "" && newList != choiceLists[choice]:
 		return fmt.Errorf("commandtext: the list %q is not the one choice %d creates", newList, choice)
 	}
-	for _, p := range patterns {
-		if p == "" || !suggestable(p) {
-			return fmt.Errorf("commandtext: pattern %q cannot be suggested", p)
-		}
+	return nil
+}
+
+// validateChoiceQuoting reports a quoting that an existing list does not have, or that a list the choice creates has: a created list is written plain.
+func validateChoiceQuoting(quoting Quoting, newList string) error {
+	switch {
+	case newList == "":
+		return quoting.validate()
+	case quoting != "":
+		return fmt.Errorf("commandtext: a created list has no quoting, not %q", quoting)
 	}
 	return nil
 }

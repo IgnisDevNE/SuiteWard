@@ -15,8 +15,8 @@ import (
 const cmtReviewKey = "scope-review:1001:7:" + cmtScopeDigest
 
 var (
-	cmtIncludeList = map[string]any{"list": "include", "line": 3, "anchor": "  - /tests/**", "patterns": []string{"*_test.go"}}
-	cmtRunnerList  = map[string]any{"list": "runner", "line": 6, "anchor": "- conftest.py", "patterns": []string{".pytest.ini", "pytest.ini"}}
+	cmtIncludeList = map[string]any{"list": "include", "line": 3, "anchor": "  - /tests/**", "patterns": []string{"*_test.go"}, "quoting": "plain"}
+	cmtRunnerList  = map[string]any{"list": "runner", "line": 6, "anchor": "- conftest.py", "patterns": []string{".pytest.ini", "pytest.ini"}, "quoting": "plain"}
 )
 
 // cmtReviewPayload is the payload of a scope review on cmtPull as the checks job writes it, with change applied.
@@ -32,11 +32,11 @@ func cmtReviewPayload(lists []map[string]any, change func(map[string]any)) json.
 func cmtTrimmed(text string) string { return strings.TrimRight(text, "\n") }
 
 func cmtIncludeBody() string {
-	return cmtTrimmed(commandtext.ScopeSuggestionBody("  - /tests/**", "  ", []string{"*_test.go"}, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":include")
+	return cmtTrimmed(commandtext.ScopeSuggestionBody("  - /tests/**", "  ", []string{"*_test.go"}, commandtext.QuotingPlain)) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":include")
 }
 
 func cmtRunnerBody() string {
-	return cmtTrimmed(commandtext.ScopeSuggestionBody("- conftest.py", "", []string{".pytest.ini", "pytest.ini"}, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":runner")
+	return cmtTrimmed(commandtext.ScopeSuggestionBody("- conftest.py", "", []string{".pytest.ini", "pytest.ini"}, commandtext.QuotingPlain)) + "\n\n" + commandtext.Marker(cmtInstance, cmtReviewKey+":runner")
 }
 
 func TestCommentPublisherPostsTheScopeReviewOnTheLineOfTheList(t *testing.T) {

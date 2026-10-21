@@ -514,9 +514,21 @@ func TestScopeNoticeFitsInAComment(t *testing.T) {
 
 var suggestionBlock = regexp.MustCompile("(?s)```suggestion\n(.*)\n```\n$")
 
+// anchorQuoting is the quoting of a list whose items all have the quoting of the item that anchor holds.
+func anchorQuoting(anchor string) commandtext.Quoting {
+	item := strings.TrimLeft(strings.TrimPrefix(strings.TrimLeft(anchor, " "), "-"), " ")
+	switch {
+	case strings.HasPrefix(item, `"`):
+		return commandtext.QuotingDouble
+	case strings.HasPrefix(item, "'"):
+		return commandtext.QuotingSingle
+	}
+	return commandtext.QuotingPlain
+}
+
 func suggestionBody(t *testing.T, anchor, indent string, patterns []string) string {
 	t.Helper()
-	return render(t, func() string { return commandtext.ScopeSuggestionBody(anchor, indent, patterns, "") })
+	return render(t, func() string { return commandtext.ScopeSuggestionBody(anchor, indent, patterns, anchorQuoting(anchor)) })
 }
 
 func TestScopeSuggestionBodyHoldsTheAnchorAndTheNewPatterns(t *testing.T) {
@@ -599,13 +611,13 @@ func TestScopeSuggestionBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			mustPanic(t, func() { commandtext.ScopeSuggestionBody(c.anchor, c.indent, c.patterns, "") })
-			if commandtext.ValidateScopeSuggestion(c.anchor, c.indent, c.patterns, "") == nil {
+			mustPanic(t, func() { commandtext.ScopeSuggestionBody(c.anchor, c.indent, c.patterns, commandtext.QuotingPlain) })
+			if commandtext.ValidateScopeSuggestion(c.anchor, c.indent, c.patterns, commandtext.QuotingPlain) == nil {
 				t.Error("ValidateScopeSuggestion accepts it")
 			}
 		})
 	}
-	if err := commandtext.ValidateScopeSuggestion(`  - "a"`, "  ", slices.Repeat([]string{strings.Repeat("a", 100)}, 20), ""); err != nil {
+	if err := commandtext.ValidateScopeSuggestion(`  - "a"`, "  ", slices.Repeat([]string{strings.Repeat("a", 100)}, 20), commandtext.QuotingDouble); err != nil {
 		t.Errorf("the largest suggestion is refused: %v", err)
 	}
 }

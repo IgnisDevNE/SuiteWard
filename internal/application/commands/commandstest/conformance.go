@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
@@ -39,7 +40,7 @@ func cmdTime(n int) time.Time {
 	return time.Date(2026, 10, 14, 12, 0, 0, 123456000, time.UTC).Add(time.Duration(n) * time.Minute)
 }
 
-func repoName(id int64) string { return "acme/repo-" + string(rune('a'+id)) }
+func repoName(id int64) string { return fmt.Sprintf("acme/repo-%c", 'a'+id) }
 
 type cmdEnv struct {
 	t     *testing.T

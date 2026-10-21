@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -38,7 +39,7 @@ func otTime(n int) time.Time {
 func otSecret(b byte) owner.Secret { return bytes.Repeat([]byte{b}, 20) }
 
 func otProject(id int64, check string) owner.ProjectPolicy {
-	return owner.ProjectPolicy{RepositoryID: id, Repo: "acme/repo-" + string(rune('a'+id)), TestCheck: check}
+	return owner.ProjectPolicy{RepositoryID: id, Repo: fmt.Sprintf("acme/repo-%c", 'a'+id), TestCheck: check}
 }
 
 func otEnrollment(account int64, secret byte, step int64, projects ...owner.ProjectPolicy) owner.Enrollment {

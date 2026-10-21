@@ -1104,7 +1104,7 @@ Where you set them:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `SUITEWARD_DATABASE_URL` (secret, required) | none | The PostgreSQL URL of the application role `suiteward_app`, never the owner. Use the `_FILE` form. The isolated units mount it from the Podman secret `suiteward-database-url`. |
-| `SUITEWARD_MIGRATION_DATABASE_URL` (secret) | none | The PostgreSQL URL of the database owner. Only `suiteward migrate` connects with it, and it requires it. Use the `_FILE` form. Only the migration unit mounts it, from the Podman secret `suiteward-database-owner-url`: the service never gets it. |
+| `SUITEWARD_MIGRATION_DATABASE_URL` (secret) | none | The PostgreSQL URL of the database owner. Only `suiteward migrate` connects with it, and it requires it; `serve`, `setup` and `probe` refuse to start when it is set, so never put it in the service's unit. Use the `_FILE` form. Only the migration unit mounts it, from the Podman secret `suiteward-database-owner-url`: the service never gets it. |
 | `SUITEWARD_ARTIFACT_DIR` (required) | none. The image sets `/data/artifacts` | Absolute path of the artifact store. |
 | `SUITEWARD_HTTP_ADDR` | `127.0.0.1:8080`. The image sets `0.0.0.0:8080` | Address of the HTTP listener. The units publish it on the host's loopback only. |
 | `SUITEWARD_SHUTDOWN_TIMEOUT` | `30s` (1 s to 10 min) | Time allowed for a graceful stop. The container's stop timeout must exceed this by at least 5 s. The units set 45 s, which covers the default. A value of 40 s or more needs a larger stop timeout. |

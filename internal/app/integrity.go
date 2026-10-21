@@ -61,7 +61,7 @@ func (j *integrityJob) project(ctx context.Context, project contract.ProjectID) 
 	if err != nil || version == "" {
 		return err
 	}
-	verdict := j.verify(ctx, digests)
+	verdict := j.verify(ctx, project, digests)
 	if err := ctx.Err(); err != nil { // a cancelled read says nothing about the bytes
 		return err
 	}
@@ -100,7 +100,7 @@ func (j *integrityJob) canonical(ctx context.Context, project contract.ProjectID
 
 // verify returns failed when a digest is missing or does not match its bytes, else unavailable when one could not be
 // read, else passed. It goes on after an unreadable entry, so that one never hides a corrupt one.
-func (j *integrityJob) verify(ctx context.Context, digests []artifact.Digest) integrity.Verdict {
+func (j *integrityJob) verify(ctx context.Context, project contract.ProjectID, digests []artifact.Digest) integrity.Verdict {
 	verdict := integrity.Passed
 	for _, digest := range digests {
 		switch err := j.content.Verify(ctx, digest); {
@@ -108,8 +108,8 @@ func (j *integrityJob) verify(ctx context.Context, digests []artifact.Digest) in
 		case errors.Is(err, filesystem.ErrCorruptArtifact) || errors.Is(err, fs.ErrNotExist):
 			return integrity.Failed
 		default:
-			if verdict == integrity.Passed && ctx.Err() == nil { // once per project: the error names an object file, never its content
-				j.logger.WarnContext(ctx, "canonical integrity unavailable", "error", err)
+			if verdict == integrity.Passed && ctx.Err() == nil { // once per project and run: the error names an object file, never its content
+				j.logger.WarnContext(ctx, "canonical integrity unavailable", "project", string(project), "error", err)
 			}
 			verdict = integrity.Unavailable
 		}

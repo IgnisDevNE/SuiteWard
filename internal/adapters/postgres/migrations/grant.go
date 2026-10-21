@@ -54,9 +54,9 @@ func GrantApp(ctx context.Context, databaseURL, role string) (err error) {
 }
 
 // CheckAppRole reports why role cannot be the role the service connects as: it does not exist, or it is the role of
-// databaseURL, a superuser, a role that bypasses row security, a member of the migration role or the owner of the schema or of a
-// table in it, any of which would let the
-// service undo what only the owner may do. It changes nothing, so migrate runs it before it migrates.
+// databaseURL, a superuser, a role that bypasses row security, a member of the migration role or of the owner of the
+// schema, the owner of the schema, or the owner of a table in it, any of which would let the service undo what only the
+// owner may do. It changes nothing, so migrate runs it before it migrates.
 func CheckAppRole(ctx context.Context, databaseURL, role string) (err error) {
 	connection, err := pgx.Connect(ctx, databaseURL)
 	if err != nil {
@@ -70,11 +70,12 @@ func CheckAppRole(ctx context.Context, databaseURL, role string) (err error) {
 // checkAppRole returns the schema and the connection's user, once role is known to be least-privilege.
 func checkAppRole(ctx context.Context, connection *pgx.Conn, role string) (schema, owner string, err error) {
 	var superuser, bypassRLS, ownsSchema, migrationMember, ownsRelation bool
-	// pg_has_role(..., 'MEMBER') is true for the migration role itself and for any role that inherits its privileges.
+	// pg_has_role(..., 'MEMBER') is true for the role itself and for any role that inherits its privileges. The schema owner may
+	// not be the migration role.
 	err = connection.QueryRow(ctx, `SELECT COALESCE(current_schema(), ''), current_user, r.rolsuper, r.rolbypassrls,
-		COALESCE((SELECT n.nspowner = r.oid FROM pg_namespace n WHERE n.nspname = current_schema()), false),
+		COALESCE((SELECT pg_has_role(r.oid, n.nspowner, 'MEMBER') FROM pg_namespace n WHERE n.nspname = current_schema()), false),
 		pg_has_role(r.oid, current_user, 'MEMBER'),
-		EXISTS (SELECT 1 FROM pg_class c WHERE c.relowner = r.oid AND c.relnamespace = to_regnamespace(current_schema()))
+		EXISTS (SELECT 1 FROM pg_class c WHERE c.relowner = r.oid AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema()))
 		FROM pg_roles r WHERE r.rolname = $1`, role).Scan(&schema, &owner, &superuser, &bypassRLS, &ownsSchema, &migrationMember, &ownsRelation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", fmt.Errorf("the database role %q does not exist: create it with a login and a password, then run migrate again", role)
@@ -93,7 +94,7 @@ func checkAppRole(ctx context.Context, connection *pgx.Conn, role string) (schem
 		{migrationMember, "it is the migration role or a member of it"},
 		{superuser, "it is a superuser"},
 		{bypassRLS, "it bypasses row security"},
-		{ownsSchema, "it owns the schema"},
+		{ownsSchema, "it owns the schema or is a member of its owner"},
 		{ownsRelation, "it owns a table in the schema"},
 	} {
 		if c.failed {

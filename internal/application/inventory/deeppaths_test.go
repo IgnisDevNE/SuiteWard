@@ -40,8 +40,11 @@ func TestAPathLongerThan4096BytesIsInvalid(t *testing.T) {
 }
 
 // Deep paths cost work in proportion to their length, not its square: two thousand of them, 4 MB of paths in all, take about 2 s,
-// where folding every directory prefix of each took a minute. The bound is wide, for slow and instrumented runs.
+// where folding every directory prefix of each took a minute. The bound is wide, for slow runners.
 func TestADeepTreeIsResolvedFast(t *testing.T) {
+	if raceEnabled {
+		t.Skip("a wall-clock bound means nothing under the race detector; the uninstrumented Go jobs run it")
+	}
 	base, err := inventory.Build(context.Background(), treeOf(t, baseFiles()))
 	if err != nil {
 		t.Fatalf("Build base: %v", err)

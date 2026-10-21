@@ -485,23 +485,98 @@ func TestTreeReadDecodesABlobOnlyWhenCalled(t *testing.T) {
 	if got := gh.uris(); !slices.Equal(got, []string{treeURI}) {
 		t.Fatalf("requests after Tree = %v, want only the tree", got)
 	}
-	for range 2 {
-		content, err := tree.Read(t.Context(), "tests/a_test.go")
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		if string(content) != testFileContent {
-			t.Errorf("Read = %q, want %q", content, testFileContent)
-		}
+	content, err := tree.Read(t.Context(), "tests/a_test.go")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(content) != testFileContent {
+		t.Errorf("Read = %q, want %q", content, testFileContent)
 	}
 	got := gh.requests()
-	if uris := gh.uris(); !slices.Equal(uris, []string{treeURI, blobsURI + testFileBlob, blobsURI + testFileBlob}) {
-		t.Fatalf("requests = %v, want the tree and the blob twice", uris)
+	if uris := gh.uris(); !slices.Equal(uris, []string{treeURI, blobsURI + testFileBlob}) {
+		t.Fatalf("requests = %v, want the tree and the blob", uris)
 	}
 	for _, r := range got[1:] {
 		if r.ifNoneMatch != "" {
 			t.Errorf("blob request carried If-None-Match %q", r.ifNoneMatch)
 		}
+	}
+}
+
+// A blob SHA names its content, so the reader keeps what it read: another read of the same blob, through the same tree or the
+// tree of another assessment, costs no request.
+func TestTreeReadsABlobOnceForEveryAssessmentOfTheReader(t *testing.T) {
+	reader, gh := newReader(t, map[string]reply{
+		treeURI:                 ok(fixture(t, "tree.json")),
+		blobsURI + testFileBlob: ok(fixture(t, "blob_a_test_go.json")),
+	})
+	for range 3 {
+		tree, err := reader.Tree(t.Context(), repo, commitSHA)
+		if err != nil {
+			t.Fatalf("Tree: %v", err)
+		}
+		for range 2 {
+			if content, err := tree.Read(t.Context(), "tests/a_test.go"); err != nil || string(content) != testFileContent {
+				t.Fatalf("Read = %q, %v", content, err)
+			}
+		}
+	}
+	if got := slices.DeleteFunc(gh.uris(), func(uri string) bool { return uri == treeURI }); !slices.Equal(got, []string{blobsURI + testFileBlob}) {
+		t.Errorf("blob requests = %v, want one", got)
+	}
+}
+
+// A pass that failed keeps the blobs it read, and only those: the blob it did not read is fetched by the next pass.
+func TestTreeReadKeepsTheBlobsOfACancelledPass(t *testing.T) {
+	reader, gh := newReader(t, map[string]reply{
+		treeURI:                    ok(fixture(t, "tree.json")),
+		blobsURI + declarationBlob: ok(fixture(t, "blob_declaration.json")),
+		blobsURI + testFileBlob:    ok(fixture(t, "blob_a_test_go.json")),
+	})
+	first, err := reader.Tree(t.Context(), repo, commitSHA)
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+	if _, err := first.Read(t.Context(), ".suiteward.yml"); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if content, err := first.Read(cancelled, "tests/a_test.go"); err == nil {
+		t.Fatalf("a read with a cancelled context returned %q", content)
+	}
+
+	second, err := reader.Tree(t.Context(), repo, commitSHA)
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+	if _, err := inventory.Build(t.Context(), second); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	blobs := slices.DeleteFunc(gh.uris(), func(uri string) bool { return uri == treeURI })
+	slices.Sort(blobs)
+	if want := []string{blobsURI + declarationBlob, blobsURI + testFileBlob}; !slices.Equal(blobs, want) {
+		t.Errorf("blob requests = %v, want each blob once: %v", blobs, want)
+	}
+}
+
+// A blob that cannot be decoded is an error and is not kept: the next read asks GitHub again.
+func TestTreeReadDoesNotKeepABlobItCouldNotRead(t *testing.T) {
+	reader, gh := newReader(t, map[string]reply{
+		treeURI:                 ok(fixture(t, "tree.json")),
+		blobsURI + testFileBlob: ok([]byte(`{"content":"!!not base64!!","encoding":"base64"}`)),
+	})
+	tree, err := reader.Tree(t.Context(), repo, commitSHA)
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+	for range 2 {
+		if content, err := tree.Read(t.Context(), "tests/a_test.go"); err == nil {
+			t.Fatalf("Read = %q, want an error", content)
+		}
+	}
+	if got := slices.DeleteFunc(gh.uris(), func(uri string) bool { return uri == treeURI }); len(got) != 2 {
+		t.Errorf("blob requests = %v, want two", got)
 	}
 }
 

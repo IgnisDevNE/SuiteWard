@@ -1,7 +1,7 @@
 # SuiteWard project baseline
 
-- **Updated:** 2026-10-21 (phase SH)
-- **Stage:** the MVP phases through M1.10 are delivered and released (v0.1.0 to v0.1.3), and the security gate's assessment and hardening (phase SH) prepare v0.2.0. The [delivery plan](plan/README.md) lists each phase.
+- **Updated:** 2026-10-21 (phase SH done; phase M1.11 approved)
+- **Stage:** the MVP phases through M1.10 are delivered and released (v0.1.0 to v0.1.3), the security hardening (phase SH) is released as v0.2.0-rc.1 and rc.2, and phase M1.11 prepares v0.2.0-rc.3 and the final v0.2.0. The [delivery plan](plan/README.md) lists each phase.
 
 ## Product identity and audience
 
@@ -74,7 +74,7 @@ Development is test-first for authority, consent, promotion, idempotency, concur
 
 - Known limit: strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone.
 - M2's first supported execution ecosystem and RunnerProfile (D-EXECUTION), and the future managed execution location and trust model.
-- D-DEPLOY's remaining status, D-JOB-RETENTION and D-HARDENING-CONTROLS ([decision register](plan/decisions.md#open)).
+- D-HARDENING-CONTROLS ([decision register](plan/decisions.md#open)).
 - Post-MVP: encrypted backups, guided restore, Release backups, the priority queue, and automatic protection setup and repair.
 
 An earlier system-design proposal may discuss candidates for these items. That discussion alone does not make them accepted decisions.

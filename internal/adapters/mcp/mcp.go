@@ -68,12 +68,21 @@ type Backend interface {
 type StatusView struct {
 	Tier             string             `json:"tier"`
 	TierNote         string             `json:"tierNote,omitempty"`
+	Instance         string             `json:"instance"`
+	Budget           *BudgetStatus      `json:"budget,omitempty"`
 	Owner            *OwnerStatus       `json:"owner,omitempty"`
 	GitHubConfigured bool               `json:"githubConfigured"`
 	Repositories     []RepositoryStatus `json:"repositories"`
 	// UnconfiguredRepositories lists the enrolled repositories that GITHUB_REPOSITORIES does not name: SuiteWard
 	// skips them until the setting names them again or setup is run without them.
 	UnconfiguredRepositories []string `json:"unconfiguredRepositories,omitempty"`
+}
+
+// BudgetStatus is the GitHub API budget of the current rate-limit window, shown only while known: Remaining is
+// what SuiteWard may still request, Reset when the window ends and requests resume.
+type BudgetStatus struct {
+	Remaining int       `json:"remaining"`
+	Reset     time.Time `json:"reset"`
 }
 
 // OwnerStatus is the enrolled owner: the login is display only, the account

@@ -1,0 +1,54 @@
+# Re-scans the pinned PostgreSQL image every week, and on demand, for vulnerabilities published since the digest was chosen. Not part of the CI gate and not a required check.
+# A fixable HIGH or CRITICAL finding in the OS packages fails the run: refresh the postgres image in every copy listed in dev/tools.json and the docs (scripts/check-pins.ps1 enforces that they agree).
+# The findings in language packages are only reported: they are in usr/local/bin/gosu, an upstream binary that runs at container start to drop privileges, and a digest bump cannot fix them.
+name: Image scan
+
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Scan ${{ matrix.platform }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install trivy
+        # The binary pinned in dev/tools.json: a release asset checked against its SHA-256 before it is extracted.
+        run: |
+          read -r url sha256 < <(jq -er '.trivy.assets["linux-amd64"] | "\(.url) \(.sha256)"' dev/tools.json)
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$RUNNER_TEMP/trivy.tar.gz" "$url"
+          echo "$sha256  $RUNNER_TEMP/trivy.tar.gz" | sha256sum --check --strict -
+          tar --extract --gzip --file "$RUNNER_TEMP/trivy.tar.gz" --directory "$RUNNER_TEMP" trivy
+      - name: Scan the pinned image
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          image=$(jq -er '.postgres.image' dev/tools.json)
+          scan=("$RUNNER_TEMP/trivy" image --image-src remote --platform "$PLATFORM" --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --no-progress)
+          {
+            echo "### $PLATFORM: language packages (reported, not a failure)"
+            echo "These are in an upstream binary (gosu) that runs only at container start, so a digest bump cannot fix them."
+            echo '```'
+            "${scan[@]}" --pkg-types library --format table "$image"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          "${scan[@]}" --pkg-types os --exit-code 1 "$image"

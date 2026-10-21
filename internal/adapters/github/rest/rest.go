@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,6 +53,9 @@ var maxBody int64 = 64 << 20
 
 // maxCacheEntries bounds the ETag cache by paths; a variable only so tests can lower it.
 var maxCacheEntries = 4096
+
+// maxCacheBytes bounds the ETag cache by the total size of its bodies; a variable only so tests can lower it.
+var maxCacheBytes = 32 << 20
 
 // maxClockOffset bounds the offset a Date header may set: windows last at most
 // an hour, so a Date further from the local clock is a stale or broken
@@ -151,6 +155,24 @@ func (b *Budget) local(t time.Time) time.Time {
 	return t.Add(b.offset)
 }
 
+// Window is what the budget knows of the current rate-limit window.
+type Window struct {
+	Remaining int       // requests SuiteWard may still send in the window; 0 once refused
+	Reset     time.Time // the end of the window, on the local clock
+}
+
+// Window returns the current window; known is false before the first response
+// and once the window has ended, until the next response, as acquire does not refuse then either.
+func (b *Budget) Window() (w Window, known bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.known || !b.clock().Add(-b.offset).Before(b.reset) {
+		return Window{}, false
+	}
+	allowed := int(math.Ceil(b.fraction * float64(b.limit)))
+	return Window{Remaining: max(0, allowed-b.used-b.inFlight), Reset: b.reset.Add(b.offset)}, true
+}
+
 // release returns a reservation whose request got no response.
 func (b *Budget) release() {
 	b.mu.Lock()
@@ -202,10 +224,11 @@ type Client struct {
 	base   string
 	budget *Budget
 
-	mu       sync.Mutex
-	identity string            // token identity the cache belongs to
-	cache    map[string]cached // by request path, at most maxCacheEntries
-	tick     uint64
+	mu         sync.Mutex
+	identity   string            // token identity the cache belongs to
+	cache      map[string]cached // by request path, at most maxCacheEntries
+	cacheBytes int               // total size of the cached bodies, at most maxCacheBytes
+	tick       uint64
 }
 
 // NewClient returns a client; baseURL must be absolute and carry no query,
@@ -324,7 +347,7 @@ func (c *Client) send(ctx context.Context, method, path string, payload []byte, 
 	if useCache {
 		c.mu.Lock()
 		if identity != c.identity {
-			c.identity, c.cache = identity, map[string]cached{}
+			c.identity, c.cache, c.cacheBytes = identity, map[string]cached{}, 0
 		}
 		entry, hadCache = c.cache[path]
 		if hadCache {
@@ -380,7 +403,7 @@ func (c *Client) interpret(a answer) (Response, error) {
 				if etag != "" {
 					c.store(a.path, etag, a.body)
 				} else {
-					delete(c.cache, a.path)
+					c.drop(a.path)
 				}
 			}
 			c.mu.Unlock()
@@ -427,21 +450,32 @@ func (c *Client) retryTime(retryAfter []string, reset string) time.Time {
 	return time.Time{}
 }
 
-// store keeps the ETag and body of path, first dropping the entry used least recently when a new path would pass maxCacheEntries; the caller
-// holds c.mu. The bound is by paths: a polling cycle reads about three for each open pull request (its two comment listings and, when
-// asked, its file listing) and a few for each repository (the open and closed listings, branch heads), so 4096 holds a cycle over some
-// thirteen hundred open pull requests, far more than one installation observes. An entry dropped early costs one full read, never a stale
-// answer. The scan is linear, once for each stored response, which follows a network round trip.
+// store keeps the ETag and body of path, first dropping its old entry and then the entries used least recently until the new one fits both
+// maxCacheEntries and maxCacheBytes; a body larger than maxCacheBytes is not kept. The caller holds c.mu. The bound by paths holds a polling
+// cycle over some thirteen hundred open pull requests (about three paths each, a few more for each repository), far more than one
+// installation observes; the bound by bytes keeps large bodies from growing the cache past the container's memory. An entry dropped early
+// costs one full read, never a stale answer. The scan is linear, once for each dropped entry, which follows a network round trip.
 func (c *Client) store(path, etag string, body []byte) {
-	if _, known := c.cache[path]; !known && len(c.cache) >= maxCacheEntries {
+	c.drop(path)
+	if len(body) > maxCacheBytes {
+		return
+	}
+	for len(c.cache) > 0 && (len(c.cache) >= maxCacheEntries || c.cacheBytes+len(body) > maxCacheBytes) {
 		oldest, found := "", false
 		for p, e := range c.cache {
 			if !found || e.used < c.cache[oldest].used {
 				oldest, found = p, true
 			}
 		}
-		delete(c.cache, oldest)
+		c.drop(oldest)
 	}
 	c.tick++
 	c.cache[path] = cached{etag: etag, body: bytes.Clone(body), used: c.tick}
+	c.cacheBytes += len(body)
+}
+
+// drop removes path from the cache and its body from the byte total; the caller holds c.mu.
+func (c *Client) drop(path string) {
+	c.cacheBytes -= len(c.cache[path].body)
+	delete(c.cache, path)
 }

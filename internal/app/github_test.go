@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,6 +130,7 @@ func (c *countingReader) PullComments(context.Context, string, int) ([]githubsyn
 // paceReader lists no pulls and reports requests requests for its cycle, from the injected clock at, for sync
 // pacing tests (D-SYNC, "Sync pacing", M1.7c).
 type paceReader struct {
+	mu       sync.Mutex // the calls of a sync job and a tick together
 	calls    int
 	requests int
 	changed  bool  // the cycle's listing was not a 304
@@ -137,7 +139,9 @@ type paceReader struct {
 }
 
 func (r *paceReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
+	r.mu.Lock()
 	r.calls++
+	r.mu.Unlock()
 	return nil, githubsync.ReadInfo{Date: r.at(), Requests: r.requests, Changed: r.changed}, r.err
 }
 
@@ -220,6 +224,80 @@ func TestSyncTickWaitsLongerAfterAnExpensiveTick(t *testing.T) {
 	if reader.calls != 2 {
 		t.Fatal("a tick 56 s after a 420-request tick did not run")
 	}
+}
+
+func TestSyncTickPacesByTheRequestsOfASyncRepoSinceThePreviousStart(t *testing.T) {
+	start := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	clock := start
+	reader := &paceReader{requests: 1, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+	if _, err := s.tick(t.Context()); err != nil { // the first tick: 1 request
+		t.Fatal(err)
+	}
+
+	reader.requests = 419 // an MCP sync of 419 requests makes 420 since the tick started, which paces the next tick to 56 s
+	if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil {
+		t.Fatal(err)
+	}
+	calls := reader.calls
+
+	clock = start.Add(20 * time.Second)
+	if _, err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != calls {
+		t.Fatal("a tick 20 s after a 1-request tick and a 419-request sync called GitHub; want it to wait until 56 s")
+	}
+
+	clock = start.Add(56 * time.Second)
+	if _, err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls == calls {
+		t.Fatal("a tick 56 s after the previous start did not run")
+	}
+}
+
+func TestSyncTickIgnoresTheSyncRepoRequestsBeforeThePreviousStart(t *testing.T) {
+	start := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	clock := start
+	reader := &paceReader{requests: 419, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+	if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil { // before any tick
+		t.Fatal(err)
+	}
+
+	reader.requests = 1
+	if _, err := s.tick(t.Context()); err != nil { // the first tick, always due: it covers that sync
+		t.Fatal(err)
+	}
+	calls := reader.calls
+	clock = start.Add(19900 * time.Millisecond)
+	if _, err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls == calls {
+		t.Fatal("a tick 19.9 s after the previous start waited for a sync that ran before that start")
+	}
+}
+
+func TestSyncRepoAndTickRunTogether(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := paceSync(t, &paceReader{requests: 1, at: func() time.Time { return clock }}, func() time.Time { return clock })
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil {
+				t.Error(err)
+			}
+		})
+		wg.Go(func() {
+			if _, err := s.tick(t.Context()); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func TestSyncTickWakesCommandsChecksAndMergesWhenACycleChanged(t *testing.T) {
@@ -447,7 +525,7 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/down", InstallationID: 2, At: at, Kind: githubsync.FailureTransport}); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts()}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
@@ -464,13 +542,39 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	}
 }
 
+func TestStatusShowsTheBudgetOnlyWhenKnown(t *testing.T) {
+	reset := time.Date(2026, 10, 11, 13, 0, 0, 0, time.FixedZone("local", 2*3600))
+	for name, test := range map[string]struct {
+		budget fakeBudget
+		want   string
+	}{
+		"known":   {fakeBudget{rest.Window{Remaining: 42, Reset: reset}, true}, `,"budget":{"remaining":42,"reset":"2026-10-11T11:00:00Z"}`},
+		"unknown": {fakeBudget{}, ``},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
+				github: &githubStatus{repos: []string{"acme/ok"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: test.budget}}
+
+			code, body := call(t, a, http.MethodGet, "/status")
+
+			want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
+				"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
+				"outbox":{"pending":0,"delivered":0,"failed":0},
+				"github":[{"repo":"acme/ok"}]` + test.want + `}`
+			if code != http.StatusOK || !jsonEqual(t, body, want) {
+				t.Fatalf("GET /status = %d %s; want 200 %s", code, body, want)
+			}
+		})
+	}
+}
+
 func TestStatusShowsTheLastBootstrapProblemOfARepository(t *testing.T) {
 	problems := &bootstrapProblems{}
 	problems.set("acme/ok", "origin-not-passed")
 	problems.set("acme/down", "read-failed")
 	problems.clear("acme/down")
 	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
-		github: &githubStatus{repos: []string{"acme/ok", "acme/down"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: problems, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts()}}
+		github: &githubStatus{repos: []string{"acme/ok", "acme/down"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: problems, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
@@ -490,7 +594,7 @@ func (failingRepositories) Repository(context.Context, string) (githubsync.Repos
 }
 
 func TestStatusIsUnavailableWhenTheObservationsCannotBeRead(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts()}}
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 

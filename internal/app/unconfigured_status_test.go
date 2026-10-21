@@ -23,7 +23,7 @@ func TestStatusNamesAnEnrolledRepositoryThatIsNotConfigured(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a := &api{owners: enrolledStore(t, "isolated"), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 12}}
 			if test.repos != nil {
-				a.github = &githubStatus{repos: test.repos, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts()}
+				a.github = &githubStatus{repos: test.repos, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}
 			}
 
 			code, body := call(t, a, http.MethodGet, "/status")

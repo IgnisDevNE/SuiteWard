@@ -141,7 +141,7 @@ Limits: `go-format.ps1` formats only files inside the checkout that launched the
 
 ### Verifying M1.6a on the co-located stack
 
-These verification entries record how each phase was verified. The HOST.md sections 6b to 6f they cite were removed after M1.10, because they describe flows that no longer exist; the links point to the file as of the tag `v0.1.3`. Current installs follow the [install guide](install.md).
+These verification entries record how each phase was verified. The HOST.md sections 6b to 6f they cite were removed after M1.10, because they describe flows that no longer exist; the links point to the file as of the tag `v0.1.3`. Current installs follow the [install guide](install.md). The entries are historical: the `Deploy` workflow and the `deploy` image tag they pull are retired, and `./deploy/local.ps1` now requires `-Image` (the release's signed index digest, install guide step 5.3), so do not copy their `podman pull` and `local.ps1` commands as they stand.
 
 The verification sections below run in a PowerShell session with the rootless connection selected (see above), and every `podman machine ssh` takes `--username user`. They were first written for a stack on the default connection; the commands are the same, run rootless. Where an entry says to restart or update the image, `./deploy/local.ps1` does it: it migrates first, so a newer image never meets an old schema.
 

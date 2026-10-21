@@ -1,7 +1,7 @@
 # SuiteWard engineering plan
 
-- **Updated:** 2026-10-21 (phase SH in progress)
-- **Status:** Delivered through M1.10 and released as `v0.1.3`. The security hardening phase [SH](plan/phases/SH.md) is in progress.
+- **Updated:** 2026-10-21 (phase SH done; phase M1.11 approved)
+- **Status:** Delivered through M1.10 (`v0.1.3`) and the security hardening phase [SH](plan/phases/SH.md), released as `v0.2.0-rc.1` and `v0.2.0-rc.2`. [M1.11](plan/phases/M1.11.md) ships as `v0.2.0-rc.3`, and the final `v0.2.0` follows it.
 
 This plan builds on the [project baseline](project-baseline.md) and the [accepted ADRs](decisions/README.md). It concerns how SuiteWard itself is developed; the product's rules for governing customer repositories are separate.
 
@@ -41,4 +41,4 @@ A task states its outcome, applicable ADRs and contracts, dependencies, owned fi
 
 ## Decisions still required
 
-See the [decision register](plan/decisions.md). Open gates: D-DEPLOY (the host is decided, AlmaLinux 9; only its status is open), D-JOB-RETENTION, D-EXECUTION, D-MANAGED-EXECUTION, and D-HARDENING-CONTROLS. D-RELEASE is decided. The MVP backup is a plain `pg_dump` plus a tarball (D-INSTALL); encrypted backups, guided restore, the priority queue, and automatic protection repair are deferred to post-MVP.
+See the [decision register](plan/decisions.md). Open gates: D-EXECUTION, D-MANAGED-EXECUTION, and D-HARDENING-CONTROLS. D-RELEASE is decided. The MVP backup is a plain `pg_dump` plus a tarball (D-INSTALL); encrypted backups, guided restore, the priority queue, and automatic protection repair are deferred to post-MVP.

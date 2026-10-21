@@ -25,7 +25,7 @@ function Get-RepositoryMode {
 
 function Assert-CiGate {
     param($Results)
-    foreach ($required in @('inspect', 'foundation')) {
+    foreach ($required in @('inspect', 'foundation', 'image')) {
         if ($Results.$required.result -ne 'success') { throw "$required did not succeed" }
     }
     $hasGo = $Results.inspect.outputs.go

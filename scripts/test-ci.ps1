@@ -26,6 +26,7 @@ function New-Results {
     return [pscustomobject]@{
         inspect = [pscustomobject]@{ result = 'success'; outputs = [pscustomobject]@{ go = $HasGo } }
         foundation = [pscustomobject]@{ result = 'success' }
+        image = [pscustomobject]@{ result = 'success' }
         go = [pscustomobject]@{ result = $GoResult }
         coverage = [pscustomobject]@{ result = $CoverageResult }
     }
@@ -49,6 +50,16 @@ $checks++
 $missingFoundation = New-Results 'false' 'skipped' 'skipped'
 $missingFoundation.PSObject.Properties.Remove('foundation')
 Assert-Throws { Assert-CiGate $missingFoundation } 'missing foundation job'
+$checks++
+foreach ($badResult in @('skipped', 'failure', 'cancelled')) {
+    $badImage = New-Results 'false' 'skipped' 'skipped'
+    $badImage.image.result = $badResult
+    Assert-Throws { Assert-CiGate $badImage } "image build $badResult"
+    $checks++
+}
+$missingImage = New-Results 'false' 'skipped' 'skipped'
+$missingImage.PSObject.Properties.Remove('image')
+Assert-Throws { Assert-CiGate $missingImage } 'missing image job'
 $checks++
 
 # Inspect the scalar status declarations used by this repository. This is a
@@ -132,7 +143,7 @@ $checks++
 # Branch protection requires the exact context name; the gate must aggregate every verification job.
 $gateJob=[regex]::Match($workflow,'(?ms)^  gate:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
 if(-not $gateJob.Contains('name: CI / Gate')){throw 'The gate job must keep the required context name CI / Gate.'}
-if(-not $gateJob.Contains('needs: [inspect, foundation, go, coverage]') -or -not $gateJob.Contains('if: always()')){throw 'The gate must always run and require inspect, foundation, go, and coverage.'}
+if(-not $gateJob.Contains('needs: [inspect, foundation, image, go, coverage]') -or -not $gateJob.Contains('if: always()')){throw 'The gate must always run and require inspect, foundation, image, go, and coverage.'}
 $checks++
 # GitHub's pwsh step wrapper exits with $LASTEXITCODE; script tests deliberately run failing native children,
 # so a successful foundation run must leave a zero exit code behind.

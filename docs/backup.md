@@ -134,29 +134,28 @@ Check the backup before anything is replaced:
 
 **Isolated restore**
 
-3. Pin both units to the backup's version, by the digest of its image. Pull the image, read its digest, set the `Image=` line of BOTH `suiteward-migrate.container` and `suiteward.container` to it, check them, then reload the units. They must name the same image.
+3. Pin both units to the backup's version, by the digest of its image. Pull the image, set the `Image=` line of BOTH `suiteward-migrate.container` and `suiteward.container` to its digest, check them, then reload the units. They must name the same image.
 
    ```bash
    podman pull ghcr.io/ignisdevne/suiteward:<version>
    ```
 
-   ```bash
-   d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:<version>)
-   ```
+   The chain reads the digest and stops if it is empty, so it never writes an incomplete line:
 
    ```bash
+   d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:<version>) && [ -n "$d" ] &&
    sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
    ```
 
    ```bash
-   grep ^Image= ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+   grep -c '^Image=ghcr.io/ignisdevne/suiteward@sha256:[0-9a-f]\{64\}$' ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
    ```
 
    ```bash
    systemctl --user daemon-reload
    ```
 
-   Expect the same `ghcr.io/ignisdevne/suiteward@sha256:` line twice, and no output from the others. The sed command names the two files: never run it on every `*.container` file, because it would also touch the database unit.
+   Expect `1` for each of the two files from the `grep`, and no output from the others. A `0` means a pin is missing or malformed: run the chain again. The sed command names the two files: never run it on every `*.container` file, because it would also touch the database unit.
 
 4. Stop the service and the migration, and make sure the database runs. Stopping the migration unit as well makes the start in step 7 run it again.
 

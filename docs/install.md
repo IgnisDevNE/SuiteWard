@@ -646,17 +646,7 @@ podman pull docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa5408
 podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
 ```
 
-Expect a digest line for each pull. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. Read the digest of the release image into a variable of this shell, then print it:
-
-```
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z)
-```
-
-```
-echo "$d"
-```
-
-Expect `sha256:` followed by 64 hexadecimal characters. Keep this shell open: the variable `d` is used below.
+Expect a digest line for each pull. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. The pinning command below reads the digest of the pulled release image itself.
 
 Create the directory:
 
@@ -690,19 +680,26 @@ cat > ~/.config/containers/systemd/suiteward-migrate.container
 cat > ~/.config/containers/systemd/suiteward.container
 ```
 
-Both `suiteward-migrate.container` and `suiteward.container` carry the placeholder `Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>`. They must name the same image, so replace the placeholder in both with the digest you read:
+Both `suiteward-migrate.container` and `suiteward.container` carry the placeholder `Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>`. They must name the same image, so replace the placeholder in both with the digest of the image you pulled. The chain reads the digest first and stops if it is empty, so it can never write an incomplete line:
 
 ```
+d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z) && [ -n "$d" ] &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
 ```
 
-Check the result:
+Check the result. The command counts, in each file, the lines that have the form of a digest pin:
+
+```
+grep -c '^Image=ghcr.io/ignisdevne/suiteward@sha256:[0-9a-f]\{64\}$' ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+```
+
+Expect `1` for each of the two files. A `0` means the pin is missing or malformed: run the chain again. Then print the three `Image=` lines and compare by eye:
 
 ```
 grep ^Image= ~/.config/containers/systemd/*.container
 ```
 
-Expect three lines: the database image, and the same `ghcr.io/ignisdevne/suiteward@sha256:` line, with your digest, in `suiteward-migrate.container` and in `suiteward.container`. Neither contains `<digest>` any more.
+Expect the database image, and the same `ghcr.io/ignisdevne/suiteward@sha256:` line in `suiteward-migrate.container` and in `suiteward.container`.
 
 In `suiteward.container`, keep `Environment=SUITEWARD_INSTALLATION_TIER=isolated` only if your coding agent cannot reach this account. Otherwise set it to `co-located` ([ADR 0027](decisions/0027-agent-human-trust-separation.md)).
 
@@ -749,7 +746,7 @@ printf 'postgres://suiteward_app:%s@%s' "$apw" "$h" |
 unset apw h
 ```
 
-Expect no output. The contract's own example, `\password suiteward_app` in `psql`, asks for the password on a terminal: it would make you type a password that you then have to put into the URL secret, which is why this step generates it instead.
+Expect one line, the ID of the new secret (not its value). The contract's own example, `\password suiteward_app` in `psql`, asks for the password on a terminal: it would make you type a password that you then have to put into the URL secret, which is why this step generates it instead.
 
 Check the shape of the secret without showing it. It must print `1`:
 
@@ -839,14 +836,10 @@ An update always goes through the migration. The service never changes the schem
 
 **11.1 Back up first.** `suiteward migrate` changes the schema before the service starts, and migrations only go forward: an older image refuses to start on a newer schema, and nothing migrates it back. The only way back is the backup, so take one now. See [the backup runbook](backup.md). The backup holds the TOTP secret and the enrollment, so store it as a secret.
 
-**11.2 Pull the new release image.** Use the new `vX.Y.Z`. On the isolated host, run it as `suiteward`, then read its digest into a variable of this shell:
+**11.2 Pull the new release image.** Use the new `vX.Y.Z`. On the isolated host, run it as `suiteward`:
 
 ```
 podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
-```
-
-```
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z)
 ```
 
 **11.3 Update an isolated host.** Read the release notes first. Compare the new release's `deploy/quadlet/*` files with the units installed in `~/.config/containers/systemd/`, and carry over anything the new release adds: a new secret (as `suiteward`), a new entry in `/etc/suiteward/github.env` (as the administrator), or a new setting in a unit file (as `suiteward`). Keep a copy of the units you replace, in case you roll back:
@@ -855,17 +848,18 @@ d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.
 cp -r ~/.config/containers/systemd ~/systemd-units-<old version>
 ```
 
-Then change BOTH `Image=` lines to the new digest of step 11.2, the one in `suiteward-migrate.container` and the one in `suiteward.container`. They must stay identical, because the migration must run the same release as the service:
+Then change BOTH `Image=` lines to the digest of the image you pulled in step 11.2, the one in `suiteward-migrate.container` and the one in `suiteward.container`. They must stay identical, because the migration must run the same release as the service. The chain reads the digest and stops if it is empty:
 
 ```
+d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z) && [ -n "$d" ] &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
 ```
 
 ```
-grep ^Image= ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+grep -c '^Image=ghcr.io/ignisdevne/suiteward@sha256:[0-9a-f]\{64\}$' ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
 ```
 
-Expect the same `@sha256:` line twice. Reload the units, and restart the migration unit:
+Expect `1` for each of the two files. A `0` means the pin is missing or malformed: run the chain again. Reload the units, and restart the migration unit:
 
 ```
 systemctl --user daemon-reload
@@ -887,14 +881,14 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
 
 **11.5 Upgrade an isolated host from v0.1.x.** v0.1.x ran the service as the database owner and migrated inside it. This release splits the roles, so the first upgrade needs three extra steps before the update of step 11.3: the owner URL moves to its own secret, the role `suiteward_app` is created with a new secret, and the migration unit is installed. This guide covers AlmaLinux 9 only. A v0.1.x host on another distribution is not covered: install a new host as in section 10, then restore your backup there ([the backup runbook](backup.md)). On the AlmaLinux 9 host, as `suiteward`:
 
-1. Back up, as in step 11.1, and keep the copy of the units (the `cp` command of step 11.3). Pull the release and read its digest (step 11.2).
+1. Back up, as in step 11.1, and keep the copy of the units (the `cp` command of step 11.3). Pull the release (step 11.2).
 2. Stop the service. The database keeps running:
 
    ```
    systemctl --user stop suiteward.service
    ```
 
-3. Copy the owner URL into its own secret. In v0.1.x, the secret `suiteward-database-url` holds the owner URL. The command reads it into a variable and writes it without a trailing newline:
+3. Copy the owner URL into its own secret. In v0.1.x, the secret `suiteward-database-url` holds the owner URL. The command reads it into a variable and writes it without a trailing newline. It prints the ID of the new secret, not its value:
 
    ```
    u=$(podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-database-url) &&
@@ -916,7 +910,7 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
 
 6. Create the role and the new `suiteward-database-url`: run the chain and the check of step 10.11, which follow the wait for the healthy database. The database is already running. Do not run the earlier commands of step 10.11 again.
 7. Install the migration unit. Create `~/.config/containers/systemd/suiteward-migrate.container` and overwrite `suiteward.container`, from the new release's `deploy/quadlet/`, as in step 10.9: run `cat >` for each, paste, press Ctrl-D. Keep the `SUITEWARD_INSTALLATION_TIER` line your old unit had. The new `suiteward.container` has no `AutoUpdate=` line: a tag you followed before no longer moves by itself.
-8. Pin both units to the digest of step 1, with the `sed` command of step 11.3 and its check.
+8. Pin both units to the digest of the image you pulled, with the chain of step 11.3 and its check (it reads the digest itself, so do it in this step).
 9. Run the dry run of step 10.10, then reload and start. The new units are not active yet, so start the service, which starts the migration first:
 
    ```
@@ -950,7 +944,7 @@ On an isolated host, as `suiteward`:
    ```
 
    When you roll back to an earlier release of this layout, put its digest into both `Image=` lines instead (step 11.3).
-3. When you roll back to v0.1.x, put the owner URL back into `suiteward-database-url`: that release runs the service as the owner and migrates inside it.
+3. When you roll back to v0.1.x, put the owner URL back into `suiteward-database-url`: that release runs the service as the owner and migrates inside it. The second command prints the ID of the new secret, not its value.
 
    ```
    podman secret rm suiteward-database-url

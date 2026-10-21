@@ -185,16 +185,14 @@ That prints the token to the terminal. If Session Manager session logging (S3 or
 
 ## 5. Install the quadlets and start
 
-Copy the six files in `deploy/quadlet/` from the repository (on your workstation) into place, one `cat` per file: run the command, wait until the cursor stops, paste the file's content, then press Ctrl-D on an empty line. Pull the images and read the digest first: the two SuiteWard units pin the image by digest, never by a tag.
+Copy the six files in `deploy/quadlet/` from the repository (on your workstation) into place, one `cat` per file: run the command, wait until the cursor stops, paste the file's content, then press Ctrl-D on an empty line. Pull the images first: the two SuiteWard units pin the image by digest, never by a tag.
 
 ```
 podman pull docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
 podman pull ghcr.io/ignisdevne/suiteward:deploy
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:deploy)
-echo "$d"
 ```
 
-`deploy` is the tag the `Deploy` workflow moves after your approval of `promote`; for a release, pull `vX.Y.Z` instead. `echo` must print `sha256:` and 64 hexadecimal characters. Then the files:
+`deploy` is the tag the `Deploy` workflow moves after your approval of `promote`; for a release, pull `vX.Y.Z` instead. Then the files:
 
 ```
 mkdir -p ~/.config/containers/systemd
@@ -206,14 +204,19 @@ cat > ~/.config/containers/systemd/suiteward-migrate.container
 cat > ~/.config/containers/systemd/suiteward.container
 ```
 
-Put the digest into BOTH SuiteWard units. They must name the same image: the migration must run the release the service runs. Name the two files, never a `*.container` glob, which would also rewrite the database pin:
+Put the digest into BOTH SuiteWard units. They must name the same image: the migration must run the release the service runs. Name the two files, never a `*.container` glob, which would also rewrite the database pin. The chain reads the digest and stops if it is empty, so it never writes an incomplete line:
 
 ```
+d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:deploy) && [ -n "$d" ] &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" \
   ~/.config/containers/systemd/suiteward-migrate.container \
   ~/.config/containers/systemd/suiteward.container
-grep ^Image= ~/.config/containers/systemd/*.container
+grep -c '^Image=ghcr.io/ignisdevne/suiteward@sha256:[0-9a-f]\{64\}$' \
+  ~/.config/containers/systemd/suiteward-migrate.container \
+  ~/.config/containers/systemd/suiteward.container
 ```
+
+The `grep` must print `1` for each of the two files; a `0` means the pin is missing, so run the chain again.
 
 Podman skips a unit it cannot parse (you would only see "unit not found"). Dry-run the generator; it prints every generated unit or the error. It must list the three services `suiteward-db`, `suiteward-migrate` and `suiteward`, the network and both volumes:
 
@@ -230,7 +233,7 @@ systemctl --user start suiteward-db.service
 until [ "$(podman inspect --format '{{.State.Health.Status}}' suiteward-db)" = healthy ]; do sleep 2; done
 ```
 
-**The application role.** Run the role chain and the shape check of [install.md step 10.11](../docs/install.md#10-running-on-a-separate-host-operators) here, as they are written there (they create the role `suiteward_app` with a generated password sent on standard input, and the secret `suiteward-database-url`; they print nothing). Do not paste the password anywhere. Then start the service. It requires the migration, which requires the database, so this starts `suiteward-migrate.service` first (it applies the schema as the owner and grants the role its access) and the service only after migrate exited 0:
+**The application role.** Run the role chain and the shape check of [install.md step 10.11](../docs/install.md#10-running-on-a-separate-host-operators) here, as they are written there (they create the role `suiteward_app` with a generated password sent on standard input, and the secret `suiteward-database-url`; they print only the ID of the new secret, never a value). Do not paste the password anywhere. Then start the service. It requires the migration, which requires the database, so this starts `suiteward-migrate.service` first (it applies the schema as the owner and grants the role its access) and the service only after migrate exited 0:
 
 ```
 systemctl --user start suiteward.service
@@ -259,13 +262,15 @@ podman run --rm --network suiteward docker.io/curlimages/curl@sha256:58adaa4e8dc
 
 ```
 podman pull ghcr.io/ignisdevne/suiteward:deploy
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:deploy)
+d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:deploy) && [ -n "$d" ] &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" \
   ~/.config/containers/systemd/suiteward-migrate.container \
-  ~/.config/containers/systemd/suiteward.container
-systemctl --user daemon-reload
+  ~/.config/containers/systemd/suiteward.container &&
+systemctl --user daemon-reload &&
 systemctl --user restart suiteward-migrate.service
 ```
+
+Check the pins as above (the `grep -c` prints `1` for each of the two files) and the units with `systemctl --user status suiteward-migrate.service suiteward.service --no-pager`.
 
 The per-phase steps of sections 6a to 6f below say "pull `:deploy`, then restart `suiteward.service`": they describe the earlier flow. Today that is this block, then the smoke test of section 6. On a host still on v0.1.x, [install.md step 11.5](../docs/install.md#11-updating) comes first: the owner URL moves to its own secret, the role and the migrate unit are created.
 

@@ -74,7 +74,7 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 		row, err := q.LockPRCheck(ctx, key)
 		if errors.Is(err, pgx.ErrNoRows) {
 			var inserted bool
-			if record, inserted, err = insertFirstCheck(ctx, q, build, r, at); err != nil {
+			if record, inserted, err = insertFirstCheck(ctx, q, build, r, pull, at); err != nil {
 				return err
 			}
 			if inserted {
@@ -139,13 +139,9 @@ func advanceCheck(ctx context.Context, q *dbgen.Queries, row dbgen.PrCheck, r ch
 
 // insertFirstCheck writes the first record of a pull and its message. It reports inserted false, and writes
 // nothing, when the pull has a row after all: a concurrent first publication committed it while this insert waited.
-func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (governance.OutboxMessage, error), r checks.Result, at time.Time) (checks.Record, bool, error) {
+func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (governance.OutboxMessage, error), r checks.Result, pull int32, at time.Time) (checks.Record, bool, error) {
 	next, _ := checks.Next(checks.Record{}, false, r, at, time.Time{})
 	msg, err := build(next.Generation)
-	if err != nil {
-		return checks.Record{}, false, err
-	}
-	pull, err := int32Of(r.PullNumber)
 	if err != nil {
 		return checks.Record{}, false, err
 	}

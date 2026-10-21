@@ -68,7 +68,10 @@ func connectWithArtifacts(ctx context.Context, cfg config.Config) (*pgxpool.Pool
 	store, err := postgres.NewStore(pool, artifacts, inserter)
 	if err != nil {
 		pool.Close()
-		if errors.Is(err, postgres.ErrSchemaNotReady) {
+		switch {
+		case errors.Is(err, postgres.ErrSchemaNewer):
+			err = fmt.Errorf("%w: this database was migrated by a newer release; run that release (or restore a backup)", err)
+		case errors.Is(err, postgres.ErrSchemaNotReady):
 			// The service connects as a role that cannot migrate: the owner does, with `suiteward migrate`.
 			err = fmt.Errorf("%w: run `suiteward migrate` with the migration settings, then start again", err)
 		}

@@ -29,7 +29,18 @@ var (
 // connect as the application role and refuse a schema that is not at the supported version.
 func runMigrate(ctx context.Context, cfg config.Config, stderr io.Writer, logger *slog.Logger) int {
 	owner := cfg.MigrationDatabaseURL.Reveal()
+	// The role the service connects as is the user of its own URL: nothing else can say which role will run.
+	service, err := pgx.ParseConfig(cfg.DatabaseURL.Reveal())
+	if err != nil { // Run checked the URL; the cause is dropped, it may quote the password
+		reportf(stderr, "invalid settings:\nSUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string\n")
+		return 1
+	}
+	role := service.User
 	if err := waitForDatabase(ctx, owner, connectAttempts, connectInterval); err != nil {
+		reportf(stderr, "%v\n", err)
+		return 1
+	}
+	if err := migrations.CheckAppRole(ctx, owner, role); err != nil { // before anything changes
 		reportf(stderr, "%v\n", err)
 		return 1
 	}
@@ -37,17 +48,20 @@ func runMigrate(ctx context.Context, cfg config.Config, stderr io.Writer, logger
 		reportf(stderr, "migrate the database: %v\n", err)
 		return 1
 	}
-	if err := migrations.GrantApp(ctx, owner, cfg.DatabaseAppRole); err != nil {
+	if err := migrations.GrantApp(ctx, owner, role); err != nil {
 		reportf(stderr, "%v\n", err)
 		return 1
 	}
-	logger.InfoContext(ctx, "database migrated", "version", migrations.SupportedVersion, "role", cfg.DatabaseAppRole)
+	logger.InfoContext(ctx, "database migrated", "version", migrations.SupportedVersion, "role", role)
 	return 0
 }
 
 // waitForDatabase returns once the database accepts a connection with databaseURL, or at once when it refuses the
 // login or does not have the database. The error never carries the URL.
 func waitForDatabase(ctx context.Context, databaseURL string, attempts int, interval time.Duration) error {
+	if attempts < 1 {
+		return errors.New("migrate has no connection attempt to make: the number of attempts must be at least one")
+	}
 	var last error
 	for attempt := range attempts {
 		if attempt > 0 {
@@ -57,11 +71,14 @@ func waitForDatabase(ctx context.Context, databaseURL string, attempts int, inte
 				return ctx.Err()
 			}
 		}
-		connection, err := pgx.Connect(ctx, databaseURL)
+		attemptCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+		connection, err := pgx.Connect(attemptCtx, databaseURL)
 		if err == nil {
-			_ = connection.Close(ctx) // the connection only proved the database accepts them
+			_ = connection.Close(attemptCtx) // the connection only proved the database accepts them
+			cancel()
 			return nil
 		}
+		cancel()
 		var answered *pgconn.PgError
 		// A refused login or an unknown database stays so; "the database system is starting up" (57P03) does not.
 		if errors.As(err, &answered) && (strings.HasPrefix(answered.Code, "28") || answered.Code == "3D000") {

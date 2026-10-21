@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,8 +20,17 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// ErrSchemaNotReady reports a database whose schema is not the supported version.
+// ErrSchemaNotReady reports a database whose schema is not usable by this build: not the supported version, not
+// there, or not visible to the role. A database that cannot be reached, or that refuses the login, is not this.
 var ErrSchemaNotReady = errors.New("postgres schema is not ready")
+
+// ErrSchemaNewer is ErrSchemaNotReady for a schema migrated by a newer release than this build.
+var ErrSchemaNewer = errors.New("postgres schema is newer than this build")
+
+// schemaProblems are the SQLSTATEs that say the schema is not there or not usable by the role: an undefined function
+// (the version function of a database nobody migrated), an undefined table, insufficient privilege and an invalid
+// schema name.
+var schemaProblems = []string{"42883", "42P01", "42501", "3F000"}
 
 const (
 	schemaCheckTimeout = 10 * time.Second
@@ -59,7 +69,7 @@ func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier, jobs JobInserter) 
 	version, err := dbgen.New(pool).GetSchemaVersion(ctx)
 	if err != nil {
 		var answered *pgconn.PgError
-		if errors.As(err, &answered) { // the server answered: the schema is not there, or the role may not read it
+		if errors.As(err, &answered) && slices.Contains(schemaProblems, answered.Code) {
 			return nil, fmt.Errorf("%w: read schema version: %w", ErrSchemaNotReady, err)
 		}
 		return nil, fmt.Errorf("read schema version: %w", err)

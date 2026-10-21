@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -158,8 +159,16 @@ type Window struct {
 }
 
 // Window returns the current window; known is false before the first response
-// and once the window has ended, until the next response.
-func (b *Budget) Window() (w Window, known bool) { return Window{}, false }
+// and once the window has ended, until the next response, as acquire does not refuse then either.
+func (b *Budget) Window() (w Window, known bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.known || !b.clock().Add(-b.offset).Before(b.reset) {
+		return Window{}, false
+	}
+	allowed := int(math.Ceil(b.fraction * float64(b.limit)))
+	return Window{Remaining: max(0, allowed-b.used-b.inFlight), Reset: b.reset.Add(b.offset)}, true
+}
 
 // release returns a reservation whose request got no response.
 func (b *Budget) release() {

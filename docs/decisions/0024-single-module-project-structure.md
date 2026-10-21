@@ -1,7 +1,7 @@
 # ADR 0024: A single Go module with explicit internal boundaries
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M0, released in `v0.1.0`).
 - **Product:** SuiteWard
 - **Scope:** Application source organization and dependency direction.
 - **Related:** [ADR 0003](0003-go-and-chi.md), [ADR 0004](0004-postgresql-pgx-sqlc.md), [ADR 0006](0006-provider-agnostic-modular-monolith.md), and [ADR 0023](0023-development-environment-and-project-local-tooling.md).

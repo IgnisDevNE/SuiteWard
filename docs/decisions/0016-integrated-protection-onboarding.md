@@ -1,7 +1,7 @@
 # ADR 0016: Integrated installation and automatic protection setup
 
 - **Date:** 2026-09-26
-- **Status:** Accepted; automation/repair deferred post-MVP by the R1 amendment. Not yet implemented.
+- **Status:** Accepted. Verification of protection and its report are implemented (M1.5, released in `v0.1.0`); automatic setup is deferred post-MVP by the R1 amendment.
 - **M1.6b note (2026-10-14):** the first-test-PR bootstrap path returns to the MVP as phase M1.7b (see the [ADR 0010](0010-repository-bootstrap.md) amendment of 2026-10-14).
 - **R1 note (2026-10-05):** the first-test-PR bootstrap path is deferred to post-MVP; only the existing-baseline path is in the MVP (see the amendment to [ADR 0010](0010-repository-bootstrap.md)).
 - **Product:** SuiteWard

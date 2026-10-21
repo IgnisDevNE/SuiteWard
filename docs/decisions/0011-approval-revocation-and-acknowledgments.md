@@ -1,7 +1,7 @@
 # ADR 0011: Explicit approval revocation and PR acknowledgments
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M1.6a, released in `v0.1.0`).
 - **Product:** SuiteWard
 - **Scope:** Approval withdrawal, processed comment changes, and visible command outcomes.
 - **Related:** [Exact approval](0002-exact-revision-approval.md), [synchronization](0001-self-hosted-github-synchronization.md), and [River jobs](0005-river-background-jobs.md).

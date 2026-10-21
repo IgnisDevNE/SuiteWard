@@ -1,7 +1,7 @@
 # ADR 0002: Human approval of an exact proposal revision
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M1.6a and M1.6b, released in `v0.1.0`). The `/suiteward prioritize` command stays deferred.
 - **R1 note (2026-10-05):** the `/suiteward prioritize` command described below is deferred to post-MVP ([ADR 0022](0022-contract-change-pr-priority.md)); the approve command now also carries an owner TOTP code (see the amendment at the end).
 - **Product:** SuiteWard
 - **Scope:** GitHub approval experience for changes to the canonical test contract.

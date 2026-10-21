@@ -1,6 +1,6 @@
 # CI and coverage
 
-- **Updated:** 2026-10-09
+- **Updated:** 2026-10-21
 - **Status:** Active. `main` requires an up-to-date PR with the contexts `CI / Gate` (GitHub Actions) and `codecov/patch` (Codecov).
 
 ## Quality policy

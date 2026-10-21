@@ -1,6 +1,8 @@
 # S1 findings: GitHub walking skeleton
 
-- **Status:** reviewed. Its proposals were applied to the [decision register](../plan/decisions.md): D-GITHUB-ACCESS and D-DEPLOY (2026-10-10/11), D-CHECKS (2026-10-13), the D-PROTECTION input (partly, 2026-10-13); D-INTEGRATION and the D-SYNC numbers are still open. Everything listed under "Not measured" at the end was not done in S1; M1.4's live test measured the pull and commit reads, and M1.5-P0 the protection reads.
+> **Historical record (2026-10-10).** The numbers and hosts below are those of the spike. Since then the isolated host is an AlmaLinux 9 host, which replaced the Ubuntu host measured here, no host updates itself automatically, and D-INTEGRATION is accepted. The [decision register](../plan/decisions.md) and the [runtime contract](../contracts/runtime.md) are canonical.
+
+- **Status:** reviewed. Its proposals were applied to the [decision register](../plan/decisions.md): D-GITHUB-ACCESS and D-DEPLOY (2026-10-10/11), D-CHECKS (2026-10-13), the D-PROTECTION input (partly, 2026-10-13); D-INTEGRATION was accepted on 2026-10-15 (M1.7) and the D-SYNC numbers were settled later (a 20 s paced poll, M1.7c). Everything listed under "Not measured" at the end was not done in S1; M1.4's live test measured the pull and commit reads, and M1.5-P0 the protection reads.
 - **Phase:** [S1](../plan/phases/S1.md). Code: removed in M1.10; it lives in git history, last present at commit `0aaba8818a3f2fce96eb0f5d49f811d029e66854` (`git show 0aaba88:spikes/s1`). It was throwaway, a separate module, and never imported by `internal/`.
 - **Measured:** 2026-10-10 against `IgnisDevNE/SuiteWardQ` (public) and `IgnisDevNE/SuiteWardQ-private` with the test App `SuiteWardQ Spike` (not the production App).
 

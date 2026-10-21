@@ -1,7 +1,7 @@
 # ADR 0018: Corrective PR rollback and permanent canonical history
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M1.7, released in `v0.1.0`): a corrective PR is approved afresh, and every canonical version is kept.
 - **Product:** SuiteWard
 - **Scope:** Same-PR contract changes, correction of already-promoted changes, and preservation of canonical audit history.
 - **Related:** [Exact approval](0002-exact-revision-approval.md), [canonical authority](0007-canonical-contract-authority.md), [approval revocation](0011-approval-revocation-and-acknowledgments.md), [protected scope](0013-protected-scope-and-agent-assisted-review.md), [promotion](0014-merge-triggered-canonical-promotion.md), and [required check](0015-required-contract-check.md).

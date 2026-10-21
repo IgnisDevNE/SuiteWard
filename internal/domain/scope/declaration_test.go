@@ -498,3 +498,23 @@ func TestParseDeclarationRefusesAPatternOverTheSegmentCap(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidDeclaration wrapping ErrInvalidPattern", err)
 	}
 }
+
+// The additions of AddPatterns and AddExcludes count toward the 1000 patterns of a declaration: a base of 999 takes
+// one more and refuses two.
+func TestAddPatternsAndExcludesRefuseAdditionsPastTheDeclarationCap(t *testing.T) {
+	var base strings.Builder
+	base.WriteString("version: 1\ninclude:\n")
+	for i := 0; i < 999; i++ {
+		base.WriteString("  - d" + strconv.Itoa(i) + "/\n")
+	}
+	raw := []byte(base.String())
+	if _, err := scope.AddPatterns(raw, []string{"new-a/"}, nil); err != nil {
+		t.Fatalf("AddPatterns of the 1000th pattern: %v", err)
+	}
+	if _, err := scope.AddPatterns(raw, []string{"new-a/"}, []string{"new-b/"}); !errors.Is(err, scope.ErrInvalidDeclaration) {
+		t.Errorf("AddPatterns past the cap error = %v, want ErrInvalidDeclaration", err)
+	}
+	if _, err := scope.AddExcludes(raw, []string{"new-a", "new-b"}); !errors.Is(err, scope.ErrInvalidDeclaration) {
+		t.Errorf("AddExcludes past the cap error = %v, want ErrInvalidDeclaration", err)
+	}
+}

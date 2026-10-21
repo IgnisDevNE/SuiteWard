@@ -124,7 +124,7 @@ func (j *checksJob) explainRunners(ctx context.Context, p owner.ProjectPolicy, p
 		return &opaque{what: "read the canonical declaration", cause: err}
 	}
 	protect, err := scope.AddPatterns(base, nil, inventory.RunnerPatterns(set.paths))
-	if err != nil { // no head input reaches it (the canonical is verified and the patterns are constants): a defect fails the job, not the comment
+	if err != nil { // the patterns are constants and no head input reaches it, but a canonical near the pattern cap can make the additions pass it: the job then fails explicitly, not the comment
 		return &opaque{what: "add the runner patterns", cause: err}
 	}
 	var ignore []byte

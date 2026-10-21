@@ -1332,3 +1332,114 @@ func TestETagCacheIsBoundedAndKeepsTheRecentlyUsed(t *testing.T) {
 		t.Fatalf("the cache holds %d paths after the dropped one came back; want the bound of 3", got)
 	}
 }
+
+// bodyServer answers each path with an ETag and a body of sizes[path] bytes (looked up on every request, so a test can change it);
+// a request carrying the current ETag gets a 304. conditional records whether each path's last request carried If-None-Match.
+type bodyServer struct {
+	mu          sync.Mutex
+	sizes       map[string]int
+	version     int
+	conditional map[string]bool
+}
+
+func (b *bodyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	etag := fmt.Sprintf(`"%s-%d-%d"`, r.URL.Path, b.sizes[r.URL.Path], b.version)
+	b.conditional[r.URL.Path] = r.Header.Get("If-None-Match") == etag
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("ETag", etag)
+	_, _ = w.Write([]byte(strings.Repeat("x", b.sizes[r.URL.Path])))
+}
+
+func (b *bodyServer) sentConditional(path string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.conditional[path]
+}
+
+func newBodyCache(t *testing.T, maxBytes int, sizes map[string]int) (*rest.Client, *bodyServer, func(string)) {
+	t.Helper()
+	rest.LimitCacheBytesTo(t, maxBytes)
+	b := &bodyServer{sizes: sizes, conditional: map[string]bool{}}
+	srv := httptest.NewServer(b)
+	t.Cleanup(srv.Close)
+	c := newClient(t, newTokens().Token, srv.URL, newBudget(t, 1, &clock{now: t0}))
+	return c, b, func(path string) {
+		t.Helper()
+		if _, err := c.Get(context.Background(), path); err != nil {
+			t.Fatalf("Get %s: %v", path, err)
+		}
+	}
+}
+
+// The ETag cache also holds at most maxCacheBytes of bodies: past that the entries used least recently are dropped.
+func TestETagCacheIsBoundedByBytes(t *testing.T) {
+	c, b, get := newBodyCache(t, 10, map[string]int{"/a": 4, "/b": 4, "/c": 4})
+	get("/a")
+	get("/b")
+	get("/a") // /a is now the most recent
+	get("/c") // 12 bytes would pass the bound of 10: /b, the least recently used, goes
+	if got := c.CacheLen(); got != 2 {
+		t.Errorf("the cache holds %d paths, want 2", got)
+	}
+	if got := c.CacheBytes(); got != 8 {
+		t.Errorf("the cache holds %d bytes, want 8", got)
+	}
+	get("/a")
+	get("/c")
+	get("/b")
+	if !b.sentConditional("/a") || !b.sentConditional("/c") {
+		t.Error("a recently used path lost its ETag")
+	}
+	if b.sentConditional("/b") {
+		t.Error("/b, the least recently used, still sent If-None-Match after the byte bound dropped it")
+	}
+}
+
+// Replacing a path's body swaps its size in the total instead of adding to it.
+func TestETagCacheByteTotalFollowsAReplacedBody(t *testing.T) {
+	c, b, get := newBodyCache(t, 100, map[string]int{"/a": 4})
+	get("/a")
+	b.mu.Lock()
+	b.sizes["/a"] = 6
+	b.mu.Unlock()
+	get("/a") // a new ETag: the 200 replaces the entry
+	if got, gotBytes := c.CacheLen(), c.CacheBytes(); got != 1 || gotBytes != 6 {
+		t.Errorf("the cache holds %d paths and %d bytes after the replacement, want 1 and 6", got, gotBytes)
+	}
+}
+
+// A body larger than the whole bound is not cached and does not push the others out.
+func TestETagCacheSkipsABodyLargerThanTheByteBound(t *testing.T) {
+	c, b, get := newBodyCache(t, 10, map[string]int{"/a": 4, "/big": 11})
+	get("/a")
+	get("/big")
+	if got, gotBytes := c.CacheLen(), c.CacheBytes(); got != 1 || gotBytes != 4 {
+		t.Errorf("the cache holds %d paths and %d bytes, want /a alone: 1 and 4", got, gotBytes)
+	}
+	get("/a")
+	get("/big")
+	if !b.sentConditional("/a") {
+		t.Error("/a lost its ETag to a body that was never cached")
+	}
+	if b.sentConditional("/big") {
+		t.Error("/big was cached though it exceeds the byte bound")
+	}
+}
+
+// A path whose new body is larger than the bound loses its old entry: that ETag no longer describes the current answer.
+func TestETagCacheDropsAPathWhoseBodyGrewPastTheByteBound(t *testing.T) {
+	c, b, get := newBodyCache(t, 10, map[string]int{"/a": 4})
+	get("/a")
+	b.mu.Lock()
+	b.sizes["/a"] = 11
+	b.mu.Unlock()
+	get("/a")
+	if got, gotBytes := c.CacheLen(), c.CacheBytes(); got != 0 || gotBytes != 0 {
+		t.Errorf("the cache holds %d paths and %d bytes, want it empty", got, gotBytes)
+	}
+}

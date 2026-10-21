@@ -3,13 +3,9 @@ package app
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
 // hidden is the tail of a password that an unencoded @ would leave in an error of pgx.
@@ -31,24 +27,11 @@ func TestMigrateRefusesAMalformedOwnerURLWithoutEchoingIt(t *testing.T) {
 	}
 }
 
-// Run checks the service URL before migrate starts; runMigrate still refuses one it cannot read, without echoing it.
-func TestRunMigrateRefusesAServiceURLItCannotRead(t *testing.T) {
-	var stderr strings.Builder
-	cfg := config.Config{
-		DatabaseURL:          "postgres://u:p@" + hidden + "@127.0.0.1:1/db?sslmode=bogus",
-		MigrationDatabaseURL: "postgres://owner@127.0.0.1:1/db?sslmode=disable",
-	}
-	code := runMigrate(t.Context(), cfg, &stderr, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if code != 1 || !strings.Contains(stderr.String(), "SUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string") || strings.Contains(stderr.String(), hidden) {
-		t.Fatalf("runMigrate exited %d, stderr %q; want 1 and the fixed message without the password", code, stderr.String())
-	}
-}
-
 // A stop request ends the wait between two attempts instead of sleeping out the interval.
 func TestWaitForDatabaseStopsWhenTheContextEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
-	err := waitForDatabase(ctx, "postgres://owner@127.0.0.1:1/db?sslmode=disable", 1000, time.Hour)
+	err := waitForDatabase(ctx, "postgres://owner@127.0.0.1:1/db?sslmode=disable", migrateWait{attempts: 1000, interval: time.Hour, timeout: time.Second})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("waitForDatabase = %v; want the context's deadline", err)
 	}

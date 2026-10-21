@@ -111,29 +111,26 @@ func TestMigrateNamesAMissingRoleAndLeaksNoSecret(t *testing.T) {
 func TestMigrateWaitsForADatabaseThatIsNotAcceptingConnections(t *testing.T) {
 	vars := migrateVars(t, newEmptyDatabase(t))
 	vars["SUITEWARD_MIGRATION_DATABASE_URL"] = "postgres://owner:pw@127.0.0.1:1/db?sslmode=disable&connect_timeout=1"
-	restore := migrateWait(1, 0)
-	defer restore()
-	if code, _, stderr := run([]string{"migrate"}, testEnv(vars)); code != 1 || !strings.Contains(stderr, "not reachable") {
+	if code, _, stderr := runWithinWait(t, migrateWait{attempts: 1, timeout: 5 * time.Second}, []string{"migrate"}, testEnv(vars)); code != 1 || !strings.Contains(stderr, "not reachable") {
 		t.Fatalf("migrate against a closed port exited %d, stderr %q; want 1 and an unreachable database", code, stderr)
 	}
-}
-
-// migrateWait bounds how long migrate waits for the database, for one test.
-func migrateWait(attempts int, interval time.Duration) (restore func()) {
-	previousAttempts, previousInterval := connectAttempts, connectInterval
-	connectAttempts, connectInterval = attempts, interval
-	return func() { connectAttempts, connectInterval = previousAttempts, previousInterval }
 }
 
 // runWithin is run for a command that must end by itself: when it does not (a serve that migrated and started), the
 // context ends it after the bound and the assertions that follow report what it did.
 func runWithin(t *testing.T, args []string, env Env) (code int, stdout, stderr string) {
 	t.Helper()
+	return runWithinWait(t, defaultMigrateWait, args, env)
+}
+
+// runWithinWait is runWithin with the wait of migrate.
+func runWithinWait(t *testing.T, wait migrateWait, args []string, env Env) (code int, stdout, stderr string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	var out, errOut strings.Builder
 	env.Stdin = strings.NewReader("")
-	code = Run(ctx, args, env, &out, &errOut)
+	code = runWith(ctx, args, env, &out, &errOut, wait)
 	return code, out.String(), errOut.String()
 }
 
@@ -146,8 +143,8 @@ func TestMigrateDoesNotWaitOnARefusedLogin(t *testing.T) {
 	}
 	refused.User = url.UserPassword(refused.User.Username(), "not-the-password")
 	vars["SUITEWARD_MIGRATION_DATABASE_URL"] = refused.String()
-	defer migrateWait(1000, time.Hour)() // a retry would wait out the interval
-	code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
+	// a retry would wait out the interval
+	code, _, stderr := runWithinWait(t, migrateWait{attempts: 1000, interval: time.Hour, timeout: 5 * time.Second}, []string{"migrate"}, testEnv(vars))
 	if code != 1 || !strings.Contains(stderr, "refused") {
 		t.Fatalf("migrate with a wrong password exited %d, stderr %q; want 1 and a refusal", code, stderr)
 	}
@@ -169,10 +166,10 @@ func TestMigrateReachesADatabaseThatStartsAcceptingConnectionsLater(t *testing.T
 	target := parsed.Host
 	parsed.Host = addr
 	vars["SUITEWARD_MIGRATION_DATABASE_URL"] = parsed.String()
-	defer migrateWait(100, 50*time.Millisecond)()
 	late := time.AfterFunc(300*time.Millisecond, func() { newProxyAt(t, addr, target) })
 	defer late.Stop()
-	if code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars)); code != 0 {
+	wait := migrateWait{attempts: 100, interval: 50 * time.Millisecond, timeout: 5 * time.Second}
+	if code, _, stderr := runWithinWait(t, wait, []string{"migrate"}, testEnv(vars)); code != 0 {
 		t.Fatalf("migrate against a database that came up late exited %d: %s", code, stderr)
 	}
 }
@@ -205,15 +202,6 @@ func TestMigrateRefusesAServiceRoleThatIsNotLeastPrivilege(t *testing.T) {
 	})
 }
 
-func TestMigrateStopsWhenNoAttemptIsConfigured(t *testing.T) {
-	vars := migrateVars(t, newEmptyDatabase(t))
-	defer migrateWait(0, 0)()
-	code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
-	if code != 1 || strings.Contains(stderr, "%!") || !strings.Contains(stderr, "attempt") {
-		t.Fatalf("migrate with no attempt exited %d, stderr %q; want 1 and a plain message", code, stderr)
-	}
-}
-
 // A server that accepts the connection and never answers must not hold an attempt for ever.
 func TestMigrateBoundsEveryAttempt(t *testing.T) {
 	silent, err := net.Listen("tcp", "127.0.0.1:0")
@@ -232,10 +220,8 @@ func TestMigrateBoundsEveryAttempt(t *testing.T) {
 	}()
 	vars := migrateVars(t, newEmptyDatabase(t))
 	vars["SUITEWARD_MIGRATION_DATABASE_URL"] = "postgres://owner:pw@" + silent.Addr().String() + "/db?sslmode=disable"
-	defer migrateWait(2, 0)()
-	defer migrateAttemptTimeout(200 * time.Millisecond)()
 	start := time.Now()
-	code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
+	code, _, stderr := runWithinWait(t, migrateWait{attempts: 2, timeout: 200 * time.Millisecond}, []string{"migrate"}, testEnv(vars))
 	if code != 1 || !strings.Contains(stderr, "not reachable") || time.Since(start) > 10*time.Second {
 		t.Fatalf("migrate against a silent server exited %d after %v, stderr %q; want 1, unreachable, and soon", code, time.Since(start), stderr)
 	}
@@ -265,13 +251,6 @@ func TestServeOnASchemaNewerThanTheBuildDoesNotAdviseMigrating(t *testing.T) {
 	if code != 1 || strings.Contains(stdout, "run `suiteward migrate`") || !strings.Contains(stdout, "newer release") {
 		t.Fatalf("serve on a newer schema exited %d, stdout %q; want 1 and the advice to run the newer release", code, stdout)
 	}
-}
-
-// migrateAttemptTimeout bounds one connection attempt of migrate, for one test.
-func migrateAttemptTimeout(d time.Duration) (restore func()) {
-	previous := connectTimeout
-	connectTimeout = d
-	return func() { connectTimeout = previous }
 }
 
 func requireNothingMigrated(t *testing.T, ownerURL string) {

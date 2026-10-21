@@ -68,6 +68,43 @@ func TestSyncTicksDoNotOverlap(t *testing.T) {
 	}
 }
 
+// A sync job and a tick may list one repository at different moments; the later commit would then write the older
+// listing over the newer one (a pull request listed by one reads as not open in the other), so they never run together.
+func TestASyncRepoJobWaitsForARunningTick(t *testing.T) {
+	w := newWorld(t, 5)
+	release := make(chan struct{})
+	var ticking atomic.Bool
+	var syncedDuringTick atomic.Int32
+	var synced atomic.Int32
+	config := syncConfig(func(context.Context) error {
+		ticking.Store(true)
+		<-release
+		ticking.Store(false)
+		return nil
+	}, func(context.Context, string) error {
+		if ticking.Load() {
+			syncedDuringTick.Add(1)
+		}
+		synced.Add(1)
+		return nil
+	})
+	runtime := startRuntime(t, w, config)
+	t.Cleanup(func() { close(release) })
+	waitUntil(t, "the tick to start", ticking.Load)
+
+	if inserted, err := runtime.InsertSyncRepo(t.Context(), "acme/widgets"); err != nil || !inserted {
+		t.Fatalf("InsertSyncRepo = %v, %v", inserted, err)
+	}
+	// A negative assertion about a worker: give an idle one time to take the job.
+	time.Sleep(1200 * time.Millisecond)
+
+	if got := syncedDuringTick.Load(); got != 0 {
+		t.Fatalf("the sync job ran %d times while the tick ran; want it to wait for the tick", got)
+	}
+	release <- struct{}{}
+	waitUntil(t, "the sync job to run after the tick", func() bool { return synced.Load() == 1 })
+}
+
 func TestSyncRepoJobsCoalesceWhilePending(t *testing.T) {
 	w := newWorld(t, 5)
 	var mu sync.Mutex

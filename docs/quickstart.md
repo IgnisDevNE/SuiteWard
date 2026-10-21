@@ -25,11 +25,11 @@ podman system connection list
 $env:CONTAINER_CONNECTION = '<name of the rootless connection>'
 ```
 
-Then pull the image, start the stack and read its status. The script creates two database roles (the owner, used only by the one-shot migration, and the least-privilege `suiteward_app` for the service), runs `suiteward migrate`, and starts the service only after the migration succeeded. Open the machine as its rootless user, `user`: the default ssh user is `root`, the rootful store:
+Then pull the image by the digest of its image index, start the stack and read its status. Take the digest from the release notes and verify it first with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` ([step 5.3](install.md#5-install-co-located)). Check that `version` in the status is the release you meant. The script creates two database roles (the owner, used only by the one-shot migration, and the least-privilege `suiteward_app` for the service), runs `suiteward migrate`, and starts the service only after the migration succeeded. Open the machine as its rootless user, `user`: the default ssh user is `root`, the rootful store:
 
 ```powershell
-podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
-./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:vX.Y.Z -GitHubAppKeyFile <path to the PEM> -GitHubAppId <app id> -GitHubInstallationId <installation id> -GitHubRepositories '<owner/name>,<owner/name>'
+podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
+./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppKeyFile <path to the PEM> -GitHubAppId <app id> -GitHubInstallationId <installation id> -GitHubRepositories '<owner/name>,<owner/name>'
 podman machine ssh --username user "curl -s http://127.0.0.1:8081/status"
 ```
 

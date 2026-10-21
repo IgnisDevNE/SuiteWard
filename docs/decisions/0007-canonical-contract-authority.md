@@ -1,7 +1,7 @@
 # ADR 0007: Canonical contract authority and promotion invariants
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented: the domain in M0, the PostgreSQL store in R1 and M1.2, approval and promotion in M1.6 and M1.7, released in `v0.1.0`. Amended 2026-10-20 (database role, below).
 - **Scope:** Domain authority, versioning, approval, and promotion.
 - **Origin:** Product thesis derived from CircuitoNE / CircuitoNE-QA as PoC #0.
 
@@ -65,6 +65,10 @@ These alternatives conflict with the product's core purpose.
 - Strict GitHub integration coordination beyond the explicitly limited assisted mode.
 
 The earlier draft SQL schema is a design input, not a completed production migration.
+
+## Amendment (2026-10-20, phase SH): the service's database role
+
+The service connects to PostgreSQL as a role that owns nothing and can only read and write rows (DML): it cannot alter or drop the triggers that make history immutable, truncate a table or change the schema. Only `suiteward migrate` holds the schema owner's credential, runs as a separate one-shot step before the service starts, and refuses a service role that is not least-privilege. The invariants above are unchanged; this limits what a compromised service credential can do to them. What it does and does not prevent is listed in the [threat model](../security/threat-model.md) (boundary B5) and in the [persistence contract](../contracts/persistence.md#database-roles-and-grants-sh-h4).
 
 ## Amendment (2026-10-05, phase R1): verification point and storage shape
 

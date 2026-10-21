@@ -99,22 +99,20 @@ const prefix = "/suiteward"
 // GitHub shows as text. It skips a fenced code block, an HTML comment and an
 // indented code block. A fence opens on a line whose text, after any block quote
 // or list item markers (>, -, *, +, N. and N)), starts with three or more
-// backticks or tildes, and closes on a line indented at most three columns that
-// holds only at least as many of the same character; an unclosed fence runs to
+// backticks or tildes, and, when it opened outside such a marker, closes on a line indented at most three columns that
+// holds only at least as many of the same character; an unclosed fence, and any fence opened after a marker, runs to
 // the end of the body. An HTML comment hides every line from one that contains
 // <!-- up to and including the next that contains -->, or to the end of the
 // body, and a comment that closes on the line it opens on hides only that line;
 // a fence marker inside a comment opens nothing, and a comment marker inside a
 // fence is code. A line indented four or more columns, a tab counting as four
-// and measured before trimming, is an indented code block. The known cases that
-// skip text: a fence opened inside a block quote runs to the end of the body
-// because its closing line holds the quote marker, and so does a fence closed by
-// a line indented four or more columns, which CommonMark keeps in the fence. The
-// prefix and the verb match without regard to ASCII case, the reference keeps
+// and measured before trimming, is an indented code block. The known case
+// that skips text: a fence opened after a quote or list item marker runs to the end of the body, though GitHub ends it with its
+// container. The prefix and the verb match without regard to ASCII case, the reference keeps
 // its P<n>-R<m> form, and only spaces and tabs separate tokens.
 func Parse(body string) Parsed {
 	var fence string
-	inComment := false
+	contained, inComment := false, false
 	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if inComment {
@@ -124,7 +122,7 @@ func Parse(body string) Parsed {
 		}
 		text := strings.Trim(line, " \t")
 		if fence != "" {
-			if closesFence(line, text, fence) {
+			if !contained && closesFence(line, text, fence) {
 				fence = ""
 			}
 			continue
@@ -133,8 +131,8 @@ func Parse(body string) Parsed {
 			inComment = opensComment(line)
 			continue
 		}
-		if f := openingFence(stripMarkers(text)); f != "" {
-			fence = f
+		if f, c := fenceStart(text); f != "" {
+			fence, contained = f, c
 			continue
 		}
 		if indent(line) >= 4 {
@@ -174,6 +172,14 @@ func indent(line string) (columns int) {
 // closesFence reports whether the line closes the fence: CommonMark lets a closing fence start at most three columns in.
 func closesFence(line, text, fence string) bool {
 	return indent(line) < 4 && strings.HasPrefix(text, fence) && strings.Trim(text, fence[:1]) == ""
+}
+
+// fenceStart returns the run that opens a fence on text, after any block quote or list item markers, and whether the fence sits in such a
+// container. Only its container ends a contained fence, and a line that is less indented than the container's content does that and opens a
+// fence of its own, so no line closes a contained fence for Parse: it runs to the end of the body.
+func fenceStart(text string) (fence string, contained bool) {
+	inner := stripMarkers(text)
+	return openingFence(inner), inner != text
 }
 
 // stripMarkers removes the block quote and list item markers (>, -, *, +, N. and N) with the spaces after them) that start the text, so a fence

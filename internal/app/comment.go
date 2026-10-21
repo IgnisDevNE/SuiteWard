@@ -112,16 +112,16 @@ func codeReason(code string) (commandtext.Reason, bool) {
 
 // The reasons of propose-refused and skip-refused in a payload (docs/contracts/runtime.md, "Comment keys").
 const (
-	reasonCanonicalPresent    = "canonical-present"
-	reasonFork                = "fork"
-	reasonNotOpen             = "not-open"
-	reasonBaseNotTarget       = "base-not-target"
-	reasonEmptyInventory      = "empty-inventory"
-	refusalInvalidSource      = "invalid-source" // named like the bootstrap job's status code
-	reasonCarrier             = "carrier"
-	reasonDeclarationMissing  = "declaration-missing"   // rendered by commandtext.SuggestDeclaration, which is not an Ack
-	reasonScopeNotice         = "scope-notice"          // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
-	reasonNothingUncovered    = "nothing-uncovered"     // a suggested reply that every test-like path of the head is in the scope
+	reasonCanonicalPresent   = "canonical-present"
+	reasonFork               = "fork"
+	reasonNotOpen            = "not-open"
+	reasonBaseNotTarget      = "base-not-target"
+	reasonEmptyInventory     = "empty-inventory"
+	refusalInvalidSource     = "invalid-source" // named like the bootstrap job's status code
+	reasonCarrier            = "carrier"
+	reasonDeclarationMissing = "declaration-missing" // rendered by commandtext.SuggestDeclaration, which is not an Ack
+	reasonScopeNotice        = "scope-notice"        // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
+	reasonNothingUncovered   = "nothing-uncovered"   // a suggested reply that every test-like path of the head is in the scope
 )
 
 var (

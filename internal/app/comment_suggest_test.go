@@ -102,7 +102,7 @@ func TestCommentPublisherRefusesASuggestPayloadThatDoesNotFit(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w := newCmtWorld(t)
 			err := w.pub.publish(t.Context(), fmt.Sprintf("ack:%d:%d", cmtRepoID, cmtComment), cmtAckPayload(extra))
-			if err == nil || strings.Contains(err.Error(), "cannot be rendered") {
+			if err == nil || !strings.Contains(err.Error(), "does not match its key") && !strings.Contains(err.Error(), "does not decode") {
 				t.Fatalf("publish = %v; want a validation or decoding error, not a render failure", err)
 			}
 			if len(w.writer.posts()) != 0 {

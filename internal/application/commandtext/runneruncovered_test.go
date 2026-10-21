@@ -141,7 +141,9 @@ func choiceQuoting(anchor, newList string) commandtext.Quoting {
 
 func choiceBody(t *testing.T, choice commandtext.RunnerChoice, anchor, indent string, patterns []string, newList string) string {
 	t.Helper()
-	return render(t, func() string { return commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, choiceQuoting(anchor, newList)) })
+	return render(t, func() string {
+		return commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, choiceQuoting(anchor, newList))
+	})
 }
 
 func TestRunnerChoiceBodyAddsTheItemsToAnExistingList(t *testing.T) {
@@ -226,7 +228,9 @@ func TestRunnerChoiceBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			mustPanic(t, func() { commandtext.RunnerChoiceBody(c.choice, c.anchor, c.indent, c.patterns, c.newList, choiceQuoting(c.anchor, c.newList)) })
+			mustPanic(t, func() {
+				commandtext.RunnerChoiceBody(c.choice, c.anchor, c.indent, c.patterns, c.newList, choiceQuoting(c.anchor, c.newList))
+			})
 			if commandtext.ValidateRunnerChoice(c.choice, c.anchor, c.indent, c.patterns, c.newList, choiceQuoting(c.anchor, c.newList)) == nil {
 				t.Error("ValidateRunnerChoice accepts it")
 			}

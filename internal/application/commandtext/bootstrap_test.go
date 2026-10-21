@@ -459,7 +459,7 @@ func TestAcknowledgeProposeAndSkipPanicsOnImpossibleState(t *testing.T) {
 		"a refusal on nothing uncovered":                 {Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract, Refusal: commandtext.Fork, Source: source, Owner: owner},
 		"eligibility on nothing uncovered":               {Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract, Source: source, Owner: owner, Eligible: true},
 		"no source command on nothing uncovered":         {Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract, Owner: owner},
-		"no base on nothing uncovered": {Outcome: commandtext.NothingUncovered, Source: source, Owner: owner},
+		"no base on nothing uncovered":                   {Outcome: commandtext.NothingUncovered, Source: source, Owner: owner},
 		"suggest refused without a reason":               refused(commandtext.SuggestRefused, 0),
 		"suggest refused for a canonical":                refused(commandtext.SuggestRefused, commandtext.CanonicalPresent),
 		"suggest refused for a base that is not target":  refused(commandtext.SuggestRefused, commandtext.BaseNotTarget),

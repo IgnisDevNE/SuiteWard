@@ -143,7 +143,7 @@ func cmtChoiceBody(choice commandtext.RunnerChoice, anchor, indent string, patte
 	if newList != "" { // a list that the choice creates has no quoting
 		quoting = ""
 	}
-	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, quoting)) +"\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
+	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, quoting)) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
 }
 
 func TestCommentPublisherPostsTheProtectAndIgnoreSuggestionsEachWithItsOwnMarker(t *testing.T) {

@@ -145,6 +145,8 @@ func TestParse(t *testing.T) {
 		{"a backtick fence whose info string opens a comment", "``` <!--\n-->\n/suiteward approve P1-R1 123456", notCommand},
 		{"a tilde fence whose info string opens a comment", "~~~ <!--\n-->\n/suiteward approve P1-R1 123456", notCommand},
 		{"a fence whose info string holds a whole comment", "``` <!-- x -->\n/suiteward approve P1-R1 123456", notCommand},
+		{"a backtick run whose info string holds a backtick is no fence", "```a```\nx\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a lone carriage return ends a line", "foo\r```\n/suiteward approve P1-R1 123456", notCommand},
 
 		// Malformed.
 		{"bare prefix", "/suiteward", malformed(commandtext.UnknownVerb)},

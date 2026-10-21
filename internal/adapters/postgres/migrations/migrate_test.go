@@ -29,3 +29,13 @@ func TestMigrationHonorsCancellation(t *testing.T) {
 		t.Fatalf("canceled migration must preserve cancellation: %v", err)
 	}
 }
+
+func TestRoleChecksNameAnUnreachableDatabase(t *testing.T) {
+	unreachable := "postgres://nobody@127.0.0.1:1/test?sslmode=disable"
+	if err := GrantApp(t.Context(), unreachable, "app"); err == nil || !strings.Contains(err.Error(), "connect to grant the application role") {
+		t.Fatalf("GrantApp on an unreachable database = %v; want the connection named", err)
+	}
+	if err := CheckAppRole(t.Context(), unreachable, "app"); err == nil || !strings.Contains(err.Error(), "connect to check the application role") {
+		t.Fatalf("CheckAppRole on an unreachable database = %v; want the connection named", err)
+	}
+}

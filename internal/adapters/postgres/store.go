@@ -91,9 +91,21 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 	if fn == nil {
 		return fmt.Errorf("%w: missing unit of work", governance.ErrInvalidRequest)
 	}
-	transaction, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	return inTx(ctx, s.pool, "governance", func(transaction pgx.Tx) error {
+		work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
+		if _, err := work.lock(ctx); err != nil {
+			return err
+		}
+		return fn(ctx, work)
+	})
+}
+
+// inTx runs fn in one transaction of pool. It commits only when fn returns nil and ctx is still live; an error, a panic
+// or a canceled context roll every write back. kind names the transaction in the errors of the begin and the commit.
+func inTx(ctx context.Context, pool *pgxpool.Pool, kind string, fn func(pgx.Tx) error) error {
+	transaction, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin governance transaction: %w", err)
+		return fmt.Errorf("begin %s transaction: %w", kind, err)
 	}
 	committed := false
 	defer func() {
@@ -101,18 +113,14 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 			rollback(ctx, transaction)
 		}
 	}()
-	work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
-	if _, err := work.lock(ctx); err != nil {
-		return err
-	}
-	if err := fn(ctx, work); err != nil {
+	if err := fn(transaction); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit governance transaction: %w", err)
+		return translateWrite("commit "+kind+" transaction", err)
 	}
 	committed = true
 	return nil

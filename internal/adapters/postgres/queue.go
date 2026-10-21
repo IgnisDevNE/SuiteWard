@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -99,28 +98,14 @@ func insertOutbox(ctx context.Context, q *dbgen.Queries, project, suite pgtype.T
 // EnqueueSystem inserts a job and an outbox message with no Suite in one
 // transaction, with the statement of Tx.Outbox and the job inserter. It returns the job id.
 func (s *Store) EnqueueSystem(ctx context.Context, job governance.Job, message governance.OutboxMessage) (int64, error) {
-	transaction, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin system transaction: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			rollback(ctx, transaction)
+	var id int64
+	err := inTx(ctx, s.pool, "system", func(transaction pgx.Tx) (err error) {
+		if id, err = enqueue(ctx, s.jobs, transaction, job); err != nil {
+			return err
 		}
-	}()
-	id, err := enqueue(ctx, s.jobs, transaction, job)
-	if err != nil {
-		return 0, err
-	}
-	if err := insertOutbox(ctx, dbgen.New(transaction), pgtype.Text{}, pgtype.Text{}, message); err != nil {
-		return 0, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit system transaction: %w", err)
-	}
-	committed = true
-	return id, nil
+		return insertOutbox(ctx, dbgen.New(transaction), pgtype.Text{}, pgtype.Text{}, message)
+	})
+	return id, err
 }
 
 // SystemStatus reports the state of a job and an outbox message written by
@@ -148,11 +133,15 @@ func (s *Store) SystemStatus(ctx context.Context, jobID int64, outboxKey string)
 // counts the attempt and hides the message until the lease expires. Pending
 // messages that used every attempt are failed instead of claimed.
 func (s *Store) ClaimOutbox(ctx context.Context, params ClaimOutboxParams) (ClaimOutboxResult, error) {
-	if params.MaxAttempts < 1 || params.MaxAttempts > math.MaxInt32 || params.Limit < 1 || params.Limit > math.MaxInt32 {
-		return ClaimOutboxResult{}, fmt.Errorf("claim outbox: max attempts %d and limit %d must each be between 1 and %d", params.MaxAttempts, params.Limit, math.MaxInt32)
+	maxAttempts, attemptsErr := int32Of(params.MaxAttempts)
+	batch, limitErr := int32Of(params.Limit)
+	if err := errors.Join(attemptsErr, limitErr); err != nil {
+		return ClaimOutboxResult{}, fmt.Errorf("claim outbox: %w", err)
+	}
+	if maxAttempts < 1 || batch < 1 {
+		return ClaimOutboxResult{}, fmt.Errorf("claim outbox: max attempts %d and limit %d must each be at least 1", maxAttempts, batch)
 	}
 	q := dbgen.New(s.pool)
-	maxAttempts, batch := int32(params.MaxAttempts), int32(params.Limit)
 	abandoned, err := q.FailExhaustedOutbox(ctx, dbgen.FailExhaustedOutboxParams{Now: timestamp(params.Now), MaxAttempts: maxAttempts})
 	if err != nil {
 		return ClaimOutboxResult{}, fmt.Errorf("fail exhausted outbox messages: %w", err)

@@ -29,10 +29,7 @@ func Up(ctx context.Context, databaseURL string) error {
 
 // UpTo applies migrations through a supported forward version.
 func UpTo(ctx context.Context, databaseURL string, version int64) (err error) {
-	if version < 1 {
-		return ErrForwardOnly
-	}
-	if version > SupportedVersion {
+	if version < 1 || version > SupportedVersion {
 		return fmt.Errorf("unsupported schema migration version: %d", version)
 	}
 	configuration, err := pgx.ParseConfig(databaseURL)
@@ -43,20 +40,22 @@ func UpTo(ctx context.Context, databaseURL string, version int64) (err error) {
 	defer func() { err = errors.Join(err, database.Close()) }()
 	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, 30))
 	if err != nil {
-		return err
+		return fmt.Errorf("create the migration lock: %w", err)
 	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrationFiles,
 		goose.WithSessionLocker(locker), goose.WithDisableGlobalRegistry(true))
 	if err != nil {
-		return err
+		return fmt.Errorf("create the migration provider: %w", err)
 	}
 	current, err := provider.GetDBVersion(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("read the schema version: %w", err)
 	}
 	if version < current {
 		return ErrForwardOnly
 	}
-	_, err = provider.UpTo(ctx, version)
-	return err
+	if _, err = provider.UpTo(ctx, version); err != nil {
+		return fmt.Errorf("migrate to version %d: %w", version, err)
+	}
+	return nil
 }

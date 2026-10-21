@@ -62,36 +62,22 @@ func (s *Store) Record(ctx context.Context, e commands.Entry, ack *governance.Ou
 	if err != nil {
 		return err
 	}
-	transaction, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin command ledger transaction: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			rollback(ctx, transaction)
+	return inTx(ctx, s.pool, "command ledger", func(transaction pgx.Tx) error {
+		q := dbgen.New(transaction)
+		inserted, err := q.InsertPRCommand(ctx, dbgen.InsertPRCommandParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, PullNumber: pull,
+			AuthorID: e.AuthorID, CreatedAt: timestamp(e.CreatedAt), BodyDigest: e.BodyDigest.String(), Disposition: string(e.Disposition),
+			OperationID: optionalText(string(e.Operation)), DecidedAt: timestamp(e.DecidedAt)})
+		if err != nil {
+			return fmt.Errorf("write command ledger entry: %w", err)
 		}
-	}()
-	q := dbgen.New(transaction)
-	inserted, err := q.InsertPRCommand(ctx, dbgen.InsertPRCommandParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, PullNumber: pull,
-		AuthorID: e.AuthorID, CreatedAt: timestamp(e.CreatedAt), BodyDigest: e.BodyDigest.String(), Disposition: string(e.Disposition),
-		OperationID: optionalText(string(e.Operation)), DecidedAt: timestamp(e.DecidedAt)})
-	if err != nil {
-		return fmt.Errorf("write command ledger entry: %w", err)
-	}
-	if inserted == 0 {
-		return sameEntry(ctx, q, e, pull)
-	}
-	if ack != nil {
-		if err := insertOutbox(ctx, q, pgtype.Text{}, pgtype.Text{}, *ack); err != nil {
-			return err
+		if inserted == 0 {
+			return sameEntry(ctx, q, e, pull)
 		}
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit command ledger transaction: %w", err)
-	}
-	committed = true
-	return nil
+		if ack != nil {
+			return insertOutbox(ctx, q, pgtype.Text{}, pgtype.Text{}, *ack)
+		}
+		return nil
+	})
 }
 
 // sameEntry is nil when the stored entry of e's comment is e, and commands.ErrConflict when it is another.

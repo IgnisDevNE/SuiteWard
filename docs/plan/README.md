@@ -1,6 +1,6 @@
 # Delivery plan
 
-- **Updated:** 2026-10-20 (security gate: assessment done, hardening phase [SH](phases/SH.md) recorded; `v0.2.0` next)
+- **Updated:** 2026-10-21 (security gate: assessment done, hardening phase [SH](phases/SH.md) recorded; `v0.2.0` next)
 
 Each phase produces one PR, integrated with a merge commit after the user's authorization. Work inside a phase is orchestrated as described in [orchestration](orchestration.md): the main session writes [briefs](task-brief.md), `sw-implementer` subagents implement them test-first in their own worktrees, and `sw-reviewer` subagents review them. Open and accepted product choices live in the [decision register](decisions.md).
 

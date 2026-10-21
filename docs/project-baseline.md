@@ -72,7 +72,7 @@ Development is test-first for authority, consent, promotion, idempotency, concur
 
 ## Items still open
 
-- Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone (D-INTEGRATION).
+- Known limit: strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone.
 - M2's first supported execution ecosystem and RunnerProfile (D-EXECUTION), and the future managed execution location and trust model.
 - D-DEPLOY's remaining status, D-JOB-RETENTION and D-HARDENING-CONTROLS ([decision register](plan/decisions.md#open)).
 - Post-MVP: encrypted backups, guided restore, Release backups, the priority queue, and automatic protection setup and repair.

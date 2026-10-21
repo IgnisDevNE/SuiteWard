@@ -1,7 +1,7 @@
 # ADR 0008: Deliver integrity before canonical execution
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented. Amended 2026-10-20: release provenance, SBOM and keyless signing are adopted ahead of M3 (see the amendment below).
+- **Status:** Accepted; M0 and M1 implemented and released (v0.1.0 onward), M2 and M3 planned. Amended 2026-10-20: release provenance, SBOM and keyless signing are adopted ahead of M3 (see the amendment below).
 - **Scope:** Milestone order, assurance levels, and first execution backend.
 - **Origin:** Roadmap recovered from the original system design.
 

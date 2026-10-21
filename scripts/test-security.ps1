@@ -19,7 +19,7 @@ try {
     Invoke-Git add -A; Invoke-Git commit -q -m clean
     if (-not (Invoke-Scan).Passed) { throw 'A clean repository was rejected.' }
     # A pull request must not switch the scanners off by adding their own configuration or ignore files.
-    foreach ($config in '.gitleaks.toml', '.gitleaksignore', 'zizmor.yml', '.github/zizmor.yml') {
+    foreach ($config in '.gitleaks.toml', '.gitleaksignore', 'zizmor.yml', 'zizmor.yaml', '.github/zizmor.yml', '.github/zizmor.yaml') {
         Set-Content -LiteralPath (Join-Path $testRoot $config) -Value ''
         if ((Invoke-Scan).Passed) { throw "The scan accepted a $config file." }
         Remove-Item -LiteralPath (Join-Path $testRoot $config)
@@ -27,7 +27,18 @@ try {
     # An action referenced by a mutable tag is something zizmor flags without network access.
     Set-Content -LiteralPath $workflow -Value ($clean + "      - uses: actions/checkout@v4`n")
     Invoke-Git add -A; Invoke-Git commit -q -m unpinned
-    if ((Invoke-Scan).Passed) { throw 'A workflow with an unpinned action was accepted.' }
+    $scan = Invoke-Scan
+    if ($scan.Passed -or -not $scan.Output.Contains('unpinned-uses')) { throw 'A workflow with an unpinned action was accepted.' }
+    # Neither a configuration outside the tree (the environment) nor an inline comment may suppress a finding.
+    $outside = Join-Path $testRoot '../zizmor-outside.yml'
+    Set-Content -LiteralPath $outside -Value "rules:`n  unpinned-uses:`n    disable: true`n"
+    $env:ZIZMOR_CONFIG = $outside
+    try { $scan = Invoke-Scan } finally { Remove-Item Env:ZIZMOR_CONFIG; Remove-Item -LiteralPath $outside }
+    if ($scan.Passed -or -not $scan.Output.Contains('unpinned-uses')) { throw 'ZIZMOR_CONFIG suppressed a finding.' }
+    Set-Content -LiteralPath $workflow -Value ($clean + "      - uses: actions/checkout@v4 # zizmor: ignore[unpinned-uses]`n")
+    $scan = Invoke-Scan
+    if ($scan.Passed -or -not $scan.Output.Contains('unpinned-uses')) { throw 'An inline ignore comment suppressed a finding.' }
+    Invoke-Git checkout -q -- .
     Invoke-Git revert --no-edit HEAD
     # The secret is built at run time, so this file holds no literal for the real scan to find. It stays in history after the revert.
     $secret = 'ghp_' + (-join (1..36 | ForEach-Object { 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[(Get-Random -Maximum 62)] }))
@@ -36,6 +47,12 @@ try {
     Invoke-Git rm -q notes.txt; Invoke-Git commit -q -m 'remove the secret'
     $scan = Invoke-Scan
     if ($scan.Passed) { throw 'A secret that is only in history was accepted.' }
+    # A scanner configuration from the environment must not allow the secret either.
+    $allow = Join-Path ([IO.Path]::GetTempPath()) "gitleaks-allow-$([Guid]::NewGuid().ToString('N')).toml"
+    Set-Content -LiteralPath $allow -Value "[extend]`nuseDefault = true`n[[allowlists]]`npaths = ['''.*''']`n"
+    $env:GITLEAKS_CONFIG = $allow
+    try { $configured = Invoke-Scan } finally { Remove-Item Env:GITLEAKS_CONFIG; Remove-Item -LiteralPath $allow }
+    if ($configured.Passed -or -not $configured.Output.Contains('github-pat')) { throw 'GITLEAKS_CONFIG allowed a secret.' }
     if ($scan.Output.Contains($secret) -or $scan.Output.Contains($secret.Substring(4, 12))) { throw 'The scan printed part of a secret.' }
     Write-Host 'Security scan checks passed.'
 } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force }

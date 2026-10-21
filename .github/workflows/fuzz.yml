@@ -1,0 +1,63 @@
+# Fuzzes the parsers of untrusted input every week, and on demand. Not part of the CI gate and not a required check.
+# Each Fuzz target of a package runs for FUZZTIME; the seed inputs under testdata/fuzz also run in the normal Go tests.
+# A failing run keeps the input Go wrote under testdata/fuzz as an artifact: copy it into the repository with the fix.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz
+  cancel-in-progress: false
+
+env:
+  FUZZTIME: 3m
+  FUZZ_PARALLEL: 2
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.package }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - internal/application/commandtext
+          - internal/domain/scope
+          - internal/domain/artifact
+          - internal/adapters/github
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Fuzz every target of the package
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          targets=$(go test -list '^Fuzz' "./$PACKAGE" | grep '^Fuzz')
+          failed=0
+          for target in $targets; do
+            go test -run '^$' -fuzz "^${target}\$" -fuzztime "$FUZZTIME" -parallel "$FUZZ_PARALLEL" "./$PACKAGE" || failed=1
+          done
+          exit "$failed"
+      - name: Keep the failing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-${{ strategy.job-index }}
+          path: ${{ matrix.package }}/testdata/fuzz
+          if-no-files-found: ignore
+          retention-days: 30

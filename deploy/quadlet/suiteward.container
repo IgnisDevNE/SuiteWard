@@ -9,7 +9,7 @@ After=suiteward-migrate.service
 StartLimitIntervalSec=0
 
 [Container]
-# Pinned by digest: replace <digest> (podman image inspect --format '{{.Digest}}' <image>), and change suiteward-migrate.container to the same line.
+# Pinned by digest: replace <digest> with the signed image index digest of the release (docs/install.md, step 10.9; not the platform digest of `podman image inspect`), and change suiteward-migrate.container to the same line.
 Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>
 ContainerName=suiteward
 Network=suiteward.network

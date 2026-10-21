@@ -136,7 +136,7 @@ To stop the stack and keep its state, run `./deploy/local.ps1 -Down`. Expect the
 
 `./deploy/local.ps1 -Down -Purge` also removes the database, the artifact volume, the secrets (including both database URLs), the MCP token copy and the network. That deletes your TOTP enrollment and every contract version. Use it only to start over, and back up first (section 11, step 11.1, and [the backup runbook](backup.md)).
 
-**Converting a stack from v0.1.x.** A stack started by v0.1.x has one database secret, `suiteward-database-url`, and it holds the owner URL: that stack's service ran as the owner. Run the command of step 5.4 again with the new release's `-Image`, and the script converts it in place. It prints `Upgrading an existing stack: suiteward-database-url held the owner URL. Creating the role suiteward_app and replacing the secret with its URL; the owner URL is now in suiteward-database-owner-url and only the migrate container gets it.` Then it creates the secret `suiteward-database-owner-url`, creates the role with a new password, replaces `suiteward-database-url` by the application URL, and migrates. The data is untouched. A run that was interrupted repeats only what is still missing. Back up first (step 11.1) and select the rootless connection (step 5.2). The conversion works only when the old stack is in the rootless store. v0.1.x started it on your default connection, which can be the rootful one. In that case the script would find no stack and start a new, empty one in the rootless store, and nothing moves the old state over. Do this instead: back up the old stack, stop it with `podman --connection <name of the rootful connection> stop suiteward suiteward-db` (both stacks publish the ports 8081 and 8091), start the new one with step 5.4, and restore the backup into it ([the backup runbook](backup.md), co-located restore).
+**Converting a stack from v0.1.x.** A stack started by v0.1.x has one database secret, `suiteward-database-url`, and it holds the owner URL: that stack's service ran as the owner. Run the command of step 5.4 again with the new release's `-Image`, and the script converts it in place. It prints `Upgrading an existing stack: suiteward-database-url held the owner URL. Creating the role suiteward_app and replacing the secret with its URL; the owner URL is now in suiteward-database-owner-url and only the migrate container gets it.` Then it creates the secret `suiteward-database-owner-url`, creates the role with a new password, replaces `suiteward-database-url` by the application URL, and migrates. The data is untouched. A run that was interrupted repeats only what is still missing. Back up first (step 11.1) and select the rootless connection (step 5.2). The conversion works only when the old stack is in the rootless store. v0.1.x started it on your default connection, which can be the rootful one. In that case the script would find no stack and start a new, empty one in the rootless store, and nothing moves the old state over. Do this instead: back up the old stack, stop it with `podman --connection <name of the rootful connection> stop suiteward suiteward-db` (both stacks publish the ports 8081 and 8091), start the new one with step 5.4, and restore the backup into it ([the backup runbook](backup.md#co-located-restore)).
 
 ## 6. Run setup
 
@@ -639,29 +639,29 @@ podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-mcp-toke
 
 `podman secret create` refuses a name that exists. To replace a secret, remove it with `podman secret rm <name>`, create it again, and restart the service.
 
-**10.9 Pull the images and install the six unit files (as `suiteward`).** Pull the database image by its digest, then the release image:
+**10.9 Pull the images and install the six unit files (as `suiteward`).** Pull the database image by its digest:
 
 ```
 podman pull docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 ```
 
+Expect a digest line. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. The digest to pin is the one of the release's image index, which is what the release workflow signs. Take it from the release notes, or from the log of the workflow step "Sign the image index, verify the signature, then move latest-stable", which prints `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one, so the verification below fails and a pin on it names a single architecture.
+
+Verify it on any machine that has cosign 3.x, for example your own PC, from the release source (the host does not need cosign):
+
+``````
+pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>
+``````
+
+Expect `Verified: … was signed by the SuiteWard release workflow.` The script runs `cosign verify` with the fixed identity `^https://github\.com/IgnisDevNE/SuiteWard/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` and the issuer `https://token.actions.githubusercontent.com`; you can run `cosign verify --certificate-identity-regexp <identity> --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/ignisdevne/suiteward@sha256:<index>` yourself instead. If it fails, do not pin that digest.
+
+Then pull the release image by that digest. The index is multi-arch, so the same line works on amd64 and arm64:
+
 ```
-podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
+podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
 ```
 
-Expect a digest line for each pull. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. The pinning command below reads the digest of the pulled release image itself. Before you pin it, verify that the release workflow signed that digest. Print the digest on the host:
-
-``````
-podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z
-``````
-
-Then verify it on any machine that has cosign 3.x, for example your own PC, from the release source (the host does not need cosign):
-
-``````
-pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<digest>
-``````
-
-Expect `Verified: … was signed by the SuiteWard release workflow.` The script runs `cosign verify` with the fixed identity `^https://github\.com/IgnisDevNE/SuiteWard/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` and the issuer `https://token.actions.githubusercontent.com`; you can run `cosign verify --certificate-identity-regexp <identity> --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/ignisdevne/suiteward@sha256:<digest>` yourself instead. If it fails, do not pin that digest.
+Expect a digest line. If you pulled by tag instead (`ghcr.io/ignisdevne/suiteward:vX.Y.Z`), check that the tag points at the index you verified: `podman image inspect --format '{{json .RepoDigests}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z` must list `ghcr.io/ignisdevne/suiteward@sha256:<index>`.
 
 Create the directory:
 
@@ -695,10 +695,16 @@ cat > ~/.config/containers/systemd/suiteward-migrate.container
 cat > ~/.config/containers/systemd/suiteward.container
 ```
 
-Both `suiteward-migrate.container` and `suiteward.container` carry the placeholder `Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>`. They must name the same image, so replace the placeholder in both with the digest of the image you pulled. The chain reads the digest first and stops if it is empty, so it can never write an incomplete line:
+Both `suiteward-migrate.container` and `suiteward.container` carry the placeholder `Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>`. They must name the same image, so replace the placeholder in both with the index digest you verified. Set the digest, replacing `<index>` (the one you verified):
 
 ```
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z) && [ -n "$d" ] &&
+d=sha256:<index>
+```
+
+The chain stops unless `d` has the form of a digest, so it can never write an incomplete line:
+
+```
+[[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
 ```
 
@@ -851,7 +857,7 @@ An update always goes through the migration. The service never changes the schem
 
 **11.1 Back up first.** `suiteward migrate` changes the schema before the service starts, and migrations only go forward: an older image refuses to start on a newer schema, and nothing migrates it back. The only way back is the backup, so take one now. See [the backup runbook](backup.md). The backup holds the TOTP secret and the enrollment, so store it as a secret.
 
-**11.2 Pull the new release image.** Use the new `vX.Y.Z`. On the isolated host, run it as `suiteward`:
+**11.2 Pull the new release image.** Use the new `vX.Y.Z`. On the isolated host, run it as `suiteward`. You can pull by the index digest instead, as step 10.9 does:
 
 ```
 podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
@@ -863,10 +869,16 @@ podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
 cp -r ~/.config/containers/systemd ~/systemd-units-$(date +%Y%m%d-%H%M%S)
 ```
 
-Verify the signature of the digest you pulled, as step 10.9 says (`podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z`, then `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<digest>` on a machine with cosign 3.x). Then change BOTH `Image=` lines to the digest of the image you pulled in step 11.2, the one in `suiteward-migrate.container` and the one in `suiteward.container`. They must stay identical, because the migration must run the same release as the service. The chain reads the digest and stops if it is empty:
+Take the image index digest of the new release and verify its signature, as step 10.9 says (`pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` on a machine with cosign 3.x). If you pulled by tag in step 11.2, check that `podman image inspect --format '{{json .RepoDigests}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z` lists that digest. Then change BOTH `Image=` lines to the index digest, the one in `suiteward-migrate.container` and the one in `suiteward.container`. They must stay identical, because the migration must run the same release as the service. Set the digest, replacing `<index>`:
 
 ```
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z) && [ -n "$d" ] &&
+d=sha256:<index>
+```
+
+The chain stops unless `d` has the form of a digest:
+
+```
+[[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
 ```
 
@@ -929,7 +941,7 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
 
 6. Create the role and the new `suiteward-database-url`: run the chain and the check of step 10.11, which follow the wait for the healthy database. The database is already running. Do not run the earlier commands of step 10.11 again.
 7. Install the migration unit. Create `~/.config/containers/systemd/suiteward-migrate.container` and overwrite `suiteward.container`, from the new release's `deploy/quadlet/`, as in step 10.9: run `cat >` for each, paste, press Ctrl-D. Keep the `SUITEWARD_INSTALLATION_TIER` line your old unit had. The new `suiteward.container` has no `AutoUpdate=` line: the units are pinned by digest and nothing moves them by itself.
-8. Pin both units to the digest of the image you pulled, with the chain of step 11.3 and its check (it reads the digest itself, so do it in this step).
+8. Pin both units to the index digest of the release, with the chain of step 11.3 and its check (set `d` first, as that step says).
 9. Run the dry run of step 10.10, then reload and start. The new units are not active yet, so start the service, which starts the migration first:
 
    ```
@@ -962,7 +974,7 @@ On an isolated host, as `suiteward`:
    cp ~/systemd-units-<timestamp>/suiteward.container ~/.config/containers/systemd/suiteward.container
    ```
 
-   When you roll back to an earlier release of this layout, put its digest into both `Image=` lines instead (step 11.3).
+   When you roll back to an earlier release of this layout, put its image index digest into both `Image=` lines instead (step 11.3).
 3. When you roll back to v0.1.x, put the owner URL back into `suiteward-database-url`: that release runs the service as the owner and migrates inside it. The second command prints the ID of the new secret, not its value.
 
    ```
@@ -981,9 +993,9 @@ On an isolated host, as `suiteward`:
    systemctl --user daemon-reload
    ```
 
-5. Restore the data from the pre-upgrade backup, with steps 5 and 6 of [the runbook's isolated restore](backup.md#3-restore) (empty the database and load the dump, replace the artifact volume). The database is running, and it holds the roles: `suiteward_app` stays in the cluster, so a later upgrade finds it, and step 10.11 tells you what to run then.
+5. Restore the data from the pre-upgrade backup, with steps 5 and 6 of [the runbook's isolated restore](backup.md#isolated-restore) (empty the database and load the dump, replace the artifact volume). The database is running, and it holds the roles: `suiteward_app` stays in the cluster, so a later upgrade finds it, and step 10.11 tells you what to run then.
 
-6. Start the service. A v0.1.x release migrates inside its own process, as the owner; a release of this layout runs the migration unit first, on its own image. Then check `/readyz` and `/status` against the `status.json` of the backup (backup runbook, section 3, step 8):
+6. Start the service. A v0.1.x release migrates inside its own process, as the owner; a release of this layout runs the migration unit first, on its own image. Then check `/readyz` and `/status` against the `status.json` of the backup (backup runbook, isolated restore, step 8):
 
    ```
    systemctl --user start suiteward.service

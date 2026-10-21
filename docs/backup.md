@@ -2,9 +2,7 @@
 
 This runbook backs up one SuiteWard instance, restores it from a backup, and rebuilds it from the protected default branch when no backup can be used.
 
-There are two installation tiers. The **isolated** installation runs the quadlets on an AlmaLinux 9 host with `systemctl --user`, and its commands come first in each step. The **co-located** installation is the stack that `deploy/local.ps1` starts with Podman on a Windows PC, and its differences are noted under each step. Run the isolated commands as the user that runs the SuiteWard units (`suiteward`). Every command uses the names the installation creates: the containers `suiteward`, `suiteward-migrate` (the one-shot migration) and `suiteward-db`, the volumes `suiteward-data` and `suiteward-db-data`, and the database and its owner `suiteward`. The service connects as another role, `suiteward_app`.
-
-Co-located, run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.2](install.md#5-install-co-located)), and open the Podman machine as its rootless user: `podman machine ssh --username user`. The default ssh user is `root`, which is the rootful store and does not hold this stack.
+There are two installation tiers, and each section that has commands gives one complete flow for each, so follow only the flow of your tier. The **isolated** installation runs the quadlets on an AlmaLinux 9 host with `systemctl --user`, and its flows are bash, run as the user that runs the SuiteWard units (`suiteward`). The **co-located** installation is the stack that `deploy/local.ps1` starts with Podman on a Windows PC, and its flows are PowerShell. Every command uses the names the installation creates: the containers `suiteward`, `suiteward-migrate` (the one-shot migration) and `suiteward-db`, the volumes `suiteward-data` and `suiteward-db-data`, and the database and its owner `suiteward`. The service connects as another role, `suiteward_app`.
 
 ## 1. What a backup holds
 
@@ -29,7 +27,19 @@ Encrypted backup archives and a guided restore come after the MVP: see [ADR 0019
 
 ## 2. Back up
 
-Stop the service container, not the database, so that the database and the artifacts come from the same moment.
+Stop the service container, not the database, so that the database and the artifacts come from the same moment. Follow the flow of your tier from its first step to the last.
+
+### Isolated host (bash, as `suiteward`)
+
+The `suiteward` account has a `nologin` shell, so `sudo -iu suiteward` fails. As the administrator, open a shell as `suiteward` with a working user bus, as [step 10.1 of the install guide](install.md#10-running-on-a-separate-host-operators) does:
+
+```bash
+r=/run/user/$(id -u suiteward)
+sudo -u suiteward -H env XDG_RUNTIME_DIR=$r \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus bash
+```
+
+The command opens a new shell and waits for commands, so it prints nothing. Check it with `whoami`, which prints `suiteward`. Run every command of the isolated flows of sections 2 to 4 in this shell, and type `exit` to leave it.
 
 1. Stop the service.
 
@@ -37,7 +47,7 @@ Stop the service container, not the database, so that the database and the artif
    systemctl --user stop suiteward.service
    ```
 
-   Expect no output. `suiteward-db` keeps running, and `suiteward-migrate.service` stays active (it has finished its work and does not run again when the service starts). Co-located: `podman stop suiteward`.
+   Expect no output. `suiteward-db` keeps running, and `suiteward-migrate.service` stays active (it has finished its work and does not run again when the service starts).
 
 2. Dump the database as its owner, `suiteward`, which the command below uses over the container's local socket. The dump is plain SQL, so restoring it needs only `psql`.
 
@@ -49,11 +59,7 @@ Stop the service container, not the database, so that the database and the artif
    podman exec suiteward-db pg_dump -U suiteward -d suiteward > ~/suiteward-backup/suiteward.sql
    ```
 
-   Expect no output and a file that starts with `--` comment lines. Do not add `-t` to `podman exec`: a terminal changes the bytes. Co-located: `New-Item -ItemType Directory -Force -Path $HOME\suiteward-backup`, then run the dump through `cmd`, which writes the bytes unchanged. The host path is quoted inside the `cmd` string, so a profile path with a space works:
-
-   ```powershell
-   cmd /c "podman exec suiteward-db pg_dump -U suiteward -d suiteward > `"$HOME\suiteward-backup\suiteward.sql`""
-   ```
+   Expect no output and a file that starts with `--` comment lines. Do not add `-t` to `podman exec`: a terminal changes the bytes.
 
 3. Export the artifact volume to a tarball.
 
@@ -61,7 +67,7 @@ Stop the service container, not the database, so that the database and the artif
    podman volume export suiteward-data --output ~/suiteward-backup/suiteward-artifacts.tar
    ```
 
-   Expect no output. Co-located: the same command, with `--output $HOME\suiteward-backup\suiteward-artifacts.tar`.
+   Expect no output.
 
 4. Start the service.
 
@@ -69,7 +75,7 @@ Stop the service container, not the database, so that the database and the artif
    systemctl --user start suiteward.service
    ```
 
-   Expect no output. Co-located: `podman start suiteward`.
+   Expect no output.
 
 5. Wait until the service is ready, then check `/status` and save it next to the files. Its `version` is the version of these files, and the restore is checked against this saved copy.
 
@@ -83,7 +89,86 @@ Stop the service container, not the database, so that the database and the artif
    curl -sS -o ~/suiteward-backup/status.json http://127.0.0.1:8081/status
    ```
 
-   Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`. Co-located: the same two commands with `curl.exe`, and `-o $HOME\suiteward-backup\status.json` for the file. The port is published inside the Podman machine and may not answer from Windows, as `deploy/local.ps1` notes when it starts the stack. A `curl.exe` that cannot connect keeps retrying for minutes: stop it with Ctrl-C, then run both commands through the machine as its rootless user, redirecting on the Windows side to save the file:
+   Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`.
+
+6. Keep a copy of the backup folder off this machine, offline and encrypted, as the warning in section 1 says. How you copy the files depends on how you reach the host. If you reach it only through a remote shell that cannot copy files, serve the folder on the host's loopback, forward that port to your PC with your remote-access tool, download each file, then stop both. Start the server in the host shell. It stays in the foreground, and the shell waits until you stop it with Ctrl-C:
+
+   ```bash
+   python3 -m http.server <port> --bind 127.0.0.1 --directory ~/suiteward-backup
+   ```
+
+   The forwarding command depends on your remote-access tool. With AWS Systems Manager, for example, and `<port>` set to 8000, run this on the machine that has the AWS CLI and your credentials (quoted for a POSIX shell or PowerShell 7). It stays open while the forward works:
+
+   ```
+   aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["8000"],"localPortNumber":["18000"]}'
+   ```
+
+   Pick a free local port for the forward (18000 here): a port already in use locally can reset every connection. In a second terminal on the same machine, download each file, once for `suiteward.sql`, `suiteward-artifacts.tar` and `status.json`:
+
+   ```
+   curl -fsS -o <file> http://127.0.0.1:18000/<file>
+   ```
+
+   Compare the file sizes with `ls -l ~/suiteward-backup` on the host. Then stop the forward (Ctrl-C in its terminal) and the server (Ctrl-C in the host shell).
+
+> [!WARNING]
+> While the server and the forward run, any local user of either machine can read the files, and `suiteward.sql` holds the TOTP secret. Do this only on machines only you use, and stop both as soon as the download ends.
+
+### Co-located PC (PowerShell)
+
+Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.2](install.md#5-install-co-located)).
+
+1. Stop the service.
+
+   ```powershell
+   podman stop suiteward
+   ```
+
+   Expect `suiteward`.
+
+2. Dump the database as its owner, `suiteward`. The dump is plain SQL, so restoring it needs only `psql`. Create the folder, then run the dump through `cmd`, which writes the bytes unchanged. The host path is quoted inside the `cmd` string, so a profile path with a space works.
+
+   ```powershell
+   New-Item -ItemType Directory -Force -Path $HOME\suiteward-backup
+   ```
+
+   ```powershell
+   cmd /c "podman exec suiteward-db pg_dump -U suiteward -d suiteward > `"$HOME\suiteward-backup\suiteward.sql`""
+   ```
+
+   Expect no output from the dump and a file that starts with `--` comment lines. Do not add `-t` to `podman exec`: a terminal changes the bytes.
+
+3. Export the artifact volume to a tarball.
+
+   ```powershell
+   podman volume export suiteward-data --output $HOME\suiteward-backup\suiteward-artifacts.tar
+   ```
+
+   Expect no output.
+
+4. Start the service.
+
+   ```powershell
+   podman start suiteward
+   ```
+
+   Expect `suiteward`.
+
+5. Wait until the service is ready, then check `/status` and save it next to the files. Its `version` is the version of these files, and the restore is checked against this saved copy.
+
+   ```powershell
+   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   ```
+
+   Expect `{"schemaVersion":N,"status":"ready"}`. The service needs a moment after the start, and the command retries while nothing answers.
+
+   ```powershell
+   curl.exe -sS -o $HOME\suiteward-backup\status.json http://127.0.0.1:8081/status
+   ```
+
+   Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`.
+
+   The port is published inside the Podman machine and may not answer from Windows, as `deploy/local.ps1` notes when it starts the stack. A `curl.exe` that cannot connect keeps retrying for minutes: stop it with Ctrl-C, then run both commands through the Podman machine as its rootless user, `podman machine ssh --username user` (the default ssh user is `root`, which is the rootful store and does not hold this stack). Redirect on the Windows side to save the file:
 
    ```powershell
    podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz"
@@ -94,14 +179,6 @@ Stop the service container, not the database, so that the database and the artif
    ```
 
 6. Keep a copy of the backup folder off this machine, offline and encrypted, as the warning in section 1 says. No command.
-
-   Operator note, for a host you reach only through a remote shell that cannot copy files: serve the folder on the host's loopback, forward that port to your PC with your remote-access tool, download each file, then stop both.
-
-   ```bash
-   python3 -m http.server <port> --bind 127.0.0.1 --directory ~/suiteward-backup
-   ```
-
-   Pick a free local port for the forward: a port already in use locally can reset every connection. Download `suiteward.sql`, `suiteward-artifacts.tar` and `status.json` from `http://127.0.0.1:<local port>/`, then stop the forward and the server (Ctrl-C). The forwarding command depends on your remote-access tool. While both run, any local user of either machine can read the files, and `suiteward.sql` holds the TOTP secret. So do this on machines only you use, stop both as soon as the download ends, and compare the file sizes with `ls -l` on the host.
 
 ## 3. Restore
 
@@ -114,7 +191,11 @@ Restore with the **same SuiteWard version** that made the backup. Migrations mov
 
 The one exception is a backup made by v0.1.x. That release has no `migrate` command, and the units and `deploy/local.ps1` of this layout run it, so they cannot start the v0.1.x image. Restore such a backup with the release you upgrade to: its migration brings the restored schema forward. `/status` then shows the new `version` and `schemaVersion`, and the same `owner`.
 
-Check the backup before anything is replaced:
+Follow the flow of your tier. Each one starts by checking the backup before anything is replaced.
+
+### Isolated restore
+
+Run the commands in the shell of the `suiteward` account, which [section 2](#isolated-host-bash-as-suiteward) opens.
 
 1. Check that the dump is complete.
 
@@ -122,7 +203,7 @@ Check the backup before anything is replaced:
    grep -c "PostgreSQL database dump complete" ~/suiteward-backup/suiteward.sql
    ```
 
-   Expect `1`. Any other count means the dump was cut short, and you must not restore from it. Co-located: `Select-String -Path $HOME\suiteward-backup\suiteward.sql -Pattern 'PostgreSQL database dump complete' -Quiet`, which prints `True`.
+   Expect `1`. Any other count means the dump was cut short, and you must not restore from it.
 
 2. Check that the artifact archive can be read.
 
@@ -130,22 +211,32 @@ Check the backup before anything is replaced:
    tar -tf ~/suiteward-backup/suiteward-artifacts.tar
    ```
 
-   Expect a list of entries under `artifacts/` and no error. Co-located: `tar -tf $HOME\suiteward-backup\suiteward-artifacts.tar`.
+   Expect a list of entries under `artifacts/` and no error.
 
-**Isolated restore**
+3. Pin both units to the backup's version, by the digest of its signed image index. The version is the `version` value in `status.json`. Take the index digest of that release from its release notes, or from the log of the release workflow's step "Sign the image index, verify the signature, then move latest-stable", which prints `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one. Verify it on a machine with cosign 3.x, as [step 10.9 of the install guide](install.md#10-running-on-a-separate-host-operators) says (the host does not need cosign):
 
-3. Pin both units to the backup's version, by the digest of its image. Pull the image, set the `Image=` line of BOTH `suiteward-migrate.container` and `suiteward.container` to its digest, check them, then reload the units. They must name the same image.
-
-   ```bash
-   podman pull ghcr.io/ignisdevne/suiteward:<version>
+   ```
+   pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>
    ```
 
-   The chain reads the digest and stops if it is empty, so it never writes an incomplete line:
+   If it fails, do not pin that digest. Then, on the host, pull the image by the digest. The index is multi-arch, so the same line works on amd64 and arm64:
 
    ```bash
-   d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:<version>) && [ -n "$d" ] &&
+   podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
+   ```
+
+   Set the digest, replacing `<index>`, then set the `Image=` line of BOTH `suiteward-migrate.container` and `suiteward.container` to it. They must name the same image. The chain stops unless `d` has the form of a digest, so it never writes an incomplete line:
+
+   ```bash
+   d=sha256:<index>
+   ```
+
+   ```bash
+   [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
    sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
    ```
+
+   Check them, then reload the units:
 
    ```bash
    grep -c '^Image=ghcr.io/ignisdevne/suiteward@sha256:[0-9a-f]\{64\}$' ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
@@ -155,7 +246,9 @@ Check the backup before anything is replaced:
    systemctl --user daemon-reload
    ```
 
-   Expect `1` for each of the two files from the `grep`, and no output from the others. A `0` means a pin is missing or malformed: run the chain again. The sed command names the two files: never run it on every `*.container` file, because it would also touch the database unit.
+   Expect `1` for each of the two files from the `grep`, and no output from the others. A `0` means a pin is missing or malformed, or `d` was not a digest: run the chain again. The sed command names the two files: never run it on every `*.container` file, because it would also touch the database unit.
+
+   If you pulled by tag instead, `podman image inspect --format '{{json .RepoDigests}}' ghcr.io/ignisdevne/suiteward:<version>` must list `ghcr.io/ignisdevne/suiteward@sha256:<index>`.
 
 4. Stop the service and the migration, and make sure the database runs. Stopping the migration unit as well makes the start in step 7 run it again.
 
@@ -187,11 +280,7 @@ Check the backup before anything is replaced:
    podman exec -i suiteward-db psql -U suiteward -d suiteward -v ON_ERROR_STOP=1 < ~/suiteward-backup/suiteward.sql
    ```
 
-   Expect `CREATE TABLE`, `COPY` and similar lines, and no `ERROR`. `ON_ERROR_STOP` ends the load at the first error. Co-located: the same two commands in PowerShell, with the load run through `cmd`. The host path is quoted inside the `cmd` string, so a profile path with a space works:
-
-   ```powershell
-   cmd /c "podman exec -i suiteward-db psql -U suiteward -d suiteward -v ON_ERROR_STOP=1 < `"$HOME\suiteward-backup\suiteward.sql`""
-   ```
+   Expect `CREATE TABLE`, `COPY` and similar lines, and no `ERROR`. `ON_ERROR_STOP` ends the load at the first error.
 
 6. Replace the artifact volume. Remove it, let the Quadlet unit for `suiteward-data.volume` create it empty, then import the tarball into the empty volume.
 
@@ -207,7 +296,7 @@ Check the backup before anything is replaced:
    podman volume import suiteward-data ~/suiteward-backup/suiteward-artifacts.tar
    ```
 
-   Expect the first command to print `suiteward-data`, and the other two to print nothing. Use `restart`, not `start`: the volume unit stays active after its first run, so `start` does nothing. The unit only creates the volume; it does not start the service. Co-located: there is no volume unit, so use the co-located restore below.
+   Expect the first command to print `suiteward-data`, and the other two to print nothing. Use `restart`, not `start`: the volume unit stays active after its first run, so `start` does nothing. The unit only creates the volume; it does not start the service.
 
 7. Run the migration, then start the service. The migration unit applies the grants to `suiteward_app` again, which the restore replaced, and it applies any migration the dump lacks (a backup from v0.1.x gets all of them here). The service starts only after the migration exited with code 0.
 
@@ -233,21 +322,39 @@ Check the backup before anything is replaced:
    curl -sS http://127.0.0.1:8081/status
    ```
 
-   Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts, right after each promotion and then every hour, so wait a moment for it. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup. Co-located: `curl.exe` in place of `curl`, or the machine commands of section 2, step 5 when `127.0.0.1:8081` does not answer from Windows.
+   Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts, right after each promotion and then every hour, so wait a moment for it. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup.
 
-9. Return the units to your update path. Step 3 pinned both `Image=` lines to the backup's version, and the stack stays on that version until you change them. The install guide's [Updating](install.md#11-updating) gives the way: pull the new release, set BOTH `Image=` lines to its digest, reload the units and restart `suiteward-migrate.service`, which migrates and restarts the service. Update when you choose, with a fresh backup first. Never leave `suiteward-migrate` on a newer image than the one the service runs, and never restart `suiteward.service` alone after changing an image: the service refuses a schema that is not the one of its image. Automatic updates are not supported. After step 3 the units are already loaded; if you edited them again, reload them:
+9. Return the units to your update path. Step 3 pinned both `Image=` lines to the backup's version, and the stack stays on that version until you change them. The install guide's [Updating](install.md#11-updating) gives the way: pull the new release, set BOTH `Image=` lines to its index digest, reload the units and restart `suiteward-migrate.service`, which migrates and restarts the service. Update when you choose, with a fresh backup first. Never leave `suiteward-migrate` on a newer image than the one the service runs, and never restart `suiteward.service` alone after changing an image: the service refuses a schema that is not the one of its image. Automatic updates are not supported. After step 3 the units are already loaded; if you edited them again, reload them:
 
    ```bash
    systemctl --user daemon-reload
    ```
 
-   Expect no output. Co-located: there is nothing to return, because each update names its own `-Image`.
+   Expect no output.
 
-**Co-located restore**
+### Co-located restore
 
-The co-located stack creates its volumes and roles only when the script runs, and a run also starts the service. So the restore begins with an empty installation of the same version (the release you upgrade to, for a backup from v0.1.x: see the start of this section), instead of pinning the image and replacing the volume. The script creates the roles `suiteward` and `suiteward_app`, migrates, and starts the service:
+Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.2](install.md#5-install-co-located)), from the repository root.
 
-1. Purge the stack, then reinstall the same version from the repository root. This replaces isolated steps 3 and 4 and the volume part of step 6.
+The co-located stack creates its volumes and roles only when the script runs, and a run also starts the service. So after the two checks, the restore begins with an empty installation of the same version (the release you upgrade to, for a backup from v0.1.x: see the start of this section), instead of pinning the image and replacing the volume. The script creates the roles `suiteward` and `suiteward_app`, migrates, and starts the service.
+
+1. Check that the dump is complete.
+
+   ```powershell
+   Select-String -Path $HOME\suiteward-backup\suiteward.sql -Pattern 'PostgreSQL database dump complete' -Quiet
+   ```
+
+   Expect `True`. Anything else means the dump was cut short, and you must not restore from it.
+
+2. Check that the artifact archive can be read.
+
+   ```powershell
+   tar -tf $HOME\suiteward-backup\suiteward-artifacts.tar
+   ```
+
+   Expect a list of entries under `artifacts/` and no error.
+
+3. Purge the stack, then reinstall the same version.
 
    ```powershell
    ./deploy/local.ps1 -Down -Purge
@@ -259,27 +366,29 @@ The co-located stack creates its volumes and roles only when the script runs, an
 
    Give the GitHub flags only if this stack uses GitHub. The purge removes the volumes, the secrets and the MCP token. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`. Expect the line `database migrated` from the migration, then `Started suiteward-db and suiteward`. The service starts on an empty database with the schema of this release, and the next steps replace that schema.
 
-2. Stop the service.
+4. Stop the service.
 
    ```powershell
    podman stop suiteward
    ```
 
-3. Empty the database, then load the dump. The load runs through `cmd`, with the host path quoted inside the `cmd` string so a profile path with a space works.
+   Expect `suiteward`.
+
+5. Empty the database, then load the dump. The load runs through `cmd`, with the host path quoted inside the `cmd` string so a profile path with a space works. Emptying the `public` schema empties the database, and this deletes the database's current content.
 
    ```powershell
    podman exec suiteward-db psql -U suiteward -d suiteward -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE" -c "CREATE SCHEMA public"
    ```
 
-   Expect the `NOTICE` lines, `DROP SCHEMA` and `CREATE SCHEMA` of isolated step 5.
+   Expect `NOTICE` lines that name what `DROP SCHEMA public CASCADE` drops (`drop cascades to ...`). They are not errors. Then expect `DROP SCHEMA` and `CREATE SCHEMA`.
 
    ```powershell
    cmd /c "podman exec -i suiteward-db psql -U suiteward -d suiteward -v ON_ERROR_STOP=1 < `"$HOME\suiteward-backup\suiteward.sql`""
    ```
 
-   Expect `CREATE TABLE`, `COPY` and similar lines, and no `ERROR`.
+   Expect `CREATE TABLE`, `COPY` and similar lines, and no `ERROR`. `ON_ERROR_STOP` ends the load at the first error.
 
-4. Import the artifacts into the empty volume.
+6. Import the artifacts into the empty volume.
 
    ```powershell
    podman volume import suiteward-data $HOME\suiteward-backup\suiteward-artifacts.tar
@@ -287,13 +396,27 @@ The co-located stack creates its volumes and roles only when the script runs, an
 
    Expect no output.
 
-5. Run the same install command of step 1 again, with the same `-Image` and GitHub flags. It replaces the stopped service, runs the migration again (it applies the grants to `suiteward_app` and any migration the dump lacks), and starts the service on the restored data. The secrets and volumes it finds are kept, and the App key file is not read again.
+7. Run the same install command of step 3 again, with the same `-Image` and GitHub flags. It replaces the stopped service, runs the migration again (it applies the grants to `suiteward_app` and any migration the dump lacks), and starts the service on the restored data. The secrets and volumes it finds are kept, and the App key file is not read again.
 
    ```powershell
    ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:<version> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
    ```
 
-6. Wait until the service is ready, then check `/status` as in isolated step 8, with `curl.exe`. If `127.0.0.1:8081` does not answer from Windows, run both commands through the machine, as in section 2, step 5:
+8. Wait until the service is ready, then check `/status` against `status.json`.
+
+   ```powershell
+   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   ```
+
+   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers.
+
+   ```powershell
+   curl.exe -sS http://127.0.0.1:8081/status
+   ```
+
+   Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts, right after each promotion and then every hour, so wait a moment for it. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup.
+
+   If `127.0.0.1:8081` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run both commands through the Podman machine, as its rootless user, as in section 2, step 5:
 
    ```powershell
    podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz"
@@ -303,6 +426,8 @@ The co-located stack creates its volumes and roles only when the script runs, an
    podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status"
    ```
 
+There is nothing to return to an update path afterwards, because each update names its own `-Image`.
+
 ## 4. Re-bootstrap from the protected default branch
 
 Use this when no backup can be restored. The protected files are already on each repository's default branch, so the first contract is proposed again from them. The commands and their replies are those of the install guide's [First use: bootstrap](install.md#8-first-use-bootstrap), and the [runtime contract](contracts/runtime.md#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16) is normative.
@@ -310,7 +435,13 @@ Use this when no backup can be restored. The protected files are already on each
 > [!WARNING]
 > You lose the version history, the ledgers, the old enrollment and its TOTP secret, and the proposal history. Open pull requests wait for the new contract: their `SuiteWard / Contract` check stays pending (`bootstrap-awaiting`) until V1 exists. The protected files themselves stay in git, on the default branch.
 
-1. Purge the instance. Stop the three units and remove the volumes. The secrets stay: the owner password secret initialises the new database on its first start. The application role lived in the removed database volume, so step 2 creates it again.
+Follow the flow of your tier up to its readiness check, then continue with [enroll, propose and approve](#enroll-propose-and-approve-both-tiers), which is the same for both.
+
+### Isolated re-bootstrap
+
+Run the commands in the shell of the `suiteward` account, which [section 2](#isolated-host-bash-as-suiteward) opens.
+
+1. Purge the instance. Stop the three units and remove the volumes. The secrets stay: the owner password secret initialises the new database on its first start. The application role lived in the removed database volume, so step 3 creates it again.
 
    ```bash
    systemctl --user stop suiteward.service suiteward-migrate.service suiteward-db.service
@@ -320,9 +451,7 @@ Use this when no backup can be restored. The protected files are already on each
    podman volume rm --force suiteward-db-data suiteward-data
    ```
 
-   Co-located: `./deploy/local.ps1 -Down -Purge`, which also removes the secrets and the MCP token.
-
-2. Install the same version again. Check that both `Image=` lines, in `suiteward-migrate.container` and in `suiteward.container`, name the same digest of `ghcr.io/ignisdevne/suiteward:<version>`, reload the units, and start the database alone.
+2. Install the same version again. Check that both `Image=` lines, in `suiteward-migrate.container` and in `suiteward.container`, name the same digest, the signed image index digest of `ghcr.io/ignisdevne/suiteward:<version>` (step 3 of the isolated restore says where to find it and how to verify it). Reload the units, and start the database alone.
 
    ```bash
    grep ^Image= ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
@@ -336,13 +465,15 @@ Use this when no backup can be restored. The protected files are already on each
    systemctl --user start suiteward-db.service
    ```
 
-   Create the application role again. The new role gets a new password, so remove the old URL secret first:
+3. Create the application role again. The new role gets a new password, so remove the old URL secret first:
 
    ```bash
    podman secret rm suiteward-database-url
    ```
 
-   Then run the wait for the healthy database, the role chain and the check of [step 10.11 of the install guide](install.md#10-running-on-a-separate-host-operators). Do not run that step's `daemon-reload` and start commands again. Then start the service. It runs the migration first, and the migration needs the role:
+   Then run the wait for the healthy database, the role chain and the check of [step 10.11 of the install guide](install.md#10-running-on-a-separate-host-operators). Do not run that step's `daemon-reload` and start commands again.
+
+4. Start the service. It runs the migration first, and the migration needs the role:
 
    ```bash
    systemctl --user start suiteward.service
@@ -354,19 +485,53 @@ Use this when no backup can be restored. The protected files are already on each
    curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
    ```
 
-   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers. Co-located: run the second command of the co-located restore (section 3, step 1) with the same version and the GitHub flags: it creates both roles and migrates. Then wait for readiness with `curl.exe`, or through the machine when `127.0.0.1:8081` does not answer from Windows.
+   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers.
 
-3. Run `setup` once for the instance, not once for each repository: it enrolls one owner for all of them, and every run replaces the TOTP secret. This starts a new enrollment: the new entry is named `SuiteWard:<login> (<tier> <instance>)`, and the database is new, so its instance id (shown as `instance` in `/status`) differs from the old one. Before you scan the new entry, delete the old entry of this instance, the one with the old id in its name. Entries of other instances stay. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted. It needs the GitHub settings in place: the isolated host reads them from `/etc/suiteward/github.env`, and the co-located stack has them only when it was started with its GitHub parameters (step 2).
+### Co-located re-bootstrap
 
-   ```bash
+Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.2](install.md#5-install-co-located)), from the repository root.
+
+1. Purge the stack. This removes the volumes, the secrets and the MCP token.
+
+   ```powershell
+   ./deploy/local.ps1 -Down -Purge
+   ```
+
+2. Install the same version again, with the GitHub flags: the script creates both roles, migrates, and starts the service. Give the GitHub flags only if this stack uses GitHub. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`.
+
+   ```powershell
+   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:<version> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
+   ```
+
+   Expect the line `database migrated` from the migration, then `Started suiteward-db and suiteward`.
+
+3. Wait until the service is ready.
+
+   ```powershell
+   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   ```
+
+   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers. If `127.0.0.1:8081` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run the check through the Podman machine, as its rootless user, as in section 2, step 5:
+
+   ```powershell
+   podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz"
+   ```
+
+### Enroll, propose and approve (both tiers)
+
+These steps are the same on both tiers. Run the first one in the shell of your flow: the `suiteward` shell of the isolated host, or the PowerShell session of the co-located PC.
+
+1. Run `setup` once for the instance, not once for each repository: it enrolls one owner for all of them, and every run replaces the TOTP secret. This starts a new enrollment: the new entry is named `SuiteWard:<login> (<tier> <instance>)`, and the database is new, so its instance id (shown as `instance` in `/status`) differs from the old one. Before you scan the new entry, delete the old entry of this instance, the one with the old id in its name. Entries of other instances stay. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted. It needs the GitHub settings in place: the isolated host reads them from `/etc/suiteward/github.env`, and the co-located stack has them only when it was started with its GitHub parameters.
+
+   ```
    podman exec -it suiteward /suiteward setup --owner <your GitHub login> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
    ```
 
    Give exactly one `--test-check` for each configured repository (those of `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env`, or the `-GitHubRepositories` you gave `deploy/local.ps1`), in single quotes as shown, because a check name can hold spaces and slashes. `<check name>` is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset, never `SuiteWard / Contract`. A missing, extra or duplicate `--test-check` is a usage error, and nothing is written.
 
-   Setup is interactive: run it yourself in a real terminal, with any recording of the session turned off, because it prints the TOTP secret and its `otpauth://` URI there. It looks up your login and every repository first, then waits for you to press Enter before it generates the secret. After that it prints the secret and the URI once, asks for a code, and prints the protection result of each repository. Co-located: the same command, in PowerShell, where the single quotes work the same way.
+   Setup is interactive: run it yourself in a real terminal, with any recording of the session turned off, because it prints the TOTP secret and its `otpauth://` URI there. It looks up your login and every repository first, then waits for you to press Enter before it generates the secret. After that it prints the secret and the URI once, asks for a code, and prints the protection result of each repository. The command is the same in bash and in PowerShell, where the single quotes work the same way.
 
-4. Propose on each repository. On an open pull request whose base is the default branch, comment `/suiteward propose`. It needs no code and grants nothing by itself. The source decides the baseline:
+2. Propose on each repository. On an open pull request whose base is the default branch, comment `/suiteward propose`. It needs no code and grants nothing by itself. The source decides the baseline:
 
    - When the default branch holds `.suiteward.yml`, the proposal is a `branch` baseline, pinned at the default branch's commit, which the proposal comment shows as its origin.
    - Otherwise, when the head of the pull request holds `.suiteward.yml`, the proposal falls back to a `pull` baseline from that head, decided when this pull request merges.
@@ -377,18 +542,18 @@ Use this when no backup can be restored. The protected files are already on each
 > [!WARNING]
 > Before you approve, review the origin commit and the list of protected files in the proposal comment. A `branch` baseline adopts whatever the default branch holds now, including merges that nobody assessed after the state was lost.
 
-5. Approve the revision the proposal comment names, with a fresh 6-digit code from your authenticator app: `/suiteward approve P<n>-R<m> <code>`. `setup` consumed the step it verified, and a code that was already used is refused. A code is spent by the first command that uses it, so wait for the next code before you approve the next repository.
+3. Approve the revision the proposal comment names, with a fresh 6-digit code from your authenticator app: `/suiteward approve P<n>-R<m> <code>`. `setup` consumed the step it verified, and a code that was already used is refused. A code is spent by the first command that uses it, so wait for the next code before you approve the next repository.
 
    - A `branch` baseline becomes V1 by itself, with no merge. V1 can take up to about a minute to appear, and the bot then comments `Bootstrap complete: P<n>-R1, approved by <owner>, is now canonical version V1.`
    - A `pull` baseline becomes V1 only from the exact merge commit of that pull request, after it merges. A push that changes a protected file in that pull request cancels the proposal: comment `/suiteward propose` again.
 
-6. Read `/status`. Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error. Co-located: steps 3 to 6 are the same, and `/status` may need the machine commands of section 2, step 5.
+4. Read `/status`, with the command of your flow's readiness check: put `/status` in place of `/readyz` and leave out the retry options. Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error.
 
 ## 5. Rehearse on the co-located stack
 
-Rehearse before you rely on a backup. The rehearsal purges the stack, so use a test repository and a stack whose data you can lose. It also confirms that the co-located commands work with your Podman version.
+Rehearse before you rely on a backup. The rehearsal purges the stack, so use a test repository and a stack whose data you can lose. It also confirms that the co-located commands work with your Podman version. Every step is the co-located flow, in PowerShell.
 
-- [ ] Back up (section 2), and copy the backup folder to a second place.
+- [ ] Back up ([section 2, co-located PC](#co-located-pc-powershell)), and copy the backup folder to a second place.
 - [ ] Keep `status.json`: it is the before state.
-- [ ] Purge, reinstall the same version, and restore (section 3, co-located restore).
+- [ ] Purge, reinstall the same version, and restore ([section 3, co-located restore](#co-located-restore)).
 - [ ] Compare `/status` with `status.json`: the same `version`, `schemaVersion` and `owner`; `integrity` `passed` in each `github` entry; `outbox.failed` 0.

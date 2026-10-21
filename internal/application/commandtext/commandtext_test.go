@@ -75,7 +75,6 @@ func TestParse(t *testing.T) {
 		{"text before and after", "LGTM\n/suiteward approve P3-R1 333333\nShip it.\n/other text", command(commandtext.Approve, 3, 1, "333333")},
 		{"after a closed fence", "```\n/suiteward approve P9-R9 999999\n```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a closed tilde fence", "~~~~sh\n/suiteward revoke P9-R9 999999\n~~~~\n/suiteward revoke P1-R2 121212", command(commandtext.Revoke, 1, 2, "121212")},
-		{"after a list item fence that closes", "- ```\n  code\n  ```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a fence closed with three columns", "```\n/suiteward approve P9-R9 999999\n   ```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"a dash that is no list marker opens nothing", "---\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a longer closing fence", "```\n/suiteward approve P9-R9 999999\n`````\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
@@ -135,6 +134,10 @@ func TestParse(t *testing.T) {
 		{"a tilde fence in a starred list item", "* ~~~\n  /suiteward revoke P1-R1 123456", notCommand},
 		{"a fence in a block quote skips the line after it", "> ```\n/suiteward approve P1-R1 123456", notCommand},
 		{"a fence in a quoted list item", "> - ```\n>   /suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a list item that a bare fence ends", "- ```\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a quote that a bare fence ends", "> ```\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a numbered item that a less indented fence ends", "1. ```\n  ```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a list item runs to the end of the body", "- ```\n  code\n  ```\n/suiteward approve P1-R2 121212", notCommand},
 
 		// Malformed.
 		{"bare prefix", "/suiteward", malformed(commandtext.UnknownVerb)},

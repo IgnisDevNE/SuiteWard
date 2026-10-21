@@ -111,7 +111,7 @@ foreach ($case in @(
 }
 $workflow=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/ci.yml')).Replace("`r",'')
 $coverageJob=[regex]::Match($workflow,'(?ms)^  coverage:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
-foreach($required in @('services:', 'postgres:', 'postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722', 'pg_isready', 'SUITEWARD_TEST_DATABASE_URL:', './scripts/check-go.ps1 -Coverage -Integration')) {
+foreach($required in @('services:', 'postgres:', 'postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336', 'pg_isready', 'SUITEWARD_TEST_DATABASE_URL:', './scripts/check-go.ps1 -Coverage -Integration')) {
     if(-not $coverageJob.Contains($required)){throw "Required real PostgreSQL coverage verification is absent: $required"}
     $checks++
 }

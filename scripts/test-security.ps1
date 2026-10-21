@@ -18,6 +18,12 @@ try {
     Set-Content -LiteralPath $workflow -Value $clean
     Invoke-Git add -A; Invoke-Git commit -q -m clean
     if (-not (Invoke-Scan).Passed) { throw 'A clean repository was rejected.' }
+    # A pull request must not switch the scanners off by adding their own configuration or ignore files.
+    foreach ($config in '.gitleaks.toml', '.gitleaksignore', 'zizmor.yml', '.github/zizmor.yml') {
+        Set-Content -LiteralPath (Join-Path $testRoot $config) -Value ''
+        if ((Invoke-Scan).Passed) { throw "The scan accepted a $config file." }
+        Remove-Item -LiteralPath (Join-Path $testRoot $config)
+    }
     # An action referenced by a mutable tag is something zizmor flags without network access.
     Set-Content -LiteralPath $workflow -Value ($clean + "      - uses: actions/checkout@v4`n")
     Invoke-Git add -A; Invoke-Git commit -q -m unpinned

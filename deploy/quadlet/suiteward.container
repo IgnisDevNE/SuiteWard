@@ -4,8 +4,8 @@
 Description=SuiteWard
 Wants=network-online.target
 After=network-online.target
-Requires=suiteward-migrate.container
-After=suiteward-migrate.container
+Requires=suiteward-migrate.service
+After=suiteward-migrate.service
 StartLimitIntervalSec=0
 
 [Container]

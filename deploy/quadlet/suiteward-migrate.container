@@ -6,8 +6,8 @@
 Description=SuiteWard database migration
 Wants=network-online.target
 After=network-online.target
-Requires=suiteward-db.container
-After=suiteward-db.container
+Requires=suiteward-db.service
+After=suiteward-db.service
 StartLimitIntervalSec=0
 
 [Container]

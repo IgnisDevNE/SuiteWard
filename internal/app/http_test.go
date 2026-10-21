@@ -19,14 +19,20 @@ import (
 )
 
 type fakeStore struct {
-	version    int64
-	versionErr error
-	counts     postgres.Counts
-	countsErr  error
+	version     int64
+	versionErr  error
+	counts      postgres.Counts
+	countsErr   error
+	instanceErr error
 }
 
 func (f fakeStore) SchemaVersion(context.Context) (int64, error)    { return f.version, f.versionErr }
 func (f fakeStore) Counts(context.Context) (postgres.Counts, error) { return f.counts, f.countsErr }
+
+// testInstance is the instance id of every fakeStore: 32 hex characters, like the store's.
+const testInstance = "1a2b3c4d5e6f708192a3b4c5d6e7f809"
+
+func (f fakeStore) Instance(context.Context) (string, error) { return testInstance, f.instanceErr }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
@@ -83,11 +89,20 @@ func TestStatusReportsEveryStateEvenAtZero(t *testing.T) {
 		Outbox: map[string]int64{"delivered": 2},
 	}}}
 	code, body := call(t, a, http.MethodGet, "/status")
-	want := `{"version":"` + Version + `","schemaVersion":10,"tier":"isolated",
+	want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":10,"tier":"isolated",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":3,"discarded":1},
 		"outbox":{"pending":0,"delivered":2,"failed":0}}`
 	if code != http.StatusOK || !jsonEqual(t, body, want) {
 		t.Fatalf("GET /status = %d %s; want 200 %s", code, body, want)
+	}
+}
+
+func TestStatusNamesTheInstanceByItsShortId(t *testing.T) {
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10}}
+	code, body := call(t, a, http.MethodGet, "/status")
+	var got map[string]any
+	if err := json.Unmarshal([]byte(body), &got); err != nil || code != http.StatusOK || got["instance"] != "1a2b3c4d" {
+		t.Fatalf("GET /status = %d %s; want 200 with instance 1a2b3c4d, the id setup puts in the authenticator entry", code, body)
 	}
 }
 
@@ -119,6 +134,7 @@ func TestStatusIsUnavailableWhenTheStoreFails(t *testing.T) {
 	for name, store := range map[string]fakeStore{
 		"schema version": {versionErr: errors.New(leakCause)},
 		"counts":         {version: 10, countsErr: errors.New(leakCause)},
+		"instance":       {version: 10, instanceErr: errors.New(leakCause)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, body := call(t, &api{owners: ownertest.NewMemory(), store: store, logger: quietLogger()}, http.MethodGet, "/status")

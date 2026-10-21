@@ -11,6 +11,11 @@ import (
 // tier recorded at enrollment differ.
 const tierNote = "The configured tier and the tier recorded at enrollment differ, so the effective tier is co-located until setup is run again."
 
+// shortInstance is the first 8 hex characters of the instance id: non-secret, stable per instance, and what
+// setup puts in the authenticator entry and /status shows, so the owner can match one to the other.
+// The store guarantees 32 hex characters (a CHECK constraint), so the slice cannot be out of range.
+func shortInstance(id string) string { return id[:8] }
+
 // ownerReader is the part of the owner store /status and MCP status read.
 type ownerReader interface {
 	Current(ctx context.Context) (owner.State, bool, error)

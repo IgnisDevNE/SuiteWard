@@ -72,7 +72,7 @@ func TestSetupEnrollsAndServeReportsTheOwnerAndTheTier(t *testing.T) {
 	if code := Run(t.Context(), args, env, &stdout, &stderr); code != 0 {
 		t.Fatalf("setup exited %d:\n%s", code, stderr.String())
 	}
-	if lines := strings.Split(strings.TrimSpace(stdout.String()), "\n"); len(lines) != 2 || !strings.HasPrefix(lines[0], "otpauth://totp/SuiteWard:octo?") {
+	if lines := strings.Split(strings.TrimSpace(stdout.String()), "\n"); len(lines) != 2 || !strings.HasPrefix(lines[0], "otpauth://totp/SuiteWard:octo%20%28co-located%20") {
 		t.Fatalf("stdout = %q; want the URI and the secret", stdout.String())
 	}
 	if got := scalar(t, databaseURL, "SELECT result FROM github_protection_results WHERE repository_id = $1", setupRepoID); got != "findings" {
@@ -95,6 +95,14 @@ func TestSetupEnrollsAndServeReportsTheOwnerAndTheTier(t *testing.T) {
 	}
 	if status["tier"] != "co-located" || status["tierNote"] == nil {
 		t.Fatalf("GET /status tier = %v, note %v; want co-located with a note to re-run setup", status["tier"], status["tierNote"])
+	}
+	// The entry names the instance by the id /status shows.
+	storedID := scalar(t, databaseURL, "SELECT instance_id FROM suiteward_instance")
+	if status["instance"] != storedID[:8] {
+		t.Fatalf("GET /status instance = %v; want the first 8 characters of the stored id %s", status["instance"], storedID[:8])
+	}
+	if want := "%20" + storedID[:8] + "%29?"; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("the entry name lacks %s: %q", want, stdout.String())
 	}
 	if code := after.stop(); code != 0 {
 		t.Fatalf("a clean stop exited %d:\n%s", code, after.logs.String())

@@ -1,7 +1,7 @@
 // Package commandtext parses the owner's PR command comments and renders the
 // comment bodies SuiteWard posts (D-COMMANDS, ADRs 0010, 0011 and 0027). It
 // takes plain values, returns plain values and depends only on the
-// domain packages (scope).
+// domain packages (scope) and the YAML library.
 //
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
 // (with its Command: Verb Approve, Revoke, Propose, Skip or Suggest, Proposal, Revision and Code; Propose and Suggest have
@@ -91,20 +91,25 @@ type Parsed struct {
 const prefix = "/suiteward"
 
 // Parse reads the command line of a comment body (D-COMMANDS): the first line
-// that GitHub shows as text whose own text, trimmed of spaces and tabs, starts
-// with /suiteward followed by a space, a tab or the end of the line. Other
-// lines are ignored. GitHub shows no text in a fenced code block, in an HTML
-// comment or in an indented code block, so Parse skips them. A fence opens on a
-// line whose trimmed text starts with three or more backticks or tildes and
-// closes on a line holding only at least as many of the same character; an
-// unclosed fence runs to the end of the body. An HTML comment hides every line
-// from one that contains <!-- up to and including the next that contains -->,
-// or to the end of the body, and a comment that closes on the line it opens on
-// hides only that line; a fence marker inside a comment opens nothing, and a
-// comment marker inside a fence is code. A line indented four or more columns,
-// a tab counting as four and measured before trimming, is an indented code
-// block. The prefix and the verb match without regard to ASCII case, the reference keeps its P<n>-R<m> form, and only
-// spaces and tabs separate tokens.
+// whose own text, trimmed of spaces and tabs, starts with /suiteward followed by
+// a space, a tab or the end of the line. Other lines are ignored. Parse is
+// conservative: it never reads a line GitHub shows as code, and it may skip one
+// GitHub shows as text. It skips a fenced code block, an HTML comment and an
+// indented code block. A fence opens on a line whose text, after any block quote
+// or list item markers (>, -, *, +, N. and N)), starts with three or more
+// backticks or tildes, and closes on a line indented at most three columns that
+// holds only at least as many of the same character; an unclosed fence runs to
+// the end of the body. An HTML comment hides every line from one that contains
+// <!-- up to and including the next that contains -->, or to the end of the
+// body, and a comment that closes on the line it opens on hides only that line;
+// a fence marker inside a comment opens nothing, and a comment marker inside a
+// fence is code. A line indented four or more columns, a tab counting as four
+// and measured before trimming, is an indented code block. The known cases that
+// skip text: a fence opened inside a block quote runs to the end of the body
+// because its closing line holds the quote marker, and so does a fence closed by
+// a line indented four or more columns, which CommonMark keeps in the fence. The
+// prefix and the verb match without regard to ASCII case, the reference keeps
+// its P<n>-R<m> form, and only spaces and tabs separate tokens.
 func Parse(body string) Parsed {
 	var fence string
 	inComment := false
@@ -117,7 +122,7 @@ func Parse(body string) Parsed {
 		}
 		text := strings.Trim(line, " \t")
 		if fence != "" {
-			if strings.HasPrefix(text, fence) && strings.Trim(text, fence[:1]) == "" {
+			if closesFence(line, text, fence) {
 				fence = ""
 			}
 			continue
@@ -126,7 +131,7 @@ func Parse(body string) Parsed {
 			inComment = opensComment(line)
 			continue
 		}
-		if f := openingFence(text); f != "" {
+		if f := openingFence(stripMarkers(text)); f != "" {
 			fence = f
 			continue
 		}
@@ -162,6 +167,42 @@ func indent(line string) (columns int) {
 		}
 	}
 	return columns
+}
+
+// closesFence reports whether the line closes the fence: CommonMark lets a closing fence start at most three columns in.
+func closesFence(line, text, fence string) bool {
+	return indent(line) < 4 && strings.HasPrefix(text, fence) && strings.Trim(text, fence[:1]) == ""
+}
+
+// stripMarkers removes the block quote and list item markers (>, -, *, +, N. and N) with the spaces after them) that start the text, so a fence
+// inside a quote or a list item is seen as a fence.
+func stripMarkers(text string) string {
+	for {
+		rest, ok := stripMarker(text)
+		if !ok {
+			return text
+		}
+		text = strings.TrimLeft(rest, " 	")
+	}
+}
+
+func stripMarker(text string) (rest string, ok bool) {
+	switch {
+	case text == "":
+		return "", false
+	case text[0] == '>':
+		return text[1:], true
+	case strings.ContainsRune("-*+", rune(text[0])):
+		return text[1:], len(text) > 1 && (text[1] == ' ' || text[1] == '	')
+	}
+	n := 0
+	for n < len(text) && text[n] >= '0' && text[n] <= '9' {
+		n++
+	}
+	if n == 0 || n+1 >= len(text) || (text[n] != '.' && text[n] != ')') || (text[n+1] != ' ' && text[n+1] != '	') {
+		return "", false
+	}
+	return text[n+1:], true
 }
 
 // openingFence returns the run of fence characters that opens a code block,

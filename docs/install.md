@@ -163,7 +163,7 @@ Setup then works through these steps:
 
 1. It looks up your login, which must be a user account, and every configured repository. If one lookup fails, it exits with code 1 before it writes anything.
 2. It prints a warning and waits. Press Enter to continue. End of input or Ctrl-C exits with code 1, before any secret is created.
-3. It prints the `otpauth://` URI and the base32 secret, once. Scan the URI with your authenticator, or type the secret in. The entry is named `SuiteWard:<login> (<tier> <instance>)`, for example `SuiteWard:magalz (isolated 1a2b3c4d)`: `<instance>` is the first 8 characters of this instance's id, which `/status` shows as `instance`, so each instance has its own entry. Setup says the same on stderr. If you type the secret in, give the entry that name yourself.
+3. It prints the `otpauth://` URI and the base32 secret, once. Scan the URI with your authenticator, or type the secret in. The entry is named `SuiteWard:<login> (<tier> <instance>)`, for example `SuiteWard:octo (isolated 1a2b3c4d)`: `<instance>` is the first 8 characters of this instance's id, which `/status` shows as `instance`, so each instance has its own entry. Setup says the same on stderr. If you type the secret in, give the entry that name yourself.
 4. It asks for the current 6-digit code. You get three attempts. Three wrong codes exit with code 1 and write nothing.
 5. It stores the owner and the secret, records each repository's test check, and checks protection for each repository (section 7).
 
@@ -251,6 +251,7 @@ SuiteWard's proposal comment shows the copyable command. Approve the exact revis
 Keep these points in mind:
 
 - A `.suiteward.yml` larger than 64 KiB in a pull request or on the default branch is invalid (`invalid-source`). A real declaration is a few lines.
+- A declaration with a pattern of more than 64 segments, or more than 1000 patterns in all, is invalid (`invalid-source`). This also holds for the declaration stored with the canonical: one over a cap fails every assessment until the repository is bootstrapped again.
 - A tree that holds a path longer than 4096 bytes, or more than 8 spellings of one name that differ only in case, is invalid (`invalid-source`).
 - If a protected file changes after the proposal, SuiteWard cancels the proposal and comments. Post `/suiteward propose` again.
 - Pull requests from forks get no proposal. Their check shows `fork-unsupported`, because forks are not supported in this release.
@@ -300,7 +301,7 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 | in_progress, `source-unavailable` | GitHub cannot list the whole tree of this revision, so SuiteWard cannot read it. This happens with very large monorepos, which cannot be protected in this release. |
 | in_progress, `fork-unsupported` | Pull requests from forks are not supported. |
 | in_progress, `assessment-pending` | SuiteWard is still reading the pull request. Wait a few minutes. |
-| failure, `invalid-source` | `.suiteward.yml` is invalid, or a symbolic link that the scope reaches points at a directory, outside the repository or nowhere, or the scope covers the link itself (section 8), or it is larger than 64 KiB. Fix it. A submodule never causes this: its contents are not protected. |
+| failure, `invalid-source` | `.suiteward.yml` is invalid, or a symbolic link that the scope reaches points at a directory, outside the repository or nowhere, or the scope covers the link itself (section 8), or it is larger than 64 KiB, or a pattern has more than 64 segments, or it holds more than 1000 patterns; or the tree holds a path longer than 4096 bytes or more than 8 case spellings of one name. Fix it. A submodule never causes this: its contents are not protected. |
 | failure, `integrity-failed` | A canonical artifact no longer matches its integrity record. SuiteWard fails the check on every pull request of that repository and does not promote; it does not block merges by itself — your branch protection does that, if you require the check. Restore the artifact from a trusted copy or a backup, never edit the database, and restart the service: it re-verifies at once. On the isolated host, as `suiteward`, run `systemctl --user restart suiteward.service`: the image did not change, so migrate does not run again. On the co-located PC, run the `./deploy/local.ps1` command of step 5.4 again, with the same `-Image` and the three GitHub parameters. |
 | failure, `owner-command-rejected` | A confirmation code on your latest command was wrong or reused. Post a valid `approve` or `revoke` with a current code, or push a new head. A later `skip`, `propose` or `suggest` does not clear it. Any other wrong command only gets a reply and changes nothing. |
 
@@ -856,7 +857,7 @@ An update always goes through the migration. The service never changes the schem
 podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
 ```
 
-**11.3 Update an isolated host.** Read the release notes first. Compare the new release's `deploy/quadlet/*` files with the units installed in `~/.config/containers/systemd/`, and carry over anything the new release adds: a new secret (as `suiteward`), a new entry in `/etc/suiteward/github.env` (as the administrator), or a new setting in a unit file (as `suiteward`). Keep a copy of the units you replace, in case you roll back:
+**11.3 Update an isolated host.** Read the release notes first. An instance on v0.1.1 or older upgrades to v0.1.3 first, and lets its queued comments go out, before any later release: later releases no longer read the comment payloads that v0.1.1 or older queued. Compare the new release's `deploy/quadlet/*` files with the units installed in `~/.config/containers/systemd/`, and carry over anything the new release adds: a new secret (as `suiteward`), a new entry in `/etc/suiteward/github.env` (as the administrator), or a new setting in a unit file (as `suiteward`). Keep a copy of the units you replace, in case you roll back:
 
 ```
 cp -r ~/.config/containers/systemd ~/systemd-units-$(date +%Y%m%d-%H%M%S)

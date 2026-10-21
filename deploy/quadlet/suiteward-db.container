@@ -1,5 +1,5 @@
 # PostgreSQL for SuiteWard. Pinned by digest and never auto-updated: a major or minor upgrade is a deliberate change here.
-# Only keys Podman 4.9 documents are used; HOST.md dry-runs the generator before the first start.
+# Only keys the Podman documentation of 5.5 and later lists are used; HOST.md dry-runs the generator before the first start.
 [Unit]
 Description=SuiteWard PostgreSQL
 Wants=network-online.target
@@ -28,7 +28,7 @@ HealthCmd=pg_isready -U suiteward -d suiteward
 HealthInterval=5s
 HealthTimeout=3s
 HealthRetries=12
-# The memory limit and stop timeout have no quadlet key in 4.9, hence PodmanArgs. The 2 GiB host is shared with other services.
+# The memory limit and stop timeout have no quadlet key we rely on (Podman 5.5 or later), hence PodmanArgs. The 2 GiB host is shared with other services.
 PodmanArgs=--memory=384m --stop-timeout=30
 
 [Service]

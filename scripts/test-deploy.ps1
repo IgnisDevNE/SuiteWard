@@ -23,6 +23,10 @@ foreach ($line in 'Type=oneshot', 'RemainAfterExit=yes', 'Exec=migrate', 'Requir
 Assert-That (Has $migrate 'Secret=suiteward-database-owner-url,type=mount,target=/run/secrets/database-owner-url') 'migrate does not mount the owner URL secret'
 Assert-That (Has $migrate 'Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url') 'migrate does not mount the application URL secret'
 Assert-That (-not (Has $migrate 'PublishPort=')) 'migrate publishes a port'
+# A failed migrate fails closed: a restart loop would hide a real failure (missing role, a failed migration) while serve's start job has already failed.
+foreach ($key in 'Restart=', 'RestartSec=', 'StartLimitIntervalSec=', 'AutoUpdate=') {
+    Assert-That (-not (Has $migrate $key)) "migrate has $key (a failed migrate must leave the service down)"
+}
 
 foreach ($line in 'Requires=suiteward-migrate.service', 'After=suiteward-migrate.service', 'ReadOnly=true', 'DropCapability=ALL', 'NoNewPrivileges=true') {
     Assert-That ($serve -contains $line) "suiteward.container lacks $line"

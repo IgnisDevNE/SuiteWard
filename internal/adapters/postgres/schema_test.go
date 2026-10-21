@@ -163,7 +163,7 @@ func TestGovernanceMigrationsLifecycle(t *testing.T) {
 		if err := migrations.Up(t.Context(), database.url); err != nil {
 			t.Fatal(err)
 		}
-		if err := migrations.UpTo(t.Context(), database.url, 0); !errors.Is(err, migrations.ErrForwardOnly) {
+		if err := migrations.UpTo(t.Context(), database.url, migrations.SupportedVersion-1); !errors.Is(err, migrations.ErrForwardOnly) {
 			t.Fatalf("downgrade must fail closed; got %v", err)
 		}
 		schemaExec(t, database.conn, "INSERT INTO goose_db_version(version_id, is_applied) VALUES ($1, true)", migrations.SupportedVersion+1)

@@ -92,6 +92,12 @@ Remove-Item Env:CONTAINER_CONNECTION -ErrorAction Ignore
 $env:CONTAINER_HOST = 'ssh://caller-host'
 $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) "suiteward-deploy-test-$([Guid]::NewGuid().ToString('N'))"
 try {
+    # Without LOCALAPPDATA (a host that is not Windows) the script says so instead of failing in Join-Path with a null argument.
+    $savedAppData = $env:LOCALAPPDATA; Remove-Item Env:LOCALAPPDATA
+    $noAppData = $null
+    try { & $localPath -Down } catch { $noAppData = $_.Exception.Message }
+    $env:LOCALAPPDATA = $savedAppData
+    Assert-That ($noAppData -match 'LOCALAPPDATA') "a missing LOCALAPPDATA was not named (got: $noAppData)"
     $refused = $null
     try { & $localPath -PodmanConnection podman-machine-default-root -Down } catch { $refused = $_.Exception.Message }
     Assert-That ($refused -match 'rootless') "a rootful connection was not refused (got: $refused)"

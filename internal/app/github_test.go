@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,6 +130,7 @@ func (c *countingReader) PullComments(context.Context, string, int) ([]githubsyn
 // paceReader lists no pulls and reports requests requests for its cycle, from the injected clock at, for sync
 // pacing tests (D-SYNC, "Sync pacing", M1.7c).
 type paceReader struct {
+	mu       sync.Mutex // the calls of a sync job and a tick together
 	calls    int
 	requests int
 	changed  bool  // the cycle's listing was not a 304
@@ -137,7 +139,9 @@ type paceReader struct {
 }
 
 func (r *paceReader) OpenPulls(context.Context, string) ([]githubsync.ObservedPull, githubsync.ReadInfo, error) {
+	r.mu.Lock()
 	r.calls++
+	r.mu.Unlock()
 	return nil, githubsync.ReadInfo{Date: r.at(), Requests: r.requests, Changed: r.changed}, r.err
 }
 
@@ -220,6 +224,80 @@ func TestSyncTickWaitsLongerAfterAnExpensiveTick(t *testing.T) {
 	if reader.calls != 2 {
 		t.Fatal("a tick 56 s after a 420-request tick did not run")
 	}
+}
+
+func TestSyncTickPacesByTheRequestsOfASyncRepoSinceThePreviousStart(t *testing.T) {
+	start := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	clock := start
+	reader := &paceReader{requests: 1, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+	if _, err := s.tick(t.Context()); err != nil { // the first tick: 1 request
+		t.Fatal(err)
+	}
+
+	reader.requests = 419 // an MCP sync of 419 requests makes 420 since the tick started, which paces the next tick to 56 s
+	if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil {
+		t.Fatal(err)
+	}
+	calls := reader.calls
+
+	clock = start.Add(20 * time.Second)
+	if _, err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != calls {
+		t.Fatal("a tick 20 s after a 1-request tick and a 419-request sync called GitHub; want it to wait until 56 s")
+	}
+
+	clock = start.Add(56 * time.Second)
+	if _, err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls == calls {
+		t.Fatal("a tick 56 s after the previous start did not run")
+	}
+}
+
+func TestSyncTickIgnoresTheSyncRepoRequestsBeforeThePreviousStart(t *testing.T) {
+	start := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	clock := start
+	reader := &paceReader{requests: 419, at: func() time.Time { return clock }}
+	s := paceSync(t, reader, func() time.Time { return clock })
+	if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil { // before any tick
+		t.Fatal(err)
+	}
+
+	reader.requests = 1
+	if _, err := s.tick(t.Context()); err != nil { // the first tick, always due: it covers that sync
+		t.Fatal(err)
+	}
+	calls := reader.calls
+	clock = start.Add(19900 * time.Millisecond)
+	if _, err := s.tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls == calls {
+		t.Fatal("a tick 19.9 s after the previous start waited for a sync that ran before that start")
+	}
+}
+
+func TestSyncRepoAndTickRunTogether(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := paceSync(t, &paceReader{requests: 1, at: func() time.Time { return clock }}, func() time.Time { return clock })
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if _, err := s.syncRepo(t.Context(), "acme/widgets"); err != nil {
+				t.Error(err)
+			}
+		})
+		wg.Go(func() {
+			if _, err := s.tick(t.Context()); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func TestSyncTickWakesCommandsChecksAndMergesWhenACycleChanged(t *testing.T) {

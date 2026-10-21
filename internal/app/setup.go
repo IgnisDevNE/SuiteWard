@@ -250,7 +250,15 @@ func (s *setup) enrollmentCode(ctx context.Context, lines <-chan string, login s
 		s.logger.Error("generate the TOTP secret", "error", err)
 		return nil, 0, false
 	}
-	uri, err := totp.URI(secret, totpIssuer, login)
+	instance, err := s.instance(ctx)
+	if err != nil {
+		reportf(s.stderr, "could not read the instance id; see the log\n")
+		s.logger.ErrorContext(ctx, "read the instance id", "error", err)
+		return nil, 0, false
+	}
+	// The issuer stays SuiteWard; the account tells the entries of several instances apart (an authenticator may replace an entry with the same label).
+	entry := fmt.Sprintf("%s (%s %s)", login, s.cfg.Tier, shortInstance(instance))
+	uri, err := totp.URI(secret, totpIssuer, entry)
 	if err != nil {
 		reportf(s.stderr, "could not build the TOTP enrollment\n")
 		s.logger.Error("build the TOTP URI", "error", err)
@@ -261,6 +269,7 @@ func (s *setup) enrollmentCode(ctx context.Context, lines <-chan string, login s
 		return nil, 0, false
 	}
 	reportf(s.stderr, "add it to your authenticator app (the otpauth:// URI above, or the base32 secret), then confirm with a code.\n")
+	reportf(s.stderr, "this entry is for the %s instance %s and is named %q. After the code is confirmed, delete any older entry of this instance.\n", s.cfg.Tier, shortInstance(instance), totpIssuer+":"+entry)
 
 	for attempt := 1; attempt <= totpAttempts; attempt++ {
 		_, _ = fmt.Fprintf(s.stderr, "Enter the 6-digit code (attempt %d of %d): ", attempt, totpAttempts) // a failed write to stderr cannot be reported anywhere else
@@ -419,6 +428,6 @@ func runSetup(ctx context.Context, cfg config.Config, o setupOptions, stdin io.R
 		reportf(stderr, "%v\n", err)
 		return 1
 	}
-	s := &setup{cfg: cfg, options: o, store: store, readers: readers, stdin: stdin, stdout: stdout, stderr: stderr, logger: logger, now: time.Now, random: rand.Reader}
+	s := &setup{cfg: cfg, options: o, store: store, readers: readers, stdin: stdin, stdout: stdout, stderr: stderr, logger: logger, now: time.Now, random: rand.Reader, instance: store.Instance}
 	return s.run(ctx)
 }

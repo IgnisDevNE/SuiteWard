@@ -70,7 +70,7 @@ func TestStatusReportsTheOwnerAndTheEffectiveTier(t *testing.T) {
 
 			code, body := call(t, a, http.MethodGet, "/status")
 
-			want := `{"version":"` + Version + `","schemaVersion":12,"tier":"` + test.wantTier + `",
+			want := `{"version":"` + Version + `","instance":"","schemaVersion":12,"tier":"` + test.wantTier + `",
 				"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 				"outbox":{"pending":0,"delivered":0,"failed":0}`
 			if test.wantNote != "" {

@@ -86,7 +86,7 @@ func TestStatusReportsEveryStateEvenAtZero(t *testing.T) {
 		Outbox: map[string]int64{"delivered": 2},
 	}}}
 	code, body := call(t, a, http.MethodGet, "/status")
-	want := `{"version":"` + Version + `","schemaVersion":10,"tier":"isolated",
+	want := `{"version":"` + Version + `","instance":"","schemaVersion":10,"tier":"isolated",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":3,"discarded":1},
 		"outbox":{"pending":0,"delivered":2,"failed":0}}`
 	if code != http.StatusOK || !jsonEqual(t, body, want) {

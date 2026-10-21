@@ -136,7 +136,7 @@ Two installation tiers share the same image ([ADR 0027](../decisions/0027-agent-
 | T | A pull request runs with secrets or write access | CI runs on `pull_request`, never `pull_request_target`; `contents: read`; checkouts use `persist-credentials: false`: `.github/workflows/ci.yml:3-10`, `:31` | `.github/workflows/ci.yml` itself; CI gate `CI / Gate` ([ci-and-coverage.md](../ci-and-coverage.md)) | CICD-SEC-4; CICD-SEC-5 |
 | T | A tag moved under a third-party action | Every action is pinned by commit SHA; the release and deploy workflows use no third-party action and pin the BuildKit image by digest: `.github/workflows/release.yml:6`, `:23`; `.github/workflows/deploy.yml:3`, `:32` | `.github/workflows/ci.yml` | CICD-SEC-3; CICD-SEC-8 |
 | E | An image reaches the host without the owner | The release and the deploy publish steps run in protected environments: `.github/workflows/release.yml:60`, `.github/workflows/deploy.yml:76`; the owner's approval moves the deploy tag only to the built digest: `.github/workflows/deploy.yml:85-88`; the host pulls the image itself and holds no deploy or registry credential ([verification targets](../plan/README.md#verification-targets)) | `deploy/smoke_test.sh` (self-test of the post-deploy smoke check) | CICD-SEC-1; CICD-SEC-5; CICD-SEC-6 |
-| T | A known-vulnerable dependency ships | `govulncheck` runs on Linux CI, and a reachable finding fails the build: `.github/workflows/ci.yml:126-128` | CI gate | CICD-SEC-3 |
+| T | A known-vulnerable dependency ships | `govulncheck` runs on Linux CI, and a reachable finding fails the build: `.github/workflows/ci.yml:126-133` | CI gate | CICD-SEC-3 |
 
 ## 7. Out of scope
 

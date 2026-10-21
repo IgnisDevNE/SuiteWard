@@ -85,3 +85,16 @@ func TestALargeTreeWithoutCaseTwinsIsFast(t *testing.T) {
 		t.Errorf("Build of %d entries took %v", len(files), elapsed)
 	}
 }
+
+// The directory spellings are bounded on their own too: files with different names under nine casings of one directory
+// stay under the cap of each file name and still reach nine spellings of the directory.
+func TestATreeWithManySpellingsOfOneDirectoryOfDistinctFilesIsInvalid(t *testing.T) {
+	files := baseFiles()
+	for i, dir := range casings("abcdefghijkl", 9) {
+		name := fmt.Sprintf("%s/f%d", dir, i)
+		files[name] = regular(name, "x")
+	}
+	if _, err := inventory.Build(context.Background(), treeOf(t, files)); !errors.Is(err, inventory.ErrInvalidTree) {
+		t.Fatalf("Build error = %v, want ErrInvalidTree", err)
+	}
+}

@@ -280,3 +280,17 @@ func requireNothingMigrated(t *testing.T, ownerURL string) {
 		t.Fatalf("migrate created %s tables before it refused the role", n)
 	}
 }
+
+// A migration that fails stops migrate before it grants anything: the service role gets no access to a half-migrated schema.
+func TestMigrateReportsAMigrationThatFailsAndGrantsNothing(t *testing.T) {
+	ownerURL := newEmptyDatabase(t)
+	vars := migrateVars(t, ownerURL)
+	exec(t, ownerURL, "CREATE TABLE suites (x int)") // the first migration creates the table of that name
+	code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
+	if code != 1 || !strings.Contains(stderr, "migrate the database") {
+		t.Fatalf("migrate over a conflicting table exited %d, stderr %q; want 1 and the migration named", code, stderr)
+	}
+	if n := scalar(t, ownerURL, "SELECT count(*) FROM information_schema.table_privileges WHERE table_schema = current_schema() AND grantee = $1", pgtest.Role); n != "0" {
+		t.Fatalf("migrate granted %s privileges after a failed migration", n)
+	}
+}

@@ -21,6 +21,7 @@ coverage:
 ignore:
   - "internal/adapters/postgres/internal/dbgen/**"
   - "internal/application/governance/governancetest/**"
+  - "internal/adapters/postgres/pgtest/**"
 
 comment:
   require_head: true

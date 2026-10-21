@@ -159,3 +159,38 @@ func password(t *testing.T, rawURL string) string {
 	secret, _ := parsed.User.Password()
 	return secret
 }
+
+func TestGrantAppRefusesASchemaNobodyMigrated(t *testing.T) {
+	database := newSchemaDatabase(t)
+	pgtest.EnsureRole(t, database.url)
+	if err := migrations.GrantApp(t.Context(), database.url, pgtest.Role); err == nil || !strings.Contains(err.Error(), "grant the application role") {
+		t.Fatalf("GrantApp on an empty schema = %v; want the grant named as the failure", err)
+	}
+}
+
+func TestRoleChecksRefuseAConnectionWithoutACurrentSchema(t *testing.T) {
+	database := newSchemaDatabase(t)
+	pgtest.EnsureRole(t, database.url)
+	parsed, err := url.Parse(database.url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", "sw_no_such_schema")
+	parsed.RawQuery = query.Encode()
+	for name, check := range map[string]func() error{
+		"GrantApp":     func() error { return migrations.GrantApp(t.Context(), parsed.String(), pgtest.Role) },
+		"CheckAppRole": func() error { return migrations.CheckAppRole(t.Context(), parsed.String(), pgtest.Role) },
+	} {
+		if err := check(); err == nil || !strings.Contains(err.Error(), "no current schema") {
+			t.Errorf("%s without a current schema = %v; want a refusal that says so", name, err)
+		}
+	}
+}
+
+func TestCheckAppRoleReportsARoleNameItCannotLookUp(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.CheckAppRole(t.Context(), database.url, "no\x00role"); err == nil || !strings.Contains(err.Error(), "read the schema and the role") {
+		t.Fatalf("CheckAppRole for a name with a NUL byte = %v; want the lookup named as the failure", err)
+	}
+}

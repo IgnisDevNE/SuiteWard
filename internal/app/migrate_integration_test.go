@@ -72,6 +72,7 @@ func TestMigrateAppliesTheSchemaAndTheRoleGrantsSoServeRunsAsTheApplicationRole(
 	if version := scalar(t, ownerURL, "SELECT schema_version()::text"); version != strconv.FormatInt(migrations.SupportedVersion, 10) {
 		t.Fatalf("schema version after migrate = %s", version)
 	}
+	delete(vars, "SUITEWARD_MIGRATION_DATABASE_URL") // serve refuses the owner credential
 	s := startRun(t, vars)
 	s.waitReady()
 	if code, _ := s.get("/status"); code != http.StatusOK {

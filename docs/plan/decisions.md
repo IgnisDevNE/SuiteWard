@@ -401,6 +401,7 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
         - The release job signs the image index with cosign, keyless, and attaches a build provenance and an SBOM.
         - Users verify the signature with `scripts/verify-release.ps1` against the `release.yml` workflow on a `refs/tags/v*` ref, before they pin the digest. An image pushed by any other workflow or ref fails verification. This needs no extra secret.
         - Signing does not stop another workflow from pushing a tag. A consumer who pins and verifies the digest is protected; one who follows a tag is not.
+        - **Release notes name the index digest (2026-10-21).** The release run writes `Index digest:` to its summary, and the owner copies that line into the notes, so every host can pin the signed index without inspecting the image.
 - **License.**
   - `AGPL-3.0-only`.
   - The repository carries the official text in `LICENSE`, and the README carries the notice.

@@ -20,6 +20,8 @@ try {
     & (Join-Path $PSScriptRoot 'test-workflows.ps1')
     & (Join-Path $PSScriptRoot 'check-pins.ps1')
     & (Join-Path $PSScriptRoot 'test-pins.ps1')
+    & (Join-Path $PSScriptRoot 'check-security.ps1')
+    & (Join-Path $PSScriptRoot 'test-security.ps1')
     & (Join-Path $PSScriptRoot 'ci.ps1') -Mode Documents
     & (Join-Path $PSScriptRoot 'test-ci.ps1')
     & (Join-Path $PSScriptRoot 'test-go.ps1')

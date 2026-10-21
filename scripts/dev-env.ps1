@@ -117,7 +117,7 @@ function Assert-ToolVersion {
     param($Context, [string]$Name)
     $exe = Get-ToolPath $Context $Name
     if (-not (Test-Path -LiteralPath $exe)) { throw "$Name is not installed in the shared tool cache ($($Context.Tools)). Run: ./scripts/dev.ps1 setup" }
-    [string[]]$versionArgs = @(switch ($Name) { 'go' { 'version' }; 'sqlc' { 'version' }; 'actionlint' { '-version' }; 'govulncheck' { '-version' }; 'gopls' { 'version' }; 'golangci-lint' { '--version' } })
+    [string[]]$versionArgs = @(switch ($Name) { 'go' { 'version' }; 'sqlc' { 'version' }; 'actionlint' { '-version' }; 'govulncheck' { '-version' }; 'gopls' { 'version' }; 'golangci-lint' { '--version' }; 'zizmor' { '--version' }; 'gitleaks' { 'version' }; 'trivy' { '--version' } })
     $output = Invoke-ToolConfigScope $Context {
         & $exe @versionArgs 2>&1
         if ($LASTEXITCODE -ne 0) { throw "$Name version check failed." }
@@ -183,7 +183,7 @@ function Install-DevTools {
     try {
         try { $lock = [IO.File]::Open((Join-Path $Context.State 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
         catch { throw 'Another setup is running in this checkout. Wait for it to finish.' }
-        foreach ($name in @('go', 'sqlc', 'actionlint', 'golangci-lint')) { Install-ArchiveTool $Context $name }
+        foreach ($name in @('go', 'sqlc', 'actionlint', 'golangci-lint', 'zizmor', 'gitleaks')) { Install-ArchiveTool $Context $name }
         # Go-module tools install with the pinned Go into their own versioned directory, verified through the public checksum database.
         $modules = [ordered]@{ govulncheck = 'golang.org/x/vuln/cmd/govulncheck'; gopls = 'golang.org/x/tools/gopls' }
         foreach ($module in $modules.Keys) {

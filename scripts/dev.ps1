@@ -24,7 +24,7 @@ try {
             Write-Host "Pinned development tools are ready in the shared cache ($($context.Tools))."
         }
         'doctor' {
-            foreach ($name in @('go', 'sqlc', 'actionlint', 'govulncheck', 'gopls', 'golangci-lint')) { Assert-ToolVersion $context $name; Write-Host "$name $($context.Manifest[$name].version): OK" }
+            foreach ($name in @('go', 'sqlc', 'actionlint', 'govulncheck', 'gopls', 'golangci-lint', 'zizmor', 'gitleaks')) { Assert-ToolVersion $context $name; Write-Host "$name $($context.Manifest[$name].version): OK" }
             $actualRoot = Invoke-ToolConfigScope $context { & (Get-ToolPath $context 'go') env GOROOT; if ($LASTEXITCODE -ne 0) { throw 'Cannot read Go configuration.' } }
             if ([IO.Path]::GetFullPath($actualRoot) -ne [IO.Path]::GetFullPath($env:GOROOT)) { throw 'Go did not select this checkout toolchain.' }
             Test-DevDatabase $context

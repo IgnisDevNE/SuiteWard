@@ -88,6 +88,7 @@ function Select-RootlessConnection {
     if ($rootless -cne 'true') { throw 'The Podman connection is rootful. The co-located stack must run rootless: select the machine''s rootless connection with -PodmanConnection NAME.' }
 }
 
+if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is not set: the co-located stack runs on Windows, and the MCP token copy for a client lives there.' }
 $tokenFile = Join-Path $env:LOCALAPPDATA 'SuiteWard\mcp-token'
 
 if ($Purge -and -not $Down) { throw '-Purge only applies together with -Down.' }
@@ -189,7 +190,8 @@ try {
 
     # The wait is cheap here, so the role and the migration run against a ready database.
     $deadline = (Get-Date).AddSeconds(90)
-    while ((& podman inspect --format '{{.State.Health.Status}}' suiteward-db) -ne 'healthy') {
+    while (($state = & podman inspect --format '{{.State.Status}} {{.State.Health.Status}}' suiteward-db) -ne 'running healthy') {
+        if ("$state" -match '^(exited|stopped|dead)') { throw 'suiteward-db exited before it became healthy (podman logs suiteward-db).' }
         if ((Get-Date) -gt $deadline) { throw 'suiteward-db did not become healthy within 90 s (podman logs suiteward-db).' }
         Start-Sleep -Seconds 1
     }

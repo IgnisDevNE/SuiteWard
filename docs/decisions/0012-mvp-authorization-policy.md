@@ -1,7 +1,7 @@
 # ADR 0012: Minimal authorization policy for the individual-developer MVP
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented: the owner and the policy in M1.5, approval by the owner's TOTP-confirmed command in M1.6, released in `v0.1.0`; hardened in phase SH ([ADR 0027](0027-agent-human-trust-separation.md)). The open implementation details below stay open.
 - **R1 note (2026-10-05):** the contract-change priority transfer described below is deferred to post-MVP; the MVP has no admission gate or priority queue ([ADR 0022](0022-contract-change-pr-priority.md)).
 - **Product:** SuiteWard
 - **Scope:** Initial human and agent capabilities, approval threshold, and PR authorship.

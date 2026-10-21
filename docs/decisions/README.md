@@ -76,4 +76,4 @@ A review found overengineering and gaps in the threat model and plan. Phase R1 s
 
 ## Next product decision
 
-Owner enrollment and TOTP verification (ADR 0027) are to be implemented in M1.5 and M1.6 (not implemented yet). D-GITHUB-ACCESS, D-IDENTITY, D-TIER, D-CHECKS and D-PROTECTION are accepted; D-INTEGRATION still needs a concrete decision before its phase; strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone. Execution-profile selection is deferred to M2.
+Owner enrollment and TOTP verification (ADR 0027) are implemented (M1.5, M1.6a) and were amended after the 2026-10-20 security review. D-GITHUB-ACCESS, D-IDENTITY, D-TIER, D-CHECKS and D-PROTECTION are accepted; D-INTEGRATION still needs a concrete decision before its phase; strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone. Execution-profile selection is deferred to M2.

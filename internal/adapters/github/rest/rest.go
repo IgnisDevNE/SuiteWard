@@ -328,7 +328,7 @@ func (c *Client) send(ctx context.Context, method, path string, payload []byte, 
 	if useCache {
 		c.mu.Lock()
 		if identity != c.identity {
-			c.identity, c.cache = identity, map[string]cached{}
+			c.identity, c.cache, c.cacheBytes = identity, map[string]cached{}, 0
 		}
 		entry, hadCache = c.cache[path]
 		if hadCache {
@@ -384,7 +384,7 @@ func (c *Client) interpret(a answer) (Response, error) {
 				if etag != "" {
 					c.store(a.path, etag, a.body)
 				} else {
-					delete(c.cache, a.path)
+					c.drop(a.path)
 				}
 			}
 			c.mu.Unlock()
@@ -431,21 +431,32 @@ func (c *Client) retryTime(retryAfter []string, reset string) time.Time {
 	return time.Time{}
 }
 
-// store keeps the ETag and body of path, first dropping the entry used least recently when a new path would pass maxCacheEntries; the caller
-// holds c.mu. The bound is by paths: a polling cycle reads about three for each open pull request (its two comment listings and, when
-// asked, its file listing) and a few for each repository (the open and closed listings, branch heads), so 4096 holds a cycle over some
-// thirteen hundred open pull requests, far more than one installation observes. An entry dropped early costs one full read, never a stale
-// answer. The scan is linear, once for each stored response, which follows a network round trip.
+// store keeps the ETag and body of path, first dropping its old entry and then the entries used least recently until the new one fits both
+// maxCacheEntries and maxCacheBytes; a body larger than maxCacheBytes is not kept. The caller holds c.mu. The bound by paths holds a polling
+// cycle over some thirteen hundred open pull requests (about three paths each, a few more for each repository), far more than one
+// installation observes; the bound by bytes keeps large bodies from growing the cache past the container's memory. An entry dropped early
+// costs one full read, never a stale answer. The scan is linear, once for each dropped entry, which follows a network round trip.
 func (c *Client) store(path, etag string, body []byte) {
-	if _, known := c.cache[path]; !known && len(c.cache) >= maxCacheEntries {
+	c.drop(path)
+	if len(body) > maxCacheBytes {
+		return
+	}
+	for len(c.cache) > 0 && (len(c.cache) >= maxCacheEntries || c.cacheBytes+len(body) > maxCacheBytes) {
 		oldest, found := "", false
 		for p, e := range c.cache {
 			if !found || e.used < c.cache[oldest].used {
 				oldest, found = p, true
 			}
 		}
-		delete(c.cache, oldest)
+		c.drop(oldest)
 	}
 	c.tick++
 	c.cache[path] = cached{etag: etag, body: bytes.Clone(body), used: c.tick}
+	c.cacheBytes += len(body)
+}
+
+// drop removes path from the cache and its body from the byte total; the caller holds c.mu.
+func (c *Client) drop(path string) {
+	c.cacheBytes -= len(c.cache[path].body)
+	delete(c.cache, path)
 }

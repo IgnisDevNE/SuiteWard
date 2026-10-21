@@ -11,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -38,6 +39,17 @@ type Tree interface {
 	Entries(context.Context) ([]Entry, error)
 	Read(ctx context.Context, path string) ([]byte, error)
 }
+
+// ConcurrentTree is a Tree that may be read from several goroutines at once. It is opt-in, because the other trees (fakes, the
+// filesystem) were never written for it; a tree whose reads cross the network says true so that the inventory overlaps them.
+type ConcurrentTree interface {
+	Tree
+	ConcurrentReads() bool
+}
+
+// readConcurrency bounds the reads in flight of a ConcurrentTree: a cold head of a few hundred files has to fit the job timeout
+// (about 0.4 s a read), and eight is few enough for the API budget and the secondary rate limit.
+const readConcurrency = 8
 
 var (
 	ErrInvalidTree      = errors.New("invalid source tree")
@@ -228,18 +240,56 @@ func unsafeLink(ctx context.Context, tree Tree, index *layout, targets map[strin
 	return false, nil
 }
 
-// manifestOfFiles hashes the covered files, reading from the tree only what known lacks.
+// manifestOfFiles hashes the covered files, reading from the tree only what known lacks. The reads of a ConcurrentTree overlap;
+// the manifest does not depend on their order, and the first read to fail is the error returned.
 func manifestOfFiles(ctx context.Context, tree Tree, covered []string, known map[string][]byte) (artifact.Manifest, error) {
-	files := make([]artifact.Entry, 0, len(covered))
-	for _, path := range covered {
-		content, found := known[path]
-		if !found {
-			var err error
-			if content, err = tree.Read(ctx, path); err != nil {
-				return artifact.Manifest{}, fmt.Errorf("read %q: %w", path, err)
-			}
+	contents := make([][]byte, len(covered))
+	limit := 1
+	if c, ok := tree.(ConcurrentTree); ok && c.ConcurrentReads() {
+		limit = readConcurrency
+	}
+	var (
+		wg      sync.WaitGroup
+		once    sync.Once
+		failure error
+		stopped bool // the context ended before every read was started
+		slots   = make(chan struct{}, limit)
+	)
+	readCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for i, path := range covered {
+		if content, found := known[path]; found {
+			contents[i] = content
+			continue
 		}
-		files = append(files, artifact.Entry{Path: path, Content: artifact.Hash(content)})
+		select {
+		case slots <- struct{}{}:
+		case <-readCtx.Done():
+		}
+		if readCtx.Err() != nil {
+			stopped = true
+			break
+		}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			content, err := tree.Read(readCtx, path)
+			if err != nil {
+				once.Do(func() { failure = fmt.Errorf("read %q: %w", path, err); cancel() })
+				return
+			}
+			contents[i] = content
+		})
+	}
+	wg.Wait()
+	if failure != nil {
+		return artifact.Manifest{}, failure
+	}
+	if stopped {
+		return artifact.Manifest{}, fmt.Errorf("read the covered files: %w", ctx.Err())
+	}
+	files := make([]artifact.Entry, len(covered))
+	for i, path := range covered {
+		files[i] = artifact.Entry{Path: path, Content: artifact.Hash(contents[i])}
 	}
 	return artifact.NewManifest(files)
 }

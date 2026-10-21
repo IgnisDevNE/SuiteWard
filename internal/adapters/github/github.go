@@ -85,6 +85,7 @@ type Comment struct {
 // Reader performs the typed reads of one GitHub installation.
 type Reader struct {
 	client *rest.Client
+	blobs  *blobCache // shared by every tree of the reader
 }
 
 // NewReader returns a reader over client.
@@ -92,7 +93,7 @@ func NewReader(client *rest.Client) (*Reader, error) {
 	if client == nil {
 		return nil, errors.New("github reader: nil client")
 	}
-	return &Reader{client: client}, nil
+	return &Reader{client: client, blobs: newBlobCache(maxBlobCacheBytes)}, nil
 }
 
 // checkRepo accepts an owner/name repository whose parts can only name
@@ -442,7 +443,7 @@ func (r *Reader) Tree(ctx context.Context, repo, commitSHA string) (inventory.Tr
 	if raw.Truncated {
 		return nil, fmt.Errorf("%w: %w: GitHub truncated the tree of %s at %s", inventory.ErrInvalidTree, ErrTreeTruncated, repo, commitSHA)
 	}
-	t := &tree{client: r.client, repo: repo, byPath: make(map[string]treeEntry, len(raw.Tree))}
+	t := &tree{client: r.client, blobs: r.blobs, repo: repo, byPath: make(map[string]treeEntry, len(raw.Tree))}
 	for _, e := range raw.Tree {
 		if e.Mode == "040000" && e.Type == "tree" {
 			continue
@@ -464,10 +465,14 @@ func (r *Reader) Tree(ctx context.Context, repo, commitSHA string) (inventory.Tr
 // listed as GitHub sent them and rejected by inventory.
 type tree struct {
 	client  *rest.Client
+	blobs   *blobCache
 	repo    string
 	entries []inventory.Entry
 	byPath  map[string]treeEntry
 }
+
+// ConcurrentReads says that Read may be called from several goroutines: the tree is read-only and the client is safe for concurrent use.
+func (*tree) ConcurrentReads() bool { return true }
 
 func (t *tree) Entries(context.Context) ([]inventory.Entry, error) {
 	return slices.Clone(t.entries), nil
@@ -481,6 +486,10 @@ func (t *tree) Read(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("github tree: %q is not listed", path)
 	case entry.kind != inventory.File && entry.kind != inventory.Symlink:
 		return nil, fmt.Errorf("github tree: %q is neither a regular file nor a symlink", path)
+	}
+	cacheKey := t.repo + "/" + entry.sha
+	if content, hit := t.blobs.get(cacheKey); hit {
+		return content, nil
 	}
 	blobPath := "/repos/" + t.repo + "/git/blobs/" + entry.sha
 	resp, err := t.client.GetImmutable(ctx, blobPath)
@@ -501,6 +510,7 @@ func (t *tree) Read(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: blob of %q is not valid base64: %v", ErrInvalidResponse, path, err)
 	}
+	t.blobs.put(cacheKey, content)
 	return content, nil
 }
 

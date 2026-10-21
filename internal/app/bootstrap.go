@@ -271,10 +271,17 @@ func invalidSource(err error) bool {
 }
 
 // githubTree is an inventory.Tree whose failures are GitHub reads and that reads each file once: the inventory,
-// the summary and the content store all need the same bytes.
+// the summary and the content store all need the same bytes. It is safe for concurrent use when the tree it wraps is.
 type githubTree struct {
 	tree  inventory.Tree
+	mu    sync.Mutex // guards files, and is not held across a read
 	files map[string][]byte
+}
+
+// ConcurrentReads lets the inventory overlap the reads, when the wrapped tree allows it.
+func (t *githubTree) ConcurrentReads() bool {
+	c, ok := t.tree.(inventory.ConcurrentTree)
+	return ok && c.ConcurrentReads()
 }
 
 func (t *githubTree) Entries(ctx context.Context) ([]inventory.Entry, error) {
@@ -286,7 +293,10 @@ func (t *githubTree) Entries(ctx context.Context) ([]inventory.Entry, error) {
 }
 
 func (t *githubTree) Read(ctx context.Context, path string) ([]byte, error) {
-	if data, read := t.files[path]; read {
+	t.mu.Lock()
+	data, read := t.files[path]
+	t.mu.Unlock()
+	if read {
 		return data, nil
 	}
 	data, err := t.tree.Read(ctx, path)
@@ -296,7 +306,9 @@ func (t *githubTree) Read(ctx context.Context, path string) ([]byte, error) {
 	if path == scope.DeclarationPath && len(data) > maxDeclarationBytes {
 		return nil, fmt.Errorf("%w: larger than %d bytes", scope.ErrInvalidDeclaration, maxDeclarationBytes)
 	}
+	t.mu.Lock()
 	t.files[path] = data
+	t.mu.Unlock()
 	return data, nil
 }
 

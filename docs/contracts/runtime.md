@@ -143,7 +143,7 @@ Both jobs are registered only when the GitHub settings are set, and they act onl
   - **Otherwise** compare with `checks.Store.Current`:
     - same head, same canonical, same Suite revision and same latest owner command: nothing to do;
     - a stored `unchanged` result for the same head and canonical: keep it without reading the tree (consent cannot change it);
-    - anything else: read the head tree (`Reader.Tree`) and call `governance.AssessHead`, which is idempotent.
+    - anything else: read the head tree (`Reader.Tree`) and call `governance.AssessHead`, which is idempotent. The inventory reads the covered files of a cold head eight at a time (the first failed read cancels the rest and is the error), and the GitHub reader keeps the blobs it read, up to 32 MiB in memory, by repository and blob SHA: a run cut off by the job timeout, a retry and the next head with the same blobs do not fetch them again. Neither changes the outcome, the API budget accounting or any stored state.
   - **State.**
     - `success`: the head is unchanged against the canonical (reason `unchanged`), or ready (reason `ready`).
     - `in_progress`: reasons `approval-missing` (including a revision rebound after the canonical or the policy changed), `not-current`, `assessment-pending`, `source-unavailable` (a tree GitHub truncated); `ErrCanonicalMoved` from `AssessHead` (the canonical moved while the head was assessed) keeps the current record and retries on the next run; any other `ErrConflict`, such as a conflicting assessment, is deterministic and is an opaque failure (`/status` problem `failed`) that fails that pull request's step while the run continues.

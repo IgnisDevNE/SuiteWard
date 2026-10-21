@@ -39,7 +39,7 @@ sudo -u suiteward -H env XDG_RUNTIME_DIR=$r \
   DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus bash
 ```
 
-The command opens a new shell and waits for commands, so it prints nothing. Check it with `whoami`, which prints `suiteward`. Run every command of the isolated flows of sections 2 to 4 in this shell, and type `exit` to leave it.
+The command opens a new shell and waits for commands, so it prints nothing. Check it with `whoami`, which prints `suiteward`. Run every command of the isolated flows of sections 2 to 4 in this shell, except the ones that say they run on another machine (the verification of the digest, and the copy off the host). Type `exit` to leave it.
 
 1. Stop the service.
 
@@ -91,28 +91,30 @@ The command opens a new shell and waits for commands, so it prints nothing. Chec
 
    Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`.
 
-6. Keep a copy of the backup folder off this machine, offline and encrypted, as the warning in section 1 says. How you copy the files depends on how you reach the host. If you reach it only through a remote shell that cannot copy files, serve the folder on the host's loopback, forward that port to your PC with your remote-access tool, download each file, then stop both. Start the server in the host shell. It stays in the foreground, and the shell waits until you stop it with Ctrl-C:
+6. Keep a copy of the backup folder off this machine, offline and encrypted, as the warning in section 1 says. How you copy the files depends on how you reach the host. If you reach it only through a remote shell that cannot copy files, serve the folder on the host's loopback, forward that port to your PC with your remote-access tool, download each file, then stop both.
+
+   > [!WARNING]
+   > While the server and the forward run, any local user of either machine can read the files, and `suiteward.sql` holds the TOTP secret. Do this only on machines only you use, and stop both as soon as the download ends.
+
+   Start the server in the host shell. It stays in the foreground, and the shell waits until you stop it with Ctrl-C:
 
    ```bash
    python3 -m http.server <port> --bind 127.0.0.1 --directory ~/suiteward-backup
    ```
 
-   The forwarding command depends on your remote-access tool. With AWS Systems Manager, for example, and `<port>` set to 8000, run this on the machine that has the AWS CLI and your credentials (quoted for a POSIX shell or PowerShell 7). It stays open while the forward works:
+   The forwarding command depends on your remote-access tool. With AWS Systems Manager, for example, and `<port>` set to 8000, run this on the machine that has the AWS CLI and your credentials (quoted for a POSIX shell or PowerShell 7.3 or later). It stays open while the forward works:
 
    ```
    aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["8000"],"localPortNumber":["18000"]}'
    ```
 
-   Pick a free local port for the forward (18000 here): a port already in use locally can reset every connection. In a second terminal on the same machine, download each file, once for `suiteward.sql`, `suiteward-artifacts.tar` and `status.json`:
+   Pick a free local port for the forward (18000 here): a port already in use locally can reset every connection. In a second terminal on the same machine, download each file, once for `suiteward.sql`, `suiteward-artifacts.tar` and `status.json` (`curl.exe` on Windows):
 
    ```
    curl -fsS -o <file> http://127.0.0.1:18000/<file>
    ```
 
-   Compare the file sizes with `ls -l ~/suiteward-backup` on the host. Then stop the forward (Ctrl-C in its terminal) and the server (Ctrl-C in the host shell).
-
-> [!WARNING]
-> While the server and the forward run, any local user of either machine can read the files, and `suiteward.sql` holds the TOTP secret. Do this only on machines only you use, and stop both as soon as the download ends.
+   Then stop the forward (Ctrl-C in its terminal) and the server (Ctrl-C in the host shell), and compare the sizes of the downloaded files with `ls -l ~/suiteward-backup` on the host.
 
 ### Co-located PC (PowerShell)
 
@@ -213,7 +215,7 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
 
    Expect a list of entries under `artifacts/` and no error.
 
-3. Pin both units to the backup's version, by the digest of its signed image index. The version is the `version` value in `status.json`. Take the index digest of that release from its release notes, or from the log of the release workflow's step "Sign the image index, verify the signature, then move latest-stable", which prints `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one. Verify it on a machine with cosign 3.x, as [step 10.9 of the install guide](install.md#10-running-on-a-separate-host-operators) says (the host does not need cosign):
+3. Pin both units to the backup's version, by the digest of its signed image index. The version is the `version` value in `status.json` (the release you upgrade to, for a backup from v0.1.x). Take the index digest of that release from its release notes, or from the log of the release workflow's step "Sign the image index, verify the signature, then move latest-stable", which prints `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one. Verify it on a machine with cosign 3.x, as [step 10.9 of the install guide](install.md#10-running-on-a-separate-host-operators) says (the host does not need cosign):
 
    ```
    pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>
@@ -225,15 +227,18 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
    podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
    ```
 
-   Set the digest, replacing `<index>`, then set the `Image=` line of BOTH `suiteward-migrate.container` and `suiteward.container` to it. They must name the same image. The chain stops unless `d` has the form of a digest, so it never writes an incomplete line:
+   Set the digest, replacing `<index>`, then set the `Image=` line of BOTH `suiteward-migrate.container` and `suiteward.container` to it. They must name the same image. The chain refuses with a message unless `d` has the form of a digest, so it never writes an incomplete line:
 
    ```bash
    d=sha256:<index>
    ```
 
    ```bash
-   [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
-   sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+   if [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+     sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+   else
+     echo "Refused: d is not sha256: and 64 hex digits"
+   fi
    ```
 
    Check them, then reload the units:
@@ -246,7 +251,7 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
    systemctl --user daemon-reload
    ```
 
-   Expect `1` for each of the two files from the `grep`, and no output from the others. A `0` means a pin is missing or malformed, or `d` was not a digest: run the chain again. The sed command names the two files: never run it on every `*.container` file, because it would also touch the database unit.
+   Expect `1` for each of the two files from the `grep`, and no output from the others. A `0` means a pin is missing or malformed: run the chain again. A line `Refused: ...` means `d` was not set to a digest, and the files are unchanged, so an old pin is still in place and the `grep` also prints `1`: set `d` and run the chain again. The sed command names the two files: never run it on every `*.container` file, because it would also touch the database unit.
 
    If you pulled by tag instead, `podman image inspect --format '{{json .RepoDigests}}' ghcr.io/ignisdevne/suiteward:<version>` must list `ghcr.io/ignisdevne/suiteward@sha256:<index>`.
 
@@ -547,7 +552,7 @@ These steps are the same on both tiers. Run the first one in the shell of your f
    - A `branch` baseline becomes V1 by itself, with no merge. V1 can take up to about a minute to appear, and the bot then comments `Bootstrap complete: P<n>-R1, approved by <owner>, is now canonical version V1.`
    - A `pull` baseline becomes V1 only from the exact merge commit of that pull request, after it merges. A push that changes a protected file in that pull request cancels the proposal: comment `/suiteward propose` again.
 
-4. Read `/status`, with the command of your flow's readiness check: put `/status` in place of `/readyz` and leave out the retry options. Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error.
+4. Read `/status` with the second command of step 8 of the restore flow of your tier (section 3). Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error.
 
 ## 5. Rehearse on the co-located stack
 

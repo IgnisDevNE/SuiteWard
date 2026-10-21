@@ -701,11 +701,14 @@ Both `suiteward-migrate.container` and `suiteward.container` carry the placehold
 d=sha256:<index>
 ```
 
-The chain stops unless `d` has the form of a digest, so it can never write an incomplete line:
+The chain refuses with a message unless `d` has the form of a digest, so it can never write an incomplete line:
 
 ```
-[[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
-sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+if [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+else
+  echo "Refused: d is not sha256: and 64 hex digits"
+fi
 ```
 
 Check the result. The command counts, in each file, the lines that have the form of a digest pin:
@@ -875,11 +878,14 @@ Take the image index digest of the new release and verify its signature, as step
 d=sha256:<index>
 ```
 
-The chain stops unless `d` has the form of a digest:
+The chain refuses with a message unless `d` has the form of a digest. Without that message you could not tell a refused chain from a done one, because the old pin would still pass the check below:
 
 ```
-[[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
-sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+if [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  sed -i "s|^Image=ghcr.io/ignisdevne/suiteward[:@].*|Image=ghcr.io/ignisdevne/suiteward@$d|" ~/.config/containers/systemd/suiteward-migrate.container ~/.config/containers/systemd/suiteward.container
+else
+  echo "Refused: d is not sha256: and 64 hex digits"
+fi
 ```
 
 ```

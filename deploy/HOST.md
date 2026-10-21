@@ -105,7 +105,7 @@ NFT=$(sudo sh -c 'command -v nft')
 sudo tee /etc/systemd/system/suiteward-imds-block.service >/dev/null <<EOF
 [Unit]
 Description=Reject the instance metadata service for the suiteward user
-Before=user@.service
+Before=systemd-user-sessions.service
 After=nftables.service
 
 [Service]

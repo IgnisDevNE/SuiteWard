@@ -2,7 +2,9 @@ package scope_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
@@ -261,5 +263,89 @@ func TestZeroPatternNeverMayMatchBelow(t *testing.T) {
 	var pattern scope.Pattern
 	if _, err := pattern.MayMatchBelow("a"); !errors.Is(err, scope.ErrInvalidPattern) {
 		t.Fatalf("Pattern{}.MayMatchBelow error = %v, want ErrInvalidPattern", err)
+	}
+}
+
+// A pattern has at most 64 segments: an untrusted declaration must not buy unbounded matching work.
+func TestParsePatternCapsSegmentsAtSixtyFour(t *testing.T) {
+	for name, tt := range map[string]struct {
+		pattern string
+		valid   bool
+	}{
+		"64 segments":                      {strings.Repeat("a/", 63) + "a", true},
+		"65 segments":                      {strings.Repeat("a/", 64) + "a", false},
+		"65 recursive segments":            {"/" + strings.Repeat("**/", 64) + "x", false},
+		"20000 recursive segments":         {"/" + strings.Repeat("**/", 20000) + "x", false},
+		"64 segments with trailing slash":  {strings.Repeat("a/", 63) + "a/", true},
+		"65 segments with trailing slash":  {strings.Repeat("a/", 64) + "a/", false},
+		"64 recursive segments are usable": {"/" + strings.Repeat("**/", 63) + "x", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := scope.ParsePattern(tt.pattern)
+			if tt.valid && err != nil {
+				t.Fatalf("ParsePattern: %v", err)
+			}
+			if !tt.valid && !errors.Is(err, scope.ErrInvalidPattern) {
+				t.Fatalf("ParsePattern error = %v, want ErrInvalidPattern", err)
+			}
+		})
+	}
+}
+
+// The costliest pattern the cap allows (64 segments, 32 of them recursive and none adjacent) matches a deep path in
+// work linear in segments times components. The bound is generous: it separates that from a quadratic walk per
+// recursive segment, not scheduler noise.
+func TestPatternWithManyRecursiveSegmentsMatchesDeepPathQuickly(t *testing.T) {
+	pattern, err := scope.ParsePattern("/" + strings.Repeat("**/a/", 31) + "**/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := strings.Repeat("a/", 6000) + "y"
+	start := time.Now()
+	got, err := pattern.Match(path)
+	if err != nil || got {
+		t.Fatalf("Match = %v, %v, want false", got, err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Match took %v", elapsed)
+	}
+}
+
+// Adjacent "**" segments mean what one does, so a pattern with a run of them matches exactly as its collapsed form.
+func TestAdjacentRecursiveSegmentsMatchAsOne(t *testing.T) {
+	paths := []string{"a", "x", "a/x", "a/b/x", "a/b/c/x", "x/a", "a/x/b", "b/a/x", "x/x", "a/b/c"}
+	for _, tt := range [][2]string{
+		{"a/**/**/x", "a/**/x"},
+		{"a/**/**/**/x", "a/**/x"},
+		{"**/**/x", "**/x"},
+		{"/**/**/x", "/**/x"},
+		{"a/**/**", "a/**"},
+		{"a/**/**/", "a/**/"},
+		{"**/**", "**"},
+		{"**/**/a", "**/a"},
+		{"a/**/**/b/**/**/x", "a/**/b/**/x"},
+	} {
+		t.Run(tt[0], func(t *testing.T) {
+			long, err := scope.ParsePattern(tt[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			short, err := scope.ParsePattern(tt[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range paths {
+				gotLong, errLong := long.Match(p)
+				gotShort, errShort := short.Match(p)
+				if errLong != nil || errShort != nil || gotLong != gotShort {
+					t.Errorf("Match(%q): %q = %v, %v; %q = %v, %v", p, tt[0], gotLong, errLong, tt[1], gotShort, errShort)
+				}
+				belowLong, errLong := long.MayMatchBelow(p)
+				belowShort, errShort := short.MayMatchBelow(p)
+				if errLong != nil || errShort != nil || belowLong != belowShort {
+					t.Errorf("MayMatchBelow(%q): %q = %v, %v; %q = %v, %v", p, tt[0], belowLong, errLong, tt[1], belowShort, errShort)
+				}
+			}
+		})
 	}
 }

@@ -45,8 +45,8 @@ func TestBootstrapSummaryNamesTheRunnerRulesTheDeclarationHas(t *testing.T) {
 	}
 }
 
-// A declaration with no runner rules says so; a payload written before M1.9-E4 never read the runner rules, so it says nothing.
-func TestBootstrapSummaryStatesNoRunnerRulesOnlyWhenTheDeclarationHasNone(t *testing.T) {
+// A declaration with no runner rules says so, and so does a payload written before M1.9-E4, which holds no runner list.
+func TestBootstrapSummaryStatesNoRunnerRulesWhenTheDeclarationHasNone(t *testing.T) {
 	message := cmtMust(newSummaryMessage(cmtTarget(), cmtSummaryInputs()))
 	var payload map[string]any
 	if err := json.Unmarshal(message.Payload, &payload); err != nil {
@@ -71,11 +71,9 @@ func TestBootstrapSummaryStatesNoRunnerRulesOnlyWhenTheDeclarationHasNone(t *tes
 		t.Fatalf("a declaration without runner rules does not say so:\n%s", body)
 	}
 
-	delete(summary, "runner") // a payload written before M1.9-E4
-	pre := cmtSummaryInputs()
-	want := commandtext.BootstrapSummary(commandtext.Summary{Proposal: 1, Revision: 1, Origin: bootHead, Branch: "main", Protected: 2, Paths: pre.Paths,
-		Include: pre.Include, Exclude: pre.Exclude, IncludeTotal: len(pre.Include), ExcludeTotal: len(pre.Exclude), Tier: commandtext.CoLocated})
-	if got := render(payload); got != want || strings.Contains(got, "runner") {
+	want := render(payload)
+	delete(summary, "runner") // a payload written before M1.9-E4 holds no runner list, which reads as none
+	if got := render(payload); got != want {
 		t.Fatalf("a payload without runner rules renders\n%s\nwant\n%s", got, want)
 	}
 }

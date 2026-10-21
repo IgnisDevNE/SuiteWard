@@ -10,6 +10,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// MaxDeclarationPatterns is the most patterns a declaration may list across include, exclude and runner.
+const MaxDeclarationPatterns = 1000
+
 // DeclarationPath is the repository-root path of the scope declaration.
 const DeclarationPath = ".suiteward.yml"
 
@@ -42,7 +45,7 @@ func ParseDeclaration(raw []byte) (Declaration, error) {
 		if errors.Is(err, io.EOF) {
 			return Declaration{}, fmt.Errorf("%w: no document", ErrInvalidDeclaration)
 		}
-		return Declaration{}, fmt.Errorf("%w: %v", ErrInvalidDeclaration, err)
+		return Declaration{}, fmt.Errorf("%w: %w", ErrInvalidDeclaration, err)
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
@@ -73,6 +76,15 @@ func ParseDeclaration(raw []byte) (Declaration, error) {
 	if err := checkVersion(fields["version"]); err != nil {
 		return Declaration{}, err
 	}
+	total := 0
+	for _, key := range []string{"include", "exclude", "runner"} {
+		if node := fields[key]; node.Kind == yaml.SequenceNode {
+			total += len(node.Content)
+		}
+	}
+	if total > MaxDeclarationPatterns {
+		return Declaration{}, fmt.Errorf("%w: %d patterns in a declaration of at most %d", ErrInvalidDeclaration, total, MaxDeclarationPatterns)
+	}
 	include, err := parseList("include", fields["include"])
 	if err != nil {
 		return Declaration{}, err
@@ -93,7 +105,10 @@ func checkVersion(node yaml.Node) error {
 		return fmt.Errorf("%w: version must be the integer 1", ErrInvalidDeclaration)
 	}
 	var version int
-	if err := node.Decode(&version); err != nil || version != 1 {
+	if err := node.Decode(&version); err != nil {
+		return fmt.Errorf("%w: version must be the integer 1, got %q: %w", ErrInvalidDeclaration, node.Value, err)
+	}
+	if version != 1 {
 		return fmt.Errorf("%w: version must be the integer 1, got %q", ErrInvalidDeclaration, node.Value)
 	}
 	return nil
@@ -148,15 +163,16 @@ func (d Declaration) Runner() []Pattern {
 }
 
 // AddPatterns returns raw with include and runner appended to their lists. It creates a list that is missing (in block
-// style), skips a pattern already in its list, quotes a new item as the items of its list are all quoted, keeps the comments yaml.v3 keeps, and never removes or reorders a pattern.
-// The result is a valid declaration; when there is nothing to add it is raw itself, byte for byte. Rewriting the file
-// reindents it with two spaces, so the owner approves the new bytes (D-SCOPE-DISCOVERY).
+// style), skips a pattern already in its list, quotes a new item as the items of its list are all quoted, keeps the
+// comments yaml.v3 keeps, and never removes or reorders a pattern. The result is a valid declaration, so it errors
+// when the additions pass MaxDeclarationPatterns; when there is nothing to add it is raw itself, byte for byte.
+// Rewriting the file reindents it with two spaces, so the owner approves the new bytes (D-SCOPE-DISCOVERY).
 func AddPatterns(raw []byte, include, runner []string) ([]byte, error) {
 	return addToLists(raw, []listAdd{{"include", include}, {"runner", runner}})
 }
 
-// AddExcludes returns raw with paths appended to its exclude list, under the rules of AddPatterns. A path is added as the pattern it spells,
-// so a name without a slash excludes that name at every depth.
+// AddExcludes returns raw with paths appended to its exclude list, under the rules of AddPatterns. A path is added as
+// the pattern it spells, so a name without a slash excludes that name at every depth.
 func AddExcludes(raw []byte, paths []string) ([]byte, error) {
 	return addToLists(raw, []listAdd{{"exclude", paths}})
 }
@@ -180,7 +196,7 @@ func addToLists(raw []byte, adds []listAdd) ([]byte, error) {
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(raw, &root); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidDeclaration, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidDeclaration, err)
 	}
 	top := root.Content[0] // ParseDeclaration accepted raw: one document holding a mapping
 	changed := false
@@ -230,7 +246,7 @@ func appendToList(top *yaml.Node, key string, patterns []string) bool {
 	for _, pattern := range patterns {
 		if !present[pattern] {
 			present[pattern] = true
-			added = append(added, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: pattern, Style: style})
+			added = append(added, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: pattern, Style: ItemStyle(pattern, style)})
 		}
 	}
 	if len(added) == 0 {
@@ -242,4 +258,23 @@ func appendToList(top *yaml.Node, key string, patterns []string) bool {
 	}
 	list.Content = append(list.Content, added...)
 	return true
+}
+
+// needsQuotes reports whether a plain scalar v would not read back as the string v: the merge key and the YAML 1.1 booleans, which
+// the encoder leaves plain when the node is a string. ItemStyle applies it.
+func needsQuotes(v string) bool {
+	switch v {
+	case "<<", "y", "Y", "yes", "Yes", "YES", "n", "N", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF":
+		return true
+	}
+	return false
+}
+
+// ItemStyle returns style, or the double-quoted style when style is plain and v needs quotes. appendToList and the
+// review suggestions both use it, so that both write the same item.
+func ItemStyle(v string, style yaml.Style) yaml.Style {
+	if style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) == 0 && needsQuotes(v) {
+		return yaml.DoubleQuotedStyle
+	}
+	return style
 }

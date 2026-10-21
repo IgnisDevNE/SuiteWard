@@ -1,25 +1,23 @@
 # The SuiteWard service. Outbound only: both published ports (8081 HTTP, 8091 MCP) are bound to the host's loopback, so they are reached from the host only.
-# Quadlet 4.9 has no Notify=healthy, so the database is ordered with Requires/After only. If it is not accepting connections yet,
-# the service exits 1 at startup (no retry loop inside the process) and Restart=always tries again.
+# suiteward-migrate.service runs first (Requires/After) and waits for the database itself; serve never migrates and never sees the owner URL.
 [Unit]
 Description=SuiteWard
 Wants=network-online.target
 After=network-online.target
-Requires=suiteward-db.service
-After=suiteward-db.service
+Requires=suiteward-migrate.service
+After=suiteward-migrate.service
 StartLimitIntervalSec=0
 
 [Container]
-Image=ghcr.io/ignisdevne/suiteward:deploy
+# Pinned by digest: replace <digest> (podman image inspect --format '{{.Digest}}' <image>), and change suiteward-migrate.container to the same line.
+Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>
 ContainerName=suiteward
-# Checked by podman-auto-update.timer when you enable it (daily by default); remove AutoUpdate=registry to pin a version.
-AutoUpdate=registry
 Network=suiteward.network
 # The container listens on all its interfaces; the host side is loopback only.
 PublishPort=127.0.0.1:8081:8080
 # The MCP listener (image default SUITEWARD_MCP_ADDR=0.0.0.0:8090); it still needs its bearer token.
 PublishPort=127.0.0.1:8091:8090
-# The full database URL, the GitHub App key and the MCP token are podman secrets mounted as files; they are never environment variables.
+# The application role URL (never the owner URL), the GitHub App key and the MCP token are podman secrets mounted as files; they are never environment variables.
 Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400
 Environment=SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url
 Secret=suiteward-github-app-key,type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400
@@ -36,7 +34,7 @@ Volume=suiteward-data.volume:/data
 ReadOnly=true
 DropCapability=ALL
 NoNewPrivileges=true
-# The stop timeout (45 s) must exceed SUITEWARD_SHUTDOWN_TIMEOUT (30 s by default). No quadlet key for it or the memory limit in 4.9.
+# The stop timeout (45 s) must exceed SUITEWARD_SHUTDOWN_TIMEOUT (30 s by default). It and the memory limit go through PodmanArgs (Podman 5.5 or later).
 PodmanArgs=--memory=256m --stop-timeout=45
 
 [Service]

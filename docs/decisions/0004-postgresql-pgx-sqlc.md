@@ -1,7 +1,7 @@
 # ADR 0004: PostgreSQL with pgx and sqlc
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (R1 and M1.2, released in `v0.1.0`).
 - **Product:** SuiteWard
 - **Scope:** Relational persistence and database access from Go.
 - **Related:** [ADR 0001](0001-self-hosted-github-synchronization.md) and [ADR 0003](0003-go-and-chi.md).

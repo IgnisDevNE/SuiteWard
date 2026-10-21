@@ -1,6 +1,6 @@
 # Governance persistence contract
 
-- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" (frozen by M1.3-C0) and "Baseline proposals" (frozen before M1.3-C2) below, and for phase M1.4 by "GitHub observations" (frozen by M1.4-B0).
+- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" (frozen by M1.3-C0) and "Baseline proposals" (frozen before M1.3-C2) below, and for phase M1.4 by "GitHub observations" (frozen by M1.4-B0), and by each later phase through M1.10 (`v0.1.3`); phase SH (in progress) extends it for `v0.2.0`.
 - **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite), M1.3-C1 (proposal revision write), M1.3-C2 (baseline proposals), M1.4-B1 (observation store), M1.4-B2 (reconciliation).
 
 ## Principles
@@ -241,7 +241,7 @@ Semantics:
 - Retry limits, timeouts and backoff are runtime settings per kind (see [runtime](runtime.md)), not part of the port.
 - A job's terminal state is River's `discarded` (retries exhausted) or `completed`; both stay in `river_job` and are counted by the runtime status endpoint until River's cleaner removes them. The runtime sets no retention, so River v0.49.0's defaults apply: completed and cancelled jobs are removed after 24 hours and discarded jobs after 7 days. The job counts of `/status` therefore describe the retained jobs, not the history.
 - `outbox.project_id` and `outbox.suite_id` are both set (a message written through `Tx.Outbox`) or both null (a system message, for example the diagnostic `probe` written through the non-port `Store.EnqueueSystem`, which reuses the outbox insert statement and inserts a job in the same transaction without taking a Suite lock); a `CHECK` enforces it.
-- The outbox row is the single owner of delivery state (it is not mirrored by a River job per message). A relay, itself a periodic River job that runs at startup and then on `OUTBOX_POLL_INTERVAL`, claims due rows with `FOR UPDATE SKIP LOCKED`, increments `attempts`, sets `next_attempt_at` to now plus `OUTBOX_LEASE` and commits; it then calls the publisher registered for the row's kind outside any transaction. An outcome update is conditional on the claim (`WHERE key = $1 AND state = 'pending' AND attempts = <attempts at claim>`): when a publish outlasts the lease and another relay has reclaimed the row, the late outcome updates nothing and is logged, never an error and never overwriting the newer claim. Success sets `state = delivered`. An error sets `last_error`; at `OUTBOX_MAX_ATTEMPTS` the state becomes `failed` (terminal, visible), otherwise `next_attempt_at` is now plus a capped exponential backoff. A crash between claim and outcome leaves the row pending until the lease expires, so it is redelivered. A row whose kind has no registered publisher stays pending. Until M1.7 it failed at once; M1.7 changes that:
+- The outbox row is the single owner of delivery state (it is not mirrored by a River job per message). A relay, itself a periodic River job that runs at startup and then on `OUTBOX_POLL_INTERVAL`, claims due rows with `FOR UPDATE SKIP LOCKED`, increments `attempts`, sets `next_attempt_at` to now plus `OUTBOX_LEASE` and commits; it then calls the publisher registered for the row's kind outside any transaction. An outcome update is conditional on the claim (`WHERE key = $1 AND state = 'pending' AND attempts = <attempts at claim>`): when a publish outlasts the lease and another relay has reclaimed the row, the late outcome updates nothing and is logged, never an error and never overwriting the newer claim. Success sets `state = delivered`. An error sets `last_error`; at `OUTBOX_MAX_ATTEMPTS` the state becomes `failed` (terminal, visible), otherwise `next_attempt_at` is now plus a capped exponential backoff. A crash between claim and outcome leaves the row pending until the lease expires, so it is redelivered. The relay's periodic job is unique while unfinished: after an unclean stop its next run waits until River rescues the stuck job (up to `JOB_TIMEOUT` plus 1 minute); the rows stay durable. A row whose kind has no registered publisher stays pending. Until M1.7 it failed at once; M1.7 changes that:
 - the relay releases the claim, restoring the attempt, and defers the row by the backoff cap;
 - it logs a Warn naming the kind, once per kind per process;
 - so a target switched off GitHub, or a publisher registered later, never loses a message.
@@ -542,7 +542,7 @@ package commands
 type Disposition string // the codes below
 
 const (
-	NotCommand      Disposition = "not-command"     // no /suiteward line, or SuiteWard's own comment
+	NotCommand      Disposition = "not-command"     // no /suiteward line, SuiteWard's own comment, or an approve, revoke or skip first observed after its pull request stopped being open (no step used, never acknowledged)
 	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
 	NoSuite         Disposition = "no-suite"        // owner-authored command for a project whose Suite does not exist yet
 	EditedFirst     Disposition = "edited-first"    // owner-authored, first observed version already edited (updated_at != created_at); no step used
@@ -553,6 +553,7 @@ const (
 	ReplayedCode    Disposition = "replayed-code"   // owner-authored, the step was used by another command
 	UnknownProposal Disposition = "unknown-proposal" // owner-authored, valid code, for a proposal that does not exist on an existing Suite; the step stays consumed
 	Processed       Disposition = "processed"       // passed to ProcessConsent; Receipt holds the outcome
+	OtherPull       Disposition = "other-pull"      // owner-authored approve or revoke for a proposal that another pull request carries; refused before its step is used (migration 00020); acknowledged, no operation id, never counted by LatestOwnerCommand
 )
 
 type Entry struct {
@@ -598,7 +599,7 @@ type Candidate struct { // the first observed version of one comment
 
   `edited-first` is recorded like a rejected disposition, with an acknowledgment, and uses up no step.
 
-  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
+  A crash between any two steps repeats the earlier steps harmlessly on the next run. Rejected dispositions (`malformed`, `invalid-code`, `replayed-code`, `no-suite`, `unknown-proposal`, `other-pull`, `edited-first`) go through `Record` with the acknowledgment. `not-command`, `ignored-author`, `before-enrollment` and `failed` record nothing to publish.
 - **Keys.** Observations are keyed by `owner/name` (M1.4) and projects by repository id. `Pending` joins them through the enrolled projects (`owner.State.Projects`), so a repository that is not enrolled has no candidates.
 
 ### Consumed steps bound to their command
@@ -1182,7 +1183,7 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
   - it uses the same classifier as `Suggest`.
 - A declaration whose runner pattern matches no file still parses, and `Covers` and the integrity check accept it.
 - `AddPatterns`, by round trip: the output parses, keeps every original pattern, and adds exactly the requested new ones.
-- `suggested` and `suggest-refused` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
+- `suggested`, `suggest-refused` and `other-pull` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
 - Payloads: an ack or revision payload of the `v0.1.0` shape still decodes.
 
 ## Cycle start (M1.7c; normative)
@@ -1232,7 +1233,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9, `00020` the other-pull disposition)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -1262,6 +1263,30 @@ Property every reconstitution test must check: state produced by domain operatio
 River's own tables (`river_job` and the rest) are created by vendored goose migrations and owned by River.
 
 All enumerations are `text` with `CHECK` constraints. Immutable and append-only tables reject `UPDATE`, `DELETE` and `TRUNCATE` by trigger (`github_comment_versions` accepts an `UPDATE` of `not_seen_since` only). `migrations.SupportedVersion` is the single exported schema version used by both the migrator and the schema-readiness check.
+
+## Database roles and grants (SH-H4)
+
+Two roles use the database. The **owner** owns every object (today the bootstrap role `suiteward`) and is used only by `suiteward migrate`. The **application role** is what `serve`, `setup` and `probe` connect as: the user of `DATABASE_URL` (`suiteward_app` in the shipped layout), which is also the role `suiteward migrate` grants to. It must be least-privilege: `migrate` refuses, before it changes anything, the migration role or a member of it, a superuser, a role with `BYPASSRLS`, the owner of the schema or a member of its owner, and the owner of a table in the schema. Whoever holds the application credential can change data but cannot defeat the immutability triggers: that needs the owner.
+
+`migrations.GrantApp(ctx, ownerURL, role)` gives the role, in the connection's `current_schema()` (never a hard-coded `public`), in one transaction and idempotently:
+
+- `USAGE` on the schema;
+- `SELECT, INSERT, UPDATE, DELETE` on all tables, then `INSERT, UPDATE, DELETE` revoked on `goose_db_version`, which it only reads (the schema version is the startup gate; `schema_version()` reads it as the caller);
+- `USAGE, SELECT` on all sequences;
+- `ALTER DEFAULT PRIVILEGES FOR ROLE <owner> IN SCHEMA <schema>` granting the same on tables and sequences the owner creates later, so a migration that was applied but not yet granted is still covered.
+
+It grants nothing else: no `TRUNCATE`, `TRIGGER`, `REFERENCES`, `CREATE` or ownership (every run revokes `TRUNCATE`, `TRIGGER` and `REFERENCES` on the schema's tables, so the role converges to this set), so the role cannot `ALTER TABLE ... DISABLE TRIGGER`, `DROP TRIGGER`, `TRUNCATE` or create objects, and it is not a superuser, so `SET session_replication_role` fails; each is a `42501` (insufficient privilege). The statements the store runs on the enrollment and queue tables (`LOCK TABLE owner_enrollment IN SHARE ROW EXCLUSIVE MODE`, row locks, `FOR UPDATE SKIP LOCKED`) and River's own maintenance need no more. River's reindexer, which does (`REINDEX INDEX CONCURRENTLY` needs the owner), is disabled.
+
+The role is not created by the program: `CREATE ROLE` needs a password, which the deployment holds. `GrantApp` fails, naming it, when the role does not exist, and when it is not least-privilege, as listed above (`CheckAppRole`, which `migrate` runs first). A deployment creates it once, as the owner, with the password typed or piped into `psql` on its standard input, never as a command-line argument (an argument shows in the process list and the shell history):
+
+```sql
+CREATE ROLE suiteward_app LOGIN;
+\password suiteward_app
+```
+
+The grants assume PostgreSQL 15 or later, where `PUBLIC` has no `CREATE` on schema `public`. On an older server the role could create objects there through `PUBLIC`: run `REVOKE CREATE ON SCHEMA public FROM PUBLIC;` yourself (`GrantApp` does not change it). River's tables and the history tables stay owned by the owner either way.
+
+The integration tests create one such role for the cluster and run the PostgreSQL conformance suites, the River suites and the application suites connected as it, after the owner migrated the schema and `GrantApp` ran (`internal/adapters/postgres/pgtest`); suites that tamper with stored facts or change the schema (`ALTER TABLE`, `TRUNCATE`, `DISABLE TRIGGER`) run those statements as the owner.
 
 ## Behaviors that must stay covered
 

@@ -29,5 +29,5 @@ func DecideBootstrap(input BootstrapInput) (PromotionDecision, error) {
 
 // integratesOrigin pairs the two accepted shapes: a pinned branch commit is integrated as it is, a PR head only by its merge.
 func integratesOrigin(integration IntegrationKind, origin OriginKind) bool {
-	return integration == IntegrationExistingBaseline && origin == OriginBranch || integration == IntegrationMergedChange && origin == OriginPull
+	return (integration == IntegrationExistingBaseline && origin == OriginBranch) || (integration == IntegrationMergedChange && origin == OriginPull)
 }

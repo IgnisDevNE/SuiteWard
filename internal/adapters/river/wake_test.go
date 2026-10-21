@@ -89,14 +89,33 @@ func TestEachGitHubKindRunsOnItsOwnQueue(t *testing.T) {
 	config.SyncTick, config.SyncRepo = run, func(context.Context, string) (river.Wake, error) { return nil, nil }
 	config.Commands, config.Merges, config.Bootstrap = run, run, run
 	config.Checks = func(context.Context) error { ran.Add(1); return nil }
-	config.SyncInterval, config.CommandsInterval, config.ChecksInterval, config.MergesInterval, config.BootstrapInterval = time.Hour, time.Hour, time.Hour, time.Hour, time.Hour
+	config.Integrity = func(context.Context) error { ran.Add(1); return nil }
+	config.SyncInterval, config.CommandsInterval, config.ChecksInterval, config.MergesInterval, config.BootstrapInterval, config.IntegrityInterval = time.Hour, time.Hour, time.Hour, time.Hour, time.Hour, time.Hour
 	startRuntime(t, w, config)
-	waitUntil(t, "the five periodic runs", func() bool { return ran.Load() >= 5 })
+	waitUntil(t, "the six periodic runs", func() bool { return ran.Load() >= 6 })
 
-	for _, kind := range []string{river.SyncTickKind, river.CommandsKind, river.ChecksKind, river.MergesKind, river.BootstrapKind} {
+	for _, kind := range []string{river.SyncTickKind, river.CommandsKind, river.ChecksKind, river.MergesKind, river.BootstrapKind, river.IntegrityKind} {
 		if got := w.scalar("SELECT queue FROM river_job WHERE kind=$1 ORDER BY id LIMIT 1", kind); got != kind {
 			t.Errorf("%s runs on queue %q; want a queue of its own", kind, got)
 		}
+	}
+}
+
+// A promotion wakes the integrity job so the new canonical is verified at once instead of within the hour.
+func TestARunThatWakesIntegrityRunsItAgain(t *testing.T) {
+	w := newWorld(t, 5)
+	var ran atomic.Int32
+	config := wakeConfig(&logCapture{}, nil, river.Wake{river.IntegrityKind}, nil)
+	config.Integrity = func(context.Context) error { ran.Add(1); return nil }
+	config.IntegrityInterval = time.Hour
+	runtime := startRuntime(t, w, config)
+	waitUntil(t, "the first integrity run", func() bool { return ran.Load() == 1 })
+
+	wakeFromSyncRepo(t, w, runtime, "acme/widgets", "completed")
+
+	waitUntil(t, "the woken integrity run", func() bool { return ran.Load() == 2 })
+	if got := w.count("kind='canonical_integrity' AND queue='canonical_integrity' AND max_attempts=1"); got == "0" {
+		t.Fatal("no woken integrity job on its own queue")
 	}
 }
 
@@ -175,7 +194,7 @@ func TestAnUnknownWakeKindInsertsNothingAndIsLoggedAtError(t *testing.T) {
 }
 
 // River refuses to insert a job whose kind no worker is registered for; with no Checks job that is the failing insert.
-func TestAFailingWakeUpIsLoggedAtWarnWithTheKindOnlyAndDoesNotFailTheRun(t *testing.T) {
+func TestAFailingWakeUpIsLoggedAtWarnWithItsCauseAndDoesNotFailTheRun(t *testing.T) {
 	w := newWorld(t, 5)
 	logs := &logCapture{}
 	runtime := startRuntime(t, w, wakeConfig(logs, nil, river.Wake{river.ChecksKind}, nil))
@@ -186,8 +205,8 @@ func TestAFailingWakeUpIsLoggedAtWarnWithTheKindOnlyAndDoesNotFailTheRun(t *test
 	if line == "" {
 		t.Fatalf("no Warn line names the kind %q:\n%s", river.ChecksKind, logs.String())
 	}
-	if strings.Contains(line, `"error"`) {
-		t.Errorf("the Warn line carries more than the kind: %s", line)
+	if !strings.Contains(line, `"error"`) {
+		t.Errorf("the Warn line does not carry the cause: %s", line)
 	}
 	if got := w.count("kind='github_checks'"); got != "0" {
 		t.Fatalf("%s checks jobs; want none", got)

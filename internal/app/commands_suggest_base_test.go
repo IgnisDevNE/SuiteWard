@@ -299,7 +299,7 @@ func TestSuggestAfterTheFirstContractAddsNoSecondReviewForASetTheChecksJobReview
 	w := newCjWorld(t)
 	w.seedDeclared(cjDecl, reviewFiles(reviewDecl, cjUtilTst))
 	w.pullFiles(changed("@@ -1,3 +1,3 @@"))
-	existing, err := newScopeReviewMessage(cjTarget(cjID2), cjHead, wantSuggestionsDigest(reviewDecl, suggestInclude), []scopeSuggestion{{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}}})
+	existing, err := newScopeReviewMessage(cjTarget(cjID2), cjHead, wantSuggestionsDigest(reviewDecl, suggestInclude), []scopeSuggestion{{List: "include", Line: 3, Anchor: "  - /tests/**", Patterns: []string{"*_test.go"}, Quoting: "plain"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		w := newCjWorld(t)
 		w.trees(map[string]string{"README.md": "x"}, reviewFiles(reviewDecl, cjUtilTst))
 		reader := w.pullFiles(changed("@@ -1,3 +1,3 @@"))
-		reader.err = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
+		reader.err = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootLeak)
 		w.syncAll([]cjComment{cjSuggest(500, cjAt(10))})
 		w.mustRun()
 
@@ -343,7 +343,7 @@ func TestSuggestKeepsTheReplyWhenTheChangedFilesCannotBeRead(t *testing.T) {
 		if !strings.Contains(w.logs.String(), `"kind"`) || !strings.Contains(w.logs.String(), `"status":500`) {
 			t.Fatalf("the log lacks the kind and status of the failure\nlogs: %s", w.logs)
 		}
-		w.requireNothingLeaked(bootSecret)
+		w.requireNothingLeaked(bootLeak)
 	})
 	t.Run("a rate limit waits for the next run", func(t *testing.T) {
 		w := newCjWorld(t)
@@ -418,7 +418,6 @@ func TestCommentPublisherRefusesASuggestReplyWithABaseThatDoesNotFit(t *testing.
 		"new patterns on nothing uncovered":      {"disposition": "suggested", "reason": "nothing-uncovered", "addInclude": []string{"*_test.go"}},
 		"21 new patterns":                        notice("addInclude", strings.Split(strings.Repeat("x,", 21), ",")[:21]),
 		"a base on a refusal that is not a file": {"disposition": "suggest-refused", "reason": "fork", "base": "pull"},
-		"a declared flag with a base":            notice("declared", true),
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCmtWorld(t)
@@ -467,7 +466,7 @@ func TestPayloadsOverTheOutboxLimitAreNotRenderable(t *testing.T) {
 		for i := range patterns {
 			patterns[i] = strings.Repeat("a", 99) + fmt.Sprint(i%10)
 		}
-		suggestions = append(suggestions, scopeSuggestion{List: list, Line: 3, Anchor: "  - " + strings.Repeat("a", 900), Patterns: patterns})
+		suggestions = append(suggestions, scopeSuggestion{List: list, Line: 3, Anchor: "  - " + strings.Repeat("a", 900), Patterns: patterns, Quoting: "plain"})
 	}
 	if _, err := newScopeReviewMessage(cmtTarget(), cmtScopeHead, scopeDigest("x"), suggestions); err != nil {
 		t.Errorf("the largest review: %v", err)

@@ -4,6 +4,7 @@ package river_test
 
 import (
 	"context"
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,6 +77,34 @@ func TestPeriodicJobRunsDoNotOverlap(t *testing.T) {
 				t.Fatalf("%s %s jobs and %d running at once while the first run still ran; want 1 and 1", got, job.name, peak.Load())
 			}
 		})
+	}
+}
+
+// A relay run that outlasts several periods does not let the next ones pile up behind it.
+func TestRelayRunsDoNotPileUpBehindAnUnfinishedRun(t *testing.T) {
+	w := newWorld(t, 5)
+	release := make(chan struct{})
+	var running atomic.Int32
+	config := testConfig(&logCapture{})
+	config.Publishers = map[string]river.Publisher{"demo": func(ctx context.Context, _ string, _ json.RawMessage) error {
+		running.Add(1)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}}
+	config.OutboxPollInterval = 100 * time.Millisecond
+	w.enqueue("held", river.ProbeKind, "demo", time.Time{})
+	startRuntime(t, w, config)
+	t.Cleanup(func() { close(release) })
+	waitUntil(t, "the relay run to start", func() bool { return running.Load() == 1 })
+
+	// A negative assertion about a timer: let the periodic job fire a dozen times while the first run still runs.
+	time.Sleep(1200 * time.Millisecond)
+
+	if got := w.scalar("SELECT count(*)::text FROM river_job WHERE kind='outbox_relay' AND state IN ('available', 'running')"); got != "1" {
+		t.Fatalf("%s unfinished relay jobs while the first run still ran; want 1", got)
 	}
 }
 

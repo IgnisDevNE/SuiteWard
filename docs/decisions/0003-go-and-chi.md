@@ -1,7 +1,7 @@
 # ADR 0003: Go and Chi for the application and HTTP adapter
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M1.2, released in `v0.1.0`).
 - **Product:** SuiteWard
 - **Scope:** Implementation language and HTTP routing.
 - **Related:** [ADR 0001: Self-hosted deployment and GitHub synchronization](0001-self-hosted-github-synchronization.md).

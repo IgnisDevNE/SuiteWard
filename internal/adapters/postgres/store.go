@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,8 +20,17 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// ErrSchemaNotReady reports a database whose schema is not the supported version.
+// ErrSchemaNotReady reports a database whose schema is not usable by this build: not the supported version, not
+// there, or not visible to the role. A database that cannot be reached, or that refuses the login, is not this.
 var ErrSchemaNotReady = errors.New("postgres schema is not ready")
+
+// ErrSchemaNewer is ErrSchemaNotReady for a schema migrated by a newer release than this build.
+var ErrSchemaNewer = errors.New("postgres schema is newer than this build")
+
+// schemaProblems are the SQLSTATEs that say the schema is not there or not usable by the role: an undefined function
+// (the version function of a database nobody migrated), an undefined table, insufficient privilege and an invalid
+// schema name.
+var schemaProblems = []string{"42883", "42P01", "42501", "3F000"}
 
 const (
 	schemaCheckTimeout = 10 * time.Second
@@ -58,7 +68,11 @@ func NewStore(pool *pgxpool.Pool, artifacts ArtifactVerifier, jobs JobInserter) 
 	defer cancel()
 	version, err := dbgen.New(pool).GetSchemaVersion(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: read schema version: %w", ErrSchemaNotReady, err)
+		var answered *pgconn.PgError
+		if errors.As(err, &answered) && slices.Contains(schemaProblems, answered.Code) {
+			return nil, fmt.Errorf("%w: read schema version: %w", ErrSchemaNotReady, err)
+		}
+		return nil, fmt.Errorf("read schema version: %w", err)
 	}
 	if err := supportedSchema(version); err != nil {
 		return nil, err
@@ -77,9 +91,21 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 	if fn == nil {
 		return fmt.Errorf("%w: missing unit of work", governance.ErrInvalidRequest)
 	}
-	transaction, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	return inTx(ctx, s.pool, "governance", func(transaction pgx.Tx) error {
+		work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
+		if _, err := work.lock(ctx); err != nil {
+			return err
+		}
+		return fn(ctx, work)
+	})
+}
+
+// inTx runs fn in one transaction of pool. It commits only when fn returns nil and ctx is still live; an error, a panic
+// or a canceled context roll every write back. kind names the transaction in the errors of the begin and the commit.
+func inTx(ctx context.Context, pool *pgxpool.Pool, kind string, fn func(pgx.Tx) error) error {
+	transaction, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin governance transaction: %w", err)
+		return fmt.Errorf("begin %s transaction: %w", kind, err)
 	}
 	committed := false
 	defer func() {
@@ -87,18 +113,14 @@ func (s *Store) Do(ctx context.Context, project contract.ProjectID, suite contra
 			rollback(ctx, transaction)
 		}
 	}()
-	work := &tx{q: dbgen.New(transaction), project: project, suite: suite, artifacts: s.artifacts}
-	if _, err := work.lock(ctx); err != nil {
-		return err
-	}
-	if err := fn(ctx, work); err != nil {
+	if err := fn(transaction); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit governance transaction: %w", err)
+		return translateWrite("commit "+kind+" transaction", err)
 	}
 	committed = true
 	return nil

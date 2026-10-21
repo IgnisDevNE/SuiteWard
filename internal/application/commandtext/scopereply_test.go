@@ -111,7 +111,7 @@ func TestScopeReplyForTheDefaultBranchSaysTheChangeMustReachTheDefaultBranchFirs
 	}
 }
 
-func TestNothingUncoveredNamesTheBaseWhenThereIsOne(t *testing.T) {
+func TestNothingUncoveredNamesTheBase(t *testing.T) {
 	ack := func(base commandtext.ScopeBase) string {
 		return render(t, func() string {
 			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.NothingUncovered, Owner: owner, Source: source, Base: base})
@@ -122,8 +122,8 @@ func TestNothingUncoveredNamesTheBaseWhenThereIsOne(t *testing.T) {
 			t.Errorf("base %d: the body does not name %q:\n%s", base, subject, body)
 		}
 	}
-	if body := ack(0); !strings.Contains(body, "is in the scope already") {
-		t.Errorf("without a base the words are the old ones:\n%s", body)
+	if err := commandtext.ValidateAck(commandtext.Ack{Outcome: commandtext.NothingUncovered, Owner: owner, Source: source}); err == nil {
+		t.Error("an acknowledgment of nothing uncovered without a base is accepted")
 	}
 	mustPanic(t, func() {
 		commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.NothingUncovered, Owner: owner, Source: source, Base: commandtext.BaseDefaultBranch + 1})

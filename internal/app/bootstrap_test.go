@@ -37,7 +37,7 @@ const (
 	bootOwnerID     = int64(7)
 	bootHead        = "1111111111111111111111111111111111111111"
 	bootMovedHead   = "2222222222222222222222222222222222222222"
-	bootSecret      = "SECRET-TEXT-GITHUB-SENT"
+	bootLeak        = "SECRET-TEXT-GITHUB-SENT"
 )
 
 var (
@@ -423,7 +423,7 @@ func (w *bootWorld) approveIn(repositoryID, comment int64, n int, carrierPull in
 	reference := contract.ProposalReference{ProjectID: owner.ProjectID(repositoryID), SuiteID: "default", ProposalID: contract.ProposalID(fmt.Sprintf("P%d", n)), RevisionID: "R1"}
 	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID(fmt.Sprintf("consent:github-comment:%d", comment)),
 		SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", comment)), Actor: bootOwnerPrincipal(), Reference: reference,
-		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: contract.CommandOrder(comment)}))
+		Carrier: contract.ApprovalCarrierID(fmt.Sprintf("github-pr:%d/%d", repositoryID, carrierPull)), Action: contract.ApproveConsent, Order: testOrder(comment)}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil || !response.Receipt.CurrentApprovalEligible {
 		w.t.Fatalf("approve P%d-R1: eligible %v, error %v", n, response.Receipt.CurrentApprovalEligible, err)
@@ -596,7 +596,7 @@ func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
 	}
 }
 
-func TestBootstrapWakesChecksAfterPromotingV1(t *testing.T) {
+func TestBootstrapWakesChecksAndIntegrityAfterPromotingV1(t *testing.T) {
 	w := approvedWorld(t)
 	w.openPulls(bootRepo)
 
@@ -604,7 +604,7 @@ func TestBootstrapWakesChecksAfterPromotingV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\nlogs: %s", err, w.logs)
 	}
-	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+	if want := (river.Wake{river.ChecksKind, river.IntegrityKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that promoted V1 woke %v; want %v", wake, want)
 	}
 	if wake, err := w.job.run(t.Context()); err != nil || len(wake) != 0 { // the canonical exists now: nothing is promoted again
@@ -698,7 +698,7 @@ func (w *bootWorld) requireProblem(code string) {
 func TestBootstrapKeepsTheProblemOfAPromotionThatCannotProceed(t *testing.T) {
 	t.Run("read of the origin", func(t *testing.T) {
 		w := approvedWorld(t)
-		w.reader.repo(bootRepo).treeErr[bootHead] = errors.New(bootSecret)
+		w.reader.repo(bootRepo).treeErr[bootHead] = errors.New(bootLeak)
 
 		w.mustRun()
 
@@ -808,7 +808,7 @@ func TestBootstrapSummaryCountsTheRulesItDropsAndMarksWhatItCut(t *testing.T) {
 		return list
 	}
 	message, err := newSummaryMessage(commentTarget{RepositoryID: 1, Repo: "a/b", Pull: 1},
-		bootstrapSummaryInputs{Proposal: 1, Revision: 1, Origin: bootHead, Branch: "main", Protected: 1, Paths: []string{long}, Include: rules(25), Exclude: rules(21), Tier: owner.TierIsolated})
+		bootstrapSummaryInputs{Proposal: 1, Revision: 1, Source: sourceBranch, Origin: bootHead, Branch: "main", Protected: 1, Paths: []string{long}, Include: rules(25), Exclude: rules(21), Tier: owner.TierIsolated})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,7 +843,7 @@ func TestBootstrapSummaryCountsTheRulesItDropsAndMarksWhatItCut(t *testing.T) {
 func worstCase(unit string) bootstrapSummaryInputs {
 	entry := strings.Repeat(unit, 500)
 	list := func() []string { return slices.Repeat([]string{entry}, 40) } // more than the 20 the payload keeps
-	return bootstrapSummaryInputs{Proposal: 999999999, Revision: 1, Origin: bootHead, Branch: entry, Protected: 100000, Paths: list(), Include: list(), Runner: list(), Exclude: list(), Tier: owner.TierCoLocated}
+	return bootstrapSummaryInputs{Proposal: 999999999, Revision: 1, Source: sourceBranch, Origin: bootHead, Branch: entry, Protected: 100000, Paths: list(), Include: list(), Runner: list(), Exclude: list(), Tier: owner.TierCoLocated}
 }
 
 func TestBootstrapSummaryStaysWithinTheOutboxLimitForAnyRepositoryText(t *testing.T) {
@@ -921,7 +921,7 @@ func (w *bootWorld) suiteOf(id int64) bool {
 func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *testing.T) {
 	t.Run("suite creation", func(t *testing.T) {
 		w := newBootWorld(t)
-		w.reader.repo(bootRepo).repoErr = errors.New(bootSecret)
+		w.reader.repo(bootRepo).repoErr = errors.New(bootLeak)
 
 		if err := w.run(); err != nil {
 			t.Fatalf("a GitHub read failure failed the run: %v", err)
@@ -930,7 +930,7 @@ func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *te
 		if w.suiteExists() {
 			t.Fatal("the Suite was created from a failed read")
 		}
-		if strings.Contains(w.logs.String(), bootSecret) {
+		if strings.Contains(w.logs.String(), bootLeak) {
 			t.Fatalf("a log line holds the text GitHub sent:\n%s", w.logs)
 		}
 		w.reader.repo(bootRepo).repoErr = nil // the failure ends
@@ -941,7 +941,7 @@ func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *te
 	})
 	t.Run("promotion", func(t *testing.T) {
 		w := approvedWorld(t)
-		w.reader.repo(bootRepo).treeErr[bootHead] = errors.New(bootSecret)
+		w.reader.repo(bootRepo).treeErr[bootHead] = errors.New(bootLeak)
 
 		w.mustRun()
 
@@ -951,7 +951,7 @@ func TestBootstrapSkipsAProjectWhoseGitHubReadFailedAndNeverLogsGitHubText(t *te
 		if _, found := w.assessmentOutcome(bootHead); found {
 			t.Fatal("a failed read was recorded as an assessment: it could never be Passed afterwards")
 		}
-		if strings.Contains(w.logs.String(), bootSecret) {
+		if strings.Contains(w.logs.String(), bootLeak) {
 			t.Fatalf("a log line holds the text GitHub sent:\n%s", w.logs)
 		}
 		delete(w.reader.repo(bootRepo).treeErr, bootHead)
@@ -967,7 +967,7 @@ func TestBootstrapKeepsTheLastProblemOfAGitHubReadUntilTheProjectRunsCleanly(t *
 		fail func(*bootRepository)
 		code string
 	}{
-		"repository": {func(r *bootRepository) { r.repoErr = errors.New(bootSecret) }, "read-failed"},
+		"repository": {func(r *bootRepository) { r.repoErr = errors.New(bootLeak) }, "read-failed"},
 		"changed":    {func(r *bootRepository) { r.info.ID = 5555 }, "repository-changed"},
 	}
 	for name, test := range failures {
@@ -980,7 +980,7 @@ func TestBootstrapKeepsTheLastProblemOfAGitHubReadUntilTheProjectRunsCleanly(t *
 			w.mustRun()
 
 			w.requireProblem(test.code)
-			if strings.Contains(w.logs.String(), bootSecret) || strings.Contains(w.problems.lookup(bootRepo), bootSecret) {
+			if strings.Contains(w.logs.String(), bootLeak) || strings.Contains(w.problems.lookup(bootRepo), bootLeak) {
 				t.Fatalf("GitHub text reached the problem or the logs: %s", w.logs)
 			}
 			w.mustRun()
@@ -1015,7 +1015,7 @@ func TestBootstrapKeepsTheProblemOfAFailedRunAndClearsItWhenTheProjectIsCanonica
 
 func TestBootstrapContinuesWithTheNextProjectAfterAFailure(t *testing.T) {
 	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))
-	w.reader.repo(bootRepo).repoErr = errors.New(bootSecret)
+	w.reader.repo(bootRepo).repoErr = errors.New(bootLeak)
 
 	w.mustRun()
 

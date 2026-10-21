@@ -1,7 +1,7 @@
 # ADR 0017: Detect protection changes and require confirmation to repair
 
 - **Date:** 2026-09-26
-- **Status:** Accepted; automation/repair deferred post-MVP by the R1 amendment. Not yet implemented.
+- **Status:** Accepted. Detection and the distinct unknown state are implemented, reported in `/status` (M1.5, released in `v0.1.0`); confirmed repair is deferred post-MVP by the R1 amendment.
 - **Product:** SuiteWard
 - **Scope:** Detection, notification, and repair of required merge protection after setup.
 - **Related:** [Periodic synchronization](0001-self-hosted-github-synchronization.md), [MVP authorization](0012-mvp-authorization-policy.md), [canonical promotion](0014-merge-triggered-canonical-promotion.md), [required contract check](0015-required-contract-check.md), and [integrated setup](0016-integrated-protection-onboarding.md).

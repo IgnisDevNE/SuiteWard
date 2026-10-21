@@ -8,21 +8,22 @@ foreach ($script in Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -Fi
 }
 . (Join-Path $PSScriptRoot 'dev-env.ps1')
 $context = Get-DevContext $root
-New-Item -ItemType Directory -Path $context.State -Force | Out-Null
-$lock = $null
-try {
-    $lock = [IO.File]::Open((Join-Path $context.State 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
-    Install-ArchiveTool $context 'actionlint'
-} finally { if ($lock) { $lock.Dispose() } }
+Install-ArchiveTool $context 'actionlint'
 Push-Location -LiteralPath $root
 try {
     & (Join-Path $PSScriptRoot 'check-workflows.ps1')
     & (Join-Path $PSScriptRoot 'test-workflows.ps1')
+    & (Join-Path $PSScriptRoot 'check-pins.ps1')
+    & (Join-Path $PSScriptRoot 'test-pins.ps1')
+    & (Join-Path $PSScriptRoot 'test-release.ps1')
+    & (Join-Path $PSScriptRoot 'check-security.ps1')
+    & (Join-Path $PSScriptRoot 'test-security.ps1')
     & (Join-Path $PSScriptRoot 'ci.ps1') -Mode Documents
     & (Join-Path $PSScriptRoot 'test-ci.ps1')
     & (Join-Path $PSScriptRoot 'test-go.ps1')
     & (Join-Path $PSScriptRoot 'test-persistence.ps1')
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
+    & (Join-Path $PSScriptRoot 'test-deploy.ps1')
     & (Join-Path $PSScriptRoot 'test-bot-token.ps1')
     & (Join-Path $PSScriptRoot 'test-hooks.ps1')
     $sh = Get-Command sh -ErrorAction SilentlyContinue

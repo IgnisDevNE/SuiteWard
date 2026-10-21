@@ -131,9 +131,19 @@ func TestRunnerUncoveredCommentIsRefusedOnAnImpossibleState(t *testing.T) {
 
 // The review suggestion of each choice (the one-click form of the two declarations).
 
+// choiceQuoting is the quoting that a choice carries: the one of the list the anchor is in, none for a list that the choice creates.
+func choiceQuoting(anchor, newList string) commandtext.Quoting {
+	if newList != "" {
+		return ""
+	}
+	return anchorQuoting(anchor)
+}
+
 func choiceBody(t *testing.T, choice commandtext.RunnerChoice, anchor, indent string, patterns []string, newList string) string {
 	t.Helper()
-	return render(t, func() string { return commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, "") })
+	return render(t, func() string {
+		return commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, choiceQuoting(anchor, newList))
+	})
 }
 
 func TestRunnerChoiceBodyAddsTheItemsToAnExistingList(t *testing.T) {
@@ -218,8 +228,10 @@ func TestRunnerChoiceBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			mustPanic(t, func() { commandtext.RunnerChoiceBody(c.choice, c.anchor, c.indent, c.patterns, c.newList, "") })
-			if commandtext.ValidateRunnerChoice(c.choice, c.anchor, c.indent, c.patterns, c.newList, "") == nil {
+			mustPanic(t, func() {
+				commandtext.RunnerChoiceBody(c.choice, c.anchor, c.indent, c.patterns, c.newList, choiceQuoting(c.anchor, c.newList))
+			})
+			if commandtext.ValidateRunnerChoice(c.choice, c.anchor, c.indent, c.patterns, c.newList, choiceQuoting(c.anchor, c.newList)) == nil {
 				t.Error("ValidateRunnerChoice accepts it")
 			}
 		})

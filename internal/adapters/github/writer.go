@@ -45,10 +45,15 @@ func (w *Writer) PostComment(ctx context.Context, repo string, number int, body 
 	if err != nil {
 		return 0, fmt.Errorf("encode comment of pull request %d of %s: %w", number, repo, err)
 	}
-	path := fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number)
-	resp, err := w.client.Post(ctx, path, payload)
+	return postID(ctx, w.client, fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number), payload, "comment", fmt.Sprintf("pull request %d of %s", number, repo))
+}
+
+// postID posts payload to path and returns the id of the object GitHub created. what names the object, and target
+// where it goes, in the errors; an answer without a positive id is an invalid response.
+func postID(ctx context.Context, client *rest.Client, path string, payload []byte, what, target string) (int64, error) {
+	resp, err := client.Post(ctx, path, payload)
 	if err != nil {
-		return 0, fmt.Errorf("post comment on pull request %d of %s: %w", number, repo, err)
+		return 0, fmt.Errorf("post %s on %s: %w", what, target, err)
 	}
 	var created struct {
 		ID int64 `json:"id"`
@@ -57,7 +62,7 @@ func (w *Writer) PostComment(ctx context.Context, repo string, number int, body 
 		return 0, err
 	}
 	if created.ID <= 0 {
-		return 0, fmt.Errorf("%w: the answer to %s has no comment id", ErrInvalidResponse, path)
+		return 0, fmt.Errorf("%w: the answer to %s has no %s id", ErrInvalidResponse, path, what)
 	}
 	return created.ID, nil
 }
@@ -112,21 +117,7 @@ func (w *Writer) PostReviewComment(ctx context.Context, repo string, number int,
 	if err != nil {
 		return 0, fmt.Errorf("encode review comment of pull request %d of %s: %w", number, repo, err)
 	}
-	apiPath := fmt.Sprintf("/repos/%s/pulls/%d/comments", repo, number)
-	resp, err := w.client.Post(ctx, apiPath, payload)
-	if err != nil {
-		return 0, fmt.Errorf("post review comment on pull request %d of %s: %w", number, repo, err)
-	}
-	var created struct {
-		ID int64 `json:"id"`
-	}
-	if err := decode(apiPath, resp.Body, &created); err != nil {
-		return 0, err
-	}
-	if created.ID <= 0 {
-		return 0, fmt.Errorf("%w: the answer to %s has no comment id", ErrInvalidResponse, apiPath)
-	}
-	return created.ID, nil
+	return postID(ctx, w.client, fmt.Sprintf("/repos/%s/pulls/%d/comments", repo, number), payload, "review comment", fmt.Sprintf("pull request %d of %s", number, repo))
 }
 
 func (w *Writer) commentsByAuthor(ctx context.Context, repo string, number int, collection string, authorID int64) ([]Comment, error) {

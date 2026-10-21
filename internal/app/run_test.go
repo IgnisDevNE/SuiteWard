@@ -27,6 +27,9 @@ func run(args []string, env Env) (code int, stdout, stderr string) {
 	return code, out.String(), errOut.String()
 }
 
+// leakWord stands for a database password; the tests prove it never appears in an output.
+const leakWord = "s3cret-pw"
+
 func TestUsageErrorsExitWithTwo(t *testing.T) {
 	for _, args := range [][]string{
 		nil, {"unknown"}, {"serve", "extra"},
@@ -42,7 +45,7 @@ func TestUsageErrorsExitWithTwo(t *testing.T) {
 
 func TestBadSettingsListEveryProblemAndNoSecret(t *testing.T) {
 	env := testEnv(map[string]string{
-		"SUITEWARD_DATABASE_URL": "mysql://user:s3cret-pw@db/suiteward",
+		"SUITEWARD_DATABASE_URL": "mysql://user:" + leakWord + "@db/suiteward",
 		"SUITEWARD_JOB_WORKERS":  "0",
 		"SUITEWARD_DATABSE_URL":  "typo",
 	})
@@ -56,7 +59,7 @@ func TestBadSettingsListEveryProblemAndNoSecret(t *testing.T) {
 				t.Errorf("%s: stderr does not name %s: %q", command, problem, stderr)
 			}
 		}
-		if strings.Contains(stdout+stderr, "s3cret-pw") {
+		if strings.Contains(stdout+stderr, leakWord) {
 			t.Errorf("%s printed the secret: %q %q", command, stdout, stderr)
 		}
 		if warned := strings.Contains(stdout, "SUITEWARD_DATABSE_URL"); warned != (command == "serve") {
@@ -88,7 +91,7 @@ func TestAMalformedDatabaseURLIsRefusedWithoutEchoingIt(t *testing.T) {
 
 func TestUnreachableDatabaseIsFatalAndLogged(t *testing.T) {
 	env := testEnv(map[string]string{
-		"SUITEWARD_DATABASE_URL": "postgres://suiteward:s3cret-pw@127.0.0.1:1/suiteward?sslmode=disable",
+		"SUITEWARD_DATABASE_URL": "postgres://suiteward:" + leakWord + "@127.0.0.1:1/suiteward?sslmode=disable",
 		"SUITEWARD_ARTIFACT_DIR": t.TempDir(),
 		"SUITEWARD_HTTP_ADDR":    "127.0.0.1:0",
 	})
@@ -103,8 +106,35 @@ func TestUnreachableDatabaseIsFatalAndLogged(t *testing.T) {
 		if args[0] == "probe" && !strings.Contains(stderr, "suiteward:") {
 			t.Errorf("probe did not report its error on stderr: %q", stderr)
 		}
-		if strings.Contains(stdout+stderr, "s3cret-pw") {
+		if strings.Contains(stdout+stderr, leakWord) {
 			t.Errorf("%q printed the secret: %q %q", args, stdout, stderr)
 		}
+	}
+}
+
+// The owner credential is for `suiteward migrate` only: every other command refuses to start with it in its environment.
+func TestServeSetupAndProbeRefuseTheMigrationCredential(t *testing.T) {
+	env := testEnv(map[string]string{
+		"SUITEWARD_DATABASE_URL":           "postgres://app@127.0.0.1:1/db?sslmode=disable",
+		"SUITEWARD_MIGRATION_DATABASE_URL": "postgres://owner@127.0.0.1:1/db?sslmode=disable",
+		"SUITEWARD_ARTIFACT_DIR":           t.TempDir(),
+	})
+	for _, args := range [][]string{{"serve"}, {"probe"}, {"setup", "--owner", "owner", "--test-check", "acme/widgets=ci / test"}} {
+		code, _, stderr := run(args, env)
+		if code != 1 || !strings.Contains(stderr, "the migration credential is for `suiteward migrate` only; remove it from this service's environment") {
+			t.Errorf("Run(%q) = %d, stderr %q; want 1 and the refusal", args, code, stderr)
+		}
+	}
+}
+
+func TestServeRefusesTheMigrationCredentialFromAFile(t *testing.T) {
+	env := testEnv(map[string]string{
+		"SUITEWARD_DATABASE_URL":                "postgres://app@127.0.0.1:1/db?sslmode=disable",
+		"SUITEWARD_MIGRATION_DATABASE_URL_FILE": "/run/secrets/database-owner-url",
+		"SUITEWARD_ARTIFACT_DIR":                t.TempDir(),
+	})
+	env.ReadFile = func(string) ([]byte, error) { return []byte("postgres://owner@127.0.0.1:1/db?sslmode=disable"), nil }
+	if code, _, stderr := run([]string{"serve"}, env); code != 1 || !strings.Contains(stderr, "the migration credential is for `suiteward migrate` only") {
+		t.Fatalf("serve with the owner URL in a file exited %d, stderr %q; want 1 and the refusal", code, stderr)
 	}
 }

@@ -168,15 +168,15 @@ func TestCommentPublisherRefusesARevisionPayloadThatDoesNotMatchItsKey(t *testin
 		{"another revision", "revision:1001:P2-R3", with(func(map[string]any) {})},
 		{"another proposal", "revision:1001:P3-R2", with(func(map[string]any) {})},
 		{"another repository", "revision:1002:P2-R2", with(func(map[string]any) {})},
-		{"an unknown field", cmtRevisionKey, with(func(m map[string]any) { m["body"] = cmtSecretText })},
-		{"a reference that is not P<n>-R<m>", cmtRevisionKey, with(func(m map[string]any) { m["reference"] = cmtSecretText })},
+		{"an unknown field", cmtRevisionKey, with(func(m map[string]any) { m["body"] = cmtLeakText })},
+		{"a reference that is not P<n>-R<m>", cmtRevisionKey, with(func(m map[string]any) { m["reference"] = cmtLeakText })},
 		{"a previous revision of another proposal", cmtRevisionKey, with(func(m map[string]any) { m["previous"] = "P3-R1" })},
 		{"a previous revision that is not earlier", cmtRevisionKey, with(func(m map[string]any) { m["previous"] = "P2-R2" })},
-		{"a canonical that is not V<n>", cmtRevisionKey, with(func(m map[string]any) { m["canonical"] = cmtSecretText })},
+		{"a canonical that is not V<n>", cmtRevisionKey, with(func(m map[string]any) { m["canonical"] = cmtLeakText })},
 		{"a canonical of zero", cmtRevisionKey, with(func(m map[string]any) { m["canonical"] = "V0" })},
 		{"a negative total", cmtRevisionKey, with(func(m map[string]any) { m["addedTotal"] = -1 })},
-		{"a tier that is unknown", cmtRevisionKey, with(func(m map[string]any) { m["tier"] = cmtSecretText })},
-		{"a payload that is not JSON", cmtRevisionKey, json.RawMessage(`{"repositoryId": ` + cmtSecretText)},
+		{"a tier that is unknown", cmtRevisionKey, with(func(m map[string]any) { m["tier"] = cmtLeakText })},
+		{"a payload that is not JSON", cmtRevisionKey, json.RawMessage(`{"repositoryId": ` + cmtLeakText)},
 		{"a repository that is not owner/name", cmtRevisionKey, with(func(m map[string]any) { m["repo"] = "SECRET" })},
 		{"an acknowledgment payload under a revision key", cmtRevisionKey, ack.Payload},
 		{"a revision payload under an acknowledgment key", "ack:1001:555", with(func(map[string]any) {})},
@@ -189,7 +189,7 @@ func TestCommentPublisherRefusesARevisionPayloadThatDoesNotMatchItsKey(t *testin
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}
@@ -231,20 +231,21 @@ func TestBootstrapSummaryFromAPullStatesTheHeadAndNoBranch(t *testing.T) {
 		Include: want.Include, Runner: []string{}, Exclude: want.Exclude, IncludeTotal: want.IncludeTotal, ExcludeTotal: want.ExcludeTotal, Tier: commandtext.CoLocated}))
 }
 
-func TestBootstrapSummaryPayloadsWithoutASourceAreFromTheBranch(t *testing.T) {
+// Every release writes a source, so a summary without one is refused, not read as from the branch.
+func TestBootstrapSummaryRefusesAPayloadWithoutASource(t *testing.T) {
 	w := newCmtWorld(t)
 	var payload map[string]any
 	if err := json.Unmarshal(cmtMust(newSummaryMessage(cmtTarget(), cmtSummaryInputs())).Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	delete(payload["summary"].(map[string]any), "source") // a message written before M1.7b
+	delete(payload["summary"].(map[string]any), "source")
 	raw := cmtMust(json.Marshal(payload))
 
-	if err := w.pub.publish(t.Context(), "bootstrap-summary:1001:P1-R1", raw); err != nil {
-		t.Fatal(err)
+	if err := w.pub.publish(t.Context(), "bootstrap-summary:1001:P1-R1", raw); err == nil {
+		t.Fatal("publish accepted a summary without a source")
 	}
-	if body := w.writer.posts()[0].body; !strings.Contains(body, "on branch `main`") {
-		t.Fatalf("body %q does not name the branch", body)
+	if len(w.writer.posts()) != 0 {
+		t.Fatal("a comment was posted")
 	}
 }
 
@@ -378,7 +379,7 @@ func TestRevisionMessageDropsTheReductionDetailThatDoesNotFitTheOutbox(t *testin
 	list := func() []string { return slices.Repeat([]string{strings.Repeat("<", 150)}, 20) }
 	notice := cmtNotice()
 	notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
-	notice.ReducedRules, notice.ReducedPaths = list(), append(list(), "tests/more_test.go")
+	notice.ReducedRules, notice.ReducedPaths = asRules(list()), append(list(), "tests/more_test.go")
 
 	message := cmtRevisionMessage(t, notice, "isolated")
 
@@ -429,7 +430,7 @@ func TestRevisionCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
 			list := func() []string { return slices.Repeat([]string{strings.Repeat(unit, 400)}, 25) }
 			notice := cmtNotice()
 			notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
-			notice.ReducedRules, notice.ReducedPaths = list(), list()
+			notice.ReducedRules, notice.ReducedPaths = asRules(list()), list()
 			target := commentTarget{RepositoryID: cmtRepoID, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: cmtPull}
 			message, err := newRevisionMessage(target, notice, "co-located")
 			if err != nil {
@@ -472,4 +473,13 @@ func TestCommentPublisherRefusesAnInconsistentOmittedReductionDetail(t *testing.
 			}
 		})
 	}
+}
+
+// asRules marks each entry as scope.Reductions marks a removed rule.
+func asRules(entries []string) []string {
+	rules := make([]string, len(entries))
+	for i, e := range entries {
+		rules[i] = "rule " + e
+	}
+	return rules
 }

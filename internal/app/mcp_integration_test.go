@@ -98,7 +98,7 @@ func TestServeAnswersMCPOverTheRealListener(t *testing.T) {
 	if code := s.stop(); code != 0 {
 		t.Fatalf("a clean stop exited %d:\n%s", code, s.logs.String())
 	}
-	for what, secret := range map[string]string{"the MCP token": integrationMCPToken, "a comment body": fakeCommentBody, "the installation token": fakeToken} {
+	for what, secret := range map[string]string{"the MCP token": integrationMCPToken, "a comment body": fakeCommentBody, "the installation token": fakeInstallAuth} {
 		if strings.Contains(s.logs.String(), secret) {
 			t.Errorf("the logs contain %s:\n%s", what, s.logs.String())
 		}

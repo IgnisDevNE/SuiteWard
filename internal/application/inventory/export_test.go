@@ -9,7 +9,11 @@ import (
 
 // Evaluate resolves the manifest of tree under the governing scope alone, as the tests use it.
 func Evaluate(ctx context.Context, tree Tree, governing scope.Scope) (artifact.Manifest, error) {
-	return evaluate(ctx, tree, governing, governing)
+	covered, err := evaluate(ctx, tree, governing, governing)
+	if err != nil {
+		return artifact.Manifest{}, err
+	}
+	return manifestOfFiles(ctx, tree, covered, map[string][]byte{})
 }
 
 // RunnerGroups exposes the runner families to the test that proves every glob parses.

@@ -1,7 +1,7 @@
 # ADR 0001: Self-hosted deployment and GitHub synchronization
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (S1, M1.2 and M1.4, released in `v0.1.0`); the optional future adapters stay open.
 - **Product:** SuiteWard
 - **Scope:** Hosting, artifact storage, GitHub onboarding, local MCP integration, and periodic reconciliation.
 

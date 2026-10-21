@@ -19,7 +19,6 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -106,9 +105,6 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Up(t.Context(), databaseURL); err != nil {
-		t.Fatal(err)
-	}
 	pool, store, artifacts, err := connectWithArtifacts(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +136,7 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	consent := func(action contract.ConsentAction, comment int64, proposal, pull int) {
 		t.Helper()
 		command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID("consent:github-comment:" + strconv.FormatInt(comment, 10)),
-			SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: action, Order: contract.CommandOrder(comment),
+			SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: action, Order: testOrder(comment),
 			Carrier: carrierID(bootRepoID, pull), Reference: contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "default", ProposalID: proposalID(proposal), RevisionID: "R1"}}))
 		if _, err := governance.ProcessConsent(t.Context(), store, governance.ConsentRequest{Command: command}); err != nil {
 			t.Fatal(err)

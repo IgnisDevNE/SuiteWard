@@ -330,7 +330,7 @@ func (w *cjWorld) requireProcessed(repositoryID, comment int64) governance.Conse
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	if receipt.Result.Command().Order() != contract.CommandOrder(comment) || receipt.Result.Command().Actor().ID() != owner.PrincipalID(cjOwnerID) ||
+	if receipt.Result.Command().Order() != testOrder(comment) || receipt.Result.Command().Actor().ID() != owner.PrincipalID(cjOwnerID) ||
 		receipt.Result.Command().SourceCommandID() != commentSource(comment) || receipt.Result.Command().Carrier() != carrierID(repositoryID, cjPull) {
 		w.t.Fatalf("the command given to the domain is %+v", receipt.Result.Command())
 	}
@@ -499,9 +499,9 @@ func TestCommandsJobAcceptsTheCodesOfTheToleranceAndNoOther(t *testing.T) {
 	}
 }
 
-// The offsets of the owner's codes are logged to measure the window before M1.8: a verified code with its distance in
-// steps from the comment's step, a rejected one with whether a window of 2 steps would have accepted it. Never the code.
-func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
+// Every code gets a line, verified or rejected, with the repository and the comment. A line carries no distance from
+// the comment's step: it would tell a reader how close a wrong code came. Never the code.
+func TestCommandsJobLogsEveryCodeWithoutItsOffsetAndNeverTheCode(t *testing.T) {
 	w := newCjWorld(t)
 	offsets := []int64{-3, -2, -1, 0, 1, 2, 3}
 	var comments []cjComment
@@ -521,20 +521,20 @@ func TestCommandsJobLogsTheOffsetOfEveryCodeAndNeverTheCode(t *testing.T) {
 	}
 	for i, offset := range offsets {
 		entry := logged[int64(500+i)]
+		want := "github command code rejected"
+		if offset >= -1 && offset <= 1 {
+			want = "github command code verified"
+		}
 		switch {
 		case entry == nil:
 			t.Errorf("offset %d: no log line for the code; logs: %s", offset, w.logs)
-		case offset >= -1 && offset <= 1: // accepted
-			if entry["msg"] != "github command code verified" || entry["offset"] != float64(offset) {
-				t.Errorf("offset %d: log %v, want a verified code at that offset", offset, entry)
-			}
-		case offset >= -2 && offset <= 2: // rejected, but inside the window of 2
-			if entry["msg"] != "github command code rejected" || entry["would_match"] != true || entry["offset"] != float64(offset) {
-				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would accept at that offset", offset, entry)
-			}
+		case entry["msg"] != want || entry["repo"] != cjRepo1:
+			t.Errorf("offset %d: log %v, want %q for %s", offset, entry, want, cjRepo1)
 		default:
-			if entry["msg"] != "github command code rejected" || entry["would_match"] != false || entry["offset"] != nil {
-				t.Errorf("offset %d: log %v, want a rejected code that a window of 2 would not accept", offset, entry)
+			for _, field := range []string{"offset", "would_match"} {
+				if _, present := entry[field]; present {
+					t.Errorf("offset %d: log %v carries %q", offset, entry, field)
+				}
 			}
 		}
 	}
@@ -718,14 +718,16 @@ func TestCommandsJobDoesNothingWhileARepositoryHasNeverSynchronized(t *testing.T
 	}
 }
 
-func TestCommandsJobStillWaitsForAnEnrolledRepositoryThatIsNotConfiguredAndWarnsOnce(t *testing.T) {
+func TestCommandsJobSkipsAnEnrolledRepositoryThatIsNotConfiguredAndWarnsOnce(t *testing.T) {
 	w := newCjWorld(t)
 	w.job.repos = []string{cjRepo1} // repository 2 was removed from GITHUB_REPOSITORIES without re-running setup
 	w.observe(cjID1, cjSync, ownerCommand(500, cjAt(40), "approve", "P1-R2", 0))
-	w.observe(cjID2, cjSync.Add(-30*time.Minute))
+	w.observe(cjID2, cjSync.Add(-30*time.Minute)) // its stale cycle must not hold the watermark back
 	w.mustRun()
 	w.mustRun()
-	w.requireNoEntry(cjID1, 500) // fail closed: the stale cycle of the removed repository still holds the watermark back
+	if _, _, found := w.recorded(cjID1, 500); !found {
+		t.Fatalf("the command of the configured repository was held back by the unconfigured one\nlogs: %s", w.logs)
+	}
 	warnings := 0
 	for _, line := range strings.Split(w.logs.String(), "\n") {
 		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "not configured") && strings.Contains(line, cjRepo2) {
@@ -737,6 +739,32 @@ func TestCommandsJobStillWaitsForAnEnrolledRepositoryThatIsNotConfiguredAndWarns
 	}
 	if warnings != 1 {
 		t.Fatalf("%d warnings name the unconfigured repository %s over two runs; want 1; logs: %s", warnings, cjRepo2, w.logs)
+	}
+}
+
+// Skipping the repository in the horizon does not filter its comments: one it observed before it left the
+// configuration is decided under the horizon of the configured repositories, like any other pending comment.
+func TestCommandsJobStillDecidesACommandObservedInAnUnconfiguredEnrolledRepository(t *testing.T) {
+	w := newCjWorld(t)
+	w.job.repos = []string{cjRepo1}
+	w.observe(cjID1, cjSync)
+	w.observe(cjID2, cjSync.Add(-30*time.Minute), ownerCommand(600, cjAt(10), "approve", "P1-R2", 0))
+	w.mustRun()
+	if _, _, found := w.recorded(cjID2, 600); !found {
+		t.Fatalf("the observed command of the unconfigured repository was not decided\nlogs: %s", w.logs)
+	}
+}
+
+func TestCommandsJobHorizonIsNotReadyWithoutAConfiguredEnrolledRepository(t *testing.T) {
+	w := newCjWorld(t)
+	w.job.repos = []string{"acme/other"} // neither enrolled repository is configured
+	w.syncAll(nil)
+	enrollment, _, err := w.owners.Current(w.t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if horizon, ready, err := w.job.horizon(w.t.Context(), enrollment); err != nil || ready || !horizon.IsZero() {
+		t.Fatalf("horizon = %v, ready %v, err %v; want a zero horizon, not ready: nothing configured can be decided", horizon, ready, err)
 	}
 }
 
@@ -786,7 +814,7 @@ func (w *cjWorld) botStopEntry() map[string]any {
 }
 
 func TestCommandsJobLogsWhyTheBotAccountCouldNotBeResolved(t *testing.T) {
-	const secret = "GITHUB-SENT-THIS"
+	const leak = "GITHUB-SENT-THIS"
 	for name, test := range map[string]struct {
 		err    error
 		kind   string
@@ -794,7 +822,7 @@ func TestCommandsJobLogsWhyTheBotAccountCouldNotBeResolved(t *testing.T) {
 	}{
 		// BotIdentity wraps appauth's error of GET /app answered 401 to the App JWT (a revoked key).
 		"refused app jwt": {fmt.Errorf("bot identity: %w", &appauth.StatusError{Endpoint: "app", Status: 401}), "unauthorized", 401},
-		"transport":       {fmt.Errorf("bot identity: appauth: request app: %w", errors.New("dial tcp: "+secret)), "transport", 0},
+		"transport":       {fmt.Errorf("bot identity: appauth: request app: %w", errors.New("dial tcp: "+leak)), "transport", 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -807,7 +835,7 @@ func TestCommandsJobLogsWhyTheBotAccountCouldNotBeResolved(t *testing.T) {
 			if entry["kind"] != test.kind || entry["status"] != test.status {
 				t.Fatalf("log entry = %v; want kind %q and status %v", entry, test.kind, test.status)
 			}
-			if strings.Contains(w.logs.String(), secret) {
+			if strings.Contains(w.logs.String(), leak) {
 				t.Fatalf("the log carries text the failure held; logs: %s", w.logs)
 			}
 		})

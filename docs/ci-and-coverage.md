@@ -1,6 +1,6 @@
 # CI and coverage
 
-- **Updated:** 2026-10-09
+- **Updated:** 2026-10-21
 - **Status:** Active. `main` requires an up-to-date PR with the contexts `CI / Gate` (GitHub Actions) and `codecov/patch` (Codecov).
 
 ## Quality policy
@@ -18,14 +18,14 @@ The workflow is `.github/workflows/ci.yml`. It runs on pull requests, pushes to 
 | Job | Behavior |
 | --- | --- |
 | Inspect repository | Compare tracked files with the base revision to select foundation or Go verification. Removing an existing Go module or source cannot silently disable the Go checks. |
-| Foundation, Windows and Linux | Parse all PowerShell scripts; validate every workflow file with actionlint and the documentation links; run the tests for CI classification and gate behavior, coverage argument handling, Go, persistence, and development tooling safety and isolation, and the bot-token script. |
+| Foundation, Windows and Linux | Parse all PowerShell scripts; validate every workflow file with actionlint and the documentation links; audit the workflows offline with zizmor and scan the whole git history for secrets with gitleaks (redacted, never printed; the job fetches the full history; a scanner configuration or ignore file, or a `gitleaks:allow` comment, is not honored); check that every copy of a pinned image digest agrees and that the Containerfile pins its base images; run the tests for CI classification and gate behavior, coverage argument handling, Go, persistence, and development tooling safety and isolation, and the bot-token script. |
 | Go, Windows and Linux | Verify formatting, analyze, lint, build and run portable tests; verify fresh sqlc output. A module without real packages fails. |
 | Race, security, and coverage | Test the exact event head against an isolated PostgreSQL service with integration tests, verify fresh sqlc output, scan vulnerabilities, preserve the coverage report, and upload it to Codecov. |
 | CI / Gate | Always evaluate all prerequisite results. Accept skipped Go jobs only when the successful classifier established foundation-only applicability. Failures, cancellations, missing classification, and unexpected skips fail the gate. |
 
 There is no placeholder application package and no artificial coverage upload. Once Go code exists, even a documentation-only PR runs the Go jobs so the required coverage contexts remain available. The PowerShell tests verify CI infrastructure and are not counted as application coverage.
 
-Go is pinned to 1.27.3 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 and the Codecov CLI to v11.3.1. The [local bootstrap](local-development.md) installs the same Go, scanner, and linter versions in the shared per-user tool cache (not inside each checkout) and reuses `scripts/check-go.ps1`.
+Go is pinned to 1.27.3 in `.go-version`. The workflow uses explicit Windows Server 2025 and Ubuntu 24.04 runner labels. Actions are pinned to commit SHAs; govulncheck is pinned to v1.8.0 in `dev/tools.json` (CI reads the version there) and the Codecov CLI to v11.3.1. The base images in `deploy/Containerfile`, the PostgreSQL image and the BuildKit image are pinned by digest, and `scripts/check-pins.ps1` fails when copies of one image disagree. The release workflow builds the linux/amd64 image to an archive and scans it with trivy before anything is pushed, failing on a fixable HIGH or CRITICAL vulnerability (vulnerabilities only, not secrets or misconfiguration). The scan covers a linux/amd64 image built separately from the multi-architecture index that is pushed next, so the pushed amd64 layer is rebuilt from the same inputs and not the scanned file, and the arm64 image is not scanned. `deploy.yml`, which publishes every `main` build, does not scan. The scheduled `Fuzz` workflow (weekly and on demand, not a required check) runs every Fuzz target of the untrusted-input parsers for a few minutes and keeps a failing input as an artifact. The [local bootstrap](local-development.md) installs the same Go, scanner, and linter versions in the shared per-user tool cache (not inside each checkout) and reuses `scripts/check-go.ps1`.
 
 ## Required contexts
 

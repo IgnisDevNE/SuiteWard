@@ -240,7 +240,7 @@ func (w *cjJobWorld) consent(action contract.ConsentAction, comment int64, propo
 	w.t.Helper()
 	operation := contract.OperationID(fmt.Sprintf("consent:github-comment:%d", comment))
 	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: contract.SourceCommandID(fmt.Sprintf("github-comment:%d", comment)),
-		Actor: bootOwnerPrincipal(), Action: action, Order: contract.CommandOrder(comment), Carrier: carrierID(bootRepoID, pull),
+		Actor: bootOwnerPrincipal(), Action: action, Order: testOrder(comment), Carrier: carrierID(bootRepoID, pull),
 		Reference: contract.ProposalReference{ProjectID: w.project(), SuiteID: "default", ProposalID: proposalID(proposal), RevisionID: contract.ProposalRevisionID(fmt.Sprintf("R%d", revision))}}))
 	response, err := governance.ProcessConsent(w.t.Context(), w.mem, governance.ConsentRequest{Command: command})
 	if err != nil {
@@ -607,7 +607,7 @@ func TestChecksKeepTheRecordOnATransientReadAndNeverLeaveANewHeadWithoutACheck(t
 	w := newCJWorld(t, true)
 	w.protectedPull()
 	w.consent(contract.RevokeConsent, 201, 2, 1, 5) // moves the Suite so the next run reads the tree again
-	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 
 	if err := w.runChecks(); err != nil {
 		t.Fatalf("a failed GitHub read must not fail the run: %v", err)
@@ -618,7 +618,7 @@ func TestChecksKeepTheRecordOnATransientReadAndNeverLeaveANewHeadWithoutACheck(t
 		t.Fatalf("problem %q, want read-failed", got)
 	}
 
-	w.reader.repos[bootRepo].treeErr[cjHead5] = errors.New(bootSecret)
+	w.reader.repos[bootRepo].treeErr[cjHead5] = errors.New(bootLeak)
 	w.sync(map[int]string{4: bootHead, 5: cjHead5})
 	w.mustCheck()
 
@@ -626,7 +626,7 @@ func TestChecksKeepTheRecordOnATransientReadAndNeverLeaveANewHeadWithoutACheck(t
 	if record.HeadSHA != cjHead5 {
 		t.Fatalf("head %s, want head 5", record.HeadSHA)
 	}
-	if strings.Contains(w.logs.String(), bootSecret) {
+	if strings.Contains(w.logs.String(), bootLeak) {
 		t.Fatalf("a log line carries what GitHub sent: %s", w.logs)
 	}
 
@@ -653,7 +653,7 @@ func TestChecksNeverKeepAStoredReasonThatNoLongerExistsOnATransientRead(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 
 	if err := w.runChecks(); err != nil {
 		t.Fatalf("a stored reason that no longer exists must not fail the run: %v", err)
@@ -664,7 +664,7 @@ func TestChecksNeverKeepAStoredReasonThatNoLongerExistsOnATransientRead(t *testi
 
 func TestChecksGiveANewHeadWhoseFirstReadFailedAnAssessmentPendingCheck(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 	w.sync(map[int]string{4: bootHead, 5: cjHead2})
 
 	if err := w.runChecks(); err != nil {
@@ -786,20 +786,20 @@ func TestChecksFailTheRunOnAStoreErrorAfterEveryRepositoryAndShowItInStatus(t *t
 
 func TestChecksNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 	w := newCJWorld(t, true)
-	w.reader.repos[bootRepo].treeErr[cjHead2] = fmt.Errorf("%s: %w", bootSecret, inventory.ErrUnsafeEntry)
-	w.reader.repos[bootRepo].treeErr[cjHead3] = errors.New(bootSecret)
+	w.reader.repos[bootRepo].treeErr[cjHead2] = fmt.Errorf("%s: %w", bootLeak, inventory.ErrUnsafeEntry)
+	w.reader.repos[bootRepo].treeErr[cjHead3] = errors.New(bootLeak)
 	w.sync(map[int]string{4: bootHead, 5: cjHead2, 6: cjHead3})
 
 	err := w.runChecks()
 
-	if err != nil && strings.Contains(err.Error(), bootSecret) {
+	if err != nil && strings.Contains(err.Error(), bootLeak) {
 		t.Fatalf("the run error carries what GitHub sent: %v", err)
 	}
-	if strings.Contains(w.logs.String(), bootSecret) {
+	if strings.Contains(w.logs.String(), bootLeak) {
 		t.Fatalf("a log line carries what GitHub sent: %s", w.logs)
 	}
 	for _, m := range w.ledger.messages {
-		if strings.Contains(string(m.Payload), bootSecret) {
+		if strings.Contains(string(m.Payload), bootLeak) {
 			t.Fatalf("a message carries what GitHub sent: %s", m.Payload)
 		}
 	}
@@ -808,13 +808,13 @@ func TestChecksNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 // TestTheChecksJobIsTheOnlyWriterOfCheckStates scans the production code: nothing but the job calls Publish of
 // the check ledger (D-CHECKS: a single writer).
 func TestTheChecksJobIsTheOnlyWriterOfCheckStates(t *testing.T) {
-	root := filepath.Join("..", "..", "internal")
+	repository := os.DirFS(filepath.Join("..", ".."))
 	var callers []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(repository, "internal", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(filepath.ToSlash(path), "/checkstest/") { // the in-memory ledger and its conformance suite are test support
 			return err
 		}
-		source, err := os.ReadFile(path)
+		source, err := fs.ReadFile(repository, path)
 		if err != nil {
 			return err
 		}

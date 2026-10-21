@@ -2,6 +2,7 @@ package river
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,11 +133,14 @@ func (r *Relay) release(ctx context.Context, untried []postgres.OutboxClaim) {
 }
 
 // publish calls the publisher and turns a panic into an error, so that one
-// message cannot abort the batch.
+// message cannot abort the batch. The error holds a short digest of the panic
+// text, never the text: it can carry a payload or a secret, and the digest still
+// tells two panics apart.
 func publish(ctx context.Context, publisher Publisher, claim postgres.OutboxClaim) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("publisher panicked: %s", truncate(fmt.Sprint(recovered)))
+			digest := sha256.Sum256([]byte(fmt.Sprint(recovered)))
+			err = fmt.Errorf("publisher panicked (digest %x)", digest[:4])
 		}
 	}()
 	return publisher(ctx, claim.Key, claim.Payload)

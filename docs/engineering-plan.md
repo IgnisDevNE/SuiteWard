@@ -1,7 +1,7 @@
 # SuiteWard engineering plan
 
-- **Updated:** 2026-10-05 (phase R1)
-- **Status:** The engineering foundation (F0), the M0 domain, and the M1.01 persistence adapter are merged. Phase R1 simplifies the delivery process and resets persistence to a normalized contract; it is in progress.
+- **Updated:** 2026-10-21 (phase SH in progress)
+- **Status:** Delivered through M1.10 and released as `v0.1.3`. The security hardening phase [SH](plan/phases/SH.md) is in progress.
 
 This plan builds on the [project baseline](project-baseline.md) and the [accepted ADRs](decisions/README.md). It concerns how SuiteWard itself is developed; the product's rules for governing customer repositories are separate.
 
@@ -36,9 +36,9 @@ A task states its outcome, applicable ADRs and contracts, dependencies, owned fi
 - GitHub organization `IgnisDevNE` is on the Free plan. The public `SuiteWard` repository uses branch protection requiring an up-to-date PR and `CI / Gate`, with administrator enforcement and force pushes and deletion disabled.
 - Codecov is configured through the organization's existing GitHub App installation.
 - Bot identity: `ignisdevne[bot]` (App 5028495, installation 163660443), with Workflows write access for SuiteWard.
-- Go 1.27.3, sqlc 1.31.1, actionlint 1.7.12, golangci-lint 2.14.0, govulncheck 1.8.0, and gopls 0.23.0 install once per user in a shared tool cache. PostgreSQL 18.6 runs from a digest-pinned image with isolated volumes, credentials, and loopback ports per checkout. Windows uses the rootless Podman connection per checkout; the host default connection is never changed.
+- Go 1.27.3, sqlc 1.31.1, actionlint 1.7.12, golangci-lint 2.14.0, zizmor 1.31.1, gitleaks 8.30.1, trivy 0.76.0, govulncheck 1.8.0, and gopls 0.23.0 install once per user in a shared tool cache. PostgreSQL 18.6 runs from a digest-pinned image with isolated volumes, credentials, and loopback ports per checkout. Windows uses the rootless Podman connection per checkout; the host default connection is never changed.
 - Memtrace is scoped to SuiteWard; versioned documents remain canonical.
 
 ## Decisions still required
 
-See the [decision register](plan/decisions.md). Open gates: D-DEPLOY, D-JOB-RETENTION, D-EXECUTION, D-MANAGED-EXECUTION, and D-HARDENING-CONTROLS. D-RELEASE is decided. The MVP backup is a plain `pg_dump` plus a tarball (D-INSTALL); encrypted backups, guided restore, the priority queue, and automatic protection repair are deferred to post-MVP.
+See the [decision register](plan/decisions.md). Open gates: D-DEPLOY (the host is decided, AlmaLinux 9; only its status is open), D-JOB-RETENTION, D-EXECUTION, D-MANAGED-EXECUTION, and D-HARDENING-CONTROLS. D-RELEASE is decided. The MVP backup is a plain `pg_dump` plus a tarball (D-INSTALL); encrypted backups, guided restore, the priority queue, and automatic protection repair are deferred to post-MVP.

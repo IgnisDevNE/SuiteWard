@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -22,6 +23,7 @@ var Version = "dev"
 var Source string
 
 const usage = `usage: suiteward serve
+       suiteward migrate
        suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
        suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]
 `
@@ -42,10 +44,15 @@ func OSEnv() Env {
 }
 
 // Run executes one command (args without the program name) and returns the
-// process exit code of the runtime contract. serve logs JSON to stdout; probe
+// process exit code of the runtime contract. serve and migrate log JSON to stdout; probe
 // prints JSON lines to stdout; setup prints only the TOTP enrollment to stdout
 // and logs JSON to stderr; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
+	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
+}
+
+// runWith is Run with the wait of migrate, which a test bounds.
+func runWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writer, wait migrateWait) int {
 	command := ""
 	if len(args) > 0 {
 		command = args[0]
@@ -55,7 +62,7 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		flags setupFlags
 	)
 	switch command {
-	case "serve":
+	case "serve", "migrate":
 		if len(args) != 1 {
 			return usageError(stderr)
 		}
@@ -79,13 +86,17 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		logs = stderr
 	}
 	logger := newLogger(logs, cfg.LogLevel)
-	if command == "serve" {
+	if command == "serve" || command == "migrate" {
 		for _, name := range warnings {
 			logger.Warn("unrecognized setting", "name", name)
 		}
 	}
 	if err != nil {
 		reportf(stderr, "invalid settings:\n%v\n", err)
+		return 1
+	}
+	if command != "migrate" && cfg.MigrationDatabaseURL != "" { // the owner credential never reaches the service
+		reportf(stderr, "the migration credential is for `suiteward migrate` only; remove it from this service's environment\n")
 		return 1
 	}
 	var setupOpts setupOptions
@@ -100,13 +111,27 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 		}
 	}
 	// The cause is dropped: pgx redacts only up to the first @, so for an unencoded @ in the password it echoes the rest.
-	if _, err := pgxpool.ParseConfig(cfg.DatabaseURL.Reveal()); err != nil {
+	service, err := pgxpool.ParseConfig(cfg.DatabaseURL.Reveal())
+	if err != nil {
 		reportf(stderr, "invalid settings:\nSUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string\n")
 		return 1
+	}
+	if command == "migrate" {
+		if cfg.MigrationDatabaseURL == "" {
+			reportf(stderr, "migrate needs the owner connection (SUITEWARD_MIGRATION_DATABASE_URL)\n")
+			return usageError(stderr)
+		}
+		if _, err := pgxpool.ParseConfig(cfg.MigrationDatabaseURL.Reveal()); err != nil {
+			reportf(stderr, "invalid settings:\nSUITEWARD_MIGRATION_DATABASE_URL is not a valid PostgreSQL connection string\n")
+			return 1
+		}
 	}
 	switch command {
 	case "serve":
 		return serve(ctx, cfg, logger, nil)
+	case "migrate":
+		// The role the service connects as is the user of its own URL: nothing else can say which role will run.
+		return runMigrate(ctx, cfg, service.ConnConfig.User, wait, stderr, logger)
 	case "setup":
 		return runSetup(ctx, cfg, setupOpts, env.Stdin, stdout, stderr, logger)
 	}

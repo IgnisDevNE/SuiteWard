@@ -18,7 +18,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
@@ -77,9 +76,6 @@ func newPRFlow(t *testing.T) *prFlow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Up(t.Context(), databaseURL); err != nil {
-		t.Fatal(err)
-	}
 	pool, store, artifacts, err := connectWithArtifacts(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +123,7 @@ func (f *prFlow) cycle(at time.Time, heads map[int]string) {
 func (f *prFlow) consent(comment int64, proposal, pull int) {
 	f.t.Helper()
 	command := bootMust(contract.NewCommand(contract.CommandInput{OperationID: contract.OperationID("consent:github-comment:" + strconv.FormatInt(comment, 10)),
-		SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: contract.ApproveConsent, Order: contract.CommandOrder(comment),
+		SourceCommandID: contract.SourceCommandID("github-comment:" + strconv.FormatInt(comment, 10)), Actor: bootOwnerPrincipal(), Action: contract.ApproveConsent, Order: testOrder(comment),
 		Carrier: carrierID(bootRepoID, pull), Reference: contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "default", ProposalID: proposalID(proposal), RevisionID: "R1"}}))
 	if response, err := governance.ProcessConsent(f.t.Context(), f.store, governance.ConsentRequest{Command: command}); err != nil || !response.Receipt.CurrentApprovalEligible {
 		f.t.Fatalf("approve P%d-R1: eligible %v, error %v", proposal, response.Receipt.CurrentApprovalEligible, err)

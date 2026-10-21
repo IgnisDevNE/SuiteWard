@@ -73,7 +73,7 @@ func TestCommentPublisherRefusesAnInvalidSourceThatDoesNotMatchItsKeyOrCannotBeR
 		{"a digest that is not SHA-256 hex", "invalid-source:1001:7:" + strings.Repeat("g", 64), cmtInvalidPayload("link", nil)},
 		{"a key without a digest", "invalid-source:1001:7", cmtInvalidPayload("link", nil)},
 		{"a key with five parts", cmtInvalidKey + ":1", cmtInvalidPayload("link", nil)},
-		{"an unknown field", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["body"] = cmtSecretText })},
+		{"an unknown field", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["body"] = cmtLeakText })},
 		{"a declaration of a declaration problem", cmtInvalidKey, cmtInvalidPayload("declaration", func(m map[string]any) { m["declaration"] = "version: 1\n" })},
 		{"a declaration over the bound", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["declaration"] = strings.Repeat("#", commandtext.MaxDeclaration+1) })},
 		{"an unknown kind", cmtInvalidKey, cmtInvalidPayload("link", func(m map[string]any) { m["kind"] = "SECRET" })},
@@ -90,7 +90,7 @@ func TestCommentPublisherRefusesAnInvalidSourceThatDoesNotMatchItsKeyOrCannotBeR
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}

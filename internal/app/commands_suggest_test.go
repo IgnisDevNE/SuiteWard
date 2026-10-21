@@ -343,7 +343,7 @@ func TestSuggestRetriesAGitHubFailureAndIsFailedAfterFiveAttemptsLoggingOnlyKind
 				repository, name = cjID2, cjRepo2
 				w.seedDeclared(cjDecl, withFiles(bootFiles("v1"), cjUtilTst))
 			}
-			w.reader.repo(name).treeErr[cjHead] = errors.New(bootSecret)
+			w.reader.repo(name).treeErr[cjHead] = errors.New(bootLeak)
 			if canonical {
 				w.syncAll(nil, cjSuggest(500, cjAt(10)))
 			} else {
@@ -361,7 +361,7 @@ func TestSuggestRetriesAGitHubFailureAndIsFailedAfterFiveAttemptsLoggingOnlyKind
 			if !strings.Contains(w.logs.String(), `"kind"`) || !strings.Contains(w.logs.String(), `"status"`) {
 				t.Fatalf("the failure log lacks the kind and status of the read\nlogs: %s", w.logs)
 			}
-			w.requireNothingLeaked(bootSecret)
+			w.requireNothingLeaked(bootLeak)
 		})
 	}
 }

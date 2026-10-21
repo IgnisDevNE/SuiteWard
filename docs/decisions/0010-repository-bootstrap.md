@@ -1,7 +1,7 @@
 # ADR 0010: Bootstrap existing repositories and the first test PR
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented: the existing-baseline path in M1.6a and the first-test-PR path in M1.7b (released in `v0.1.0`).
 - **Product:** SuiteWard
 - **Scope:** Initial authority, initial contract selection, and first canonical promotion.
 - **Related:** [Hosting and synchronization](0001-self-hosted-github-synchronization.md), [exact approval](0002-exact-revision-approval.md), [canonical authority](0007-canonical-contract-authority.md), and [assurance levels](0008-progressive-integrity-and-execution.md).

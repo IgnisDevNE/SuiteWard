@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -41,6 +42,9 @@ const SecretBytes = 20
 
 // Digits is the number of decimal digits in a code.
 const Digits = 6
+
+// modulus truncates the 31-bit HOTP value to Digits decimal digits.
+var modulus = uint32(math.Pow10(Digits))
 
 // Period is the length of a time step.
 const Period = 30 * time.Second
@@ -94,7 +98,7 @@ func Code(secret []byte, step int64) (string, error) {
 	sum := mac.Sum(nil)
 	offset := sum[len(sum)-1] & 0x0f
 	value := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
-	return fmt.Sprintf("%0*d", Digits, value%1_000_000), nil
+	return fmt.Sprintf("%0*d", Digits, value%modulus), nil
 }
 
 // Verify checks code against the steps Step(at)-tolerance to

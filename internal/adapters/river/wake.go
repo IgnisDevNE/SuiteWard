@@ -24,7 +24,7 @@ type waker struct {
 	logger *slog.Logger
 }
 
-// wake inserts one job of each kind unless one is already waiting. A failure is logged with the kind only and never
+// wake inserts one job of each kind unless one is already waiting. A failure is logged with its cause and never
 // reaches the run: the periodic run is the fallback.
 func (w *waker) wake(ctx context.Context, kinds Wake) {
 	ctx = context.WithoutCancel(ctx) // a run that failed late may still have committed work
@@ -35,7 +35,7 @@ func (w *waker) wake(ctx context.Context, kinds Wake) {
 			continue
 		}
 		if err := w.insert(ctx, kind, args); err != nil {
-			w.logger.WarnContext(ctx, "wake-up failed", "kind", kind)
+			w.logger.WarnContext(ctx, "wake-up failed", "kind", kind, "error", err)
 		}
 	}
 }

@@ -59,6 +59,7 @@ type MergeOutcome struct {
 	Reference *contract.ProposalReference // the PR's change proposal revision, when there is one
 }
 
+// MergeRequest is the merge of one pull request into the Suite's integration target: what PromoteMerge needs to decide and record its outcome.
 type MergeRequest struct {
 	Project    contract.ProjectID
 	Suite      contract.SuiteID

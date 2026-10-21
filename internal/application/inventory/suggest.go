@@ -358,6 +358,7 @@ func runnerHandled(s scope.Scope) func(pattern string) (bool, error) {
 
 // WithRunner returns s with the runner patterns extra added, sorted and without repeats. The limit of maxSuggestions include and runner
 // patterns together holds: the runner patterns, which s lacks, keep their room, the include patterns past the limit are dropped, and Cut is set.
+// Submodules is not recomputed: it keeps what the patterns of s reached before extra was added and before any include pattern was dropped.
 func (s Suggestion) WithRunner(extra []string) Suggestion {
 	runner := slices.Compact(slices.Sorted(slices.Values(slices.Concat(s.Runner, extra))))
 	include, runner, cut := limit(s.Include, runner)

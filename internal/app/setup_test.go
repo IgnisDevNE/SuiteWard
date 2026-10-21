@@ -106,11 +106,13 @@ type setupRun struct {
 	reader               io.Reader // replaces stdin when set
 	stdout, stderr, logs bytes.Buffer
 	tier                 config.Tier
+	instance             string // the instance id the store reports
+	instanceErr          error
 }
 
 // newSetupRun answers the confirmation with Enter, then sends codes.
 func newSetupRun(fake *setupGitHub, codes string) *setupRun {
-	return &setupRun{fake: fake, store: ownertest.NewMemory(), stdin: "\n" + codes, tier: config.TierCoLocated}
+	return &setupRun{fake: fake, store: ownertest.NewMemory(), stdin: "\n" + codes, tier: config.TierCoLocated, instance: setupInstance}
 }
 
 func (r *setupRun) run(t *testing.T) int {
@@ -133,6 +135,7 @@ func (r *setupRun) runWith(t *testing.T, ctx context.Context) int {
 		cfg: config.Config{Tier: r.tier, GitHub: &settings}, options: setupOptions{owner: "octo", testChecks: map[string]string{setupWidgetsRepo: setupTestCheck}},
 		store: store, readers: readers, stdin: r.input(), stdout: &r.stdout, stderr: &r.stderr,
 		logger: newLogger(&r.logs, slog.LevelDebug), now: func() time.Time { return setupNow }, random: fixedRandom(),
+		instance: func(context.Context) (string, error) { return r.instance, r.instanceErr },
 	}
 	return s.run(ctx)
 }
@@ -161,7 +164,7 @@ func (r *setupRun) requireNothingSecret(t *testing.T, codes ...string) {
 	base32Secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(fixedSecret)
 	keyLine := strings.Split(setupKey(), "\n")[1]
 	for what, text := range map[string]string{"the logs": r.logs.String(), "stderr": r.stderr.String()} {
-		for _, secret := range append([]string{base32Secret, setupReadToken, setupProtToken, setupGitHubBody, keyLine}, codes...) {
+		for _, secret := range append([]string{base32Secret, setupReadAuth, setupProtAuth, setupGitHubBody, keyLine}, codes...) {
 			if strings.Contains(text, secret) {
 				t.Errorf("%s contain %q:\n%s", what, secret, text)
 			}
@@ -176,7 +179,7 @@ func TestSetupEnrollsOnTheSecondAttemptAndPrintsTheSecretOnce(t *testing.T) {
 		t.Fatalf("setup exited %d:\n%s\n%s", code, r.stderr.String(), r.logs.String())
 	}
 
-	uri, err := totp.URI(fixedSecret, "SuiteWard", "octo")
+	uri, err := totp.URI(fixedSecret, "SuiteWard", "octo (co-located 1a2b3c4d)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +187,7 @@ func TestSetupEnrollsOnTheSecondAttemptAndPrintsTheSecretOnce(t *testing.T) {
 	if want := uri + "\n" + base32Secret + "\n"; r.stdout.String() != want {
 		t.Fatalf("stdout = %q; want exactly the URI and the secret %q", r.stdout.String(), want)
 	}
-	if parsed, err := url.Parse(uri); err != nil || parsed.Query().Get("issuer") != "SuiteWard" || !strings.HasPrefix(parsed.Path, "/SuiteWard:octo") {
+	if parsed, err := url.Parse(uri); err != nil || parsed.Query().Get("issuer") != "SuiteWard" || !strings.HasPrefix(parsed.Path, "/SuiteWard:octo (co-located 1a2b3c4d)") {
 		t.Fatalf("URI %q has the wrong issuer or account", uri)
 	}
 	state, found := r.enrolled(t)
@@ -203,6 +206,52 @@ func TestSetupEnrollsOnTheSecondAttemptAndPrintsTheSecretOnce(t *testing.T) {
 		t.Fatalf("stderr = %q; want the warning about recorded terminal sessions", r.stderr.String())
 	}
 	r.requireNothingSecret(t, rightCode(t), wrongCode(t))
+}
+
+const setupInstance = "1a2b3c4d5e6f708192a3b4c5d6e7f809"
+
+func TestSetupLabelsTheEntryWithTheTierAndTheInstance(t *testing.T) {
+	label := func(tier config.Tier, instance string) string {
+		r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")
+		r.tier, r.instance = tier, instance
+		if code := r.run(t); code != 0 {
+			t.Fatalf("setup exited %d:\n%s", code, r.stderr.String())
+		}
+		uri := strings.Split(r.stdout.String(), "\n")[0]
+		parsed, err := url.Parse(uri)
+		if err != nil || parsed.Query().Get("issuer") != "SuiteWard" {
+			t.Fatalf("URI %q is not valid or lacks the issuer", uri)
+		}
+		for _, want := range []string{string(tier) + " " + instance[:8], "delete any existing entry with this exact name", "entries of other instances stay", `"SuiteWard:octo", with no instance in its name, predates this release`} {
+			if !strings.Contains(r.stderr.String(), want) {
+				t.Errorf("stderr = %q; want it to say %q so the owner can tell the entries apart", r.stderr.String(), want)
+			}
+		}
+		return strings.TrimPrefix(parsed.Path, "/")
+	}
+
+	isolated := label(config.TierIsolated, setupInstance)
+	if want := "SuiteWard:octo (isolated 1a2b3c4d)"; isolated != want {
+		t.Fatalf("label = %q; want %q", isolated, want)
+	}
+	if other := label(config.TierCoLocated, "ffffffff5e6f708192a3b4c5d6e7f809"); other == isolated || other == label(config.TierCoLocated, "00000000000000000000000000000000") {
+		t.Fatalf("two instances of the same owner share the label %q", other)
+	}
+}
+
+func TestSetupWritesNothingWhenTheInstanceCannotBeRead(t *testing.T) {
+	r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")
+	r.instanceErr = errors.New("database down")
+
+	if code := r.run(t); code != 1 {
+		t.Fatalf("setup exited %d; want 1", code)
+	}
+	if r.stdout.String() != "" {
+		t.Fatalf("stdout = %q; the secret was printed without an instance to name", r.stdout.String())
+	}
+	if _, found := r.enrolled(t); found {
+		t.Fatal("enrolled without knowing the instance")
+	}
 }
 
 func TestSetupRecordsTheTierOfTheSettings(t *testing.T) {
@@ -322,12 +371,12 @@ func TestSetupMintsTheTwoTokensWithTheirOwnPermissions(t *testing.T) {
 		t.Fatalf("token requests = %v; want the read map and the protection map, one each", got)
 	}
 	for _, path := range []string{"/users/octo", "/repos/" + setupWidgetsRepo} {
-		if !fake.requestedWith(path, setupReadToken) {
+		if !fake.requestedWith(path, setupReadAuth) {
 			t.Errorf("%s was not read with the synchronization token", path)
 		}
 	}
 	for _, path := range []string{"/repos/" + setupWidgetsRepo + "/rules/branches/main", "/repos/" + setupWidgetsRepo + "/branches/main/protection"} {
-		if !fake.requestedWith(path, setupProtToken) {
+		if !fake.requestedWith(path, setupProtAuth) {
 			t.Errorf("%s was not read with the protection token", path)
 		}
 	}
@@ -429,14 +478,14 @@ func (f failingStore) RecordProtection(ctx context.Context, p owner.ProtectionRe
 }
 
 func TestSetupEnrollmentFailuresExitOneWithFixedMessages(t *testing.T) {
-	secretCause := errors.New("dial tcp db.internal:5432: password=hunter2")
+	leakCause := errors.New("dial tcp db.internal:5432: password=hunter2")
 	for name, test := range map[string]struct {
 		cause error
 		want  string
 	}{
 		"step already used": {owner.ErrStepUsed, "already used"},
 		"refused":           {fmt.Errorf("%w: another owner cannot take over a project that has a Suite", owner.ErrInvalidState), "another owner cannot take over"},
-		"store failure":     {secretCause, "could not record the enrollment"},
+		"store failure":     {leakCause, "could not record the enrollment"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")

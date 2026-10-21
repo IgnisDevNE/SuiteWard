@@ -133,7 +133,7 @@ Patterns are gitignore-style. A pattern with no slash inside it matches at any d
 ## Install
 
 SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App that the owner creates. The [install guide](docs/install.md) covers both tiers:
-- **Isolated:** a Linux host under systemd, outbound only, with full assurance.
+- **Isolated:** an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance. The guide describes the v0.2.0 install; v0.1.3 ran on a Linux host.
 - **Co-located:** Podman on the developer's Windows PC.
 
 The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
@@ -145,9 +145,11 @@ The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [
 
 - **The MVP is feature-complete for a single owner on GitHub,** and accepted on both tiers. SuiteWard governs its own tests: every pull request to this repository that changes a protected file needs the owner's approval.
 - **Releases:**
-  - `v0.1.0` is the first release.
-  - `v0.1.1` adds scope discovery (M1.9). It is the current release and runs on both tiers.
-  - The final MVP release comes after a security gate: hardening, a heavy pentest of both tiers, and a SecOps review.
+  - `v0.1.0` is the first release, and `v0.1.1` adds scope discovery (M1.9).
+  - `v0.1.3` is the current release and runs on both tiers; its isolated tier runs on a Linux host, and v0.2.0 moves it to AlmaLinux 9.
+  - `v0.2.0` is in preparation: a least-privilege database role, `suiteward migrate`, signed releases with provenance and an SBOM, and an AlmaLinux 9 isolated host.
+  - The security assessment is done; the hardening phase is [SH](docs/plan/phases/SH.md).
+- **Security:** see [SECURITY.md](SECURITY.md), the [threat model](docs/security/threat-model.md), and [`scripts/verify-release.ps1`](scripts/verify-release.ps1), which verifies a release's signature and provenance.
 - **After the MVP:**
   - canonical test execution (M2);
   - a managed service;

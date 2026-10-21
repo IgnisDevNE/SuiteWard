@@ -16,7 +16,6 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -65,9 +64,6 @@ func TestCheckPublisherOnPostgreSQLPostsTheCurrentGenerationOnce(t *testing.T) {
 	env := testEnv(serveVars(t, databaseURL))
 	cfg, _, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.Up(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
 	pool, store, _, err := connectWithArtifacts(t.Context(), cfg)

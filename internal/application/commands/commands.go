@@ -31,7 +31,7 @@ type Disposition string
 
 // The dispositions (D-COMMANDS).
 const (
-	NotCommand       Disposition = "not-command"       // no /suiteward line, or SuiteWard's own comment
+	NotCommand       Disposition = "not-command"       // no /suiteward line, SuiteWard's own comment, or an approve, revoke or skip first observed after its pull request stopped being open (nothing is decided and no step is used)
 	BeforeEnrollment Disposition = "before-enrollment" // created before the current enrollment's enrolled_at; never acknowledged
 	NoSuite          Disposition = "no-suite"          // owner-authored command for a project whose Suite does not exist yet
 	EditedFirst      Disposition = "edited-first"      // owner-authored, first observed version already edited (updated_at != created_at); no step used
@@ -48,9 +48,10 @@ const (
 	SkipRefused      Disposition = "skip-refused"      // owner-authored /suiteward skip that was refused; no operation id
 	Suggested        Disposition = "suggested"         // owner-authored /suiteward suggest that was answered, or that found no Suite yet (the acknowledgment says the bootstrap is pending); no operation id, never a command for the check
 	SuggestRefused   Disposition = "suggest-refused"   // owner-authored /suiteward suggest on a fork or a closed pull request, or from a source it cannot answer from; always acknowledged; no operation id, never a command for the check
+	OtherPull        Disposition = "other-pull"        // owner-authored approve or revoke whose reference names a proposal carried by another pull request; refused before a step is used; no operation id, never a command for the check
 )
 
-var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused}
+var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused, OtherPull}
 
 // Entry is the decision about the first observed version of one comment.
 type Entry struct {
@@ -79,7 +80,7 @@ type Store interface {
 	// Pending returns the first observed version of every comment that has no ledger entry, across all enrolled
 	// repositories, ordered by created_at then comment id, at most limit, and only comments created before
 	// horizon. The caller computes horizon from the sync watermark (D-COMMANDS): the earliest last successful
-	// cycle among the enrolled repositories, minus JOB_TIMEOUT and 30 s.
+	// cycle among the configured enrolled repositories, minus the listing margin (commandListingMargin in internal/app).
 	Pending(ctx context.Context, horizon time.Time, limit int) ([]Candidate, error)
 	// Record stores the decision for one comment and, when ack is not nil, its acknowledgment outbox message in
 	// the same transaction (for dispositions that never reach ProcessConsent). That message is a system outbox
@@ -151,8 +152,8 @@ func (d Disposition) AffectsCheck() bool {
 
 // ValidatePending reports why Pending cannot answer, as ErrInvalid.
 func ValidatePending(horizon time.Time, limit int) error {
-	if horizon.IsZero() || limit < 1 {
-		return invalid("Pending needs a horizon and a positive limit")
+	if horizon.IsZero() || limit < 1 || limit > math.MaxInt32 {
+		return invalid("Pending needs a horizon and a limit between 1 and %d", math.MaxInt32)
 	}
 	return nil
 }

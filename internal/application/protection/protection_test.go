@@ -25,7 +25,7 @@ func ruleFacts(rules ...Rule) Facts { return Facts{Rules: rules, FromRuleset: le
 
 func TestEvaluate(t *testing.T) {
 	good := []Check{contract(app), {Context: test}}
-	caveat := []Code{RulesetBypassUnverified}
+	caveat := []Code{RulesetOverrideUnverified}
 	tests := []struct {
 		name      string
 		facts     Facts

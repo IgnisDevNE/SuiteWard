@@ -28,6 +28,7 @@ var (
 type store interface {
 	SchemaVersion(ctx context.Context) (int64, error)
 	Counts(ctx context.Context) (postgres.Counts, error)
+	Instance(ctx context.Context) (string, error)
 }
 
 // api serves /healthz, /readyz and /status. Only fixed reasons reach a
@@ -81,6 +82,11 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		a.storeFailed(w, r, err)
 		return
 	}
+	instance, err := a.store.Instance(ctx)
+	if err != nil {
+		a.storeFailed(w, r, err)
+		return
+	}
 	enrollment, enrolled, err := a.owners.Current(ctx)
 	if err != nil {
 		a.storeFailed(w, r, err)
@@ -88,7 +94,7 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 	}
 	tier, note := effectiveTier(a.tier, enrollment, enrolled)
 	body := map[string]any{
-		"version": Version, "schemaVersion": version, "tier": tier,
+		"version": Version, "schemaVersion": version, "tier": tier, "instance": shortInstance(instance),
 		"jobs": perState(jobStates, counts.Jobs), "outbox": perState(outboxStates, counts.Outbox),
 	}
 	if note != "" {
@@ -101,6 +107,9 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 		body["owner"] = map[string]any{"login": enrollment.Owner.Login, "accountId": enrollment.Owner.AccountID, "enrolledAt": enrollment.EnrolledAt.UTC().Format(time.RFC3339)}
 	}
 	if a.github != nil {
+		if names := unconfiguredRepositories(a.github.repos, enrollment); len(names) > 0 {
+			body["unconfiguredRepositories"] = names
+		}
 		protections, err := storedProtection(ctx, a.owners, a.github.ids, a.github.repos)
 		if err != nil {
 			a.storeFailed(w, r, err)

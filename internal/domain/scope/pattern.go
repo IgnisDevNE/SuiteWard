@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -15,6 +16,10 @@ import (
 // ErrInvalidPattern reports a pattern that does not satisfy the D-SCOPE
 // gitignore subset.
 var ErrInvalidPattern = errors.New("invalid scope pattern")
+
+// MaxPatternSegments is the most "/"-separated segments a pattern may have. An untrusted declaration chooses its
+// patterns, and the cap bounds the matching work each can cost.
+const MaxPatternSegments = 64
 
 // Pattern is a validated gitignore-style scope rule.
 type Pattern struct {
@@ -62,6 +67,9 @@ func ParsePattern(s string) (Pattern, error) {
 	body = strings.TrimPrefix(body, "/")
 
 	segments := strings.Split(body, "/")
+	if len(segments) > MaxPatternSegments {
+		return Pattern{}, fmt.Errorf("%w: %d segments in a pattern of at most %d", ErrInvalidPattern, len(segments), MaxPatternSegments)
+	}
 	for _, segment := range segments {
 		switch {
 		case segment == "" || segment == "." || segment == "..":
@@ -72,13 +80,15 @@ func ParsePattern(s string) (Pattern, error) {
 			return Pattern{}, fmt.Errorf("%w: %q mixes ** with other characters in %q", ErrInvalidPattern, segment, s)
 		default:
 			if _, err := path.Match(segment, ""); err != nil {
-				return Pattern{}, fmt.Errorf("%w: %q: %v", ErrInvalidPattern, s, err)
+				return Pattern{}, fmt.Errorf("%w: %q: %w", ErrInvalidPattern, s, err)
 			}
 		}
 	}
 	if !anchored {
 		segments = append([]string{"**"}, segments...)
 	}
+	// A run of "**" matches what one does; collapsing it keeps matching linear in segments times components.
+	segments = slices.CompactFunc(segments, func(a, b string) bool { return a == "**" && b == "**" })
 
 	belowOnly := !isDir && segments[len(segments)-1] == "**"
 	if belowOnly {
@@ -129,8 +139,7 @@ func (p Pattern) String() string {
 // segments against the start of components, honoring "**" as zero or more
 // segments. It also reports whether a segment other than "**" is still
 // unmatched once every component is consumed (a deeper path could satisfy it).
-// It is memoized because adjacent "**" segments would otherwise revisit the
-// same (segment, component) position many times.
+// It is memoized, so each (segment, component) position is visited once.
 func matchEnds(segments, components []string) ([]int, bool) {
 	type state struct{ segment, component int }
 	ends := make(map[int]struct{})
@@ -153,8 +162,10 @@ func matchEnds(segments, components []string) ([]int, bool) {
 			return
 		}
 		if segments[segment] == "**" {
-			for next := component; next <= len(components); next++ {
-				walk(segment+1, next)
+			// "**" consumes nothing, or one component and stays.
+			walk(segment+1, component)
+			if component < len(components) {
+				walk(segment, component+1)
 			}
 			return
 		}

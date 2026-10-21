@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -408,5 +410,111 @@ func TestAddExcludesWithNothingNewReturnsTheBytesUnchangedAndRejectsInvalidInput
 		if got, err := scope.AddExcludes([]byte("version: 1\n"), []string{pattern}); !errors.Is(err, scope.ErrInvalidPattern) || got != nil {
 			t.Errorf("exclude %q: AddExcludes = %q, %v; want ErrInvalidPattern", pattern, got, err)
 		}
+	}
+}
+
+// A pattern that YAML reads as another scalar or as the merge key must be written quoted, so the result stays a declaration that holds it.
+func TestAddPatternsAndAddExcludesQuoteWhatYAMLWouldReadAsAnotherValue(t *testing.T) {
+	patterns := []string{"<<", "y", "No", "ON"}
+	for name, add := range map[string]func(raw []byte) ([]byte, error){
+		"include": func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, patterns, nil) },
+		"runner":  func(raw []byte) ([]byte, error) { return scope.AddPatterns(raw, nil, patterns) },
+		"exclude": func(raw []byte) ([]byte, error) { return scope.AddExcludes(raw, patterns) },
+		"existing": func(raw []byte) ([]byte, error) {
+			return scope.AddExcludes(append(raw, "exclude:\n  - a\n"...), patterns)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := add([]byte("version: 1\n"))
+			if err != nil {
+				t.Fatalf("the library cannot add the patterns: %v", err)
+			}
+			d, err := scope.ParseDeclaration(got)
+			if err != nil {
+				t.Fatalf("the result is not a declaration: %v\n%s", err, got)
+			}
+			var held []string
+			for _, list := range [][]scope.Pattern{d.Include(), d.Runner(), d.Exclude()} {
+				held = append(held, patternStrings(list)...)
+			}
+			for _, p := range patterns {
+				if !slices.Contains(held, p) {
+					t.Errorf("the declaration lacks %q:\n%s", p, got)
+				}
+			}
+		})
+	}
+}
+
+// A pattern that is only a YAML 1.1 boolean is quoted on its own, without the merge key to force it, and reads back as the same string.
+func TestAddPatternsQuotesAYAMLBooleanOnItsOwn(t *testing.T) {
+	for _, pattern := range []string{"y", "Off"} {
+		t.Run(pattern, func(t *testing.T) {
+			got, err := scope.AddPatterns([]byte("version: 1\n"), []string{pattern}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "version: 1\ninclude:\n  - \"" + pattern + "\"\n"; string(got) != want {
+				t.Errorf("AddPatterns = %q, want %q", got, want)
+			}
+			if d := mustParse(t, got); !reflect.DeepEqual(patternStrings(d.Include()), []string{pattern}) {
+				t.Errorf("the declaration holds %q, want %q", patternStrings(d.Include()), pattern)
+			}
+		})
+	}
+}
+
+// A declaration holds at most 1000 patterns across include, exclude and runner.
+func TestParseDeclarationCapsPatternsAtOneThousand(t *testing.T) {
+	declare := func(include, exclude, runner int) []byte {
+		var b strings.Builder
+		b.WriteString("version: 1\n")
+		for key, n := range map[string]int{"include": include, "exclude": exclude, "runner": runner} {
+			b.WriteString(key + ":\n")
+			for i := 0; i < n; i++ {
+				b.WriteString("  - " + key[:1] + strconv.Itoa(i) + "/\n")
+			}
+		}
+		return []byte(b.String())
+	}
+	if _, err := scope.ParseDeclaration(declare(400, 300, 300)); err != nil {
+		t.Fatalf("1000 patterns: %v", err)
+	}
+	for name, raw := range map[string][]byte{
+		"1001 across the lists": declare(400, 300, 301),
+		"1001 in one list":      declare(1001, 0, 0),
+	} {
+		if _, err := scope.ParseDeclaration(raw); !errors.Is(err, scope.ErrInvalidDeclaration) {
+			t.Errorf("%s: error = %v, want ErrInvalidDeclaration", name, err)
+		}
+	}
+}
+
+// A pattern past the segment cap makes the declaration invalid, the pattern's own error kept in the chain.
+func TestParseDeclarationRefusesAPatternOverTheSegmentCap(t *testing.T) {
+	raw := []byte("version: 1\ninclude:\n  - /" + strings.Repeat("**/", 20000) + "x\n")
+	_, err := scope.ParseDeclaration(raw)
+	if !errors.Is(err, scope.ErrInvalidDeclaration) || !errors.Is(err, scope.ErrInvalidPattern) {
+		t.Fatalf("error = %v, want ErrInvalidDeclaration wrapping ErrInvalidPattern", err)
+	}
+}
+
+// The additions of AddPatterns and AddExcludes count toward the 1000 patterns of a declaration: a base of 999 takes
+// one more and refuses two.
+func TestAddPatternsAndExcludesRefuseAdditionsPastTheDeclarationCap(t *testing.T) {
+	var base strings.Builder
+	base.WriteString("version: 1\ninclude:\n")
+	for i := 0; i < 999; i++ {
+		base.WriteString("  - d" + strconv.Itoa(i) + "/\n")
+	}
+	raw := []byte(base.String())
+	if _, err := scope.AddPatterns(raw, []string{"new-a/"}, nil); err != nil {
+		t.Fatalf("AddPatterns of the 1000th pattern: %v", err)
+	}
+	if _, err := scope.AddPatterns(raw, []string{"new-a/"}, []string{"new-b/"}); !errors.Is(err, scope.ErrInvalidDeclaration) {
+		t.Errorf("AddPatterns past the cap error = %v, want ErrInvalidDeclaration", err)
+	}
+	if _, err := scope.AddExcludes(raw, []string{"new-a", "new-b"}); !errors.Is(err, scope.ErrInvalidDeclaration) {
+		t.Errorf("AddExcludes past the cap error = %v, want ErrInvalidDeclaration", err)
 	}
 }

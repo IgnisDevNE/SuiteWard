@@ -142,18 +142,23 @@ func (j *commandsJob) decidePending(ctx context.Context) error {
 
 // horizon is the sync watermark (D-COMMANDS, "The sync watermark in GitHub's clock", M1.7c): the earliest
 // CycleStartedAt among the enrolled repositories, GitHub's own clock, minus commandListingMargin. ready is false,
-// with a Warn line (every command waits), while an enrolled repository has no recorded cycle start: nothing can be
-// decided before it has been seen. JOB_TIMEOUT and the former clock skew no longer enter the horizon.
+// with a Warn line (every command waits), while a configured enrolled repository has no recorded cycle start: nothing
+// can be decided before it has been seen. An enrolled repository that is not in GITHUB_REPOSITORIES is skipped, once
+// warned: nothing syncs it, so its stale cycle would hold every command back for good; /status names it. Without a
+// configured enrolled repository there is nothing to decide, so it is not ready. JOB_TIMEOUT and the former clock
+// skew no longer enter the horizon.
 func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (horizon time.Time, ready bool, err error) {
 	var earliest time.Time
 	for _, project := range enrollment.Projects {
-		// Fail closed: an enrolled repository holds the watermark back even after it left GITHUB_REPOSITORIES, so say why.
-		if !slices.Contains(j.repos, project.Repo) && !j.warned[project.Repo] {
-			if j.warned == nil {
-				j.warned = map[string]bool{}
+		if !slices.Contains(j.repos, project.Repo) {
+			if !j.warned[project.Repo] {
+				if j.warned == nil {
+					j.warned = map[string]bool{}
+				}
+				j.warned[project.Repo] = true
+				j.logger.WarnContext(ctx, "github commands skip an enrolled repository that is not configured in GITHUB_REPOSITORIES", "repo", project.Repo)
 			}
-			j.warned[project.Repo] = true
-			j.logger.WarnContext(ctx, "github commands wait for an enrolled repository that is not configured in GITHUB_REPOSITORIES", "repo", project.Repo)
+			continue
 		}
 		state, _, err := j.syncs.Repository(ctx, project.Repo)
 		if err != nil {
@@ -166,6 +171,9 @@ func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (hori
 		if earliest.IsZero() || state.CycleStartedAt.Before(earliest) {
 			earliest = state.CycleStartedAt
 		}
+	}
+	if earliest.IsZero() {
+		return time.Time{}, false, nil
 	}
 	return earliest.Add(-commandListingMargin), true, nil
 }
@@ -229,11 +237,28 @@ func ignoredDisposition(enrollment owner.State, botID int64, m githubsync.Commen
 // rejectFunc records a command as rejected with its acknowledgment.
 type rejectFunc func(d commands.Disposition, reason commandtext.Reason, reference string) error
 
-// consent decides an approve, a revoke or a skip: it verifies and consumes the code, then applies the command.
+// consent decides an approve, a revoke or a skip: it ignores one first observed after its pull request stopped being open, refuses an approve or a revoke
+// for a proposal that another pull request carries, and otherwise verifies and consumes the code, then applies the command.
 func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, reject rejectFunc) error {
+	pull, err := j.observedPull(ctx, c)
+	if err != nil {
+		return err
+	}
+	// A command the sync first observed while the pull request was listed open is still decided after it closes. Both times are the
+	// sync's own clock (the cycle's At), so GitHub's created_at never enters; equal times count as closed. No step, no consent, no acknowledgment.
+	if !pull.NotOpenSince.IsZero() && !c.Comment.FirstSeen.Before(pull.NotOpenSince) {
+		return j.record(ctx, c, commands.NotCommand, "", nil)
+	}
 	var reference string // a skip names no proposal
 	if command.Verb != commandtext.Skip {
 		reference = commandtext.Reference(command.Proposal, command.Revision)
+		elsewhere, err := j.carriedElsewhere(ctx, c, command)
+		if err != nil {
+			return err
+		}
+		if elsewhere {
+			return reject(commands.OtherPull, 0, reference)
+		}
 	}
 	source := commentSource(c.Comment.CommentID)
 	if verified, err := j.verifyCode(ctx, enrollment, c, command, source, reference, reject); !verified {
@@ -245,20 +270,40 @@ func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c com
 	return j.process(ctx, enrollment, c, command, source, reference, reject)
 }
 
+// carriedElsewhere reports whether the proposal the command names exists and is carried by another pull request than the
+// comment's. A missing Suite or proposal is not: the consent that follows answers it.
+func (j *commandsJob) carriedElsewhere(ctx context.Context, c commands.Candidate, command commandtext.Command) (elsewhere bool, err error) {
+	err = j.suites.Do(ctx, owner.ProjectID(c.RepositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		proposal, _, err := tx.Proposal(ctx, proposalID(command.Proposal))
+		if err != nil {
+			return err
+		}
+		elsewhere = proposal.Current().Carrier() != carrierID(c.RepositoryID, c.PullNumber)
+		return nil
+	})
+	if errors.Is(err, governance.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &opaque{what: "look for the proposal", cause: err}
+	}
+	return elsewhere, nil
+}
+
 // verifyCode checks the code of the command and consumes its step. verified is false when the command was recorded as rejected, or the step failed:
 // err is then the result of that.
 func (j *commandsJob) verifyCode(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, source contract.SourceCommandID, reference string, reject rejectFunc) (verified bool, err error) {
 	m := c.Comment
 	step, err := totp.Verify(enrollment.Secret, command.Code, m.CreatedAt, commandTolerance)
 	if errors.Is(err, totp.ErrInvalidCode) {
-		j.logRejectedOffset(ctx, enrollment.Secret, command.Code, c)
+		j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", m.CommentID)
 		return false, reject(commands.InvalidCode, 0, reference)
 	}
 	if err != nil {
 		return false, &opaque{what: "verify the code", cause: err}
 	}
 	// Logged before the step is consumed, so a replayed code also logs "verified" and is then rejected.
-	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID, "offset", step-totp.Step(m.CreatedAt))
+	j.logger.InfoContext(ctx, "github command code verified", "repo", c.Repo, "comment", m.CommentID)
 	// The comment's own time keeps a retry after a crash identical to the first call.
 	switch err := j.owners.ConsumeStep(ctx, enrollment.Owner.AccountID, step, m.CreatedAt, source); {
 	case errors.Is(err, owner.ErrStepUsed):
@@ -311,20 +356,6 @@ func (j *commandsJob) process(ctx context.Context, enrollment owner.State, c com
 	return j.record(ctx, c, commands.Processed, operation, nil)
 }
 
-// measuredTolerance is how far logRejectedOffset looks, to measure whether commandTolerance is too narrow.
-const measuredTolerance = 2
-
-// logRejectedOffset logs, for measurement only, whether a wider window would have accepted a rejected code and at which
-// offset in steps from the comment's step. The result never changes the decision, and neither the code nor the secret is logged.
-func (j *commandsJob) logRejectedOffset(ctx context.Context, secret []byte, code string, c commands.Candidate) {
-	step, err := totp.Verify(secret, code, c.Comment.CreatedAt, measuredTolerance)
-	if err != nil {
-		j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", c.Comment.CommentID, "would_match", false)
-		return
-	}
-	j.logger.InfoContext(ctx, "github command code rejected", "repo", c.Repo, "comment", c.Comment.CommentID, "would_match", true, "offset", step-totp.Step(c.Comment.CreatedAt))
-}
-
 // consentRequest is the command of the owner's comment with the identifiers of D-COMMANDS.
 func consentRequest(enrollment owner.State, c commands.Candidate, command commandtext.Command, source contract.SourceCommandID, operation contract.OperationID) (governance.ConsentRequest, error) {
 	actor, err := contract.NewPrincipal(owner.PrincipalID(enrollment.Owner.AccountID), contract.Human)
@@ -334,6 +365,9 @@ func consentRequest(enrollment owner.State, c commands.Candidate, command comman
 	action := contract.ApproveConsent
 	if command.Verb == commandtext.Revoke {
 		action = contract.RevokeConsent
+	}
+	if c.Comment.CommentID < 0 {
+		return governance.ConsentRequest{}, &opaque{what: "build the command order", cause: fmt.Errorf("comment identifier %d is negative", c.Comment.CommentID)}
 	}
 	built, err := contract.NewCommand(contract.CommandInput{OperationID: operation, SourceCommandID: source, Actor: actor, Action: action,
 		Reference: contract.ProposalReference{ProjectID: owner.ProjectID(c.RepositoryID), SuiteID: defaultSuite, ProposalID: proposalID(command.Proposal),

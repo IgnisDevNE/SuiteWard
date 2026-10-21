@@ -144,34 +144,13 @@ func (s *Store) Put(ctx context.Context, digest artifact.Digest, content io.Read
 
 // Read returns independent bytes only after validating their exact identity.
 func (s *Store) Read(ctx context.Context, digest artifact.Digest) ([]byte, error) {
-	name, err := objectName(digest)
+	var content []byte
+	err := s.scan(ctx, digest, func(r io.Reader) (err error) {
+		content, err = io.ReadAll(r)
+		return err
+	})
 	if err != nil {
 		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	root, err := s.io.openRoot(s.root)
-	if err != nil {
-		return nil, fmt.Errorf("open artifact root: %w", err)
-	}
-	// The root is only read through: a close error of the directory handle cannot change the outcome.
-	defer func() { _ = root.Close() }()
-	info, err := s.io.lstat(root, name)
-	if err != nil {
-		return nil, fmt.Errorf("inspect artifact object: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, ErrCorruptArtifact
-	}
-	file, err := s.io.openFile(root, name, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open artifact object: %w", err)
-	}
-	content, readErr := io.ReadAll(contextReader{ctx, file})
-	closeErr := file.Close()
-	if err := errors.Join(readErr, closeErr); err != nil {
-		return nil, fmt.Errorf("read artifact object: %w", err)
 	}
 	if artifact.Hash(content) != digest {
 		return nil, ErrCorruptArtifact
@@ -179,10 +158,53 @@ func (s *Store) Read(ctx context.Context, digest artifact.Digest) ([]byte, error
 	return content, nil
 }
 
-// Verify checks that the digest names available, intact raw content.
+// Verify checks that the digest names available, intact raw content, without holding it in memory.
 func (s *Store) Verify(ctx context.Context, digest artifact.Digest) error {
-	_, err := s.Read(ctx, digest)
-	return err
+	hash := sha256.New()
+	if err := s.scan(ctx, digest, func(r io.Reader) error {
+		_, err := io.Copy(hash, r)
+		return err
+	}); err != nil {
+		return err
+	}
+	if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != digest.String() {
+		return ErrCorruptArtifact
+	}
+	return nil
+}
+
+// scan passes the bytes of the object named by digest, once it is a regular file, to consume.
+func (s *Store) scan(ctx context.Context, digest artifact.Digest, consume func(io.Reader) error) error {
+	name, err := objectName(digest)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	root, err := s.io.openRoot(s.root)
+	if err != nil {
+		return fmt.Errorf("open artifact root: %w", err)
+	}
+	// The root is only read through: a close error of the directory handle cannot change the outcome.
+	defer func() { _ = root.Close() }()
+	info, err := s.io.lstat(root, name)
+	if err != nil {
+		return fmt.Errorf("inspect artifact object: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return ErrCorruptArtifact
+	}
+	file, err := s.io.openFile(root, name, os.O_RDONLY, 0)
+	if err != nil {
+		return fmt.Errorf("open artifact object: %w", err)
+	}
+	consumeErr := consume(contextReader{ctx, file})
+	closeErr := file.Close()
+	if err := errors.Join(consumeErr, closeErr); err != nil {
+		return fmt.Errorf("read artifact object: %w", err)
+	}
+	return nil
 }
 
 func objectName(digest artifact.Digest) (string, error) {

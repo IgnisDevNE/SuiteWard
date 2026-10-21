@@ -72,7 +72,7 @@ type bootstrapSummaryInputs struct {
 	Protected    int      `json:"protected"`        // all protected files, of which Paths lists the first ones
 	Paths        []string `json:"paths"`
 	Include      []string `json:"include"`               // the declared include rules
-	Runner       []string `json:"runner,omitzero"`       // the declared runner rules; nil in a message written before M1.9-E4, which omitempty would not tell from none
+	Runner       []string `json:"runner,omitzero"`       // the declared runner rules; a message of v0.1.0 has none, which reads as none
 	Exclude      []string `json:"exclude"`               // the declared exclude rules
 	IncludeTotal int      `json:"includeTotal"`          // how many include rules the declaration has, of which Include lists the first ones
 	ExcludeTotal int      `json:"excludeTotal"`          // likewise for exclude
@@ -93,7 +93,7 @@ func (s bootstrapSummaryInputs) summary() (commandtext.Summary, error) {
 	}
 	var source commandtext.Source
 	switch s.Source {
-	case "", sourceBranch: // a message written before M1.7b has no source
+	case sourceBranch:
 	case sourcePull:
 		source = commandtext.SourcePull
 	default:
@@ -139,6 +139,10 @@ func cutBytes(s string, limit int) string {
 // maxOutboxPayload is what a message of the comment kinds that carry repository text may marshal to: the outbox takes 64 KiB, and
 // JSON writes <, > and & as six bytes, so text that is long in escapes could fill it. A payload over it cannot be rendered.
 const maxOutboxPayload = 60 << 10
+
+// maxDeclarationBytes caps the .suiteward.yml of an untrusted tree before it is parsed: a real declaration is a few
+// lines, and the YAML parser should not be handed whatever a head branch puts there.
+const maxDeclarationBytes = 64 << 10
 
 // marshalPayload encodes a payload, and refuses one over maxOutboxPayload.
 func marshalPayload(payload any) ([]byte, error) {
@@ -289,6 +293,9 @@ func (t *githubTree) Read(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, githubRead(err)
 	}
+	if path == scope.DeclarationPath && len(data) > maxDeclarationBytes {
+		return nil, fmt.Errorf("%w: larger than %d bytes", scope.ErrInvalidDeclaration, maxDeclarationBytes)
+	}
 	t.files[path] = data
 	return data, nil
 }
@@ -336,13 +343,13 @@ type bootstrapJob struct {
 	promoted bool // the current run promoted V1; runs never overlap
 }
 
-// run advances every project and wakes the checks when it promoted V1 (docs/contracts/runtime.md, "Queues and
-// wake-ups"). A run that failed after a promotion still wakes them.
+// run advances every project and wakes the checks, and the integrity job that verifies the new canonical, when it
+// promoted V1 (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed after a promotion still wakes them.
 func (b *bootstrapJob) run(ctx context.Context) (river.Wake, error) {
 	b.promoted = false
 	err := b.advanceAll(ctx)
 	if b.promoted {
-		return river.Wake{river.ChecksKind}, err
+		return river.Wake{river.ChecksKind, river.IntegrityKind}, err
 	}
 	return nil, err
 }

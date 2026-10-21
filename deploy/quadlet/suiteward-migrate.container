@@ -1,0 +1,36 @@
+# One-shot `suiteward migrate`: brings the schema to this release's version as the database owner and grants the application role its
+# access (docs/contracts/persistence.md, "Database roles and grants"). suiteward.service requires it, so serve starts only after it
+# exited 0 and never holds the owner credential. It waits by itself (30 attempts, 1 s apart) for the database to accept connections.
+# The role named in the application URL (suiteward_app) is created once by the deployment (docs/install.md); migrate never creates it.
+[Unit]
+Description=SuiteWard database migration
+Wants=network-online.target
+After=network-online.target
+Requires=suiteward-db.service
+After=suiteward-db.service
+
+[Container]
+# The same line as in suiteward.container: change both together.
+Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>
+ContainerName=suiteward-migrate
+Exec=migrate
+Network=suiteward.network
+# The owner URL is mounted here and nowhere else; the application URL names the role migrate grants to.
+Secret=suiteward-database-owner-url,type=mount,target=/run/secrets/database-owner-url,uid=65532,mode=0400
+Environment=SUITEWARD_MIGRATION_DATABASE_URL_FILE=/run/secrets/database-owner-url
+Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400
+Environment=SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+PodmanArgs=--memory=256m
+
+[Service]
+Type=oneshot
+# The unit stays active after migrate exited 0, so suiteward.service (Requires=) can start and restart without migrating again.
+RemainAfterExit=yes
+# No Restart=: a failed migrate (missing role, role not least-privilege, failed migration) fails closed. suiteward.service does not start, and the
+# failure shows in `systemctl --user status` and the journal. Fix the cause, then start suiteward.service again (docs/install.md, step 10.12).
+
+[Install]
+WantedBy=default.target

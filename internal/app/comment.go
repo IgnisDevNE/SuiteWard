@@ -63,11 +63,11 @@ type ackPayload struct {
 	Project       contract.ProjectID   `json:"project,omitempty"`       // processed: the project of the Suite
 	Suite         contract.SuiteID     `json:"suite,omitempty"`         // processed: the Suite whose receipt is read
 	Operation     contract.OperationID `json:"operation,omitempty"`     // processed: the operation of the consent receipt
-	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
+	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, other-pull, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
 	Comment       int64                `json:"comment"`                 // the id of the command comment
 	Owner         string               `json:"owner"`                   // the owner's GitHub login at processing time
 	Reason        string               `json:"reason,omitempty"`        // malformed: the reason code; propose-refused, skip-refused and suggest-refused: the refusal; suggested: declaration-missing, scope-notice or nothing-uncovered
-	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal and proposed: P<n>-R<m>
+	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal, other-pull and proposed: P<n>-R<m>
 	Branch        string               `json:"branch,omitempty"`        // declaration-missing and scope-notice: the pull request's head ref. Also a refusal that asks to fix .suiteward.yml: the branch of the file to edit
 	Suggestion    []string             `json:"suggestion,omitempty"`    // declaration-missing: the include patterns inventory.Suggest found
 	Runner        []string             `json:"runner,omitempty"`        // and the runner patterns,
@@ -77,8 +77,7 @@ type ackPayload struct {
 	Paths         []string             `json:"paths,omitempty"`         // scope-notice: at most 20 uncovered test-like paths of the head, each cut to 150 bytes,
 	PathsTotal    int                  `json:"pathsTotal,omitempty"`    // how many there are,
 	Declaration   string               `json:"declaration,omitempty"`   // and the canonical declaration with the new patterns added, at most 8192 bytes
-	Declared      bool                 `json:"declared,omitempty"`      // declaration-missing of a suggest: the default branch or the head already holds a .suiteward.yml (no longer written, still decoded; removed with reasonDeclarationTooLarge once no host can hold a payload from before v0.1.2)
-	Base          string               `json:"base,omitempty"`          // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; none in a notice written before M1.9-E5. Also an invalid-source suggest-refused, for the file that is not a valid declaration
+	Base          string               `json:"base,omitempty"`          // scope-notice of a suggest: what the head was compared with, pull, default-branch or contract; required by nothing-uncovered. Also an invalid-source suggest-refused, for the file that is not a valid declaration
 	AddInclude    []string             `json:"addInclude,omitempty"`    // with a base: the include patterns the base lacks,
 	AddRunner     []string             `json:"addRunner,omitempty"`     // and the runner patterns, at most 20 together
 	DefaultBranch string               `json:"defaultBranch,omitempty"` // scope-notice for the default branch: the branch whose file the reply asks to change, for the editor link
@@ -113,24 +112,23 @@ func codeReason(code string) (commandtext.Reason, bool) {
 
 // The reasons of propose-refused and skip-refused in a payload (docs/contracts/runtime.md, "Comment keys").
 const (
-	reasonCanonicalPresent    = "canonical-present"
-	reasonFork                = "fork"
-	reasonNotOpen             = "not-open"
-	reasonBaseNotTarget       = "base-not-target"
-	reasonEmptyInventory      = "empty-inventory"
-	refusalInvalidSource      = "invalid-source" // named like the bootstrap job's status code
-	reasonCarrier             = "carrier"
-	reasonDeclarationTooLarge = "declaration-too-large" // suggest-refused, no longer written: a queued acknowledgment of v0.1.1 holds it and must still render; removed with the Declared field once no host can hold a payload from before v0.1.2
-	reasonDeclarationMissing  = "declaration-missing"   // rendered by commandtext.SuggestDeclaration, which is not an Ack
-	reasonScopeNotice         = "scope-notice"          // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
-	reasonNothingUncovered    = "nothing-uncovered"     // a suggested reply that every test-like path of the head is in the scope
+	reasonCanonicalPresent   = "canonical-present"
+	reasonFork               = "fork"
+	reasonNotOpen            = "not-open"
+	reasonBaseNotTarget      = "base-not-target"
+	reasonEmptyInventory     = "empty-inventory"
+	refusalInvalidSource     = "invalid-source" // named like the bootstrap job's status code
+	reasonCarrier            = "carrier"
+	reasonDeclarationMissing = "declaration-missing" // rendered by commandtext.SuggestDeclaration, which is not an Ack
+	reasonScopeNotice        = "scope-notice"        // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
+	reasonNothingUncovered   = "nothing-uncovered"   // a suggested reply that every test-like path of the head is in the scope
 )
 
 var (
 	proposeRefusals = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, reasonBaseNotTarget: commandtext.BaseNotTarget, reasonEmptyInventory: commandtext.EmptyInventory, refusalInvalidSource: commandtext.InvalidSource}
 	skipRefusals    = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonCarrier: commandtext.Carrier}
 	// suggestRefusals are the reasons of suggest-refused, worded as the propose refusals of the same name.
-	suggestRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, refusalInvalidSource: commandtext.InvalidSource, reasonDeclarationTooLarge: commandtext.DeclarationTooLarge}
+	suggestRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, refusalInvalidSource: commandtext.InvalidSource}
 )
 
 // scopeBases are the codes of Base in a scope-notice payload.
@@ -144,6 +142,7 @@ var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	commands.SkipRefused: commandtext.SkipRefused, commands.Failed: commandtext.ProposeFailed, // a failed command is acknowledged only when it was a propose
 	// A suggest that finds a declaration to suggest is rendered by its own texts, so Suggested here is the one that finds nothing to add.
 	commands.Suggested: commandtext.NothingUncovered, commands.SuggestRefused: commandtext.SuggestRefused,
+	commands.OtherPull: commandtext.OtherPullRequest,
 }
 
 // reasonFits reports whether reason is one a payload of d may carry.
@@ -196,7 +195,7 @@ func (a ackPayload) suggested() bool {
 
 // suggestion is what the renderer takes for a declaration-missing payload.
 func (a ackPayload) suggestion() commandtext.DeclarationSuggestion {
-	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Submodules: a.Submodules, Cut: a.Cut, Suggest: a.Disposition == string(commands.Suggested), Declared: a.Declared}
+	return commandtext.DeclarationSuggestion{Source: a.Comment, Repo: a.Repo, Branch: a.Branch, Patterns: a.Suggestion, Runner: a.Runner, Mixed: a.Mixed, Submodules: a.Submodules, Cut: a.Cut, Suggest: a.Disposition == string(commands.Suggested)}
 }
 
 // validate reports why the payload cannot be rendered, without quoting it. The shape of an acknowledgment is commandtext's (ValidateAck); what is
@@ -209,7 +208,7 @@ func (a ackPayload) validate() error {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
-		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() || a.hasNotice() || a.Declared || a.Base != "" {
+		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() || a.hasNotice() || a.Base != "" {
 			return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
 		}
 		return nil
@@ -235,7 +234,7 @@ func (a ackPayload) validate() error {
 
 // validateRejected reports why the payload of an acknowledgment that has no receipt cannot be rendered.
 func (a ackPayload) validateRejected() error {
-	if a.suggested() || a.hasNotice() || a.Declared {
+	if a.suggested() || a.hasNotice() {
 		return errors.New("the suggestion and the notice fit only a missing declaration or a scope notice")
 	}
 	if _, _, ok := commandtext.ParseReference(a.Reference); a.Reference != "" && !ok { // an unreadable reference would render as none
@@ -254,8 +253,6 @@ func (a ackPayload) validateMissing() error {
 		return errors.New("a missing declaration names no reference")
 	case a.hasNotice() || a.Base != "":
 		return errors.New("a missing declaration holds no scope notice")
-	case a.Declared && a.Disposition != string(commands.Suggested):
-		return errors.New("only a suggest states that a declaration exists")
 	}
 	// SuggestDeclaration panics on what it refuses, which would loop the outbox job: refuse it here.
 	if commandtext.ValidateSuggestion(a.suggestion()) != nil {
@@ -272,8 +269,8 @@ func (a ackPayload) validateMissing() error {
 // validateNotice reports why a scope-notice payload cannot be rendered, without quoting it.
 func (a ackPayload) validateNotice() error {
 	switch {
-	case len(a.Suggestion) != 0 || len(a.Runner) != 0 || a.Reference != "" || a.Declared:
-		return errors.New("a scope notice holds no suggestion, no reference and no declared flag")
+	case len(a.Suggestion) != 0 || len(a.Runner) != 0 || a.Reference != "":
+		return errors.New("a scope notice holds no suggestion and no reference")
 	case a.PathsTotal < len(a.Paths):
 		return errors.New("the total is below the listed paths")
 	}
@@ -295,8 +292,8 @@ func newProcessedAck(target commentTarget, comment int64, ownerLogin string, pro
 }
 
 // newRejectedAck builds the acknowledgment of a command the job rejected before ProcessConsent: disposition is
-// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal or EditedFirst. reference (P<n>-R<m>) is the
-// parsed command's: required for UnknownProposal, optional for InvalidCode, ReplayedCode and NoSuite (a skip or a
+// Malformed (with its reason), InvalidCode, ReplayedCode, NoSuite, UnknownProposal, OtherPull or EditedFirst. reference (P<n>-R<m>) is the
+// parsed command's: required for UnknownProposal and OtherPull, optional for InvalidCode, ReplayedCode and NoSuite (a skip or a
 // propose has none) and empty otherwise.
 func newRejectedAck(target commentTarget, comment int64, ownerLogin string, disposition commands.Disposition, reason commandtext.Reason, reference string) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reasonCode(reason), Reference: reference})
@@ -973,9 +970,9 @@ type invalidSourcePayload struct {
 	commentTarget
 	Kind          string `json:"kind"`
 	Path          string `json:"path,omitempty"`        // a link only
-	Declaration   string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
+	Declaration   string `json:"declaration,omitempty"` // a link only, and none in a payload that v0.1.1-rc.6 or earlier queued: the head's declaration with the link in exclude, at most 8192 bytes
 	PathCut       bool   `json:"pathCut,omitempty"`
-	Branch        string `json:"branch,omitempty"`        // the pull request's head ref, for the editor link; none in a payload written before M1.9-E12, which then has no link
+	Branch        string `json:"branch,omitempty"`        // the pull request's head ref, for the editor link; none in a payload that v0.1.1-rc.7 or earlier queued, which then has no link
 	NoDeclaration bool   `json:"noDeclaration,omitempty"` // a link only: the head has no .suiteward.yml, so the link goes to the new-file page of GitHub's editor
 }
 

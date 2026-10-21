@@ -27,8 +27,8 @@ const (
 	setupRepoID      = int64(10)
 	setupInstallID   = int64(42)
 	setupWidgetsRepo = "acme/widgets"
-	setupReadToken   = "ghs_FAKE-READ-TOKEN-VALUE"
-	setupProtToken   = "ghs_FAKE-PROTECTION-TOKEN-VALUE"
+	setupReadAuth    = "ghs_FAKE-READ-TOKEN-VALUE"
+	setupProtAuth    = "ghs_FAKE-PROTECTION-TOKEN-VALUE"
 	setupGitHubBody  = "SECRET-BODY-GITHUB-SENT-WITH-AN-ERROR"
 	setupTestCheck   = "ci / test"
 )
@@ -103,9 +103,9 @@ func (f *setupGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		f.tokenRequests = append(f.tokenRequests, raw)
 		permissions, _ := json.Marshal(raw["permissions"])
 		_ = json.Unmarshal(permissions, &body.Permissions) // the request is checked by the tests through tokenRequests
-		granted, token := body.Permissions, setupReadToken
+		granted, token := body.Permissions, setupReadAuth
 		if _, administration := body.Permissions["administration"]; administration {
-			token = setupProtToken
+			token = setupProtAuth
 			if f.protectionMint != 0 {
 				fail(f.protectionMint)
 				return

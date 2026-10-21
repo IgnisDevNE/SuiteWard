@@ -1,7 +1,7 @@
 # SuiteWard development conventions
 
-- **Updated:** 2026-10-05
-- **Status:** Accepted conventions; M0, M1.01 and R1 are delivered.
+- **Updated:** 2026-10-21
+- **Status:** Accepted conventions; delivered through M1.10 (`v0.1.3`), phase SH in progress.
 - **Scope:** How contributors and agents write SuiteWard code and tests.
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.
@@ -59,6 +59,7 @@ Defensive nil checks inside validated code hide bugs: an impossible state silent
 - An unreachable nil fails loudly: an error naming the broken invariant, or a panic with a message only where the state is genuinely unreachable.
 - Never `if err != nil { return nil }`, never `return nil, nil` for "not found" (return a sentinel such as `ErrNotFound`), and never an empty `default` that swallows an unexpected case.
 - `golangci-lint` enforces part of this with `nilnil` and `nilerr`, next to `dupl`, `gocyclo` (25) and `gocognit` (30). There are no `//nolint` comments and no exclusions: a function over a limit is split.
+- `gosec` runs through `golangci-lint` too. Its only exceptions are two linter settings, G505 and G401 (SHA-1), because RFC 6238 TOTP and git object IDs require SHA-1; there are still no `//nolint` comments and no path exclusions. An integer conversion that can overflow goes through a checked helper that returns an error (`int32Of`, `uint64Of`, `int64Of` in the PostgreSQL adapter), never a wrapping or clamping cast.
 
 ## Dependency composition
 

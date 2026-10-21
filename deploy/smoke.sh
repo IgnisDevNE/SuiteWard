@@ -3,10 +3,8 @@
 # synchronized once), the MCP listener's unauthenticated answers, a probe through the real worker, and a
 # delayed probe job that must survive a restart. Needs only podman, curl and coreutils; reads nothing from the
 # environment but the SMOKE_* knobs below. Run it on the target:
-#   sh deploy/smoke.sh [--promote]
-#   podman machine ssh "sh -s" < deploy/smoke.sh          (this PC, inside the Podman machine)
-#   podman machine ssh "sh -s -- --promote" < deploy/smoke.sh
-# --promote also runs `podman auto-update` once; it only works for the quadlet-managed service on the host.
+#   sh deploy/smoke.sh
+#   podman machine ssh --username user "sh -s" < deploy/smoke.sh          (this PC, inside the Podman machine, as its rootless user: the default ssh user is root, the rootful store)
 # Exit 0 only if every step passed; a failing step prints "FAIL <step>: <reason>" and exits 1.
 set -u
 
@@ -24,13 +22,7 @@ GITHUB_TIMEOUT=${SMOKE_GITHUB_TIMEOUT:-120}
 # The MCP listener's published port. The mcp step sends no token and never reads one.
 MCP_BASE=${SMOKE_MCP_BASE:-http://127.0.0.1:8091}
 
-promote=0
-for arg; do
-	case $arg in
-	--promote) promote=1 ;;
-	*) echo "usage: smoke.sh [--promote]" >&2; exit 2 ;;
-	esac
-done
+[ $# -eq 0 ] || { echo "usage: smoke.sh" >&2; exit 2; }
 
 nl='
 '
@@ -115,6 +107,7 @@ check_status() { # step
 	[ -z "$EXPECT_VERSION" ] || [ "$version" = "$EXPECT_VERSION" ] || die "$1" "version $version, want $EXPECT_VERSION"
 	schema=$(num schemaVersion "$body")
 	[ -n "$schema" ] || die "$1" "no schemaVersion in $body"
+	tier=$(printf '%s' "$body" | sed -n 's/.*"tier" *: *"\([^"]*\)".*/\1/p' | head -n 1)
 	discarded=$(num discarded "$body")
 	failed=$(num failed "$body")
 	[ "$discarded" = 0 ] || die "$1" "discarded jobs: ${discarded:-missing}"
@@ -136,9 +129,7 @@ check_status status
 ok status "version $version, schema version $schema, no failed or discarded"
 
 begin
-body=$(curl -fsS -m 5 "$BASE/status") || die tier "GET /status failed"
-tier=$(printf '%s' "$body" | sed -n 's/.*"tier" *: *"\([^"]*\)".*/\1/p' | head -n 1)
-[ -n "$tier" ] || die tier "no tier in $body"
+[ -n "$tier" ] || die tier "no tier in $body" # check_status read it from the same /status answer
 if [ -n "$EXPECT_TIER" ]; then
 	[ "$tier" = "$EXPECT_TIER" ] || die tier "$tier, want $EXPECT_TIER"
 else
@@ -190,15 +181,6 @@ ok probe-after-restart "delayed job $id survived the restart and completed; this
 begin
 check_status status-final
 ok status-final
-
-if [ "$promote" = 1 ]; then
-	begin
-	before=$(podman inspect --format '{{.ImageDigest}}' "$CTR" </dev/null) || die promote "cannot read the image digest"
-	podman auto-update </dev/null >/dev/null || die promote "podman auto-update failed"
-	wait_ready || die promote "not ready within ${READY_TIMEOUT}s after auto-update"
-	after=$(podman inspect --format '{{.ImageDigest}}' "$CTR" </dev/null) || die promote "cannot read the image digest after the update"
-	ok promote "digest before $before, after $after"
-fi
 
 print_summary PASS
 # Exit here: piped through PowerShell, `sh -s` would otherwise run the line the pipe appends and exit 127.

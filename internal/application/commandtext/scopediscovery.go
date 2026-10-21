@@ -8,10 +8,13 @@ import (
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // MaxDeclaration bounds the declaration bytes a notice shows. Fenced against a run of backticks the block can take
-// three times its size, which with the other lists keeps the notice below three quarters of GitHub's comment limit.
+// three times its size. With the other lists at their caps the worst notice measures close to 58,000 bytes, below
+// GitHub's comment limit of 65,536 but not below three quarters of it.
 const MaxDeclaration = 8192
 
 // cutWarning is the line that SuggestDeclaration shows for a list cut at the limit, word for word.
@@ -76,8 +79,13 @@ func ValidateScopeNotice(n ScopeNotice) error {
 
 // validateNoticeLists reports a list of a notice that is too long, or a notice with no path that is not a reply with new patterns.
 func validateNoticeLists(n ScopeNotice) error {
-	if len(n.Paths) > maxListed || (len(n.Paths) == 0 && (n.Base == 0 || len(n.AddInclude)+len(n.AddRunner) == 0)) {
-		return fmt.Errorf("commandtext: %d paths in a notice, want 1 to %d (none only in a reply with new patterns)", len(n.Paths), maxListed)
+	switch {
+	case len(n.Paths) > maxListed:
+		return fmt.Errorf("commandtext: %d paths in a notice, want at most %d", len(n.Paths), maxListed)
+	case len(n.Paths) == 0 && n.Base == 0:
+		return errors.New("commandtext: a notice that is not a reply to a command lists paths, and has none")
+	case len(n.Paths) == 0 && len(n.AddInclude)+len(n.AddRunner) == 0:
+		return errors.New("commandtext: a reply with no paths lists the patterns to add, and has none")
 	}
 	return errors.Join(checkListed("mixed files", len(n.Mixed)), checkListed("submodules", len(n.Submodules)))
 }
@@ -199,7 +207,7 @@ func scopeSuggestReply(n ScopeNotice) string {
 		parts = append(parts, pasteStep(n.Repo, n.Branch, action),
 			"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts these lines as a review comment, and GitHub's **Commit suggestion** button applies them in one click.")
 	} else if n.DefaultBranch != "" {
-		parts = append(parts, "To change `.suiteward.yml` on the default branch, [open GitHub's editor for it]("+editLink(n.Repo, n.DefaultBranch)+") and "+action+". "+
+		parts = append(parts, "To change `.suiteward.yml` on the default branch, "+editorLinkText(n.Repo, n.DefaultBranch)+" and "+action+". "+
 			"GitHub offers a new branch and a pull request when the default branch is protected.")
 	}
 	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
@@ -215,6 +223,11 @@ func scopeSuggestReply(n ScopeNotice) string {
 				"Then comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	}
 	return replyTo(paragraphs(parts...), n.Source)
+}
+
+// editorLinkText is the Markdown link to GitHub's editor for .suiteward.yml on a branch.
+func editorLinkText(repo, branch string) string {
+	return "[open GitHub's editor for it](" + editLink(repo, branch) + ")"
 }
 
 // editLink is GitHub's editor for .suiteward.yml on a branch; the branch is path-escaped segment by segment.
@@ -241,43 +254,29 @@ func pathEscape(branch string) string {
 // input that does not fit panics (see ValidateScopeSuggestion).
 func ScopeSuggestionBody(anchorLine, indent string, patterns []string, quoting Quoting) string {
 	must(ValidateScopeSuggestion(anchorLine, indent, patterns, quoting))
-	content := anchorLine + suggestedItems(patterns, indent, quoting.styleOf(anchorLine))
+	content := anchorLine + suggestedItems(patterns, indent, quoting.style())
 	return paragraphs("SuiteWard suggests adding these patterns to this list; committing the suggestion is a protected change that needs the owner's approval.",
 		fence("suggestion", content+"\n"))
 }
 
-// styleOf is the quoting of the items to write: the one q names, or for the zero value the quoting of the item that anchorLine holds, which is all that a
-// payload written before the style was carried knows of the list: a list of mixed quoting then follows that item, where scope.AddPatterns writes plain.
-func (q Quoting) styleOf(anchorLine string) yaml.Style {
-	switch q {
-	case QuotingPlain:
-		return 0
-	case QuotingSingle:
-		return yaml.SingleQuotedStyle
-	case QuotingDouble:
-		return yaml.DoubleQuotedStyle
+// quotingStyles are the YAML styles of the quotings.
+var quotingStyles = map[Quoting]yaml.Style{QuotingPlain: 0, QuotingSingle: yaml.SingleQuotedStyle, QuotingDouble: yaml.DoubleQuotedStyle}
+
+// style is the YAML style of the items to write; ValidateScopeSuggestion and ValidateRunnerChoice have refused a quoting that is none of the three.
+func (q Quoting) style() yaml.Style {
+	style, known := quotingStyles[q]
+	if !known {
+		panic(fmt.Sprintf("commandtext: unknown quoting %q", q))
 	}
-	return quotingOf(anchorLine)
+	return style
 }
 
-// validate reports a style that is none of the three and not the zero value.
+// validate reports a quoting that is none of the three.
 func (q Quoting) validate() error {
-	if q != "" && q != QuotingPlain && q != QuotingSingle && q != QuotingDouble {
+	if _, known := quotingStyles[q]; !known {
 		return fmt.Errorf("commandtext: quoting %q is unknown", q)
 	}
 	return nil
-}
-
-// quotingOf is the quoting of the item that anchorLine holds: double, single or plain.
-func quotingOf(anchorLine string) yaml.Style {
-	item := strings.TrimLeft(strings.TrimPrefix(strings.TrimLeft(anchorLine, " "), "-"), " ")
-	switch {
-	case strings.HasPrefix(item, `"`):
-		return yaml.DoubleQuotedStyle
-	case strings.HasPrefix(item, "'"):
-		return yaml.SingleQuotedStyle
-	}
-	return 0
 }
 
 // suggestedItems is the line break and the list item of each pattern at indent, written in style as scope.AddPatterns writes them: by
@@ -286,7 +285,7 @@ func quotingOf(anchorLine string) yaml.Style {
 func suggestedItems(patterns []string, indent string, style yaml.Style) string {
 	var items strings.Builder
 	for _, p := range patterns {
-		item := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: style}}}
+		item := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: p, Style: scope.ItemStyle(p, style)}}}
 		line, err := yaml.Marshal(item)
 		if err != nil {
 			panic(fmt.Sprintf("commandtext: a validated pattern %q cannot be written as a list item: %v", p, err))
@@ -300,18 +299,22 @@ func suggestedItems(patterns []string, indent string, style yaml.Style) string {
 // style quoting names (see Quoting), but a pattern that cannot be written inside a double-quoted YAML scalar is still refused, not left
 // out: the caller decides what to do.
 func ValidateScopeSuggestion(anchorLine, indent string, patterns []string, quoting Quoting) error {
-	if err := quoting.validate(); err != nil {
+	if err := errors.Join(quoting.validate(), validatePatterns(patterns), validateAnchor(anchorLine)); err != nil {
 		return err
 	}
 	switch {
-	case len(patterns) == 0 || len(patterns) > maxListed:
-		return fmt.Errorf("commandtext: %d suggested patterns, want 1 to %d", len(patterns), maxListed)
 	case strings.Trim(indent, " ") != "":
 		return fmt.Errorf("commandtext: indent %q is not spaces", indent)
-	case len(anchorLine) > 1000 || !utf8.ValidString(anchorLine) || strings.ContainsAny(anchorLine, "\r\n"):
-		return errors.New("commandtext: the anchor line is over 1000 bytes, not UTF-8 or not one line")
 	case !strings.HasPrefix(anchorLine, indent+"- "):
 		return fmt.Errorf("commandtext: the anchor line %q is not a list item at indent %q", anchorLine, indent)
+	}
+	return nil
+}
+
+// validatePatterns reports a count of suggested patterns that is not 1 to maxListed, and a pattern that cannot be suggested.
+func validatePatterns(patterns []string) error {
+	if len(patterns) == 0 || len(patterns) > maxListed {
+		return fmt.Errorf("commandtext: %d suggested patterns, want 1 to %d", len(patterns), maxListed)
 	}
 	for _, p := range patterns {
 		if p == "" || !suggestable(p) {
@@ -321,9 +324,16 @@ func ValidateScopeSuggestion(anchorLine, indent string, patterns []string, quoti
 	return nil
 }
 
+// validateAnchor reports an anchor line that is over 1000 bytes, not UTF-8 or not one line.
+func validateAnchor(anchorLine string) error {
+	if len(anchorLine) > 1000 || !utf8.ValidString(anchorLine) || strings.ContainsAny(anchorLine, "\r\n") {
+		return errors.New("commandtext: the anchor line is over 1000 bytes, not UTF-8 or not one line")
+	}
+	return nil
+}
+
 // Quoting is the quoting style of the list that a review suggestion extends, as scope.AddPatterns would write its new items: the quoting
-// that every existing item shares, plain when they differ. The zero value follows the anchor line, which is all that a payload written before
-// the style was carried knows of the list.
+// that every existing item shares, plain when they differ.
 type Quoting string
 
 const (

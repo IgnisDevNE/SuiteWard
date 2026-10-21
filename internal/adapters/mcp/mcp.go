@@ -71,6 +71,9 @@ type StatusView struct {
 	Owner            *OwnerStatus       `json:"owner,omitempty"`
 	GitHubConfigured bool               `json:"githubConfigured"`
 	Repositories     []RepositoryStatus `json:"repositories"`
+	// UnconfiguredRepositories lists the enrolled repositories that GITHUB_REPOSITORIES does not name: SuiteWard
+	// skips them until the setting names them again or setup is run without them.
+	UnconfiguredRepositories []string `json:"unconfiguredRepositories,omitempty"`
 }
 
 // OwnerStatus is the enrolled owner: the login is display only, the account

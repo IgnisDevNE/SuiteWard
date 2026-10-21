@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
@@ -26,9 +25,6 @@ func TestCommandsJobOnPostgreSQLDecidesACommentOnlyOnceACycleStartedTenSecondsAf
 	env := testEnv(serveVars(t, databaseURL))
 	cfg, _, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.Up(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
 	pool, store, _, err := connectWithArtifacts(t.Context(), cfg)
@@ -52,7 +48,7 @@ func TestCommandsJobOnPostgreSQLDecidesACommentOnlyOnceACycleStartedTenSecondsAf
 			t.Fatal(err)
 		}
 	}
-	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, pulls: store, repos: []string{bootRepo}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now: func() time.Time { return created.Add(3 * time.Hour) }, bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	decided := func() string {
 		return scalar(t, databaseURL, "SELECT count(*)::text FROM pr_commands WHERE comment_id = 101")

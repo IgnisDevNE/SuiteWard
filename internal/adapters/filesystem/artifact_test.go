@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -161,7 +162,7 @@ func TestMissingAndCorruptObjectsPreventSuccess(t *testing.T) {
 	if err := store.Put(context.Background(), digest, bytes.NewReader(content)); !errors.Is(err, ErrCorruptArtifact) {
 		t.Fatalf("duplicate silently repaired corrupt existing object: %v", err)
 	}
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(filepath.Clean(path))
 	if err != nil || !bytes.Equal(got, corrupt) {
 		t.Fatalf("duplicate changed corrupt existing bytes: %q, %v", got, err)
 	}
@@ -245,3 +246,31 @@ func (r *pausedReader) Read(p []byte) (int, error) {
 }
 
 var _ io.Reader = (*pausedReader)(nil)
+
+// Verify hashes the object as a stream: it never holds it in memory.
+func TestVerifyDoesNotHoldTheObjectInMemory(t *testing.T) {
+	store := newTestStore(t, t.TempDir())
+	const size = 32 << 20
+	content := bytes.Repeat([]byte("0123456789abcdef"), size/16)
+	digest := artifact.Hash(content)
+	if err := store.Put(context.Background(), digest, bytes.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := store.Verify(context.Background(), digest)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatalf("Verify large object: %v", err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > size/4 {
+		t.Fatalf("Verify allocated %d bytes for a %d byte object", allocated, size)
+	}
+	content[size-1] ^= 1
+	if err := os.WriteFile(testObjectPath(store.root, digest), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Verify(context.Background(), digest); !errors.Is(err, ErrCorruptArtifact) {
+		t.Fatalf("corrupt large Verify = %v, want corruption", err)
+	}
+}

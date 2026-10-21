@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
@@ -39,7 +40,7 @@ func cmdTime(n int) time.Time {
 	return time.Date(2026, 10, 14, 12, 0, 0, 123456000, time.UTC).Add(time.Duration(n) * time.Minute)
 }
 
-func repoName(id int64) string { return "acme/repo-" + string(rune('a'+id)) }
+func repoName(id int64) string { return fmt.Sprintf("acme/repo-%c", 'a'+id) }
 
 type cmdEnv struct {
 	t     *testing.T
@@ -143,7 +144,7 @@ var (
 	CountedDispositions = []commands.Disposition{commands.InvalidCode, commands.ReplayedCode, commands.Processed}
 	IgnoredDispositions = []commands.Disposition{commands.Malformed, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.NotCommand,
 		commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor, commands.Proposed, commands.ProposeRefused, commands.Skipped,
-		commands.SkipRefused, commands.Suggested, commands.SuggestRefused}
+		commands.SkipRefused, commands.Suggested, commands.SuggestRefused, commands.OtherPull}
 )
 
 func firstComment(id int64) observed {
@@ -208,7 +209,7 @@ func cmPendingOrder(e *cmdEnv) {
 	e.requirePending(5, 3, inOrder[:3]...)
 	e.requirePending(6, 10, append(slices.Clone(inOrder), candidate(10, 6, c(11, 5)))...)
 	e.requirePending(1, 10)
-	for _, limit := range []int{0, -1} {
+	for _, limit := range []int{0, -1, 1 << 31} { // PostgreSQL's LIMIT here is an int4
 		_, err := e.store.Pending(e.ctx, cmdTime(5), limit)
 		e.requireErr(err, commands.ErrInvalid)
 	}

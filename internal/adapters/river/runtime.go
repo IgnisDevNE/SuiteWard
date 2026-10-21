@@ -145,7 +145,8 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	riverqueue.AddWorker(workers, &relayWorker{relay: relay})
 	relayJob := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(config.OutboxPollInterval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1}
+			// Runs do not pile up behind an unfinished one: the insert is unique while a run is unfinished.
+			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: "outbox_relay", RunOnStart: true})
 	periodicJobs, err := addPeriodicJobs(workers, config, wake)
@@ -155,11 +156,7 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	if err := addSyncRepo(workers, config, wake); err != nil {
 		return nil, err
 	}
-	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
-		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
-		Queues:       queues(config.Workers),
-		PeriodicJobs: append([]*riverqueue.PeriodicJob{relayJob}, periodicJobs...),
-	})
+	client, err := riverqueue.NewClient(riverpgxv5.New(pool), clientConfig(config, workers, append([]*riverqueue.PeriodicJob{relayJob}, periodicJobs...)))
 	if err != nil {
 		return nil, fmt.Errorf("create the River client: %w", err)
 	}
@@ -175,3 +172,15 @@ func (r *Runtime) Stop(ctx context.Context) error { return r.client.Stop(ctx) }
 
 // StopAndCancel stops and cancels the contexts of running jobs.
 func (r *Runtime) StopAndCancel(ctx context.Context) error { return r.client.StopAndCancel(ctx) }
+
+// clientConfig is the River configuration of the runtime.
+func clientConfig(config Config, workers *riverqueue.Workers, periodicJobs []*riverqueue.PeriodicJob) *riverqueue.Config {
+	return &riverqueue.Config{
+		Logger: config.Logger, Workers: workers, JobTimeout: config.JobTimeout, RescueStuckJobsAfter: config.rescueStuckJobsAfter(), RetryPolicy: config.RetryPolicy, MaxAttempts: config.JobMaxAttempts,
+		Queues:       queues(config.Workers),
+		PeriodicJobs: periodicJobs,
+		// River reindexes its own indexes every day (REINDEX INDEX CONCURRENTLY), which needs the owner of the schema,
+		// and the service is not: an empty list, unlike nil (River's defaults), leaves it nothing to do.
+		ReindexerIndexNames: []string{},
+	}
+}

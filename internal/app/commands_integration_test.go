@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
@@ -27,9 +26,6 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 	env := testEnv(serveVars(t, databaseURL))
 	cfg, _, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migrations.Up(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
 	pool, store, artifacts, err := connectWithArtifacts(t.Context(), cfg)
@@ -69,7 +65,7 @@ func TestCommandsJobOnPostgreSQLApprovesRejectsAReusedCodeAndRevokes(t *testing.
 		Comments: map[int][]githubsync.ObservedComment{4: comments}}); err != nil {
 		t.Fatal(err)
 	}
-	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: []string{bootRepo}, logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
+	job := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, pulls: store, repos: []string{bootRepo}, logger: logger, now: func() time.Time { return bootTime.Add(2*time.Hour + 123456789*time.Nanosecond) },
 		bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil })}
 	for range 2 { // the second run finds nothing to decide
 		if _, err := job.run(t.Context()); err != nil {

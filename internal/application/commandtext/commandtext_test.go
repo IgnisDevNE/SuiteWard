@@ -62,13 +62,21 @@ func TestParse(t *testing.T) {
 		{"approve", "/suiteward approve P1-R1 123456", command(commandtext.Approve, 1, 1, "123456")},
 		{"revoke", "/suiteward revoke P42-R3 654321", command(commandtext.Revoke, 42, 3, "654321")},
 		{"largest ids", "/suiteward approve P999999999-R999999999 000000", command(commandtext.Approve, 999999999, 999999999, "000000")},
-		{"extra spaces and tabs", " \t /suiteward \t approve  \tP7-R2\t\t 012345 \t", command(commandtext.Approve, 7, 2, "012345")},
+		{"extra spaces and tabs", "  /suiteward \t approve  \tP7-R2\t\t 012345 \t", command(commandtext.Approve, 7, 2, "012345")},
+		{"indented three columns", "   /suiteward approve P7-R2 012345", command(commandtext.Approve, 7, 2, "012345")},
+		{"after a comment that closes on its own line", "<!-- note -->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"after a comment block", "<!--\nnote\n-->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"a fence inside an HTML comment opens nothing", "<!--\n```\n-->\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"after an indented line", "    code\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"a comment marker inside a fence is code", "```\n<!--\n```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"CRLF", "/suiteward revoke P5-R1 111111\r\nthanks\r\n", command(commandtext.Revoke, 5, 1, "111111")},
 		{"CRLF on a later line", "Looks good.\r\n/suiteward approve P5-R1 111111\r\n", command(commandtext.Approve, 5, 1, "111111")},
 		{"command on a later line", "Reviewed the inventory.\n\n/suiteward approve P2-R4 222222", command(commandtext.Approve, 2, 4, "222222")},
 		{"text before and after", "LGTM\n/suiteward approve P3-R1 333333\nShip it.\n/other text", command(commandtext.Approve, 3, 1, "333333")},
 		{"after a closed fence", "```\n/suiteward approve P9-R9 999999\n```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a closed tilde fence", "~~~~sh\n/suiteward revoke P9-R9 999999\n~~~~\n/suiteward revoke P1-R2 121212", command(commandtext.Revoke, 1, 2, "121212")},
+		{"after a fence closed with three columns", "```\n/suiteward approve P9-R9 999999\n   ```\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
+		{"a dash that is no list marker opens nothing", "---\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 		{"after a longer closing fence", "```\n/suiteward approve P9-R9 999999\n`````\n/suiteward approve P1-R2 121212", command(commandtext.Approve, 1, 2, "121212")},
 
 		// The prefix and the verb are case-insensitive; the reference keeps its form.
@@ -98,12 +106,47 @@ func TestParse(t *testing.T) {
 		{"no-break space after the prefix", "/suiteward\u00a0approve P1-R1 123456", notCommand},
 		{"quoted", "> /suiteward approve P1-R1 123456", notCommand},
 
+		// GitHub shows no command in a hidden comment or in an indented code block.
+		{"inside an HTML comment block", "<!--\n/suiteward approve P1-R1 123456\n-->", notCommand},
+		{"on the line that opens an HTML comment", "<!-- /suiteward approve P1-R1 123456\nnote\n-->", notCommand},
+		{"on the line that closes an HTML comment", "<!--\nnote\n--> /suiteward approve P1-R1 123456", notCommand},
+		{"after an unclosed HTML comment", "<!--\n/suiteward approve P1-R1 123456", notCommand},
+		{"in an HTML comment on one line", "<!-- /suiteward approve P1-R1 123456 -->", notCommand},
+		{"after text and an unclosed comment opener on the same line", "note <!-- x\n/suiteward approve P1-R1 123456", notCommand},
+		{"a comment that closes and reopens on one line", "<!--\nx --> y <!--\n/suiteward approve P1-R1 123456\n-->", notCommand},
+		{"a comment that closes and reopens unclosed on its opening line", "<!-- a --> b <!-- c\n/suiteward approve P1-R1 123456\n-->", notCommand},
+		{"indented four spaces", "    /suiteward approve P1-R1 123456", notCommand},
+		{"indented a tab", "\t/suiteward approve P1-R1 123456", notCommand},
+		{"indented two spaces and a tab", "  \t/suiteward approve P1-R1 123456", notCommand},
+		{"indented a space and a tab", " \t /suiteward approve P7-R2 012345", notCommand},
+		{"indented four spaces on a later line, CRLF", "text\r\n    /suiteward approve P1-R1 123456\r\n", notCommand},
+
 		// Fences.
 		{"unclosed fence hides the rest", "```\nsome code\n/suiteward approve P1-R1 123456\nmore", notCommand},
 		{"unclosed tilde fence hides the rest", "~~~\n/suiteward revoke P1-R1 123456", notCommand},
 		{"tilde does not close a backtick fence", "```\n~~~\n/suiteward approve P1-R1 123456\n```", notCommand},
 		{"shorter fence does not close", "````\n```\n/suiteward approve P1-R1 123456\n````", notCommand},
 		{"fence with info string does not close", "```\n```go\n/suiteward approve P1-R1 123456\n```", notCommand},
+		{"a closing fence indented four columns does not close", "```\n    ```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a closing fence indented a tab does not close", "```\n\t```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a list item", "- ```\n  /suiteward approve P1-R1 123456\n  ```", notCommand},
+		{"a fence in a numbered list item", "1. ```\n   /suiteward approve P1-R1 123456\n   ```", notCommand},
+		{"a tilde fence in a starred list item", "* ~~~\n  /suiteward revoke P1-R1 123456", notCommand},
+		{"a fence in a block quote skips the line after it", "> ```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a quoted list item", "> - ```\n>   /suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a list item that a bare fence ends", "- ```\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a quote that a bare fence ends", "> ```\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a numbered item that a less indented fence ends", "1. ```\n  ```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence in a list item runs to the end of the body", "- ```\n  code\n  ```\n/suiteward approve P1-R2 121212", notCommand},
+		{"an opener indented inside an open list item", "- item\n  ```\n  code\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"an opener indented inside an open numbered item", "1. item\n   ```\n   code\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"an opener indented inside a list item after a blank line", "- a\n\n  ```\n  x\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a top-level fence indented one column is skipped to the end", " ```\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a backtick fence whose info string opens a comment", "``` <!--\n-->\n/suiteward approve P1-R1 123456", notCommand},
+		{"a tilde fence whose info string opens a comment", "~~~ <!--\n-->\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence whose info string holds a whole comment", "``` <!-- x -->\n/suiteward approve P1-R1 123456", notCommand},
+		{"a backtick run whose info string holds a backtick is no fence", "```a```\nx\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a lone carriage return ends a line", "foo\r```\n/suiteward approve P1-R1 123456", notCommand},
 
 		// Malformed.
 		{"bare prefix", "/suiteward", malformed(commandtext.UnknownVerb)},
@@ -349,6 +392,12 @@ func TestAcknowledge(t *testing.T) {
 			commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1, Source: source, Owner: owner},
 			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "comment `/suiteward propose`"},
 			[]string{"eligible"},
+		},
+		{
+			"other pull request",
+			commandtext.Ack{Outcome: commandtext.OtherPullRequest, Proposal: 4, Revision: 2, Source: source, Owner: owner},
+			[]string{"P4-R2 belongs to another pull request; comment the command on that pull request. Nothing changed."},
+			[]string{"eligible", "check"},
 		},
 		{
 			"edited first",
@@ -729,7 +778,7 @@ func TestRenderedBodiesNeverEchoTheComment(t *testing.T) {
 	bodies := []string{}
 	for _, outcome := range []commandtext.Outcome{
 		commandtext.Approved, commandtext.Revoked, commandtext.NoActiveApproval,
-		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite, commandtext.RevokedAfterPromotion, commandtext.ApprovedAfterPromotion,
+		commandtext.InvalidCode, commandtext.ReplayedCode, commandtext.NoSuite, commandtext.RevokedAfterPromotion, commandtext.ApprovedAfterPromotion, commandtext.OtherPullRequest,
 	} {
 		bodies = append(bodies, render(t, func() string {
 			return commandtext.Acknowledge(commandtext.Ack{Outcome: outcome, Proposal: c.Proposal, Revision: c.Revision, Source: source, Owner: owner})
@@ -951,7 +1000,7 @@ func TestBootstrapSummaryCountsTheRulesTheCallerDidNotCarry(t *testing.T) {
 	}
 }
 
-// The default-branch text is pinned: M1.7b adds a source, and the branch text stays as it was.
+// The default-branch text is pinned: M1.7b adds a source, and the branch text stays as it was. A summary without runner rules states none.
 func TestBootstrapSummaryOfTheBranchKeepsItsExactText(t *testing.T) {
 	want := "**SuiteWard bootstrap proposal P1-R1**\n\n" +
 		"SuiteWard proposes this repository's protected baseline as P1-R1. Nothing is canonical yet.\n\n" +
@@ -960,6 +1009,7 @@ func TestBootstrapSummaryOfTheBranchKeepsItsExactText(t *testing.T) {
 		"- Installation tier: `isolated`\n\n" +
 		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
 		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
+		"Scope runner rules: none.\n\n" +
 		"Scope exclude rules:\n\n```\ntests/tmp/\n```\n\n" +
 		"Review the inventory and the scope. To approve this exact baseline, comment:\n\n" +
 		"```\n/suiteward approve P1-R1 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
@@ -1045,8 +1095,7 @@ func TestBootstrapSummaryPanicsOnASourceThatDoesNotFit(t *testing.T) {
 	}
 }
 
-// A summary built without Runner is the shape from before M1.9-E4: it knows nothing of the runner rules, so it names none
-// (the golden test above keeps that text byte for byte). A non-nil Runner, even an empty one, is a declaration that was read.
+// A summary without runner rules, nil or empty, states that there are none.
 func TestBootstrapSummaryListsTheRunnerRulesBetweenIncludeAndExclude(t *testing.T) {
 	rules := func(n int) []string {
 		items := make([]string, n)
@@ -1082,8 +1131,8 @@ func TestBootstrapSummaryListsTheRunnerRulesBetweenIncludeAndExclude(t *testing.
 	}
 
 	s.Runner = nil
-	if body := render(t, func() string { return commandtext.BootstrapSummary(s) }); strings.Contains(body, "runner") {
-		t.Errorf("a summary without runner information names the runner rules:\n%s", body)
+	if body := render(t, func() string { return commandtext.BootstrapSummary(s) }); !strings.Contains(body, "Scope runner rules: none.") {
+		t.Errorf("a nil runner list is not stated as none:\n%s", body)
 	}
 }
 
@@ -1092,7 +1141,7 @@ func TestBootstrapSummaryWithRunnerRulesKeepsTheRestOfTheText(t *testing.T) {
 	without := render(t, func() string { return commandtext.BootstrapSummary(s) })
 	s.Runner = []string{"pytest.ini"}
 	with := render(t, func() string { return commandtext.BootstrapSummary(s) })
-	if want := strings.Replace(without, "Scope exclude rules:", "Scope runner rules:\n\n```\npytest.ini\n```\n\nScope exclude rules:", 1); with != want {
+	if want := strings.Replace(without, "Scope runner rules: none.", "Scope runner rules:\n\n```\npytest.ini\n```", 1); with != want {
 		t.Errorf("the runner section is not the only change:\n%s", with)
 	}
 }

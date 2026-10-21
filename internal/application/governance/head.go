@@ -288,7 +288,7 @@ func CanonicalDeclaration(ctx context.Context, reader ContentReader, canonical c
 		}
 		declaration, err := scope.ParseDeclaration(raw)
 		if err != nil {
-			return nil, scope.Declaration{}, fmt.Errorf("%w: the canonical %s does not parse: %v", ErrInvalidState, scope.DeclarationPath, err)
+			return nil, scope.Declaration{}, fmt.Errorf("%w: the canonical %s does not parse: %w", ErrInvalidState, scope.DeclarationPath, err)
 		}
 		if err := checkApprovedScope(declaration, protected); err != nil {
 			return nil, scope.Declaration{}, err

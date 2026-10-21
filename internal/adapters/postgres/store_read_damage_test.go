@@ -122,6 +122,7 @@ func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 		{"a consent result by an actor of an unknown kind", []string{dropConstraint("consent_results", "consent_results_actor_kind_check"), "UPDATE consent_results SET actor_kind = 'robot'"}, proposal("p1"), true, "consent result comment-p1"},
 		{"a consent result with an unknown action", []string{dropConstraint("consent_results", "consent_results_action_check"), "UPDATE consent_results SET action = 'delete'"}, proposal("p1"), true, "consent result comment-p1"},
 		{"a consent result with order zero", []string{dropConstraint("consent_results", "consent_results_command_order_check"), "UPDATE consent_results SET command_order = 0"}, proposal("p1"), true, "consent result comment-p1"},
+		{"a consent result with a negative order", []string{dropConstraint("consent_results", "consent_results_command_order_check"), "UPDATE consent_results SET command_order = -1"}, proposal("p1"), true, "consent result comment-p1"},
 		{"a consent result with an unknown outcome", []string{dropConstraint("consent_results", "consent_results_outcome_check"), "UPDATE consent_results SET outcome = 'maybe'"}, proposal("p1"), true, "consent result comment-p1"},
 		{"a consent result for a revision that does not exist", []string{"UPDATE consent_results SET revision_id = 'ghost'"}, proposal("p1"), true, "consent history"},
 		{"an operation table that cannot be read for aliases", []string{renameTable("operations")}, proposal("p1"), false, "load consent aliases"},

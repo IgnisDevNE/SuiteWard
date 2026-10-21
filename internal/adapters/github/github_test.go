@@ -127,7 +127,7 @@ func newReader(t *testing.T, routes map[string]reply) (*github.Reader, *fakeGitH
 
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("testdata", name))
+	body, err := os.ReadFile(filepath.Clean(filepath.Join("testdata", name)))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -134,6 +133,8 @@ type setup struct {
 	logger  *slog.Logger
 	now     func() time.Time
 	random  io.Reader
+	// instance is commands.Store.Instance: the id the authenticator entry names.
+	instance func(context.Context) (string, error)
 }
 
 // resolved is what the lookups found; nothing is written before all of it is.
@@ -249,7 +250,16 @@ func (s *setup) enrollmentCode(ctx context.Context, lines <-chan string, login s
 		s.logger.Error("generate the TOTP secret", "error", err)
 		return nil, 0, false
 	}
-	uri, err := totp.URI(secret, totpIssuer, login)
+	instance, err := s.instance(ctx)
+	if err != nil {
+		reportf(s.stderr, "could not read the instance id; see the log\n")
+		s.logger.ErrorContext(ctx, "read the instance id", "error", err)
+		return nil, 0, false
+	}
+	// The issuer stays SuiteWard; the account tells the entries of several instances apart. The same instance gets the same label again, so
+	// the note below says to delete the old entry before scanning: an authenticator may replace it or keep a duplicate.
+	entry := fmt.Sprintf("%s (%s %s)", login, s.cfg.Tier, shortInstance(instance))
+	uri, err := totp.URI(secret, totpIssuer, entry)
 	if err != nil {
 		reportf(s.stderr, "could not build the TOTP enrollment\n")
 		s.logger.Error("build the TOTP URI", "error", err)
@@ -260,6 +270,8 @@ func (s *setup) enrollmentCode(ctx context.Context, lines <-chan string, login s
 		return nil, 0, false
 	}
 	reportf(s.stderr, "add it to your authenticator app (the otpauth:// URI above, or the base32 secret), then confirm with a code.\n")
+	reportf(s.stderr, "this entry is for the %s instance %s and is named %q. Before you scan it, delete any existing entry with this exact name; entries of other instances stay. An older entry named %q, with no instance in its name, predates this release: delete it once this entry's code is accepted.\n",
+		s.cfg.Tier, shortInstance(instance), totpIssuer+":"+entry, totpIssuer+":"+login)
 
 	for attempt := 1; attempt <= totpAttempts; attempt++ {
 		_, _ = fmt.Fprintf(s.stderr, "Enter the 6-digit code (attempt %d of %d): ", attempt, totpAttempts) // a failed write to stderr cannot be reported anywhere else
@@ -404,13 +416,9 @@ func protectionChecks(checks []github.Check) []protection.Check {
 	return out
 }
 
-// runSetup migrates the database, composes the store and the GitHub readers
+// runSetup composes the store (the database is migrated by `suiteward migrate`) and the GitHub readers
 // of cfg (whose GitHub settings Run has checked) and runs setup.
 func runSetup(ctx context.Context, cfg config.Config, o setupOptions, stdin io.Reader, stdout, stderr io.Writer, logger *slog.Logger) int {
-	if err := migrations.Up(ctx, cfg.DatabaseURL.Reveal()); err != nil {
-		reportf(stderr, "migrate the database: %v\n", err)
-		return 1
-	}
 	pool, store, err := connect(ctx, cfg)
 	if err != nil {
 		reportf(stderr, "%v\n", err)
@@ -422,6 +430,6 @@ func runSetup(ctx context.Context, cfg config.Config, o setupOptions, stdin io.R
 		reportf(stderr, "%v\n", err)
 		return 1
 	}
-	s := &setup{cfg: cfg, options: o, store: store, readers: readers, stdin: stdin, stdout: stdout, stderr: stderr, logger: logger, now: time.Now, random: rand.Reader}
+	s := &setup{cfg: cfg, options: o, store: store, readers: readers, stdin: stdin, stdout: stdout, stderr: stderr, logger: logger, now: time.Now, random: rand.Reader, instance: store.Instance}
 	return s.run(ctx)
 }

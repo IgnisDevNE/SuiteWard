@@ -61,7 +61,7 @@ func (r *mgReader) Pull(_ context.Context, repo string, number int) (github.Pull
 	}
 	detail, found := r.pulls[key]
 	if !found {
-		return github.PullDetail{}, fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootSecret)
+		return github.PullDetail{}, fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootLeak)
 	}
 	return detail, nil
 }
@@ -77,7 +77,7 @@ func (r *mgReader) Tree(_ context.Context, _, sha string) (inventory.Tree, error
 	}
 	tree, found := r.trees[sha]
 	if !found {
-		return nil, fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootSecret)
+		return nil, fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootLeak)
 	}
 	return tree, nil
 }
@@ -304,7 +304,7 @@ func TestMergesPromoteAnApprovedMergeAndSayItInOneMessage(t *testing.T) {
 	w.wantProblem("")
 }
 
-func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
+func TestMergesWakeChecksAndIntegrityAfterAPromotion(t *testing.T) {
 	w := newMgWorld(t)
 	w.approved(5, cjHead2, "v2", 2, 201)
 	w.leave(5)
@@ -316,7 +316,7 @@ func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
 		t.Fatalf("merges run: %v\nlogs: %s", err, w.logs)
 	}
 	w.wantOutcome(5, governance.MergePromoted, "")
-	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+	if want := (river.Wake{river.ChecksKind, river.IntegrityKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that promoted woke %v; want %v", wake, want)
 	}
 	if wake, err := w.merges.run(t.Context()); err != nil || len(wake) != 0 { // each run starts with no wake-ups
@@ -324,7 +324,7 @@ func TestMergesWakeChecksAfterAPromotion(t *testing.T) {
 	}
 }
 
-func TestMergesWakeChecksAfterACorrection(t *testing.T) {
+func TestMergesWakeChecksAndIntegrityAfterACorrection(t *testing.T) {
 	w := newMgWorld(t)
 	w.approved(5, cjHead2, "v2", 2, 201)
 	w.leave(5)
@@ -341,7 +341,7 @@ func TestMergesWakeChecksAfterACorrection(t *testing.T) {
 		t.Fatalf("merges run: %v\nlogs: %s", err, w.logs)
 	}
 	w.wantOutcome(6, governance.MergeCorrected, "")
-	if want := (river.Wake{river.ChecksKind}); !slices.Equal(wake, want) {
+	if want := (river.Wake{river.ChecksKind, river.IntegrityKind}); !slices.Equal(wake, want) {
 		t.Fatalf("a run that corrected woke %v; want %v", wake, want)
 	}
 	if wake, err := w.merges.run(t.Context()); err != nil || len(wake) != 0 {
@@ -513,7 +513,7 @@ func TestMergesResolveEveryPullThatLeftTheOpenList(t *testing.T) {
 		w := newMgWorld(t)
 		w.sync(map[int]string{4: bootHead, 5: cjHead3})
 		w.leave(5)
-		w.gh.pullErr[mgKey{bootRepo, 5}] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootSecret)
+		w.gh.pullErr[mgKey{bootRepo, 5}] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootLeak)
 
 		w.mustMerge()
 
@@ -635,7 +635,7 @@ func TestMergesStopAtTheFirstMergeThatCannotBeDecided(t *testing.T) {
 		w.leave(5, 6)
 		w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
 		w.merged(6, cjHead3, mgSHA6, "v3", 2*time.Minute)
-		w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootSecret)
+		w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootLeak)
 		w.otherMerged()
 		w.advance(time.Minute)
 
@@ -666,7 +666,7 @@ func TestMergesStopAtTheFirstMergeThatCannotBeDecided(t *testing.T) {
 		w.sync(map[int]string{4: bootHead, 5: cjHead3})
 		w.leave(5)
 		w.merged(5, cjHead3, mgSHA5, "v1", time.Minute)
-		w.gh.closedErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootSecret)
+		w.gh.closedErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootLeak)
 
 		w.mustMerge()
 
@@ -834,9 +834,9 @@ func TestMergesRefuseWhatSuiteWardCannotTrust(t *testing.T) {
 
 func TestMergesReadAnIntegratedTreeThatMayBeLate(t *testing.T) {
 	late := map[string]error{
-		"truncated":     fmt.Errorf("%w: %w: %s", inventory.ErrInvalidTree, github.ErrTreeTruncated, bootSecret),
-		"not found":     fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootSecret),
-		"unprocessable": fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, bootSecret),
+		"truncated":     fmt.Errorf("%w: %w: %s", inventory.ErrInvalidTree, github.ErrTreeTruncated, bootLeak),
+		"not found":     fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootLeak),
+		"unprocessable": fmt.Errorf("%w: %s", &rest.StatusError{Status: 422}, bootLeak),
 	}
 	for name, failure := range late {
 		t.Run(name, func(t *testing.T) {
@@ -903,9 +903,9 @@ func TestMergesRecordATreeThatIsInvalidAsAnInvalidSource(t *testing.T) {
 
 func TestMergesStopOnATransientReadWhateverTheAge(t *testing.T) {
 	transient := map[string]error{
-		"a server error":   fmt.Errorf("%w: %s", &rest.StatusError{Status: 503}, bootSecret),
+		"a server error":   fmt.Errorf("%w: %s", &rest.StatusError{Status: 503}, bootLeak),
 		"a rate limit":     &rest.RateLimitedError{Status: 403, Until: bootTime.Add(3 * time.Hour)},
-		"a transport fail": errors.New(bootSecret),
+		"a transport fail": errors.New(bootLeak),
 	}
 	for name, failure := range transient {
 		t.Run(name, func(t *testing.T) {
@@ -929,7 +929,7 @@ func TestMergesReturnATransientBlobReadAsAnErrorNeverAsAnOutcome(t *testing.T) {
 	w.approved(5, cjHead2, "v2", 2, 201)
 	w.leave(5)
 	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
-	w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: errors.New(bootSecret)} // the listing works; a blob does not
+	w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: errors.New(bootLeak)} // the listing works; a blob does not
 	w.advance(2 * time.Hour)
 
 	w.mustMerge()
@@ -958,12 +958,12 @@ func TestMergesStatusShowsTheLastProblemUntilACleanRun(t *testing.T) {
 		w.sync(map[int]string{4: bootHead, 5: cjHead3})
 		w.leave(5)
 		w.merged(5, cjHead3, mgSHA5, "v1", time.Minute)
-		w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootSecret)
+		w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 502}, bootLeak)
 		w.mustMerge()
 		if got := status(w); got != "read-failed" {
 			t.Fatalf("status merges %q, want read-failed", got)
 		}
-		w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootSecret)
+		w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootLeak)
 		w.mustMerge()
 		if got := status(w); got != "waiting" {
 			t.Fatalf("status merges %q, want waiting", got)
@@ -1031,9 +1031,9 @@ func TestMergesNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 	w.approved(6, cjHead3, "v3", 3, 202)
 	w.leave(5, 6)
 	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
-	w.gh.pullErr[mgKey{bootRepo, 6}] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
-	w.gh.closedErr = errors.New(bootSecret)
-	w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
+	w.gh.pullErr[mgKey{bootRepo, 6}] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootLeak)
+	w.gh.closedErr = errors.New(bootLeak)
+	w.gh.treeErr[mgSHA5] = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootLeak)
 	phases := []func(){
 		func() {}, // the listing fails, and so does the read of pull 6
 		func() {
@@ -1043,13 +1043,13 @@ func TestMergesNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 		}, // the tree read fails
 		func() {
 			delete(w.gh.treeErr, mgSHA5)
-			w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: fmt.Errorf("%s", bootSecret)} // a blob read fails
+			w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: fmt.Errorf("%s", bootLeak)} // a blob read fails
 		},
 	}
 	for i, phase := range phases {
 		phase()
 		err := w.runMerges()
-		if err != nil && strings.Contains(err.Error(), bootSecret) {
+		if err != nil && strings.Contains(err.Error(), bootLeak) {
 			t.Fatalf("phase %d: the run error carries what GitHub sent: %v", i, err)
 		}
 		if w.mgProbs.lookup(bootRepo) != "read-failed" {
@@ -1057,11 +1057,11 @@ func TestMergesNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(w.logs.String(), bootSecret) {
+	if strings.Contains(w.logs.String(), bootLeak) {
 		t.Fatalf("a log line carries what GitHub sent: %s", w.logs)
 	}
 	for _, m := range w.suites.messages {
-		if strings.Contains(string(m.Payload), bootSecret) {
+		if strings.Contains(string(m.Payload), bootLeak) {
 			t.Fatalf("a message carries what GitHub sent: %s", m.Payload)
 		}
 	}
@@ -1072,11 +1072,12 @@ func TestMergesNeverLogOrReturnWhatGitHubSent(t *testing.T) {
 func TestTheMergesJobIsTheOnlyWriterOfMergeFacts(t *testing.T) {
 	writes := []string{"governance.PromoteMerge(", ".RecordResolution(", ".RecordClosed(", ".MarkProcessed("}
 	var callers []string
-	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+	here := os.DirFS(".")
+	err := fs.WalkDir(here, ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
 		}
-		source, err := os.ReadFile(path)
+		source, err := fs.ReadFile(here, path)
 		if err != nil {
 			return err
 		}
@@ -1143,8 +1144,8 @@ func (w *mgWorld) otherOutcome() (governance.MergeOutcome, bool) {
 // that is permanently unreadable must not stall the repository.
 func TestMergesBoundABlobThatMayBeLate(t *testing.T) {
 	late := map[string]error{
-		"not found":        fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootSecret),
-		"invalid response": fmt.Errorf("%w: %s", github.ErrInvalidResponse, bootSecret),
+		"not found":        fmt.Errorf("%w: %s", &rest.StatusError{Status: 404}, bootLeak),
+		"invalid response": fmt.Errorf("%w: %s", github.ErrInvalidResponse, bootLeak),
 	}
 	for name, failure := range late {
 		t.Run(name, func(t *testing.T) {
@@ -1180,7 +1181,7 @@ func TestMergesKeepAFailedBlobReadTransientPastTheBound(t *testing.T) {
 	w.approved(5, cjHead2, "v2", 2, 201)
 	w.leave(5)
 	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
-	w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: fmt.Errorf("%w: %s", &rest.StatusError{Status: 503}, bootSecret)}
+	w.gh.trees[mgSHA5] = &bootTree{files: bootFiles("v2"), readErr: fmt.Errorf("%w: %s", &rest.StatusError{Status: 503}, bootLeak)}
 	w.advance(2 * time.Hour)
 
 	w.mustMerge()

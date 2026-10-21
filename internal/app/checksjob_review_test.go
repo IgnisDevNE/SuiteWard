@@ -194,14 +194,14 @@ func TestChecksWriteNoScopeReviewWithoutANewScopeNotice(t *testing.T) {
 func TestChecksWriteTheScopeNoticeWhenTheListOfFilesCannotBeRead(t *testing.T) {
 	t.Run("a failure that will repeat", func(t *testing.T) {
 		w := newCJWorld(t, true)
-		w.reader.filesErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootSecret)
+		w.reader.filesErr = fmt.Errorf("%w: %s", &rest.StatusError{Status: 500}, bootLeak)
 
 		w.scopePull(reviewFiles(reviewDecl, cjUtilTst), bootFiles("v1"))
 
 		if keys := w.scopeKeys("scope-notice:"); len(keys) != 1 || len(w.scopeKeys("scope-review:")) != 0 {
 			t.Fatalf("scope messages %v, want the notice and no review", w.scopeKeys("scope-"))
 		}
-		if strings.Contains(w.logs.String(), bootSecret) {
+		if strings.Contains(w.logs.String(), bootLeak) {
 			t.Fatalf("logs hold GitHub's text: %s", w.logs)
 		}
 	})

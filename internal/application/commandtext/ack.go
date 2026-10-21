@@ -1,6 +1,7 @@
 package commandtext
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -94,11 +95,11 @@ func ValidateAck(a Ack) error {
 
 func checkKnown(a Ack) error {
 	switch {
-	case a.Outcome < Approved || a.Outcome > SuggestRefused:
+	case a.Outcome < Approved || a.Outcome >= lastOutcome:
 		return fmt.Errorf("commandtext: unknown outcome %d", a.Outcome)
-	case a.Rejection > ObsoleteCommand:
+	case a.Rejection >= lastRejection:
 		return fmt.Errorf("commandtext: unknown rejection %d", a.Rejection)
-	case a.Malformed > ExtraText:
+	case a.Malformed >= lastReason:
 		return fmt.Errorf("commandtext: unknown malformed reason %d", a.Malformed)
 	}
 	return nil
@@ -155,8 +156,15 @@ func checkConsent(a Ack) error {
 }
 
 func checkBase(a Ack) error {
-	if a.Base < 0 || a.Base > BaseDefaultBranch || (a.Base != 0 && a.Outcome != NothingUncovered && !namesFile(a) && !tooLargeAgainstDefault(a)) || (a.Outcome == ProposeRefused && a.Base == BaseContract) {
+	switch {
+	case a.Base < 0 || a.Base > BaseDefaultBranch:
+		return fmt.Errorf("commandtext: base %d is unknown", a.Base)
+	case a.Outcome == NothingUncovered && a.Base == 0:
+		return errors.New("commandtext: nothing uncovered names the base the head was compared with")
+	case a.Base != 0 && a.Outcome != NothingUncovered && !namesFile(a):
 		return fmt.Errorf("commandtext: base %d does not fit outcome %d", a.Base, a.Outcome)
+	case a.Outcome == ProposeRefused && a.Base == BaseContract:
+		return errors.New("commandtext: a propose is refused before a contract, so its base is not the contract")
 	}
 	return nil
 }
@@ -174,17 +182,9 @@ func checkRefusalAndEditor(a Ack) error {
 	return ValidateEditTarget(a.Repo, a.Branch)
 }
 
-// editorFits reports whether a may carry an editor link: a refusal that names a file of a branch, or a suggest whose declaration is too large.
+// editorFits reports whether a may carry an editor link: a refusal that names a file of a branch.
 func editorFits(a Ack) bool {
-	if a.Outcome == SuggestRefused && a.Refusal == DeclarationTooLarge {
-		return true // a Base, if any, is the default branch: checkBase refuses another
-	}
 	return namesFile(a) && (a.Base == BasePull || a.Base == BaseDefaultBranch)
-}
-
-// tooLargeAgainstDefault reports whether a is the refusal of a suggested declaration too large for the default branch's file, which is the one Base it names.
-func tooLargeAgainstDefault(a Ack) bool {
-	return a.Outcome == SuggestRefused && a.Refusal == DeclarationTooLarge && a.Base == BaseDefaultBranch
 }
 
 // namesFile reports whether a is the refusal of an invalid source of a suggest or a propose, which may name the file refused in Base.

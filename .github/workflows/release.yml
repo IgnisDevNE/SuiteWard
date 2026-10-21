@@ -4,6 +4,8 @@
 # A final `vX.Y.Z` must sit on a commit of `main`; a pre-release may sit anywhere and never moves `latest-stable`.
 # Same build as deploy.yml, with the tag as the version and the tag's source tree as the corresponding source (AGPL section 13).
 # No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
+# The pushed index carries a SLSA provenance and an SBOM (BuildKit attestation manifests) and is signed keyless with cosign through GitHub OIDC; the signature is recorded in the public Rekor log (ADR 0008).
+# Consumers verify the signature with scripts/verify-release.ps1; the signing identity is this workflow at a `v*` tag.
 name: Release
 
 on:
@@ -21,6 +23,8 @@ env:
   IMAGE: ghcr.io/ignisdevne/suiteward
   # moby/buildkit:buildx-stable-1 as of 2026-10-09.
   BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+  # docker/buildkit-syft-scanner:stable-1 as of 2026-10-20: the SBOM generator BuildKit runs, pinned so its tag cannot move.
+  SBOM_GENERATOR: docker.io/docker/buildkit-syft-scanner@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
 
 jobs:
   verify:
@@ -61,30 +65,62 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Only this job: cosign exchanges the run's OIDC token for a short-lived signing certificate.
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Create the builder
         run: docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Scan the image for fixable HIGH and CRITICAL vulnerabilities
+        env:
+          TAG: ${{ github.ref_name }}
+        # Nothing is pushed yet. Only linux/amd64 is built and scanned: the arm64 image has the same packages and the same Go source.
+        run: |
+          docker buildx build --platform linux/amd64 --provenance=false \
+            --build-arg "GO_VERSION=$(cat .go-version)" \
+            --build-arg "VERSION=$TAG" \
+            --build-arg "SOURCE=https://github.com/IgnisDevNE/SuiteWard/tree/$TAG" \
+            --file deploy/Containerfile --output "type=docker,dest=$RUNNER_TEMP/candidate.tar" .
+          pwsh ./scripts/check-image.ps1 -Archive "$RUNNER_TEMP/candidate.tar"
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-      - name: Build and push linux/amd64 and linux/arm64
+      - name: Install cosign
+        # The binary pinned in dev/tools.json: a release asset checked against its SHA-256 before it is made executable.
+        run: |
+          read -r url sha256 < <(jq -er '.cosign.assets["linux-amd64"] | "\(.url) \(.sha256)"' dev/tools.json)
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$RUNNER_TEMP/cosign" "$url"
+          echo "$sha256  $RUNNER_TEMP/cosign" | sha256sum --check --strict -
+          chmod +x "$RUNNER_TEMP/cosign"
+      - id: push
+        name: Build and push linux/amd64 and linux/arm64
         env:
           TAG: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
-          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
         run: |
-          tags=(--tag "$IMAGE:$TAG")
-          if [ "$PRERELEASE" = false ]; then tags+=(--tag "$IMAGE:latest-stable"); fi
-          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
+            --provenance=mode=max --attest "type=sbom,generator=$SBOM_GENERATOR" \
             --build-arg "GO_VERSION=$(cat .go-version)" \
             --build-arg "VERSION=$TAG" \
             --build-arg "SOURCE=https://github.com/IgnisDevNE/SuiteWard/tree/$TAG" \
             --label org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
             --label "org.opencontainers.image.revision=$COMMIT" \
             --annotation index:org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
-            --file deploy/Containerfile "${tags[@]}" .
+            --file deploy/Containerfile --tag "$IMAGE:$TAG" \
+            --metadata-file "$RUNNER_TEMP/meta.json" .
+          # The index digest: the attestation manifests hang off it, so signing it covers them.
+          echo "digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/meta.json")" >> "$GITHUB_OUTPUT"
+      - name: Sign the image index, verify the signature, then move latest-stable
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Unexpected image digest"; exit 1; }
+          "$RUNNER_TEMP/cosign" sign --yes "$IMAGE@$DIGEST"
+          pwsh ./scripts/verify-release.ps1 -Reference "$IMAGE@$DIGEST" -Cosign "$RUNNER_TEMP/cosign"
+          # Only a verified signature moves latest-stable; the version tag is public before this step runs.
+          if [ "$PRERELEASE" = false ]; then docker buildx imagetools create --tag "$IMAGE:latest-stable" "$IMAGE@$DIGEST"; fi

@@ -21,13 +21,13 @@ func TestPeriodicSpecsDefineThePeriodsQueuesAndWakeUps(t *testing.T) {
 	}
 
 	queued := slices.Sorted(maps.Keys(queues(4)))
-	if want := []string{"default", "github_bootstrap", "github_checks", "github_commands", "github_merges", "github_sync_tick", outboxQueue}; !slices.Equal(queued, want) {
+	if want := []string{"canonical_integrity", "default", "github_bootstrap", "github_checks", "github_commands", "github_merges", "github_sync_tick", outboxQueue}; !slices.Equal(queued, want) {
 		t.Errorf("queues %v; want %v", queued, want)
 	}
 	if configs := queues(4); configs["default"].MaxWorkers != 4 || configs[outboxQueue].MaxWorkers != 1 || configs["github_checks"].MaxWorkers != 1 {
 		t.Errorf("queue workers %v; want 4 on the default queue and one on each other", configs)
 	}
-	if woken, want := slices.Sorted(maps.Keys(wakeable)), []string{"github_bootstrap", "github_checks", "github_commands", "github_merges"}; !slices.Equal(woken, want) {
+	if woken, want := slices.Sorted(maps.Keys(wakeable)), []string{"canonical_integrity", "github_bootstrap", "github_checks", "github_commands", "github_merges"}; !slices.Equal(woken, want) {
 		t.Errorf("wakeable kinds %v; want %v", woken, want)
 	}
 }

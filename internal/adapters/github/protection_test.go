@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	bearer     = "Bearer fake-token"
+	authHeader = "Bearer fake-token"
 	rulesURI   = "/repos/octo-org/octo-repo/rules/branches/main?per_page=100&page="
 	classicURI = "/repos/octo-org/octo-repo/branches/main/protection"
 	contract   = "SuiteWard Spike / Contract"
@@ -46,8 +46,8 @@ func TestUserReadsTheNumericIdentity(t *testing.T) {
 	if want := (github.User{ID: 884695, Login: "magalz", Type: "User"}); got != want {
 		t.Errorf("User = %+v, want %+v", got, want)
 	}
-	if reqs := gh.requests(); len(reqs) != 1 || reqs[0].authorization != bearer {
-		t.Errorf("requests = %+v, want one carrying %q", reqs, bearer)
+	if reqs := gh.requests(); len(reqs) != 1 || reqs[0].authorization != authHeader {
+		t.Errorf("requests = %+v, want one carrying %q", reqs, authHeader)
 	}
 }
 
@@ -69,8 +69,8 @@ func TestRepositoryReadsTheNumericIdentity(t *testing.T) {
 	if got != want {
 		t.Errorf("Repository = %+v, want %+v", got, want)
 	}
-	if reqs := gh.requests(); len(reqs) != 1 || reqs[0].authorization != bearer {
-		t.Errorf("requests = %+v, want one carrying %q", reqs, bearer)
+	if reqs := gh.requests(); len(reqs) != 1 || reqs[0].authorization != authHeader {
+		t.Errorf("requests = %+v, want one carrying %q", reqs, authHeader)
 	}
 }
 
@@ -152,8 +152,8 @@ func TestProtectionReadsTheMeasuredRulesetShape(t *testing.T) {
 				t.Errorf("requests = %v, want the rules page 1 then the classic protection", uris)
 			}
 			for _, r := range gh.requests() {
-				if r.authorization != bearer {
-					t.Errorf("request %s carried %q, want %q", r.uri, r.authorization, bearer)
+				if r.authorization != authHeader {
+					t.Errorf("request %s carried %q, want %q", r.uri, r.authorization, authHeader)
 				}
 			}
 		})

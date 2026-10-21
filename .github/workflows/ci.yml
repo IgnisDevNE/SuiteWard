@@ -43,8 +43,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The secret scan reads the whole history.
+          fetch-depth: 0
           persist-credentials: false
-      - name: Validate scripts, workflows, and documentation
+      - name: Validate scripts, workflows, documentation, pins, and secrets
         run: ./scripts/check-foundation.ps1
 
   go:
@@ -87,7 +89,7 @@ jobs:
       id-token: write
     services:
       postgres:
-        image: docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+        image: docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
         env:
           POSTGRES_USER: suiteward_ci
           POSTGRES_PASSWORD: suiteward_ci_ephemeral
@@ -119,11 +121,11 @@ jobs:
         env:
           SUITEWARD_TEST_DATABASE_URL: postgresql://suiteward_ci:suiteward_ci_ephemeral@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/suiteward_ci?sslmode=disable
         run: ./scripts/check-go.ps1 -Coverage -Integration
-      - name: Verify fresh generated PostgreSQL queries
-        run: ./scripts/check-persistence.ps1 -Mode Generated
       - name: Check reachable known vulnerabilities
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          # An installed Go module has no archive to hash, so dev/tools.json holds its version and the checksum database verifies the module.
+          $version = (Get-Content dev/tools.json -Raw | ConvertFrom-Json).govulncheck.version
+          go install "golang.org/x/vuln/cmd/govulncheck@v$version"
           if ($LASTEXITCODE -ne 0) { throw 'govulncheck installation failed' }
           & (Join-Path $env:GOBIN 'govulncheck') ./...
           if ($LASTEXITCODE -ne 0) { throw 'Vulnerability check failed or found reachable vulnerabilities' }

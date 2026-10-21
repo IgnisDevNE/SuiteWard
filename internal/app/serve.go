@@ -15,17 +15,28 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
 const (
 	readHeaderTimeout = 10 * time.Second
+	// The other bounds exceed the slowest legitimate exchange (a store or MCP backend call is cut at storeTimeout,
+	// 3 s; MCP bodies are capped) and the 10 s header bound they include. With JSONResponse an MCP call is a plain
+	// request/response, so WriteTimeout also ends the one long-lived stream the SDK can open (subscriptions/listen,
+	// protocol 2026-07-28 and later), and a client simply reconnects.
+	readTimeout  = 30 * time.Second
+	writeTimeout = 30 * time.Second
+	idleTimeout  = 60 * time.Second
 	// forceGrace is what cancelled jobs get to return after SHUTDOWN_TIMEOUT ran out. The supervisor's
 	// stop timeout must exceed SHUTDOWN_TIMEOUT by at least this much (the contract's 45 s over 30 s does).
 	forceGrace = 5 * time.Second
 )
+
+// newHTTPServer is the one place an HTTP server of the service is built.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout, ReadTimeout: readTimeout, WriteTimeout: writeTimeout, IdleTimeout: idleTimeout}
+}
 
 // newLogger is the structured JSON logger of the runtime contract.
 func newLogger(w io.Writer, level slog.Level) *slog.Logger {
@@ -57,6 +68,13 @@ func connectWithArtifacts(ctx context.Context, cfg config.Config) (*pgxpool.Pool
 	store, err := postgres.NewStore(pool, artifacts, inserter)
 	if err != nil {
 		pool.Close()
+		switch {
+		case errors.Is(err, postgres.ErrSchemaNewer):
+			err = fmt.Errorf("%w: this database was migrated by a newer release; run that release (or restore a backup)", err)
+		case errors.Is(err, postgres.ErrSchemaNotReady):
+			// The service connects as a role that cannot migrate: the owner does, with `suiteward migrate`.
+			err = fmt.Errorf("%w: run `suiteward migrate` with the migration settings, then start again", err)
+		}
 		return nil, nil, nil, err
 	}
 	return pool, store, artifacts, nil
@@ -74,9 +92,6 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, handlers
 }
 
 func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, handlers map[string]river.Handler) error {
-	if err := migrations.Up(ctx, cfg.DatabaseURL.Reveal()); err != nil {
-		return fmt.Errorf("migrate the database: %w", err)
-	}
 	pool, store, artifacts, err := connectWithArtifacts(ctx, cfg)
 	if err != nil {
 		return err
@@ -132,7 +147,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		return fmt.Errorf("start the job runtime: %w", err)
 	}
 	backend.inserter = runtime
-	srv := &http.Server{Handler: newRouter(a), ReadHeaderTimeout: readHeaderTimeout}
+	srv := newHTTPServer(newRouter(a))
 	var (
 		mcpServers []*http.Server
 		mcpFailed  <-chan error // nil without MCP: never ready
@@ -160,7 +175,7 @@ func startMCP(settings config.MCP, backend mcp.Backend, logger *slog.Logger) (sr
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen on %s for MCP: %w", settings.Addr, err)
 	}
-	srv = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	srv = newHTTPServer(handler)
 	stopped := make(chan error, 1)
 	go func() { stopped <- srv.Serve(listener) }()
 	logger.Info("mcp listening", "addr", listener.Addr().String())

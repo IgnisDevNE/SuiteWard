@@ -77,7 +77,7 @@ func TestCommentPublisherRefusesARunnerUncoveredCommentThatDoesNotMatchItsKeyOrC
 		{"a digest that is not SHA-256 hex", "runner-uncovered:1001:7:" + strings.Repeat("g", 64), cmtRunnerPayload(nil)},
 		{"a key without a digest", "runner-uncovered:1001:7", cmtRunnerPayload(nil)},
 		{"a key with five parts", cmtRunnerKey + ":1", cmtRunnerPayload(nil)},
-		{"an unknown field", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["body"] = cmtSecretText })},
+		{"an unknown field", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["body"] = cmtLeakText })},
 		{"a head that is not a commit SHA", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["head"] = "SECRET" })},
 		{"a branch that is not a git ref", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["branch"] = "a..b" })},
 		{"no paths", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["paths"] = []string{}; m["pathsTotal"] = 0 })},
@@ -95,7 +95,7 @@ func TestCommentPublisherRefusesARunnerUncoveredCommentThatDoesNotMatchItsKeyOrC
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}
@@ -134,12 +134,16 @@ func TestNewRunnerUncoveredMessageIsRefusedWhenItCannotBePosted(t *testing.T) {
 const cmtRunnerReviewKey = "scope-review:1001:7:" + cmtScopeDigest
 
 var (
-	cmtProtectList = map[string]any{"list": "protect", "line": 5, "anchor": "  - pytest.toml", "patterns": []string{"jest.config.*"}}
+	cmtProtectList = map[string]any{"list": "protect", "line": 5, "anchor": "  - pytest.toml", "patterns": []string{"jest.config.*"}, "quoting": "plain"}
 	cmtIgnoreList  = map[string]any{"list": "ignore", "line": 3, "anchor": "  - /tests/**", "patterns": []string{"jest.config.js"}, "newList": "exclude"}
 )
 
 func cmtChoiceBody(choice commandtext.RunnerChoice, anchor, indent string, patterns []string, newList, suffix string) string {
-	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, "")) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
+	quoting := commandtext.QuotingPlain
+	if newList != "" { // a list that the choice creates has no quoting
+		quoting = ""
+	}
+	return cmtTrimmed(commandtext.RunnerChoiceBody(choice, anchor, indent, patterns, newList, quoting)) + "\n\n" + commandtext.Marker(cmtInstance, cmtRunnerReviewKey+":"+suffix)
 }
 
 func TestCommentPublisherPostsTheProtectAndIgnoreSuggestionsEachWithItsOwnMarker(t *testing.T) {

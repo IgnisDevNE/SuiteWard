@@ -22,9 +22,9 @@ SuiteWard protects a repository's tests from the coding agent that works on it. 
 
 | Step | The agent can |
 | --- | --- |
-| Prerequisites | Check PowerShell 7.2+, Podman and the Podman machine, and read the release version to use. |
+| Prerequisites | Check PowerShell 7.2+, Podman and the Podman machine, that the machine has a rootless connection (`podman system connection list`: the stack must run rootless), and read the release version to use. |
 | GitHub App ([section 4](install.md#4-create-the-github-app)) | Show the user the checklist of permissions and verify, from the user's screenshots or the App's public page, that nothing extra is granted. |
-| Co-located start ([section 5](install.md#5-install-co-located)) | Prepare the exact `local.ps1` command with placeholders. Run it only if the user explicitly asks, and never handle the `.pem` itself: the user passes the path. |
+| Co-located start ([section 5](install.md#5-install-co-located)) | Prepare the exact `local.ps1` command with placeholders, and the selection of the rootless connection for the session (`$env:CONTAINER_CONNECTION`, or `-PodmanConnection`; the script refuses a rootful one and the agent never changes the Podman default). Run it only if the user explicitly asks, and never handle the `.pem` itself: the user passes the path. The script generates the database passwords into Podman secrets and prints none of them. Read the machine's status with `podman machine ssh --username user`, never as the default `root` user. When the script converts a stack from v0.1.x (it prints `Upgrading an existing stack`), remind the user to take a backup first ([backup runbook](backup.md)); the agent never reads it. |
 | Setup ([section 6](install.md#6-run-setup)) | Prepare the `setup` command line with the owner login and the test check names. The user runs it in their own terminal. |
 | Ruleset ([section 7](install.md#7-create-the-ruleset)) | Explain what the ruleset must contain, and read `/status` afterwards to confirm `enforced`. |
 | Declaration ([section 8](install.md#8-first-use-bootstrap)) | Draft or improve `.suiteward.yml` and open a pull request with it. The owner reviews it and posts `/suiteward propose`. |

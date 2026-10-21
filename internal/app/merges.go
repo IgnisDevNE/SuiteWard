@@ -80,13 +80,14 @@ type mergeRun struct {
 	integrityFailed bool      // the stored bytes of the current canonical failed their verification
 }
 
-// run advances the merges and wakes the checks when it promoted or corrected a canonical, so the owner sees it at once
-// (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed after a promotion still wakes them.
+// run advances the merges and wakes the checks, and the integrity job that verifies the new canonical, when it promoted
+// or corrected one, so the owner sees it at once (docs/contracts/runtime.md, "Queues and wake-ups"). A run that failed
+// after a promotion still wakes them.
 func (j *mergesJob) run(ctx context.Context) (river.Wake, error) {
 	j.promoted = false
 	err := j.advanceAll(ctx)
 	if j.promoted {
-		return river.Wake{river.ChecksKind}, err
+		return river.Wake{river.ChecksKind, river.IntegrityKind}, err
 	}
 	return nil, err
 }

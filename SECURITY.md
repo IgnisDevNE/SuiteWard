@@ -6,7 +6,7 @@ Only the latest release receives security fixes. Releases are tagged `vX.Y.Z` an
 
 ## Report a vulnerability privately
 
-Use GitHub's private vulnerability reporting: open the repository's **Security** tab, choose **Report a vulnerability**, or go to <https://github.com/IgnisDevNE/SuiteWard/security/advisories/new>. Only the maintainers can read the report.
+Use GitHub's private vulnerability reporting: open the repository's **Security** tab, choose **Report a vulnerability**, or go to <https://github.com/IgnisDevNE/SuiteWard/security/advisories/new>. Only the maintainers can read the report. Private reporting works once the maintainers have enabled it on the repository.
 
 Do not open a public issue, pull request or comment for a vulnerability, and do not post details anywhere else before a fix is released.
 
@@ -25,4 +25,4 @@ The maintainers answer in the report; allow a few days for the first answer. Whe
 
 The [threat model](docs/security/threat-model.md) lists what SuiteWard defends against and what it does not: the trusted host administrator and the assurance of the co-located tier are out of scope.
 
-Releases from `v0.2.0` are signed. Before you pin a release, verify its signature with `scripts/verify-release.ps1` ([install guide](docs/install.md)).
+Signing applies from the first release built with the signing workflow, which is `v0.2.0` and its candidates; earlier releases are not signed. Before you pin a release, verify its signature with `scripts/verify-release.ps1` ([install guide](docs/install.md)).

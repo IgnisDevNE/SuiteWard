@@ -14,10 +14,10 @@
 
 Recorded in the [decision register](../decisions.md#d-security-review-decisions-of-the-security-review-phase-sh) and in the ADRs they amend:
 
-1. **Commands follow their pull request** (G5, G6): a command first observed after its pull request stopped being open is ignored, and a command applies only to its own pull request (`other-pull`). [ADR 0027](../../decisions/0027-agent-human-trust-separation.md).
+1. **Commands follow their pull request** (closed pull requests, commands on another pull request): a command first observed after its pull request stopped being open is ignored, and a command applies only to its own pull request (`other-pull`). [ADR 0027](../../decisions/0027-agent-human-trust-separation.md).
 2. **Commands are read where GitHub shows text** (D-COMMANDS).
-3. **Case-fold collisions are protected and invisible characters are escaped** (SG-07, D-SCOPE).
-4. **Bounded input and reported state** (SG-17): a 64 KiB cap on a declaration read from a pull request, an unconfigured enrolled repository no longer holds back commands and shows in `/status`, and a new canonical is verified right after its promotion.
+3. **Case-fold collisions are protected and invisible characters are escaped** (D-SCOPE).
+4. **Bounded input and reported state** (declaration size, unconfigured repositories): a 64 KiB cap on a declaration read from a pull request, an unconfigured enrolled repository no longer holds back commands and shows in `/status`, and a new canonical is verified right after its promotion.
 5. **The service connects as a least-privilege database role**; only `suiteward migrate` holds the owner credential ([ADR 0007](../../decisions/0007-canonical-contract-authority.md)).
 6. **The isolated host is AlmaLinux 9 (EL9) only, with Podman 5.5 or later.** Automatic image updates are not supported: a host follows a release by the owner changing the digest.
 7. **Release images are signed** (keyless cosign, provenance, SBOM), after [ADR 0008](../../decisions/0008-progressive-integrity-and-execution.md)'s amendment.

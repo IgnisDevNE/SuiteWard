@@ -38,12 +38,15 @@ func promoteWithin(ctx context.Context, tx Tx, identity PromotionIdentity) (Prom
 	case OperationBootstrap:
 		decision, err = contract.DecideBootstrap(contract.BootstrapInput{Promotion: input})
 	case OperationCorrect:
-		// PromoteMerge names the current version, which the history holds; a version that is not found is the zero
-		// value, which DecideCorrection refuses (ErrInvalidCorrection), so it is not checked twice.
+		// PromoteMerge names the current version, which the history holds.
 		var target contract.HistoricalCanonical
-		target, _, err = tx.Version(ctx, identity.CorrectsVersionID)
+		var found bool
+		target, found, err = tx.Version(ctx, identity.CorrectsVersionID)
 		if err != nil {
 			return PromoteResult{}, fmt.Errorf("load corrected version: %w", err)
+		}
+		if !found {
+			return PromoteResult{}, fmt.Errorf("%w: the corrected version %q is not in the history", ErrInvalidState, identity.CorrectsVersionID)
 		}
 		decision, err = contract.DecideCorrection(contract.CorrectionInput{Promotion: input, Target: target})
 	case OperationPromote:

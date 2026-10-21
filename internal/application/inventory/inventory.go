@@ -85,7 +85,11 @@ func Build(ctx context.Context, tree Tree) (Inventory, error) {
 		known[scope.DeclarationPath] = raw
 	}
 	effective := scope.NewScope(declaration)
-	manifest, err := manifestOf(ctx, tree, entries, effective, effective, known)
+	covered, err := coveredOf(ctx, tree, entries, effective, effective)
+	if err != nil {
+		return Inventory{}, err
+	}
+	manifest, err := manifestOfFiles(ctx, tree, covered, known)
 	if err != nil {
 		return Inventory{}, err
 	}
@@ -108,18 +112,23 @@ func (i Inventory) Contract() (contract.ProtectedContract, error) {
 	return contract.NewProtectedContract(i.manifest, i.scope.Digest(), map[string]string{})
 }
 
-// evaluate resolves the manifest of tree under the governing scope instead of the tree's own declaration, so that the governing
-// rules decide which existing protection is checked (ADR 0013). The links of tree are also accepted by the exact excludes of
-// accepting: the candidate's own scope, whose exclude is the reduction the owner approves (D-SCOPE, an accepted link).
-func evaluate(ctx context.Context, tree Tree, governing, accepting scope.Scope) (artifact.Manifest, error) {
+// evaluate lists the paths of tree that the governing scope covers instead of the tree's own declaration, so that the governing
+// rules decide which existing protection is checked (ADR 0013). Only the paths are needed, so no file is read. The links of tree
+// are also accepted by the exact excludes of accepting: the candidate's own scope, whose exclude is the reduction the owner
+// approves (D-SCOPE, an accepted link).
+func evaluate(ctx context.Context, tree Tree, governing, accepting scope.Scope) ([]string, error) {
 	entries, err := ListEntries(ctx, tree)
 	if err != nil {
-		return artifact.Manifest{}, err
+		return nil, err
 	}
-	return manifestOf(ctx, tree, entries, governing, accepting, map[string][]byte{})
+	return coveredOf(ctx, tree, entries, governing, accepting)
 }
 
-// ListEntries returns the tree's entries once each has a valid path, a valid
+// maxPathBytes bounds the path of an entry (D-SCOPE, tree limits): the work to fold and resolve a path grows with its length for
+// each of its directories, and no real repository has one this long.
+const maxPathBytes = 4096
+
+// ListEntries returns the tree's entries once each has a valid path of at most maxPathBytes, a valid
 // kind and a distinct path.
 func ListEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 	entries, err := tree.Entries(ctx)
@@ -131,6 +140,8 @@ func ListEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 		switch {
 		case !artifact.ValidPath(entry.Path):
 			return nil, fmt.Errorf("%w: invalid path %q", ErrInvalidTree, entry.Path)
+		case len(entry.Path) > maxPathBytes:
+			return nil, fmt.Errorf("%w: a path of %d bytes is longer than %d", ErrInvalidTree, len(entry.Path), maxPathBytes)
 		case entry.Kind < File || entry.Kind > Submodule:
 			return nil, fmt.Errorf("%w: invalid kind %d for %q", ErrInvalidTree, entry.Kind, entry.Path)
 		case seen[entry.Path]:
@@ -144,61 +155,60 @@ func ListEntries(ctx context.Context, tree Tree) ([]Entry, error) {
 // maxLinkHops bounds the links followed to resolve one symlink (D-SCOPE).
 const maxLinkHops = 8
 
-// manifestOf rejects a symlink inside effective that may hide protected content, unless accepting excludes it exactly, then hashes every covered file,
-// reading from the tree only what known lacks. A submodule is outside the scope: it is never rejected and never read.
-func manifestOf(ctx context.Context, tree Tree, entries []Entry, effective, accepting scope.Scope, known map[string][]byte) (artifact.Manifest, error) {
+// coveredOf lists the files of entries that effective covers, in entry order. It rejects a symlink inside effective that may hide
+// protected content, unless accepting excludes it exactly. A submodule is outside the scope: it is never rejected and never read.
+func coveredOf(ctx context.Context, tree Tree, entries []Entry, effective, accepting scope.Scope) ([]string, error) {
 	index := newLayout(entries)
 	targets := map[string]string{} // the blobs of the links read so far
 	collisions, err := newCollider(entries, effective)
 	if err != nil {
-		return artifact.Manifest{}, err
+		return nil, err
 	}
 	covered := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		covers, err := collisions.covers(effective, entry.Path)
-		if err != nil {
-			return artifact.Manifest{}, err
+		if entry.Kind == Submodule {
+			continue
 		}
-		switch entry.Kind {
-		case File:
+		covers, err := collisions.covers(entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		if entry.Kind == File {
 			if covers {
 				covered = append(covered, entry.Path)
 			}
-			continue
-		case Submodule:
 			continue
 		}
 		// D-SCOPE, an accepted link: an exclude that names exactly this link skips it. Nothing reached through it is protected.
 		if accepting.ExcludesExactly(entry.Path) {
 			continue
 		}
-		unsafe, err := unsafeLink(ctx, tree, index, targets, effective, collisions, entry.Path, covers)
+		unsafe, err := unsafeLink(ctx, tree, index, targets, collisions, entry.Path, covers)
 		if err != nil {
-			return artifact.Manifest{}, err
+			return nil, err
 		}
 		if unsafe {
-			return artifact.Manifest{}, &UnsafeEntryError{Path: entry.Path}
+			return nil, &UnsafeEntryError{Path: entry.Path}
 		}
 	}
-
-	return manifestOfFiles(ctx, tree, covered, known)
+	return covered, nil
 }
 
 // unsafeLink reports whether the link makes the declaration invalid (D-SCOPE): the scope covers it, or a pattern may reach below it
 // unless it resolves to a regular file of the tree, which behaves as a file. The same test holds for the path the link would have in
 // a case-twin directory of the tree (collider.rewrites), which a case-insensitive checkout could put it on.
-func unsafeLink(ctx context.Context, tree Tree, index layout, targets map[string]string, effective scope.Scope, collisions collider, link string, covers bool) (bool, error) {
+func unsafeLink(ctx context.Context, tree Tree, index *layout, targets map[string]string, collisions collider, link string, covers bool) (bool, error) {
 	if covers {
 		return true, nil
 	}
 	resolved, known := false, false
 	for i, candidate := range append([]string{link}, collisions.rewrites(link, true)...) {
 		if i > 0 { // covers answered for the link itself
-			if covered, err := effective.Covers(candidate); err != nil || covered {
+			if covered, err := collisions.scope.Covers(candidate); err != nil || covered {
 				return covered, err
 			}
 		}
-		below, err := effective.MayCoverBelow(candidate)
+		below, err := collisions.scope.MayCoverBelow(candidate)
 		if err != nil {
 			return false, err
 		}
@@ -235,21 +245,33 @@ func manifestOfFiles(ctx context.Context, tree Tree, covered []string, known map
 }
 
 // layout indexes the entries of a tree for link resolution: the kind of each entry, and every directory, which has an
-// entry somewhere below it and none of its own.
+// entry somewhere below it and none of its own. It is built when the first link is resolved, which most trees never do.
 type layout struct {
-	kinds map[string]EntryKind
-	dirs  map[string]bool
+	entries []Entry
+	kinds   map[string]EntryKind
+	dirs    map[string]bool
 }
 
-func newLayout(entries []Entry) layout {
-	l := layout{kinds: make(map[string]EntryKind, len(entries)), dirs: map[string]bool{}}
-	for _, entry := range entries {
+func newLayout(entries []Entry) *layout { return &layout{entries: entries} }
+
+func (l *layout) build() {
+	if l.kinds != nil {
+		return
+	}
+	l.kinds, l.dirs = make(map[string]EntryKind, len(l.entries)), map[string]bool{}
+	for _, entry := range l.entries {
 		l.kinds[entry.Path] = entry.Kind
-		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
+		for dir := entry.Path; ; {
+			end := strings.LastIndexByte(dir, '/') // path.Dir would clean the whole path for each directory
+			if end < 0 {
+				break
+			}
+			if dir = dir[:end]; l.dirs[dir] {
+				break // its parents are in already
+			}
 			l.dirs[dir] = true
 		}
 	}
-	return l
 }
 
 func (l layout) isDir(p string) bool { return p == "" || (l.dirs[p] && l.kinds[p] == 0) }
@@ -289,7 +311,8 @@ func (l layout) resolve(dir, target string) (string, bool) {
 // it ends at a regular file. A link's blob is its target, relative to the link's directory (layout.resolve). Every
 // target that resolves to nothing, a submodule, a directory and a loop end at no file. A failed read is an error, not
 // an answer.
-func resolvesToFile(ctx context.Context, tree Tree, l layout, targets map[string]string, link string) (bool, error) {
+func resolvesToFile(ctx context.Context, tree Tree, l *layout, targets map[string]string, link string) (bool, error) {
+	l.build()
 	for range maxLinkHops {
 		target, read := targets[link]
 		if !read {
@@ -358,20 +381,24 @@ func Classify(ctx context.Context, governing Governing, candidate Tree) (Classif
 	reduced := []string{}
 	// A path of the governing inventory that the governing scope does not cover is a case collision, protected with its twin: its removal
 	// is Removed, and the twin carries any reduction.
-	for _, entry := range slices.Concat(underGoverning.Entries(), governing.Manifest.Entries()) {
-		inGoverning, err := governing.Scope.Covers(entry.Path)
+	paths := underGoverning
+	for _, entry := range governing.Manifest.Entries() {
+		paths = append(paths, entry.Path)
+	}
+	for _, p := range paths {
+		inGoverning, err := governing.Scope.Covers(p)
 		if err != nil {
 			return Classification{}, Inventory{}, err
 		}
 		if !inGoverning {
 			continue
 		}
-		covers, err := proposed.scope.Covers(entry.Path)
+		covers, err := proposed.scope.Covers(p)
 		if err != nil {
 			return Classification{}, Inventory{}, err
 		}
 		if !covers {
-			reduced = append(reduced, entry.Path)
+			reduced = append(reduced, p)
 		}
 	}
 	slices.Sort(reduced)
@@ -416,8 +443,9 @@ func compare(governing, proposed artifact.Manifest) (added, removed, modified []
 	return added, removed, modified
 }
 
-// maxSpellings bounds the spellings of one case-folded name in a tree: every spelling of a directory is a path to rewrite onto, so an
-// untrusted tree with thousands would make the work grow with the square of its size. A tree beyond it is invalid.
+// maxSpellings bounds the spellings of one case-folded name in a tree: the entries with one folded path, and the real directories with
+// one folded path. Every spelling of a directory is a path to rewrite onto, so an untrusted tree with thousands would make the work
+// grow with the square of its size. A tree beyond it is invalid.
 const maxSpellings = 8
 
 // collider finds the paths that a case-insensitive checkout could put on a covered path (D-SCOPE, case-sensitive matching). A path is
@@ -425,15 +453,17 @@ const maxSpellings = 8
 // tree that differs from it only in case gives a path the scope covers. Matching stays case-sensitive and a look-alike character folds
 // to nothing (Unicode simple folding), so only the tree's own paths decide.
 type collider struct {
-	direct map[string]bool            // the entries the scope covers
-	files  map[string]bool            // the folded covered files
-	dirs   map[string]map[string]bool // the directories of the tree, by folded path
+	scope  scope.Scope
+	direct map[string]bool     // the entries the scope covers
+	files  map[string]bool     // the folded covered files
+	dirs   map[string][]string // the spellings of the directories of the tree, by folded path
+	twins  bool                // some name has a second spelling: without one only direct can cover a path
 }
 
 // newCollider indexes the covered entries and the directories of entries. It refuses a tree that holds more than maxSpellings
 // spellings of one folded directory or entry path.
 func newCollider(entries []Entry, effective scope.Scope) (collider, error) {
-	c := collider{direct: map[string]bool{}, files: map[string]bool{}, dirs: map[string]map[string]bool{}}
+	c := collider{scope: effective, direct: map[string]bool{}, files: map[string]bool{}, dirs: map[string][]string{}}
 	spelled := map[string]int{} // the entries by folded path
 	for _, entry := range entries {
 		covers, err := effective.Covers(entry.Path)
@@ -443,6 +473,8 @@ func newCollider(entries []Entry, effective scope.Scope) (collider, error) {
 		key := foldKey(entry.Path)
 		if spelled[key]++; spelled[key] > maxSpellings {
 			return collider{}, tooManySpellings(entry.Path)
+		} else if spelled[key] > 1 {
+			c.twins = true
 		}
 		if covers {
 			c.direct[entry.Path] = true
@@ -450,20 +482,39 @@ func newCollider(entries []Entry, effective scope.Scope) (collider, error) {
 		if entry.Kind == File && covers {
 			c.files[key] = true
 		}
-		for dir := path.Dir(entry.Path); dir != "."; dir = path.Dir(dir) {
-			key := foldKey(dir)
-			if c.dirs[key][dir] {
-				break // its parents are in already
-			}
-			if c.dirs[key] == nil {
-				c.dirs[key] = map[string]bool{}
-			}
-			if c.dirs[key][dir] = true; len(c.dirs[key]) > maxSpellings {
-				return collider{}, tooManySpellings(dir)
-			}
+		if err := c.addDirs(entry.Path, key); err != nil {
+			return collider{}, err
+		}
+	}
+	// A link also stands for a directory (rewrites with self), and it is not one of the directories that addDirs compared.
+	for _, entry := range entries {
+		if entry.Kind == Symlink && slices.ContainsFunc(c.dirs[foldKey(entry.Path)], func(dir string) bool { return dir != entry.Path }) {
+			c.twins = true
 		}
 	}
 	return c, nil
+}
+
+// addDirs records the directories above p, whose fold is key. The fold is made once for the path, and the folded directories are
+// cut from it at its own slashes: a fold can change the length of a rune, so p's offsets do not fit it.
+func (c *collider) addDirs(p, key string) error {
+	for {
+		end, keyEnd := strings.LastIndexByte(p, '/'), strings.LastIndexByte(key, '/')
+		if end < 0 {
+			return nil
+		}
+		p, key = p[:end], key[:keyEnd]
+		spellings := c.dirs[key]
+		switch {
+		case slices.Contains(spellings, p):
+			return nil // its parents are in already
+		case len(spellings) == maxSpellings:
+			return tooManySpellings(p)
+		case len(spellings) > 0:
+			c.twins = true
+		}
+		c.dirs[key] = append(spellings, p)
+	}
 }
 
 func tooManySpellings(p string) error {
@@ -473,27 +524,44 @@ func tooManySpellings(p string) error {
 // rewrites lists the paths p becomes when a directory prefix of p is replaced by a real directory of the tree that differs from it in
 // case; with self, p itself is such a prefix too (a link standing for a directory).
 func (c collider) rewrites(p string, self bool) []string {
+	if !c.twins {
+		return nil
+	}
+	key := foldKey(p) // the i-th slash of key ends the fold of the prefix that the i-th slash of p ends
 	var rewritten []string
-	for end := 0; end <= len(p); end++ {
-		if end < len(p) && p[end] != '/' || end == len(p) && !self {
-			continue
-		}
-		for dir := range c.dirs[foldKey(p[:end])] {
+	rewrite := func(end, keyEnd int) {
+		for _, dir := range c.dirs[key[:keyEnd]] {
 			if dir != p[:end] {
 				rewritten = append(rewritten, dir+p[end:])
 			}
 		}
 	}
-	return rewritten
+	for end, keyEnd := 0, 0; ; end, keyEnd = end+1, keyEnd+1 {
+		next, keyNext := strings.IndexByte(p[end:], '/'), strings.IndexByte(key[keyEnd:], '/')
+		if next < 0 {
+			if self {
+				rewrite(len(p), len(key))
+			}
+			return rewritten
+		}
+		end, keyEnd = end+next, keyEnd+keyNext
+		rewrite(end, keyEnd)
+	}
 }
 
 // covers reports whether the scope covers p or p collides with a path it covers.
-func (c collider) covers(effective scope.Scope, p string) (bool, error) {
-	if c.direct[p] || c.files[foldKey(p)] {
+func (c collider) covers(p string) (bool, error) {
+	if c.direct[p] {
+		return true, nil
+	}
+	if !c.twins {
+		return false, nil
+	}
+	if c.files[foldKey(p)] {
 		return true, nil
 	}
 	for _, rewritten := range c.rewrites(p, false) {
-		if covers, err := effective.Covers(rewritten); err != nil || covers {
+		if covers, err := c.scope.Covers(rewritten); err != nil || covers {
 			return covers, err
 		}
 	}

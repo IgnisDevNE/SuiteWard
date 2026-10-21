@@ -311,3 +311,44 @@ func TestPromoteMergeRollsBackWhenThePromotionWriteFails(t *testing.T) {
 		t.Fatalf("retry = %+v, want a fresh promotion", retry)
 	}
 }
+
+// withoutVersion is a unit of work whose history lacks the version id, though the Suite's canonical names it.
+type withoutVersion struct {
+	governance.UnitOfWork
+	id contract.SuiteVersionID
+}
+
+func (u withoutVersion) Do(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, fn func(context.Context, governance.Tx) error) error {
+	return u.UnitOfWork.Do(ctx, project, suite, func(ctx context.Context, tx governance.Tx) error { return fn(ctx, missingVersionTx{Tx: tx, id: u.id}) })
+}
+
+type missingVersionTx struct {
+	governance.Tx
+	id contract.SuiteVersionID
+}
+
+func (t missingVersionTx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.HistoricalCanonical, bool, error) {
+	if id == t.id {
+		return contract.HistoricalCanonical{}, false, nil
+	}
+	return t.Tx.Version(ctx, id)
+}
+
+// A correction names the current version, which the history must hold: a missing one is a broken state, not a zero version
+// for the decision to refuse.
+func TestPromoteMergeOfACorrectionRefusesAMissingCorrectedVersion(t *testing.T) {
+	second := newCandidate(t, "pr2", "V1", treeContract(t, headTree("v2", "package main\n")))
+	fix := newCandidate(t, "fix", "V2", treeContract(t, headTree("v1", "package main\n")))
+	e := newHeadEnv(t, second, fix)
+	e.approve(second)
+	e.approve(fix)
+	e.merge(second, headTree("v2", "package main\n"), governance.MergePromoted)
+	before := e.revision()
+
+	_, err := governance.PromoteMerge(context.Background(), withoutVersion{e.mem, "V2"}, e.writer, e.mergeRequest(fix, headTree("v1", "package main\n")))
+
+	if !errors.Is(err, governance.ErrInvalidState) {
+		t.Fatalf("error = %v, want ErrInvalidState for a corrected version the history lacks", err)
+	}
+	e.requireWrites(before, 0)
+}

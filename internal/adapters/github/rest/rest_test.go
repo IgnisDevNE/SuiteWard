@@ -471,8 +471,19 @@ func TestBudgetIsSharedByClients(t *testing.T) {
 	if ok.Load()+exhausted.Load() != 40 || exhausted.Load() == 0 {
 		t.Fatalf("succeeded %d, exhausted %d of 40", ok.Load(), exhausted.Load())
 	}
-	if _, err := second.Get(context.Background(), "/after"); !errors.Is(err, rest.ErrBudgetExhausted) {
-		t.Fatalf("Get after the shared budget is spent: err = %v, want ErrBudgetExhausted", err)
+	// A reservation can overlap a response that already counts it, so the burst may stop short of the 10th request;
+	// sequential Gets then use the rest and are refused before the server sees an 11th.
+	for n := 0; ; n++ {
+		_, err := second.Get(context.Background(), fmt.Sprintf("/after/%d", n))
+		if errors.Is(err, rest.ErrBudgetExhausted) {
+			break
+		}
+		if err != nil || gh.Hits() > 10 {
+			t.Fatalf("Get /after/%d once the burst ended: err = %v, server saw %d requests; want ErrBudgetExhausted within 10", n, err, gh.Hits())
+		}
+	}
+	if hits := gh.Hits(); hits != 10 {
+		t.Fatalf("server saw %d requests before the shared budget refused; want 10", hits)
 	}
 }
 

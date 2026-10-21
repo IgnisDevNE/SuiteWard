@@ -4,9 +4,9 @@
 # delayed probe job that must survive a restart. Needs only podman, curl and coreutils; reads nothing from the
 # environment but the SMOKE_* knobs below. Run it on the target:
 #   sh deploy/smoke.sh [--promote]
-#   podman machine ssh "sh -s" < deploy/smoke.sh          (this PC, inside the Podman machine)
-#   podman machine ssh "sh -s -- --promote" < deploy/smoke.sh
-# --promote also runs `podman auto-update` once; it only works for the quadlet-managed service on the host.
+#   podman machine ssh --username user "sh -s" < deploy/smoke.sh          (this PC, inside the Podman machine, as its rootless user: the default ssh user is root, the rootful store)
+#   podman machine ssh --username user "sh -s -- --promote" < deploy/smoke.sh
+# --promote also runs `podman auto-update` once; it only works for the quadlet-managed service on the host, and only when the unit opted into AutoUpdate (the shipped unit does not, see docs/install.md).
 # Exit 0 only if every step passed; a failing step prints "FAIL <step>: <reason>" and exits 1.
 set -u
 

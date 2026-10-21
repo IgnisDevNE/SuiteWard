@@ -23,6 +23,7 @@ try {
     & (Join-Path $PSScriptRoot 'test-go.ps1')
     & (Join-Path $PSScriptRoot 'test-persistence.ps1')
     & (Join-Path $PSScriptRoot 'test-dev.ps1')
+    & (Join-Path $PSScriptRoot 'test-deploy.ps1')
     & (Join-Path $PSScriptRoot 'test-bot-token.ps1')
     & (Join-Path $PSScriptRoot 'test-hooks.ps1')
     $sh = Get-Command sh -ErrorAction SilentlyContinue

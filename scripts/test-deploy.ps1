@@ -40,7 +40,9 @@ $local = Get-Lines $localPath
 foreach ($line in $local | Where-Object { $_ -match '(Invoke-Podman|& podman|psql)' -and $_ -match '\$\w*(password|token)' }) { $failures.Add("a password or token reaches a command line: $line") }
 Assert-That (($local -match 'psql') -match 'exec -i' -and ($local -match 'psql') -match '-f -') 'psql is not fed on stdin (podman exec -i ... psql -f -)'
 $text = Get-Content -LiteralPath $localPath -Raw
-Assert-That ($text.IndexOf('migrate') -ge 0 -and $text.IndexOf('suiteward-migrate') -lt $text.LastIndexOf('--name suiteward `')) 'migrate does not run before serve'
+$migrateAt = $text.IndexOf('--name suiteward-migrate '); $serveAt = $text.IndexOf('--name suiteward --network')
+Assert-That ($migrateAt -ge 0 -and $migrateAt -lt $serveAt) 'migrate does not run before serve'
+Assert-That ([regex]::IsMatch($text, 'migrate\r?\n\s*if \(\$LASTEXITCODE -ne 0\) \{ throw')) 'a failed migrate does not stop the script'
 Assert-That ($text.Contains('podman machine ssh --username user "sh -s"')) 'the smoke instruction does not use the rootless ssh user'
 
 # Behavior with a fake podman (a function the script sees): a rootful connection is refused before anything is created; -Down -Purge removes the owner secret too.
@@ -54,6 +56,7 @@ function podman {
     } elseif ("$args" -like 'info*') { $global:swRootless }
 }
 $savedLocal = $env:LOCALAPPDATA; $savedConnection = $env:CONTAINER_CONNECTION
+Remove-Item Env:CONTAINER_CONNECTION -ErrorAction Ignore
 $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) "suiteward-deploy-test-$([Guid]::NewGuid().ToString('N'))"
 try {
     $refused = $null
@@ -62,9 +65,9 @@ try {
     Assert-That (-not ($global:swCalls | Where-Object { $_ -match '^(rm|secret|volume|network|run) ' })) 'podman changed something before the rootful refusal'
     Assert-That ($env:CONTAINER_CONNECTION -ceq 'podman-machine-default-root') 'the requested connection was not the one used'
 
-    $global:swCalls.Clear(); $global:swRootless = 'true'
+    Remove-Item Env:CONTAINER_CONNECTION; $global:swCalls.Clear(); $global:swRootless = 'true'
     & $localPath -Down -Purge
-    Assert-That ($env:CONTAINER_CONNECTION -ceq 'podman-machine-default') 'the rootless machine connection was not selected'
+    if ($IsWindows) { Assert-That ($env:CONTAINER_CONNECTION -ceq 'podman-machine-default') 'the rootless machine connection was not selected' }
     Assert-That (@($global:swCalls | Where-Object { $_ -match '^secret rm .*suiteward-database-owner-url' }).Count -eq 1) '-Down -Purge does not remove the owner URL secret'
 } finally {
     Remove-Item -LiteralPath Function:\podman

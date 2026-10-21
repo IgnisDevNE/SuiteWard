@@ -106,11 +106,13 @@ type setupRun struct {
 	reader               io.Reader // replaces stdin when set
 	stdout, stderr, logs bytes.Buffer
 	tier                 config.Tier
+	instance             string // the instance id the store reports
+	instanceErr          error
 }
 
 // newSetupRun answers the confirmation with Enter, then sends codes.
 func newSetupRun(fake *setupGitHub, codes string) *setupRun {
-	return &setupRun{fake: fake, store: ownertest.NewMemory(), stdin: "\n" + codes, tier: config.TierCoLocated}
+	return &setupRun{fake: fake, store: ownertest.NewMemory(), stdin: "\n" + codes, tier: config.TierCoLocated, instance: setupInstance}
 }
 
 func (r *setupRun) run(t *testing.T) int {
@@ -133,6 +135,7 @@ func (r *setupRun) runWith(t *testing.T, ctx context.Context) int {
 		cfg: config.Config{Tier: r.tier, GitHub: &settings}, options: setupOptions{owner: "octo", testChecks: map[string]string{setupWidgetsRepo: setupTestCheck}},
 		store: store, readers: readers, stdin: r.input(), stdout: &r.stdout, stderr: &r.stderr,
 		logger: newLogger(&r.logs, slog.LevelDebug), now: func() time.Time { return setupNow }, random: fixedRandom(),
+		instance: func(context.Context) (string, error) { return r.instance, r.instanceErr },
 	}
 	return s.run(ctx)
 }
@@ -176,7 +179,7 @@ func TestSetupEnrollsOnTheSecondAttemptAndPrintsTheSecretOnce(t *testing.T) {
 		t.Fatalf("setup exited %d:\n%s\n%s", code, r.stderr.String(), r.logs.String())
 	}
 
-	uri, err := totp.URI(fixedSecret, "SuiteWard", "octo")
+	uri, err := totp.URI(fixedSecret, "SuiteWard", "octo (co-located 1a2b3c4d)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +187,7 @@ func TestSetupEnrollsOnTheSecondAttemptAndPrintsTheSecretOnce(t *testing.T) {
 	if want := uri + "\n" + base32Secret + "\n"; r.stdout.String() != want {
 		t.Fatalf("stdout = %q; want exactly the URI and the secret %q", r.stdout.String(), want)
 	}
-	if parsed, err := url.Parse(uri); err != nil || parsed.Query().Get("issuer") != "SuiteWard" || !strings.HasPrefix(parsed.Path, "/SuiteWard:octo") {
+	if parsed, err := url.Parse(uri); err != nil || parsed.Query().Get("issuer") != "SuiteWard" || !strings.HasPrefix(parsed.Path, "/SuiteWard:octo (co-located 1a2b3c4d)") {
 		t.Fatalf("URI %q has the wrong issuer or account", uri)
 	}
 	state, found := r.enrolled(t)
@@ -203,6 +206,52 @@ func TestSetupEnrollsOnTheSecondAttemptAndPrintsTheSecretOnce(t *testing.T) {
 		t.Fatalf("stderr = %q; want the warning about recorded terminal sessions", r.stderr.String())
 	}
 	r.requireNothingSecret(t, rightCode(t), wrongCode(t))
+}
+
+const setupInstance = "1a2b3c4d5e6f708192a3b4c5d6e7f809"
+
+func TestSetupLabelsTheEntryWithTheTierAndTheInstance(t *testing.T) {
+	label := func(tier config.Tier, instance string) string {
+		r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")
+		r.tier, r.instance = tier, instance
+		if code := r.run(t); code != 0 {
+			t.Fatalf("setup exited %d:\n%s", code, r.stderr.String())
+		}
+		uri := strings.Split(r.stdout.String(), "\n")[0]
+		parsed, err := url.Parse(uri)
+		if err != nil || parsed.Query().Get("issuer") != "SuiteWard" {
+			t.Fatalf("URI %q is not valid or lacks the issuer", uri)
+		}
+		for _, want := range []string{string(tier) + " " + instance[:8], "delete"} {
+			if !strings.Contains(r.stderr.String(), want) {
+				t.Errorf("stderr = %q; want it to say %q so the owner can tell the entries apart", r.stderr.String(), want)
+			}
+		}
+		return strings.TrimPrefix(parsed.Path, "/")
+	}
+
+	isolated := label(config.TierIsolated, setupInstance)
+	if want := "SuiteWard:octo (isolated 1a2b3c4d)"; isolated != want {
+		t.Fatalf("label = %q; want %q", isolated, want)
+	}
+	if other := label(config.TierCoLocated, "ffffffff5e6f708192a3b4c5d6e7f809"); other == isolated || other == label(config.TierCoLocated, "00000000000000000000000000000000") {
+		t.Fatalf("two instances of the same owner share the label %q", other)
+	}
+}
+
+func TestSetupWritesNothingWhenTheInstanceCannotBeRead(t *testing.T) {
+	r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")
+	r.instanceErr = errors.New("database down")
+
+	if code := r.run(t); code != 1 {
+		t.Fatalf("setup exited %d; want 1", code)
+	}
+	if r.stdout.String() != "" {
+		t.Fatalf("stdout = %q; the secret was printed without an instance to name", r.stdout.String())
+	}
+	if _, found := r.enrolled(t); found {
+		t.Fatal("enrolled without knowing the instance")
+	}
 }
 
 func TestSetupRecordsTheTierOfTheSettings(t *testing.T) {

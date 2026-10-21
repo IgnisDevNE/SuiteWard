@@ -256,6 +256,13 @@ func TestURI(t *testing.T) {
 			account: "alice smith@example.com",
 			want:    "otpauth://totp/SuiteWard:alice%20smith@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=SuiteWard&algorithm=SHA1&digits=6&period=30",
 		},
+		{
+			// The instance label setup uses: spaces and parentheses are percent-encoded.
+			name:    "an instance label in the account",
+			issuer:  "SuiteWard",
+			account: "magalz (isolated 1a2b3c4d)",
+			want:    "otpauth://totp/SuiteWard:magalz%20%28isolated%201a2b3c4d%29?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=SuiteWard&algorithm=SHA1&digits=6&period=30",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -23,10 +23,13 @@ type fakeStore struct {
 	versionErr error
 	counts     postgres.Counts
 	countsErr  error
+	instance   string
 }
 
 func (f fakeStore) SchemaVersion(context.Context) (int64, error)    { return f.version, f.versionErr }
 func (f fakeStore) Counts(context.Context) (postgres.Counts, error) { return f.counts, f.countsErr }
+
+func (f fakeStore) Instance(context.Context) (string, error) { return f.instance, nil }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
@@ -88,6 +91,15 @@ func TestStatusReportsEveryStateEvenAtZero(t *testing.T) {
 		"outbox":{"pending":0,"delivered":2,"failed":0}}`
 	if code != http.StatusOK || !jsonEqual(t, body, want) {
 		t.Fatalf("GET /status = %d %s; want 200 %s", code, body, want)
+	}
+}
+
+func TestStatusNamesTheInstanceByItsShortId(t *testing.T) {
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10, instance: "1a2b3c4d5e6f708192a3b4c5d6e7f809"}}
+	code, body := call(t, a, http.MethodGet, "/status")
+	var got map[string]any
+	if err := json.Unmarshal([]byte(body), &got); err != nil || code != http.StatusOK || got["instance"] != "1a2b3c4d" {
+		t.Fatalf("GET /status = %d %s; want 200 with instance 1a2b3c4d, the id setup puts in the authenticator entry", code, body)
 	}
 }
 

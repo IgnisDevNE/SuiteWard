@@ -133,6 +133,8 @@ type setup struct {
 	logger  *slog.Logger
 	now     func() time.Time
 	random  io.Reader
+	// instance is commands.Store.Instance: the id the authenticator entry names.
+	instance func(context.Context) (string, error)
 }
 
 // resolved is what the lookups found; nothing is written before all of it is.

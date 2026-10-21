@@ -9,10 +9,13 @@
 #   it prints "Upgrading an existing stack ...", creates the secret suiteward-database-owner-url, creates the role suiteward_app
 #   with a new password, replaces suiteward-database-url by the application URL and migrates. The data is untouched, and a second
 #   run (or one that follows an interruption) repeats only what is still missing.
-#   ./deploy/local.ps1                                   start with the published image, without GitHub (the MCP listener still runs)
+#   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index>
+#                                                        start the signed release image, without GitHub (the MCP listener still runs).
+#                                                        -Image is required to start: pass the release's signed index digest (docs/install.md 5.3), verified with scripts/verify-release.ps1; there is no default tag.
 #   ./deploy/local.ps1 -Image localhost/suiteward:local  start a locally built image
-#   ./deploy/local.ps1 -GitHubAppKeyFile <pem> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories owner/name[,owner/name]
+#   ./deploy/local.ps1 -Image <image> -GitHubAppKeyFile <pem> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories owner/name[,owner/name]
 #                                                        start with the GitHub synchronization
+#   ./deploy/local.ps1 -Image <image> -JobTimeout 3m     set SUITEWARD_JOB_TIMEOUT (a Go duration) on the service container only
 #   ./deploy/local.ps1 -Down                             remove the containers, keep the state
 #   ./deploy/local.ps1 -Down -Purge                      also remove the volumes, secrets, the MCP token copy and the network
 # GitHub is optional, as in the product: it is configured only when all three non-secret values are given, and they are not stored,
@@ -26,7 +29,9 @@
 # D-TIER: this PC is the co-located tier (the agent shares it with the owner), declared here and never detected.
 #Requires -Version 7.2
 param(
-    [string]$Image = 'ghcr.io/ignisdevne/suiteward:deploy',
+    [string]$Image,
+    [ValidatePattern('^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$')]
+    [string]$JobTimeout,
     [string]$GitHubAppKeyFile,
     [string]$GitHubAppId,
     [string]$GitHubInstallationId,
@@ -92,6 +97,7 @@ if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is not set: the co-located sta
 $tokenFile = Join-Path $env:LOCALAPPDATA 'SuiteWard\mcp-token'
 
 if ($Purge -and -not $Down) { throw '-Purge only applies together with -Down.' }
+if (-not $Down -and -not $Image) { throw '-Image is required: pass the signed index digest of the release, ghcr.io/ignisdevne/suiteward@sha256:<index> (docs/install.md 5.3 and 11.4), or a locally built image.' }
 # The selection below changes this process's environment (and so the caller's session when dot-sourced or run in-process): put it back at the end.
 $savedConnection = $env:CONTAINER_CONNECTION; $savedHost = $env:CONTAINER_HOST
 try {
@@ -177,6 +183,10 @@ try {
             '--secret', 'suiteward-github-app-key,type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400'
     }
 
+    # Serve only: the migrate container does not read the job time limit.
+    $jobTimeoutArgs = @()
+    if ($JobTimeout) { $jobTimeoutArgs = '--env', "SUITEWARD_JOB_TIMEOUT=$JobTimeout" }
+
     # The old service (and a migrate container left by an interrupted run) is removed first: the database restarts below and the application secret may be replaced.
     Invoke-Podman rm --force --ignore --time 45 suiteward suiteward-migrate
     Invoke-Podman run --detach --replace --name suiteward-db --network suiteward --restart always `
@@ -227,7 +237,7 @@ try {
         --env SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token `
         --secret 'suiteward-mcp-token,type=mount,target=/run/secrets/mcp-token,uid=65532,mode=0400' `
         --env SUITEWARD_INSTALLATION_TIER=co-located `
-        @githubArgs `
+        @githubArgs @jobTimeoutArgs `
         --volume suiteward-data:/data `
         --publish 127.0.0.1:8081:8080 --publish 127.0.0.1:8091:8090 `
         $Image | Out-Null

@@ -126,3 +126,15 @@ func TestServeSetupAndProbeRefuseTheMigrationCredential(t *testing.T) {
 		}
 	}
 }
+
+func TestServeRefusesTheMigrationCredentialFromAFile(t *testing.T) {
+	env := testEnv(map[string]string{
+		"SUITEWARD_DATABASE_URL":                "postgres://app@127.0.0.1:1/db?sslmode=disable",
+		"SUITEWARD_MIGRATION_DATABASE_URL_FILE": "/run/secrets/database-owner-url",
+		"SUITEWARD_ARTIFACT_DIR":                t.TempDir(),
+	})
+	env.ReadFile = func(string) ([]byte, error) { return []byte("postgres://owner@127.0.0.1:1/db?sslmode=disable"), nil }
+	if code, _, stderr := run([]string{"serve"}, env); code != 1 || !strings.Contains(stderr, "the migration credential is for `suiteward migrate` only") {
+		t.Fatalf("serve with the owner URL in a file exited %d, stderr %q; want 1 and the refusal", code, stderr)
+	}
+}

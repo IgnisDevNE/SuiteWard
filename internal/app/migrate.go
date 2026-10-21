@@ -24,8 +24,6 @@ type migrateWait struct {
 	timeout  time.Duration
 }
 
-var defaultMigrateWait = migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second}
-
 // runMigrate brings the schema to migrations.SupportedVersion as the owner of the schema and then grants the
 // application role its access (migrations.GrantApp). It is the only command that changes the schema; serve and setup
 // connect as the application role and refuse a schema that is not at the supported version.

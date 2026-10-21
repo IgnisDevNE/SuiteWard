@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -121,18 +122,25 @@ func TestMigrateWaitsForADatabaseThatIsNotAcceptingConnections(t *testing.T) {
 // context ends it after the bound and the assertions that follow report what it did.
 func runWithin(t *testing.T, args []string, env Env) (code int, stdout, stderr string) {
 	t.Helper()
-	return runWithinWait(t, defaultMigrateWait, args, env)
+	env.Stdin = strings.NewReader("")
+	return runBounded(t, args, env, func(ctx context.Context, out, errOut io.Writer) int { return Run(ctx, args, env, out, errOut) })
 }
 
 // runWithinWait is runWithin with the wait of migrate.
 func runWithinWait(t *testing.T, wait migrateWait, args []string, env Env) (code int, stdout, stderr string) {
 	t.Helper()
+	env.Stdin = strings.NewReader("")
+	return runBounded(t, args, env, func(ctx context.Context, out, errOut io.Writer) int {
+		return runWith(ctx, args, env, out, errOut, wait)
+	})
+}
+
+func runBounded(t *testing.T, args []string, env Env, command func(ctx context.Context, out, errOut io.Writer) int) (code int, stdout, stderr string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	var out, errOut strings.Builder
-	env.Stdin = strings.NewReader("")
-	code = runWith(ctx, args, env, &out, &errOut, wait)
-	return code, out.String(), errOut.String()
+	return command(ctx, &out, &errOut), out.String(), errOut.String()
 }
 
 func TestMigrateDoesNotWaitOnARefusedLogin(t *testing.T) {

@@ -22,7 +22,8 @@ try {
     foreach ($config in '.gitleaks.toml', '.gitleaksignore', 'zizmor.yml', 'zizmor.yaml', '.github/zizmor.yml', '.github/zizmor.yaml') {
         Set-Content -LiteralPath (Join-Path $testRoot $config) -Value ''
         if ((Invoke-Scan).Passed) { throw "The scan accepted a $config file." }
-        Remove-Item -LiteralPath (Join-Path $testRoot $config)
+        # -Force: PowerShell on Linux treats a dot file as hidden and refuses to remove it otherwise.
+        Remove-Item -LiteralPath (Join-Path $testRoot $config) -Force
     }
     # An action referenced by a mutable tag is something zizmor flags without network access.
     Set-Content -LiteralPath $workflow -Value ($clean + "      - uses: actions/checkout@v4`n")
@@ -33,7 +34,7 @@ try {
     $outside = Join-Path $testRoot '../zizmor-outside.yml'
     Set-Content -LiteralPath $outside -Value "rules:`n  unpinned-uses:`n    disable: true`n"
     $env:ZIZMOR_CONFIG = $outside
-    try { $scan = Invoke-Scan } finally { Remove-Item Env:ZIZMOR_CONFIG; Remove-Item -LiteralPath $outside }
+    try { $scan = Invoke-Scan } finally { Remove-Item Env:ZIZMOR_CONFIG; Remove-Item -LiteralPath $outside -Force }
     if ($scan.Passed -or -not $scan.Output.Contains('unpinned-uses')) { throw 'ZIZMOR_CONFIG suppressed a finding.' }
     Set-Content -LiteralPath $workflow -Value ($clean + "      - uses: actions/checkout@v4 # zizmor: ignore[unpinned-uses]`n")
     $scan = Invoke-Scan
@@ -51,7 +52,7 @@ try {
     $allow = Join-Path ([IO.Path]::GetTempPath()) "gitleaks-allow-$([Guid]::NewGuid().ToString('N')).toml"
     Set-Content -LiteralPath $allow -Value "[extend]`nuseDefault = true`n[[allowlists]]`npaths = ['''.*''']`n"
     $env:GITLEAKS_CONFIG = $allow
-    try { $configured = Invoke-Scan } finally { Remove-Item Env:GITLEAKS_CONFIG; Remove-Item -LiteralPath $allow }
+    try { $configured = Invoke-Scan } finally { Remove-Item Env:GITLEAKS_CONFIG; Remove-Item -LiteralPath $allow -Force }
     if ($configured.Passed -or -not $configured.Output.Contains('github-pat')) { throw 'GITLEAKS_CONFIG allowed a secret.' }
     if ($scan.Output.Contains($secret) -or $scan.Output.Contains($secret.Substring(4, 12))) { throw 'The scan printed part of a secret.' }
     Write-Host 'Security scan checks passed.'

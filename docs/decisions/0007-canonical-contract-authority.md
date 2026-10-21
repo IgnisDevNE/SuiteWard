@@ -1,7 +1,7 @@
 # ADR 0007: Canonical contract authority and promotion invariants
 
 - **Date:** 2026-09-26
-- **Status:** Accepted and implemented: the domain in M0, the PostgreSQL store in R1 and M1.2, approval and promotion in M1.6 and M1.7, released in `v0.1.0`. Amended 2026-10-20 (database role, below).
+- **Status:** Accepted and implemented: the domain in M0, the PostgreSQL store in R1 and M1.2, approval and promotion in M1.6 and M1.7, released in `v0.1.0`. Amended 2026-10-20 (database role, below). The open implementation details below stay open.
 - **Scope:** Domain authority, versioning, approval, and promotion.
 - **Origin:** Product thesis derived from CircuitoNE / CircuitoNE-QA as PoC #0.
 
@@ -66,13 +66,13 @@ These alternatives conflict with the product's core purpose.
 
 The earlier draft SQL schema is a design input, not a completed production migration.
 
-## Amendment (2026-10-20, phase SH): the service's database role
-
-The service connects to PostgreSQL as a role that owns nothing and can only read and write rows (DML): it cannot alter or drop the triggers that make history immutable, truncate a table or change the schema. Only `suiteward migrate` holds the schema owner's credential, runs as a separate one-shot step before the service starts, and refuses a service role that is not least-privilege. The invariants above are unchanged; this limits what a compromised service credential can do to them. What it does and does not prevent is listed in the [threat model](../security/threat-model.md) (boundary B5) and in the [persistence contract](../contracts/persistence.md#database-roles-and-grants-sh-h4).
-
 ## Amendment (2026-10-05, phase R1): verification point and storage shape
 
 - Artifact bytes are verified when a version is written, against that version's manifest only. Loads and replays do not re-hash stored artifacts. Periodic integrity verification becomes a runtime job.
 - Governance state is stored as normalized facts rather than serialized aggregate snapshots. See the [persistence contract](../contracts/persistence.md).
 
 The invariants above are unchanged.
+
+## Amendment (2026-10-20, phase SH): the service's database role
+
+The service connects to PostgreSQL as a role that owns nothing and can only read and write rows (DML): it cannot alter or drop the triggers that make history immutable, truncate a table or change the schema. Only `suiteward migrate` holds the schema owner's credential, runs as a separate one-shot step before the service starts, and refuses a service role that is not least-privilege. The invariants above are unchanged; this limits what a compromised service credential can do to them. What it does and does not prevent is listed in the [threat model](../security/threat-model.md) (boundary B5) and in the [persistence contract](../contracts/persistence.md#database-roles-and-grants-sh-h4).

@@ -33,7 +33,7 @@ Recorded in the [decision register](../decisions.md#d-security-review-decisions-
 - **H4 Database role and deployment:** the service as a least-privilege role with `suiteward migrate` as the owner step (H4a); the quadlets and `deploy/local.ps1` running migrate before serve, with digest-pinned units and a rootless co-located stack (H4b); the install, upgrade, backup and host runbooks for AlmaLinux 9 (H4c).
 - **H5 Runtime bounds:** HTTP timeouts on both listeners, a publisher panic stored as a classification and a digest, the 64 KiB declaration cap, a skipped unconfigured repository, an integrity check right after a promotion, and the code-offset log removed.
 - **H6 Supply chain:** base images and tools pinned by digest with a cross-check, `gosec`, `zizmor`, `gitleaks` and `trivy` in the checks, a weekly fuzz workflow (H6); build provenance, SBOM and keyless signing of the release index, and `latest-stable` moved only after a verified signature (H6b).
-- **H7 Whole-phase review and fixes.**
+- **H7:** recorded by the orchestrator.
 - **H8 Records:** the ADR amendments, the decision register, the threat model rows, `SECURITY.md` and this page.
 
 ## Verification

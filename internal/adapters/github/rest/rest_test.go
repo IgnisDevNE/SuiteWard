@@ -1332,3 +1332,38 @@ func TestETagCacheIsBoundedAndKeepsTheRecentlyUsed(t *testing.T) {
 		t.Fatalf("the cache holds %d paths after the dropped one came back; want the bound of 3", got)
 	}
 }
+
+func TestBudgetWindowReportsWhatIsLeftUntilTheResetInLocalTime(t *testing.T) {
+	const skew = 2 * time.Minute
+	reset := t0.Add(time.Hour)
+	clk := &clock{now: t0.Add(skew)}
+	gh := &rateLimitedServer{limit: 10, reset: reset, date: func() time.Time { return clk.Now().Add(-skew) }}
+	srv := httptest.NewServer(gh)
+	defer srv.Close()
+	b := newBudget(t, 0.5, clk)
+	c := newClient(t, newTokens().Token, srv.URL, b)
+
+	if w, known := b.Window(); known {
+		t.Fatalf("Window before any response = %+v, want unknown", w)
+	}
+	for i := range 2 {
+		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
+			t.Fatalf("Get %d: %v", i, err)
+		}
+	}
+	if w, known := b.Window(); !known || w.Remaining != 3 || !w.Reset.Equal(reset.Add(skew)) {
+		t.Fatalf("Window = %+v, %v; want 3 requests left until %v", w, known, reset.Add(skew))
+	}
+	for i := 2; i < 5; i++ {
+		if _, err := c.Get(context.Background(), fmt.Sprintf("/p/%d", i)); err != nil {
+			t.Fatalf("Get %d: %v", i, err)
+		}
+	}
+	if w, known := b.Window(); !known || w.Remaining != 0 {
+		t.Fatalf("Window over the budget = %+v, %v; want 0 left, known", w, known)
+	}
+	clk.Set(reset.Add(skew)) // the window has ended: nothing is known until the next response
+	if w, known := b.Window(); known {
+		t.Fatalf("Window after the reset = %+v, want unknown", w)
+	}
+}

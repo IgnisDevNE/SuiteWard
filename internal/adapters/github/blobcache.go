@@ -18,7 +18,7 @@ type blobCache struct {
 	blobs map[string][]byte
 }
 
-func newBlobCache(max int) *blobCache { return &blobCache{max: max, blobs: map[string][]byte{}} }
+func newBlobCache(limit int) *blobCache { return &blobCache{max: limit, blobs: map[string][]byte{}} }
 
 // get returns a copy of the blob kept under key.
 func (c *blobCache) get(key string) ([]byte, bool) {

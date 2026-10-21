@@ -2,7 +2,7 @@
 # Not part of the CI gate and not a required check.
 # The tag alone does not publish: the `publish` job waits for the owner's approval in the protected `release` environment.
 # A final `vX.Y.Z` must sit on a commit of `main`; a pre-release may sit anywhere and never moves `latest-stable`.
-# Same build as deploy.yml, with the tag as the version and the tag's source tree as the corresponding source (AGPL section 13).
+# CI builds the same Containerfile for both platforms on every change without pushing; here the tag is the version and the tag's source tree is the corresponding source (AGPL section 13).
 # No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
 # The pushed index carries a SLSA provenance and an SBOM (BuildKit attestation manifests) and is signed keyless with cosign through GitHub OIDC; the signature is recorded in the public Rekor log (ADR 0008).
 # Consumers verify the signature with scripts/verify-release.ps1; the signing identity is this workflow at a `v*` tag.
@@ -122,5 +122,7 @@ jobs:
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Unexpected image digest"; exit 1; }
           "$RUNNER_TEMP/cosign" sign --yes "$IMAGE@$DIGEST"
           pwsh ./scripts/verify-release.ps1 -Reference "$IMAGE@$DIGEST" -Cosign "$RUNNER_TEMP/cosign"
+          # The release notes name the index digest: copy this line from the run summary.
+          { echo "Index digest: $DIGEST"; echo "Reference: $IMAGE@$DIGEST"; } >> "$GITHUB_STEP_SUMMARY"
           # Only a verified signature moves latest-stable; the version tag is public before this step runs.
           if [ "$PRERELEASE" = false ]; then docker buildx imagetools create --tag "$IMAGE:latest-stable" "$IMAGE@$DIGEST"; fi

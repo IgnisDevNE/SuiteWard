@@ -1,4 +1,4 @@
-# Co-located target: runs the same two containers as the quadlets (deploy/quadlet) with `podman run` on this PC.
+# Co-located target: runs the same containers as the quadlets (deploy/quadlet: database, migrate, service) with `podman run` on this PC.
 # Creates the network, volumes and secrets on first use. The passwords are generated here, go straight into Podman secrets
 # and are never printed, written to a file or passed as an argument.
 # It uses the machine's rootless connection only (-PodmanConnection NAME picks one) and refuses a rootful one.
@@ -173,8 +173,8 @@ if ($github) {
         '--secret', 'suiteward-github-app-key,type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400'
 }
 
-# The old service is stopped first: the database restarts below and the application secret may be replaced.
-Invoke-Podman rm --force --ignore --time 45 suiteward
+# The old service (and a migrate container left by an interrupted run) is removed first: the database restarts below and the application secret may be replaced.
+Invoke-Podman rm --force --ignore --time 45 suiteward suiteward-migrate
 Invoke-Podman run --detach --replace --name suiteward-db --network suiteward --restart always `
     --read-only --cap-drop all --security-opt no-new-privileges --user 999:999 `
     --tmpfs /run/postgresql --tmpfs /tmp --memory 384m --stop-timeout 30 `

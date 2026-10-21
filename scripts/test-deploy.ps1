@@ -55,7 +55,7 @@ function podman {
         '[{"Name":"podman-machine-default","URI":"ssh://user@127.0.0.1:1/run/user/1000/podman/podman.sock","IsMachine":true},{"Name":"podman-machine-default-root","URI":"ssh://root@127.0.0.1:1/run/podman/podman.sock","IsMachine":true}]'
     } elseif ("$args" -like 'info*') { $global:swRootless }
 }
-$savedLocal = $env:LOCALAPPDATA; $savedConnection = $env:CONTAINER_CONNECTION
+$savedLocal = $env:LOCALAPPDATA; $savedConnection = $env:CONTAINER_CONNECTION; $savedHost = $env:CONTAINER_HOST
 Remove-Item Env:CONTAINER_CONNECTION -ErrorAction Ignore
 $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) "suiteward-deploy-test-$([Guid]::NewGuid().ToString('N'))"
 try {
@@ -71,7 +71,7 @@ try {
     Assert-That (@($global:swCalls | Where-Object { $_ -match '^secret rm .*suiteward-database-owner-url' }).Count -eq 1) '-Down -Purge does not remove the owner URL secret'
 } finally {
     Remove-Item -LiteralPath Function:\podman
-    $env:LOCALAPPDATA = $savedLocal; $env:CONTAINER_CONNECTION = $savedConnection
+    $env:LOCALAPPDATA = $savedLocal; $env:CONTAINER_CONNECTION = $savedConnection; $env:CONTAINER_HOST = $savedHost
 }
 
 if ($failures.Count) { throw "Deploy checks failed:`n  $($failures -join "`n  ")" }

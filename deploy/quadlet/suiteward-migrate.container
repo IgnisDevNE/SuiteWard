@@ -1,6 +1,6 @@
 # One-shot `suiteward migrate`: brings the schema to this release's version as the database owner and grants the application role its
 # access (docs/contracts/persistence.md, "Database roles and grants"). suiteward.service requires it, so serve starts only after it
-# exited 0 and never holds the owner credential. It waits by itself (up to 30 s) for the database to accept connections.
+# exited 0 and never holds the owner credential. It waits by itself (30 attempts, 1 s apart) for the database to accept connections.
 # The role named in the application URL (suiteward_app) is created once by the deployment (docs/install.md); migrate never creates it.
 [Unit]
 Description=SuiteWard database migration

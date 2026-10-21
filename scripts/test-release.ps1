@@ -34,6 +34,12 @@ try {
         'https://github.com/IgnisDevNE/SuiteWard/xgithub/workflows/release.yml@refs/tags/v1.2.3') {
         if ($identity -cmatch $regexp) { throw "The identity $identity is accepted." }
     }
+    # The verify job's tag check and the signing identity must accept the same tag shapes.
+    $tagCheck = [regex]::Match((Get-Content -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/release.yml') -Raw), '\[\[ ! "\$TAG" =~ (?<re>\S+) \]\]').Groups['re'].Value
+    if (-not $tagCheck) { throw 'The tag check was not found in release.yml.' }
+    foreach ($tag in 'v1.2.3', 'v10.20.30', 'v1.2.3-rc.1', 'v1.2.3-rc.12', 'v1.2', 'v1.2.3.4', 'v1.2.3-rc', 'v1.2.3-rc.', 'v1.2.3-beta.1', 'v1.2.3-rc.1x', 'v1.2.3/x', 'vx.y.z', '1.2.3', 'main') {
+        if (($tag -cmatch $tagCheck) -ne ("$workflow@refs/tags/$tag" -cmatch $regexp)) { throw "release.yml and verify-release.ps1 disagree about the tag $tag." }
+    }
     $env:FAKE_COSIGN_EXIT = '1'
     Assert-Rejected { & $verify -Reference $digest -Cosign $fake } 'could not verify'
     Assert-Rejected { & $verify -Reference $digest -Cosign (Join-Path $testRoot 'missing') } 'was not found'

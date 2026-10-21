@@ -92,6 +92,9 @@ type Parsed struct {
 
 const prefix = "/suiteward"
 
+// lineEndings turns CRLF and a lone CR into LF: GitHub ends a line at each of them.
+var lineEndings = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+
 // Parse reads the command line of a comment body (D-COMMANDS): the first line
 // whose own text, trimmed of spaces and tabs, starts with /suiteward followed
 // by a space, a tab or the end of the line. Other lines are ignored.
@@ -117,17 +120,18 @@ const prefix = "/suiteward"
 //   - An indented code block: a line indented four or more columns, a tab
 //     counting as four and measured before trimming.
 //
-// Known limit: Parse models no <pre> or <code> block and no inline code span
-// that crosses lines, so it reads a command that GitHub shows as code there. A
-// code that is still current and unused is required, so that is no authority.
+// Known limit: Parse models no raw HTML block (<details> up to a blank line,
+// for one, hides fence markers; <pre> and <code> are others) and no inline code
+// span that crosses lines, so it reads a command that GitHub shows as code
+// there. A code that is still current and unused is required, so that is no
+// authority.
 //
 // The prefix and the verb match without regard to ASCII case, the reference
 // keeps its P<n>-R<m> form, and only spaces and tabs separate tokens.
 func Parse(body string) Parsed {
 	var fence string
 	contained, inComment := false, false
-	for line := range strings.SplitSeq(body, "\n") {
-		line = strings.TrimSuffix(line, "\r")
+	for line := range strings.SplitSeq(lineEndings.Replace(body), "\n") {
 		if inComment {
 			closed := strings.Index(line, "-->")
 			inComment = closed < 0 || opensComment(line[closed+len("-->"):])
@@ -230,9 +234,14 @@ func stripMarker(text string) (rest string, ok bool) {
 // or "" when the line opens none.
 func openingFence(text string) string {
 	for _, c := range []string{"`", "~"} {
-		if strings.HasPrefix(text, c+c+c) {
-			return text[:len(text)-len(strings.TrimLeft(text, c))]
+		if !strings.HasPrefix(text, c+c+c) {
+			continue
 		}
+		run := text[:len(text)-len(strings.TrimLeft(text, c))]
+		if c == "`" && strings.Contains(text[len(run):], "`") { // CommonMark: the info string of a backtick fence holds no backtick
+			return ""
+		}
+		return run
 	}
 	return ""
 }

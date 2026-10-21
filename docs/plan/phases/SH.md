@@ -33,7 +33,7 @@ Recorded in the [decision register](../decisions.md#d-security-review-decisions-
 - **H4 Database role and deployment:** the service as a least-privilege role with `suiteward migrate` as the owner step (H4a); the quadlets and `deploy/local.ps1` running migrate before serve, with digest-pinned units and a rootless co-located stack (H4b); the install, upgrade, backup and host runbooks for AlmaLinux 9 (H4c).
 - **H5 Runtime bounds:** HTTP timeouts on both listeners, a publisher panic stored as a classification and a digest, the 64 KiB declaration cap, a skipped unconfigured repository, an integrity check right after a promotion, and the code-offset log removed.
 - **H6 Supply chain:** base images and tools pinned by digest with a cross-check, `gosec`, `zizmor`, `gitleaks` and `trivy` in the checks, a weekly fuzz workflow (H6); build provenance, SBOM and keyless signing of the release index, and `latest-stable` moved only after a verified signature (H6b).
-- **H7:** recorded by the orchestrator.
+- **H7 Rootless co-located stack:** `deploy/local.ps1` selects the rootless connection and refuses a rootful one. It was delivered with H4b.
 - **H8 Records:** the ADR amendments, the decision register, the threat model rows, `SECURITY.md` and this page.
 
 ## Verification
@@ -47,7 +47,7 @@ Recorded in the [decision register](../decisions.md#d-security-review-decisions-
 
 1. **A release candidate (`v0.2.0-rc.N`)**, created by the owner on the commit the orchestrator names, approved in the `release` environment. It is the first image built, scanned, provenance-attested and signed by the new workflow.
 2. **The co-located PC (A3)** runs the candidate through `deploy/local.ps1`, which converts the v0.1.x stack: it creates the role, replaces the database secret and keeps the owner URL in its own secret.
-3. **A new AlmaLinux 9 isolated host** installs `v0.1.3` by the install guide, restores the A1 backup, and upgrades to the candidate through [install section 11](../../install.md#11-updating) (the v0.1.x upgrade steps: owner secret, role, migrate unit, the auto-update timer disabled).
+3. **A new AlmaLinux 9 isolated host** is installed with the candidate by [install section 10](../../install.md#10-running-on-a-separate-host-operators), and the A1 backup (taken on v0.1.3) is restored into it; `migrate` brings the restored schema forward. This replaces the Ubuntu A1 host after it is validated.
 4. **The final release `v0.2.0`**, after both runs and the owner's authorization, verified with `scripts/verify-release.ps1` before any host pins it.
 
 ## Known limits
@@ -56,4 +56,5 @@ Recorded in the [decision register](../decisions.md#d-security-review-decisions-
 - **The signing path first runs on the release candidate tag:** the workflow cannot be exercised on a branch, because the identity is the workflow at a `v*` tag. `v0.1.x` images are unsigned.
 - **The release scan covers `linux/amd64`** only; the arm64 image has the same packages and source.
 - **Signing does not stop another workflow from pushing a tag.** A host that pins and verifies the digest is protected; one that follows a tag is not ([D-RELEASE](../decisions.md#d-release-platforms-versions-license-and-notices)).
+- **The in-place v0.1.x upgrade of a quadlet host** (install 11.5) is not run live: there is no EL9 host on v0.1.x. The conversion logic is exercised on the co-located stack through `deploy/local.ps1`, and the restore of a v0.1.3 backup is exercised on the new host.
 - **Accepted:** the unencrypted TOTP secret at rest, the co-located tier's reduced assurance, and the fork pull request merge command (backlog).

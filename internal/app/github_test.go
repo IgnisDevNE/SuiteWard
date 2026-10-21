@@ -451,7 +451,7 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
-	want := `{"version":"` + Version + `","instance":"","schemaVersion":11,"tier":"co-located",
+	want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 		"outbox":{"pending":0,"delivered":0,"failed":0},
 		"github":[
@@ -474,7 +474,7 @@ func TestStatusShowsTheLastBootstrapProblemOfARepository(t *testing.T) {
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
-	want := `{"version":"` + Version + `","instance":"","schemaVersion":11,"tier":"co-located",
+	want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 		"outbox":{"pending":0,"delivered":0,"failed":0},
 		"github":[{"repo":"acme/ok","bootstrap":"origin-not-passed"},{"repo":"acme/down"}]}`

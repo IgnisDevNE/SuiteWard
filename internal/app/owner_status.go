@@ -13,7 +13,8 @@ const tierNote = "The configured tier and the tier recorded at enrollment differ
 
 // shortInstance is the first 8 hex characters of the instance id: non-secret, stable per instance, and what
 // setup puts in the authenticator entry and /status shows, so the owner can match one to the other.
-func shortInstance(id string) string { return id[:min(len(id), 8)] }
+// The store guarantees 32 hex characters (a CHECK constraint), so the slice cannot be out of range.
+func shortInstance(id string) string { return id[:8] }
 
 // ownerReader is the part of the owner store /status and MCP status read.
 type ownerReader interface {

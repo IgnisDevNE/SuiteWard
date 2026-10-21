@@ -222,7 +222,7 @@ func TestSetupLabelsTheEntryWithTheTierAndTheInstance(t *testing.T) {
 		if err != nil || parsed.Query().Get("issuer") != "SuiteWard" {
 			t.Fatalf("URI %q is not valid or lacks the issuer", uri)
 		}
-		for _, want := range []string{string(tier) + " " + instance[:8], "delete"} {
+		for _, want := range []string{string(tier) + " " + instance[:8], "delete any existing entry with this exact name", "entries of other instances stay", `"SuiteWard:octo", with no instance in its name, predates this release`} {
 			if !strings.Contains(r.stderr.String(), want) {
 				t.Errorf("stderr = %q; want it to say %q so the owner can tell the entries apart", r.stderr.String(), want)
 			}

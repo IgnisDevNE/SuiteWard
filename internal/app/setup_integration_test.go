@@ -97,8 +97,12 @@ func TestSetupEnrollsAndServeReportsTheOwnerAndTheTier(t *testing.T) {
 		t.Fatalf("GET /status tier = %v, note %v; want co-located with a note to re-run setup", status["tier"], status["tierNote"])
 	}
 	// The entry names the instance by the id /status shows.
-	if want := "%20" + shortInstance(scalar(t, databaseURL, "SELECT instance_id FROM suiteward_instance")) + "%29?"; status["instance"] == nil || !strings.Contains(stdout.String(), want) || !strings.Contains(want, status["instance"].(string)) {
-		t.Fatalf("GET /status instance = %v; want it in the entry name (%s) of %q", status["instance"], want, stdout.String())
+	storedID := scalar(t, databaseURL, "SELECT instance_id FROM suiteward_instance")
+	if status["instance"] != storedID[:8] {
+		t.Fatalf("GET /status instance = %v; want the first 8 characters of the stored id %s", status["instance"], storedID[:8])
+	}
+	if want := "%20" + storedID[:8] + "%29?"; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("the entry name lacks %s: %q", want, stdout.String())
 	}
 	if code := after.stop(); code != 0 {
 		t.Fatalf("a clean stop exited %d:\n%s", code, after.logs.String())

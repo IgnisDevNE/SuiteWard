@@ -358,9 +358,6 @@ func (t Token) Reveal() string { return *t.value }
 // Identity is a stable id of this token, derived from but never equal to the value.
 func (t Token) Identity() string { return t.identity }
 
-// ExpiresAt is when GitHub expires the token.
-func (t Token) ExpiresAt() time.Time { return t.expiresAt }
-
 // String hides the value.
 func (t Token) String() string { return "appauth.Token{identity: " + t.identity + "}" }
 

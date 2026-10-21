@@ -72,24 +72,14 @@ func (s *Store) RecordCycle(ctx context.Context, cycle githubsync.Cycle) ([]int6
 	if err := cycle.Validate(); err != nil {
 		return nil, err
 	}
-	transaction, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin GitHub cycle transaction: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			rollback(ctx, transaction)
-		}
-	}()
-	ids, err := recordCycle(ctx, dbgen.New(transaction), cycle)
+	var ids []int64
+	err := inTx(ctx, s.pool, "GitHub cycle", func(transaction pgx.Tx) (err error) {
+		ids, err = recordCycle(ctx, dbgen.New(transaction), cycle)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := transaction.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit GitHub cycle transaction: %w", err)
-	}
-	committed = true
 	return ids, nil
 }
 
@@ -223,32 +213,19 @@ func (s *Store) Comments(ctx context.Context, repo string, number int) ([]github
 // a cycle like RecordCycle does. fn gets the closed watermark. found is false, and fn does not run, for a repository
 // that has no row yet.
 func (s *Store) withRepository(ctx context.Context, repo string, fn func(q *dbgen.Queries, watermark pgtype.Timestamptz) error) (found bool, err error) {
-	transaction, err := s.pool.Begin(ctx)
-	if err != nil {
-		return false, fmt.Errorf("begin GitHub transaction: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			rollback(ctx, transaction)
+	err = inTx(ctx, s.pool, "GitHub", func(transaction pgx.Tx) error {
+		q := dbgen.New(transaction)
+		watermark, err := q.LockGitHubRepository(ctx, repo)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
 		}
-	}()
-	q := dbgen.New(transaction)
-	watermark, err := q.LockGitHubRepository(ctx, repo)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("lock GitHub repository: %w", err)
-	}
-	if err := fn(q, watermark); err != nil {
-		return true, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return true, fmt.Errorf("commit GitHub transaction: %w", err)
-	}
-	committed = true
-	return true, nil
+		if err != nil {
+			return fmt.Errorf("lock GitHub repository: %w", err)
+		}
+		found = true
+		return fn(q, watermark)
+	})
+	return found, err
 }
 
 // AwaitingResolution implements githubsync.Store.

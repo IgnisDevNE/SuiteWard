@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"regexp"
 
@@ -161,12 +160,6 @@ type classicJSON struct {
 	} `json:"enforce_admins"`
 }
 
-// statusIs reports whether err is the rest client's answer with status.
-func statusIs(err error, status int) bool {
-	var se *rest.StatusError
-	return errors.As(err, &se) && se.Status == status
-}
-
 // typeChecks types the required checks of a rule or of classic protection,
 // reading each source id with pin; a check without a context cannot be
 // matched, so it is a malformed answer.
@@ -199,7 +192,7 @@ func (r *Reader) Protection(ctx context.Context, repo, branch string) (Protectio
 	}
 	rules, _, err := readDecoded[ruleJSON](ctx, r.client, rulesPath)
 	switch {
-	case statusIs(err, http.StatusForbidden):
+	case errors.Is(err, rest.ErrForbidden):
 		p.RulesForbidden = true
 	case err != nil:
 		return Protection{}, fmt.Errorf("effective rules of %s: %w", repo, err)
@@ -219,9 +212,9 @@ func (r *Reader) Protection(ctx context.Context, repo, branch string) (Protectio
 	classicPath := "/repos/" + repo + "/branches/" + escaped + "/protection"
 	resp, err := r.client.Get(ctx, classicPath)
 	switch {
-	case statusIs(err, http.StatusNotFound):
+	case errors.Is(err, rest.ErrNotFound):
 		p.Classic.State = ClassicAbsent
-	case statusIs(err, http.StatusForbidden):
+	case errors.Is(err, rest.ErrForbidden):
 		p.Classic.State = ClassicUnreadable
 	case err != nil:
 		return Protection{}, fmt.Errorf("classic protection of %s: %w", repo, err)

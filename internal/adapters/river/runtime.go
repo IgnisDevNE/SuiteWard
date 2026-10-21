@@ -145,7 +145,8 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 	riverqueue.AddWorker(workers, &relayWorker{relay: relay})
 	relayJob := riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(config.OutboxPollInterval),
 		func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
-			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1}
+			// Runs do not pile up behind an unfinished one: the insert is unique while a run is unfinished.
+			return relayArgs{}, &riverqueue.InsertOpts{Queue: outboxQueue, MaxAttempts: 1, UniqueOpts: riverqueue.UniqueOpts{ByState: uniqueWhileActive}}
 		},
 		&riverqueue.PeriodicJobOpts{ID: "outbox_relay", RunOnStart: true})
 	periodicJobs, err := addPeriodicJobs(workers, config, wake)

@@ -194,7 +194,7 @@ func TestAnUnknownWakeKindInsertsNothingAndIsLoggedAtError(t *testing.T) {
 }
 
 // River refuses to insert a job whose kind no worker is registered for; with no Checks job that is the failing insert.
-func TestAFailingWakeUpIsLoggedAtWarnWithTheKindOnlyAndDoesNotFailTheRun(t *testing.T) {
+func TestAFailingWakeUpIsLoggedAtWarnWithItsCauseAndDoesNotFailTheRun(t *testing.T) {
 	w := newWorld(t, 5)
 	logs := &logCapture{}
 	runtime := startRuntime(t, w, wakeConfig(logs, nil, river.Wake{river.ChecksKind}, nil))
@@ -205,8 +205,8 @@ func TestAFailingWakeUpIsLoggedAtWarnWithTheKindOnlyAndDoesNotFailTheRun(t *test
 	if line == "" {
 		t.Fatalf("no Warn line names the kind %q:\n%s", river.ChecksKind, logs.String())
 	}
-	if strings.Contains(line, `"error"`) {
-		t.Errorf("the Warn line carries more than the kind: %s", line)
+	if !strings.Contains(line, `"error"`) {
+		t.Errorf("the Warn line does not carry the cause: %s", line)
 	}
 	if got := w.count("kind='github_checks'"); got != "0" {
 		t.Fatalf("%s checks jobs; want none", got)

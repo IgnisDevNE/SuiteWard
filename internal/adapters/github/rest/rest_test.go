@@ -497,6 +497,7 @@ func TestGetReturnsTypedErrors(t *testing.T) {
 		{name: "403 with remaining 0", status: 403, remaining: "0", want: rest.ErrRateLimited, until: reset.Add(skew)},
 		{name: "403 with Retry-After", status: 403, remaining: "4000", retryAfter: "60", want: rest.ErrRateLimited, until: t0.Add(time.Minute)},
 		{name: "429 with Retry-After", status: 429, retryAfter: "30", want: rest.ErrRateLimited, until: t0.Add(30 * time.Second)},
+		{name: "429 with a Retry-After past an hour", status: 429, retryAfter: "9223372036854775807", want: rest.ErrRateLimited, until: t0.Add(time.Hour)},
 		{name: "429 with remaining 0", status: 429, remaining: "0", want: rest.ErrRateLimited, until: reset.Add(skew)},
 		{name: "429 with an HTTP-date Retry-After", status: 429, retryAfter: t0.Add(-skew + 90*time.Second).UTC().Format(http.TimeFormat), want: rest.ErrRateLimited, until: t0.Add(90 * time.Second)},
 		{name: "429 without signals", status: 429, remaining: "4000"},

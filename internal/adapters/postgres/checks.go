@@ -55,17 +55,10 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 	if err := checks.ValidatePublish(r, at); err != nil {
 		return checks.Record{}, false, err
 	}
-	transaction, err := l.pool.Begin(ctx)
+	pull, err := int32Of(r.PullNumber)
 	if err != nil {
-		return checks.Record{}, false, fmt.Errorf("begin check transaction: %w", err)
+		return checks.Record{}, false, err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			rollback(ctx, transaction)
-		}
-	}()
-	q := dbgen.New(transaction)
 	build := func(generation int64) (governance.OutboxMessage, error) {
 		msg, err := message(generation)
 		if err != nil {
@@ -73,43 +66,37 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 		}
 		return msg, msg.Validate()
 	}
-	pull, err := int32Of(r.PullNumber)
-	if err != nil {
-		return checks.Record{}, false, err
-	}
-	key := dbgen.LockPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: pull}
-	row, err := q.LockPRCheck(ctx, key)
-	if errors.Is(err, pgx.ErrNoRows) {
-		var first checks.Record
-		var inserted bool
-		if first, inserted, err = insertFirstCheck(ctx, q, build, r, at); err != nil {
-			return checks.Record{}, false, err
-		}
-		if inserted {
-			if err := transaction.Commit(ctx); err != nil {
-				return checks.Record{}, false, translateWrite("commit check transaction", err)
+	var record checks.Record
+	var advanced bool
+	err = inTx(ctx, l.pool, "check", func(transaction pgx.Tx) error {
+		q := dbgen.New(transaction)
+		key := dbgen.LockPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: pull}
+		row, err := q.LockPRCheck(ctx, key)
+		if errors.Is(err, pgx.ErrNoRows) {
+			var inserted bool
+			if record, inserted, err = insertFirstCheck(ctx, q, build, r, pull, at); err != nil {
+				return err
 			}
-			committed = true
-			return first, true, nil
+			if inserted {
+				advanced = true
+				return nil
+			}
+			row, err = q.LockPRCheck(ctx, key) // a concurrent publication inserted it first
 		}
-		row, err = q.LockPRCheck(ctx, key) // a concurrent publication inserted it first
-	}
-	if err != nil {
-		return checks.Record{}, false, fmt.Errorf("lock check record: %w", err)
-	}
-	failedAt, err := failureTime(ctx, q, row.MessageKey)
+		if err != nil {
+			return fmt.Errorf("lock check record: %w", err)
+		}
+		failedAt, err := failureTime(ctx, q, row.MessageKey)
+		if err != nil {
+			return err
+		}
+		record, advanced, err = advanceCheck(ctx, q, row, r, at, failedAt, build)
+		return err
+	})
 	if err != nil {
 		return checks.Record{}, false, err
 	}
-	next, advance, err := advanceCheck(ctx, q, row, r, at, failedAt, build)
-	if err != nil {
-		return checks.Record{}, false, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return checks.Record{}, false, translateWrite("commit check transaction", err)
-	}
-	committed = true
-	return next, advance, nil
+	return record, advanced, nil
 }
 
 // failureTime is when the current message of a check failed; zero when it did not.
@@ -152,13 +139,9 @@ func advanceCheck(ctx context.Context, q *dbgen.Queries, row dbgen.PrCheck, r ch
 
 // insertFirstCheck writes the first record of a pull and its message. It reports inserted false, and writes
 // nothing, when the pull has a row after all: a concurrent first publication committed it while this insert waited.
-func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (governance.OutboxMessage, error), r checks.Result, at time.Time) (checks.Record, bool, error) {
+func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (governance.OutboxMessage, error), r checks.Result, pull int32, at time.Time) (checks.Record, bool, error) {
 	next, _ := checks.Next(checks.Record{}, false, r, at, time.Time{})
 	msg, err := build(next.Generation)
-	if err != nil {
-		return checks.Record{}, false, err
-	}
-	pull, err := int32Of(r.PullNumber)
 	if err != nil {
 		return checks.Record{}, false, err
 	}

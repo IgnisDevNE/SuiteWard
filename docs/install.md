@@ -770,7 +770,7 @@ podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-database
 
 If the role exists already (an earlier attempt that stopped after the SQL, or a rollback, section 11), the SQL fails with `role "suiteward_app" already exists` and no secret is created. Run the same chain with `ALTER ROLE suiteward_app PASSWORD '%s';` in place of `CREATE ROLE suiteward_app LOGIN PASSWORD '%s';`, which gives the role the new password.
 
-The migration unit refuses a role that is the owner, a superuser, has `BYPASSRLS`, or owns the schema. `suiteward_app` is none of them. Outside a rollback to v0.1.x (step 11.6), never use the owner's URL as `suiteward-database-url`.
+The migration unit refuses a role that is the owner or a member of it, a superuser, has `BYPASSRLS`, owns the schema or is a member of its owner, or owns a table in it. `suiteward_app` is none of them. Outside a rollback to v0.1.x (step 11.6), never use the owner's URL as `suiteward-database-url`.
 
 **10.12 Start the service (as `suiteward`).** Run:
 
@@ -1169,7 +1169,7 @@ Common problems:
 - **The service restarts in a loop and its journal says `schema version X, this build requires Y`.** The service refuses a schema that is older than its image, and it never migrates. Someone changed an image and restarted `suiteward.service` alone, or the migration has not run. As `suiteward`, restart the migration unit, which migrates and restarts the service: `systemctl --user restart suiteward-migrate.service`. If the message says the database was migrated by a newer release, the image is older than the schema: use the newer release, or restore a backup (step 11.6). Never start an older image on the database.
 - **`suiteward-migrate.service` fails.** Read its journal: `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`. The unit is not retried by itself: the service stays down until you fix the cause and run `systemctl --user start suiteward.service`. The usual causes are these:
   - The database role `suiteward_app` does not exist: create it, as step 10.11 says. A fresh database volume has no role.
-  - The message says the service must connect as a least-privilege role: `suiteward-database-url` names a role that owns the schema, is a superuser or has `BYPASSRLS`, for example the owner's URL. Replace the secret by the URL of `suiteward_app` (step 10.11).
+  - The message says the service must connect as a least-privilege role: `suiteward-database-url` names a role that owns the schema or a table in it, is a member of the owner, a superuser or has `BYPASSRLS`, for example the owner's URL. Replace the secret by the URL of `suiteward_app` (step 10.11).
   - The message says the database is not reachable after 30 attempts, or that it refused the owner connection: the database is not running or not healthy (`podman ps`), or `suiteward-database-owner-url` holds a password that the database does not have.
   - The message starts with `migrate the database`: a migration failed. Report the message and do not edit the database. The schema is left as the failed migration left it, so restore your backup before you try another image (step 11.6).
 - **The service stays down after a power loss.** If PostgreSQL's crash recovery takes longer than the migration's wait, the migration fails closed and the service stays down. Wait until the database accepts connections (`podman ps` shows `suiteward-db` healthy), then run `systemctl --user start suiteward.service`.

@@ -28,68 +28,55 @@ func (s *Store) Enroll(ctx context.Context, e owner.Enrollment) error {
 	if err != nil {
 		return err
 	}
-	transaction, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin owner enrollment transaction: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			rollback(ctx, transaction)
+	return inTx(ctx, s.pool, "owner enrollment", func(transaction pgx.Tx) error {
+		q := dbgen.New(transaction)
+		if err := q.LockOwnerEnrollment(ctx); err != nil {
+			return fmt.Errorf("lock owner enrollment: %w", err)
 		}
-	}()
-	q := dbgen.New(transaction)
+		previous, err := q.GetOwnerEnrollment(ctx)
+		enrolled := !errors.Is(err, pgx.ErrNoRows)
+		if err != nil && enrolled {
+			return fmt.Errorf("read owner enrollment: %w", err)
+		}
+		projects := slices.Clone(e.Projects)
+		slices.SortFunc(projects, func(a, b owner.ProjectPolicy) int { return cmp.Compare(a.RepositoryID, b.RepositoryID) })
+		if enrolled && previous.AccountID != e.Owner.AccountID {
+			if err := refuseTakeover(ctx, q, projects); err != nil {
+				return err
+			}
+		}
 
-	if err := q.LockOwnerEnrollment(ctx); err != nil {
-		return fmt.Errorf("lock owner enrollment: %w", err)
-	}
-	previous, err := q.GetOwnerEnrollment(ctx)
-	enrolled := !errors.Is(err, pgx.ErrNoRows)
-	if err != nil && enrolled {
-		return fmt.Errorf("read owner enrollment: %w", err)
-	}
-	projects := slices.Clone(e.Projects)
-	slices.SortFunc(projects, func(a, b owner.ProjectPolicy) int { return cmp.Compare(a.RepositoryID, b.RepositoryID) })
-	if enrolled && previous.AccountID != e.Owner.AccountID {
-		if err := refuseTakeover(ctx, q, projects); err != nil {
-			return err
+		generation := previous.Generation + 1 // zero before the first enrollment
+		revision := string(owner.RevisionID(generation))
+		for _, p := range projects {
+			err := q.InsertPolicy(ctx, dbgen.InsertPolicyParams{ProjectID: string(owner.ProjectID(p.RepositoryID)), RevisionID: revision,
+				OwnerID: string(owner.PrincipalID(e.Owner.AccountID)), OwnerKind: ownerKind})
+			if err != nil {
+				return fmt.Errorf("write policy of repository %d: %w", p.RepositoryID, err)
+			}
 		}
-	}
-
-	generation := previous.Generation + 1 // zero before the first enrollment
-	revision := string(owner.RevisionID(generation))
-	for _, p := range projects {
-		err := q.InsertPolicy(ctx, dbgen.InsertPolicyParams{ProjectID: string(owner.ProjectID(p.RepositoryID)), RevisionID: revision,
-			OwnerID: string(owner.PrincipalID(e.Owner.AccountID)), OwnerKind: ownerKind})
+		err = q.UpsertOwnerEnrollment(ctx, dbgen.UpsertOwnerEnrollmentParams{Generation: generation, AccountID: e.Owner.AccountID, Login: e.Owner.Login,
+			Secret: []byte(e.Secret), Tier: e.Tier, PolicyRevisionID: revision, EnrolledAt: timestamp(e.EnrolledAt)})
 		if err != nil {
-			return fmt.Errorf("write policy of repository %d: %w", p.RepositoryID, err)
+			return fmt.Errorf("write owner enrollment: %w", err)
 		}
-	}
-	err = q.UpsertOwnerEnrollment(ctx, dbgen.UpsertOwnerEnrollmentParams{Generation: generation, AccountID: e.Owner.AccountID, Login: e.Owner.Login,
-		Secret: []byte(e.Secret), Tier: e.Tier, PolicyRevisionID: revision, EnrolledAt: timestamp(e.EnrolledAt)})
-	if err != nil {
-		return fmt.Errorf("write owner enrollment: %w", err)
-	}
-	for _, p := range projects {
-		err := q.InsertOwnerTestCheck(ctx, dbgen.InsertOwnerTestCheckParams{RepositoryID: p.RepositoryID, PolicyRevisionID: revision,
-			ProjectID: string(owner.ProjectID(p.RepositoryID)), Repo: p.Repo, TestCheck: p.TestCheck})
+		for _, p := range projects {
+			err := q.InsertOwnerTestCheck(ctx, dbgen.InsertOwnerTestCheckParams{RepositoryID: p.RepositoryID, PolicyRevisionID: revision,
+				ProjectID: string(owner.ProjectID(p.RepositoryID)), Repo: p.Repo, TestCheck: p.TestCheck})
+			if err != nil {
+				return fmt.Errorf("write test check of repository %d: %w", p.RepositoryID, err)
+			}
+		}
+		inserted, err := q.InsertConsumedStep(ctx, dbgen.InsertConsumedStepParams{AccountID: e.Owner.AccountID, Step: e.Step, ConsumedAt: timestamp(e.EnrolledAt),
+			SourceCommandID: string(owner.SetupSource(generation))})
 		if err != nil {
-			return fmt.Errorf("write test check of repository %d: %w", p.RepositoryID, err)
+			return fmt.Errorf("consume TOTP step: %w", err)
 		}
-	}
-	inserted, err := q.InsertConsumedStep(ctx, dbgen.InsertConsumedStepParams{AccountID: e.Owner.AccountID, Step: e.Step, ConsumedAt: timestamp(e.EnrolledAt),
-		SourceCommandID: string(owner.SetupSource(generation))})
-	if err != nil {
-		return fmt.Errorf("consume TOTP step: %w", err)
-	}
-	if inserted == 0 {
-		return owner.ErrStepUsed
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit owner enrollment transaction: %w", err)
-	}
-	committed = true
-	return nil
+		if inserted == 0 {
+			return owner.ErrStepUsed
+		}
+		return nil
+	})
 }
 
 // refuseTakeover rejects an enrollment by another owner of a project that already has a Suite.

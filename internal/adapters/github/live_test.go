@@ -109,7 +109,7 @@ func TestLive(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Token (also fails when granted permissions differ from %v): %s", readPermissions, failure(err))
 		}
-		t.Logf("token identity %s, expires %s", tok.Identity(), tok.ExpiresAt().UTC().Format(time.RFC3339))
+		t.Logf("token identity %s", tok.Identity())
 	})
 
 	t.Run("open pulls", func(t *testing.T) {

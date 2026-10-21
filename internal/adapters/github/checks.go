@@ -39,9 +39,6 @@ func NewChecks(client *rest.Client) (*Checks, error) {
 	return &Checks{client: client}, nil
 }
 
-// maxCheckBody is the body limit of rest.Post, checked here to name the cause.
-const maxCheckBody = 64 << 10
-
 func (r CheckRun) validate() error {
 	switch {
 	case r.Name == "":
@@ -84,24 +81,10 @@ func (c *Checks) Post(ctx context.Context, repo string, run CheckRun) (int64, er
 	if err != nil {
 		return 0, fmt.Errorf("encode check run on %s of %s: %w", run.HeadSHA, repo, err)
 	}
-	if len(payload) > maxCheckBody {
-		return 0, fmt.Errorf("%w: check run body of %d bytes exceeds %d", ErrInvalidArgument, len(payload), maxCheckBody)
+	if len(payload) > rest.MaxPostBody { // rest.Post checks it too; checked here to name the cause
+		return 0, fmt.Errorf("%w: check run body of %d bytes exceeds %d", ErrInvalidArgument, len(payload), rest.MaxPostBody)
 	}
-	path := "/repos/" + repo + "/check-runs"
-	resp, err := c.client.Post(ctx, path, payload)
-	if err != nil {
-		return 0, fmt.Errorf("post check run on %s of %s: %w", run.HeadSHA, repo, err)
-	}
-	var created struct {
-		ID int64 `json:"id"`
-	}
-	if err := decode(path, resp.Body, &created); err != nil {
-		return 0, err
-	}
-	if created.ID <= 0 {
-		return 0, fmt.Errorf("%w: the answer to %s has no check run id", ErrInvalidResponse, path)
-	}
-	return created.ID, nil
+	return postID(ctx, c.client, "/repos/"+repo+"/check-runs", payload, "check run", fmt.Sprintf("%s of %s", run.HeadSHA, repo))
 }
 
 type checkRunJSON struct {

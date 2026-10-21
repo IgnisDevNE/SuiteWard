@@ -150,6 +150,97 @@ func TestGrantAppRefusesARoleThatIsNotLeastPrivilege(t *testing.T) {
 	}
 }
 
+// A member of the migration role inherits its privileges on the tables, and a role that owns a table can drop the
+// triggers on it: neither may be the application role.
+func TestGrantAppRefusesAMemberOfTheMigrationRoleAndAnOwnerOfATable(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, database schemaDatabase, role string){
+		"suiteward_test_member": func(t *testing.T, database schemaDatabase, role string) {
+			var owner string
+			if err := database.conn.QueryRow(t.Context(), "SELECT current_user").Scan(&owner); err != nil {
+				t.Fatal(err)
+			}
+			schemaExec(t, database.conn, "GRANT "+pgx.Identifier{owner}.Sanitize()+" TO "+pgx.Identifier{role}.Sanitize())
+			t.Cleanup(func() { // roles outlive the schema, and the membership would leak into other tests
+				_, _ = database.conn.Exec(context.Background(), "REVOKE "+pgx.Identifier{owner}.Sanitize()+" FROM "+pgx.Identifier{role}.Sanitize())
+			})
+		},
+		"suiteward_test_table_owner": func(t *testing.T, database schemaDatabase, role string) {
+			r := pgx.Identifier{role}.Sanitize()
+			schemaExec(t, database.conn, "GRANT CREATE ON SCHEMA "+pgx.Identifier{database.schema}.Sanitize()+" TO "+r+"; CREATE TABLE owned (x int); ALTER TABLE owned OWNER TO "+r)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			database := newSchemaDatabase(t)
+			if err := migrations.Up(t.Context(), database.url); err != nil {
+				t.Fatal(err)
+			}
+			pgtest.EnsureNamedRole(t, database.url, name, "")
+			setup(t, database, name)
+			if err := migrations.GrantApp(t.Context(), database.url, name); err == nil || !strings.Contains(err.Error(), "least-privilege") {
+				t.Fatalf("GrantApp for %s = %v; want a least-privilege refusal", name, err)
+			}
+		})
+	}
+}
+
+// A schema whose name needs quoting is still the schema the role is checked against.
+func TestGrantAppRefusesATableOwnerInASchemaThatNeedsQuoting(t *testing.T) {
+	base := newSchemaDatabase(t)
+	schema := "Mixed_" + base.schema
+	identifier := pgx.Identifier{schema}.Sanitize()
+	schemaExec(t, base.conn, "CREATE SCHEMA "+identifier)
+	t.Cleanup(func() { _, _ = base.conn.Exec(context.Background(), "DROP SCHEMA "+identifier+" CASCADE") }) // cleanup path: the base schema's own cleanup reports a broken connection
+	parsed, err := url.Parse(base.url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", identifier) // quoted, or the server folds the name to lower case
+	parsed.RawQuery = query.Encode()
+	mixed := parsed.String()
+	if err := migrations.Up(t.Context(), mixed); err != nil {
+		t.Fatal(err)
+	}
+	const name = "suiteward_test_quoted_owner"
+	pgtest.EnsureNamedRole(t, mixed, name, "")
+	schemaExec(t, base.conn, "GRANT CREATE ON SCHEMA "+identifier+" TO "+name+"; CREATE TABLE "+identifier+".owned (x int); ALTER TABLE "+identifier+".owned OWNER TO "+name)
+	if err := migrations.GrantApp(t.Context(), mixed, name); err == nil || !strings.Contains(err.Error(), "least-privilege") {
+		t.Fatalf("GrantApp for a table owner in %s = %v; want a least-privilege refusal", schema, err)
+	}
+}
+
+// The owner of the schema is not always the migration role: a member of it can drop what it owns too.
+func TestGrantAppRefusesAMemberOfTheSchemaOwner(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	const schemaOwner, member = "suiteward_test_schema_owner_role", "suiteward_test_schema_owner_member"
+	pgtest.EnsureNamedRole(t, database.url, schemaOwner, "")
+	pgtest.EnsureNamedRole(t, database.url, member, "")
+	schemaExec(t, database.conn, "ALTER SCHEMA "+pgx.Identifier{database.schema}.Sanitize()+" OWNER TO "+schemaOwner+"; GRANT "+schemaOwner+" TO "+member)
+	t.Cleanup(func() { // roles outlive the schema, and the membership would leak into other tests
+		_, _ = database.conn.Exec(context.Background(), "REVOKE "+schemaOwner+" FROM "+member)
+	})
+	if err := migrations.GrantApp(t.Context(), database.url, member); err == nil || !strings.Contains(err.Error(), "least-privilege") {
+		t.Fatalf("GrantApp for a member of the schema owner = %v; want a least-privilege refusal", err)
+	}
+}
+
+// GrantApp converges: a privilege the role holds that the contract withholds is taken back.
+func TestGrantAppRevokesTruncateTriggerAndReferences(t *testing.T) {
+	database, _ := appConnection(t)
+	schemaExec(t, database.conn, "GRANT TRUNCATE, TRIGGER, REFERENCES ON ALL TABLES IN SCHEMA "+pgx.Identifier{database.schema}.Sanitize()+" TO "+pgx.Identifier{pgtest.Role}.Sanitize())
+	if err := migrations.GrantApp(t.Context(), database.url, pgtest.Role); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := database.conn.QueryRow(t.Context(), `SELECT count(*) FROM information_schema.role_table_grants
+		WHERE grantee = $1 AND table_schema = current_schema() AND privilege_type IN ('TRUNCATE', 'TRIGGER', 'REFERENCES')`, pgtest.Role).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("%d withheld privileges remain after GrantApp, %v", left, err)
+	}
+}
+
 func password(t *testing.T, rawURL string) string {
 	t.Helper()
 	parsed, err := url.Parse(rawURL)

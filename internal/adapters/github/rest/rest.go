@@ -53,6 +53,9 @@ var maxBody int64 = 64 << 20
 // maxCacheEntries bounds the ETag cache by paths; a variable only so tests can lower it.
 var maxCacheEntries = 4096
 
+// maxCacheBytes bounds the ETag cache by the total size of its bodies; a variable only so tests can lower it.
+var maxCacheBytes = 32 << 20
+
 // maxClockOffset bounds the offset a Date header may set: windows last at most
 // an hour, so a Date further from the local clock is a stale or broken
 // intermediary and is ignored.
@@ -202,10 +205,11 @@ type Client struct {
 	base   string
 	budget *Budget
 
-	mu       sync.Mutex
-	identity string            // token identity the cache belongs to
-	cache    map[string]cached // by request path, at most maxCacheEntries
-	tick     uint64
+	mu         sync.Mutex
+	identity   string            // token identity the cache belongs to
+	cache      map[string]cached // by request path, at most maxCacheEntries
+	cacheBytes int               // total size of the cached bodies, at most maxCacheBytes
+	tick       uint64
 }
 
 // NewClient returns a client; baseURL must be absolute and carry no query,

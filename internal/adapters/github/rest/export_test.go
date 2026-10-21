@@ -24,3 +24,18 @@ func (c *Client) CacheLen() int {
 	defer c.mu.Unlock()
 	return len(c.cache)
 }
+
+// LimitCacheBytesTo lowers the byte bound of the ETag cache for the duration of the test.
+func LimitCacheBytesTo(t testing.TB, n int) {
+	t.Helper()
+	old := maxCacheBytes
+	maxCacheBytes = n
+	t.Cleanup(func() { maxCacheBytes = old })
+}
+
+// CacheBytes is the total size of the bodies the client caches.
+func (c *Client) CacheBytes() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cacheBytes
+}

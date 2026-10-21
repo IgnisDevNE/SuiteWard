@@ -9,11 +9,17 @@ Install-ArchiveTool $context 'zizmor'
 Install-ArchiveTool $context 'gitleaks'
 Push-Location -LiteralPath $Root
 try {
-    # These files are read from the scanned tree and could narrow what the scanners see; the tools run with their defaults only.
-    foreach ($config in '.gitleaks.toml', '.gitleaksignore', 'zizmor.yml', '.github/zizmor.yml') {
+    # These files could narrow what the scanners see. The tools also run without configuration (below); this is the friendly error.
+    foreach ($config in '.gitleaks.toml', '.gitleaksignore', 'zizmor.yml', 'zizmor.yaml', '.github/zizmor.yml', '.github/zizmor.yaml') {
         if (Test-Path -LiteralPath $config) { throw "$config would change what the scanners report; remove it." }
     }
-    & (Get-ToolPath $context 'zizmor') --offline --no-progress .github/workflows
+    # Configuration also comes from the environment, and zizmor honors inline ignore comments: run with neither.
+    $saved = @{}
+    foreach ($name in 'ZIZMOR_CONFIG', 'GITLEAKS_CONFIG', 'GITLEAKS_CONFIG_TOML') {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    }
+    & (Get-ToolPath $context 'zizmor') --offline --no-progress --no-config --no-ignores .github/workflows
     if ($LASTEXITCODE -ne 0) { throw 'zizmor reported findings in the workflows.' }
     # A shallow checkout hides the history the scan exists to read.
     if ((git rev-parse --is-shallow-repository) -ne 'false') { throw 'The history scan needs a full clone; fetch the full history.' }
@@ -22,11 +28,14 @@ try {
     try {
         & (Get-ToolPath $context 'gitleaks') git --redact --ignore-gitleaks-allow --no-banner --no-color --log-level error --report-format json --report-path $report .
         if ($LASTEXITCODE -ne 0) {
-            if (Test-Path -LiteralPath $report) {
-                foreach ($finding in Get-Content -LiteralPath $report -Raw | ConvertFrom-Json) { Write-Host "gitleaks: $($finding.RuleID) in $($finding.File):$($finding.StartLine) at commit $($finding.Commit)" }
-            }
+            # Exit 1 with a report is a finding; anything else is the tool failing, which must not read as a secret.
+            if ($LASTEXITCODE -ne 1 -or -not (Test-Path -LiteralPath $report)) { throw "gitleaks failed (exit $LASTEXITCODE) without a report." }
+            foreach ($finding in Get-Content -LiteralPath $report -Raw | ConvertFrom-Json) { Write-Host "gitleaks: $($finding.RuleID) in $($finding.File):$($finding.StartLine) at commit $($finding.Commit)" }
             throw 'gitleaks found a secret in the git history.'
         }
     } finally { if (Test-Path -LiteralPath $report) { Remove-Item -LiteralPath $report } }
     Write-Host 'Workflow audit and history secret scan passed.'
-} finally { Pop-Location }
+} finally {
+    Pop-Location
+    if (Test-Path variable:saved) { Restore-DevEnvironment $saved }
+}

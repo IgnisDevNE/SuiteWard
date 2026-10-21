@@ -61,7 +61,15 @@ Worktrees live at `D:/Repos/SuiteWard-worktrees/<phase>-<task>`, for example `D:
 
 **After a phase's PR is merged**, the orchestrator:
 - removes its task worktrees. `git worktree remove` stops at the read-only Go module cache inside a checkout, so delete the folder with `Remove-Item -Recurse -Force` once git no longer lists it;
-- cleans the Memtrace graph: `cleanup_worktrees`, then `cleanup_stale_records` with `check_missing` and `check_stale_spans`, as a dry run first.
+- resets the Memtrace store and indexes `main` afresh (owner, 2026-10-21). Stale branch copies and records then never pile up, and a fresh index is much faster than cleaning a large store record by record:
+  1. In PowerShell, from the main checkout, set `$env:MEMTRACE_MEMDB_DATA_DIR = 'D:\Repos\SuiteWard\.memdb'` and `$env:MEMTRACE_ALLOW_DESTRUCTIVE_DATA_DIR = '\\?\D:\Repos\SuiteWard\.memdb'`, then run `memtrace reset`.
+     - The reset stops the Memtrace runtime.
+     - It moves the old store to `.memdb.history/`, which the owner purges with `memtrace history purge --store D:\Repos\SuiteWard\.memdb --delete-forever`.
+  2. Start the runtime again with `memtrace start --headless`, as a background command.
+  3. Index through the MCP tool `index_directory`, with `path` the main checkout, `repo_id: SuiteWard`, `branch: main` and `defer_replay: true` as the only option.
+     - Embeddings stay on, so every graph and search feature works.
+     - Only the git-history replay is deferred. The project does not use it, and it is the slow part.
+     - If the call answers `peer_indexing`, the runtime is already indexing: wait for its job (`list_jobs`, `check_job_status`) instead of starting another.
 
 ## Reporting to the user
 

@@ -5,6 +5,7 @@
 /outputs/
 /coverage.out
 /.memdb/
+/.memdb.history/
 /.memtrace/
 /.env
 /.env.*

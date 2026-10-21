@@ -34,7 +34,7 @@ Volume=suiteward-data.volume:/data
 ReadOnly=true
 DropCapability=ALL
 NoNewPrivileges=true
-# The stop timeout (45 s) must exceed SUITEWARD_SHUTDOWN_TIMEOUT (30 s by default). No quadlet key for it or the memory limit in 4.9.
+# The stop timeout (45 s) must exceed SUITEWARD_SHUTDOWN_TIMEOUT (30 s by default). It and the memory limit go through PodmanArgs (Podman 5.5 or later).
 PodmanArgs=--memory=256m --stop-timeout=45
 
 [Service]

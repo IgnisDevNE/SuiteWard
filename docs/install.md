@@ -516,6 +516,7 @@ NFT=$(sudo sh -c 'command -v nft')
 sudo tee /etc/systemd/system/suiteward-imds-block.service >/dev/null <<EOF
 [Unit]
 Description=Reject the instance metadata service for the suiteward user
+Before=user@.service
 After=nftables.service
 
 [Service]
@@ -545,7 +546,7 @@ sudo nft list table inet suiteward_imds
 
 Expect the table to list the `reject` rule for `169.254.169.254`. The rule covers IPv4 only.
 
-Open a shell as `suiteward` again (step 10.1) and run the same check as before. It must now print `000`, confirming the service account is refused at that address:
+Open a shell as `suiteward` again (step 10.1) and run the same check as before. It must now print `000`, confirming the service account is refused at that address. If it still prints `200`, stop: the rule does not cover the container traffic, and the service must not run on this host until you fix it.
 
 ```
 podman run --rm docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/api/token
@@ -646,7 +647,19 @@ podman pull docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e041
 podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
 ```
 
-Expect a digest line for each pull. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. The pinning command below reads the digest of the pulled release image itself.
+Expect a digest line for each pull. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. The pinning command below reads the digest of the pulled release image itself. Before you pin it, verify that the release workflow signed that digest. Print the digest on the host:
+
+``````
+podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z
+``````
+
+Then verify it on any machine that has cosign 3.x, for example your own PC, from the release source (the host does not need cosign):
+
+``````
+pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<digest>
+``````
+
+Expect `Verified: … was signed by the SuiteWard release workflow.` The script runs `cosign verify` with the fixed identity `^https://github\.com/IgnisDevNE/SuiteWard/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` and the issuer `https://token.actions.githubusercontent.com`; you can run `cosign verify --certificate-identity-regexp <identity> --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/ignisdevne/suiteward@sha256:<digest>` yourself instead. If it fails, do not pin that digest.
 
 Create the directory:
 
@@ -800,7 +813,7 @@ podman run --rm --network suiteward docker.io/curlimages/curl@sha256:58adaa4e8dc
 
 Expect `200`. `403` means the shared unauthenticated GitHub rate limit is used up: wait, then run it again. `000` means the host cannot reach GitHub, so fix the network path before you go on.
 
-Then the metadata address, if you did step 10.5. The service network is not the network that step used, so check it again. It must print `000`:
+Then the metadata address, if you did step 10.5. The service network is not the network that step used, so check it again. It must print `000`. If it prints `200`, stop: the rule does not cover the container traffic.
 
 ```
 podman run --rm --network suiteward docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' -o /dev/null -w '%{http_code}\n' http://169.254.169.254/latest/api/token
@@ -845,10 +858,10 @@ podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
 **11.3 Update an isolated host.** Read the release notes first. Compare the new release's `deploy/quadlet/*` files with the units installed in `~/.config/containers/systemd/`, and carry over anything the new release adds: a new secret (as `suiteward`), a new entry in `/etc/suiteward/github.env` (as the administrator), or a new setting in a unit file (as `suiteward`). Keep a copy of the units you replace, in case you roll back:
 
 ```
-cp -r ~/.config/containers/systemd ~/systemd-units-<old version>
+cp -r ~/.config/containers/systemd ~/systemd-units-$(date +%Y%m%d-%H%M%S)
 ```
 
-Then change BOTH `Image=` lines to the digest of the image you pulled in step 11.2, the one in `suiteward-migrate.container` and the one in `suiteward.container`. They must stay identical, because the migration must run the same release as the service. The chain reads the digest and stops if it is empty:
+Verify the signature of the digest you pulled, as step 10.9 says (`podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z`, then `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<digest>` on a machine with cosign 3.x). Then change BOTH `Image=` lines to the digest of the image you pulled in step 11.2, the one in `suiteward-migrate.container` and the one in `suiteward.container`. They must stay identical, because the migration must run the same release as the service. The chain reads the digest and stops if it is empty:
 
 ```
 d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:vX.Y.Z) && [ -n "$d" ] &&
@@ -882,10 +895,14 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
 **11.5 Upgrade an isolated host from v0.1.x.** v0.1.x ran the service as the database owner and migrated inside it. This release splits the roles, so the first upgrade needs three extra steps before the update of step 11.3: the owner URL moves to its own secret, the role `suiteward_app` is created with a new secret, and the migration unit is installed. This guide covers AlmaLinux 9 only. A v0.1.x host on another distribution is not covered: install a new host as in section 10, then restore your backup there ([the backup runbook](backup.md)). On the AlmaLinux 9 host, as `suiteward`:
 
 1. Back up, as in step 11.1, and keep the copy of the units (the `cp` command of step 11.3). Pull the release (step 11.2).
-2. Stop the service. The database keeps running:
+2. Stop the service. The database keeps running. If the v0.1.x docs had you enable automatic updates, disable the timer too, and keep it disabled (also before a rollback to v0.1.x): Podman cannot update the migration unit, so an automatic update would start the service alone on an old schema and loop. Disabling it when it was never enabled does no harm:
 
    ```
    systemctl --user stop suiteward.service
+   ```
+
+   ```
+   systemctl --user disable --now podman-auto-update.timer
    ```
 
 3. Copy the owner URL into its own secret. In v0.1.x, the secret `suiteward-database-url` holds the owner URL. The command reads it into a variable and writes it without a trailing newline. It prints the ID of the new secret, not its value:
@@ -933,14 +950,14 @@ On an isolated host, as `suiteward`:
    systemctl --user stop suiteward.service suiteward-migrate.service
    ```
 
-2. When you roll back to v0.1.x, put the old units back: the copy you made in step 11.3, or step 1 of 11.5, holds them. Remove the migration unit, and copy the old `suiteward.container` over the new one:
+2. When you roll back to v0.1.x, put the old units back: the dated copy you made in step 11.3, or step 1 of 11.5, holds them (`ls -d ~/systemd-units-*` lists the copies). Remove the migration unit, and copy the old `suiteward.container` over the new one:
 
    ```
    rm ~/.config/containers/systemd/suiteward-migrate.container
    ```
 
    ```
-   cp ~/systemd-units-<old version>/suiteward.container ~/.config/containers/systemd/suiteward.container
+   cp ~/systemd-units-<timestamp>/suiteward.container ~/.config/containers/systemd/suiteward.container
    ```
 
    When you roll back to an earlier release of this layout, put its digest into both `Image=` lines instead (step 11.3).

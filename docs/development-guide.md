@@ -1,7 +1,7 @@
 # SuiteWard development conventions
 
 - **Updated:** 2026-10-21
-- **Status:** Accepted conventions; delivered through M1.10 (`v0.1.3`), phase SH in progress.
+- **Status:** Accepted conventions; delivered through M1.10 (`v0.1.3`), phase SH done and phase M1.11 in progress.
 - **Scope:** How contributors and agents write SuiteWard code and tests.
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.
@@ -21,6 +21,8 @@ Tests should establish observable behavior and invariants rather than duplicate 
 Use small, purpose-built fakes at actual external boundaries. Pass controlled time and other nondeterministic inputs where a rule depends on them. A fake is not evidence that PostgreSQL transactions, filesystem behavior, or GitHub requests work correctly; adapter and integrated tests must exercise those real components as they are implemented.
 
 Domain and application tests need no external services (no database, container, or GitHub credentials). Later infrastructure tests must be identifiable and runnable separately. Parallel tests must own independent mutable resources; do not use timing sleeps as a substitute for coordinating concurrent test behavior.
+
+`go test -fuzz` leaves `fuzz-*` directories in the temp folder (`%TEMP%` on Windows). They are safe to delete when no fuzzing runs.
 
 Coverage targets and CI checks are defined in the [CI and coverage guide](ci-and-coverage.md). Detailed persistence and generated-code checks must be implemented with those capabilities.
 

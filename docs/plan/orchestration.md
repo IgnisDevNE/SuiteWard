@@ -47,6 +47,10 @@ Since M1.8, the host instance governs IgnisDevNE/SuiteWard. Its scope is in [`.s
 - The agent never reaches the host, its App key or its database. If one of them becomes reachable, it tells the owner instead of using it.
 - Keep test changes in as few PRs and pushes as possible, since each protected revision costs the owner one approval.
 
+## Commands that run unattended
+
+A subagent never starts an interactive REPL, a prompt that waits for input, or a long-running program (a server, a watcher) without a timeout. Every background command has a timeout too, and the orchestrator stops a background task that outlives its purpose. A REPL left in a background task once wrote a 57 GB log.
+
 ## Parallel waves
 
 Tasks without shared files and with satisfied dependencies run in parallel in one wave. Shared declarations, module files, migrations, generators, CI, and composition have exactly one owner per wave; a task needing such a file it does not own stops and reports. A later wave starts only after its dependencies are merged into the phase branch, or when it depends only on a frozen contract document.

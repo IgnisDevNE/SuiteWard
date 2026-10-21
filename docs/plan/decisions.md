@@ -1,6 +1,6 @@
 # Decision register
 
-- **Updated:** 2026-10-20 (phase SH: security review decisions (closed pull requests, commands on another pull request, case-fold collisions, declaration size and unconfigured repositories), the isolated host, updates and scanners; stale release, update and host lines corrected)
+- **Updated:** 2026-10-21 (D-DEPLOY and D-JOB-RETENTION decided, the Deploy workflow retired; phase SH, 2026-10-20: security review decisions (closed pull requests, commands on another pull request, case-fold collisions, declaration size and unconfigured repositories), the isolated host, updates and scanners; stale release, update and host lines corrected)
 
 These gates record product and implementation choices that accepted ADRs deliberately left open. They do not reopen accepted ADRs. The integrator can resolve implementation choices within accepted policy; changes to product authority, scope, or release commitments need the project owner. Do not choose an unresolved product policy to unblock a task; record the decision needed and take independent ready work.
 
@@ -384,8 +384,8 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
 - **Versions.**
   - A release is a `vX.Y.Z` git tag on a commit of `main`, and the release workflow checks that the commit is an ancestor of `main`. A pre-release `vX.Y.Z-rc.N` may sit on a phase branch.
   - The workflow publishes the image tag `vX.Y.Z`. A release that is not a pre-release also moves `latest-stable`; a pre-release never moves it.
-  - `sha-<commit>` and `deploy` stay our internal build and promotion tags.
-  - **Publishing needs the owner's approval in a protected `release` environment**, as `remote-poc` does for promotion. The bot could push a tag by itself: it has Contents write, and it is the governed party once SuiteWard governs its own tests. So the tag alone is not the authorization.
+  - `sha-<commit>` and `deploy` were our internal build and promotion tags; both were retired on 2026-10-21 (D-DEPLOY), and releases are the only published images.
+  - **Publishing needs the owner's approval in a protected `release` environment**, as the retired `remote-poc` did for promotion. The bot could push a tag by itself: it has Contents write, and it is the governed party once SuiteWard governs its own tests. So the tag alone is not the authorization.
   - The bot pushes a tag only with the owner's authorization quoting the commit.
   - **Amended 2026-10-17 (owner): only the owner creates release tags.**
     - The workflow that runs on a tag is the one in the tagged commit, so a tag pushed by the bot could carry a `release.yml` without the environment gate.
@@ -427,9 +427,9 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
   - The ruleset requires `SuiteWard / Contract` from the host's runtime App only.
   - A PR that touches protected files then also needs the owner's approval of its current revision.
   - **The governing host follows release tags** (2026-10-17; the owner asked for the best practice).
-    - It runs a pinned `vX.Y.Z` and is updated by hand, exactly as the install guide says, never by auto-update from `:deploy`.
+    - It runs a pinned `vX.Y.Z` and is updated by hand, exactly as the install guide says, never by auto-update.
     - The reason: an instance that auto-deploys what is merged into the repository it governs would let a merged change replace its own governor.
-    - Deployment from `main` (D-DEPLOY) still builds and promotes `:deploy` for verification, but the governing host does not follow it.
+    - The Deploy workflow and its `:deploy` tag were retired on 2026-10-21 (D-DEPLOY), so there is nothing else for the governing host to follow.
   - **What C2 set up** (owner, 2026-10-17):
     - **The host** runs `v0.1.0` pinned by digest, with `SUITEWARD_JOB_TIMEOUT=3m`.
     - **The scope** covers tests and runner. It protects the Go tests and testdata, the script tests, the CI scripts (`scripts/ci.ps1`, `scripts/check-*.ps1`, `scripts/dev-env.ps1`, and since H6 `scripts/dev.ps1`), the tool pins (`dev/tools.json`), `.golangci.yml` and `codecov.yml`, so that a PR cannot weaken `CI / Gate` or `codecov/patch` without an approval.
@@ -465,6 +465,20 @@ Accepted 2026-10-20 (owner), from the [threat model](../security/threat-model.md
   - the authenticator entry names the tier and the first 8 characters of the instance id, and `/status` shows those characters as `instance` (the full id is already public in the pull request comments).
 - **Backlog (owner, 2026-10-20):** a maintainer command to authorize or refuse the merge of a fork pull request, after a deeper analysis. Until then a fork pull request fails closed (D-INTEGRATION).
 
+### D-DEPLOY: Remote verification host
+
+Decided 2026-10-06 and settled by the S1 findings; the deployment workflow was retired on 2026-10-21 (owner).
+
+- **Host.** AWS EC2 in us-east-2 (cheapest region; close to the GitHub API), `t4g.small` Graviton (2 vCPU, 2 GiB; arm64, so images are multi-arch amd64+arm64), AlmaLinux 9 (EL9 only, Podman 5.5 or later; the earlier Ubuntu host was replaced), 20 GiB encrypted gp3, 2 GiB swap, rootless Podman under an unprivileged `suiteward` user. PostgreSQL runs as a rootless container beside the service on both targets (the image pinned by digest, a named volume, the password in a Podman secret the owner creates). RDS stays the scale-out path, with ECS for the service, and EFS or the S3 adapter for artifacts.
+- **Access.** No inbound ports and no SSH daemon: administration only through SSM Session Manager (instance role limited to `AmazonSSMManagedInstanceCore`), and service access through Session Manager port forwarding (the Cloudflare tunnel was removed on 2026-10-19). An agent never holds host access; the owner runs host steps in their own Session Manager session.
+- **IMDS.** IMDSv2 is required. The hop limit of 1 does not stop a rootless container (S1), so a firewall rule on the host rejects `169.254.169.254` for the `suiteward` user and is re-verified with the S1 check; the SSM agent keeps its access.
+- **Updates.** The host pins a release's signed index digest in both unit files and moves it by hand (install guide, section 11). Nothing updates it by itself.
+- **Retired 2026-10-21.** The Deploy workflow (`deploy.yml`), the `:deploy` tag and the `remote-poc` environment are gone, and CI builds the image without pushing it. Releases are the only published images ([D-RELEASE](#d-release-platforms-versions-license-and-notices)).
+
+### D-JOB-RETENTION: How long finished jobs stay visible
+
+Decided 2026-10-21 (owner): River's cleaner defaults, with no configuration. Completed jobs stay 24 hours, cancelled and discarded jobs 7 days. The outbox keeps its terminal rows. It was raised by the M1.2 phase review.
+
 ### D-MIGRATIONS: Migration tooling
 
 Superseded by R1. Goose, pgx and sqlc stay ([ADR 0026](../decisions/0026-versioned-postgresql-migrations.md)); the migrations were reset to a single normalized `00001` (River and the outbox were added in M1.2) described in the [persistence contract](../contracts/persistence.md).
@@ -475,8 +489,6 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 
 ## Open
 
-- **D-DEPLOY:** remote verification host. Partly settled 2026-10-06: AWS EC2 in us-east-2 (cheapest region; close to the GitHub API), `t4g.small` Graviton (2 vCPU, 2 GiB; arm64, so images are multi-arch amd64+arm64), AlmaLinux 9 (EL9 only, Podman 5.5 or later; Ubuntu 24.04 with Podman 4.9.3 until 2026-10-20), 20 GiB encrypted gp3, 2 GiB swap, rootless Podman under an unprivileged `suiteward` user. No inbound ports and no SSH daemon; administration only through SSM Session Manager (instance role limited to `AmazonSSMManagedInstanceCore`; IMDSv2 is required; the hop limit of 1 does not stop a rootless container, see the IMDS mitigation below). Service access through Session Manager port forwarding (the Cloudflare tunnel was removed on 2026-10-19). Deployment is pull-based: CI publishes a multi-arch image to GHCR, promotion to the deploy tag requires the owner's approval in a protected environment, and the host's quadlets are pinned by digest: nothing updates them by itself (no `AutoUpdate=`), and the owner moves the digest by hand. Scale-out path: same image on ECS, PostgreSQL to RDS, artifacts to EFS or the S3 adapter. Done 2026-10-06: the AWS host; cost budget `suiteward-poc-monthly` (US$25/month measured before credits, email alerts at 80% actual and 100% forecast); Cloudflare tunnel `suiteward-poc` (`09d32d23-e113-48d3-b870-ec1acda0dc69`) running as a system service on the host with hostname `suiteward-poc.magalz.space` answering 404 for everything; the agent's AWS session logged out afterwards. Remaining before S1-D (historical: S1-D has run): a Cloudflare Access application for the hostname (owner, Zero Trust dashboard) before any route reaches a service, the GHCR deployment workflow with its protected environment, and the owner placing the test App key on the host through Session Manager. Settled 2026-10-10 from the S1 findings ([s1-github](../spikes/s1-github.md)): CI publishes `ghcr.io/ignisdevne/suiteward` (tags `sha-<commit>` and `deploy`) with a workflow using `GITHUB_TOKEN`; the package is public so the host holds no registry credential; moving `deploy` requires the owner's approval in the `remote-poc` environment (deployment branch rule: `phase/M1.2`, `phase/M1.4` since M1.4-D and `phase/M1.5` since M1.5; `main` is added when the owner decides); the owner adopts it on the host by changing the digest of the units and restarting `suiteward-migrate.service` (install guide, section 11; `AutoUpdate=registry` was removed in phase SH); access is Session Manager only (no SSH daemon, no Tailscale). PostgreSQL runs as a rootless container beside the service on both targets (the image pinned by digest in CI, a named volume, the password in a Podman secret the owner creates); RDS stays the scale-out path. IMDS: a firewall rule on the host rejects `169.254.169.254` for the `suiteward` user and is re-verified with the S1 check; the SSM agent keeps its access. Cancelling a stale run waiting for approval is a human action. An agent never holds host access; the owner runs host steps in their own Session Manager session. The S1 spike service, its Podman secret and volume are removed from the host by the owner. Decided 2026-10-17 (M1.8): `main` triggers the deployment and is added to the `remote-poc` deployment branches. The promotion approval stays.
-- **D-JOB-RETENTION:** how long finished jobs stay visible on `/status`. Until decided, River v0.49.0's cleaner defaults apply (completed and cancelled 24 hours, discarded 7 days); the outbox keeps its terminal rows. Raised by the M1.2 phase review.
 - **D-EXECUTION:** first executable profile and execution trust model; decided in M2 before implementation.
 - **D-MANAGED-EXECUTION:** future provider-hosted or customer-infrastructure execution; nothing scheduled.
 - **D-HARDENING-CONTROLS:** further signing, provenance and transparency controls where a concrete threat justifies them. Signing the release image against `release.yml` on a `refs/tags/v*` ref, with a provenance and an SBOM, is in place from the first release built after the 2026-10-20 amendment of ADR 0008 (D-RELEASE); what remains is M3's key management and other controls. Encrypting the TOTP secret at rest with a host key is an M3 candidate with ADR 0019 (ADR 0027).

@@ -103,7 +103,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	}
 	tier := string(cfg.Tier)
 	a := &api{store: store, owners: store, logger: logger, tier: tier}
-	backend := &mcpBackend{store: store, owners: store, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
+	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
 		if err != nil {
@@ -132,9 +132,10 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		integrityJob := &integrityJob{owners: store, suites: store, content: artifacts, store: store.Integrity(), logger: logger, now: time.Now}
 		riverConfig.Integrity = integrityJob.run
 		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish, githubCheckKind: checkPoster.publish}
-		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids, problems: problems, checks: checkProblems, merges: mergeProblems, integrity: &integrityStatus{owners: store, suites: store, store: store.Integrity()}}
+		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids, problems: problems, checks: checkProblems, merges: mergeProblems, integrity: &integrityStatus{owners: store, suites: store, store: store.Integrity()}, budget: gh.budget}
 		backend.repos = gh.repos
 		backend.ids = ids
+		backend.budget = gh.budget
 	}
 	runtime, err := river.NewRuntime(pool, store, riverConfig)
 	if err != nil {

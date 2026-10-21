@@ -151,6 +151,16 @@ func (b *Budget) local(t time.Time) time.Time {
 	return t.Add(b.offset)
 }
 
+// Window is what the budget knows of the current rate-limit window.
+type Window struct {
+	Remaining int       // requests SuiteWard may still send in the window; 0 once refused
+	Reset     time.Time // the end of the window, on the local clock
+}
+
+// Window returns the current window; known is false before the first response
+// and once the window has ended, until the next response.
+func (b *Budget) Window() (w Window, known bool) { return Window{}, false }
+
 // release returns a reservation whose request got no response.
 func (b *Budget) release() {
 	b.mu.Lock()

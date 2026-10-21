@@ -138,6 +138,13 @@ func TestParse(t *testing.T) {
 		{"a fence in a quote that a bare fence ends", "> ```\n```\n/suiteward approve P1-R1 123456", notCommand},
 		{"a fence in a numbered item that a less indented fence ends", "1. ```\n  ```\n/suiteward approve P1-R1 123456", notCommand},
 		{"a fence in a list item runs to the end of the body", "- ```\n  code\n  ```\n/suiteward approve P1-R2 121212", notCommand},
+		{"an opener indented inside an open list item", "- item\n  ```\n  code\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"an opener indented inside an open numbered item", "1. item\n   ```\n   code\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"an opener indented inside a list item after a blank line", "- a\n\n  ```\n  x\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a top-level fence indented one column is skipped to the end", " ```\n```\n/suiteward approve P1-R1 123456", notCommand},
+		{"a backtick fence whose info string opens a comment", "``` <!--\n-->\n/suiteward approve P1-R1 123456", notCommand},
+		{"a tilde fence whose info string opens a comment", "~~~ <!--\n-->\n/suiteward approve P1-R1 123456", notCommand},
+		{"a fence whose info string holds a whole comment", "``` <!-- x -->\n/suiteward approve P1-R1 123456", notCommand},
 
 		// Malformed.
 		{"bare prefix", "/suiteward", malformed(commandtext.UnknownVerb)},

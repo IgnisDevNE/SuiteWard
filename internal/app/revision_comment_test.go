@@ -231,20 +231,21 @@ func TestBootstrapSummaryFromAPullStatesTheHeadAndNoBranch(t *testing.T) {
 		Include: want.Include, Runner: []string{}, Exclude: want.Exclude, IncludeTotal: want.IncludeTotal, ExcludeTotal: want.ExcludeTotal, Tier: commandtext.CoLocated}))
 }
 
-func TestBootstrapSummaryPayloadsWithoutASourceAreFromTheBranch(t *testing.T) {
+// Every release writes a source, so a summary without one is refused, not read as from the branch.
+func TestBootstrapSummaryRefusesAPayloadWithoutASource(t *testing.T) {
 	w := newCmtWorld(t)
 	var payload map[string]any
 	if err := json.Unmarshal(cmtMust(newSummaryMessage(cmtTarget(), cmtSummaryInputs())).Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	delete(payload["summary"].(map[string]any), "source") // a message written before M1.7b
+	delete(payload["summary"].(map[string]any), "source")
 	raw := cmtMust(json.Marshal(payload))
 
-	if err := w.pub.publish(t.Context(), "bootstrap-summary:1001:P1-R1", raw); err != nil {
-		t.Fatal(err)
+	if err := w.pub.publish(t.Context(), "bootstrap-summary:1001:P1-R1", raw); err == nil {
+		t.Fatal("publish accepted a summary without a source")
 	}
-	if body := w.writer.posts()[0].body; !strings.Contains(body, "on branch `main`") {
-		t.Fatalf("body %q does not name the branch", body)
+	if len(w.writer.posts()) != 0 {
+		t.Fatal("a comment was posted")
 	}
 }
 

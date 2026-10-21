@@ -21,7 +21,7 @@ func FuzzParse(f *testing.F) {
 		"/suiteward approve P1-R2 123456", "```\n/suiteward approve P1-R2 123456\n```", "~~~\n/suiteward propose\n",
 		"/SUITEWARD Approve P999999999-R1 000000", "/suiteward approve P01-R2 123456", "/suiteward skip 123456",
 		"/suiteward approve P1-R2 12345\u0663", "text\n \t/suiteward\trevoke P1-R1 111111 \t\r\n",
-		"\u017fuiteward approve P1-R1 123456", "````\n```\n/suiteward propose\n````",
+		"\u017fuiteward approve P1-R1 123456", "````\n```\n/suiteward propose\n````", "-->\n/suiteward approve P1-R2 123456", "```\n/suiteward approve P1-R2 123456",
 	} {
 		f.Add(seed)
 	}
@@ -35,10 +35,16 @@ func FuzzParse(f *testing.F) {
 		}
 		for _, mark := range []byte{'`', '~'} {
 			fence := strings.Repeat(string(mark), max(3, longestRun(body, mark)+1))
-			for _, wrapped := range []string{fence + "\n" + body, fence + "\n" + body + "\n" + fence} {
+			for _, wrapped := range []string{fence + "\n" + body, fence + "\n" + body + "\n" + fence, fence + " <!--\n" + body} {
 				if got := commandtext.Parse(wrapped); got.Kind != commandtext.KindNotCommand {
 					t.Fatalf("Parse read %+v inside a fence of %q around %q", got, mark, body)
 				}
+			}
+		}
+		// A fence opened in a list item runs to the end of the body, whatever the body holds.
+		for _, wrapped := range []string{"- ```\n" + body, "1. ```\n  " + body + "\n```", "- item\n  ```\n" + body + "\n```"} {
+			if got := commandtext.Parse(wrapped); got.Kind != commandtext.KindNotCommand {
+				t.Fatalf("Parse read %+v in a list item fence around %q", got, body)
 			}
 		}
 	})

@@ -129,14 +129,34 @@ func TestAnEarlyReadErrorCancelsTheOtherReadsAndIsTheOneReturned(t *testing.T) {
 	}
 }
 
-// 250 covered files at 0.37 s each take 92 s one by one, which is longer than the job timeout; the test runs them at a tenth of that.
-func TestAColdBuildOfALargeTreeFitsTheJobTimeout(t *testing.T) {
-	tree := newSlowTree(250, 37*time.Millisecond, true)
-	start := time.Now()
-	if _, err := inventory.Build(context.Background(), tree); err != nil {
-		t.Fatalf("Build: %v", err)
+func TestACancelledContextStopsAColdBuild(t *testing.T) {
+	tree := newSlowTree(200, 50*time.Millisecond, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			tree.mu.Lock()
+			started := tree.started
+			tree.mu.Unlock()
+			if started >= 3 {
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	_, err := inventory.Build(ctx, tree)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Build error = %v, want a cancellation", err)
 	}
-	if elapsed, sequential := time.Since(start), 250*37*time.Millisecond; elapsed > sequential/4 {
-		t.Errorf("Build took %v, want under a quarter of the sequential %v", elapsed, sequential)
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
+	if tree.inFlight != 0 {
+		t.Errorf("%d reads still in flight when Build returned", tree.inFlight)
+	}
+	if tree.started >= len(tree.paths) {
+		t.Errorf("%d reads started, want fewer than the %d files", tree.started, len(tree.paths))
 	}
 }

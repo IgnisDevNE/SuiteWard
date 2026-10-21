@@ -21,6 +21,7 @@ import (
 var (
 	connectAttempts = 30
 	connectInterval = time.Second
+	connectTimeout  = 5 * time.Second // one attempt
 )
 
 // runMigrate brings the schema to migrations.SupportedVersion as the owner of the schema and then grants the

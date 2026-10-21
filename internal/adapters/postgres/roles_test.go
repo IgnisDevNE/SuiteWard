@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -127,4 +128,34 @@ func TestGrantAppRefusesARoleThatIsMissingOrIsTheOwner(t *testing.T) {
 	if err := migrations.GrantApp(t.Context(), database.url, owner); err == nil {
 		t.Fatal("the migration role was accepted as the application role")
 	}
+}
+
+// The service must not connect as a role that could undo the split: GrantApp refuses a superuser, a role that
+// bypasses row security and the owner of the schema, and grants nothing to them.
+func TestGrantAppRefusesARoleThatIsNotLeastPrivilege(t *testing.T) {
+	for name, options := range map[string]string{"suiteward_test_super": "SUPERUSER", "suiteward_test_bypass": "BYPASSRLS", "suiteward_test_schema_owner": ""} {
+		t.Run(name, func(t *testing.T) {
+			database := newSchemaDatabase(t)
+			if err := migrations.Up(t.Context(), database.url); err != nil {
+				t.Fatal(err)
+			}
+			pgtest.EnsureNamedRole(t, database.url, name, options)
+			if options == "" {
+				schemaExec(t, database.conn, "ALTER SCHEMA "+pgx.Identifier{database.schema}.Sanitize()+" OWNER TO "+pgx.Identifier{name}.Sanitize())
+			}
+			if err := migrations.GrantApp(t.Context(), database.url, name); err == nil || !strings.Contains(err.Error(), "least-privilege") || strings.Contains(err.Error(), password(t, database.url)) {
+				t.Fatalf("GrantApp for %s = %v; want a least-privilege refusal without a secret", name, err)
+			}
+		})
+	}
+}
+
+func password(t *testing.T, rawURL string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := parsed.User.Password()
+	return secret
 }

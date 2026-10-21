@@ -25,14 +25,18 @@ const (
 
 // EnsureRole creates Role, when it is missing, with the password of ownerURL (or without one when ownerURL has none:
 // the cluster then trusts local connections). It is safe to call from parallel tests and packages.
-func EnsureRole(t testing.TB, ownerURL string) {
+func EnsureRole(t testing.TB, ownerURL string) { EnsureNamedRole(t, ownerURL, Role, "") }
+
+// EnsureNamedRole is EnsureRole for the role name, created with the CREATE ROLE options (for example "SUPERUSER"), for
+// the tests of the roles that must be refused.
+func EnsureNamedRole(t testing.TB, ownerURL, name, options string) {
 	t.Helper()
 	conn, err := pgx.Connect(t.Context(), ownerURL)
 	if err != nil {
 		t.Fatalf("connect the database owner: %v", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }() // a failed close only means the connection is gone
-	statement := "CREATE ROLE " + pgx.Identifier{Role}.Sanitize() + " LOGIN"
+	statement := "CREATE ROLE " + pgx.Identifier{name}.Sanitize() + " LOGIN " + options
 	if password := password(t, ownerURL); password != "" {
 		// CREATE ROLE takes no bind parameters: the server quotes the literal.
 		var quoted string
@@ -61,16 +65,19 @@ func AppURL(t testing.TB, ownerURL string) string {
 }
 
 // AsRole returns ownerURL with the user of Role, which has the owner's password.
-func AsRole(t testing.TB, ownerURL string) string {
+func AsRole(t testing.TB, ownerURL string) string { return AsUser(t, ownerURL, Role) }
+
+// AsUser returns ownerURL with the user, which has the owner's password.
+func AsUser(t testing.TB, ownerURL, user string) string {
 	t.Helper()
 	parsed, err := url.Parse(ownerURL)
 	if err != nil {
 		t.Fatal("the test database must be a PostgreSQL URL")
 	}
 	if password, ok := parsed.User.Password(); ok {
-		parsed.User = url.UserPassword(Role, password)
+		parsed.User = url.UserPassword(user, password)
 	} else {
-		parsed.User = url.User(Role)
+		parsed.User = url.User(user)
 	}
 	return parsed.String()
 }

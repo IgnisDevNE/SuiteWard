@@ -19,13 +19,12 @@ import (
 )
 
 // migrateVars is the environment of `suiteward migrate` for the schema of ownerURL: the service connects as the test
-// application role, the migration as the owner.
+// application role, the migration as the owner. The role that gets the grants is the user of DATABASE_URL.
 func migrateVars(t *testing.T, ownerURL string) map[string]string {
 	t.Helper()
 	pgtest.EnsureRole(t, ownerURL)
 	vars := serveVars(t, pgtest.AsRole(t, ownerURL))
 	vars["SUITEWARD_MIGRATION_DATABASE_URL"] = ownerURL
-	vars["SUITEWARD_DATABASE_APP_ROLE"] = pgtest.Role
 	return vars
 }
 
@@ -99,7 +98,7 @@ func TestMigrateNeedsTheOwnerURL(t *testing.T) {
 func TestMigrateNamesAMissingRoleAndLeaksNoSecret(t *testing.T) {
 	ownerURL := newEmptyDatabase(t)
 	vars := migrateVars(t, ownerURL)
-	vars["SUITEWARD_DATABASE_APP_ROLE"] = "suiteward_no_such_role"
+	vars["SUITEWARD_DATABASE_URL"] = pgtest.AsUser(t, ownerURL, "suiteward_no_such_role")
 	code, _, stderr := run([]string{"migrate"}, testEnv(vars))
 	if code != 1 || !strings.Contains(stderr, "suiteward_no_such_role") {
 		t.Fatalf("migrate with a missing role exited %d, stderr %q; want 1 naming the role", code, stderr)
@@ -175,5 +174,109 @@ func TestMigrateReachesADatabaseThatStartsAcceptingConnectionsLater(t *testing.T
 	defer late.Stop()
 	if code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars)); code != 0 {
 		t.Fatalf("migrate against a database that came up late exited %d: %s", code, stderr)
+	}
+}
+
+// A service that connects as the owner, or as a role that is a superuser, bypasses row security or owns the schema,
+// defeats the least-privilege split: migrate refuses before it migrates anything, and prints no URL.
+func TestMigrateRefusesAServiceRoleThatIsNotLeastPrivilege(t *testing.T) {
+	for name, options := range map[string]string{"suiteward_test_super": "SUPERUSER", "suiteward_test_bypass": "BYPASSRLS"} {
+		t.Run(options, func(t *testing.T) {
+			ownerURL := newEmptyDatabase(t)
+			vars := migrateVars(t, ownerURL)
+			pgtest.EnsureNamedRole(t, ownerURL, name, options)
+			vars["SUITEWARD_DATABASE_URL"] = pgtest.AsUser(t, ownerURL, name)
+			code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
+			if code != 1 || !strings.Contains(stderr, "least-privilege") || strings.Contains(stderr, password(t, ownerURL)) {
+				t.Fatalf("migrate for a %s role exited %d, stderr %q; want 1, the rule and no secret", options, code, stderr)
+			}
+			requireNothingMigrated(t, ownerURL)
+		})
+	}
+	t.Run("the owner", func(t *testing.T) {
+		ownerURL := newEmptyDatabase(t)
+		vars := migrateVars(t, ownerURL)
+		vars["SUITEWARD_DATABASE_URL"] = ownerURL
+		code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
+		if code != 1 || !strings.Contains(stderr, "least-privilege") || strings.Contains(stderr, password(t, ownerURL)) {
+			t.Fatalf("migrate for the owner exited %d, stderr %q; want 1, the rule and no secret", code, stderr)
+		}
+		requireNothingMigrated(t, ownerURL)
+	})
+}
+
+func TestMigrateStopsWhenNoAttemptIsConfigured(t *testing.T) {
+	vars := migrateVars(t, newEmptyDatabase(t))
+	defer migrateWait(0, 0)()
+	code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
+	if code != 1 || strings.Contains(stderr, "%!") || !strings.Contains(stderr, "attempt") {
+		t.Fatalf("migrate with no attempt exited %d, stderr %q; want 1 and a plain message", code, stderr)
+	}
+}
+
+// A server that accepts the connection and never answers must not hold an attempt for ever.
+func TestMigrateBoundsEveryAttempt(t *testing.T) {
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = silent.Close() }() // a failed close only means the port is already free
+	go func() {
+		for {
+			conn, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() }) // held until the test ends
+		}
+	}()
+	vars := migrateVars(t, newEmptyDatabase(t))
+	vars["SUITEWARD_MIGRATION_DATABASE_URL"] = "postgres://owner:pw@" + silent.Addr().String() + "/db?sslmode=disable"
+	defer migrateWait(2, 0)()
+	defer migrateAttemptTimeout(200 * time.Millisecond)()
+	start := time.Now()
+	code, _, stderr := runWithin(t, []string{"migrate"}, testEnv(vars))
+	if code != 1 || !strings.Contains(stderr, "not reachable") || time.Since(start) > 10*time.Second {
+		t.Fatalf("migrate against a silent server exited %d after %v, stderr %q; want 1, unreachable, and soon", code, time.Since(start), stderr)
+	}
+}
+
+func TestServeWithAWrongPasswordIsNotASchemaProblem(t *testing.T) {
+	ownerURL := newEmptyDatabase(t)
+	if err := migrations.Up(t.Context(), ownerURL); err != nil {
+		t.Fatal(err)
+	}
+	appURL := pgtest.AppURL(t, ownerURL)
+	wrong, err := url.Parse(appURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong.User = url.UserPassword(wrong.User.Username(), "not-the-password")
+	code, stdout, _ := runWithin(t, []string{"serve"}, testEnv(serveVars(t, wrong.String())))
+	if code != 1 || strings.Contains(stdout, "suiteward migrate") || strings.Contains(stdout, "not ready") {
+		t.Fatalf("serve with a wrong password exited %d, stdout %q; want 1 and no advice to migrate", code, stdout)
+	}
+}
+
+func TestServeOnASchemaNewerThanTheBuildDoesNotAdviseMigrating(t *testing.T) {
+	appURL := newDatabase(t)
+	exec(t, asOwner(t, appURL), "INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)", migrations.SupportedVersion+1)
+	code, stdout, _ := runWithin(t, []string{"serve"}, testEnv(serveVars(t, appURL)))
+	if code != 1 || strings.Contains(stdout, "run `suiteward migrate`") || !strings.Contains(stdout, "newer release") {
+		t.Fatalf("serve on a newer schema exited %d, stdout %q; want 1 and the advice to run the newer release", code, stdout)
+	}
+}
+
+// migrateAttemptTimeout bounds one connection attempt of migrate, for one test.
+func migrateAttemptTimeout(d time.Duration) (restore func()) {
+	previous := connectTimeout
+	connectTimeout = d
+	return func() { connectTimeout = previous }
+}
+
+func requireNothingMigrated(t *testing.T, ownerURL string) {
+	t.Helper()
+	if n := scalar(t, ownerURL, "SELECT count(*) FROM pg_tables WHERE schemaname = current_schema()"); n != "0" {
+		t.Fatalf("migrate created %s tables before it refused the role", n)
 	}
 }

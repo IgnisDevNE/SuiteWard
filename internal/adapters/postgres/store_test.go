@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/pgtest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -1102,4 +1104,67 @@ func TestReadsRejectStoredStateThatContradictsItself(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestNewStoreOnAnUnreachableDatabaseIsNotASchemaProblem(t *testing.T) {
+	pool, err := pgxpool.New(t.Context(), "postgres://nobody@127.0.0.1:1/none?sslmode=disable&connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	content, err := filesystem.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The caller tells the operator to migrate when the schema is not ready: not when the database is down.
+	if _, err := postgres.NewStore(pool, content, testInserter()); err == nil || errors.Is(err, postgres.ErrSchemaNotReady) {
+		t.Fatalf("NewStore on an unreachable database = %v; want an error that is not ErrSchemaNotReady", err)
+	}
+}
+
+// Only a schema that is not usable is "not ready", which a caller answers with the migrate command: a refused login
+// (class 28) is the operator's credential, not the schema.
+func TestNewStoreWithARefusedLoginIsNotASchemaProblem(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := url.Parse(pgtest.AppURL(t, database.url))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong.User = url.UserPassword(wrong.User.Username(), "not-the-password")
+	pool, err := pgxpool.New(t.Context(), wrong.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	content, err := filesystem.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.NewStore(pool, content, testInserter()); err == nil || errors.Is(err, postgres.ErrSchemaNotReady) {
+		t.Fatalf("NewStore with a wrong password = %v; want an error that is not ErrSchemaNotReady", err)
+	}
+}
+
+// A role that has no access to the schema sees what an unmigrated one sees: the schema is not ready for it.
+func TestNewStoreOnASchemaTheRoleCannotUseIsNotReady(t *testing.T) {
+	database := newSchemaDatabase(t)
+	if err := migrations.Up(t.Context(), database.url); err != nil {
+		t.Fatal(err)
+	}
+	pgtest.EnsureRole(t, database.url)
+	pool, err := pgxpool.New(t.Context(), pgtest.AsRole(t, database.url)) // never granted
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	content, err := filesystem.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.NewStore(pool, content, testInserter()); !errors.Is(err, postgres.ErrSchemaNotReady) {
+		t.Fatalf("NewStore as a role without grants = %v; want ErrSchemaNotReady", err)
+	}
 }

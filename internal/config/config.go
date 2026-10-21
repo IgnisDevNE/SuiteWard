@@ -59,18 +59,22 @@ const (
 
 // Config holds every validated setting.
 type Config struct {
-	DatabaseURL        Secret
-	ArtifactDir        string
-	HTTPAddr           string
-	ShutdownTimeout    time.Duration
-	LogLevel           slog.Level
-	JobWorkers         int
-	JobTimeout         time.Duration
-	JobMaxAttempts     int
-	OutboxMaxAttempts  int
-	OutboxPollInterval time.Duration
-	OutboxLease        time.Duration
-	Tier               Tier
+	// DatabaseURL is the connection of the service, which runs as the least-privilege application role; it never migrates.
+	// `suiteward migrate` grants that role, the user of this URL, its access.
+	DatabaseURL Secret
+	// MigrationDatabaseURL is the connection of the role that owns the schema, used by `suiteward migrate` only. Empty when unset.
+	MigrationDatabaseURL Secret
+	ArtifactDir          string
+	HTTPAddr             string
+	ShutdownTimeout      time.Duration
+	LogLevel             slog.Level
+	JobWorkers           int
+	JobTimeout           time.Duration
+	JobMaxAttempts       int
+	OutboxMaxAttempts    int
+	OutboxPollInterval   time.Duration
+	OutboxLease          time.Duration
+	Tier                 Tier
 	// GitHub is nil when the synchronization settings are not configured.
 	GitHub *GitHub
 	// MCP is nil when MCP_TOKEN is unset: no local MCP listener.
@@ -116,6 +120,12 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	if c.DatabaseURL != "" && !validDatabaseURL(c.DatabaseURL.Reveal()) {
 		// No cause: url.Parse errors quote the whole URL, password included.
 		l.fail("DATABASE_URL", errors.New("must be a postgres:// or postgresql:// URL"))
+	}
+	if v, ok := l.present("MIGRATION_DATABASE_URL", true); ok {
+		c.MigrationDatabaseURL = Secret(v)
+		if v != "" && !validDatabaseURL(v) {
+			l.fail("MIGRATION_DATABASE_URL", errors.New("must be a postgres:// or postgresql:// URL"))
+		}
 	}
 	c.ArtifactDir = l.required("ARTIFACT_DIR", false)
 	if c.ArtifactDir != "" && !filepath.IsAbs(c.ArtifactDir) {

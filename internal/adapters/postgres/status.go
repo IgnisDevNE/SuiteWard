@@ -52,6 +52,9 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 
 // supportedSchema returns ErrSchemaNotReady unless version is the one this build supports.
 func supportedSchema(version int64) error {
+	if version > migrations.SupportedVersion {
+		return fmt.Errorf("%w: %w: schema version %d, this build requires %d", ErrSchemaNotReady, ErrSchemaNewer, version, migrations.SupportedVersion)
+	}
 	if version != migrations.SupportedVersion {
 		return fmt.Errorf("%w: schema version %d, this build requires %d", ErrSchemaNotReady, version, migrations.SupportedVersion)
 	}

@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/pgtest"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -83,7 +85,7 @@ func newPGWorld(t *testing.T) *pgWorld {
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(t.Context(), database.url)
+	pool, err := pgxpool.New(t.Context(), pgtest.AppURL(t, database.url)) // the service connects as the application role
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,4 +284,17 @@ func (w *pgWorld) count(table string) int {
 		w.t.Fatal(err)
 	}
 	return n
+}
+
+// mutateHistory runs a statement that tries to change stored history. The application role is refused TRUNCATE
+// (42501, see roles_test.go) before the immutability trigger could be, so TRUNCATE runs as the owner to keep proving
+// the trigger; every other statement runs as the application role, as the service would.
+func (w *pgWorld) mutateHistory(statement string) error {
+	w.t.Helper()
+	if strings.HasPrefix(statement, "TRUNCATE") {
+		_, err := w.db.conn.Exec(w.t.Context(), statement)
+		return err
+	}
+	_, err := w.pool.Exec(w.t.Context(), statement)
+	return err
 }

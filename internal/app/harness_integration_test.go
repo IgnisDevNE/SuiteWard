@@ -22,14 +22,16 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/migrations"
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres/pgtest"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-// newDatabase creates a schema of its own in the test database and returns a
-// connection URL that uses it. The schema is empty: serve migrates it.
-func newDatabase(t *testing.T) string {
+// newEmptyDatabase creates a schema of its own in the test database and returns a
+// connection URL of the owner that uses it. Nothing has migrated the schema.
+func newEmptyDatabase(t *testing.T) string {
 	t.Helper()
 	base := os.Getenv("SUITEWARD_TEST_DATABASE_URL")
 	if base == "" {
@@ -307,7 +309,13 @@ type proxy struct {
 
 func newProxy(t *testing.T, target string) *proxy {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	return newProxyAt(t, "127.0.0.1:0", target)
+}
+
+// newProxyAt is newProxy listening on addr.
+func newProxyAt(t *testing.T, addr, target string) *proxy {
+	t.Helper()
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,4 +350,30 @@ func (p *proxy) cut() {
 	for _, conn := range p.conns {
 		_ = conn.Close() // closing twice is harmless
 	}
+}
+
+// newDatabase is a migrated schema of its own, as the application role the service runs as: the owner migrated it,
+// and the URL returned can do no more than the role can in production.
+func newDatabase(t *testing.T) string {
+	t.Helper()
+	ownerURL := newEmptyDatabase(t)
+	if err := migrations.Up(t.Context(), ownerURL); err != nil {
+		t.Fatal(err)
+	}
+	return pgtest.AppURL(t, ownerURL)
+}
+
+// asOwner is appURL's database as the owner of its schema, for the statements the application role cannot run.
+func asOwner(t *testing.T, appURL string) string {
+	t.Helper()
+	base, err := url.Parse(os.Getenv("SUITEWARD_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(appURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.User = base.User
+	return parsed.String()
 }

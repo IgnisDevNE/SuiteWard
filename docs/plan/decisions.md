@@ -478,7 +478,7 @@ Decided 2026-10-06 and settled by the S1 findings; the deployment workflow was r
 
 ### D-JOB-RETENTION: How long finished jobs stay visible
 
-Decided 2026-10-21 (owner): River's cleaner defaults, with no configuration. Completed jobs stay 24 hours, cancelled and discarded jobs 7 days. The outbox keeps its terminal rows. It was raised by the M1.2 phase review.
+Decided 2026-10-21 (owner): River's cleaner defaults, with no configuration. Completed and cancelled jobs stay 24 hours, discarded jobs 7 days (River v0.49.0). The outbox keeps its terminal rows. It was raised by the M1.2 phase review.
 
 ### D-MIGRATIONS: Migration tooling
 

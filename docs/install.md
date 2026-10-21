@@ -703,7 +703,7 @@ Expect the database image, and the same `ghcr.io/ignisdevne/suiteward@sha256:` l
 
 In `suiteward.container`, keep `Environment=SUITEWARD_INSTALLATION_TIER=isolated` only if your coding agent cannot reach this account. Otherwise set it to `co-located` ([ADR 0027](decisions/0027-agent-human-trust-separation.md)).
 
-None of the units has an `AutoUpdate=` line, so nothing changes an image behind your back: you change the pinned digests yourself (section 11). The database image stays as it is: a major or minor PostgreSQL upgrade is a deliberate change.
+None of the units has an `AutoUpdate=` line, so nothing changes an image behind your back: you change the pinned digests yourself (section 11). Automatic updates are not supported in this release. The database image stays as it is: a major or minor PostgreSQL upgrade is a deliberate change.
 
 **10.10 Check that Podman reads every unit (as `suiteward`).** Run the generator's dry run:
 
@@ -764,7 +764,7 @@ The migration unit refuses a role that is the owner, a superuser, has `BYPASSRLS
 systemctl --user start suiteward.service
 ```
 
-Expect no output. The command starts `suiteward-migrate.service` first. Migrate waits for the database, applies the schema as the owner, grants the role its access and exits with code 0, and only then does the service start. The command returns after that. If it reports `A dependency job for suiteward.service failed`, migrate failed: read its journal (`journalctl --user -u suiteward-migrate.service -n 50 --no-pager`), fix the cause, and see section 14. Migrate is tried again every 10 seconds; once `systemctl --user status suiteward-migrate.service` shows `active (exited)`, run the command of this step again.
+Expect no output. The command starts `suiteward-migrate.service` first. Migrate waits for the database, applies the schema as the owner, grants the role its access and exits with code 0, and only then does the service start. The command returns after that. If it reports `A dependency job for suiteward.service failed`, migrate failed: read its journal (`journalctl --user -u suiteward-migrate.service -n 50 --no-pager`), fix the cause, and see section 14. Migrate is not tried again by itself: the failure stays in `systemctl --user status suiteward-migrate.service` and the journal, and the service stays down. After you fix the cause, run the command of this step again.
 
 **10.13 Check the three units (as `suiteward`).** Run:
 
@@ -830,7 +830,7 @@ The host install is done: continue with setup (section 6), the ruleset (section 
 
 ## 11. Updating
 
-Pin one release, and update when you choose. Updates are manual unless you opt in, as described below.
+Pin one release, and update when you choose. Updates are always manual, by digest: automatic updates are not supported in this release (see the end of this section).
 
 An update always goes through the migration. The service never changes the schema, and it refuses a schema that is older or newer than its image: it exits with `schema version X, this build requires Y` and restarts in a loop. So after you change an image, never restart `suiteward.service` alone. Restart `suiteward-migrate.service`, which migrates and then restarts the service.
 
@@ -909,7 +909,7 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
    ```
 
 6. Create the role and the new `suiteward-database-url`: run the chain and the check of step 10.11, which follow the wait for the healthy database. The database is already running. Do not run the earlier commands of step 10.11 again.
-7. Install the migration unit. Create `~/.config/containers/systemd/suiteward-migrate.container` and overwrite `suiteward.container`, from the new release's `deploy/quadlet/`, as in step 10.9: run `cat >` for each, paste, press Ctrl-D. Keep the `SUITEWARD_INSTALLATION_TIER` line your old unit had. The new `suiteward.container` has no `AutoUpdate=` line: a tag you followed before no longer moves by itself.
+7. Install the migration unit. Create `~/.config/containers/systemd/suiteward-migrate.container` and overwrite `suiteward.container`, from the new release's `deploy/quadlet/`, as in step 10.9: run `cat >` for each, paste, press Ctrl-D. Keep the `SUITEWARD_INSTALLATION_TIER` line your old unit had. The new `suiteward.container` has no `AutoUpdate=` line: the units are pinned by digest and nothing moves them by itself.
 8. Pin both units to the digest of the image you pulled, with the chain of step 11.3 and its check (it reads the digest itself, so do it in this step).
 9. Run the dry run of step 10.10, then reload and start. The new units are not active yet, so start the service, which starts the migration first:
 
@@ -972,25 +972,7 @@ On an isolated host, as `suiteward`:
 
 On the co-located PC, v0.1.x's `deploy/local.ps1` cannot run this stack any more, because the stack's `suiteward-database-url` is the application URL now. Purge the stack with `./deploy/local.ps1 -Down -Purge`, check out the old release's source, start it with that release's `deploy/local.ps1`, and restore the backup into it as that release's runbook says.
 
-**Automatic updates (opt-in).** Podman can follow the newest stable release. It is off by default, and it works only if BOTH `suiteward-migrate.container` and `suiteward.container` have it, with the same image tag. If only the service followed the tag, it would update alone, find the old schema, refuse it and restart in a loop. To opt in, as `suiteward`, in both files set `Image=ghcr.io/ignisdevne/suiteward:latest-stable` and add the line `AutoUpdate=registry`, then reload the units:
-
-```
-systemctl --user daemon-reload
-```
-
-Check that Podman would update both units. The list must name `suiteward.service` and `suiteward-migrate.service`:
-
-```
-podman auto-update --dry-run
-```
-
-Podman updates the containers it finds from their units, and the migration container exists only while it runs. If `suiteward-migrate.service` is not in the list, do not enable the timer: the service would update without the migration. Otherwise, enable it:
-
-```
-systemctl --user enable --now podman-auto-update.timer
-```
-
-The timer checks once a day by default. `latest-stable` moves only for a release that is not a pre-release. A migration in such a release has no rollback either, so keep your backup current.
+**Automatic updates are not supported.** The isolated tier updates only by digest, as step 11.3 says. Podman's auto-update cannot update the migration unit, because its container exists only while it runs. An automatic update of the service alone would start the new image on the old schema, which it refuses, and loop. Do not add AutoUpdate= to a unit, and do not enable podman-auto-update.timer.
 
 ### Rotating the App key
 
@@ -1167,7 +1149,7 @@ Common problems:
 
 - **The service does not start on the isolated host.** Podman refuses to start a container while a secret it names (`suiteward-database-url`, `suiteward-database-owner-url` for the migration, the GitHub key or the MCP token) or `/etc/suiteward/github.env` is missing, and the journal shows which. The service restarts every five seconds until it starts. It also needs the migration to have exited with code 0 (`systemctl --user status suiteward-migrate.service`). A unit that Podman cannot parse is not generated at all. Run the dry run in step 10.10.
 - **The service restarts in a loop and its journal says `schema version X, this build requires Y`.** The service refuses a schema that is older than its image, and it never migrates. Someone changed an image and restarted `suiteward.service` alone, or the migration has not run. As `suiteward`, restart the migration unit, which migrates and restarts the service: `systemctl --user restart suiteward-migrate.service`. If the message says the database was migrated by a newer release, the image is older than the schema: use the newer release, or restore a backup (step 11.6). Never start an older image on the database.
-- **`suiteward-migrate.service` fails.** Read its journal: `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`. The unit tries again every 10 seconds. The usual causes are these:
+- **`suiteward-migrate.service` fails.** Read its journal: `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`. The unit is not retried by itself: the service stays down until you fix the cause and run `systemctl --user start suiteward.service`. The usual causes are these:
   - The database role `suiteward_app` does not exist: create it, as step 10.11 says. A fresh database volume has no role.
   - The message says the service must connect as a least-privilege role: `suiteward-database-url` names a role that owns the schema, is a superuser or has `BYPASSRLS`, for example the owner's URL. Replace the secret by the URL of `suiteward_app` (step 10.11).
   - The message says the database is not reachable after 30 attempts, or that it refused the owner connection: the database is not running or not healthy (`podman ps`), or `suiteward-database-owner-url` holds a password that the database does not have.

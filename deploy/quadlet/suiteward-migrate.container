@@ -8,7 +8,6 @@ Wants=network-online.target
 After=network-online.target
 Requires=suiteward-db.service
 After=suiteward-db.service
-StartLimitIntervalSec=0
 
 [Container]
 # The same line as in suiteward.container: change both together.
@@ -30,9 +29,8 @@ PodmanArgs=--memory=256m
 Type=oneshot
 # The unit stays active after migrate exited 0, so suiteward.service (Requires=) can start and restart without migrating again.
 RemainAfterExit=yes
-# A failed migrate (database still starting, a migration error) is tried again; suiteward.service starts once it succeeds.
-Restart=on-failure
-RestartSec=10
+# No Restart=: a failed migrate (missing role, role not least-privilege, failed migration) fails closed. suiteward.service does not start, and the
+# failure shows in `systemctl --user status` and the journal. Fix the cause, then start suiteward.service again (docs/install.md, step 10.12).
 
 [Install]
 WantedBy=default.target

@@ -46,7 +46,7 @@ func TestHealthzAnswersWhileTheProcessServes(t *testing.T) {
 }
 
 func TestReadyzReportsReadinessWithoutLeakingCauses(t *testing.T) {
-	const secretCause = "dial tcp db.internal:5432: password=hunter2"
+	const leakCause = "dial tcp db.internal:5432: password=hunter2"
 	tests := []struct {
 		name     string
 		store    fakeStore
@@ -56,7 +56,7 @@ func TestReadyzReportsReadinessWithoutLeakingCauses(t *testing.T) {
 	}{
 		{"ready", fakeStore{version: 10}, false, 200, `{"schemaVersion":10,"status":"ready"}`},
 		{"shutting down", fakeStore{version: 10}, true, 503, `{"reason":"shutting down","status":"unavailable"}`},
-		{"database unreachable", fakeStore{versionErr: errors.New(secretCause)}, false, 503, `{"reason":"database unavailable","status":"unavailable"}`},
+		{"database unreachable", fakeStore{versionErr: errors.New(leakCause)}, false, 503, `{"reason":"database unavailable","status":"unavailable"}`},
 		{"schema mismatch", fakeStore{versionErr: fmt.Errorf("%w: schema version 11", postgres.ErrSchemaNotReady)}, false, 503, `{"reason":"schema not ready","status":"unavailable"}`},
 	}
 	for _, test := range tests {
@@ -115,10 +115,10 @@ func TestStatusReportsTheSourceOnlyWhenTheBuildSetIt(t *testing.T) {
 }
 
 func TestStatusIsUnavailableWhenTheStoreFails(t *testing.T) {
-	const secretCause = "dial tcp db.internal:5432: password=hunter2"
+	const leakCause = "dial tcp db.internal:5432: password=hunter2"
 	for name, store := range map[string]fakeStore{
-		"schema version": {versionErr: errors.New(secretCause)},
-		"counts":         {version: 10, countsErr: errors.New(secretCause)},
+		"schema version": {versionErr: errors.New(leakCause)},
+		"counts":         {version: 10, countsErr: errors.New(leakCause)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, body := call(t, &api{owners: ownertest.NewMemory(), store: store, logger: quietLogger()}, http.MethodGet, "/status")

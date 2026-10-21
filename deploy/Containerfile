@@ -1,14 +1,18 @@
 # Build context is the repository root. Build: podman build -f deploy/Containerfile --build-arg VERSION=sha-<commit> -t localhost/suiteward:local .
 # GO_VERSION must equal .go-version; CI passes it with --build-arg, the default is for local builds.
+# Both base images are pinned by the digest of their multi-arch index; a Go bump moves the golang digest with it (scripts/check-pins.ps1 checks the pins agree).
 ARG GO_VERSION=1.27.3
 
 # The compiler runs natively and cross-compiles, so the arm64 build needs no emulated Go toolchain.
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:${GO_VERSION}-alpine AS build
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:${GO_VERSION}-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS build
 ARG TARGETOS TARGETARCH
 # What /status reports; CI passes sha-<commit>, the same string as the image tag.
 ARG VERSION=dev
 # What /status reports as the source (AGPL section 13); CI passes the URL of the exact revision.
 ARG SOURCE=
+# A golang digest that does not match GO_VERSION (a bump that left the digest behind) fails the build here.
+ARG GO_VERSION
+RUN test "$(go env GOVERSION)" = "go${GO_VERSION}"
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,7 +26,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags 
 	&& GOOS=$TARGETOS GOARCH=$TARGETARCH sh /notices.sh /out/licenses/THIRD_PARTY_NOTICES
 
 # Distroless static ships CA certificates and a nonroot user (65532).
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static:nonroot@sha256:516757106de35205efb70b91ba03f6f1298424a0678c603255cf2852a7000087
 COPY --from=build /out/suiteward /suiteward
 # SuiteWard's own license and the license texts of everything linked into the binary.
 COPY --from=build /out/licenses /licenses

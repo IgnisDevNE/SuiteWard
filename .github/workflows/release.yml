@@ -67,6 +67,17 @@ jobs:
           persist-credentials: false
       - name: Create the builder
         run: docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Scan the image for fixable HIGH and CRITICAL vulnerabilities
+        env:
+          TAG: ${{ github.ref_name }}
+        # Nothing is pushed yet. Only linux/amd64 is built and scanned: the arm64 image has the same packages and the same Go source.
+        run: |
+          docker buildx build --platform linux/amd64 --provenance=false \
+            --build-arg "GO_VERSION=$(cat .go-version)" \
+            --build-arg "VERSION=$TAG" \
+            --build-arg "SOURCE=https://github.com/IgnisDevNE/SuiteWard/tree/$TAG" \
+            --file deploy/Containerfile --output "type=docker,dest=$RUNNER_TEMP/candidate.tar" .
+          pwsh ./scripts/check-image.ps1 -Archive "$RUNNER_TEMP/candidate.tar"
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

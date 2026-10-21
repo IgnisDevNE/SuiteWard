@@ -73,9 +73,9 @@ func TestCommentPublisherRefusesABootstrapNoticeOrCancelledCommentThatDoesNotMat
 		{"a notice under a key that is not a pull number", cmtRaw(fmt.Sprintf("bootstrap-notice:%d:P1-R1", cmtRepoID), target)},
 		{"a cancelled comment under another reference", cmtRaw(cmtBootCancelledKey("P1-R2"), with(map[string]any{"reference": "P1-R1"}))},
 		{"a cancelled comment without a reference", cmtRaw(cmtBootCancelledKey("P1-R1"), target)},
-		{"a cancelled comment whose reference is not P<n>-R<m>", cmtRaw(cmtBootCancelledKey("P1-R1"), with(map[string]any{"reference": cmtSecretText}))},
+		{"a cancelled comment whose reference is not P<n>-R<m>", cmtRaw(cmtBootCancelledKey("P1-R1"), with(map[string]any{"reference": cmtLeakText}))},
 		{"a cancelled comment under another repository", cmtRaw(fmt.Sprintf("bootstrap-cancelled:%d:P1-R1", cmtRepoID+1), with(map[string]any{"reference": "P1-R1"}))},
-		{"a cancelled comment with a field it does not have", cmtRaw(cmtBootCancelledKey("P1-R1"), with(map[string]any{"reference": "P1-R1", "body": cmtSecretText}))},
+		{"a cancelled comment with a field it does not have", cmtRaw(cmtBootCancelledKey("P1-R1"), with(map[string]any{"reference": "P1-R1", "body": cmtLeakText}))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCmtWorld(t)
@@ -85,7 +85,7 @@ func TestCommentPublisherRefusesABootstrapNoticeOrCancelledCommentThatDoesNotMat
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, cmtRepo} {
+			for _, leak := range []string{cmtLeakText, cmtRepo} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}

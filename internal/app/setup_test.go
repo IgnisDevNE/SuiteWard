@@ -161,7 +161,7 @@ func (r *setupRun) requireNothingSecret(t *testing.T, codes ...string) {
 	base32Secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(fixedSecret)
 	keyLine := strings.Split(setupKey(), "\n")[1]
 	for what, text := range map[string]string{"the logs": r.logs.String(), "stderr": r.stderr.String()} {
-		for _, secret := range append([]string{base32Secret, setupReadToken, setupProtToken, setupGitHubBody, keyLine}, codes...) {
+		for _, secret := range append([]string{base32Secret, setupReadAuth, setupProtAuth, setupGitHubBody, keyLine}, codes...) {
 			if strings.Contains(text, secret) {
 				t.Errorf("%s contain %q:\n%s", what, secret, text)
 			}
@@ -322,12 +322,12 @@ func TestSetupMintsTheTwoTokensWithTheirOwnPermissions(t *testing.T) {
 		t.Fatalf("token requests = %v; want the read map and the protection map, one each", got)
 	}
 	for _, path := range []string{"/users/octo", "/repos/" + setupWidgetsRepo} {
-		if !fake.requestedWith(path, setupReadToken) {
+		if !fake.requestedWith(path, setupReadAuth) {
 			t.Errorf("%s was not read with the synchronization token", path)
 		}
 	}
 	for _, path := range []string{"/repos/" + setupWidgetsRepo + "/rules/branches/main", "/repos/" + setupWidgetsRepo + "/branches/main/protection"} {
-		if !fake.requestedWith(path, setupProtToken) {
+		if !fake.requestedWith(path, setupProtAuth) {
 			t.Errorf("%s was not read with the protection token", path)
 		}
 	}
@@ -429,14 +429,14 @@ func (f failingStore) RecordProtection(ctx context.Context, p owner.ProtectionRe
 }
 
 func TestSetupEnrollmentFailuresExitOneWithFixedMessages(t *testing.T) {
-	secretCause := errors.New("dial tcp db.internal:5432: password=hunter2")
+	leakCause := errors.New("dial tcp db.internal:5432: password=hunter2")
 	for name, test := range map[string]struct {
 		cause error
 		want  string
 	}{
 		"step already used": {owner.ErrStepUsed, "already used"},
 		"refused":           {fmt.Errorf("%w: another owner cannot take over a project that has a Suite", owner.ErrInvalidState), "another owner cannot take over"},
-		"store failure":     {secretCause, "could not record the enrollment"},
+		"store failure":     {leakCause, "could not record the enrollment"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newSetupRun(newSetupGitHub(t), rightCode(t)+"\n")

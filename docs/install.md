@@ -606,7 +606,7 @@ Expect the version (4.9.3 is the checked version) and every generated unit liste
 **10.11 Pull the two images (as `suiteward`).** Pull the database image by its digest, then the release image:
 
 ```
-podman pull docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+podman pull docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 ```
 
 ```

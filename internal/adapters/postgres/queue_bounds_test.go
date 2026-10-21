@@ -23,3 +23,14 @@ func TestClaimOutboxRefusesBoundsOutsideOneToInt32(t *testing.T) {
 		})
 	}
 }
+
+// FinishOutbox and ReleaseOutbox refuse an attempt count the database cannot hold before they touch the pool.
+func TestFinishAndReleaseOutboxRefuseAttemptsPastInt32(t *testing.T) {
+	claim := postgres.OutboxClaim{Key: "message", Attempts: math.MaxInt32 + 1}
+	if _, err := (&postgres.Store{}).FinishOutbox(t.Context(), claim, postgres.OutboxUpdate{}); err == nil {
+		t.Error("FinishOutbox accepted the attempt count")
+	}
+	if _, err := (&postgres.Store{}).ReleaseOutbox(t.Context(), claim, time.Now()); err == nil {
+		t.Error("ReleaseOutbox accepted the attempt count")
+	}
+}

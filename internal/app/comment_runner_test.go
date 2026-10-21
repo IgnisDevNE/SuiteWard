@@ -77,7 +77,7 @@ func TestCommentPublisherRefusesARunnerUncoveredCommentThatDoesNotMatchItsKeyOrC
 		{"a digest that is not SHA-256 hex", "runner-uncovered:1001:7:" + strings.Repeat("g", 64), cmtRunnerPayload(nil)},
 		{"a key without a digest", "runner-uncovered:1001:7", cmtRunnerPayload(nil)},
 		{"a key with five parts", cmtRunnerKey + ":1", cmtRunnerPayload(nil)},
-		{"an unknown field", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["body"] = cmtSecretText })},
+		{"an unknown field", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["body"] = cmtLeakText })},
 		{"a head that is not a commit SHA", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["head"] = "SECRET" })},
 		{"a branch that is not a git ref", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["branch"] = "a..b" })},
 		{"no paths", cmtRunnerKey, cmtRunnerPayload(func(m map[string]any) { m["paths"] = []string{}; m["pathsTotal"] = 0 })},
@@ -95,7 +95,7 @@ func TestCommentPublisherRefusesARunnerUncoveredCommentThatDoesNotMatchItsKeyOrC
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}

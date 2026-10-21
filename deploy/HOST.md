@@ -204,7 +204,7 @@ podman --version
 The units use only keys the 4.9 documentation lists (`Secret`, `Environment`, `EnvironmentFile` and `PublishPort` are in the Podman v4.9.3 `podman-systemd.unit(5)` container section); the memory limits and stop timeouts go through `PodmanArgs` because 4.9 has no key for them, and there is no `Notify=healthy`. The dry run is the check. If a key is rejected, remove that line, start anyway, and report which one. Pre-pull the images (a first pull can exceed systemd's start timeout), then start. The service requires the database, which pulls in the network and both volumes:
 
 ```
-podman pull docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+podman pull docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 podman pull ghcr.io/ignisdevne/suiteward:deploy
 systemctl --user daemon-reload
 systemctl --user start suiteward.service

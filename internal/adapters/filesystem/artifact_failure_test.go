@@ -66,15 +66,7 @@ func TestNewStoreRejectsUncreatableRoot(t *testing.T) {
 		t.Skip("requires a nonprivileged user without root permission bypass")
 	}
 	parent := filepath.Join(t.TempDir(), "read-only-parent")
-	if err := os.Mkdir(parent, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chmod(parent, 0o700); err != nil {
-			t.Errorf("restore owned directory permission: %v", err)
-		}
-	})
-	if err := os.Chmod(parent, 0o555); err != nil {
+	if err := os.Mkdir(parent, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(parent, "artifacts")

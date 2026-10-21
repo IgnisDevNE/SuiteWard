@@ -168,15 +168,15 @@ func TestCommentPublisherRefusesARevisionPayloadThatDoesNotMatchItsKey(t *testin
 		{"another revision", "revision:1001:P2-R3", with(func(map[string]any) {})},
 		{"another proposal", "revision:1001:P3-R2", with(func(map[string]any) {})},
 		{"another repository", "revision:1002:P2-R2", with(func(map[string]any) {})},
-		{"an unknown field", cmtRevisionKey, with(func(m map[string]any) { m["body"] = cmtSecretText })},
-		{"a reference that is not P<n>-R<m>", cmtRevisionKey, with(func(m map[string]any) { m["reference"] = cmtSecretText })},
+		{"an unknown field", cmtRevisionKey, with(func(m map[string]any) { m["body"] = cmtLeakText })},
+		{"a reference that is not P<n>-R<m>", cmtRevisionKey, with(func(m map[string]any) { m["reference"] = cmtLeakText })},
 		{"a previous revision of another proposal", cmtRevisionKey, with(func(m map[string]any) { m["previous"] = "P3-R1" })},
 		{"a previous revision that is not earlier", cmtRevisionKey, with(func(m map[string]any) { m["previous"] = "P2-R2" })},
-		{"a canonical that is not V<n>", cmtRevisionKey, with(func(m map[string]any) { m["canonical"] = cmtSecretText })},
+		{"a canonical that is not V<n>", cmtRevisionKey, with(func(m map[string]any) { m["canonical"] = cmtLeakText })},
 		{"a canonical of zero", cmtRevisionKey, with(func(m map[string]any) { m["canonical"] = "V0" })},
 		{"a negative total", cmtRevisionKey, with(func(m map[string]any) { m["addedTotal"] = -1 })},
-		{"a tier that is unknown", cmtRevisionKey, with(func(m map[string]any) { m["tier"] = cmtSecretText })},
-		{"a payload that is not JSON", cmtRevisionKey, json.RawMessage(`{"repositoryId": ` + cmtSecretText)},
+		{"a tier that is unknown", cmtRevisionKey, with(func(m map[string]any) { m["tier"] = cmtLeakText })},
+		{"a payload that is not JSON", cmtRevisionKey, json.RawMessage(`{"repositoryId": ` + cmtLeakText)},
 		{"a repository that is not owner/name", cmtRevisionKey, with(func(m map[string]any) { m["repo"] = "SECRET" })},
 		{"an acknowledgment payload under a revision key", cmtRevisionKey, ack.Payload},
 		{"a revision payload under an acknowledgment key", "ack:1001:555", with(func(map[string]any) {})},
@@ -189,7 +189,7 @@ func TestCommentPublisherRefusesARevisionPayloadThatDoesNotMatchItsKey(t *testin
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
-			for _, leak := range []string{cmtSecretText, "SECRET"} {
+			for _, leak := range []string{cmtLeakText, "SECRET"} {
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}

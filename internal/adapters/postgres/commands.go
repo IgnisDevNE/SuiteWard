@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,7 +24,11 @@ func (s *Store) Pending(ctx context.Context, horizon time.Time, limit int) ([]co
 	if err := commands.ValidatePending(horizon, limit); err != nil {
 		return nil, err
 	}
-	rows, err := dbgen.New(s.pool).PendingCommands(ctx, dbgen.PendingCommandsParams{Horizon: timestamp(horizon), MaxRows: int32(min(limit, math.MaxInt32))})
+	maxRows, err := int32Of(limit)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := dbgen.New(s.pool).PendingCommands(ctx, dbgen.PendingCommandsParams{Horizon: timestamp(horizon), MaxRows: maxRows})
 	if err != nil {
 		return nil, fmt.Errorf("read pending commands: %w", err)
 	}
@@ -55,6 +58,10 @@ func (s *Store) Record(ctx context.Context, e commands.Entry, ack *governance.Ou
 		}
 	}
 	e = e.AtStoredPrecision()
+	pull, err := int32Of(e.PullNumber)
+	if err != nil {
+		return err
+	}
 	transaction, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin command ledger transaction: %w", err)
@@ -66,14 +73,14 @@ func (s *Store) Record(ctx context.Context, e commands.Entry, ack *governance.Ou
 		}
 	}()
 	q := dbgen.New(transaction)
-	inserted, err := q.InsertPRCommand(ctx, dbgen.InsertPRCommandParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, PullNumber: int32(e.PullNumber), // Validate bounds it
+	inserted, err := q.InsertPRCommand(ctx, dbgen.InsertPRCommandParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, PullNumber: pull,
 		AuthorID: e.AuthorID, CreatedAt: timestamp(e.CreatedAt), BodyDigest: e.BodyDigest.String(), Disposition: string(e.Disposition),
 		OperationID: optionalText(string(e.Operation)), DecidedAt: timestamp(e.DecidedAt)})
 	if err != nil {
 		return fmt.Errorf("write command ledger entry: %w", err)
 	}
 	if inserted == 0 {
-		return sameEntry(ctx, q, e)
+		return sameEntry(ctx, q, e, pull)
 	}
 	if ack != nil {
 		if err := insertOutbox(ctx, q, pgtype.Text{}, pgtype.Text{}, *ack); err != nil {
@@ -88,12 +95,12 @@ func (s *Store) Record(ctx context.Context, e commands.Entry, ack *governance.Ou
 }
 
 // sameEntry is nil when the stored entry of e's comment is e, and commands.ErrConflict when it is another.
-func sameEntry(ctx context.Context, q *dbgen.Queries, e commands.Entry) error {
+func sameEntry(ctx context.Context, q *dbgen.Queries, e commands.Entry, pull int32) error {
 	row, err := q.GetPRCommand(ctx, dbgen.GetPRCommandParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID})
 	if err != nil {
 		return fmt.Errorf("read command ledger entry: %w", err)
 	}
-	if row.PullNumber != int32(e.PullNumber) || row.AuthorID != e.AuthorID || !observedTime(row.CreatedAt).Equal(e.CreatedAt) || row.BodyDigest != e.BodyDigest.String() ||
+	if row.PullNumber != pull || row.AuthorID != e.AuthorID || !observedTime(row.CreatedAt).Equal(e.CreatedAt) || row.BodyDigest != e.BodyDigest.String() ||
 		row.Disposition != string(e.Disposition) || contract.OperationID(row.OperationID.String) != e.Operation || !observedTime(row.DecidedAt).Equal(e.DecidedAt) {
 		return fmt.Errorf("%w: comment %d of repository %d", commands.ErrConflict, e.CommentID, e.RepositoryID)
 	}
@@ -105,7 +112,11 @@ func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull
 	if err := commands.ValidateLatest(repositoryID, pull, ownerID, before); err != nil {
 		return commands.Entry{}, false, err
 	}
-	row, err := dbgen.New(s.pool).LatestOwnerCommand(ctx, dbgen.LatestOwnerCommandParams{RepositoryID: repositoryID, PullNumber: int32(pull), AuthorID: ownerID, Before: before}) // ValidateLatest bounds it
+	number, err := int32Of(pull)
+	if err != nil {
+		return commands.Entry{}, false, err
+	}
+	row, err := dbgen.New(s.pool).LatestOwnerCommand(ctx, dbgen.LatestOwnerCommandParams{RepositoryID: repositoryID, PullNumber: number, AuthorID: ownerID, Before: before})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return commands.Entry{}, false, nil
 	}
@@ -125,7 +136,11 @@ func (s *Store) Skipped(ctx context.Context, repositoryID int64, pull int, since
 	if err := commands.ValidateSkipped(repositoryID, pull); err != nil {
 		return false, err
 	}
-	skipped, err := dbgen.New(s.pool).PullSkipped(ctx, dbgen.PullSkippedParams{RepositoryID: repositoryID, PullNumber: int32(pull), Since: timestamp(since)}) // ValidateSkipped bounds it
+	number, err := int32Of(pull)
+	if err != nil {
+		return false, err
+	}
+	skipped, err := dbgen.New(s.pool).PullSkipped(ctx, dbgen.PullSkippedParams{RepositoryID: repositoryID, PullNumber: number, Since: timestamp(since)})
 	if err != nil {
 		return false, fmt.Errorf("read whether the pull was skipped: %w", err)
 	}

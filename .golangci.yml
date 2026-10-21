@@ -19,7 +19,13 @@ linters:
     - dupl
     - gocyclo
     - gocognit
+    - gosec
   settings:
+    # SHA-1 is required by RFC 6238 TOTP (authenticator apps) and by git object IDs; these are the only linter exceptions.
+    gosec:
+      excludes:
+        - G505
+        - G401
     gocyclo:
       min-complexity: 25
     gocognit:

@@ -78,7 +78,7 @@ func TestSetupEnrollsAndServeReportsTheOwnerAndTheTier(t *testing.T) {
 	if got := scalar(t, databaseURL, "SELECT result FROM github_protection_results WHERE repository_id = $1", setupRepoID); got != "findings" {
 		t.Fatalf("stored protection result = %q; want findings (no rules in the fake)", got)
 	}
-	for what, secret := range map[string]string{"the database password": password(t, databaseURL), "a token": setupReadToken} {
+	for what, secret := range map[string]string{"the database password": password(t, databaseURL), "a token": setupReadAuth} {
 		if strings.Contains(stdout.String()+stderr.String(), secret) {
 			t.Errorf("setup printed %s:\n%s\n%s", what, stdout.String(), stderr.String())
 		}

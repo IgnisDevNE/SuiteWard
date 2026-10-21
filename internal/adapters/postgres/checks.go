@@ -35,7 +35,11 @@ func (l checkLedger) Current(ctx context.Context, repositoryID int64, number int
 	if err := checks.ValidatePull(repositoryID, number); err != nil {
 		return checks.Record{}, false, err
 	}
-	row, err := dbgen.New(l.pool).GetPRCheck(ctx, dbgen.GetPRCheckParams{RepositoryID: repositoryID, PullNumber: int32(number)}) // ValidatePull bounds it
+	pull, err := int32Of(number)
+	if err != nil {
+		return checks.Record{}, false, err
+	}
+	row, err := dbgen.New(l.pool).GetPRCheck(ctx, dbgen.GetPRCheckParams{RepositoryID: repositoryID, PullNumber: pull})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return checks.Record{}, false, nil
 	}
@@ -69,7 +73,11 @@ func (l checkLedger) Publish(ctx context.Context, r checks.Result, at time.Time,
 		}
 		return msg, msg.Validate()
 	}
-	key := dbgen.LockPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: int32(r.PullNumber)} // ValidatePublish bounds it
+	pull, err := int32Of(r.PullNumber)
+	if err != nil {
+		return checks.Record{}, false, err
+	}
+	key := dbgen.LockPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: pull}
 	row, err := q.LockPRCheck(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var first checks.Record
@@ -150,7 +158,11 @@ func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (
 	if err != nil {
 		return checks.Record{}, false, err
 	}
-	inserted, err := q.InsertPRCheck(ctx, dbgen.InsertPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: int32(r.PullNumber), HeadSha: next.HeadSHA, HeadSince: timestamp(next.HeadSince), // ValidatePublish bounds the pull
+	pull, err := int32Of(r.PullNumber)
+	if err != nil {
+		return checks.Record{}, false, err
+	}
+	inserted, err := q.InsertPRCheck(ctx, dbgen.InsertPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: pull, HeadSha: next.HeadSHA, HeadSince: timestamp(next.HeadSince),
 		State: string(next.State), Reason: next.Reason, Reference: next.Reference, Change: next.Change, Revision: next.Revision, CommandID: next.CommandID,
 		Generation: next.Generation, MessageKey: msg.Key, DecidedAt: timestamp(next.DecidedAt)})
 	if err != nil {

@@ -68,7 +68,7 @@ func TestChecksFailAWrongCodeWhileTheAssessmentWaits(t *testing.T) {
 	w := newCJWorld(t, true)
 	w.protectedPull()
 	w.entry(5, 301, bootOwnerID, commands.InvalidCode, "")
-	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 
 	if err := w.runChecks(); err != nil {
 		t.Fatalf("a failed GitHub read must not fail the run: %v", err)
@@ -125,7 +125,7 @@ func TestChecksKeepTheStoredCheckForEachKeptReasonOnAFailedRead(t *testing.T) {
 		t.Run(tc.reason, func(t *testing.T) {
 			w := newCJWorld(t, true)
 			w.storeCheck(tc.state, tc.reason, "")
-			w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+			w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 
 			if err := w.runChecks(); err != nil {
 				t.Fatalf("a failed GitHub read must not fail the run: %v", err)
@@ -145,7 +145,7 @@ func TestChecksKeepTheStoredCheckForEachKeptReasonOnAFailedRead(t *testing.T) {
 				state = checks.Failure
 			}
 			w.storeCheck(state, reason, "")
-			w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+			w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 
 			if err := w.runChecks(); err != nil {
 				t.Fatalf("a failed GitHub read must not fail the run: %v", err)
@@ -163,7 +163,7 @@ func TestChecksKeepARunnerUncoveredCheckOnAFailedReadOnlyWhileTheRunnerFilesAreK
 		w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
 		w.want(5, checks.InProgress, "runner-uncovered", 1)
 		w.check.unchanged = nil // the stored change is unchanged: without the memory of that, the head is assessed again
-		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 		return w
 	}
 	t.Run("known", func(t *testing.T) {
@@ -194,7 +194,7 @@ func TestChecksKeepASuccessOnAFailedReadOnlyWhileTheRunnerFilesAreKnown(t *testi
 		w.runnerPull(bootFiles("v1"))
 		w.want(5, checks.Success, "unchanged", 1)
 		w.check.unchanged = nil
-		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 		return w
 	}
 	t.Run("known", func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestChecksKeepASuccessOnAFailedReadOnlyWhileTheRunnerFilesAreKnown(t *testi
 func TestChecksSkipTheRunnerBlockForEveryOtherState(t *testing.T) {
 	t.Run("assessment-pending", func(t *testing.T) {
 		w := newCJWorld(t, true)
-		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootSecret)
+		w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New(bootLeak)
 		w.reader.files = map[int][]github.PullFile{5: added(cjJest)}
 		w.sync(map[int]string{4: bootHead, 5: cjHead2})
 

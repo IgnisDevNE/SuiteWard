@@ -161,7 +161,7 @@ func TestMissingAndCorruptObjectsPreventSuccess(t *testing.T) {
 	if err := store.Put(context.Background(), digest, bytes.NewReader(content)); !errors.Is(err, ErrCorruptArtifact) {
 		t.Fatalf("duplicate silently repaired corrupt existing object: %v", err)
 	}
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(filepath.Clean(path))
 	if err != nil || !bytes.Equal(got, corrupt) {
 		t.Fatalf("duplicate changed corrupt existing bytes: %q, %v", got, err)
 	}

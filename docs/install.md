@@ -1179,6 +1179,10 @@ Start with `/status` and the logs.
 - **Isolated host (as `suiteward`):** `curl -s http://127.0.0.1:8081/status`, then `journalctl --user -u suiteward.service -n 100 --no-pager`, for the migration `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`, and for the database `journalctl --user -u suiteward-db.service -n 50 --no-pager`. The migration container is removed when it exits, so `podman logs` cannot show it.
 - **Co-located PC (rootless connection selected, step 5.2):** `podman machine ssh --username user "curl -s http://127.0.0.1:8081/status"`, then `podman logs --tail 50 suiteward`. The migration runs in the foreground of `./deploy/local.ps1`, which shows its output.
 
+On AlmaLinux, `journalctl --user` can report that no journal files were opened: user journals are readable only to members of `systemd-journal`. Read the service's own log instead, with `podman logs --since 30m suiteward` (and `suiteward-migrate` or `suiteward-db`).
+
+If the log shows `github_checks` ending in `context deadline exceeded` again and again, then `budget_exhausted`: a first assessment of a large test suite takes longer than `SUITEWARD_JOB_TIMEOUT`, and every cancelled attempt reads the files again and spends the API budget. Raise `SUITEWARD_JOB_TIMEOUT` (section 12; `3m` covered about 250 protected files). The budget recovers when GitHub's hourly window resets, and the queued check is then published by itself.
+
 These are the `/status` fields you read:
 
 - `tier` is the effective tier. `tierNote` appears when the setting and the enrollment disagree. Run setup again (section 6).

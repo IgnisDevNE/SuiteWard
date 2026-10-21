@@ -12,7 +12,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | Name | Secret | Default | Rule |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | yes | none (required) | PostgreSQL URL accepted by pgx. The service connects as the least-privilege application role, the user of this URL (see [persistence](persistence.md#database-roles-and-grants-sh-h4)), which cannot migrate. There is no separate setting for the role's name: `suiteward migrate` grants to the user of this URL. |
-| `MIGRATION_DATABASE_URL` | yes | none | PostgreSQL URL of the role that owns the schema. Only `suiteward migrate` connects with it and requires it (exit 2 when missing). `serve`, `setup` and `probe` still read it (and the `_FILE` form) and reject a malformed value, because the settings are loaded the same way for every command, but they never connect with it: the service's own environment should not carry it. Same rule as `DATABASE_URL`. |
+| `MIGRATION_DATABASE_URL` | yes | none | PostgreSQL URL of the role that owns the schema. Only `suiteward migrate` accepts it and requires it (exit 2 when missing). `serve`, `setup` and `probe` refuse to start when it (or the `_FILE` form) is set (exit 1: "the migration credential is for `suiteward migrate` only; remove it from this service's environment"), so the owner credential never reaches the service. Same rule as `DATABASE_URL`. |
 | `ARTIFACT_DIR` | no | none (required) | Absolute path of the artifact store. |
 | `HTTP_ADDR` | no | `127.0.0.1:8080` | `host:port` (the port is validated when listening). |
 | `SHUTDOWN_TIMEOUT` | no | `30s` | Go duration, 1s to 10m. |

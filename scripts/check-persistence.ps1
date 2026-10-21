@@ -64,7 +64,7 @@ function Invoke-GeneratedQueryVerification {
     } finally {
         $resolved=[IO.Path]::GetFullPath($scratch)
         $boundary=[IO.Path]::GetFullPath($scratchBase)+[IO.Path]::DirectorySeparatorChar
-        if (-not $resolved.StartsWith($boundary,[StringComparison]::OrdinalIgnoreCase) -or $resolved -cne [IO.Path]::GetFullPath($scratch)) { throw 'Refusing cleanup outside owned generation staging directory.' }
+        if (-not $resolved.StartsWith($boundary,[StringComparison]::OrdinalIgnoreCase)) { throw 'Refusing cleanup outside owned generation staging directory.' }
         if (Test-Path -LiteralPath $resolved) { Remove-Item -LiteralPath $resolved -Recurse -Force }
     }
 }
@@ -85,12 +85,7 @@ if ($Mode -eq 'Library') { return }
 $root=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'dev-env.ps1')
 $context=Get-DevContext $root
-New-Item -ItemType Directory -Path $context.State -Force | Out-Null
-$lock=$null
-try {
-    $lock=[IO.File]::Open((Join-Path $context.State 'setup.lock'),'OpenOrCreate','ReadWrite','None')
-    Install-ArchiveTool $context 'sqlc'
-} finally { if($lock){$lock.Dispose()} }
+Install-ArchiveTool $context 'sqlc'
 Invoke-GeneratedQueryVerification -Root $root -Generate {
     param($Configuration,$Destination)
     & (Get-ToolPath $context 'sqlc') generate --file $Configuration

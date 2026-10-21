@@ -108,6 +108,9 @@ func (j *integrityJob) verify(ctx context.Context, digests []artifact.Digest) in
 		case errors.Is(err, filesystem.ErrCorruptArtifact) || errors.Is(err, fs.ErrNotExist):
 			return integrity.Failed
 		default:
+			if verdict == integrity.Passed && ctx.Err() == nil { // once per project: the error names an object file, never its content
+				j.logger.WarnContext(ctx, "canonical integrity unavailable", "error", err)
+			}
 			verdict = integrity.Unavailable
 		}
 	}

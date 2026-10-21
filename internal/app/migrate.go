@@ -16,27 +16,20 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-// The database is often still starting when migrate runs (a started container does not yet accept connections), so
-// migrate tries the owner connection this many times, this far apart, before it gives up.
-var (
-	connectAttempts = 30
-	connectInterval = time.Second
-	connectTimeout  = 5 * time.Second // one attempt
-)
+// migrateWait is how migrate waits for the database, which is often still starting (a started container does not yet
+// accept connections): it tries the owner connection attempts times, interval apart, each bounded to timeout.
+type migrateWait struct {
+	attempts int
+	interval time.Duration
+	timeout  time.Duration
+}
 
 // runMigrate brings the schema to migrations.SupportedVersion as the owner of the schema and then grants the
 // application role its access (migrations.GrantApp). It is the only command that changes the schema; serve and setup
 // connect as the application role and refuse a schema that is not at the supported version.
-func runMigrate(ctx context.Context, cfg config.Config, stderr io.Writer, logger *slog.Logger) int {
+func runMigrate(ctx context.Context, cfg config.Config, role string, wait migrateWait, stderr io.Writer, logger *slog.Logger) int {
 	owner := cfg.MigrationDatabaseURL.Reveal()
-	// The role the service connects as is the user of its own URL: nothing else can say which role will run.
-	service, err := pgx.ParseConfig(cfg.DatabaseURL.Reveal())
-	if err != nil { // Run checked the URL; the cause is dropped, it may quote the password
-		reportf(stderr, "invalid settings:\nSUITEWARD_DATABASE_URL is not a valid PostgreSQL connection string\n")
-		return 1
-	}
-	role := service.User
-	if err := waitForDatabase(ctx, owner, connectAttempts, connectInterval); err != nil {
+	if err := waitForDatabase(ctx, owner, wait); err != nil {
 		reportf(stderr, "%v\n", err)
 		return 1
 	}
@@ -58,20 +51,17 @@ func runMigrate(ctx context.Context, cfg config.Config, stderr io.Writer, logger
 
 // waitForDatabase returns once the database accepts a connection with databaseURL, or at once when it refuses the
 // login or does not have the database. The error never carries the URL.
-func waitForDatabase(ctx context.Context, databaseURL string, attempts int, interval time.Duration) error {
-	if attempts < 1 {
-		return errors.New("migrate has no connection attempt to make: the number of attempts must be at least one")
-	}
+func waitForDatabase(ctx context.Context, databaseURL string, wait migrateWait) error {
 	var last error
-	for attempt := range attempts {
+	for attempt := range wait.attempts {
 		if attempt > 0 {
 			select {
-			case <-time.After(interval):
+			case <-time.After(wait.interval):
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
-		attemptCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+		attemptCtx, cancel := context.WithTimeout(ctx, wait.timeout)
 		connection, err := pgx.Connect(attemptCtx, databaseURL)
 		if err == nil {
 			_ = connection.Close(attemptCtx) // the connection only proved the database accepts them
@@ -86,5 +76,5 @@ func waitForDatabase(ctx context.Context, databaseURL string, attempts int, inte
 		}
 		last = err
 	}
-	return fmt.Errorf("the database is not reachable after %d attempts: %w", attempts, last)
+	return fmt.Errorf("the database is not reachable after %d attempts: %w", wait.attempts, last)
 }

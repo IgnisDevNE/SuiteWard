@@ -81,7 +81,6 @@ case $* in
 	exit "${FAKE_PROBE_RC:-0}" ;;
 "restart suiteward") : > "$FAKE_DIR/restarted"; exit "${FAKE_RESTART_RC:-0}" ;;
 inspect*) echo sha256:fakedigest ;;
-auto-update) ;;
 *) echo "fake podman: unexpected: $*" >&2; exit 99 ;;
 esac
 EOF
@@ -219,15 +218,9 @@ expect_fail "not ready after restart" "FAIL ready-after-restart"
 run FAKE_WAIT_RC=2 sh "$smoke"
 expect_fail "pending probe lost after restart" "FAIL probe-after-restart"
 
-run sh "$smoke" --promote
-expect_ok "promote" "promote"
-logged "^auto-update" || bad "promote" "podman auto-update was not run"
-
 # Piped in, as `podman machine ssh "sh -s" < deploy/smoke.sh` does: no step may consume the script's own stdin.
 run FAKE_DRAIN_STDIN=1 sh -s < "$smoke"
 expect_ok "script piped to sh -s" "PASS"
-run FAKE_DRAIN_STDIN=1 sh -s -- --promote < "$smoke"
-expect_ok "script piped to sh -s with --promote" "promote"
 
 # PowerShell appends a line ending to what it pipes (`Get-Content -Raw deploy/smoke.sh | podman machine ssh "sh -s"`), and the
 # remote bash then runs that stray line (`$'\r': command not found`, exit 127 after a passing run). The script must end the

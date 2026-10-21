@@ -18,7 +18,7 @@ import (
 
 var (
 	// ErrInvalidObservation marks an observation the store cannot record: a Cycle, Failure, Resolution or closed listing that fails
-	// Validate, a pull number outside the stored range, and a cycle or resolution for a repository or pull the store has not recorded.
+	// Validate, a pull number outside the stored range, a closed listing for a repository with no recorded cycle, and a pull the store does not hold.
 	ErrInvalidObservation = errors.New("invalid GitHub observation")
 	// ErrCreationTimeChanged marks a comment whose created_at differs from the
 	// one stored for its id: GitHub never changes it, so the cycle is not recorded.

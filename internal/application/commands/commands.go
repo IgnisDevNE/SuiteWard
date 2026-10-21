@@ -80,7 +80,7 @@ type Store interface {
 	// Pending returns the first observed version of every comment that has no ledger entry, across all enrolled
 	// repositories, ordered by created_at then comment id, at most limit, and only comments created before
 	// horizon. The caller computes horizon from the sync watermark (D-COMMANDS): the earliest last successful
-	// cycle among the configured enrolled repositories, minus the listing margin (10 s).
+	// cycle among the configured enrolled repositories, minus the listing margin (commandListingMargin in internal/app).
 	Pending(ctx context.Context, horizon time.Time, limit int) ([]Candidate, error)
 	// Record stores the decision for one comment and, when ack is not nil, its acknowledgment outbox message in
 	// the same transaction (for dispositions that never reach ProcessConsent). That message is a system outbox
@@ -152,8 +152,8 @@ func (d Disposition) AffectsCheck() bool {
 
 // ValidatePending reports why Pending cannot answer, as ErrInvalid.
 func ValidatePending(horizon time.Time, limit int) error {
-	if horizon.IsZero() || limit < 1 {
-		return invalid("Pending needs a horizon and a positive limit")
+	if horizon.IsZero() || limit < 1 || limit > math.MaxInt32 {
+		return invalid("Pending needs a horizon and a limit between 1 and %d", math.MaxInt32)
 	}
 	return nil
 }

@@ -251,6 +251,7 @@ SuiteWard's proposal comment shows the copyable command. Approve the exact revis
 Keep these points in mind:
 
 - A `.suiteward.yml` larger than 64 KiB in a pull request or on the default branch is invalid (`invalid-source`). A real declaration is a few lines.
+- A tree that holds a path longer than 4096 bytes, or more than 8 spellings of one name that differ only in case, is invalid (`invalid-source`).
 - If a protected file changes after the proposal, SuiteWard cancels the proposal and comments. Post `/suiteward propose` again.
 - Pull requests from forks get no proposal. Their check shows `fork-unsupported`, because forks are not supported in this release.
 - SuiteWard cannot read a repository whose tree GitHub truncates, which happens with very large monorepos. `propose` refuses it as `invalid-source`, the bootstrap job stops at `origin-not-passed`, and the check of a pull request shows `source-unavailable` (section 9). Such a repository cannot be protected in this release.

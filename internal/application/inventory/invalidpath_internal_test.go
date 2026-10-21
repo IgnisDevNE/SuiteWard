@@ -18,15 +18,15 @@ func TestNewColliderRefusesAnInvalidPath(t *testing.T) {
 }
 
 func TestUnsafeLinkRefusesAnInvalidLink(t *testing.T) {
-	_, err := unsafeLink(t.Context(), nil, layout{}, nil, scope.NewScope(scope.NoDeclaration()), collider{}, "../x", false)
+	_, err := unsafeLink(t.Context(), nil, &layout{}, nil, collider{scope: scope.NewScope(scope.NoDeclaration())}, "../x", false)
 	if !errors.Is(err, artifact.ErrInvalidPath) {
 		t.Fatalf("unsafeLink error = %v, want ErrInvalidPath", err)
 	}
 }
 
 func TestUnsafeLinkRefusesAnInvalidRewrite(t *testing.T) {
-	collisions := collider{dirs: map[string]map[string]bool{foldKey("a"): {"a": true, "A:": true}}}
-	_, err := unsafeLink(t.Context(), nil, layout{}, nil, scope.NewScope(scope.NoDeclaration()), collisions, "a/f", false)
+	collisions := collider{scope: scope.NewScope(scope.NoDeclaration()), twins: true, dirs: map[string][]string{foldKey("a"): {"a", "A:"}}}
+	_, err := unsafeLink(t.Context(), nil, &layout{}, nil, collisions, "a/f", false)
 	if !errors.Is(err, artifact.ErrInvalidPath) {
 		t.Fatalf("unsafeLink error = %v, want ErrInvalidPath", err)
 	}

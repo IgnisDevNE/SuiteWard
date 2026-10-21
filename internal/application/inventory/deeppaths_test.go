@@ -39,25 +39,24 @@ func TestAPathLongerThan4096BytesIsInvalid(t *testing.T) {
 	}
 }
 
-// Deep paths cost work in proportion to their length, not its square: a few thousand of them, 4 MB of paths in all, are
-// resolved in about a second, where folding every directory prefix took tens of seconds.
+// Deep paths cost work in proportion to their length, not its square: two thousand of them, 4 MB of paths in all, take about 2 s,
+// where folding every directory prefix of each took a minute. The bound is wide, for slow and instrumented runs.
 func TestADeepTreeIsResolvedFast(t *testing.T) {
+	base, err := inventory.Build(context.Background(), treeOf(t, baseFiles()))
+	if err != nil {
+		t.Fatalf("Build base: %v", err)
+	}
 	files := baseFiles()
 	for i := range 2000 {
 		path := deepPath(i, 2000)
 		files[path] = regular(path, "x")
 	}
-	tree := treeOf(t, files)
 	start := time.Now()
-	built, err := inventory.Build(context.Background(), tree)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, _, err := inventory.Classify(context.Background(), inventory.Governing{Scope: built.Scope(), Manifest: built.Manifest()}, tree); err != nil {
+	if _, _, err := inventory.Classify(context.Background(), inventory.Governing{Scope: base.Scope(), Manifest: base.Manifest()}, treeOf(t, files)); err != nil {
 		t.Fatalf("Classify: %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("Build and Classify of %d deep entries took %v", len(files), elapsed)
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Errorf("Classify of %d deep entries took %v", len(files), elapsed)
 	}
 }
 

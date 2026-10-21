@@ -8,8 +8,8 @@ The co-located steps in this runbook run in a PowerShell session where you selec
 
 ## 0. Before the host steps (GitHub, once)
 
-1. The first run of the `Deploy` workflow creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the first run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. When the `promote` job waits in the `remote-poc` environment, approve it. That moves the `deploy` tag, and only to the digest built by that same run. A run waiting for approval holds the `deploy-publish` concurrency group, so a later push queues behind it. The `remote-poc` environment needs `main` as a deployment branch (the owner can drop the phase branches): since M1.10 only a push to `main` runs the `Deploy` workflow, and its `promote` waits for your approval. A phase branch does not deploy. The `deploy` tag is a pointer to the promoted digest, not what the host runs: the host pulls it once to read its digest and pins that digest in both SuiteWard units (section 5, "Update the host"). The first install needs `ghcr.io/ignisdevne/suiteward:deploy` to exist, or a release tag `vX.Y.Z`.
+1. The first release run creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
+2. The host runs a release image, pinned by its signed index digest in both SuiteWard units. No workflow moves a tag the host follows: the Deploy workflow and the `deploy` tag are retired, and the `remote-poc` environment is no longer used. Take the index digest from the release notes (the `Index digest:` line of the release run's summary) and verify it as [install.md step 10.9](../docs/install.md#10-running-on-a-separate-host-operators) says.
 
 ## 1. Open a session
 
@@ -190,10 +190,10 @@ Copy the six files in `deploy/quadlet/` from the repository (on your workstation
 
 ```
 podman pull docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
-podman pull ghcr.io/ignisdevne/suiteward:deploy
+podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
 ```
 
-`deploy` is the tag the `Deploy` workflow moves after your approval of `promote`; for a release, pull `vX.Y.Z` instead. Then the files:
+`<index>` is the image index digest of the release, from its release notes. Verify its signature first ([install.md step 10.9](../docs/install.md#10-running-on-a-separate-host-operators): `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` on a machine with cosign 3.x). Then the files:
 
 ```
 mkdir -p ~/.config/containers/systemd
@@ -205,10 +205,11 @@ cat > ~/.config/containers/systemd/suiteward-migrate.container
 cat > ~/.config/containers/systemd/suiteward.container
 ```
 
-For a release image, verify its signature before you pin it ([install.md step 10.9](../docs/install.md#10-running-on-a-separate-host-operators)). Put the digest into BOTH SuiteWard units. They must name the same image: the migration must run the release the service runs. Name the two files, never a `*.container` glob, which would also rewrite the database pin. The chain reads the digest and stops if it is empty, so it never writes an incomplete line:
+Put the verified digest into BOTH SuiteWard units. They must name the same image: the migration must run the release the service runs. Name the two files, never a `*.container` glob, which would also rewrite the database pin. The chain stops unless `d` has the form of a digest, so it never writes an incomplete line:
 
 ```
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:deploy) && [ -n "$d" ] &&
+d=sha256:<index>
+[[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" \
   ~/.config/containers/systemd/suiteward-migrate.container \
   ~/.config/containers/systemd/suiteward.container
@@ -259,11 +260,12 @@ The service now also needs outbound HTTPS to `https://api.github.com`. The IMDS 
 podman run --rm --network suiteward docker.io/curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 10 -o /dev/null -w '%{http_code}\n' https://api.github.com/zen
 ```
 
-**Update the host (a new image).** The service never changes the schema and refuses one that is not its image's, so an update goes through the migration unit. Pull the image you want, read its digest, set BOTH `Image=` lines, reload and restart `suiteward-migrate.service`, which migrates and then restarts the service through `Requires=`. Never restart `suiteward.service` alone after an image change: it would start the new image on the old schema, refuse it (`schema version X, this build requires Y`) and loop. Back up first (migrations only go forward; the way back is the backup, [install.md step 11.6](../docs/install.md#11-updating)):
+**Update the host (a new image).** The service never changes the schema and refuses one that is not its image's, so an update goes through the migration unit. Take the index digest of the release, verify it as in install.md step 10.9, pull by it, set BOTH `Image=` lines, reload and restart `suiteward-migrate.service`, which migrates and then restarts the service through `Requires=`. Never restart `suiteward.service` alone after an image change: it would start the new image on the old schema, refuse it (`schema version X, this build requires Y`) and loop. Back up first (migrations only go forward; the way back is the backup, [install.md step 11.6](../docs/install.md#11-updating)):
 
 ```
-podman pull ghcr.io/ignisdevne/suiteward:deploy
-d=$(podman image inspect --format '{{.Digest}}' ghcr.io/ignisdevne/suiteward:deploy) && [ -n "$d" ] &&
+d=sha256:<index>
+[[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] &&
+podman pull ghcr.io/ignisdevne/suiteward@$d &&
 sed -i "s|^Image=ghcr.io/ignisdevne/suiteward@.*|Image=ghcr.io/ignisdevne/suiteward@$d|" \
   ~/.config/containers/systemd/suiteward-migrate.container \
   ~/.config/containers/systemd/suiteward.container &&
@@ -408,7 +410,3 @@ aws ssm start-session --target <instance-id> --region us-east-2 --document-name 
 ```
 
 The real Claude Code smoke of the phase runs against `http://127.0.0.1:8091/mcp` with the token from section 4a (`claude mcp add --transport http suiteward http://127.0.0.1:8091/mcp --header "Authorization: Bearer <token>"`, then `tools/list`, `status` and `sync` in a session). An agent never receives the token: you run that client yourself, or tell the orchestrator only the outcome.
-
-## 8. A stale run waiting for approval
-
-A `Deploy` run that waits for your approval of `promote` holds the `deploy-publish` group, and later pushes queue behind it. Approve or reject it in the GitHub Actions run page, or cancel it there. That is a human action: nobody else cancels it, and an agent never does.

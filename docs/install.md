@@ -4,7 +4,7 @@ This guide installs SuiteWard once, creates its GitHub App, and runs the owner s
 
 Two rules apply to every command:
 
-- Pin one release. Replace `vX.Y.Z` with the release you install, everywhere it appears. Do not use a moving tag.
+- Pin one release. Replace `vX.Y.Z` with the release you install, everywhere it appears. Do not use a moving tag. Where a command names the image index digest of the release, replace `<index>` with it (step 5.3 says where it comes from).
 - Replace each value in angle brackets, such as `<owner/name>`, with your own value. Never put a secret, a token or a TOTP code into a file, a log, a pull request or a chat.
 
 ## 1. What SuiteWard does and does not do
@@ -90,21 +90,29 @@ Expect `true`. Notes:
 - `deploy/local.ps1` uses `$env:CONTAINER_CONNECTION` when it is set. With no variable, it picks the machine's only rootless connection, or stops and asks for `-PodmanConnection <name>` when it finds several. It restores your connection settings when it ends.
 - A rootful store is a different store: it holds none of the containers, volumes or secrets of this stack.
 
-**5.3 Pull the release image.** Run:
+**5.3 Pull the release image.** Pull it by the digest of its image index, which is what the release workflow signs. The release notes of every release name that digest (the owner adds it when publishing). The log of the workflow step "Sign the image index, verify the signature, then move latest-stable" also prints it, in the line `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one.
+
+Verify it first, from the release source, on a machine that has cosign 3.x (this PC, for example):
 
 ```
-podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
+pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>
 ```
 
-Expect a digest line.
+Expect `Verified: … was signed by the SuiteWard release workflow.` If it fails, do not use that digest. A signature proves that the digest came from the release workflow, not that it is the version you want: after the stack starts (step 5.4), check that `version` in `/status` is the release you meant. Then pull by the digest:
+
+```
+podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
+```
+
+Expect a digest line. The index is multi-arch, so the same line works on amd64 and arm64.
 
 **5.4 Start the stack.** The script creates the network, the volumes and the secrets. It generates the database owner password, the application role password and the MCP token and never prints them. Pass the App key file only the first time; the three GitHub values are needed on every run that should keep GitHub:
 
 ```
-./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:vX.Y.Z -GitHubAppKeyFile <path to the PEM> -GitHubAppId <app id> -GitHubInstallationId <installation id> -GitHubRepositories '<owner/name>,<owner/name>'
+./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppKeyFile <path to the PEM> -GitHubAppId <app id> -GitHubInstallationId <installation id> -GitHubRepositories '<owner/name>,<owner/name>'
 ```
 
-The script works in this order: it starts the database and waits until it is healthy, creates the application role `suiteward_app`, runs the one-shot `suiteward migrate` container, and starts the service only when migrate exited with code 0. Expect migrate's JSON log line `database migrated`, then the line `Started suiteward-db and suiteward (ghcr.io/ignisdevne/suiteward:vX.Y.Z), GitHub configured.` and the hints for the smoke test. If migrate fails, the script stops with `suiteward migrate failed with exit code N (output above); the service was not started.`
+The script works in this order: it starts the database and waits until it is healthy, creates the application role `suiteward_app`, runs the one-shot `suiteward migrate` container, and starts the service only when migrate exited with code 0. Expect migrate's JSON log line `database migrated`, then the line `Started suiteward-db and suiteward (ghcr.io/ignisdevne/suiteward@sha256:<index>), GitHub configured.` and the hints for the smoke test. If migrate fails, the script stops with `suiteward migrate failed with exit code N (output above); the service was not started.`
 
 Notes:
 
@@ -645,7 +653,7 @@ podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-mcp-toke
 podman pull docker.io/library/postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 ```
 
-Expect a digest line. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. The digest to pin is the one of the release's image index, which is what the release workflow signs. Take it from the release notes, or from the log of the workflow step "Sign the image index, verify the signature, then move latest-stable", which prints `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one, so the verification below fails and a pin on it names a single architecture.
+Expect a digest line. The units pin the release by its digest, not by its tag, because a tag can be rewritten and a digest cannot. The digest to pin is the one of the release's image index, which is what the release workflow signs. The release notes of every release name it (the owner adds it when publishing). The log of the workflow step "Sign the image index, verify the signature, then move latest-stable", also prints it, in the line `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one, so the verification below fails and a pin on it names a single architecture.
 
 Verify it on any machine that has cosign 3.x, for example your own PC, from the release source (the host does not need cosign):
 
@@ -653,7 +661,7 @@ Verify it on any machine that has cosign 3.x, for example your own PC, from the 
 pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>
 ``````
 
-Expect `Verified: … was signed by the SuiteWard release workflow.` The script runs `cosign verify` with the fixed identity `^https://github\.com/IgnisDevNE/SuiteWard/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` and the issuer `https://token.actions.githubusercontent.com`; you can run `cosign verify --certificate-identity-regexp <identity> --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/ignisdevne/suiteward@sha256:<index>` yourself instead. If it fails, do not pin that digest.
+Expect `Verified: … was signed by the SuiteWard release workflow.` The script runs `cosign verify` with the fixed identity `^https://github\.com/IgnisDevNE/SuiteWard/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` and the issuer `https://token.actions.githubusercontent.com`; you can run `cosign verify --certificate-identity-regexp <identity> --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/ignisdevne/suiteward@sha256:<index>` yourself instead. If it fails, do not pin that digest. A signature proves that the digest came from the release workflow, not that it is the version you want: after the service starts (step 10.16), check that `version` in `/status` is the release you meant.
 
 Then pull the release image by that digest. The index is multi-arch, so the same line works on amd64 and arm64:
 
@@ -860,10 +868,16 @@ An update always goes through the migration. The service never changes the schem
 
 **11.1 Back up first.** `suiteward migrate` changes the schema before the service starts, and migrations only go forward: an older image refuses to start on a newer schema, and nothing migrates it back. The only way back is the backup, so take one now. See [the backup runbook](backup.md). The backup holds the TOTP secret and the enrollment, so store it as a secret.
 
-**11.2 Pull the new release image.** Use the new `vX.Y.Z`. On the isolated host, run it as `suiteward`. You can pull by the index digest instead, as step 10.9 does:
+**11.2 Pull the new release image.** Pull by tag, or by the index digest as step 10.9 does. On the isolated host, run it as `suiteward`. By tag, with the new `vX.Y.Z`:
 
 ```
 podman pull ghcr.io/ignisdevne/suiteward:vX.Y.Z
+```
+
+By the index digest of the new release, after you verified it as step 10.9 says:
+
+```
+podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
 ```
 
 **11.3 Update an isolated host.** Read the release notes first. An instance on v0.1.1 or older upgrades to v0.1.3 first, and lets its queued comments go out, before any later release: later releases no longer read the comment payloads that v0.1.1 or older queued. Compare the new release's `deploy/quadlet/*` files with the units installed in `~/.config/containers/systemd/`, and carry over anything the new release adds: a new secret (as `suiteward`), a new entry in `/etc/suiteward/github.env` (as the administrator), or a new setting in a unit file (as `suiteward`). Keep a copy of the units you replace, in case you roll back:
@@ -910,7 +924,7 @@ systemctl --user status suiteward-migrate.service suiteward.service --no-pager
 
 Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If the service is not running, start it with `systemctl --user start suiteward.service`. Expect `/readyz` to answer `ready` again, with the new `schemaVersion` (section 10, step 10.16).
 
-**11.4 Update a co-located PC.** Pull the image (step 11.2, with the rootless connection of step 5.2 selected), then run `./deploy/local.ps1` with the new `-Image` value and the same three GitHub parameters as before (section 5, step 5.4). The script migrates before it starts the service. A run without the GitHub parameters removes GitHub from the stack. If the stack comes from v0.1.x, the script also converts it (section 5, "Converting a stack from v0.1.x").
+**11.4 Update a co-located PC.** Take the index digest of the new release, verify it and pull by it, as step 5.3 says (with the rootless connection of step 5.2 selected), then run `./deploy/local.ps1` with the new `-Image` value, `ghcr.io/ignisdevne/suiteward@sha256:<index>`, and the same three GitHub parameters as before (section 5, step 5.4). The script migrates before it starts the service. A run without the GitHub parameters removes GitHub from the stack. If the stack comes from v0.1.x, the script also converts it (section 5, "Converting a stack from v0.1.x").
 
 **11.5 Upgrade an isolated host from v0.1.x.** v0.1.x ran the service as the database owner and migrated inside it. This release splits the roles, so the first upgrade needs three extra steps before the update of step 11.3: the owner URL moves to its own secret, the role `suiteward_app` is created with a new secret, and the migration unit is installed. This guide covers AlmaLinux 9 only. A v0.1.x host on another distribution is not covered: install a new host as in section 10, then restore your backup there ([the backup runbook](backup.md)). An instance on v0.1.1 or older upgrades to v0.1.3 first, so that its queued comments drain, and then to v0.2.0, because v0.2.0 no longer reads comment payloads queued by v0.1.1 or older. On the AlmaLinux 9 host, as `suiteward`:
 

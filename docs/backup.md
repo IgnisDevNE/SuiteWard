@@ -102,7 +102,7 @@ The command opens a new shell and waits for commands, so it prints nothing. Chec
    python3 -m http.server <port> --bind 127.0.0.1 --directory ~/suiteward-backup
    ```
 
-   The forwarding command depends on your remote-access tool. With AWS Systems Manager, for example, and `<port>` set to 8000, run this on the machine that has the AWS CLI and your credentials (quoted for a POSIX shell or PowerShell 7.3 or later). It stays open while the forward works:
+   The forwarding command depends on your remote-access tool. With AWS Systems Manager, for example, and `<port>` set to 8000, run this on the machine that has the AWS CLI, the Session Manager plugin and your credentials (quoted for a POSIX shell or PowerShell 7.3 or later). It stays open while the forward works:
 
    ```
    aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["8000"],"localPortNumber":["18000"]}'
@@ -215,13 +215,13 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
 
    Expect a list of entries under `artifacts/` and no error.
 
-3. Pin both units to the backup's version, by the digest of its signed image index. The version is the `version` value in `status.json` (the release you upgrade to, for a backup from v0.1.x). Take the index digest of that release from its release notes, or from the log of the release workflow's step "Sign the image index, verify the signature, then move latest-stable", which prints `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one. Verify it on a machine with cosign 3.x, as [step 10.9 of the install guide](install.md#10-running-on-a-separate-host-operators) says (the host does not need cosign):
+3. Pin both units to the backup's version, by the digest of its signed image index. The version is the `version` value in `status.json` (the release you upgrade to, for a backup from v0.1.x). The release notes of every release name the index digest (the owner adds it when publishing). The log of the release workflow's step "Sign the image index, verify the signature, then move latest-stable", also prints it, in the line `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one. Verify it on your PC, or any machine with cosign 3.x, as [step 10.9 of the install guide](install.md#10-running-on-a-separate-host-operators) says (the host does not need cosign). This command runs on that machine, not in the host shell:
 
    ```
    pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>
    ```
 
-   If it fails, do not pin that digest. Then, on the host, pull the image by the digest. The index is multi-arch, so the same line works on amd64 and arm64:
+   If it fails, do not pin that digest. A signature proves that the digest came from the release workflow, not that it is the version you want: after the service starts (step 8), check that `version` in `/status` is the one in `status.json`. Then, on the host, pull the image by the digest. The index is multi-arch, so the same line works on amd64 and arm64:
 
    ```bash
    podman pull ghcr.io/ignisdevne/suiteward@sha256:<index>
@@ -359,14 +359,14 @@ The co-located stack creates its volumes and roles only when the script runs, an
 
    Expect a list of entries under `artifacts/` and no error.
 
-3. Purge the stack, then reinstall the same version.
+3. Purge the stack, then reinstall the same version. Install it by the digest of its signed image index: take the index digest of that release from its release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` (on this PC, with cosign 3.x; [install guide, step 5.3](install.md#5-install-co-located)), and pass it to `-Image`. The `version` in `status.json` names the release (the release you upgrade to, for a backup from v0.1.x).
 
    ```powershell
    ./deploy/local.ps1 -Down -Purge
    ```
 
    ```powershell
-   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:<version> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
+   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
    ```
 
    Give the GitHub flags only if this stack uses GitHub. The purge removes the volumes, the secrets and the MCP token. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`. Expect the line `database migrated` from the migration, then `Started suiteward-db and suiteward`. The service starts on an empty database with the schema of this release, and the next steps replace that schema.
@@ -404,7 +404,7 @@ The co-located stack creates its volumes and roles only when the script runs, an
 7. Run the same install command of step 3 again, with the same `-Image` and GitHub flags. It replaces the stopped service, runs the migration again (it applies the grants to `suiteward_app` and any migration the dump lacks), and starts the service on the restored data. The secrets and volumes it finds are kept, and the App key file is not read again.
 
    ```powershell
-   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:<version> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
+   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
    ```
 
 8. Wait until the service is ready, then check `/status` against `status.json`.
@@ -502,10 +502,10 @@ Run every `podman` command in the PowerShell session where you selected the root
    ./deploy/local.ps1 -Down -Purge
    ```
 
-2. Install the same version again, with the GitHub flags: the script creates both roles, migrates, and starts the service. Give the GitHub flags only if this stack uses GitHub. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`.
+2. Install the same version again, by the digest of its signed image index (take it from the release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` on this PC, with cosign 3.x, and pass it to `-Image`), with the GitHub flags: the script creates both roles, migrates, and starts the service. Give the GitHub flags only if this stack uses GitHub. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`.
 
    ```powershell
-   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward:<version> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
+   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
    ```
 
    Expect the line `database migrated` from the migration, then `Started suiteward-db and suiteward`.
@@ -526,13 +526,13 @@ Run every `podman` command in the PowerShell session where you selected the root
 
 These steps are the same on both tiers. Run the first one in the shell of your flow: the `suiteward` shell of the isolated host, or the PowerShell session of the co-located PC.
 
-1. Run `setup` once for the instance, not once for each repository: it enrolls one owner for all of them, and every run replaces the TOTP secret. This starts a new enrollment: the new entry is named `SuiteWard:<login> (<tier> <instance>)`, and the database is new, so its instance id (shown as `instance` in `/status`) differs from the old one. Before you scan the new entry, delete the old entry of this instance, the one with the old id in its name. Entries of other instances stay. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted. It needs the GitHub settings in place: the isolated host reads them from `/etc/suiteward/github.env`, and the co-located stack has them only when it was started with its GitHub parameters.
+1. Run `setup` once for the instance, not once for each repository: it enrolls one owner for all of them, and every run replaces the TOTP secret. This starts a new enrollment: the new entry is named `SuiteWard:<login> (<tier> <instance>)`, and the database is new, so its instance id (shown as `instance` in `/status`) differs from the old one. Before you scan the new entry, delete the old entry of this instance, the one with the old id in its name. Entries of other instances stay. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted. It needs the GitHub settings in place. On the isolated host they are in `/etc/suiteward/github.env`. On the co-located PC they are there only when the stack was started with its GitHub parameters.
 
    ```
    podman exec -it suiteward /suiteward setup --owner <your GitHub login> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
    ```
 
-   Give exactly one `--test-check` for each configured repository (those of `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env`, or the `-GitHubRepositories` you gave `deploy/local.ps1`), in single quotes as shown, because a check name can hold spaces and slashes. `<check name>` is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset, never `SuiteWard / Contract`. A missing, extra or duplicate `--test-check` is a usage error, and nothing is written.
+   Give exactly one `--test-check` for each configured repository (on the isolated host, those of `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env`; on the co-located PC, the `-GitHubRepositories` you gave `deploy/local.ps1`), in single quotes as shown, because a check name can hold spaces and slashes. `<check name>` is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset, never `SuiteWard / Contract`. A missing, extra or duplicate `--test-check` is a usage error, and nothing is written.
 
    Setup is interactive: run it yourself in a real terminal, with any recording of the session turned off, because it prints the TOTP secret and its `otpauth://` URI there. It looks up your login and every repository first, then waits for you to press Enter before it generates the secret. After that it prints the secret and the URI once, asks for a code, and prints the protection result of each repository. The command is the same in bash and in PowerShell, where the single quotes work the same way.
 
@@ -552,7 +552,23 @@ These steps are the same on both tiers. Run the first one in the shell of your f
    - A `branch` baseline becomes V1 by itself, with no merge. V1 can take up to about a minute to appear, and the bot then comments `Bootstrap complete: P<n>-R1, approved by <owner>, is now canonical version V1.`
    - A `pull` baseline becomes V1 only from the exact merge commit of that pull request, after it merges. A push that changes a protected file in that pull request cancels the proposal: comment `/suiteward propose` again.
 
-4. Read `/status` with the second command of step 8 of the restore flow of your tier (section 3). Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error.
+4. Read `/status`. Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error. On the isolated host, in the `suiteward` shell:
+
+   ```bash
+   curl -sS http://127.0.0.1:8081/status
+   ```
+
+   On the co-located PC, in PowerShell:
+
+   ```powershell
+   curl.exe -sS http://127.0.0.1:8081/status
+   ```
+
+   If `127.0.0.1:8081` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run it through the Podman machine, as its rootless user:
+
+   ```powershell
+   podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status"
+   ```
 
 ## 5. Rehearse on the co-located stack
 

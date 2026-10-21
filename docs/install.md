@@ -173,7 +173,7 @@ Afterwards, check the result. On the co-located PC, use the `podman machine ssh 
 
 Only a setup that prints the protection result of each repository and exits with code 0 counts. Confirm it with `/status`: `owner.enrolledAt` changes on every successful run, so a value that did not change means that setup did not complete. An interrupted setup can leave an authenticator entry that matches nothing: delete it.
 
-Running setup again replaces the TOTP secret, and the new entry has the same name as the old one of this instance. Once the new entry gives a code that setup accepts, delete the old entry (the entries of other instances have another `<instance>`, so leave them). Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
+Running setup again replaces the TOTP secret, and the new entry has the same name as the old one of this instance. Before you scan it, delete any existing entry with this exact name. Entries of other instances (another id in the name) stay. An older entry named `SuiteWard:<login>`, with no instance in its name, predates this release: delete it once the new entry's code is accepted. Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
 
 ## 7. Create the ruleset
 
@@ -359,7 +359,7 @@ A correction puts an earlier version's protected files back, for example the pre
 
 A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard skips it: nothing is synchronized or checked there, and the commands of the other repositories keep working. A command it had already observed there can still be decided, and its reply may fail. `/status` and the MCP `status` tool name it in `unconfiguredRepositories`, and the log warns once. Deleting the repository on GitHub has the same effect.
 1. Remove the repository from the list: `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env` on an isolated host (then restart the service), or `-GitHubRepositories` when you run `deploy/local.ps1` again on a co-located PC.
-2. Run setup again (section 6) with one `--test-check` for each repository you keep. Setup replaces the TOTP secret, so add the new entry to your authenticator app and, once it gives a valid code, delete the old one of this instance (same `<tier> <instance>` in its name).
+2. Run setup again (section 6) with one `--test-check` for each repository you keep. Setup replaces the TOTP secret, so delete the entry of this instance from your authenticator app before you scan the new one (the entry with this exact name, `<tier> <instance>` included; entries of other instances stay), then add the new entry. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted.
 3. Comment your command again. A command written before the new setup is ignored and gets no reply.
 
 SuiteWard changes nothing on GitHub: remove the App from the repository, and the ruleset rule that requires `SuiteWard / Contract`, yourself.
@@ -1160,7 +1160,7 @@ These are the `/status` fields you read:
   - `integrity` is `passed`, `failed` or `unavailable` for the current version. It appears after the first integrity check, which runs when the service starts, right after each promotion and then every hour, so a canonical shows its `integrity` within moments of its promotion. `failed` means SuiteWard fails the check on every pull request of that repository and does not promote until the problem is resolved; it does not block merges by itself — your branch protection does that, if you require the check. `unavailable` changes no check.
 - `outbox.failed` counts messages that SuiteWard could not deliver to GitHub after its retries. It should be 0. Read the logs for the repository. A refused write is often a missing App permission, so compare with section 4. If the failed message was a check, SuiteWard sends it again by itself about 15 minutes after the cause is fixed. Until then a pull request can lack its required `SuiteWard / Contract` check. Push a new commit to that pull request to get a new check at once.
 - `jobs.discarded` counts background jobs that failed for good. Read the logs.
-- `version`, `schemaVersion` and `source` identify the release and the database schema that run.
+- `version`, `schemaVersion` and `source` identify the release and the database schema that run. `instance` is the first 8 characters of the instance id, the same as in the name of the authenticator entry that setup creates (`SuiteWard:<login> (<tier> <instance>)`), so you can match an entry to an instance.
 
 Common problems:
 

@@ -148,9 +148,33 @@ jobs:
           handle_no_reports_found: false
           cleanup: true
 
+  image:
+    name: Image build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Same pinned BuildKit image as release.yml (scripts/check-pins.ps1 keeps the copies in step).
+      BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create the builder
+        run: docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Build linux/amd64 and linux/arm64 without pushing
+        # No other build of the image runs before a release tag: a broken Containerfile or a failing arm64 build shows on the pull request.
+        # The result stays in the build cache: nothing is loaded, pushed, signed or attested.
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false \
+            --build-arg "GO_VERSION=$(cat .go-version)" \
+            --file deploy/Containerfile --output type=cacheonly .
+
   gate:
     name: CI / Gate
-    needs: [inspect, foundation, go, coverage]
+    needs: [inspect, foundation, image, go, coverage]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -93,23 +93,36 @@ type Parsed struct {
 const prefix = "/suiteward"
 
 // Parse reads the command line of a comment body (D-COMMANDS): the first line
-// whose own text, trimmed of spaces and tabs, starts with /suiteward followed by
-// a space, a tab or the end of the line. Other lines are ignored. Parse is
-// conservative: it never reads a line GitHub shows as code, and it may skip one
-// GitHub shows as text. It skips a fenced code block, an HTML comment and an
-// indented code block. A fence opens on a line whose text, after any block quote
-// or list item markers (>, -, *, +, N. and N)), starts with three or more
-// backticks or tildes, and, when it opened outside such a marker, closes on a line indented at most three columns that
-// holds only at least as many of the same character; an unclosed fence, and any fence opened after a marker, runs to
-// the end of the body. An HTML comment hides every line from one that contains
-// <!-- up to and including the next that contains -->, or to the end of the
-// body, and a comment that closes on the line it opens on hides only that line;
-// a fence marker inside a comment opens nothing, and a comment marker inside a
-// fence is code. A line indented four or more columns, a tab counting as four
-// and measured before trimming, is an indented code block. The known case
-// that skips text: a fence opened after a quote or list item marker runs to the end of the body, though GitHub ends it with its
-// container. The prefix and the verb match without regard to ASCII case, the reference keeps
-// its P<n>-R<m> form, and only spaces and tabs separate tokens.
+// whose own text, trimmed of spaces and tabs, starts with /suiteward followed
+// by a space, a tab or the end of the line. Other lines are ignored.
+//
+// Parse is conservative: it never reads a line that GitHub shows as code
+// through a fence, an HTML comment or an indented block, and it may skip a line
+// that GitHub shows as text. It skips:
+//   - A fenced code block. A fence opens on a line whose text, after any block
+//     quote or list item markers (>, -, *, +, N. and N)), starts with three or
+//     more backticks or tildes, whatever follows them, an HTML comment marker
+//     included. It closes on a line indented at most three columns that holds
+//     only at least as many of the same character. An unclosed fence runs to
+//     the end of the body.
+//   - A contained fence, which no line closes: one opened after a marker, or
+//     indented by at least one column (it may sit in an open list item, which
+//     GitHub ends with the item). It runs to the end of the body, so a
+//     top-level fence indented one to three columns, and a fence in a quote or
+//     a list item, hide the rest of the body though GitHub may show it as text.
+//   - An HTML comment, from a line that contains <!-- up to and including the
+//     next that contains -->, or to the end of the body. A comment that closes
+//     on the line it opens on hides only that line. A fence marker inside a
+//     comment opens nothing, and a comment marker inside a fence is code.
+//   - An indented code block: a line indented four or more columns, a tab
+//     counting as four and measured before trimming.
+//
+// Known limit: Parse models no <pre> or <code> block and no inline code span
+// that crosses lines, so it reads a command that GitHub shows as code there. A
+// code that is still current and unused is required, so that is no authority.
+//
+// The prefix and the verb match without regard to ASCII case, the reference
+// keeps its P<n>-R<m> form, and only spaces and tabs separate tokens.
 func Parse(body string) Parsed {
 	var fence string
 	contained, inComment := false, false
@@ -127,12 +140,12 @@ func Parse(body string) Parsed {
 			}
 			continue
 		}
-		if strings.Contains(line, "<!--") {
-			inComment = opensComment(line)
+		if f, c := fenceStart(line, text); f != "" {
+			fence, contained = f, c
 			continue
 		}
-		if f, c := fenceStart(text); f != "" {
-			fence, contained = f, c
+		if strings.Contains(line, "<!--") {
+			inComment = opensComment(line)
 			continue
 		}
 		if indent(line) >= 4 {
@@ -174,12 +187,12 @@ func closesFence(line, text, fence string) bool {
 	return indent(line) < 4 && strings.HasPrefix(text, fence) && strings.Trim(text, fence[:1]) == ""
 }
 
-// fenceStart returns the run that opens a fence on text, after any block quote or list item markers, and whether the fence sits in such a
-// container. Only its container ends a contained fence, and a line that is less indented than the container's content does that and opens a
-// fence of its own, so no line closes a contained fence for Parse: it runs to the end of the body.
-func fenceStart(text string) (fence string, contained bool) {
+// fenceStart returns the run that opens a fence on the line, after any block quote or list item markers, and whether the fence is
+// contained: opened after a marker or indented, so possibly in a list item. Only its container ends a contained fence, and a line that
+// is less indented than the container's content does that and opens a fence of its own, so no line closes a contained fence for Parse.
+func fenceStart(line, text string) (fence string, contained bool) {
 	inner := stripMarkers(text)
-	return openingFence(inner), inner != text
+	return openingFence(inner), inner != text || indent(line) > 0
 }
 
 // stripMarkers removes the block quote and list item markers (>, -, *, +, N. and N) with the spaces after them) that start the text, so a fence

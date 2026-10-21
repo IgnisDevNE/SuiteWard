@@ -970,9 +970,9 @@ type invalidSourcePayload struct {
 	commentTarget
 	Kind          string `json:"kind"`
 	Path          string `json:"path,omitempty"`        // a link only
-	Declaration   string `json:"declaration,omitempty"` // a link only, and none in a payload written before M1.9-E11: the head's declaration with the link in exclude, at most 8192 bytes
+	Declaration   string `json:"declaration,omitempty"` // a link only, and none in a payload that v0.1.1-rc.6 or earlier queued: the head's declaration with the link in exclude, at most 8192 bytes
 	PathCut       bool   `json:"pathCut,omitempty"`
-	Branch        string `json:"branch,omitempty"`        // the pull request's head ref, for the editor link; none in a payload written before M1.9-E12, which then has no link
+	Branch        string `json:"branch,omitempty"`        // the pull request's head ref, for the editor link; none in a payload that v0.1.1-rc.7 or earlier queued, which then has no link
 	NoDeclaration bool   `json:"noDeclaration,omitempty"` // a link only: the head has no .suiteward.yml, so the link goes to the new-file page of GitHub's editor
 }
 

@@ -249,8 +249,8 @@ func (c *Client) GetImmutable(ctx context.Context, path string) (Response, error
 	return c.get(ctx, path, false)
 }
 
-// maxPostBody bounds a POST body; comments are far smaller.
-const maxPostBody = 64 << 10
+// MaxPostBody bounds a POST body; comments are far smaller.
+const MaxPostBody = 64 << 10
 
 // Post sends a JSON body and expects 201. It shares the budget and the rate-limit
 // errors of Get but never uses the ETag cache. The request body never reaches an error: a comment can quote repository text.
@@ -258,8 +258,8 @@ func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, 
 	if !strings.HasPrefix(path, "/") {
 		return Response{}, fmt.Errorf("github POST %q: path must start with /", path)
 	}
-	if len(body) > maxPostBody {
-		return Response{}, fmt.Errorf("github POST %s: body of %d bytes exceeds the limit of %d", path, len(body), maxPostBody)
+	if len(body) > MaxPostBody {
+		return Response{}, fmt.Errorf("github POST %s: body of %d bytes exceeds the limit of %d", path, len(body), MaxPostBody)
 	}
 	if err := c.budget.acquire(); err != nil {
 		return Response{}, fmt.Errorf("github POST %s: %w", path, err)
@@ -406,13 +406,16 @@ func responseDate(h http.Header) time.Time {
 	return date.UTC()
 }
 
+// maxRetryAfterSeconds bounds the wait a Retry-After in seconds can ask for.
+const maxRetryAfterSeconds = 3600
+
 // retryTime prefers Retry-After (seconds or an HTTP date) over X-RateLimit-Reset
 // (Unix seconds) and returns local time: the date and the reset are in GitHub's
 // clock and are shifted by the offset the response's Date just updated.
 func (c *Client) retryTime(retryAfter []string, reset string) time.Time {
 	if len(retryAfter) > 0 {
 		if s, err := strconv.Atoi(retryAfter[0]); err == nil && s >= 0 {
-			return c.budget.clock().Add(time.Duration(s) * time.Second)
+			return c.budget.clock().Add(time.Duration(min(s, maxRetryAfterSeconds)) * time.Second) // a huge value must not overflow the Duration
 		}
 		if at, err := http.ParseTime(retryAfter[0]); err == nil {
 			return c.budget.local(at)

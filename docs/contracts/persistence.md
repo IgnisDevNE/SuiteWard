@@ -1266,7 +1266,7 @@ All enumerations are `text` with `CHECK` constraints. Immutable and append-only 
 
 ## Database roles and grants (SH-H4)
 
-Two roles use the database. The **owner** owns every object (today the bootstrap role `suiteward`) and is used only by `suiteward migrate`. The **application role** (default `suiteward_app`, setting `DATABASE_APP_ROLE`) is what `serve`, `setup` and `probe` connect as, with `DATABASE_URL`. Whoever holds the application credential can change data but cannot defeat the immutability triggers: that needs the owner.
+Two roles use the database. The **owner** owns every object (today the bootstrap role `suiteward`) and is used only by `suiteward migrate`. The **application role** is what `serve`, `setup` and `probe` connect as: the user of `DATABASE_URL` (`suiteward_app` in the shipped layout), which is also the role `suiteward migrate` grants to. It must be least-privilege: `migrate` refuses, before it changes anything, the migration role, a superuser, a role with `BYPASSRLS` and the owner of the schema. Whoever holds the application credential can change data but cannot defeat the immutability triggers: that needs the owner.
 
 `migrations.GrantApp(ctx, ownerURL, role)` gives the role, in the connection's `current_schema()` (never a hard-coded `public`), in one transaction and idempotently:
 
@@ -1277,11 +1277,14 @@ Two roles use the database. The **owner** owns every object (today the bootstrap
 
 It grants nothing else: no `TRUNCATE`, `TRIGGER`, `REFERENCES`, `CREATE` or ownership, so the role cannot `ALTER TABLE ... DISABLE TRIGGER`, `DROP TRIGGER`, `TRUNCATE` or create objects, and it is not a superuser, so `SET session_replication_role` fails; each is a `42501` (insufficient privilege). The statements the store runs on the enrollment and queue tables (`LOCK TABLE owner_enrollment IN SHARE ROW EXCLUSIVE MODE`, row locks, `FOR UPDATE SKIP LOCKED`) and River's own maintenance need no more. River's reindexer, which does (`REINDEX INDEX CONCURRENTLY` needs the owner), is disabled.
 
-The role is not created by the program: `CREATE ROLE` needs a password, which the deployment holds. `GrantApp` fails, naming it, when the role does not exist, and when it is the owner. A deployment creates it once:
+The role is not created by the program: `CREATE ROLE` needs a password, which the deployment holds. `GrantApp` fails, naming it, when the role does not exist, and when it is not least-privilege (`CheckAppRole`, which `migrate` runs first). A deployment creates it once, as the owner, with the password typed or piped into `psql` on its standard input, never as a command-line argument (an argument shows in the process list and the shell history):
 
 ```sql
-CREATE ROLE suiteward_app LOGIN PASSWORD '<password>';
+CREATE ROLE suiteward_app LOGIN;
+\password suiteward_app
 ```
+
+The grants assume PostgreSQL 15 or later, where `PUBLIC` has no `CREATE` on schema `public`. On an older server the role could create objects there through `PUBLIC`: run `REVOKE CREATE ON SCHEMA public FROM PUBLIC;` yourself (`GrantApp` does not change it). River's tables and the history tables stay owned by the owner either way.
 
 The integration tests create one such role for the cluster and run the PostgreSQL conformance suites, the River suites and the application suites connected as it, after the owner migrated the schema and `GrantApp` ran (`internal/adapters/postgres/pgtest`); suites that tamper with stored facts or change the schema (`ALTER TABLE`, `TRUNCATE`, `DISABLE TRIGGER`) run those statements as the owner.
 

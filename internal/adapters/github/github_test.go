@@ -555,7 +555,7 @@ func TestTreeReadKeepsTheBlobsOfACancelledPass(t *testing.T) {
 	}
 	blobs := slices.DeleteFunc(gh.uris(), func(uri string) bool { return uri == treeURI })
 	slices.Sort(blobs)
-	if want := []string{blobsURI + declarationBlob, blobsURI + testFileBlob}; !slices.Equal(blobs, want) {
+	if want := []string{blobsURI + testFileBlob, blobsURI + declarationBlob}; !slices.Equal(blobs, want) {
 		t.Errorf("blob requests = %v, want each blob once: %v", blobs, want)
 	}
 }

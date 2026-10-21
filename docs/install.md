@@ -256,7 +256,7 @@ Keep these points in mind:
 - If a protected file changes after the proposal, SuiteWard cancels the proposal and comments. Post `/suiteward propose` again.
 - Pull requests from forks get no proposal. Their check shows `fork-unsupported`, because forks are not supported in this release.
 - SuiteWard cannot read a repository whose tree GitHub truncates, which happens with very large monorepos. `propose` refuses it as `invalid-source`, the bootstrap job stops at `origin-not-passed`, and the check of a pull request shows `source-unavailable` (section 9). Such a repository cannot be protected in this release.
-- Reading a very large test suite can take longer than the job timeout. On the isolated host, raise `SUITEWARD_JOB_TIMEOUT` (section 12). `deploy/local.ps1` has no parameter for it, so the co-located stack keeps the default: about 150 protected files read per minute of the job timeout. For a larger test suite, use the isolated host (section 10) instead.
+- Reading a very large test suite can take longer than the job timeout. SuiteWard reads the protected files eight at a time and keeps what it read, so the default of one minute covers about a thousand files, and a pass that is cut off resumes where it stopped. For a suite far beyond that, raise `SUITEWARD_JOB_TIMEOUT` on the isolated host (section 12). `deploy/local.ps1` has no parameter for it, so the co-located stack keeps the default; for a larger test suite, use the isolated host (section 10) instead.
 
 ## 9. Day to day
 
@@ -1111,7 +1111,7 @@ Where you set them:
 | `SUITEWARD_SHUTDOWN_TIMEOUT` | `30s` (1 s to 10 min) | Time allowed for a graceful stop. The container's stop timeout must exceed this by at least 5 s. The units set 45 s, which covers the default. A value of 40 s or more needs a larger stop timeout. |
 | `SUITEWARD_LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, `error`. |
 | `SUITEWARD_JOB_WORKERS` | `4` (1 to 64) | Number of background workers. |
-| `SUITEWARD_JOB_TIMEOUT` | `1m` (1 s to 1 h) | Time limit of one attempt of a background job. A `propose` reads about 150 protected files per minute of this value, so raise it for a large test suite. Isolated host only: `deploy/local.ps1` has no parameter for it, so the co-located stack always keeps the default (section 8). |
+| `SUITEWARD_JOB_TIMEOUT` | `1m` (1 s to 1 h) | Time limit of one attempt of a background job. A `propose` or a check reads about a thousand protected files per minute of this value (eight at a time, and what was read is kept for the next attempt); raise it only for a very large test suite. Isolated host only: `deploy/local.ps1` has no parameter for it, so the co-located stack always keeps the default (section 8). |
 | `SUITEWARD_JOB_MAX_ATTEMPTS` | `5` (1 to 25) | Attempts before a background job is marked discarded. |
 | `SUITEWARD_OUTBOX_MAX_ATTEMPTS` | `8` (1 to 25) | Attempts to deliver a message to GitHub before it is marked failed. |
 | `SUITEWARD_OUTBOX_POLL_INTERVAL` | `5s` (1 s to 1 h) | How often the relay looks for messages to send. |

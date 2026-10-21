@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -460,5 +461,40 @@ func TestAddPatternsQuotesAYAMLBooleanOnItsOwn(t *testing.T) {
 				t.Errorf("the declaration holds %q, want %q", patternStrings(d.Include()), pattern)
 			}
 		})
+	}
+}
+
+// A declaration holds at most 1000 patterns across include, exclude and runner.
+func TestParseDeclarationCapsPatternsAtOneThousand(t *testing.T) {
+	declare := func(include, exclude, runner int) []byte {
+		var b strings.Builder
+		b.WriteString("version: 1\n")
+		for key, n := range map[string]int{"include": include, "exclude": exclude, "runner": runner} {
+			b.WriteString(key + ":\n")
+			for i := 0; i < n; i++ {
+				b.WriteString("  - " + key[:1] + strconv.Itoa(i) + "/\n")
+			}
+		}
+		return []byte(b.String())
+	}
+	if _, err := scope.ParseDeclaration(declare(400, 300, 300)); err != nil {
+		t.Fatalf("1000 patterns: %v", err)
+	}
+	for name, raw := range map[string][]byte{
+		"1001 across the lists": declare(400, 300, 301),
+		"1001 in one list":      declare(1001, 0, 0),
+	} {
+		if _, err := scope.ParseDeclaration(raw); !errors.Is(err, scope.ErrInvalidDeclaration) {
+			t.Errorf("%s: error = %v, want ErrInvalidDeclaration", name, err)
+		}
+	}
+}
+
+// A pattern past the segment cap makes the declaration invalid, the pattern's own error kept in the chain.
+func TestParseDeclarationRefusesAPatternOverTheSegmentCap(t *testing.T) {
+	raw := []byte("version: 1\ninclude:\n  - /" + strings.Repeat("**/", 20000) + "x\n")
+	_, err := scope.ParseDeclaration(raw)
+	if !errors.Is(err, scope.ErrInvalidDeclaration) || !errors.Is(err, scope.ErrInvalidPattern) {
+		t.Fatalf("error = %v, want ErrInvalidDeclaration wrapping ErrInvalidPattern", err)
 	}
 }

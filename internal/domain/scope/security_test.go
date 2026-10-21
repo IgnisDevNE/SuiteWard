@@ -56,8 +56,9 @@ func TestParseDeclarationRejectsDeepNestingWithoutPanicking(t *testing.T) {
 	}
 }
 
-// No size cap exists: a declaration of 1 MiB is parsed like any other, and what it holds decides. The test pins that,
-// and that the parse stays far below the bound.
+// No size cap exists on the declaration's bytes: a declaration of 1 MiB is parsed like any other, and what it holds
+// decides. A megabyte of one pattern is valid; a megabyte of distinct patterns holds far more than the 1000 allowed and
+// is refused. Both finish far below the bound, which is the fastest of three runs so a busy machine cannot fail it.
 func TestParseDeclarationOfOneMebibyte(t *testing.T) {
 	const size = 1 << 20
 	var many strings.Builder
@@ -65,17 +66,28 @@ func TestParseDeclarationOfOneMebibyte(t *testing.T) {
 	for i := 0; many.Len() < size; i++ {
 		many.WriteString("  - d" + strconv.Itoa(i) + "/\n")
 	}
-	for name, raw := range map[string]string{
-		"thousands of distinct patterns": many.String(),
-		"one pattern of a megabyte":      "version: 1\ninclude:\n  - " + strings.Repeat("a", size) + "\n",
+	for name, tt := range map[string]struct {
+		raw   string
+		valid bool
+	}{
+		"thousands of distinct patterns": {many.String(), false},
+		"one pattern of a megabyte":      {"version: 1\ninclude:\n  - " + strings.Repeat("a", size) + "\n", true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			start := time.Now()
-			if _, err := scope.ParseDeclaration([]byte(raw)); err != nil {
-				t.Fatalf("ParseDeclaration of %d bytes: %v", len(raw), err)
+			fastest := time.Hour
+			for range 3 {
+				start := time.Now()
+				_, err := scope.ParseDeclaration([]byte(tt.raw))
+				fastest = min(fastest, time.Since(start))
+				if tt.valid && err != nil {
+					t.Fatalf("ParseDeclaration of %d bytes: %v", len(tt.raw), err)
+				}
+				if !tt.valid && !errors.Is(err, scope.ErrInvalidDeclaration) {
+					t.Fatalf("ParseDeclaration of %d bytes error = %v, want ErrInvalidDeclaration", len(tt.raw), err)
+				}
 			}
-			if elapsed := time.Since(start); elapsed > 5*time.Second {
-				t.Fatalf("ParseDeclaration of %d bytes took %v", len(raw), elapsed)
+			if fastest > 5*time.Second {
+				t.Fatalf("ParseDeclaration of %d bytes took %v at best", len(tt.raw), fastest)
 			}
 		})
 	}

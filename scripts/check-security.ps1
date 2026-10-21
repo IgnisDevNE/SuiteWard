@@ -9,6 +9,10 @@ Install-ArchiveTool $context 'zizmor'
 Install-ArchiveTool $context 'gitleaks'
 Push-Location -LiteralPath $Root
 try {
+    # These files are read from the scanned tree and could narrow what the scanners see; the tools run with their defaults only.
+    foreach ($config in '.gitleaks.toml', '.gitleaksignore', 'zizmor.yml', '.github/zizmor.yml') {
+        if (Test-Path -LiteralPath $config) { throw "$config would change what the scanners report; remove it." }
+    }
     & (Get-ToolPath $context 'zizmor') --offline --no-progress .github/workflows
     if ($LASTEXITCODE -ne 0) { throw 'zizmor reported findings in the workflows.' }
     # A shallow checkout hides the history the scan exists to read.
@@ -16,7 +20,7 @@ try {
     # Never verbose and always redacted; the report is read back only for rule, place and commit, never for a match.
     $report = Join-Path ([IO.Path]::GetTempPath()) "gitleaks-$([Guid]::NewGuid().ToString('N')).json"
     try {
-        & (Get-ToolPath $context 'gitleaks') git --redact --no-banner --no-color --log-level error --report-format json --report-path $report .
+        & (Get-ToolPath $context 'gitleaks') git --redact --ignore-gitleaks-allow --no-banner --no-color --log-level error --report-format json --report-path $report .
         if ($LASTEXITCODE -ne 0) {
             if (Test-Path -LiteralPath $report) {
                 foreach ($finding in Get-Content -LiteralPath $report -Raw | ConvertFrom-Json) { Write-Host "gitleaks: $($finding.RuleID) in $($finding.File):$($finding.StartLine) at commit $($finding.Commit)" }

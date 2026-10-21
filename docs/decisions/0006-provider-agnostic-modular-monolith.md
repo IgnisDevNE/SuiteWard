@@ -1,7 +1,7 @@
 # ADR 0006: Provider-agnostic domain in a modular monolith
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M0 and M1.2 to M1.4, released in `v0.1.0`); the execution plane is M2.
 - **Scope:** Application boundaries and integration strategy.
 - **Origin:** Original system-design direction, retained in the SuiteWard decisions.
 

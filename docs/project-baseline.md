@@ -34,11 +34,11 @@ M1's honest claim is a **tamper-evident, human-approved test contract**. It is n
 
 The accepted stack is Go, Chi, PostgreSQL, pgx, sqlc, and River. One local/self-hosted instance runs as a single `suiteward serve` binary (API and worker) and can manage multiple repositories, with a stated supported limit of 20 in the MVP. Canonical artifacts use a dedicated persistent local volume and content-addressed storage. Governance state is stored as normalized facts; see the [persistence contract](contracts/persistence.md).
 
-The default integration uses a GitHub App with outbound API access. A local MCP call accelerates PR synchronization; independent periodic reconciliation (60 s polling with conditional requests by default) recovers when the call is omitted. Public webhooks and an S3-compatible service are optional future adapters.
+The default integration uses a GitHub App with outbound API access. A local MCP call accelerates PR synchronization; independent periodic reconciliation (a 20 s paced poll with conditional requests, D-SYNC) recovers when the call is omitted. Public webhooks and an S3-compatible service are optional future adapters.
 
 The core rule is unchanged: a repository may contain and propose tests, but it cannot redefine its own canonical test contract.
 
-Bootstrap imports the existing tests from a pinned principal-branch commit, approved explicitly in the first real monitored PR. The path for a repository without an initial test contract (first-test PR) is deferred. Initial authority is established by the instance administrator. See [ADR 0010](decisions/0010-repository-bootstrap.md).
+Bootstrap imports the existing tests from a pinned principal-branch commit, approved explicitly in the first real monitored PR. The path for a repository without an initial test contract (first-test PR) was delivered in M1.7b. Initial authority is established by the instance administrator. See [ADR 0010](decisions/0010-repository-bootstrap.md).
 
 Approval and withdrawal use explicit revision-bound commands that carry a current owner TOTP code: `/suiteward approve <ref> <code>` and `/suiteward revoke <ref> <code>`. SuiteWard publishes the processed outcome in the PR; editing or deleting a processed command does not rewrite its recorded effect. See [ADR 0002](decisions/0002-exact-revision-approval.md), [ADR 0011](decisions/0011-approval-revocation-and-acknowledgments.md), and [ADR 0027](decisions/0027-agent-human-trust-separation.md).
 
@@ -72,13 +72,9 @@ Development is test-first for authority, consent, promotion, idempotency, concur
 
 ## Items still open
 
-- Owner identity details: initial human proof, local/headless setup sessions, and trusted App installation association (D-IDENTITY); recovery from loss of the owner identity or the TOTP secret.
-- GitHub access: the App permission matrix, token lifecycle, and local/headless onboarding (D-GITHUB-ACCESS).
-- Effective-protection comparison and the check lifecycle (D-PROTECTION, D-CHECKS).
-- Supported merge contexts and strict GitHub gate-to-merge-to-promotion coordination; same-SHA PRs and a merged PR whose promotion fails need validated handling (D-INTEGRATION).
-- Final polling numbers, from the S1 walking skeleton.
-- M2's first supported execution ecosystem and RunnerProfile (D-EXECUTION).
-- Future managed execution location and trust model.
-- Post-MVP: the items deferred above (encrypted backups, guided restore, Release backups, priority queue, automatic protection setup and repair, first-test-PR bootstrap).
+- Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone (D-INTEGRATION).
+- M2's first supported execution ecosystem and RunnerProfile (D-EXECUTION), and the future managed execution location and trust model.
+- D-DEPLOY's remaining status, D-JOB-RETENTION and D-HARDENING-CONTROLS ([decision register](plan/decisions.md#open)).
+- Post-MVP: encrypted backups, guided restore, Release backups, the priority queue, and automatic protection setup and repair.
 
 An earlier system-design proposal may discuss candidates for these items. That discussion alone does not make them accepted decisions.

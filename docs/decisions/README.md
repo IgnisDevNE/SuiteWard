@@ -1,8 +1,8 @@
 # Architecture decision records
 
-- **Updated:** 2026-10-05 (phase R1)
+- **Updated:** 2026-10-21 (phase SH in progress)
 - **Product:** SuiteWard
-- **State:** Accepted planning decisions; implementation and release validation remain pending.
+- **State:** Accepted decisions. M1.2 to M1.10 are implemented and released (`v0.1.3` is current); the security hardening phase SH amends several records for `v0.2.0`.
 
 ## Accepted records
 
@@ -14,12 +14,12 @@
 | [0004](0004-postgresql-pgx-sqlc.md) | PostgreSQL, pgx, and sqlc | Explicit SQL, generated access code, and transaction responsibilities. |
 | [0005](0005-river-background-jobs.md) | River background jobs | Transactional enqueueing, repeatable processing, periodic triggers, and restart recovery. Amended (M1.10): the outbox carries the transactional guarantee; `Tx.Enqueue` removed. |
 | [0006](0006-provider-agnostic-modular-monolith.md) | Provider-agnostic modular monolith | Control plane, execution plane, SCM adapter, and GitHub-first delivery. |
-| [0007](0007-canonical-contract-authority.md) | Canonical contract authority | Immutable versions, candidate non-authority, exact approval, bound evidence, and atomic promotion. Amended (R1): verify bytes at write; normalized state. |
-| [0008](0008-progressive-integrity-and-execution.md) | Integrity before canonical execution | M0-M3 sequence, distinct assurance levels, and DockerExecutionBackend in M2. |
+| [0007](0007-canonical-contract-authority.md) | Canonical contract authority | Immutable versions, candidate non-authority, exact approval, bound evidence, and atomic promotion. Amended (R1): verify bytes at write; normalized state. Amended (SH): the service's database role. |
+| [0008](0008-progressive-integrity-and-execution.md) | Integrity before canonical execution | M0-M3 sequence, distinct assurance levels, and DockerExecutionBackend in M2. Amended (SH): release provenance, SBOM and keyless signing ahead of M3. |
 | [0009](0009-agpl-3.0-distribution.md) | AGPLv3 distribution | The grant is `AGPL-3.0-only`; D-RELEASE (2026-10-17) settles the release notices and the source offer. |
-| [0010](0010-repository-bootstrap.md) | Repository bootstrap | Initial authority, existing baseline import, first-test PR, and conditional first promotion. Amended (R1): first-test-PR path deferred. |
+| [0010](0010-repository-bootstrap.md) | Repository bootstrap | Initial authority, existing baseline import, first-test PR, and conditional first promotion. Amended (R1): first-test-PR path deferred; restored by M1.7b and made precise in the amendments of 2026-10-14 to 2026-10-16. |
 | [0011](0011-approval-revocation-and-acknowledgments.md) | Approval revocation and PR acknowledgments | Explicit withdrawal, processed comment semantics, promotion races, and durable visible outcomes. |
-| [0012](0012-mvp-authorization-policy.md) | MVP authorization policy | Human owner and agent profiles, one eligible approval, approval by the PR author, and separated credentials. |
+| [0012](0012-mvp-authorization-policy.md) | MVP authorization policy | Human owner and agent profiles, one eligible approval, approval by the PR author, and separated credentials. Amended (SH): credential separation. |
 | [0013](0013-protected-scope-and-agent-assisted-review.md) | Protected scope and agent-assisted review | Assisted discovery, `.suiteward.yml`, exact inventory review in the PR, and explicit human approval. Amended (R1): default scope includes workflows and test runner configuration. |
 | [0014](0014-merge-triggered-canonical-promotion.md) | Merge-triggered canonical promotion | Project-owned test acceptance, exact approval, integrated-revision integrity checks, and automatic conditional promotion in M1. |
 | [0015](0015-required-contract-check.md) | Required contract check | Mandatory App-sourced governance check, exact approval before integration, bootstrap readiness, and explicit enforcement boundaries. |
@@ -33,8 +33,8 @@
 | [0023](0023-development-environment-and-project-local-tooling.md) | Development environment and project-local tooling | Native Windows development, Windows/Linux CI, local PostgreSQL in Podman, pinned project-local tools, and isolated worktree resources. Amended (R1): shared per-user tool cache. |
 | [0024](0024-single-module-project-structure.md) | Single-module project structure | `cmd/` entry points, internal domain/application/adapter boundaries, capability grouping, and dependency rules for parallel implementation. |
 | [0025](0025-test-driven-development.md) | Mandatory task-level test-driven development | Test-first for authority, consent, promotion, idempotency, concurrency and adapter behavior; reviewed by `sw-reviewer`; amended (R1): no evidence JSON or ancestry validator. |
-| [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`; amended (M1.2): River's schema vendored into goose. |
-| [0027](0027-agent-human-trust-separation.md) | Agent/human trust separation | TOTP code on every approve and revoke command, isolated and co-located installation tiers, and separate agent identity. |
+| [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`; amended (M1.2): River's schema vendored into goose; amended (SH): the least-privilege role and `suiteward migrate`. |
+| [0027](0027-agent-human-trust-separation.md) | Agent/human trust separation | TOTP code on every approve and revoke command, isolated and co-located installation tiers, and separate agent identity. Amended (SH): the code is consumed by its comment; commands apply to their own pull request. |
 
 Naming, English as the project language, initial audience, and product positioning are recorded in the [project baseline](../project-baseline.md). They do not each need an architecture decision record.
 
@@ -46,11 +46,8 @@ An accepted architecture direction is not a claim that a feature is implemented,
 
 Details explicitly marked open remain open. In particular:
 
-- Polling interval and API budget have initial defaults (D-SYNC in the [decision register](../plan/decisions.md)); final numbers come from the S1 walking skeleton.
-- Playwright or any other first test ecosystem has not been selected.
-- The normalized persistence schema is frozen in the [persistence contract](../contracts/persistence.md); real-adapter validation is still pending.
 - Strict GitHub gate-to-merge-to-promotion coordination is not proved by database CAS alone.
-- Hosted execution versus customer infrastructure remains a future decision.
+- Execution-profile selection (hosted execution versus customer infrastructure) is deferred to M2.
 - The license grant is decided: `AGPL-3.0-only`, with the release notices and the source offer settled by D-RELEASE (2026-10-17).
 
 ## Relation to the earlier system design
@@ -74,6 +71,10 @@ This consolidation does not turn every proposal in the old design into an accept
 
 A review found overengineering and gaps in the threat model and plan. Phase R1 simplifies the plan and records these decisions: ADR 0027 (TOTP owner confirmation and installation tiers), amendments to ADRs 0007, 0013, 0016, 0017, 0023, 0025 and 0026, and the post-MVP deferral of ADRs 0019 through 0022 and the first-test-PR path of ADR 0010. Open and accepted gates are in the [decision register](../plan/decisions.md).
 
+## Phase SH
+
+The security assessment of 2026-10-20 led to the hardening phase [SH](../plan/phases/SH.md). It amends ADRs 0007, 0008, 0012, 0026 and 0027 and adds the [threat model](../security/threat-model.md) and [SECURITY.md](../../SECURITY.md).
+
 ## Next product decision
 
-Owner enrollment and TOTP verification (ADR 0027) are implemented (M1.5, M1.6a) and were amended after the 2026-10-20 security review. D-GITHUB-ACCESS, D-IDENTITY, D-TIER, D-CHECKS and D-PROTECTION are accepted; D-INTEGRATION still needs a concrete decision before its phase; strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone. Execution-profile selection is deferred to M2.
+None is blocking. Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone, and execution-profile selection is deferred to M2. Accepted and open product gates are in the [decision register](../plan/decisions.md).

@@ -160,4 +160,4 @@ Two installation tiers share the same image ([ADR 0027](../decisions/0027-agent-
 ## 8. How this document is maintained
 
 - A change to a trust boundary or a control updates this document in the same pull request.
-- A `file:line` reference is checked when the cited file changes; a moved control keeps its row and gets its new reference.
+- A `file:line` reference is reviewed when the cited file changes; a moved control keeps its row and gets its new reference.

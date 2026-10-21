@@ -1,7 +1,8 @@
 # ADR 0014: Merge-triggered canonical promotion in the integrity MVP
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M1.7, released in `v0.1.0`); the priority-queue behavior stays deferred.
+- **M1.6b note (2026-10-14):** the first-test-PR bootstrap path returns to the MVP as phase M1.7b (see the [ADR 0010](0010-repository-bootstrap.md) amendment of 2026-10-14; it was made precise on 2026-10-15 and 2026-10-16).
 - **R1 note (2026-10-05):** the first-test-PR flow and the priority-queue behavior below are deferred to post-MVP (see the amendments to [ADR 0010](0010-repository-bootstrap.md) and [ADR 0022](0022-contract-change-pr-priority.md)). The MVP has no admission gate: concurrent contract-changing PRs are resolved at promotion by the canonical compare-and-set, and the later PR needs a new revision and fresh approval.
 - **Product:** SuiteWard
 - **Scope:** Repository acceptance, post-integration integrity checks, and canonical promotion in M1.

@@ -389,11 +389,10 @@ Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisio
     - The owner creates each release tag on GitHub's Releases page, on the commit the orchestrator names.
     - `v0.1.0-rc.1` was the last tag pushed by the bot, before the ruleset existed.
     - **Partly closed by signing (2026-10-20): the git-tag path is closed, and an image tag is closed only for whoever verifies the signature.**
-      - The package's Actions access gives the SuiteWard repository the Admin role (checked 2026-10-17).
-      - So any workflow on any branch the bot pushes can declare `packages: write` and push `:vX.Y.Z`, `:latest-stable` or `:deploy` with `GITHUB_TOKEN`, without the `release` environment or the `verify` job.
+      - Package write access is held by this repository's workflows (the package's Actions access gives the repository the Admin role, checked 2026-10-17), so consumers must verify the signature and pin the digest.
       - **Decided 2026-10-17 (the owner asked for the market standard).** For the MVP, keep publishing with `GITHUB_TOKEN` inside the protected environments, and pin by digest wherever it matters.
         - The install guide offers `Image=…@sha256:<digest>`.
-        - The governing host of C2 runs `v0.1.0` pinned by its digest.
+        - The governing host (the dogfooding setup of M1.8) runs `v0.1.0` pinned by its digest.
       - **The real closure is signing, in place from the first release built after the 2026-10-20 amendment of [ADR 0008](../decisions/0008-progressive-integrity-and-execution.md) (the `v0.2.0` release candidate; `v0.1.x` images are not signed).**
         - The release job signs the image index with cosign, keyless, and attaches a build provenance and an SBOM.
         - Users verify the signature with `scripts/verify-release.ps1` against the `release.yml` workflow on a `refs/tags/v*` ref, before they pin the digest. An image pushed by any other workflow or ref fails verification. This needs no extra secret.

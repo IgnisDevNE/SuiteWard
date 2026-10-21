@@ -1,7 +1,8 @@
 # ADR 0013: Protected scope and agent-assisted review in the PR
 
 - **Date:** 2026-09-26
-- **Status:** Accepted design decision; not yet implemented.
+- **Status:** Accepted and implemented (M1.3 and M1.9, released in `v0.1.0` and `v0.1.1`).
+- **M1.6b note (2026-10-14):** the first-test-PR bootstrap path returns to the MVP as phase M1.7b (see the [ADR 0010](0010-repository-bootstrap.md) amendment of 2026-10-14; it was made precise on 2026-10-15 and 2026-10-16).
 - **R1 note (2026-10-05):** the first-test-PR bootstrap flows below are deferred to post-MVP; only the existing-baseline bootstrap is in the MVP (see the amendment to [ADR 0010](0010-repository-bootstrap.md)).
 - **Product:** SuiteWard
 - **Scope:** Declaring, reviewing, and changing the protected inventory.

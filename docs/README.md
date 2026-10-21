@@ -17,3 +17,9 @@ The [CI and coverage guide](ci-and-coverage.md) records the quality gates, requi
 The [install guide](install.md) installs SuiteWard, creates its GitHub App and runs the owner setup. The [backup runbook](backup.md) backs up, restores and re-bootstraps an instance. The [quickstart](quickstart.md) is the short co-located path, and [agent-install](agent-install.md) sets what a coding agent may and may not do during an installation.
 
 The [threat model](security/threat-model.md) lists SuiteWard's assets, actors and trust boundaries, and the control and test behind each threat.
+
+The [security policy](../SECURITY.md) says how to report a vulnerability and which versions get fixes.
+
+The [decision register](plan/decisions.md) holds the accepted and open product decisions, and [Orbit](plan/orbit.md) describes the optional executor for queued tasks.
+
+The contracts fix the interfaces: [runtime](contracts/runtime.md), [persistence](contracts/persistence.md) and [GitHub](contracts/github.md). The [S1 spike](spikes/s1-github.md) is the historical record of the GitHub walking skeleton. [deploy/HOST.md](../deploy/HOST.md) is the owner runbook of the isolated host.

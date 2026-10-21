@@ -46,8 +46,8 @@ Recorded in the [decision register](../decisions.md#d-security-review-decisions-
 ## Release plan (v0.2.0)
 
 1. **A release candidate (`v0.2.0-rc.N`)**, created by the owner on the commit the orchestrator names, approved in the `release` environment. It is the first image built, scanned, provenance-attested and signed by the new workflow.
-2. **The co-located PC (A3)** runs the candidate through `deploy/local.ps1`, which converts the v0.1.x stack: it creates the role, replaces the database secret and keeps the owner URL in its own secret.
-3. **A new AlmaLinux 9 isolated host** is installed with the candidate by [install section 10](../../install.md#10-running-on-a-separate-host-operators), and the A1 backup (taken on v0.1.3) is restored into it; `migrate` brings the restored schema forward. This replaces the Ubuntu A1 host after it is validated.
+2. **The co-located PC** runs the candidate through `deploy/local.ps1`, which converts the v0.1.x stack: it creates the role, replaces the database secret and keeps the owner URL in its own secret.
+3. **A new AlmaLinux 9 isolated host** is installed with the candidate by [install section 10](../../install.md#10-running-on-a-separate-host-operators), and the backup of the existing isolated host (taken on v0.1.3) is restored into it; `migrate` brings the restored schema forward. This replaces the existing Ubuntu isolated host after it is validated.
 4. **The final release `v0.2.0`**, after both runs and the owner's authorization, verified with `scripts/verify-release.ps1` before any host pins it.
 
 ## Known limits

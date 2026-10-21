@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
@@ -183,8 +184,9 @@ type githubSync struct {
 	now        func() time.Time // injected clock, for sync pacing (D-SYNC, "Sync pacing", M1.7c)
 	logger     *slog.Logger     // the listing-lag detector
 
-	previousStart    time.Time // the start of the previous tick; zero before the first one after a process start
-	previousRequests int       // the requests that tick made, for pacing the next one
+	paceMu           sync.Mutex // a tick and a github_sync_repo job run at the same time
+	previousStart    time.Time  // the start of the previous tick; zero before the first one after a process start
+	previousRequests int        // the requests made since then, by that tick and by sync jobs, for pacing the next tick
 }
 
 // The permission maps of the installation tokens (D-GITHUB-ACCESS): each use
@@ -328,18 +330,35 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 // due: 18 s must have passed since the previous tick's start, and so must the time the previous tick's requests cost
 // at syncPaceRequests a minute. The first tick after a process start is always due.
 func (s *githubSync) tick(ctx context.Context) (river.Wake, error) {
+	if !s.startTick() {
+		return nil, nil // not due: nothing ran, so nothing is woken
+	}
+	result, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
+	s.addRequests(result.Requests) // a tick cut short by the deadline or a budget stop still counts what it made
+	s.logFirstObserved(ctx, result)
+	return syncWake(result), err
+}
+
+// startTick reports whether a tick is due and, when it is, starts counting the requests that pace the next one.
+func (s *githubSync) startTick() bool {
+	s.paceMu.Lock()
+	defer s.paceMu.Unlock()
 	now := s.now()
 	if !s.previousStart.IsZero() {
 		pace := time.Duration(s.previousRequests) * syncPaceInterval / syncPaceRequests
 		if now.Sub(s.previousStart) < max(syncMinInterval, pace) {
-			return nil, nil // not due: nothing ran, so nothing is woken
+			return false
 		}
 	}
-	s.previousStart = now
-	result, err := s.reconciler.Tick(ctx, s.repos, tickDeadline(s.jobTimeout))
-	s.previousRequests = result.Requests // a tick cut short by the deadline or a budget stop still counts what it made
-	s.logFirstObserved(ctx, result)
-	return syncWake(result), err
+	s.previousStart, s.previousRequests = now, 0
+	return true
+}
+
+// addRequests counts the requests of a tick or of a syncRepo run toward the pace of the next tick.
+func (s *githubSync) addRequests(n int) {
+	s.paceMu.Lock()
+	defer s.paceMu.Unlock()
+	s.previousRequests += n
 }
 
 // syncRepo is the github_sync_repo job. A repository that is not configured is
@@ -349,6 +368,7 @@ func (s *githubSync) syncRepo(ctx context.Context, repo string) (river.Wake, err
 		return nil, fmt.Errorf("repository %q is not one of the configured repositories", repo)
 	}
 	result, err := s.reconciler.SyncRepo(ctx, repo)
+	s.addRequests(result.Requests) // the MCP sync spends the same budget, so it paces the next tick
 	s.logFirstObserved(ctx, result)
 	return syncWake(result), err
 }

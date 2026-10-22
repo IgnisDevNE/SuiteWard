@@ -339,7 +339,7 @@ func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 
 	assertFilesAndSettings(t, home)
 
-	for _, want := range []string{"podman exec -it suiteward /suiteward setup", "SHA256:", "suiteward doctor"} {
+	for _, want := range []string{"suiteward enroll --tier isolated", "SHA256:", "suiteward doctor"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output lacks %q:\n%s", want, out)
 		}

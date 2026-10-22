@@ -146,7 +146,7 @@ func TestInstallIsolatedStoresTheAppKeyWithOneTrailingNewline(t *testing.T) {
 	}
 }
 
-const placeholderCommand = "exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>'"
+const placeholderCommand = "suiteward enroll --tier isolated"
 
 func TestInstallIsolatedRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testing.T) {
 	enrolled := `{"version":"v0.2.0","owner":{"login":"bob","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"}}`
@@ -160,11 +160,11 @@ func TestInstallIsolatedRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testi
 		},
 		"no owner": {
 			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },
-			[]string{"no owner is enrolled", "podman " + placeholderCommand},
+			[]string{"no owner is enrolled", placeholderCommand},
 		},
 		"unreadable": {
 			func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") },
-			[]string{"connection refused", "podman " + placeholderCommand},
+			[]string{"connection refused", placeholderCommand},
 		},
 	} {
 		terminalForSetup(t)

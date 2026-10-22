@@ -17,7 +17,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-// injectFirst makes the first call whose argument line contains match fail, ahead of the rules the fake has.
+// injectFirst makes every call whose argument line contains match fail, ahead of the rules the fake has.
 func (f *fakeEngine) injectFirst(match string) {
 	f.rules = append([]rule{{match: match, err: errInjected}}, f.rules...)
 }
@@ -346,14 +346,15 @@ func TestEnsureSecretsStopsAtTheFirstFailingCall(t *testing.T) {
 		have     []string // secrets that exist
 		fail     string
 		notAfter string
+		hidden   bool // a read never carries the engine's message: it may quote the value
 	}{
-		{"look for the password", nil, "secret ls --filter name=" + SecretDBAuth, "secret create"},
-		{"look for the owner URL", nil, "secret ls --filter name=" + SecretDatabaseOwnerURL, "secret create"},
-		{"read the stored password", []string{SecretDBAuth}, "secret inspect --showsecret --format {{.SecretData}} " + SecretDBAuth, "secret create"},
-		{"write the password", nil, "secret create " + SecretDBAuth, "secret create " + SecretDatabaseOwnerURL},
-		{"write the owner URL", nil, "secret create " + SecretDatabaseOwnerURL, "secret create " + SecretMCPAuth},
-		{"look for the token", []string{SecretDBAuth, SecretDatabaseOwnerURL}, "secret ls --filter name=" + SecretMCPAuth, "secret create"},
-		{"write the token", []string{SecretDBAuth, SecretDatabaseOwnerURL}, "secret create " + SecretMCPAuth, "secret create " + SecretGitHubAppKey},
+		{"look for the password", nil, "secret ls --filter name=" + SecretDBAuth, "secret create", false},
+		{"look for the owner URL", nil, "secret ls --filter name=" + SecretDatabaseOwnerURL, "secret create", false},
+		{"read the stored password", []string{SecretDBAuth}, "secret inspect --showsecret --format {{.SecretData}} " + SecretDBAuth, "secret create", true},
+		{"write the password", nil, "secret create " + SecretDBAuth, "secret create " + SecretDatabaseOwnerURL, false},
+		{"write the owner URL", nil, "secret create " + SecretDatabaseOwnerURL, "secret create " + SecretMCPAuth, false},
+		{"look for the token", []string{SecretDBAuth, SecretDatabaseOwnerURL}, "secret ls --filter name=" + SecretMCPAuth, "secret create", false},
+		{"write the token", []string{SecretDBAuth, SecretDatabaseOwnerURL}, "secret create " + SecretMCPAuth, "secret create " + SecretGitHubAppKey, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -364,8 +365,15 @@ func TestEnsureSecretsStopsAtTheFirstFailingCall(t *testing.T) {
 			}
 			f.injectFirst(tc.fail)
 			err := ensureSecrets(context.Background(), rt.Secrets(), []byte("key"))
-			if err == nil {
+			switch {
+			case err == nil:
 				t.Fatal("ensureSecrets succeeded although a call failed")
+			case tc.hidden:
+				if errors.Is(err, errInjected) || !strings.Contains(err.Error(), "read the secret "+SecretDBAuth) {
+					t.Fatalf("ensureSecrets = %v, want the read named without the engine's message", err)
+				}
+			case !errors.Is(err, errInjected):
+				t.Fatalf("ensureSecrets = %v, want the injected failure", err)
 			}
 			if len(f.find(tc.notAfter)) != 0 {
 				t.Errorf("%q ran after the failure: %v", tc.notAfter, f.lines())

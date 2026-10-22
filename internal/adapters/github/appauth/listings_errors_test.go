@@ -52,28 +52,41 @@ func TestListingsReportATransportFailureWithoutACredential(t *testing.T) {
 		}
 		return http.StatusOK, "[]"
 	})
-	refusing := func(inner http.RoundTripper) *http.Client {
-		return &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			if r.Method == http.MethodGet {
-				return nil, errors.New("connection reset")
-			}
-			return inner.RoundTrip(r)
-		})}
-	}
-	client := refusing(g.srv.Client().Transport)
-
-	_, err := app.Installations(context.Background(), client, g.srv.URL)
-	if err == nil || !strings.Contains(err.Error(), "request installations") || !strings.Contains(err.Error(), "connection reset") {
-		t.Errorf("Installations = %v", err)
-	}
-	_, err = app.InstallationRepositories(context.Background(), installationID, client, g.srv.URL)
-	if err == nil || !strings.Contains(err.Error(), "request installation/repositories") {
-		t.Fatalf("InstallationRepositories = %v", err)
-	}
-	for _, r := range g.requests() {
-		if auth := r.header.Get("Authorization"); auth != "" && strings.Contains(err.Error(), strings.TrimPrefix(auth, "Bearer ")) {
-			t.Errorf("the error holds a credential: %v", err)
+	// credentials are the bearer values of every request the client was asked to send, the refused ones included: the JWT of the
+	// installations listing, the JWT of the token request and the installation token of the repositories listing.
+	var credentials []string
+	inner := g.srv.Client().Transport
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		credentials = append(credentials, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if r.Method == http.MethodGet {
+			return nil, errors.New("connection reset")
 		}
+		return inner.RoundTrip(r)
+	})}
+
+	_, installationsErr := app.Installations(context.Background(), client, g.srv.URL)
+	if installationsErr == nil || !strings.Contains(installationsErr.Error(), "request installations") || !strings.Contains(installationsErr.Error(), "connection reset") {
+		t.Errorf("Installations = %v", installationsErr)
+	}
+	_, repositoriesErr := app.InstallationRepositories(context.Background(), installationID, client, g.srv.URL)
+	if repositoriesErr == nil || !strings.Contains(repositoriesErr.Error(), "request installation/repositories") {
+		t.Fatalf("InstallationRepositories = %v", repositoriesErr)
+	}
+	if len(credentials) != 3 {
+		t.Fatalf("the client was asked for %d requests, want 3 (installations, token, repositories): %q", len(credentials), credentials)
+	}
+	for i, credential := range credentials {
+		if credential == "" {
+			t.Fatalf("request %d carried no bearer credential, so the check below would prove nothing", i)
+		}
+		for name, err := range map[string]error{"Installations": installationsErr, "InstallationRepositories": repositoriesErr} {
+			if strings.Contains(err.Error(), credential) {
+				t.Errorf("the error of %s holds the credential of request %d: %v", name, i, err)
+			}
+		}
+	}
+	if credentials[2] != tokenValue(1) {
+		t.Errorf("the repositories listing was sent with %q, want the installation token %q", credentials[2], tokenValue(1))
 	}
 }
 

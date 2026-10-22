@@ -463,9 +463,16 @@ func TestDockerSecretsReportAReadOrARemoveThatFails(t *testing.T) {
 	})
 	t.Run("a purge stops at the first volume it cannot delete", func(t *testing.T) {
 		rt, f := linuxDocker(t)
-		f.on("volume ls --filter name=suiteward-secrets-suiteward", "suiteward-secrets-suiteward\n").fail("volume rm", errInjected)
+		// All three secret volumes exist, so a purge that went on would try the other two.
+		f.on("volume ls --filter name=suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward-migrate\n").
+			on("volume ls --filter name=suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-db\n").
+			on("volume ls --filter name=suiteward-secrets-suiteward --format", "suiteward-secrets-suiteward\n").
+			fail("volume rm", errInjected)
 		if err := rt.PurgeSecrets(ctx); !errors.Is(err, errInjected) {
 			t.Errorf("PurgeSecrets = %v", err)
+		}
+		if removals := f.find("volume rm"); len(removals) != 1 || removals[0].line() != "volume rm suiteward-secrets-suiteward" {
+			t.Errorf("the purge removed %v; want it to try the first volume only and stop at its failure", removals)
 		}
 	})
 }

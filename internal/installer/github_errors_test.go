@@ -188,16 +188,17 @@ func TestGitHubStepsRefuseAnInstallationThatCannotBeComposed(t *testing.T) {
 			if _, err := chooseTestChecks(ctx, env, a, []repoInfo{{name: "acme/app", branch: "main"}}); err == nil || !strings.Contains(err.Error(), "compose the GitHub installation") {
 				t.Errorf("chooseTestChecks = %v", err)
 			}
-			if _, err := importRulesets(ctx, withoutWait(env), a, GitHubResult{AppID: fakeAppID, TestChecks: map[string]string{"acme/app": "CI / test"}}, []repoInfo{{name: "acme/app", branch: "main"}}); err == nil || !strings.Contains(err.Error(), "compose the GitHub installation") {
+			if _, err := importRulesets(ctx, withoutWait(t, env), a, GitHubResult{AppID: fakeAppID, TestChecks: map[string]string{"acme/app": "CI / test"}}, []repoInfo{{name: "acme/app", branch: "main"}}); err == nil || !strings.Contains(err.Error(), "compose the GitHub installation") {
 				t.Errorf("importRulesets = %v", err)
 			}
 		})
 	}
 }
 
-func withoutWait(env githubEnv) githubEnv {
+func withoutWait(t *testing.T, env githubEnv) githubEnv {
+	t.Helper()
 	env.SkipRulesetWait = true
-	env.SettingsDir = os.TempDir()
+	env.SettingsDir = t.TempDir()
 	return env
 }
 

@@ -201,19 +201,15 @@ func TestDoctorDockerPinProblems(t *testing.T) {
 
 func TestDoctorStatusNamesWhatIsMissing(t *testing.T) {
 	cases := map[string]struct{ status, want string }{
-		"no version":         {`{"schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{"failed":0}}`, "no version"},
-		"no jobs.discarded":  {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{},"outbox":{"failed":0}}`, "no jobs.discarded"},
-		"no outbox.failed":   {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{}}`, "no outbox.failed"},
-		"several at once":    {`{}`, "no version, no schemaVersion, no tier, no jobs.discarded, no outbox.failed"},
-		"a failing endpoint": {"", "/status"},
+		"no version":              {`{"schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{"failed":0}}`, "no version"},
+		"no jobs.discarded":       {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{},"outbox":{"failed":0}}`, "no jobs.discarded"},
+		"no outbox.failed":        {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{}}`, "no outbox.failed"},
+		"several at once":         {`{}`, "no version, no schemaVersion, no tier, no jobs.discarded, no outbox.failed"},
+		"a body that is not JSON": {"<html>", "GET /status on port"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			rig := colocated{status: c.status}
-			if c.status == "" {
-				rig.status = "<html>"
-			}
-			f, s := rig.build(t)
+			f, s := colocated{status: c.status}.build(t)
 			_, res, _ := runDoctor(t, f, s)
 			wantFail(t, res, "status", c.want)
 		})

@@ -139,7 +139,7 @@ func TestPrepareHostAsksOrRefusesTheMetadataQuestion(t *testing.T) {
 		h := newHostFake()
 		h.metadata = "200"
 		_, err := runHost(t, h, nil, true, "maybe\n")
-		if err == nil || !strings.Contains(err.Error(), `"maybe\n" is not yes or no`) && !strings.Contains(err.Error(), "is not yes or no") {
+		if err == nil || !strings.Contains(err.Error(), "is not yes or no") {
 			t.Fatalf("PrepareHost = %v", err)
 		}
 	})

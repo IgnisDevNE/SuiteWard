@@ -7,10 +7,8 @@ import (
 
 var errInjected = errors.New("injected engine failure")
 
-// failFirst makes the first call whose argument line contains match fail, ahead of every rule the harness has.
-func (h *harness) failFirst(match string) {
-	h.f.rules = append([]rule{{match: match, err: errInjected}}, h.f.rules...)
-}
+// failFirst makes every call whose argument line contains match fail, ahead of every rule the harness has.
+func (h *harness) failFirst(match string) { h.f.injectFirst(match) }
 
 // A failing engine call stops a Podman install at that step: the error is returned, the service is never started, and no
 // secret value reaches an argument list. Calls before the first change leave the engine as it was.

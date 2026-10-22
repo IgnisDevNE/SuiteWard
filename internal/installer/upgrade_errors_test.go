@@ -122,28 +122,38 @@ func TestReadStatusInsideThePodmanMachine(t *testing.T) {
 // ---- the isolated upgrade ----
 
 func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
+	// never lists the commands that must not have run: every step after the one that failed.
 	cases := []struct {
 		name  string
 		setup func(u *isoUpgrade)
 		args  []string
 		want  []string
+		never []string
 	}{
-		{"an image of another repository", nil, []string{"--image", "docker.io/library/other@" + testDigest}, []string{"the isolated tier runs"}},
-		{"an image that is a tag", nil, []string{"--image", "ghcr.io/ignisdevne/suiteward:v1"}, []string{"never pins a tag"}},
+		{"an image of another repository", nil, []string{"--image", "docker.io/library/other@" + testDigest}, []string{"the isolated tier runs"},
+			[]string{"pg_dump", "systemctl --user stop", "daemon-reload"}},
+		{"an image that is a tag", nil, []string{"--image", "ghcr.io/ignisdevne/suiteward:v1"}, []string{"never pins a tag"},
+			[]string{"pg_dump", "systemctl --user stop", "daemon-reload"}},
 		{"the new image cannot be pulled", func(u *isoUpgrade) {
 			u.f.noImage = true
 			u.f.failOn["podman pull "+releaseImageRepo] = errInjected
-		}, nil, []string{errInjected.Error(), "nothing was changed", "the backup is in"}},
+		}, nil, []string{errInjected.Error(), "nothing was changed", "the backup is in"},
+			[]string{"systemctl --user stop", "daemon-reload", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"the service cannot be stopped", func(u *isoUpgrade) { u.f.failOn["systemctl --user stop suiteward.service"] = errInjected }, nil,
-			[]string{"stop the service", "Migrate did not run", "Fix the cause"}},
+			[]string{"stop the service", "Migrate did not run", "Fix the cause"},
+			[]string{generatorPath, "daemon-reload", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"the generator rejects the units", func(u *isoUpgrade) { u.f.failOn[generatorPath] = errInjected }, nil,
-			[]string{"the Podman generator rejects the units", "suiteward.service is stopped"}},
+			[]string{"the Podman generator rejects the units", "suiteward.service is stopped"},
+			[]string{"daemon-reload", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"the daemon reload fails", func(u *isoUpgrade) { u.f.failOn["daemon-reload"] = errInjected }, nil,
-			[]string{"daemon-reload", "suiteward.service is stopped"}},
+			[]string{"daemon-reload", "suiteward.service is stopped"},
+			[]string{"restart suiteward-db.service", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"migrate fails", func(u *isoUpgrade) { u.f.failOn["restart suiteward-migrate.service"] = errInjected }, nil,
-			[]string{"the migration failed, so the service was not started", "restore it with the previous image"}},
+			[]string{"the migration failed, so the service was not started", "restore it with the previous image"},
+			[]string{"start suiteward.service", "--property=ActiveState"}},
 		{"the service does not start", func(u *isoUpgrade) { u.f.failOn["start suiteward.service"] = errInjected }, nil,
-			[]string{"start the service", "restore it with the previous image"}},
+			[]string{"start the service", "restore it with the previous image"},
+			[]string{"--property=ActiveState"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,16 +161,45 @@ func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(u)
 			}
+			unitsBefore := u.units()
 			err := u.upgrade(append([]string{"--image", testDigest, "--yes"}, tc.args...)...)
-			if err == nil {
-				t.Fatal("the upgrade succeeded although a step failed")
-			}
-			for _, want := range tc.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the error lacks %q: %v", want, err)
-				}
+			u.assertStoppedWith(t, err, tc.want, tc.never)
+			if tc.name == "the service cannot be stopped" {
+				u.assertUnitsAre(t, unitsBefore)
 			}
 		})
+	}
+}
+
+// assertStoppedWith checks a failed isolated upgrade: the error says what it should, none of the commands after the failing step
+// ran, and the settings still name the old release, which they do only once the service is up on the new one.
+func (u *isoUpgrade) assertStoppedWith(t *testing.T, err error, want, never []string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("the upgrade succeeded although a step failed")
+	}
+	for _, text := range want {
+		if !strings.Contains(err.Error(), text) {
+			t.Errorf("the error lacks %q: %v", text, err)
+		}
+	}
+	for _, command := range never {
+		if u.f.has(command) {
+			t.Errorf("%q ran after the failure: %v", command, u.f.lines())
+		}
+	}
+	if got, loadErr := LoadSettings(settingsFile(u.home)); loadErr != nil || got.Image != oldImage {
+		t.Errorf("the settings after the failure = %q, %v; want the old image", got.Image, loadErr)
+	}
+}
+
+// assertUnitsAre fails when a unit file differs from what it was.
+func (u *isoUpgrade) assertUnitsAre(t *testing.T, before map[string]string) {
+	t.Helper()
+	for name, text := range before {
+		if got := u.unit(name); got != text {
+			t.Errorf("%s was replaced although the service could not be stopped", name)
+		}
 	}
 }
 
@@ -221,12 +260,12 @@ func TestUninstallColocatedStopsAtTheStepThatFails(t *testing.T) {
 		name  string
 		fail  string
 		purge bool
-		kept  bool // the settings file and the token copy are still there
+		never []string // commands that must not have run after the failure
 	}{
-		{"a container cannot be removed", "rm --force --ignore --time 45 suiteward-migrate", false, true},
-		{"a volume cannot be removed", "volume rm suiteward-data", true, true},
-		{"a secret cannot be removed", "secret rm", true, true},
-		{"the network cannot be removed", "network rm", true, true},
+		{"a container cannot be removed", "rm --force --ignore --time 45 suiteward-migrate", false, []string{"rm --force --ignore --time 45 suiteward-db"}},
+		{"a volume cannot be removed", "volume rm suiteward-data", true, []string{"volume rm suiteward-db-data", "secret rm", "network rm"}},
+		{"a secret cannot be removed", "secret rm", true, []string{"network rm"}},
+		{"the network cannot be removed", "network rm", true, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -241,7 +280,12 @@ func TestUninstallColocatedStopsAtTheStepThatFails(t *testing.T) {
 			if err := h.uninstall(args...); !errors.Is(err, errInjected) {
 				t.Fatalf("uninstall = %v", err)
 			}
-			if tc.kept && (!exists(h.settingsPath()) || !exists(h.tokenPath())) {
+			for _, never := range tc.never {
+				if len(h.f.find(never)) != 0 {
+					t.Errorf("%q ran after the failure: %v", never, h.f.lines())
+				}
+			}
+			if !exists(h.settingsPath()) || !exists(h.tokenPath()) {
 				t.Error("the settings or the token copy were removed although the purge failed before them")
 			}
 		})

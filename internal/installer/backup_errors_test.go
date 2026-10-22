@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -52,8 +54,12 @@ func TestOSUserSIDNamesTheCurrentUser(t *testing.T) {
 	if err != nil {
 		t.Skipf("this system cannot name the current user: %v", err)
 	}
-	if sid == "" {
-		t.Error("the current user has an empty id")
+	if runtime.GOOS == "windows" {
+		if !regexp.MustCompile(`^S-1-`).MatchString(sid) {
+			t.Errorf("the SID of the current user is %q, want one that starts with S-1-", sid)
+		}
+	} else if !regexp.MustCompile(`^[0-9]+$`).MatchString(sid) {
+		t.Errorf("the id of the current user is %q, want a number", sid)
 	}
 }
 

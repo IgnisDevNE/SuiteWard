@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -92,7 +91,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w: %s", ErrNotDigestImage, image)
 	}
 	s.Image = image
-	c := colocatedInstall{rt: rt, env: env, out: env.Term.Out, s: s, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -294,20 +293,14 @@ func defaultTokenFile(d Deps) (string, error) {
 }
 
 type colocatedInstall struct {
-	rt        Runtime
-	env       Env
-	out       io.Writer
-	s         Settings
+	githubInstall
 	image     string
 	previous  stackInstalled
 	stack     Stack
 	tokenFile string
-	githubKey []byte // the App key to store, nil when its secret exists or GitHub is off
 	secrets   secretState
 
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
-	setupOwner  string // the instance owner, when the GitHub flow ran: the login setup enrolls
-	setupChecks map[string]string
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
@@ -315,8 +308,6 @@ type secretState struct {
 	haveDB, haveOwner, haveToken bool
 	needAppURL                   bool // the application URL secret is missing, still the owner URL of a v0.1.x stack, or differs between volumes
 }
-
-func (c colocatedInstall) say(format string, args ...any) { _, _ = fmt.Fprintf(c.out, format, args...) }
 
 // inMachine says whether the stack runs in a Podman machine (Windows, macOS): its ports are published there, not on this
 // PC, and the ssh user of the machine is how to reach it.
@@ -496,14 +487,14 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 		return err
 	}
 	if err := c.rt.Run(ctx, c.stack.Migrate); err != nil {
-		return fmt.Errorf("suiteward migrate failed, so the service was not started: %w", err)
+		return migratingError{fmt.Errorf("suiteward migrate failed, so the service was not started: %w", err)}
 	}
 	c.say("suiteward migrate finished: the schema is up to date.\n")
 	if err := save(); err != nil {
-		return err
+		return migratingError{err}
 	}
 	if err := c.rt.Run(ctx, c.stack.Serve); err != nil {
-		return err
+		return migratingError{err}
 	}
 	github := "not configured"
 	if c.s.GitHub.AppID != 0 {
@@ -722,43 +713,14 @@ func (c *colocatedInstall) finish(ctx context.Context, t installTarget) error {
 	if !t.defaultPath {
 		doctor += " --settings " + t.settingsPath
 	}
-	switch {
-	case c.s.GitHub.AppID == 0:
+	if c.s.GitHub.AppID == 0 {
 		c.say("GitHub is not configured. Run the install again with --github yes (or the GitHub values) to set it up, then enroll the owner.\n")
-	case c.setupOwner == "":
-		c.say("Then check the instance with `%s`.\n", doctor)
-	default:
-		if err := c.enroll(ctx); err != nil {
-			return err
-		}
-		c.say("Then check the instance with `%s`.\n", doctor)
-	}
-	return nil
-}
-
-// enroll runs setup on a real terminal, and otherwise prints the command to run on one.
-func (c *colocatedInstall) enroll(ctx context.Context) error {
-	if setupTerminal() {
-		if err := runSetup(ctx, c.rt, c.setupOwner, c.setupChecks, c.out); err != nil {
-			return fmt.Errorf("the stack is running, but enrolling the owner failed: %w", err)
-		}
 		return nil
 	}
-	cmd, err := engineCommand(c.rt, c.env.Deps.GOOS)
-	if err != nil {
+	if err := c.enroll(ctx, c.readStatus); err != nil {
 		return err
 	}
-	repos := make([]string, 0, len(c.setupChecks))
-	for repo := range c.setupChecks {
-		repos = append(repos, repo)
-	}
-	slices.Sort(repos)
-	var checks []string
-	for _, repo := range repos {
-		checks = append(checks, "--test-check '"+repo+"="+c.setupChecks[repo]+"'")
-	}
-	c.say("Next: setup needs a real terminal (it prints the TOTP secret). Turn off any session recording of that terminal, then enroll the owner:\n  %s exec -it %s /suiteward setup --owner %s %s\n",
-		cmd, ContainerServe, c.setupOwner, strings.Join(checks, " "))
+	c.say("Then check the instance with `%s`.\n", doctor)
 	return nil
 }
 

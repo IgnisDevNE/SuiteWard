@@ -33,6 +33,15 @@ type Env struct {
 	Sleep    func(time.Duration)
 	// ResolveGitHub is the GitHub flow; nil means resolveGitHub. A test replaces it.
 	ResolveGitHub func(ctx context.Context, env githubEnv) (GitHubResult, error)
+	// HTTPGet reads an address of the local service (/status); nil means httpGet. A test replaces it.
+	HTTPGet func(ctx context.Context, address string) ([]byte, error)
+}
+
+func (e Env) httpGet() func(context.Context, string) ([]byte, error) {
+	if e.HTTPGet != nil {
+		return e.HTTPGet
+	}
+	return httpGet
 }
 
 // OSEnv is this machine and this process's console, printing to stdout.
@@ -234,7 +243,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 		if upgrade {
 			return upgradeIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
 		}
-		return installIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
+		return installIsolated(ctx, isolated, r, env)
 	case config.TierCoLocated:
 		target := installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved}
 		if upgrade {

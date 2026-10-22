@@ -37,7 +37,7 @@ import (
 //
 // The private key is returned in GitHubResult.PrivateKey for the caller to put into the SecretStore. Nothing here writes it
 // to disk, prints it or puts it in an error. An App given through flags or answers needs "app-id", "installation-id" and the
-// key: "app-key-file" (a path) or "app-key" (the answers file, a no-echo prompt, or stdin; when stdin carries the key, every
+// key: "app-key-file" (a path, or - for stdin) or "app-key" (the answers file, a no-echo prompt, or stdin; when stdin carries the key, every
 // other answer must come from flags or the answers file, because reading the key consumes the rest of stdin).
 //
 // Answer keys (flag names and answers-file keys): github-account (personal, or an organization login), manifest-code,
@@ -214,15 +214,39 @@ func existingApp(ctx context.Context, env githubEnv) (appauth.App, GitHubResult,
 	if err != nil || installationID <= 0 {
 		return appauth.App{}, GitHubResult{}, fmt.Errorf("installation-id %q is not a positive number", instText)
 	}
-	var key []byte
-	if path, ok := env.R.given("app-key-file"); ok {
-		if key, err = os.ReadFile(filepath.Clean(path)); err != nil {
-			return appauth.App{}, GitHubResult{}, fmt.Errorf("read the App key file: %w", err)
-		}
-	} else if key, err = env.R.Secret("app-key", "GitHub App private key (PEM)"); err != nil {
+	key, err := readAppKey(env.R)
+	if err != nil {
 		return appauth.App{}, GitHubResult{}, err
 	}
 	return verifyApp(ctx, env, appID, installationID, key)
+}
+
+// readAppKey reads the PEM of an App that exists: from the file of "app-key-file" (- is standard input), else from "app-key"
+// (the answers file, or stdin), else, at a terminal, from a file whose path it asks for: a prompt that reads one line cannot
+// take a pasted PEM.
+func readAppKey(r *Resolver) ([]byte, error) {
+	path, haveFile := r.given("app-key-file")
+	if _, haveKey := r.given("app-key"); !haveFile && !haveKey && r.term.IsTerminal {
+		var err error
+		if path, err = r.Value("app-key-file", "Path of the App's private key file (.pem)", ""); err != nil {
+			return nil, err
+		}
+		haveFile = true
+	}
+	if !haveFile {
+		return r.Secret("app-key", "GitHub App private key (PEM)")
+	}
+	var key []byte
+	var err error
+	if path == "-" { // standard input, as the flag says
+		key, err = io.ReadAll(r.in)
+	} else {
+		key, err = os.ReadFile(filepath.Clean(path))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read the App key file: %w", err)
+	}
+	return key, nil
 }
 
 // settingsApp reuses the App the settings name when its key secret exists. found is false when the settings name no App, or

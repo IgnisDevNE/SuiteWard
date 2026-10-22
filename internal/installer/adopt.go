@@ -148,7 +148,8 @@ func adoptUnits(installed, reference map[string][]byte, refreshDB bool) (Adopted
 			continue
 		}
 		skipLine := skip
-		if refreshDB && name == dbUnit && dbImage != "" {
+		// Exactly one database image line is relaxed: a second one is a difference, not a pin to refresh.
+		if refreshDB && name == dbUnit && dbImage != "" && countLinesWithPrefix(got, "Image="+postgresRepo) == 1 {
 			skipLine = "Image=" + postgresRepo
 		}
 		diffs = append(diffs, diffUnitLines(name, rendered[name], got, skipLine)...)
@@ -162,6 +163,17 @@ func adoptUnits(installed, reference map[string][]byte, refreshDB bool) (Adopted
 		EnvFile:  params.EnvFile,
 		DBImage:  dbImage,
 	}, nil
+}
+
+// countLinesWithPrefix counts the configuration lines of a unit that start with prefix.
+func countLinesWithPrefix(raw []byte, prefix string) int {
+	n := 0
+	for _, line := range configLinesOf(raw) {
+		if strings.HasPrefix(line, prefix) {
+			n++
+		}
+	}
+	return n
 }
 
 // configLinesOf are the lines that count: comments and blank lines are not configuration.

@@ -50,14 +50,22 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 		res     GitHubResult
 		created string // the page that deletes the App, when this run created it
 	)
-	if _, ok := env.R.given("app-id"); ok {
+	if _, ok := env.R.given("app-id"); ok { // an answer wins over the settings
 		if app, res, err = existingApp(ctx, env); err != nil {
 			return GitHubResult{}, err
 		}
-	} else if app, res, created, err = createApp(ctx, env); err != nil {
-		return GitHubResult{}, createdError(err, created)
+	} else {
+		var reused bool
+		if app, res, reused, err = settingsApp(ctx, env); err != nil {
+			return GitHubResult{}, err
+		}
+		if !reused {
+			if app, res, created, err = createApp(ctx, env); err != nil {
+				return GitHubResult{}, createdError(err, created)
+			}
+		}
 	}
-	// From here the key of a created App lives only in memory: any failure loses it, so the error says how to start over.
+	// A failure after the App was created leaves an App nobody uses: the error says how to start over.
 	fail := func(err error) (GitHubResult, error) { return GitHubResult{}, createdError(err, created) }
 
 	if res.Repositories, err = chooseRepositories(ctx, env, app, res); err != nil {
@@ -92,12 +100,12 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	return res, nil
 }
 
-// createdError says how to start over when this run created the App, whose key is only in memory.
+// createdError says how to start over when this run created the App; the key may be only in memory (no StoreKey).
 func createdError(err error, deleteURL string) error {
 	if deleteURL == "" {
 		return err
 	}
-	return fmt.Errorf("%w (this run created the App and its key exists only in memory: if you cannot continue, delete the App at %s and run the installer again)", err, deleteURL)
+	return fmt.Errorf("%w (this run created the App, and unless its key reached the secret store it exists only in memory: if you cannot continue, delete the App at %s and run the installer again)", err, deleteURL)
 }
 
 // githubBudget is the fraction of the rate limit the installer may use; it matches the service's.
@@ -207,6 +215,40 @@ func existingApp(ctx context.Context, env githubEnv) (appauth.App, GitHubResult,
 	} else if key, err = env.R.Secret("app-key", "GitHub App private key (PEM)"); err != nil {
 		return appauth.App{}, GitHubResult{}, err
 	}
+	return verifyApp(ctx, env, appID, installationID, key)
+}
+
+// settingsApp reuses the App the settings name when its key secret exists. found is false when the settings name no App, or
+// its key secret is gone (then a new App is created). An App whose key cannot be looked for or read is an error, never a new App.
+func settingsApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubResult, found bool, err error) {
+	e := env.Existing
+	if e == nil || e.AppID == 0 {
+		return app, res, false, nil
+	}
+	if e.InstallationID <= 0 {
+		return app, res, false, fmt.Errorf("the settings name the App %d without an installation id", e.AppID)
+	}
+	if env.KeyExists == nil || env.ReadKey == nil {
+		return app, res, false, fmt.Errorf("the settings name the App %d, but the flow has no way to look for its key secret", e.AppID)
+	}
+	exists, err := env.KeyExists(ctx)
+	if err != nil {
+		return app, res, false, fmt.Errorf("look for the App key secret: %w", err)
+	}
+	if !exists {
+		ghSay(env.Out, "The settings name the App %d, but its key secret does not exist: creating a new App.\n", e.AppID)
+		return app, res, false, nil
+	}
+	key, err := env.ReadKey(ctx)
+	if err != nil {
+		return app, res, false, fmt.Errorf("read the App key secret: %w", err)
+	}
+	app, res, err = verifyApp(ctx, env, e.AppID, e.InstallationID, key)
+	return app, res, err == nil, err
+}
+
+// verifyApp checks that the App's JWT works (GET /app) and that the installation is one of the App's own.
+func verifyApp(ctx context.Context, env githubEnv, appID, installationID int64, key []byte) (appauth.App, GitHubResult, error) {
 	app, err := appauth.NewApp(appID, key, env.Now)
 	if err != nil {
 		return appauth.App{}, GitHubResult{}, err
@@ -255,7 +297,13 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	if app, err = appauth.NewApp(conv.ID, conv.PrivateKey, env.Now); err != nil {
 		return app, res, created, fmt.Errorf("the key GitHub returned for the App %s is not usable: %w", conv.Slug, err)
 	}
-	ghSay(env.Out, "Created the GitHub App %s. Its key stays in memory until it goes into the secret store.\n", conv.Slug)
+	ghSay(env.Out, "Created the GitHub App %s.\n", conv.Slug)
+	if env.StoreKey != nil { // before the wait: a failure later must not lose the only copy of the key
+		if err := env.StoreKey(ctx, conv.PrivateKey); err != nil {
+			return app, res, created, fmt.Errorf("store the App key: %w", err)
+		}
+		ghSay(env.Out, "The App key is in the secret store.\n")
+	}
 	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, conv.Slug, conv.OwnerLogin)
 	info, err := waitForInstallation(ctx, env, app, conv.OwnerLogin)
 	if err != nil {
@@ -448,36 +496,28 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 	if err != nil {
 		return nil, err
 	}
+	value, _ := env.R.given("test-check")
+	listed, isList := parseTestCheckList(value)
+	for repo := range listed {
+		if !slices.ContainsFunc(repos, func(r repoInfo) bool { return strings.EqualFold(r.name, repo) }) {
+			return nil, fmt.Errorf("test-check names %s, which is not one of the chosen repositories", repo)
+		}
+	}
 	checks := make(map[string]string, len(repos))
 	for _, r := range repos {
 		key := "test-check." + r.name
-		if _, ok := env.R.given(key); !ok && len(repos) == 1 {
+		_, perRepo := env.R.given(key)
+		var answer string
+		switch fromList := lookupFold(listed, r.name); {
+		case !perRepo && fromList != "":
+			answer = fromList
+		case !perRepo && !isList && len(repos) == 1:
 			key = "test-check"
-		}
-		names, err := checkRunNames(ctx, client, r)
-		if err != nil {
-			ghSay(env.Out, "Could not read the check runs of %s (%v); you will type the name.\n", r.name, err)
-		}
-		def, label := "", fmt.Sprintf("Name of the check your CI publishes for %s", r.name)
-		if len(names) > 0 {
-			ghSay(env.Out, "Check runs on the %s branch of %s:\n", r.branch, r.name)
-			for i, n := range names {
-				ghSay(env.Out, "  %d) %s\n", i+1, n)
+			fallthrough
+		default:
+			if answer, err = askTestCheck(ctx, env, client, r, key); err != nil {
+				return nil, err
 			}
-			label = fmt.Sprintf("Required test check for %s (number or name)", r.name)
-			if len(names) == 1 {
-				def = names[0]
-			}
-		} else {
-			ghSay(env.Out, "%s has no check runs yet. Type the name your CI will publish; until a check with that name exists, /status reports missing-test-check.\n", r.name)
-		}
-		answer, err := env.R.Value(key, label, def)
-		if err != nil {
-			return nil, err
-		}
-		answer = strings.TrimSpace(answer)
-		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(names) {
-			answer = names[n-1]
 		}
 		switch answer {
 		case "":
@@ -488,6 +528,62 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 		checks[r.name] = answer
 	}
 	return checks, nil
+}
+
+// parseTestCheckList reads OWNER/NAME=CHECK entries, one per line: the shape of setup's repeated --test-check, joined by
+// the caller. ok is false when the value is a plain check name.
+func parseTestCheckList(value string) (checks map[string]string, ok bool) {
+	checks = map[string]string{}
+	for _, line := range strings.Split(value, "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		repo, check, found := strings.Cut(line, "=")
+		if check = strings.TrimSpace(check); !found || !repositoryName.MatchString(repo) || check == "" {
+			return nil, false
+		}
+		checks[repo] = check
+	}
+	return checks, len(checks) > 0
+}
+
+func lookupFold(m map[string]string, key string) string {
+	for k, v := range m {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
+
+// askTestCheck offers the check runs of the repository's default branch, or asks for the name CI will publish.
+func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r repoInfo, key string) (string, error) {
+	names, err := checkRunNames(ctx, client, r)
+	if err != nil {
+		ghSay(env.Out, "Could not read the check runs of %s (%v); you will type the name.\n", r.name, err)
+	}
+	def, label := "", fmt.Sprintf("Name of the check your CI publishes for %s", r.name)
+	if len(names) > 0 {
+		ghSay(env.Out, "Check runs on the %s branch of %s:\n", r.branch, r.name)
+		for i, n := range names {
+			ghSay(env.Out, "  %d) %s\n", i+1, n)
+		}
+		label = fmt.Sprintf("Required test check for %s (number or name)", r.name)
+		if len(names) == 1 {
+			def = names[0]
+		}
+	} else {
+		ghSay(env.Out, "%s has no check runs yet. Type the name your CI will publish; until a check with that name exists, /status reports missing-test-check.\n", r.name)
+	}
+	answer, err := env.R.Value(key, label, def)
+	if err != nil {
+		return "", err
+	}
+	answer = strings.TrimSpace(answer)
+	if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(names) {
+		answer = names[n-1]
+	}
+	return answer, nil
 }
 
 // importRulesets writes one ruleset file per repository, tells the user how to import it, waits for the import and re-reads

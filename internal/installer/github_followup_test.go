@@ -134,9 +134,12 @@ func TestResolveGitHubReusesTheAppOfTheSettings(t *testing.T) {
 }
 
 func TestResolveGitHubTestCheckList(t *testing.T) {
-	two := func(t *testing.T, flags map[string]string) (GitHubResult, error) {
+	two := func(t *testing.T, flags map[string]string, noRuns ...bool) (GitHubResult, error) {
 		g := newFakeGitHub(t)
 		g.repos = manyRepos(2)
+		if len(noRuns) > 0 {
+			g.repos[0].checkRuns, g.repos[1].checkRuns = nil, nil // nothing to offer as a default
+		}
 		flags = existingFlags(t, flags)
 		flags["repositories"] = "acme/r1,acme/r2"
 		env, _ := flowEnv(t, g, flags, strings.NewReader(""), false)
@@ -149,7 +152,7 @@ func TestResolveGitHubTestCheckList(t *testing.T) {
 		}
 	})
 	t.Run("a repository the list lacks cannot be asked", func(t *testing.T) {
-		if _, err := two(t, map[string]string{"test-check": "acme/r1=one"}); err == nil || !strings.Contains(err.Error(), "acme/r2") {
+		if _, err := two(t, map[string]string{"test-check": "acme/r1=one"}, true); err == nil || !strings.Contains(err.Error(), "acme/r2") {
 			t.Fatalf("error = %v", err)
 		}
 	})

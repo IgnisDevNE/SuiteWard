@@ -53,14 +53,9 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 		b, err := d.Exec(ctx, name, args, nil)
 		return strings.TrimSpace(string(b)), err
 	}
-	if uid, err := run("id", "-u"); err != nil {
-		return fmt.Errorf("find out who is running the installer: %w", err)
-	} else if uid == "0" {
-		return errors.New("run the installer as the service account, not as root: `sudo suiteward install host` prints the command")
-	}
-	home := d.Getenv("HOME")
-	if home == "" {
-		return errors.New("HOME is not set: run the installer as the service account, as `sudo suiteward install host` prints it")
+	home, err := checkAccount(run, d.Getenv("HOME"))
+	if err != nil {
+		return err
 	}
 	if err := s.Validate(); err != nil {
 		return err
@@ -76,7 +71,9 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 	// The adoption guard and the image, before anything is changed.
 	configDir := filepath.Join(home, ".config", "suiteward")
 	unitsDir := filepath.Join(home, ".config", "containers", "systemd")
-	digest, oldEnvFile, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r)
+	settingsPath := filepath.Join(configDir, "settings.yaml")
+	neverStarted := func() (bool, error) { return stackNeverStarted(run, settingsPath) }
+	digest, oldEnvFile, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, say)
 	if err != nil {
 		return err
 	}
@@ -125,14 +122,14 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 		return fmt.Errorf("systemctl --user daemon-reload: %w", err)
 	}
 
-	if err := startStack(ctx, rt, d); err != nil {
+	wasRunning, err := startStack(ctx, rt, d)
+	if err != nil {
 		return err
 	}
 
 	if haveGH {
 		s.GitHub = gh
 	}
-	settingsPath := filepath.Join(configDir, "settings.yaml")
 	if err := SaveSettings(settingsPath, s); err != nil {
 		return err
 	}
@@ -140,15 +137,21 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 	say("Next, turn off recording of this terminal session (setup prints the TOTP secret), then enroll yourself as the owner:\n\n")
 	say("  podman exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>'\n\n")
 	say("Then run `suiteward doctor`.\n")
-	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile)
+	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, wasRunning)
 	return nil
 }
 
 // sayOldEnvFile tells the administrator when the old /etc env file may go: only once the service runs on the new one.
-func sayOldEnvFile(out io.Writer, current, old string) {
-	if old != "" {
-		_, _ = fmt.Fprintf(out, "\nThe service now reads its GitHub settings from %s. An administrator may remove the old file: sudo rm %s\n", current, old)
+// A service that was already running is not restarted, so it reads the new file only at its next start.
+func sayOldEnvFile(out io.Writer, current, old string, wasRunning bool) {
+	if old == "" {
+		return
 	}
+	reads := "now reads its GitHub settings from " + current
+	if wasRunning {
+		reads = "will read its GitHub settings from " + current + " on its next start (it was already running and was not restarted)"
+	}
+	_, _ = fmt.Fprintf(out, "\nThe service %s. An administrator may remove the old file: sudo rm %s\n", reads, old)
 }
 
 // appKeyIfMissing reads the App key unless its secret exists, and reports the fingerprint to compare with GitHub's page.
@@ -166,32 +169,85 @@ func appKeyIfMissing(ctx context.Context, store SecretStore, r *Resolver, out io
 }
 
 // startStack starts the database, waits for it, creates the application role, starts the service (the unit dependency runs
-// migrate first) and checks the three units (install.md 10.11 to 10.13).
-func startStack(ctx context.Context, rt Runtime, d Deps) error {
+// migrate first) and checks the three units (install.md 10.11 to 10.13). It reports whether the service was already running:
+// starting a running service does nothing, so it keeps what it read at its last start.
+func startStack(ctx context.Context, rt Runtime, d Deps) (wasRunning bool, err error) {
 	systemctl := func(ctx context.Context, args ...string) (string, error) {
 		b, err := d.Exec(ctx, "systemctl", append([]string{"--user"}, args...), nil)
 		return strings.TrimSpace(string(b)), err
 	}
+	before, err := systemctl(ctx, "show", "--property=ActiveState", "--value", "suiteward.service")
+	if err != nil {
+		return false, fmt.Errorf("ask for the state of suiteward.service: %w", err)
+	}
+	wasRunning = before == "active"
 	if _, err := systemctl(ctx, "start", "suiteward-db.service"); err != nil {
-		return fmt.Errorf("start the database: %w", err)
+		return wasRunning, fmt.Errorf("start the database: %w", err)
 	}
 	if err := waitHealthy(ctx, rt); err != nil {
-		return err
+		return wasRunning, err
 	}
 	if err := ensureAppRole(ctx, rt); err != nil {
-		return err
+		return wasRunning, err
 	}
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	if _, err := systemctl(startCtx, "start", "suiteward.service"); err != nil {
-		return fmt.Errorf("start the service (read the migration with `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
+		return wasRunning, fmt.Errorf("start the service (read the migration with `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
 	}
 	for _, unit := range []string{"suiteward-db.service", "suiteward-migrate.service", "suiteward.service"} {
 		if state, err := systemctl(ctx, "show", "--property=ActiveState", "--value", unit); err != nil || state != "active" {
-			return fmt.Errorf("%s is %q after the start, want active: read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
+			return wasRunning, fmt.Errorf("%s is %q after the start, want active: read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
 		}
 	}
-	return nil
+	return wasRunning, nil
+}
+
+// checkAccount refuses a run by root, by another user than the service account, or with a HOME that is not the account's
+// home directory in the passwd database: the installer writes under HOME and must not be steered by the environment. It
+// returns HOME.
+func checkAccount(run func(string, ...string) (string, error), home string) (string, error) {
+	command := "sudo -u " + ServiceAccount + " -H env XDG_RUNTIME_DIR=/run/user/<uid of " + ServiceAccount + "> DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus suiteward install (`sudo suiteward install host` prints it with the uid filled in)"
+	if uid, err := run("id", "-u"); err != nil {
+		return "", fmt.Errorf("find out who is running the installer: %w", err)
+	} else if uid == "0" {
+		return "", fmt.Errorf("run the installer as the service account, not as root: %s", command)
+	}
+	user, err := run("id", "-un")
+	if err != nil {
+		return "", fmt.Errorf("find the account name: %w", err)
+	}
+	if user != ServiceAccount {
+		return "", fmt.Errorf("the installer is running as %q, not as %s: %s", user, ServiceAccount, command)
+	}
+	entry, err := run("getent", "passwd", ServiceAccount)
+	if err != nil {
+		return "", fmt.Errorf("look up the account %s: %w", ServiceAccount, err)
+	}
+	fields := strings.Split(entry, ":")
+	if len(fields) < 7 {
+		return "", fmt.Errorf("the account entry %q is not a passwd line", entry)
+	}
+	passwdHome := strings.Join(fields[5:len(fields)-1], ":") // the home is field 6; a colon inside it must not split it
+	if !filepath.IsAbs(home) || filepath.Clean(home) != filepath.Clean(passwdHome) {
+		return "", fmt.Errorf("HOME is %q but the home of %s is %q: %s", home, ServiceAccount, passwdHome, command)
+	}
+	return home, nil
+}
+
+// stackNeverStarted says whether this stack never completed a start: no successful run saved the settings and the service was
+// never active. Only then may a retry pin another image; otherwise changing the image is an upgrade.
+func stackNeverStarted(run func(string, ...string) (string, error), settingsPath string) (bool, error) {
+	if _, err := os.Stat(settingsPath); err == nil {
+		return false, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("look for %s: %w", settingsPath, err)
+	}
+	entered, err := run("systemctl", "--user", "show", "--property=ActiveEnterTimestamp", "--value", "suiteward.service")
+	if err != nil {
+		return false, fmt.Errorf("ask when suiteward.service was last active: %w", err)
+	}
+	return entered == "", nil
 }
 
 // checkUserManager checks the account's systemd user manager and linger (install.md 10.1 and 10.2). `show` rather than
@@ -217,8 +273,10 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 
 // adoptInstalled compares units installed earlier (by hand from the install guide, or by this installer) with the units of
 // this release, carries their tier, ports and job timeout into s and returns the image digest to pin. A difference it cannot
-// carry stops the run with the diff. Without installed units the digest comes from the "image" answer. The second result is the env file the installed units read when it is not the account's own, so the caller can say when it may go.
-func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver) (string, string, error) {
+// carry stops the run with the diff. Without installed units the digest comes from the "image" answer.
+// The second result is the env file the installed units read when it is not the account's own, so the caller can say when it
+// may go. What is installed replaces what was asked for, and each such replacement is reported.
+func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, string, error) {
 	templates, err := embeddedUnits()
 	if err != nil {
 		return "", "", err
@@ -242,6 +300,7 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver) (str
 		if err != nil {
 			return "", "", err
 		}
+		reportAdopted(say, *s, adopted.Settings)
 		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = adopted.Settings.Tier, adopted.Settings.HTTPPort, adopted.Settings.MCPPort, adopted.Settings.JobTimeout
 		installedDigest = strings.TrimPrefix(adopted.Image, releaseImageRepo+"@")
 		if adopted.EnvFile != DefaultEnvFile {
@@ -251,19 +310,49 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver) (str
 			}
 		}
 	}
+	digest, err := chooseImage(r, installedDigest, neverStarted, say)
+	return digest, oldEnv, err
+}
+
+// reportAdopted says which installed values replace the ones that were asked for.
+func reportAdopted(say func(string, ...any), asked, installed Settings) {
+	if asked.Tier != installed.Tier {
+		say("Keeping the installed tier %s (you asked for %s).\n", installed.Tier, asked.Tier)
+	}
+	if asked.HTTPPort != installed.HTTPPort {
+		say("Keeping the installed HTTP port %d (you asked for %d).\n", installed.HTTPPort, asked.HTTPPort)
+	}
+	if asked.MCPPort != installed.MCPPort {
+		say("Keeping the installed MCP port %d (you asked for %d).\n", installed.MCPPort, asked.MCPPort)
+	}
+	if asked.JobTimeout != installed.JobTimeout {
+		say("Keeping the installed job timeout %q (you asked for %q).\n", installed.JobTimeout, asked.JobTimeout)
+	}
+}
+
+// chooseImage picks the digest to pin from the "image" answer and the installed one. A different image is an upgrade, which
+// has its own command, unless the stack never completed a start: then it is a retry after a failed first run.
+func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool, error), say func(string, ...any)) (string, error) {
 	asked, _ := r.optional("image")
 	asked = strings.TrimPrefix(asked, releaseImageRepo+"@")
 	switch {
 	case asked == "" && installedDigest == "":
-		return "", "", errors.New("the release image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
+		return "", errors.New("the release image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
 	case asked == "":
-		return installedDigest, oldEnv, nil
+		return installedDigest, nil
 	case !imageDigest.MatchString(asked):
-		return "", "", fmt.Errorf("--image %q is not a digest of the form sha256:<64 lowercase hex characters>: the installer never pins a tag", asked)
+		return "", fmt.Errorf("--image %q is not a digest of the form sha256:<64 lowercase hex characters>: the installer never pins a tag", asked)
 	case installedDigest != "" && asked != installedDigest:
-		return "", "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, installedDigest)
+		never, err := neverStarted()
+		if err != nil {
+			return "", err
+		}
+		if !never {
+			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, installedDigest)
+		}
+		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, asked)
 	}
-	return asked, oldEnv, nil
+	return asked, nil
 }
 
 // optional returns the flag or answers-file value of key, when there is one: it never prompts.
@@ -373,7 +462,9 @@ func appKeyFingerprint(raw []byte) (string, error) {
 }
 
 // ensureSecrets creates the secrets that are missing (install.md 10.3, 10.7 and 10.8; the application role's one comes later).
-// The database password is never regenerated once it exists: the database keeps it in its volume. appKey is nil when the
+// The database password is never regenerated once it exists: the database keeps it in its volume. Secrets that exist are
+// not shape-checked again: the ones this installer generated are right by construction, and one made by hand (install.md 10.4
+// checks its shape) is the administrator's to have checked. appKey is nil when the
 // secret exists already.
 func ensureSecrets(ctx context.Context, store SecretStore, appKey []byte) error {
 	havePassword, err := store.Exists(ctx, SecretDBAuth)

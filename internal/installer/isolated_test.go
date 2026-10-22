@@ -117,8 +117,16 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 			}
 		}
 		return []byte(out.String()), nil
-	case c.name != "podman":
-		return nil, nil
+	case c.name == "podman":
+		return f.answerPodman(c)
+	}
+	return nil, nil
+}
+
+// answerPodman answers the podman commands: the secret store, the database container and psql.
+func (f *isoFake) answerPodman(c call) ([]byte, error) {
+	line := c.line()
+	switch {
 	case strings.HasPrefix(line, "info "):
 		return []byte("true\n"), nil
 	case strings.HasPrefix(line, "secret ls --filter name="):

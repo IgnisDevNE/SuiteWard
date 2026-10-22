@@ -201,7 +201,8 @@ func freeSubidRange(content, account string) (start int, has bool, err error) {
 // metadata offers the rule that refuses the cloud metadata address for the service account (install.md 10.5), only on a
 // host where that address answers, and never without an explicit yes. A rule that is already installed is applied again.
 func (h *host) metadata(ctx context.Context) error {
-	if !h.exists(ctx, "/etc/systemd/system/"+imdsUnit) {
+	installed := h.exists(ctx, "/etc/systemd/system/"+imdsUnit)
+	if !installed {
 		if _, err := h.run(ctx, "curl", "--version"); err != nil {
 			return fmt.Errorf("curl is needed to look for a cloud metadata service: %w", err)
 		}
@@ -221,10 +222,12 @@ func (h *host) metadata(ctx context.Context) error {
 			return nil
 		}
 	}
-	return h.installMetadataRule(ctx)
+	return h.installMetadataRule(ctx, installed)
 }
 
-func (h *host) installMetadataRule(ctx context.Context) error {
+// installMetadataRule writes the rule and its unit and loads them. installed says the unit was there before: enable --now
+// does nothing for a unit that is already active, so a rule file that changed needs a restart to be loaded.
+func (h *host) installMetadataRule(ctx context.Context, installed bool) error {
 	nft, err := h.run(ctx, "sh", "-c", "command -v nft")
 	if err != nil {
 		if err := h.dnf(ctx, "nft is not installed", "install", "-y", "nftables"); err != nil {
@@ -257,6 +260,8 @@ ExecStop=-%[2]s delete table inet suiteward_imds
 [Install]
 WantedBy=multi-user.target
 `, ServiceAccount, nft, imdsRuleFile)
+	onDisk, readErr := h.run(ctx, "cat", imdsRuleFile)
+	ruleChanged := readErr != nil || onDisk != strings.TrimSpace(rule)
 	if _, err := h.run(ctx, "mkdir", "-p", path.Dir(imdsRuleFile)); err != nil {
 		return err
 	}
@@ -265,7 +270,11 @@ WantedBy=multi-user.target
 			return fmt.Errorf("write %s: %w", file, err)
 		}
 	}
-	for _, args := range [][]string{{"daemon-reload"}, {"enable", "--now", imdsUnit}} {
+	steps := [][]string{{"daemon-reload"}, {"enable", "--now", imdsUnit}}
+	if installed && ruleChanged {
+		steps = append(steps, []string{"restart", imdsUnit})
+	}
+	for _, args := range steps {
 		if _, err := h.run(ctx, "systemctl", args...); err != nil {
 			return fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), err)
 		}
@@ -303,6 +312,13 @@ func (h *host) configDir(ctx context.Context) error {
 	}
 	dotConfig := path.Join(home, ".config")
 	dir := path.Join(dotConfig, "suiteward")
+	dest := path.Join(dir, "github.env")
+	// The account owns these directories, so it could have planted a link where root is about to chown or write.
+	for _, p := range []string{dotConfig, dir, dest} {
+		if _, err := h.run(ctx, "test", "-L", p); err == nil {
+			return fmt.Errorf("%s is a symbolic link: root will not chown or copy through it; remove the link and run this again", p)
+		}
+	}
 	// install -d owns only the last component it names, so both directories are named.
 	if _, err := h.run(ctx, "install", "-d", "-o", ServiceAccount, "-g", ServiceAccount, "-m", "0700", dotConfig, dir); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
@@ -310,7 +326,6 @@ func (h *host) configDir(ctx context.Context) error {
 	if !h.exists(ctx, etcEnvFile) {
 		return nil
 	}
-	dest := path.Join(dir, "github.env")
 	if h.exists(ctx, dest) {
 		if _, err := h.run(ctx, "cmp", "-s", etcEnvFile, dest); err != nil {
 			return fmt.Errorf("%s and %s both exist and differ: make the new one hold the values you want (it is the one the service will read), and run this again", etcEnvFile, dest)

@@ -1,6 +1,6 @@
 # Delivery plan
 
-- **Updated:** 2026-10-21 (security hardening [SH](phases/SH.md) done and released as `v0.2.0-rc.1` and `v0.2.0-rc.2`; phase [M1.11](phases/M1.11.md) approved, it ships as `v0.2.0-rc.3`; the final `v0.2.0` comes after it)
+- **Updated:** 2026-10-22 (the MVP `v0.2.0` is released; phase [M1.12](phases/M1.12.md), the installer, is next and ships as `v0.3.0-alpha.1`, the first version handed to testers)
 
 Each phase produces one PR, integrated with a merge commit after the user's authorization. Work inside a phase is orchestrated as described in [orchestration](orchestration.md): the main session writes [briefs](task-brief.md), `sw-implementer` subagents implement them test-first in their own worktrees, and `sw-reviewer` subagents review them. Open and accepted product choices live in the [decision register](decisions.md).
 
@@ -32,15 +32,17 @@ Phase pages are written by hand and kept short. A task listed on a page becomes 
 
 Evidence for the earlier phases lives in [history](../history.md).
 
-## MVP roadmap
+## Roadmap
 
-The MVP is a self-hosted, tamper-evident, human-approved test contract for one developer working with AI agents on GitHub.
+The MVP, released as `v0.2.0`, is a self-hosted, tamper-evident, human-approved test contract for one developer working with AI agents on GitHub. M1.12 and the alpha follow it.
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
 | Security gate (owner request, 2026-10-19) | The last step before the final MVP release, after M1.10 and every other phase:<ul><li>a hardening session;</li><li>a heavy pentest of both tiers and of the managed-service shape (App key, permissions, TOTP flow, host, outbox, check forgery, workflows and tags);</li><li>a dedicated SecOps review between the owner and the orchestrator.</li></ul>Its findings decide what the release carries and what goes to M3. The assessment began on 2026-10-20: the [threat model](../security/threat-model.md), scanners, fuzzing, and live tests on the co-located target. It shipped `v0.1.3` (Go 1.27.3, for the `crypto/x509` distrust of compromised intermediates). The assessment and the hardening ([SH](phases/SH.md)) are done. | M1.10 |
-| [M1.11](phases/M1.11.md) | Close-out and robustness (owner, 2026-10-21), one phase that joins what SH left:<ul><li>the budget and the instance in `/status` and MCP `status`; MCP syncs counted in the poll's pace; an ETag cache bounded by bytes;</li><li>a test that keeps the job-kind list of `status.sql` in sync with Go;</li><li>a weekly, non-gating scan of the pinned PostgreSQL image;</li><li>the Deploy workflow retired, CI building the image without pushing, and `local.ps1 -Image` mandatory;</li><li>these records, and a private security register kept locally.</li></ul>It ships as `v0.2.0-rc.3`. | SH |
-| Final `v0.2.0` | The MVP release, after M1.11 and the owner's authorization, cut from a revision validated on three targets: A3 (co-located), the AlmaLinux 9 host (isolated), and a throwaway instance that ran the live in-place upgrade of [install 11.5](../install.md#11-updating) from v0.1.3 to rc.3. That instance ran on Fedora 44 with Podman 6.1.4, not on AlmaLinux (see the [M1.11 outcome](phases/M1.11.md#outcome)). All three passed on 2026-10-21. Verified with `scripts/verify-release.ps1` before any host pins it. | M1.11 |
+| [M1.11](phases/M1.11.md) | **Done** (merged 2026-10-21, released as `v0.2.0-rc.3`). Close-out and robustness (owner, 2026-10-21), one phase that joins what SH left:<ul><li>the budget and the instance in `/status` and MCP `status`; MCP syncs counted in the poll's pace; an ETag cache bounded by bytes;</li><li>a test that keeps the job-kind list of `status.sql` in sync with Go;</li><li>a weekly, non-gating scan of the pinned PostgreSQL image;</li><li>the Deploy workflow retired, CI building the image without pushing, and `local.ps1 -Image` mandatory;</li><li>these records, and a private security register kept locally.</li></ul>It ships as `v0.2.0-rc.3`. | SH |
+| Final `v0.2.0` | **Done.** The MVP release, released on 2026-10-22 from `21423ec` (the same code as rc.3), after the owner's authorization. Index digest: `sha256:51aa230a215dfb30c662448ce090db7ab67a8173fb119237cf688caffe5db30e`; `latest-stable` moved to it. It was cut from a revision validated on three targets: A3 (co-located), the AlmaLinux 9 host (isolated), and a throwaway instance that ran the live in-place upgrade of [install 11.5](../install.md#11-updating) from v0.1.3 to rc.3 (Fedora 44 with Podman 6.1.4, not AlmaLinux; see the [M1.11 outcome](phases/M1.11.md#outcome)). A3 runs v0.2.0 and its smoke test passed; the AlmaLinux host is updated by the owner. Verified with `scripts/verify-release.ps1` before any host pins it. | M1.11 |
+| [M1.12](phases/M1.12.md) | The installer (owner, 2026-10-21; [D-INSTALLER](decisions.md#d-installer-the-installer-and-the-first-distributable-version)), the last sprint before the first version handed to testers:<ul><li>`suiteward doctor`, and the isolated installer with ruleset and setup assistance;</li><li>the co-located installer on Podman, and on Docker as a discouraged option, replacing `deploy/local.ps1`;</li><li>the App created through the manifest flow, one click to create and one to install;</li><li>`suiteward install --upgrade`;</li><li>the `suiteward` binary as signed release assets, and the install guide rewritten around the installer.</li></ul>It ships as `v0.3.0-alpha.1`. | v0.2.0 |
+| Alpha (`v0.3.0-alpha.1`) | The first distributable version, a pre-release handed to individual testers after four live validation runs (Docker Desktop co-located, A3 converted, a fresh isolated instance, the AlmaLinux host upgraded) and the owner's authorization. Everything after the alpha is post-MVP. | M1.12 |
 
 S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
 
@@ -57,7 +59,7 @@ There is no deployment workflow: the Deploy workflow, the `:deploy` tag and the 
 
 ## After the MVP
 
-Deferred by the R1 amendments, in no fixed order until the MVP is in use:
+Deferred by the R1 amendments, in no fixed order. It starts after the alpha (`v0.3.0-alpha.1`), once testers use the installer:
 
 - Contract-change priority queue and `/suiteward prioritize` (ADR 0022).
 - Automatic protection setup and confirmed repair (ADRs 0016, 0017).

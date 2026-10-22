@@ -1,6 +1,6 @@
 # Decision register
 
-- **Updated:** 2026-10-21 (D-DEPLOY and D-JOB-RETENTION decided, the Deploy workflow retired; phase SH, 2026-10-20: security review decisions (closed pull requests, commands on another pull request, case-fold collisions, declaration size and unconfigured repositories), the isolated host, updates and scanners; stale release, update and host lines corrected)
+- **Updated:** 2026-10-22 (D-INSTALLER decided for phase M1.12, the installer; `v0.2.0` released; 2026-10-21: D-DEPLOY and D-JOB-RETENTION decided, the Deploy workflow retired; phase SH, 2026-10-20: security review decisions (closed pull requests, commands on another pull request, case-fold collisions, declaration size and unconfigured repositories), the isolated host, updates and scanners; stale release, update and host lines corrected)
 
 These gates record product and implementation choices that accepted ADRs deliberately left open. They do not reopen accepted ADRs. The integrator can resolve implementation choices within accepted policy; changes to product authority, scope, or release commitments need the project owner. Do not choose an unresolved product policy to unblock a task; record the decision needed and take independent ready work.
 
@@ -419,7 +419,7 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
   - It needs what the self-hosted design does not have: a public App, several owners per instance (D-IDENTITY is one owner), enrollment through a web page with a GitHub login instead of `setup`, and a trust model in which we are the host administrator (ADR 0027). It is recorded as D-MANAGED-SERVICE in Post-MVP.
   - For the MVP, the install guide leads with the co-located path, one command on the user's machine. The isolated host is the operator path: ours, and for whoever self-hosts on a separate machine.
 - **Ruleset.** The user creates it, guided by a direct link to the repository's rulesets page and the exact boxes to tick. The App keeps no Administration write, so it can never change its own protection.
-- **GitHub App.** The user creates it by hand, from a checklist in the install guide that lists the exact permissions of [D-GITHUB-ACCESS](#d-github-access-github-app-permissions-and-token-lifecycle). The manifest flow is backlog.
+- **GitHub App.** The user creates it by hand, from a checklist in the install guide that lists the exact permissions of [D-GITHUB-ACCESS](#d-github-access-github-app-permissions-and-token-lifecycle). The manifest flow is backlog. *Amended 2026-10-21: [D-INSTALLER](#d-installer-the-installer-and-the-first-distributable-version) creates the App through the manifest flow.*
 - **Updates.** The user pins the image by digest and updates when they choose: pull the new `vX.Y.Z`, verify its signature, change both `Image=` lines to its digest, then `restart suiteward-migrate.service`, which migrates and restarts the service (install guide, section 11). Automatic updates are not supported (amended 2026-10-20, below): the migration unit cannot be updated by Podman, so an automatic update would start the service alone on an old schema.
 - **Backup.** The MVP backup is a plain `pg_dump` plus a tarball of the artifact volume, kept by the user. The runbook warns that it holds the TOTP secret and the enrollment. Encrypted backups and guided restore stay post-MVP (D-ARCHIVE, D-RESTORE).
 - **Dogfooding.**
@@ -479,6 +479,28 @@ Decided 2026-10-06 and settled by the S1 findings; the deployment workflow was r
 ### D-JOB-RETENTION: How long finished jobs stay visible
 
 Decided 2026-10-21 (owner): River's cleaner defaults, with no configuration. Completed and cancelled jobs stay 24 hours, discarded jobs 7 days (River v0.49.0). The outbox keeps its terminal rows. It was raised by the M1.2 phase review.
+
+### D-INSTALLER: The installer and the first distributable version
+
+Accepted 2026-10-21 (owner, M1.12 planning). It amends D-INSTALL: the App is created through the manifest flow, and the install guide is rewritten around the installer. The phase is [M1.12](phases/M1.12.md); it ships as `v0.3.0-alpha.1`.
+
+- **Why.** Installing takes about 11 commands co-located and about 62 isolated, with nine pastes, the image digest typed three times and a hand-made App, and several mistakes stay silent. Most of that can be automated.
+- **Order of work:** `doctor`, then the isolated installer with the ruleset and setup assistance, then the App manifest flow, then the release-pinned binary.
+- **One App per instance, created through the manifest flow.** One owner per instance, up to 20 repositories. The App keeps exactly the five permissions of D-GITHUB-ACCESS: no Contents write, no Administration write, webhook off and `public: false`. So the ruleset stays a human Import click per repository, from a JSON the installer writes. The manifest code is converted on the machine that keeps the key (for isolated, the host), with a random `state` and a listener on 127.0.0.1 only. The code passes through the user's browser, as the PEM download does today; the threat model says so.
+- **Runtimes.**
+  - **Isolated:** Podman only.
+  - **Co-located:** Podman is strongly recommended. Docker is allowed co-located only, as an explicitly discouraged option, and the installer and the docs say so plainly. The reasons:
+    - the Docker daemon is rootful by default;
+    - Docker has no secrets outside Swarm, so the PEM and the other secrets land on disk, in a private per-user directory, where Podman keeps them in its secret store and never writes the PEM to disk.
+  - A rootful Podman connection is refused. The installer never runs as root: isolated splits the administrator steps (`sudo suiteward install host`) from the service-account steps (`suiteward install`).
+- **The GitHub env file moves to the service account.** `/etc/suiteward/github.env` (written by an administrator, install guide 10.6) becomes `~/.config/suiteward/github.env`, owned by `suiteward` and loaded with `EnvironmentFile=%h/.config/suiteward/github.env`. Its values (App ID, installation ID, repositories) only exist after the manifest flow, which runs as `suiteward`. Administrator ownership was never a control: the install guide records no reason for it, and the file holds no secret. What the instance can reach is bounded by the installation's repository selection on GitHub, not by this file. Adoption moves an existing `/etc` file.
+- **Plain prompts, not `huh`.** The prompts are plain line prompts (standard library plus `golang.org/x/term` for no-echo input), which work in every terminal and are accessible, and each has a flag and an answers-file key. The TUI library `huh` is rejected for its dependency weight; polish is post-MVP.
+- **The binary is a release asset.**
+  - `suiteward` is built for linux/amd64, linux/arm64, windows/amd64 and darwin/arm64 and uploaded to the Release the owner created, with `SHA256SUMS` and a keyless `cosign sign-blob` bundle per file, under the same workflow identity as the image. macOS is covered by build and tests only.
+  - Each binary embeds the signed index digest of its own release, so an install never takes an image from a tag. A development build without that digest requires `--image`.
+  - On the isolated host, which has no cosign or PowerShell, the binary is verified once on the PC and the host checks the same files against `SHA256SUMS`.
+- **`deploy/local.ps1` is removed in the alpha.** The installer adopts a stack it made, and `suiteward install --upgrade` converts one.
+- **Hand-over.** `v0.3.0-alpha.1`, a pre-release, goes to individual testers. Everything after the alpha is post-MVP.
 
 ### D-MIGRATIONS: Migration tooling
 

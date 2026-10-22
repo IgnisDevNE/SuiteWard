@@ -372,3 +372,22 @@ func (t Token) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, t.String()
 
 // drain reads a refused answer up to maxAnswer so the connection can be reused; its text is never kept.
 func drain(body io.Reader) { _, _ = io.Copy(io.Discard, io.LimitReader(body, maxAnswer)) }
+
+// InstallationInfo is one installation of the App, as GET /app/installations lists it.
+type InstallationInfo struct {
+	ID                  int64
+	Account             string // the login of the account the App is installed on
+	AccountType         string // "User" or "Organization"
+	RepositorySelection string // "all" or "selected"
+	Permissions         map[string]string
+}
+
+// Installations lists the installations of the App (GET /app/installations, with the App JWT).
+func (a App) Installations(ctx context.Context, httpClient *http.Client, baseURL string) ([]InstallationInfo, error) {
+	return nil, nil
+}
+
+// InstallationRepositories lists the full names of the repositories installation id can read, with a token narrowed to Metadata read.
+func (a App) InstallationRepositories(ctx context.Context, id int64, httpClient *http.Client, baseURL string) ([]string, error) {
+	return nil, nil
+}

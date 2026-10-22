@@ -217,13 +217,13 @@ func TestWriteFileAtomicFlushesBeforeAndAfterTheRename(t *testing.T) {
 	origFile, origDir := syncFile, syncDir
 	t.Cleanup(func() { syncFile, syncDir = origFile, origDir })
 	syncFile = func(f *os.File) error {
-		current, _ := os.ReadFile(path)
+		current, _ := os.ReadFile(filepath.Clean(path))
 		written, _ := os.ReadFile(f.Name())
 		events = append(events, fmt.Sprintf("file(old kept=%t, temp written=%t)", string(current) == "old", string(written) == "new"))
 		return nil
 	}
 	syncDir = func(d string) error {
-		current, _ := os.ReadFile(path)
+		current, _ := os.ReadFile(filepath.Clean(path))
 		events = append(events, fmt.Sprintf("dir %s (replaced=%t)", filepath.Base(d), string(current) == "new"))
 		return nil
 	}

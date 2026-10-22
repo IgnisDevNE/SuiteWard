@@ -338,3 +338,85 @@ func TestPurgeRemovesTheRecordOfAnApp(t *testing.T) {
 		t.Error("the record of an App outlived the purge")
 	}
 }
+
+// The record is for an App that no settings or env file name yet: once the env file names it, a later step that fails does not
+// make the re-run ask GitHub again, as it did not before the record existed.
+func TestInstallIsolatedARecordDoesNotForceTheFlowOnceTheEnvFileNamesTheApp(t *testing.T) {
+	g, fake := isolatedFlow(t)
+	fake.neverInstalled(false)
+	g.f.failOn["systemctl --user start suiteward-db.service"] = errors.New("the database cannot start")
+	if err := g.run(); err == nil {
+		t.Fatal("the database start must fail")
+	}
+	if !exists(envFile(g.home)) || !exists(pendingAppPath(settingsFile(g.home))) {
+		t.Fatalf("the test needs the env file and the record: %v %v", exists(envFile(g.home)), exists(pendingAppPath(settingsFile(g.home))))
+	}
+	delete(g.f.failOn, "systemctl --user start suiteward-db.service")
+	for _, key := range []string{"github", "github-account", "github-repositories", "github-owner", "test-check", "manifest-code"} {
+		g.answers[key] = ""
+	}
+	if err := g.run(); err != nil {
+		t.Fatalf("a re-run with the App in the env file and no GitHub answers must work: %v", err)
+	}
+	if len(g.seen) != 1 {
+		t.Errorf("the GitHub flow ran %d times, want once (the first run)", len(g.seen))
+	}
+	if exists(pendingAppPath(settingsFile(g.home))) {
+		t.Error("the record is still there after the settings were saved")
+	}
+}
+
+// ---- the other way out of "recorded, key missing": the key of that App, given again ----
+
+func TestInstallColocatedTheKeyGivenAgainFinishesARecordedApp(t *testing.T) {
+	h, g, args := colocatedFlow(t)
+	g.neverInstalled(true)
+	if err := h.podman(args...); err == nil {
+		t.Fatal("the first run must fail")
+	}
+	g.neverInstalled(false) // the App is installed now; the fake engine has no key secret, as after a purge
+	keyFile := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(keyFile, testKeyPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	extra := []string{"--github-app-id", "4242", "--github-installation-id", "77", "--github-app-key-file", keyFile}
+	if err := h.podman(append(args, extra...)...); err != nil {
+		t.Fatalf("the advertised way out does not work: %v", err)
+	}
+	if n := g.count("POST /app-manifests"); n != 1 {
+		t.Errorf("%d Apps were created, want one", n)
+	}
+	if n := len(h.secretWrites(SecretGitHubAppKey)); n != 2 { // the first run, and the key given again
+		t.Errorf("the key was stored %d times, want 2", n)
+	}
+	if exists(pendingAppPath(h.settingsPath())) {
+		t.Error("the record is still there after the settings were saved")
+	}
+}
+
+func TestInstallIsolatedTheKeyGivenAgainFinishesARecordedApp(t *testing.T) {
+	g, fake := isolatedFlow(t)
+	fake.neverInstalled(true)
+	if err := g.run(); err == nil {
+		t.Fatal("the first run must fail")
+	}
+	fake.neverInstalled(false)
+	delete(g.f.secrets, SecretGitHubAppKey) // purged
+	keyFile := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(keyFile, testKeyPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g.answers["github-app-id"], g.answers["github-installation-id"], g.answers["github-app-key-file"] = "4242", "77", keyFile
+	if err := g.run(); err != nil {
+		t.Fatalf("the advertised way out does not work: %v", err)
+	}
+	if n := fake.count("POST /app-manifests"); n != 1 {
+		t.Errorf("%d Apps were created, want one", n)
+	}
+	if g.f.secrets[SecretGitHubAppKey] == "" {
+		t.Error("the key given again was not stored")
+	}
+	if exists(pendingAppPath(settingsFile(g.home))) {
+		t.Error("the record is still there after the settings were saved")
+	}
+}

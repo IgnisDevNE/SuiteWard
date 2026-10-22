@@ -29,6 +29,10 @@ func TestMain(m *testing.M) {
 		fmt.Print(string(buf[:n]))
 		fmt.Fprint(os.Stderr, "helper note")
 		os.Exit(0)
+	case "failout": // a long stdout that ends with the reason, then stderr, then a failure
+		fmt.Print("FIRSTLINE ", strings.Repeat("log ", 3000), "migration 21 failed")
+		fmt.Fprint(os.Stderr, "boom")
+		os.Exit(3)
 	case "fail":
 		fmt.Fprint(os.Stderr, "something went wrong")
 		os.Exit(3)
@@ -57,14 +61,17 @@ func TestOSExecReturnsStdoutAndFeedsStdin(t *testing.T) {
 	}
 }
 
-func TestOSExecFailureCarriesStderrAndNoStdout(t *testing.T) {
+func TestOSExecFailureCarriesStderrAndReturnsStdout(t *testing.T) {
 	name, args := helperCommand(t, "fail")
-	out, err := OSExec(context.Background(), name, args, nil)
+	_, err := OSExec(context.Background(), name, args, nil)
 	if err == nil || !strings.Contains(err.Error(), "something went wrong") {
 		t.Fatalf("got %v", err)
 	}
-	if out != nil {
-		t.Fatalf("a failed command returned output: %q", out)
+	// Whatever the failed command printed is returned with the error (doctor reads a JSON report from a failing check).
+	name, args = helperCommand(t, "failout")
+	out, err := OSExec(context.Background(), name, args, nil)
+	if err == nil || !strings.HasPrefix(string(out), "FIRSTLINE ") || !strings.HasSuffix(string(out), "migration 21 failed") {
+		t.Fatalf("a failed command did not return its whole stdout: %d bytes, %v", len(out), err)
 	}
 	var exit interface{ ExitCode() int }
 	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
@@ -111,5 +118,18 @@ func TestUnitParamsFromSettings(t *testing.T) {
 	p := UnitParamsFrom(s, testDigest)
 	if p.Digest != testDigest || p.Tier != config.TierIsolated || p.HTTPPort != 18081 || p.MCPPort != 18091 || p.JobTimeout != "3m" || p.EnvFile != "" {
 		t.Fatalf("got %+v", p)
+	}
+}
+
+func TestOSExecErrorCarriesStderrOnly(t *testing.T) {
+	name, args := helperCommand(t, "failout")
+	_, err := OSExec(context.Background(), name, args, nil)
+	// The stdout of a failed command is returned beside the error; the error says only what stderr said, so that a value
+	// a command printed (a secret read, say) cannot leak through an error message.
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("the error lacks stderr: %v", err)
+	}
+	if strings.Contains(err.Error(), "migration 21 failed") || strings.Contains(err.Error(), "log log") {
+		t.Fatalf("the error repeats the standard output: %v", err)
 	}
 }

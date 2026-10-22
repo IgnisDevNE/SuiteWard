@@ -52,6 +52,7 @@ type Settings struct {
 	HTTPPort   int         `yaml:"http_port"`
 	MCPPort    int         `yaml:"mcp_port"`
 	JobTimeout string      `yaml:"job_timeout,omitempty"` // a Go duration
+	Image      string      `yaml:"image,omitempty"`       // the release image installed, pinned by digest
 	GitHub     GitHub      `yaml:"github,omitempty"`
 }
 
@@ -104,6 +105,9 @@ func (s Settings) Validate() error {
 	}
 	if s.HTTPPort == s.MCPPort {
 		add("http_port and mcp_port must be distinct")
+	}
+	if s.Image != "" && !digestImage.MatchString(s.Image) {
+		add("image %q is not pinned by an sha256 digest", s.Image)
 	}
 	if s.JobTimeout != "" {
 		if d, err := time.ParseDuration(s.JobTimeout); err != nil || d <= 0 {

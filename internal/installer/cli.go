@@ -61,6 +61,39 @@ func (c *cli) Create(ctx context.Context, kind Kind, name string) error {
 	return nil
 }
 
+// Delete removes a volume or a network; one that does not exist is not an error.
+func (c *cli) Delete(ctx context.Context, kind Kind, name string) error {
+	if kind != KindVolume && kind != KindNetwork {
+		return fmt.Errorf("cannot delete a %s with Delete", kind)
+	}
+	have, err := c.Exists(ctx, kind, name)
+	if err != nil || !have {
+		return err
+	}
+	if _, err := c.run(ctx, nil, string(kind), "rm", name); err != nil {
+		return fmt.Errorf("remove the %s %s: %w", kind, name, err)
+	}
+	return nil
+}
+
+// ImageExists says whether the engine already has the image. A failing inspect is "not here": the pull that follows
+// reports a real problem with the engine or the registry.
+func (c *cli) ImageExists(ctx context.Context, image string) bool {
+	_, err := c.run(ctx, nil, "image", "inspect", image)
+	return err == nil
+}
+
+// runError is the error of a failed run. A foreground container (migrate) logs why it failed on stdout, so the end of
+// it is kept; a detached container prints only its ID there.
+func runError(spec RunSpec, out []byte, err error) error {
+	if !spec.Detach {
+		if tail := stdoutTail(out); tail != "" {
+			return fmt.Errorf("run %s: %w; its output ends: %s", spec.Name, err, tail)
+		}
+	}
+	return fmt.Errorf("run %s: %w", spec.Name, err)
+}
+
 func (c *cli) Pull(ctx context.Context, image string) error {
 	if !digestImage.MatchString(image) {
 		return fmt.Errorf("%w: %s", ErrNotDigestImage, image)

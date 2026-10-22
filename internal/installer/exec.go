@@ -11,10 +11,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 )
 
 // Exec runs a command and returns its standard output. Every container CLI call goes through one, so tests inject a fake and
-// check the argument list of each call.
+// check the argument list of each call. A command that fails returns what it printed together with the error.
 type Exec func(ctx context.Context, name string, args []string, stdin io.Reader) (stdout []byte, err error)
 
 // Interactive runs a command with the real stdin, stdout and stderr connected and returns when it exits. It never captures
@@ -52,7 +53,9 @@ func OSExec(ctx context.Context, name string, args []string, stdin io.Reader) ([
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %w: %s", describe(name, args), err, strings.TrimSpace(stderr.String()))
+		// The output is returned beside the error (a failing check prints its report on stdout) but is not in the error: a
+		// command may print a secret. A caller that wants a tail of it asks for it (stdoutTail). Every caller reads the error first.
+		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", describe(name, args), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }
@@ -66,6 +69,21 @@ func OSInteractive(ctx context.Context, name string, args []string) error {
 		return fmt.Errorf("%s: %w", describe(name, args), err)
 	}
 	return nil
+}
+
+// stdoutTailBytes bounds how much of a command's standard output a caller repeats in an error.
+const stdoutTailBytes = 2048
+
+// stdoutTail is the end of a command's standard output, where a command says why it stopped (migrate logs there). Only a
+// caller that knows its command prints nothing secret asks for it.
+func stdoutTail(stdout []byte) string {
+	if len(stdout) > stdoutTailBytes {
+		stdout = stdout[len(stdout)-stdoutTailBytes:]
+		for len(stdout) > 0 && !utf8.RuneStart(stdout[0]) {
+			stdout = stdout[1:]
+		}
+	}
+	return strings.TrimSpace(string(stdout))
 }
 
 // describe names a command in an error without repeating a long script argument.

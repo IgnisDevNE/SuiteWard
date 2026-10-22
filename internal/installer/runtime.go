@@ -76,6 +76,8 @@ type Runtime interface {
 	Engine() Engine
 	Exists(ctx context.Context, kind Kind, name string) (bool, error)
 	Create(ctx context.Context, kind Kind, name string) error // volumes and networks
+	Delete(ctx context.Context, kind Kind, name string) error // volumes and networks; none that is missing is an error
+	ImageExists(ctx context.Context, image string) bool       // the engine already has it, so a pull is not needed
 	Remove(ctx context.Context, container string) error       // no error when it does not exist
 	Pull(ctx context.Context, image string) error             // only an image pinned by digest
 	Run(ctx context.Context, spec RunSpec) error
@@ -84,6 +86,8 @@ type Runtime interface {
 	State(ctx context.Context, container string) (ContainerState, error)
 	Inspect(ctx context.Context, container string) ([]byte, error) // the JSON of `inspect --type container`, for the adoption guard
 	Secrets() SecretStore
+	// PurgeSecrets removes every secret of the stack: Podman's secrets, or Docker's secret volumes.
+	PurgeSecrets(ctx context.Context) error
 }
 
 // SecretStore keeps the stack's secrets where the runtime keeps them. A value never appears in an argument list.

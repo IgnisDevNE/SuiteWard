@@ -561,23 +561,6 @@ func (d *doctor) checkPins(ctx context.Context) {
 	d.pass("pins", detail+image)
 }
 
-// imageIdentity is repository and digest of an image reference: the engine may report a pinned reference without its tag.
-func imageIdentity(ref string) string {
-	repo, digest, pinned := strings.Cut(ref, "@")
-	if !pinned {
-		return ref
-	}
-	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
-		repo = repo[:i]
-	}
-	return repo + "@" + digest
-}
-
-// sameImage says whether two references are the same pinned image, tag aside.
-func sameImage(a, b string) bool {
-	return strings.Contains(a, "@") && imageIdentity(a) == imageIdentity(b)
-}
-
 // runningMatchesUnits compares the images the service and the database containers run with the images of the units. The units
 // are what the next restart will run; this says the running containers are those. It returns the detail of a passing check,
 // which ends with the release image.

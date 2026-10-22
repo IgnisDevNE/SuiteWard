@@ -97,7 +97,7 @@ func (s podmanSecrets) Read(ctx context.Context, name string) ([]byte, error) {
 	}
 	out, err := s.p.run(ctx, nil, "secret", "inspect", "--showsecret", "--format", "{{.SecretData}}", name)
 	if err != nil {
-		return nil, fmt.Errorf("read the secret %s: %w", name, err)
+		return nil, readFailed(name) // the engine's message may quote the value
 	}
 	return bytes.TrimSuffix(bytes.TrimSuffix(out, []byte("\n")), []byte("\r")), nil
 }
@@ -184,9 +184,56 @@ func (s dockerSecrets) Read(ctx context.Context, name string) ([]byte, error) {
 	}
 	out, err := s.volumeRun(ctx, secretVolume(spec.consumers[0].container), true, nil, "cat /s/"+spec.file)
 	if err != nil {
-		return nil, fmt.Errorf("read the secret %s: %w", name, err)
+		return nil, readFailed(name)
 	}
 	return out, nil
+}
+
+// readFailed is the error of a failed secret read: no cause, because whatever the command said may include the value.
+func readFailed(name string) error {
+	return fmt.Errorf("read the secret %s failed (the engine's message is not shown: it may quote the value)", name)
+}
+
+// Consistent says whether every consumer's volume holds the same value of a secret that more than one container reads. A
+// write that was interrupted between two volumes leaves them different.
+func (s dockerSecrets) Consistent(ctx context.Context, name string) (bool, error) {
+	spec, err := lookupSecret(name)
+	if err != nil {
+		return false, err
+	}
+	var first []byte
+	for i, c := range spec.consumers {
+		out, err := s.volumeRun(ctx, secretVolume(c.container), true, nil, "cat /s/"+spec.file)
+		if err != nil {
+			return false, readFailed(name)
+		}
+		if i == 0 {
+			first = out
+		} else if !bytes.Equal(out, first) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// PurgeSecrets deletes the secret volumes of the three containers; the containers are gone by then.
+func (dk *Docker) PurgeSecrets(ctx context.Context) error {
+	for _, container := range []string{ContainerServe, ContainerMigrate, ContainerDB} {
+		if err := dk.Delete(ctx, KindVolume, secretVolume(container)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PurgeSecrets removes every secret of the catalog.
+func (p *Podman) PurgeSecrets(ctx context.Context) error {
+	for _, s := range secretCatalog {
+		if err := p.secrets.Remove(ctx, s.name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s dockerSecrets) Remove(ctx context.Context, name string) error {

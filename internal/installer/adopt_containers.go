@@ -130,6 +130,24 @@ func AdoptContainers(raw map[string][]byte) (Adopted, error) {
 	return Adopted{Settings: settings, Image: image}, nil
 }
 
+// sameImage says whether an installed container runs the image the stack expects. Podman records an image created from
+// name:tag@digest as name@digest, so when both sides carry a digest the repository and the digest decide and the tag does not.
+func sameImage(want, got string) bool {
+	wantRepo, wantDigest, wantPinned := strings.Cut(want, "@")
+	gotRepo, gotDigest, gotPinned := strings.Cut(got, "@")
+	if !wantPinned || !gotPinned {
+		return want == got
+	}
+	return wantDigest == gotDigest && withoutTag(wantRepo) == withoutTag(gotRepo)
+}
+
+func withoutTag(repo string) string {
+	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
+		return repo[:i]
+	}
+	return repo
+}
+
 func envMap(env []string) map[string]string {
 	m := make(map[string]string, len(env))
 	for _, kv := range env {
@@ -329,6 +347,9 @@ func diffContainer(spec RunSpec, in inspected) ([]Diff, error) {
 	got := actualFields(in)
 	var diffs []Diff
 	for _, f := range want {
+		if f.name == "image" && sameImage(f.value, got[f.name]) {
+			continue
+		}
 		if got[f.name] != f.value {
 			diffs = append(diffs, Diff{Source: spec.Name, Field: f.name, Want: f.value, Got: got[f.name]})
 		}

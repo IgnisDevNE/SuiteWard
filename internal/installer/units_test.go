@@ -174,7 +174,7 @@ func TestRenderUnitsFillsBothReleaseImagesWithOneDigest(t *testing.T) {
 		if images := slices.DeleteFunc(configLines(units[name]), func(l string) bool { return !strings.HasPrefix(l, "Image=") }); !slices.Equal(images, []string{line}) {
 			t.Errorf("%s: %v", name, images)
 		}
-		if bytes.Contains(units[name], []byte("<digest>")) {
+		if slices.ContainsFunc(configLines(units[name]), func(l string) bool { return strings.Contains(l, "<digest>") }) {
 			t.Errorf("%s still holds the placeholder", name)
 		}
 	}
@@ -300,7 +300,7 @@ func TestWriteUnits(t *testing.T) {
 		t.Fatalf("first write changed %v", first.Changed)
 	}
 	for name, content := range units {
-		got, err := os.ReadFile(filepath.Join(dir, name))
+		got, err := os.ReadFile(filepath.Clean(filepath.Join(dir, name)))
 		if err != nil || !bytes.Equal(got, content) {
 			t.Fatalf("%s: %v", name, err)
 		}

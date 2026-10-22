@@ -2,7 +2,7 @@
 
 This runbook backs up one SuiteWard instance, restores it from a backup, and rebuilds it from the protected default branch when no backup can be used.
 
-There are two installation tiers, and each section that has commands gives one complete flow for each, so follow only the flow of your tier. The **isolated** installation runs the quadlets on an AlmaLinux 9 host with `systemctl --user`, and its flows are bash, run as the user that runs the SuiteWard units (`suiteward`). The **co-located** installation is the stack that `suiteward install` starts with Podman on a Windows PC, and its flows are PowerShell. They are written for Podman: Docker has no `volume export` and `volume import`, so a Docker stack is not covered here. Every command uses the names the installation creates: the containers `suiteward`, `suiteward-migrate` (the one-shot migration) and `suiteward-db`, the volumes `suiteward-data` and `suiteward-db-data`, and the database and its owner `suiteward`. The service connects as another role, `suiteward_app`.
+There are two installation tiers, and each section that has commands gives one complete flow for each, so follow only the flow of your tier. The **isolated** installation runs the quadlets on an AlmaLinux 9 host with `systemctl --user`, and its flows are bash, run as the user that runs the SuiteWard units (`suiteward`). The **co-located** installation is the stack that `suiteward install` starts with Podman on a Windows PC, and its flows are PowerShell. They are written for Podman: Docker has no `volume export` and `volume import`, so the manual flows do not cover a Docker stack. The installer's own backup, taken by `suiteward install --upgrade`, does (section 2). Every command uses the names the installation creates: the containers `suiteward`, `suiteward-migrate` (the one-shot migration) and `suiteward-db`, the volumes `suiteward-data` and `suiteward-db-data`, and the database and its owner `suiteward`. The service connects as another role, `suiteward_app`.
 
 ## 1. What a backup holds
 
@@ -18,7 +18,11 @@ A backup does not hold what the installation keeps around that data:
 - `~/.config/suiteward/github.env`, the file of the three GitHub settings on the isolated host, and the installer's settings file, `settings.yaml` (next to it on the isolated host, in the per-user configuration directory of the co-located PC), which records the ports, the image and the GitHub values;
 - the quadlet files, in `~/.config/containers/systemd/` on the isolated host.
 
-A restore on a new machine re-creates them first, with the installer, for the backup's version ([install guide](install.md), section 10 for the isolated host, section 5 co-located). Do not let the install run setup, because the restore brings the enrollment back. On the isolated host the install does not run setup. On the co-located PC, install without GitHub first (`suiteward install --image <image of the backup's version> --github no`), so that no App is created and no owner is enrolled. The install creates the owner password and URL, the application role and its URL secret, and the units. Only then restore the data (section 3). The database passwords and the MCP token are generated again there, which is fine because the dump holds no password; your MCP client needs the new token. On the co-located PC, put GitHub back after the restore, with the App values and its key file, as section 3 says. Carry over every setting you changed in the old units, such as an `Environment=SUITEWARD_JOB_TIMEOUT=` line in `suiteward.container`, and use the App key of the same App as the old host: a new install starts from the release's units, without your edits.
+A restore on a new machine re-creates them first, with the installer, for the backup's version ([install guide](install.md), section 10 for the isolated host, section 5 co-located). The install creates the owner password and URL, the application role and its URL secret, and the units. Only then restore the data (section 3). The restore brings the enrollment back, so the install must not replace it: the installer runs setup only when `/status` shows no owner, and on a new machine there is none yet.
+- **Co-located PC:** install without GitHub first (`suiteward install --image <image of the backup's version> --github no`). That creates no App and enrolls no owner. After the restore, run the installer again with the App's values: the restored owner is enrolled, so it skips setup and the TOTP secret stays.
+- **Isolated host:** the install needs the App key, so give it the App's values and key file as step 10.4 of the install guide says. Run it with standard input from `/dev/null` and every answer as a flag, so that it prints the setup command instead of running it, and do not run that command: setup would enroll an owner in the empty database, and the restore replaces it anyway.
+
+The database passwords and the MCP token are generated again there, which is fine because the dump holds no password; your MCP client needs the new token. Carry over every setting you changed in the old units, such as an `Environment=SUITEWARD_JOB_TIMEOUT=` line in `suiteward.container`, and use the App key of the same App as the old host: a new install starts from the release's units, without your edits.
 
 > [!WARNING]
 > A backup holds the TOTP secret, so anyone with it can approve as the owner. Keep every backup offline and encrypted at rest by your own means. SuiteWard does not encrypt backups.
@@ -27,11 +31,13 @@ Encrypted backup archives and a guided restore come after the MVP: see [ADR 0019
 
 ## 2. Back up
 
+**The installer's backup.** `suiteward install --upgrade` takes a backup before it changes anything ([install guide, section 11](install.md#11-updating)). It keeps the service running, and writes a new directory `suiteward-backup-<date>-<time>` that only you can read (mode 0700 with mode 0600 files, or an owner-only ACL on Windows), under `backups` beside the MCP token copy on a co-located PC (`%LOCALAPPDATA%\SuiteWard\backups` on Windows) or `~/.config/suiteward/backups` on the isolated host; `--backup-dir <directory>` chooses another folder. It holds the same two parts as the flows below, with the same names, so [section 3](#3-restore) restores it (read the directory of the installer's backup where the flows say `suiteward-backup`): `status.json`, `suiteward.sql` and `suiteward-artifacts.tar`, and on the isolated host a `units` folder with the unit files the upgrade replaced. The service must be running, because the backup reads its `/status`. It works on Docker too, where the manual flows below do not. Use the manual flows for a backup that is not part of an upgrade: they stop the service first, so that the database and the artifacts come from the same moment.
+
 Stop the service container, not the database, so that the database and the artifacts come from the same moment. Follow the flow of your tier from its first step to the last.
 
 ### Isolated host (bash, as `suiteward`)
 
-The `suiteward` account has a `nologin` shell, so `sudo -iu suiteward` fails. As the administrator, open a shell as `suiteward` with a working user bus, as [step 10.4 of the install guide](install.md#10-running-on-a-separate-host-operators) does:
+The `suiteward` account has a `nologin` shell, so `sudo -iu suiteward` fails. As the administrator, open a shell as `suiteward` with a working user bus, as [step 10.3 of the install guide](install.md#10-running-on-a-separate-host-operators) does:
 
 ```bash
 r=/run/user/$(id -u suiteward)
@@ -464,13 +470,13 @@ The installer creates the volumes and the roles only when it runs, and a run als
    podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status"
    ```
 
-On a new PC, put GitHub back now: the stack runs without it. Run the installer again with the App's values and key file, and with a piped standard input, so that it cannot run setup (setup needs a real terminal, and the restore brought the enrollment back). `--ruleset-imported yes` skips the wait for a ruleset import: the rulesets are already on GitHub.
+On a new PC, put GitHub back now: the stack runs without it. Run the installer again with the App's values and key file. The restore brought the enrollment back, so the installer finds an owner in `/status` and skips setup: the TOTP secret stays as it was. `--ruleset-imported yes` skips the wait for a ruleset import: the rulesets are already on GitHub.
 
 ```powershell
-'' | suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories '<owner/name>' --github-app-key-file <path to the App key file> --test-check '<owner/name>=<check name>' --ruleset-imported yes
+suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories '<owner/name>' --github-app-key-file <path to the App key file> --test-check '<owner/name>=<check name>' --ruleset-imported yes
 ```
 
-Expect the installer to print the protection result of each repository and the setup command it did not run. Do not run that command: running setup replaces the TOTP secret. Delete your copy of the key file afterwards. The GitHub values stay in the settings file, so a later install needs none of them.
+Expect the installer to print the protection result of each repository and a note that an owner is already enrolled and setup was skipped. Do not run the setup command it prints: running setup replaces the TOTP secret. Delete your copy of the key file afterwards. The GitHub values stay in the settings file, so a later install needs none of them.
 
 Nothing else returns to an update path, because `suiteward install --upgrade` moves the release when you choose.
 

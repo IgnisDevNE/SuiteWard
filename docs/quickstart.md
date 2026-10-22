@@ -46,15 +46,21 @@ Expect `ok` on every line. A `FAIL` line names the fix. For Docker instead of Po
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-Copy the binary to `/usr/local/bin/suiteward`. Create the GitHub App by hand, from the checklist in [section 10, step 10.2](install.md#10-running-on-a-separate-host-operators), and note the App ID, the installation ID and the key file.
+Copy the binary to `/usr/local/bin/suiteward`. Have the AWS CLI and the Session Manager plugin on your PC for the port forward of step 3.
 
-**2. Prepare the host**, once, as the administrator ([step 10.3](install.md#10-running-on-a-separate-host-operators)):
+**2. Prepare the host**, once, as the administrator ([step 10.2](install.md#10-running-on-a-separate-host-operators)):
 
 ```
 sudo suiteward install host
 ```
 
-**3. Install the stack** in a shell as the account `suiteward`: paste the App key into `~/app-key.pem` without echo, then run `suiteward install --tier isolated --image sha256:<index>` (from the release notes) with the App values and `--github-app-key-file ~/app-key.pem` ([step 10.4](install.md#10-running-on-a-separate-host-operators) opens the shell and gives the whole command). Then run setup with the command it prints, create the ruleset by hand ([section 7](install.md#7-create-the-ruleset)), and run `suiteward doctor`.
+**3. Install the stack** in a shell as the account `suiteward` that [step 10.3](install.md#10-running-on-a-separate-host-operators) opens:
+
+```
+suiteward install --tier isolated --github yes --manifest-port 8765
+```
+
+The binary carries its release's image digest, so no `--image` is needed. From your PC, forward the port the installer names and open `http://127.0.0.1:8765/` in your browser ([step 10.4](install.md#10-running-on-a-separate-host-operators)). The installer walks through the App, the repositories and the test checks, and writes a ruleset file for each repository on the host: print it with `cat` in the session, save it on your PC and import it. It then runs setup on the terminal (turn off session recording first) and you run `suiteward doctor`. With an App you made by hand, give its values and key file instead.
 
 ## The first contract ([section 8](install.md#8-first-use-bootstrap))
 

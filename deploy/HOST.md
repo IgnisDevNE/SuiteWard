@@ -9,8 +9,8 @@ Never paste into chat, a file, a PR, or a log: any password or database URL, a G
 ## 0. Before the host steps (GitHub, once)
 
 1. The first release run creates the GHCR package `suiteward` as private. Make it public (GitHub, owner profile, Packages, `suiteward`, Package settings, Change visibility), so the host needs no registry credential; the image contains no secret. If the run fails with `permission_denied: write_package`, open the package settings, "Manage Actions access", grant the `SuiteWard` repository write access, and re-run the job.
-2. The host runs a release image, pinned by its signed index digest in both SuiteWard units. No workflow moves a tag the host follows. Take the index digest from the release notes (the `Index digest:` line of the release run's summary) and verify it on your PC, as [install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators) says.
-3. Create the GitHub App by hand, from the checklist of [install guide step 10.2](../docs/install.md#10-running-on-a-separate-host-operators), and keep its `.pem` until the installer has stored it.
+2. The host runs a release image, pinned by its signed index digest in both SuiteWard units. No workflow moves a tag the host follows. A release binary carries the digest of its own release, so the signature you verify in section 1 covers it, and the installer needs no `--image`. If you pass `--image sha256:<index>` anyway (a development build needs it), take the digest from the release notes (the `Index digest:` line of the release run's summary) and verify it on your PC, as [install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators) says.
+3. Have the AWS CLI and the Session Manager plugin on your PC: the installer creates the GitHub App through your browser, which reaches the host through a port forward (section 2). If you prefer an App made by hand, use the checklist of [install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators), and keep its `.pem` until the installer has stored it.
 
 ## 1. Open a session and get the installer onto the host
 
@@ -38,7 +38,7 @@ sudo install -m 0755 suiteward_<tag>_linux_arm64 /usr/local/bin/suiteward
 
 ## 2. Install the host
 
-As `ssm-user`, prepare the host once ([install guide step 10.3](../docs/install.md#10-running-on-a-separate-host-operators)):
+As `ssm-user`, prepare the host once ([install guide step 10.2](../docs/install.md#10-running-on-a-separate-host-operators)):
 
 ```
 sudo suiteward install host
@@ -46,19 +46,30 @@ sudo suiteward install host
 
 It checks Podman and its CVE fix, creates the `suiteward` account with its subordinate ids and linger, and, because this is an EC2 instance, asks whether to refuse the metadata address `169.254.169.254` for that account: answer yes (`--metadata-rule yes`). D-DEPLOY says IMDSv2 with hop limit 1 keeps containers from the instance role; S1 showed that a rootless container can still obtain a token, because rootless networking makes the connection from a process of the `suiteward` user on the host. The rule covers IPv4 only, which is enough because the IPv6 metadata endpoint is off by default on EC2. It leaves the SSM agent alone, which runs as root: after the step, check that `sudo systemctl is-active amazon-ssm-agent.service` prints `active` and that a second `aws ssm start-session` from your workstation still opens.
 
-Then, still as `ssm-user`, open a shell as `suiteward` with its user bus (the account has a `nologin` shell, so `sudo -iu` fails), paste the App key without echo into that shell, and run the installer there, as [install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators) gives it:
+Then, still as `ssm-user`, open a shell as `suiteward` with its user bus (the account has a `nologin` shell, so `sudo -iu` fails), as [install guide step 10.3](../docs/install.md#10-running-on-a-separate-host-operators) says:
 
 ```
 r=/run/user/$(id -u suiteward)
 sudo -u suiteward -H env XDG_RUNTIME_DIR=$r DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus bash
-trap 'stty echo' INT; stty -echo; (umask 077; cat > ~/app-key.pem); stty echo; trap - INT
 ```
 
-For the second command, wait until the cursor stops, paste the whole PEM, press Enter, then Ctrl-D. Then, in the same shell, run `/usr/local/bin/suiteward install --tier isolated --image sha256:<index>` with the App values (`--github-app-id`, `--github-installation-id`, `--github-repositories`, `--github-app-key-file ~/app-key.pem`). Compare the fingerprint the installer prints with the one on the App's settings page. Then `shred -u ~/app-key.pem`.
+In that shell, run the installer with the manifest port pinned, so that you can start the forward first ([install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators)):
+
+```
+/usr/local/bin/suiteward install --tier isolated --github yes --manifest-port 8765
+```
+
+On your PC, in another terminal, forward the port and open `http://127.0.0.1:8765/` in your browser:
+
+```
+aws ssm start-session --target <instance-id> --region us-east-2 --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["8765"],"localPortNumber":["8765"]}'
+```
+
+The installer then walks through the App, the installation, the repositories, the owner and the test checks. For each repository it writes `~/.config/suiteward/suiteward-ruleset-<owner>-<name>.json` on the host: `cat` it in the session, save the text as a file on your PC and import it ([install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators), *The ruleset*). With an App you made by hand, give its values and `--github-app-key-file ~/app-key.pem` instead (paste the key without echo as that step says, and delete the file afterwards). Compare the key fingerprint the installer prints with the one on the App's settings page.
 
 If Session Manager session logging (S3 or CloudWatch) is on for this instance, treat the MCP token as exposed to that log whenever you print it, and replace it once the verification is done.
 
-The installer ends by printing the setup command. Do not run it yet.
+The installer runs setup at the end on a real terminal (section 4 says what to turn off first), or prints the command. Turn off Session Manager logging before it runs.
 
 ## 3. Smoke test and what to paste back
 
@@ -81,7 +92,7 @@ Paste back: the whole summary block (it holds the `tier`, `github` and `mcp` lin
 
 ## 4. Owner setup
 
-Run `suiteward setup` once, in your own Session Manager session as `suiteward`, never in an agent's session: proof of identity is access to this host. The steps are in [install guide section 6](../docs/install.md#6-run-setup) (on the host, `podman exec -it suiteward /suiteward setup ...`; the repositories are in `~/.config/suiteward/github.env`). Then create the ruleset of each repository by hand ([section 7](../docs/install.md#7-create-the-ruleset)) and run `suiteward doctor` again.
+The installer runs `suiteward setup` for you at the end of the install, on a real terminal in your own Session Manager session as `suiteward`, never in an agent's session: proof of identity is access to this host. It runs it only when `/status` shows no owner, so a re-run or an upgrade never replaces the TOTP secret. If it printed the command instead, run it once yourself (on the host, `podman exec -it suiteward /suiteward setup ...`; the repositories are in `~/.config/suiteward/github.env`). The steps are in [install guide section 6](../docs/install.md#6-run-setup). Import the ruleset of each repository ([section 7](../docs/install.md#7-create-the-ruleset)) if you have not, and run `suiteward doctor` again.
 
 **Session Manager logging.** `setup` prints the `otpauth://` URI and the base32 secret to the terminal, so a logged session records them. Disable Session Manager logging before you run it. If it was on during setup, turn it off and run setup again: re-running replaces the secret, so the recorded one stops working, and it is safe only with logging off. Paste back only the protection result lines and `/status`, never the setup output or a code.
 

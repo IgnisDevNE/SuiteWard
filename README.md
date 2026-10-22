@@ -134,7 +134,7 @@ Patterns are gitignore-style. A pattern with no slash inside it matches at any d
 
 SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App. You install it with the `suiteward` installer, a signed release binary for linux/amd64, linux/arm64, windows/amd64 and darwin/arm64 that carries the digest of its own image. The [install guide](docs/install.md) covers both tiers:
 - **Co-located:** `suiteward install` on the developer's Windows PC, with Podman (strongly recommended) or Docker (discouraged). It starts the stack, creates the GitHub App through your browser, writes the ruleset for you to import, and runs the owner setup. Windows is validated live; macOS and Linux are covered by tests only.
-- **Isolated:** `sudo suiteward install host`, then `suiteward install` as the service account, on an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance.
+- **Isolated:** `sudo suiteward install host`, then `suiteward install --tier isolated` as the service account (it creates the GitHub App through a Session Manager port forward, or takes one you made), on an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance.
 
 Verify the download once with `scripts/verify-release.ps1` ([how](docs/install.md#4-get-and-verify-the-installer)), and check an instance at any time with `suiteward doctor`. The guide also covers TOTP enrollment, the ruleset, upgrades (`suiteward install --upgrade`, which backs up first) and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
 

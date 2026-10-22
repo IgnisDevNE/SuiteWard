@@ -16,7 +16,7 @@ Subagents inherit the advisor. The ponytail plugin injects its keep-it-small rul
 
 Two consequences of the configuration:
 
-- Memtrace and gopls index the orchestrator's checkout, so it stays on the phase branch while a phase runs (integration happens there; the phase branch is not checked out in another worktree). Treat their answers as phase-branch state and read the file in your own worktree before editing it. Memtrace labels that checkout with the branch it was on when the watch started, so during a phase queries pass the phase branch (`list_watched_paths` shows it). For a task's own changes the orchestrator indexes the task worktree as a Memtrace overlay and subagents pass `worktree` to `find_code` (see `AGENTS.md`).
+- Memtrace and gopls index the orchestrator's checkout, so it stays on the phase branch while a phase runs (integration happens there; the phase branch is not checked out in another worktree). Treat their answers as phase-branch state and read the file in your own worktree before editing it. Memtrace labels that checkout with the branch it is on, so during a phase queries pass the phase branch. Task worktrees are not indexed as overlays; the Memtrace rules and known limits are in `AGENTS.md`.
 - `CLAUDE_CODE_SUBAGENT_MODEL=haiku` also applies to built-in agents that inherit the model (such as `general-purpose` and `Plan`). Pass `model: "sonnet"` (or `"opus"`) explicitly when using them for design or substantive work.
 
 ## Roles
@@ -65,11 +65,15 @@ Worktrees live at `D:/Repos/SuiteWard-worktrees/<phase>-<task>`, for example `D:
   1. In PowerShell, from the main checkout, set `$env:MEMTRACE_MEMDB_DATA_DIR = 'D:\Repos\SuiteWard\.memdb'` and `$env:MEMTRACE_ALLOW_DESTRUCTIVE_DATA_DIR = '\\?\D:\Repos\SuiteWard\.memdb'`, then run `memtrace reset`.
      - The reset stops the Memtrace runtime.
      - It moves the old store to `.memdb.history/`, which the owner purges with `memtrace history purge --store D:\Repos\SuiteWard\.memdb --delete-forever`.
-  2. Start the runtime again with `memtrace start --headless`, as a background command.
+  2. Start the runtime again as a background command, with no startup watch: `$env:MEMTRACE_NO_STARTUP_WATCH = '1'; memtrace start --headless`.
+     - Without the variable the nightly registers a `wip` overlay at startup.
   3. Index through the MCP tool `index_directory`, with `path` the main checkout, `repo_id: SuiteWard`, `branch: main` and `defer_replay: true` as the only option.
      - Embeddings stay on, so every graph and search feature works.
      - Only the git-history replay is deferred. The project does not use it, and it is the slow part.
      - If the call answers `peer_indexing`, the runtime is already indexing: wait for its job (`list_jobs`, `check_job_status`) instead of starting another.
+     - A job can stay `running` after the graph is complete. Check `get_repository_stats` before waiting longer.
+
+**At a phase start**, after checking out the phase branch in the main checkout, index it once with `branch` set to the phase branch and `defer_replay: true`. The nightly refuses any other label for that checkout. The label change re-embeds every symbol, so do it once per phase.
 
 ## Reporting to the user
 

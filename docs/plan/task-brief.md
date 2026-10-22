@@ -29,7 +29,7 @@ Nil-check rule: the implementer lists every non-error nil comparison it adds or 
 
 ## Notes
 Known pitfalls, related files, and the order of commits when it matters.
-Every brief opens its Notes with the Memtrace line: use Memtrace first (`repo_id: SuiteWard`, `branch` as `list_watched_paths` shows it) for every code question, before any file read, and report how many Memtrace calls you made against file reads.
+Every brief opens its Notes with the Memtrace line: use Memtrace first (`repo_id: SuiteWard`, `branch` set to the phase branch) for every code question, before any file read, follow the known limits in `AGENTS.md` (no `preflight_check`, bounded `get_impact`, one retry on `busy`), and report how many Memtrace calls you made against file reads. The task worktree itself is not indexed.
 ```
 
 The implementer's final report follows the format in `.claude/agents/sw-implementer.md`. The reviewer reports with the format in `.claude/agents/sw-reviewer.md`.

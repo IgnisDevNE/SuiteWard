@@ -261,3 +261,50 @@ func TestUpgradeHelpSaysYesDoesNotStartTheService(t *testing.T) {
 		t.Errorf("--yes in the help does not say that it leaves a stopped service alone:\n%s", out.String())
 	}
 }
+
+// ---- review: the wait has a deadline, and a no to the plan after a start does not claim that nothing changed ----
+
+func TestUpgradeColocatedTheWaitAfterTheStartHasADeadline(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	var deadlines []time.Duration
+	probed := false
+	u.status = func(ctx context.Context, address string) ([]byte, error) {
+		if !u.started(ContainerServe) {
+			return nil, errConnectionRefused
+		}
+		if !probed { // the first probe after the start: a probe through the Podman machine can take seconds
+			probed = true
+			if dl, ok := ctx.Deadline(); ok {
+				deadlines = append(deadlines, time.Until(dl))
+			}
+		}
+		return httpGet(ctx, address)
+	}
+	if err := u.upgradeAt(true, "\n", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deadlines) != 1 || deadlines[0] <= 0 || deadlines[0] > 95*time.Second {
+		t.Errorf("the probes after the start have deadlines %v, want one of about 90 s for the whole wait", deadlines)
+	}
+}
+
+func TestUpgradeANoToThePlanAfterAStartSaysTheServiceWasStarted(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	u.downUntilStarted()
+	err := u.upgradeAt(true, "\nn\n") // yes to the start, no to the plan: no --yes
+	if err == nil || !strings.Contains(err.Error(), "service was started") || strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("co-located: got %v, want that the service was started and nothing else changed", err)
+	}
+
+	i := newIsoUpgrade(t, nil)
+	i.f.serviceRunning = false
+	err = i.upgradeAt(true, "\nn\n", i.downUntilStarted())
+	if err == nil || !strings.Contains(err.Error(), "service was started") || strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("isolated: got %v, want that the service was started and nothing else changed", err)
+	}
+	// Without a start, the plan's no still changes nothing.
+	u = newUpgradeHarness(t, nil)
+	if err := u.upgradeAt(true, "n\n"); err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("a no to the plan of a running service: got %v", err)
+	}
+}

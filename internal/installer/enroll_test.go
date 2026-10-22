@@ -141,7 +141,7 @@ func TestEnrollAsksForTheOwnerAndOffersTheEnrolledOne(t *testing.T) {
 		t.Errorf("setup ran as %q", got)
 	}
 	h = enrollHarness(t, statusEnrolled)
-	if code, stderr := h.enroll("enroll\n\n"); code != 0 { // the confirmation, then Enter for the offered login
+	if code, stderr := h.enroll("\nenroll\n"); code != 0 { // Enter for the offered login, then the confirmation
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	if got := h.setupArgs(); !strings.Contains(got, "setup --owner bob ") || !strings.Contains(h.out.String(), "[bob]") {
@@ -199,7 +199,7 @@ func TestEnrollNeedsAnInstalledStack(t *testing.T) {
 	withTerminal(t, true)
 	h := newHarness(t, "linux") // no containers, no settings
 	h.status = statusIs(statusNoOwner)
-	code, stderr := h.enroll("", "--owner", "alice")
+	code, stderr := h.enroll("", "--owner", "alice", "--tier", "co-located")
 	if code != 1 || !strings.Contains(stderr, "nothing is installed") || len(h.f.tty) != 0 {
 		t.Fatalf("exit %d, stderr %q, setup %v", code, stderr, h.f.tty)
 	}

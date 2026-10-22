@@ -10,7 +10,7 @@ import (
 func TestUpgradeColocatedAStartThatCannotBeAnsweredOrCannotBeHealthyRefuses(t *testing.T) {
 	u := newUpgradeHarness(t, nil)
 	u.downUntilStarted()
-	if err := u.upgradeAt(true, ""); err == nil || !strings.Contains(err.Error(), "read the answer") { // the input ended: no answer is not a yes
+	if err := u.upgradeAt(true, ""); err == nil || !strings.Contains(err.Error(), "podman --connection pm start suiteward-db") { // the input ended: no answer is not a yes
 		t.Fatalf("got %v", err)
 	}
 	if u.startCalls(ContainerDB) != 0 {

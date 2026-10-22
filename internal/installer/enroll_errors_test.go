@@ -127,11 +127,11 @@ func TestEnrollRefusesAStatusThatIsNotJSONAndAConfirmationItCannotRead(t *testin
 
 func TestEnrollOffersNoLoginWhenStatusHasNone(t *testing.T) {
 	h := enrollHarness(t, `{"version":"v0.2.0","owner":{"login":""}}`)
-	if code, stderr := h.enroll("enroll\n\n"); code != 1 || !strings.Contains(stderr, "owner") || len(h.f.tty) != 0 { // Enter takes no default: there is none
+	if code, stderr := h.enroll("\nenroll\n"); code != 1 || !strings.Contains(stderr, "owner") || len(h.f.tty) != 0 { // Enter takes no default: there is none
 		t.Errorf("exit %d, stderr %q", code, stderr)
 	}
 	h = enrollHarness(t, `{"version":"v0.2.0","owner":{"login":""}}`)
-	if code, stderr := h.enroll("enroll\ncarol\n"); code != 0 || !strings.Contains(h.setupArgs(), "setup --owner carol ") {
+	if code, stderr := h.enroll("carol\nenroll\n"); code != 0 || !strings.Contains(h.setupArgs(), "setup --owner carol ") {
 		t.Errorf("exit %d, stderr %q", code, stderr)
 	}
 }

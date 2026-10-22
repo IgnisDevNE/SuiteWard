@@ -28,7 +28,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | `GITHUB_INSTALLATION_ID` (M1.4) | no | none | Positive integer. |
 | `GITHUB_REPOSITORIES` (M1.4) | no | none | Comma-separated `owner/name`, 1 to 20 (D-SYNC), no duplicates. An owner has at most 39 characters and a name at most 100, as on GitHub (since the M1.9 release review). |
 | `GITHUB_API_URL` (M1.4) | no | `https://api.github.com` | Absolute `https` URL (an `http` URL is accepted only for a loopback host, for tests). |
-| `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, `deploy/local.ps1` sets `co-located`. |
+| `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, and `suiteward install` sets the tier it installs (`co-located` by default). |
 
 Later phases add settings under the same rules. The GitHub settings of M1.4 are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide (see [github](github.md#configuration-interim-m14)).
 
@@ -45,6 +45,9 @@ Later phases add settings under the same rules. The GitHub settings of M1.4 are 
   4. Atomically: replace the owner and the secret, append one policy revision per repository owned by `github:<numeric id>`, record each repository's test check, and consume the verified step (persistence contract, M1.5).
   5. Verify protection once per repository (D-PROTECTION) and print each result with its instructions.
   Exit 0 when enrollment succeeded, whatever the protection results; the secret, codes and tokens never reach a log. Re-running setup replaces the secret.
+
+- `suiteward check [--json]`: the GitHub and database half of `suiteward doctor`, run in the service container (`podman exec suiteward /suiteward check`). It needs the settings of `serve`, including the GitHub settings, reads and posts nothing, and prints `ok <name>` or `FAIL <name>: <detail> — <fix>` for the App (`github.app`), the installation, its exact permissions, every repository's coverage and its protection result, the owner enrollment, the schema version and the service role's privileges (`github.installation`, `github.permissions`, `github.repositories`, `protection.<owner/name>`, `owner.enrolled`, `database.schema`, `database.role`), or with `--json` an array of `{name, ok, detail, fix}`. Exit 0 when every result passed, 1 otherwise.
+- `suiteward install [flags]`, `suiteward install host [flags]`, `suiteward uninstall [--purge] [--yes] [flags]` and `suiteward doctor [--json] [--settings PATH]`: the installer, run on the machine that installs (the host has no `SUITEWARD_*` environment), so they run before any configuration is loaded. The flags, the answers file and the checks are in the [install guide](../install.md#12-the-installer-flags-answers-file-and-what-it-does). Exit 0 on success, 1 on a failure, 2 on a usage error.
 
 Any other command, or none, prints usage and exits 2.
 

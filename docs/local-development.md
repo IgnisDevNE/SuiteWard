@@ -92,7 +92,7 @@ Each canonical checkout path determines a stable resource ID. Windows path casin
 
 Connection details are in `.local/dev/postgres.json`. The complete development URL is in the ignored `.local/dev/database-url.txt`; load it only into the process running a database client/test, and do not print or commit it. It includes `sslmode=disable` for the loopback-only development database. The authenticated smoke test uses the local credential over TCP inside the container and separately verifies the published host TCP port; it is not an application adapter integration test.
 
-On Windows, setup selects the sole existing rootless Podman machine connection and records its name for this checkout. The current machine's rootful Podman 6.0.2 cannot forward its published database port to Windows localhost; the existing rootless connection works. This is consistent with the [upstream Podman Windows forwarding issue](https://github.com/podman-container-tools/podman/issues/29377). The workaround is local to SuiteWard and does not switch the host default or restart the shared VM. `deploy/local.ps1`, the co-located stack, follows the same rule and is stricter: it uses a rootless connection only and refuses a rootful one. It picks the machine's sole rootless connection, honours `$env:CONTAINER_CONNECTION` or `-PodmanConnection NAME` when you name one, and restores your own connection settings when it ends. See [Running the service](#running-the-service).
+On Windows, setup selects the sole existing rootless Podman machine connection and records its name for this checkout. The current machine's rootful Podman 6.0.2 cannot forward its published database port to Windows localhost; the existing rootless connection works. This is consistent with the [upstream Podman Windows forwarding issue](https://github.com/podman-container-tools/podman/issues/29377). The workaround is local to SuiteWard and does not switch the host default or restart the shared VM. The installer, which starts the co-located stack, follows the same rule and is stricter: it uses a rootless connection only and refuses a rootful one. It picks the machine's sole rootless connection, honours `$env:CONTAINER_CONNECTION` or `--connection NAME` when you name one, and never changes your Podman default. See [Running the service](#running-the-service).
 
 If more than one rootless connection exists, choose explicitly on first setup:
 
@@ -137,77 +137,20 @@ Limits: `go-format.ps1` formats only files inside the checkout that launched the
 
 ## Running the service
 
-`suiteward serve` and `suiteward probe` are described in the [runtime contract](contracts/runtime.md). To run the real image on this PC, first select the Podman machine's rootless connection for the session (`$env:CONTAINER_CONNECTION = '<name>'`, from `podman system connection list`; the install guide's [step 5.2](install.md#5-install-co-located)), because an image lives in the store of the connection that built it and the stack runs rootless only. Build it with `podman build -f deploy/Containerfile -t localhost/suiteward:local .` (it reports version `dev`; pass `--build-arg VERSION=sha-<commit>` to stamp another), start the co-located stack with `./deploy/local.ps1 -Image localhost/suiteward:local` (one stack per machine) and run the smoke test inside the Podman machine, as its rootless user, with `Get-Content -Raw deploy/smoke.sh | podman machine ssh --username user "sh -s"` (to assert the reported version, use `podman machine ssh --username user "SMOKE_VERSION=<version> sh -s"`). The default ssh user is `root`, which is the rootful store and holds no stack. The script generates the database owner password and the application role's password into Podman secrets and prints neither. Every run starts the database, creates the role `suiteward_app` once, runs `suiteward migrate` as the owner (the one-shot step the quadlets call `suiteward-migrate.service`) and starts the service only when migrate exited 0, so an upgraded image migrates before it serves. A stack from v0.1.x, where `suiteward-database-url` held the owner URL, is converted in place: the script prints `Upgrading an existing stack ...`, creates `suiteward-database-owner-url` and the role with a new password, and replaces `suiteward-database-url` by the application URL; the data is untouched. The units and roles are described in the [runtime contract](contracts/runtime.md#commands) and the [install guide](install.md#5-install-co-located). The remote verification host follows [deploy/HOST.md](../deploy/HOST.md). The smoke script's failure-path self-test, `deploy/smoke_test.sh`, runs as part of `check`.
+`suiteward serve` and `suiteward probe` are described in the [runtime contract](contracts/runtime.md). To run the real image on this PC, build it and give its digest to the installer, which starts the co-located stack (one stack per machine; the units and roles are described in the [runtime contract](contracts/runtime.md#commands) and the [install guide](install.md#5-install-co-located)). An image lives in the store of the connection that built it, and the stack runs rootless only, so select the Podman machine's rootless connection for the session first (`$env:CONTAINER_CONNECTION = '<name>'`, from `podman system connection list`; the install guide's [step 5.1](install.md#5-install-co-located)). Build the image with `podman build -f deploy/Containerfile -t localhost/suiteward:local .` (it reports version `dev`; pass `--build-arg VERSION=sha-<commit>` to stamp another), read its digest, and install it:
 
-### Verifying M1.6a on the co-located stack
+```powershell
+podman build -f deploy/Containerfile -t localhost/suiteward:local .
+podman image inspect --format '{{.Digest}}' localhost/suiteward:local
+./scripts/dev.ps1 go build -o ./.local/suiteward.exe ./cmd/suiteward
+./.local/suiteward.exe install --image localhost/suiteward@<digest> --github no
+```
 
-These verification entries record how each phase was verified. The HOST.md sections 6b to 6f they cite were removed after M1.10, because they describe flows that no longer exist; the links point to the file as of the tag `v0.1.3`. Current installs follow the [install guide](install.md). The entries are historical: the `Deploy` workflow and the `deploy` image tag they pull are retired, and `./deploy/local.ps1` now requires `-Image` (the release's signed index digest, install guide step 5.3), so do not copy their `podman pull` and `local.ps1` commands as they stand.
+A binary built from the checkout carries no release digest, so `--image` is required, and the installer accepts only an image pinned by digest, never a tag: `<digest>` is the one that `podman image inspect` printed, with its `sha256:` prefix. `--github no` starts the stack without GitHub; drop it, or pass the values of an App you already have, to configure GitHub ([install guide](install.md#5-install-co-located)). Run `./.local/suiteward.exe doctor` to check the stack, and the smoke test inside the Podman machine, as its rootless user, with `Get-Content -Raw deploy/smoke.sh | podman machine ssh --username user "sh -s"` (to assert the reported version, use `podman machine ssh --username user "SMOKE_VERSION=<version> sh -s"`; `SMOKE_BASE` and `SMOKE_MCP_BASE` name ports other than 8081 and 8091). The default ssh user is `root`, which is the rootful store and holds no stack. The installer generates the database owner password and the application role's password into Podman secrets and prints neither. Every run starts the database, creates the role `suiteward_app` once, runs `suiteward migrate` as the owner and starts the service only when migrate exited 0, so a newer image migrates before it serves. On a PC that also runs a real instance, give the development stack its own `--settings`, `--token-file`, `--http-port` and `--mcp-port`, because the default settings file belongs to the first instance. `./.local/suiteward.exe uninstall --purge --yes` removes the development stack. The remote verification host follows [deploy/HOST.md](../deploy/HOST.md). The smoke script's failure-path self-test, `deploy/smoke_test.sh`, runs as part of `check`.
 
-The verification sections below run in a PowerShell session with the rootless connection selected (see above), and every `podman machine ssh` takes `--username user`. They were first written for a stack on the default connection; the commands are the same, run rootless. Where an entry says to restart or update the image, `./deploy/local.ps1` does it: it migrates first, so a newer image never meets an old schema.
+### Verification history
 
-Only one target may watch `IgnisDevNE/SuiteWardQ` at a time (D-COMMANDS). The host is the default watcher, so the co-located stack runs without GitHub except during its own verification. `deploy/local.ps1` already supports both: GitHub is configured only when all three non-secret parameters are given, and a run without them replaces the container with one without GitHub and keeps the state. The scenario itself is in [HOST.md, section 6b](https://github.com/IgnisDevNE/SuiteWard/blob/v0.1.3/deploy/HOST.md#6b-pr-commands-and-bootstrap-m16a); the steps here are the stack side. Run them from the checkout, in PowerShell 7.
-
-1. **Stop the host's watching first** (HOST.md, 6b.1). Never run both with GitHub, not even briefly: two acknowledgments, and one instance rejects the code meant for the other.
-2. **Start the stack with GitHub.** The stack was purged after M1.5, so its App key secret does not exist and the key file is needed once (it is copied into a Podman secret and not kept elsewhere):
-
-   ```powershell
-   podman pull ghcr.io/ignisdevne/suiteward:deploy
-   ./deploy/local.ps1 -GitHubAppKeyFile <path to the PEM> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ
-   Get-Content -Raw deploy/smoke.sh | podman machine ssh --username user "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"
-   ```
-
-   The pull avoids a stale cached `deploy` image. `<commit>` is the commit the `Deploy` run built.
-3. **Enroll with a fresh authenticator entry.** Never reuse the host's secret:
-
-   ```powershell
-   podman exec -it suiteward /suiteward setup --owner <login> --test-check IgnisDevNE/SuiteWardQ=<check>
-   ```
-
-   The warnings of HOST.md section 6a apply (the URI and the base32 secret are printed once; share no setup output).
-4. **Run the scenario** (HOST.md 6b.4). Read `/status` through the machine: `podman machine ssh --username user "curl -s http://127.0.0.1:8081/status"`.
-5. **Close the verification PR, then stop the GitHub watching:** `./deploy/local.ps1` with no GitHub parameters (smoke test with `SMOKE_GITHUB=0`), or `./deploy/local.ps1 -Down`. Only then restore the host. `./deploy/local.ps1 -Down -Purge` also removes the App key secret and the state.
-
-### Verifying M1.6b on the co-located stack
-
-The scenario is in [HOST.md, section 6c](https://github.com/IgnisDevNE/SuiteWard/blob/v0.1.3/deploy/HOST.md#6c-the-suiteward--contract-check-m16b); the stack side is the one of M1.6a above, with these differences:
-- the stack keeps its M1.6a enrollment, its authenticator entry and V1, so the setup step is not needed unless the stack was purged;
-- pull the new `deploy` image and re-run `./deploy/local.ps1` with `-GitHubAppId`, `-GitHubInstallationId` and `-GitHubRepositories` only: the App key secret from M1.6a is reused, so the PEM is not needed again; run the smoke test with `SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit>`;
-- `/status` must show `schemaVersion` 14 (for that release; the current schema is 20) and no `checks` or `bootstrap` error;
-- stop the host's watching first and restore it only after the stack is back without GitHub (HOST.md 6b.1 and 6c.4).
-
-### Verifying M1.7 on the co-located stack
-
-The scenario is in [HOST.md, section 6d](https://github.com/IgnisDevNE/SuiteWard/blob/v0.1.3/deploy/HOST.md#6d-promotion-on-merge-m17); the stack side is the one of M1.6a above, with these differences:
-- **The stack is purged and set up again.** The host runs HOST.md 6d.3 first and its merges move SuiteWardQ `main` ahead of the stack's V1 (each target keeps its own canonical), so the old V1 would show every later PR as a protected change. Stop the host's watching first (HOST.md 6b.1), then run `./deploy/local.ps1 -Down -Purge` and start again as in steps 2 and 3 of M1.6a, with the PEM and a new authenticator entry: `podman pull ghcr.io/ignisdevne/suiteward:deploy`, `./deploy/local.ps1 -GitHubAppKeyFile <path to the PEM> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ`, then `podman exec -it suiteward /suiteward setup --owner <login> --test-check IgnisDevNE/SuiteWardQ=<check>`. The bootstrap then proposes V1 from the `main` the host left; approve it;
-- run the smoke test with `SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit>`;
-- `/status` must show `schemaVersion` 15 (for that release; the current schema is 20), `integrity` `passed` and no `checks`, `bootstrap` or `merges` error;
-- run HOST.md 6d.3 steps 2 and 5, and the integrity tamper of 6d.4 step 5 only with the owner's go-ahead at the time;
-- one target at a time: put the stack back without GitHub (`./deploy/local.ps1`) before restoring the host, and read `/status` through the machine (`podman machine ssh --username user "curl -s http://127.0.0.1:8081/status"`).
-
-### Verifying M1.7b on the co-located stack
-
-The scenario is in [HOST.md, section 6e](https://github.com/IgnisDevNE/SuiteWard/blob/v0.1.3/deploy/HOST.md#6e-the-explicit-bootstrap-m17b); the stack side is the one of M1.6a above, with these differences:
-- **The stack watches its own repository, `IgnisDevNE/SuiteWardQ3`, and the host does not.** The host watches `SuiteWardQ`, `SuiteWardQ-private` and `SuiteWardQ2`, so no host stop is needed and the two targets may run at the same time;
-- **The stack is already set up for SuiteWardQ3,** and SuiteWardQ3 has had no PR since, so the explicit bootstrap needs an update, not a purge or a new `setup` (as in M1.6b): `podman pull ghcr.io/ignisdevne/suiteward:deploy`, then `./deploy/local.ps1 -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ3`. The App key secret is reused, so the PEM is not needed. Only if the stack was purged since, start it again from nothing: `./deploy/local.ps1 -GitHubAppKeyFile <path to the PEM> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ3`, then `podman exec -it suiteward /suiteward setup --owner <login> --test-check IgnisDevNE/SuiteWardQ3=<check>` with a new authenticator entry;
-- run the smoke test with the full 40-hex commit the `Deploy` run built: `Get-Content -Raw deploy/smoke.sh | podman machine ssh --username user "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"`;
-- **there is no image rollback:** once migration `00017` is applied, an older image refuses to start (forward-only migrations). If the new image fails, do not start an older one; capture `podman logs --tail 50 suiteward` and report;
-- `/status` must show `schemaVersion` 17 (for that release; the current schema is 20), `SuiteWardQ3` with no `bootstrap` error, and no `checks`, `bootstrap` or `merges` error. `no-open-pull-request` and `awaiting-initial-contract` no longer exist;
-- run HOST.md 6e.4 on SuiteWardQ3 with the co-located entry's codes: `skip` a PR that adds `.suiteward.yml`, the CI workflow and tests and merge it (no V1), then `propose` on another PR (the branch path) and approve it, so that V1 is promoted at approval. Read `/status` through the machine (`podman machine ssh --username user "curl -s http://127.0.0.1:8081/status"`);
-- then put the stack back without GitHub (`./deploy/local.ps1`).
-
-### Verifying M1.7c on the co-located stack
-
-The scenario is in [HOST.md, section 6f](https://github.com/IgnisDevNE/SuiteWard/blob/v0.1.3/deploy/HOST.md#6f-lower-latency-m17c); the stack side is the one of M1.7b above, with these differences:
-- **The update has no purge and no new `setup`.** The stack keeps its enrollment, its authenticator entry and its canonical versions. Pull the image and re-run `./deploy/local.ps1` with the GitHub id parameters only, as in M1.7b: `podman pull ghcr.io/ignisdevne/suiteward:deploy`, then `./deploy/local.ps1 -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories IgnisDevNE/SuiteWardQ3`. The App key secret is reused, so the PEM is not needed;
-- run the smoke test with the full 40-hex commit the `Deploy` run built: `Get-Content -Raw deploy/smoke.sh | podman machine ssh --username user "SMOKE_TIER=co-located SMOKE_VERSION=sha-<commit> sh -s"`;
-- **there is no image rollback:** once migration `00018` is applied, an older image refuses to start (forward-only migrations). If the new image fails, do not start an older one; capture `podman logs --tail 50 suiteward` and report;
-- `/status` must show `schemaVersion` 18 (for that release; the current schema is 20), a `cycleStartedAt` in each `github` entry (it appears after the first cycle under the new image), no `lastError` in `github`, and `outbox.failed` 0;
-- run the steps of HOST.md 6f.6 with the co-located entry's codes, the detector lines included. The stack watches only `IgnisDevNE/SuiteWardQ3`, so the host is not stopped;
-- then put the stack back without GitHub (`./deploy/local.ps1`).
-
-### M1.8 acceptance on the co-located stack
-
-The scenario is in [HOST.md, section 6g](../deploy/HOST.md#6g-mvp-acceptance-m18); 6g.7 is the stack side, with the co-located differences already written there (a purge of the old co-located state, a fresh install from the install guide on a new test repository, the PR-head bootstrap (a `pull` baseline) through the `/` branch editor link, and the backup rehearsal). Run it from the checkout, in PowerShell 7, as the stack sides above do. The steps, the expected output and the paste-backs stay in HOST.md and the install and backup guides; this entry only points to them.
+The per-phase verification entries that this section once held (M1.6a to M1.8) described the co-located stack as an earlier start script created it, and flows of the remote host that no longer exist. They are in git history, at the tag `v0.2.0`. Current installs follow the [install guide](install.md), and the host follows [deploy/HOST.md](../deploy/HOST.md).
 
 ## Verification boundaries
 

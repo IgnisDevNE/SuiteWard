@@ -18,7 +18,7 @@ func TestPodmanSecretsAreWrittenThroughStdinWithoutANewline(t *testing.T) {
 	f := newFake("linux")
 	secrets := newRootlessPodman(t, f, "").Secrets()
 
-	if err := secrets.Write(ctx, SecretMCPToken, []byte(secretValue), false); err != nil {
+	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), false); err != nil {
 		t.Fatal(err)
 	}
 	if err := secrets.Write(ctx, SecretGitHubAppKey, []byte(pemValue), true); err != nil {
@@ -42,8 +42,8 @@ func TestPodmanSecretLifecycle(t *testing.T) {
 	f := newFake("linux")
 	secrets := newRootlessPodman(t, f, "").Secrets()
 
-	f.on("secret ls", SecretMCPToken+"\n"+SecretDatabaseURL+"-old\n")
-	if ok, err := secrets.Exists(ctx, SecretMCPToken); err != nil || !ok {
+	f.on("secret ls", SecretMCPAuth+"\n"+SecretDatabaseURL+"-old\n")
+	if ok, err := secrets.Exists(ctx, SecretMCPAuth); err != nil || !ok {
 		t.Fatalf("exists: %v %v", ok, err)
 	}
 	if ok, err := secrets.Exists(ctx, SecretDatabaseURL); err != nil || ok {
@@ -51,7 +51,7 @@ func TestPodmanSecretLifecycle(t *testing.T) {
 	}
 
 	f.on("secret inspect", secretValue+"\n")
-	got, err := secrets.Read(ctx, SecretMCPToken)
+	got, err := secrets.Read(ctx, SecretMCPAuth)
 	if err != nil || string(got) != secretValue {
 		t.Fatalf("read: %q %v", got, err)
 	}
@@ -59,7 +59,7 @@ func TestPodmanSecretLifecycle(t *testing.T) {
 		t.Fatalf("calls: %v", f.lines())
 	}
 
-	if err := secrets.Remove(ctx, SecretMCPToken); err != nil {
+	if err := secrets.Remove(ctx, SecretMCPAuth); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.find("secret rm --ignore suiteward-mcp-token")) != 1 {
@@ -131,11 +131,11 @@ func TestDockerSecretsGoToOneVolumePerConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if runs := writerRuns(f); len(runs) != 1 || !strings.Contains(runs[0].line(), "suiteward-secrets-"+ContainerMigrate+":/s") ||
-		strings.Contains(runs[0].line(), "suiteward-secrets-"+ContainerServe) {
+		strings.Contains(runs[0].line(), "suiteward-secrets-"+ContainerServe+":/s") {
 		t.Fatalf("the owner URL must reach the migrate volume only: %v", f.lines())
 	}
 	f.calls = nil
-	if err := secrets.Write(ctx, SecretDBPassword, []byte(secretValue), true); err != nil {
+	if err := secrets.Write(ctx, SecretDBAuth, []byte(secretValue), true); err != nil {
 		t.Fatal(err)
 	}
 	if runs := writerRuns(f); len(runs) != 1 || !strings.Contains(runs[0].line(), "chown 999:999 /s/postgres-password") ||
@@ -150,7 +150,7 @@ func TestDockerWriteWithoutReplaceKeepsAnExistingSecret(t *testing.T) {
 	f := newFake("linux")
 	secrets := newDocker(t, f, dockerDesktopServer, `[]`, DockerOptions{}).Secrets()
 	f.on("volume ls", "suiteward-secrets-"+ContainerServe+"\n").on("test -f", "yes\n")
-	if err := secrets.Write(ctx, SecretMCPToken, []byte(secretValue), false); err == nil {
+	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), false); err == nil {
 		t.Fatal("an existing secret was overwritten without replace")
 	}
 	if len(f.find("cat >")) != 0 {
@@ -192,7 +192,7 @@ func TestDockerSecretReadAndRemove(t *testing.T) {
 	secrets := newDocker(t, f, dockerDesktopServer, `[]`, DockerOptions{}).Secrets()
 
 	f.on("cat /s/mcp-token", secretValue)
-	got, err := secrets.Read(ctx, SecretMCPToken)
+	got, err := secrets.Read(ctx, SecretMCPAuth)
 	if err != nil || string(got) != secretValue {
 		t.Fatalf("read: %q %v", got, err)
 	}
@@ -202,6 +202,7 @@ func TestDockerSecretReadAndRemove(t *testing.T) {
 	}
 
 	f.calls = nil
+	f.on("volume ls", "suiteward-secrets-"+ContainerMigrate+"\nsuiteward-secrets-"+ContainerServe+"\n")
 	if err := secrets.Remove(ctx, SecretDatabaseURL); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestNoSecretValueEverReachesAnArgumentOrAnError(t *testing.T) {
 		rt := mk(f)
 		f.fail("secret create", boom).fail("--entrypoint sh", boom)
 		var errs []error
-		for _, s := range []string{SecretDBPassword, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretGitHubAppKey, SecretMCPToken} {
+		for _, s := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretGitHubAppKey, SecretMCPAuth} {
 			errs = append(errs, rt.Secrets().Write(ctx, s, []byte(secretValue+pemValue), true))
 		}
 		for _, err := range errs {

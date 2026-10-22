@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -54,7 +55,7 @@ func FlagsSet(fs *flag.FlagSet) map[string]string {
 
 // LoadAnswers reads a flat YAML answers file; every value is a scalar.
 func LoadAnswers(path string) (map[string]string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("read the answers file: %w", err)
 	}

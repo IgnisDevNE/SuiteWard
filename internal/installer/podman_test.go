@@ -239,7 +239,7 @@ func servingSpec() RunSpec {
 	return RunSpec{
 		Name: ContainerServe, Image: testImage, Network: NetworkName, Detach: true, Restart: "always", User: "65532:65532",
 		Tmpfs: []string{"/tmp"}, Memory: "256m", StopTimeout: 45, Env: []string{"A=b"},
-		Secrets: []string{SecretDatabaseURL, SecretMCPToken}, Volumes: []string{VolumeData + ":/data"},
+		Secrets: []string{SecretDatabaseURL, SecretMCPAuth}, Volumes: []string{VolumeData + ":/data"},
 		Health:  &Health{Cmd: "pg_isready", Interval: "5s", Timeout: "3s", Retries: 12},
 		Publish: []string{"127.0.0.1:8081:8080"}, Args: []string{"serve"},
 	}

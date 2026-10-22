@@ -122,7 +122,7 @@ func TestDockerRunRemovesThenRunsWithoutReplace(t *testing.T) {
 			rmAt = i
 		}
 	}
-	if !(stopAt >= 0 && stopAt < rmAt && rmAt < runAt) {
+	if stopAt < 0 || stopAt >= rmAt || rmAt >= runAt {
 		t.Fatalf("want stop, rm, then run: %v", lines)
 	}
 	if strings.Contains(lines[runAt], "--replace") {

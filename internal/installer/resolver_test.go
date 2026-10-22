@@ -181,8 +181,8 @@ func TestLoadAnswers(t *testing.T) {
 	if _, err := LoadAnswers(write("list.yaml", "- a\n- b\n")); err == nil {
 		t.Fatal("a list was accepted as an answers file")
 	}
-	if _, err := LoadAnswers(filepath.Join(dir, "missing.yaml")); err == nil || errors.Is(err, errNotImplemented) {
-		t.Fatalf("a missing file must be an error of its own: %v", err)
+	if _, err := LoadAnswers(filepath.Join(dir, "missing.yaml")); err == nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a missing file must be reported as one: %v", err)
 	}
 	empty, err := LoadAnswers(write("empty.yaml", ""))
 	if err != nil || len(empty) != 0 {

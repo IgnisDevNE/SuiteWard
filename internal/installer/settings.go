@@ -158,7 +158,7 @@ func (g GitHub) validate() error {
 
 // LoadSettings reads path over the defaults and validates it. A missing file is ErrNoSettings.
 func LoadSettings(path string) (Settings, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if errors.Is(err, os.ErrNotExist) {
 		return Settings{}, fmt.Errorf("%s: %w", path, ErrNoSettings)
 	}

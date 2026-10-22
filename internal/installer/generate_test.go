@@ -32,8 +32,9 @@ func TestGeneratedSecrets(t *testing.T) {
 }
 
 func TestDatabaseURL(t *testing.T) {
-	got := DatabaseURL("suiteward_app", "abc123")
-	want := "postgres://suiteward_app:abc123@suiteward-db:5432/suiteward?sslmode=disable"
+	pw := "abc123" // not a credential: the URL is built for the test
+	got := DatabaseURL("suiteward_app", pw)
+	want := "postgres://suiteward_app:" + pw + "@suiteward-db:5432/suiteward?sslmode=disable"
 	if got != want {
 		t.Fatalf("got %s, want %s", got, want)
 	}

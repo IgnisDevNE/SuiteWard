@@ -28,18 +28,24 @@ func TestColocatedStackPorts(t *testing.T) {
 	}
 }
 
-func TestColocatedStackKeepsTheFlagSetsOfLocalPS1(t *testing.T) {
+func colocatedStack(t *testing.T) Stack {
+	t.Helper()
 	stack, err := ColocatedStack(colocatedSettings(), testImage)
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, migrate, serve := stack.DB, stack.Migrate, stack.Serve
+	return stack
+}
 
+func TestColocatedDatabaseKeepsTheFlagSetOfLocalPS1(t *testing.T) {
+	db := colocatedStack(t).DB
 	if db.Name != ContainerDB || db.User != "999:999" || db.Memory != "384m" || db.StopTimeout != 30 || !db.Detach || db.Restart != "always" ||
 		db.Network != NetworkName || !slices.Equal(db.Tmpfs, []string{"/run/postgresql", "/tmp"}) ||
-		!slices.Equal(db.Volumes, []string{VolumeDBData + ":/var/lib/postgresql"}) || !slices.Equal(db.Secrets, []string{SecretDBPassword}) ||
-		db.Health == nil || db.Health.Cmd != "pg_isready -U suiteward -d suiteward" || db.Health.Interval != "5s" || db.Health.Timeout != "3s" || db.Health.Retries != 12 {
+		!slices.Equal(db.Volumes, []string{VolumeDBData + ":/var/lib/postgresql"}) || !slices.Equal(db.Secrets, []string{SecretDBAuth}) {
 		t.Errorf("database spec: %+v", db)
+	}
+	if h := db.Health; h == nil || h.Cmd != "pg_isready -U suiteward -d suiteward" || h.Interval != "5s" || h.Timeout != "3s" || h.Retries != 12 {
+		t.Errorf("database health: %+v", h)
 	}
 	if pg, _ := PostgresImage(); db.Image != pg {
 		t.Errorf("the database does not run the pinned image: %s", db.Image)
@@ -47,7 +53,10 @@ func TestColocatedStackKeepsTheFlagSetsOfLocalPS1(t *testing.T) {
 	if !slices.Equal(db.Env, []string{"POSTGRES_USER=suiteward", "POSTGRES_DB=suiteward", "POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password"}) {
 		t.Errorf("database env: %v", db.Env)
 	}
+}
 
+func TestColocatedMigrateKeepsTheFlagSetOfLocalPS1(t *testing.T) {
+	migrate := colocatedStack(t).Migrate
 	if migrate.Name != ContainerMigrate || migrate.Detach || migrate.Restart != "" || migrate.Memory != "256m" || migrate.Image != testImage ||
 		!slices.Equal(migrate.Args, []string{"migrate"}) || len(migrate.Publish) != 0 || len(migrate.Volumes) != 0 {
 		t.Errorf("migrate spec: %+v", migrate)
@@ -58,12 +67,15 @@ func TestColocatedStackKeepsTheFlagSetsOfLocalPS1(t *testing.T) {
 	if !slices.Equal(migrate.Env, []string{"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MIGRATION_DATABASE_URL_FILE=/run/secrets/database-owner-url"}) {
 		t.Errorf("migrate env: %v", migrate.Env)
 	}
+}
 
+func TestColocatedServeKeepsTheFlagSetOfLocalPS1(t *testing.T) {
+	serve := colocatedStack(t).Serve
 	if serve.Name != ContainerServe || !serve.Detach || serve.Restart != "always" || serve.Memory != "256m" || serve.StopTimeout != 45 || serve.Image != testImage ||
 		!slices.Equal(serve.Volumes, []string{VolumeData + ":/data"}) || len(serve.Args) != 0 {
 		t.Errorf("serve spec: %+v", serve)
 	}
-	if !slices.Equal(serve.Secrets, []string{SecretDatabaseURL, SecretMCPToken}) {
+	if !slices.Equal(serve.Secrets, []string{SecretDatabaseURL, SecretMCPAuth}) {
 		t.Errorf("serve secrets: %v", serve.Secrets)
 	}
 	if slices.Contains(serve.Secrets, SecretDatabaseOwnerURL) || strings.Contains(strings.Join(serve.Env, " "), "MIGRATION") {

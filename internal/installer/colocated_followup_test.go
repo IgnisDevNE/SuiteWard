@@ -417,10 +417,10 @@ func TestUninstallNeverTouchesAnotherInstance(t *testing.T) {
 	h.mustNotMutate()
 }
 
-func TestUninstallRefusesTheIsolatedTier(t *testing.T) {
+func TestUninstallOfTheIsolatedTierNeedsTheServiceAccount(t *testing.T) {
 	h := newHarness(t, "linux")
 	err := h.uninstall("--tier", "isolated", "--yes")
-	if err == nil || !strings.Contains(err.Error(), "isolated") {
+	if err == nil || !strings.Contains(err.Error(), ServiceAccount) {
 		t.Fatalf("got %v", err)
 	}
 	h.mustNotMutate()

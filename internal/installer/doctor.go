@@ -676,12 +676,8 @@ func dockerPins(raw map[string][]byte) (string, error) {
 
 // ---- ports and /status ----
 
-// get reads one path of the service's HTTP port: from this host, or from inside the Podman machine where the port is published.
-func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
-	address := "http://127.0.0.1:" + strconv.Itoa(d.s.HTTPPort) + path
-	if d.viaSSH {
-		return d.machineSSH(ctx, "curl -fsS -m 5 "+address)
-	}
+// httpGet reads one address of the local service.
+func httpGet(ctx context.Context, address string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
@@ -697,6 +693,15 @@ func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+// get reads one path of the service's HTTP port: from this host, or from inside the Podman machine where the port is published.
+func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
+	address := "http://127.0.0.1:" + strconv.Itoa(d.s.HTTPPort) + path
+	if d.viaSSH {
+		return d.machineSSH(ctx, "curl -fsS -m 5 "+address)
+	}
+	return httpGet(ctx, address)
 }
 
 func (d *doctor) checkPorts(ctx context.Context) {

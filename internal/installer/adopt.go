@@ -60,6 +60,7 @@ type Adopted struct {
 	Settings Settings // tier, runtime, ports, job timeout and, from containers, the GitHub values
 	Image    string   // the release image that is installed
 	EnvFile  string   // units only: the EnvironmentFile path found, which the isolated installer moves
+	DBImage  string   // the PostgreSQL image the installed database runs, when it could be read
 }
 
 // parseMemory reads a --memory value (k, m or g suffix, or plain bytes) as bytes.
@@ -95,6 +96,9 @@ func sortedKeys[V any](m map[string]V) []string {
 
 const (
 	serveUnit = "suiteward.container"
+	dbUnit    = "suiteward-db.container"
+	// postgresRepo starts the Image= line of the database unit.
+	postgresRepo = "docker.io/library/postgres:"
 	// A valid digest that stands in for an installed one that could not be read; the lines it would render are not compared.
 	unknownDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 )
@@ -109,6 +113,12 @@ var (
 // this binary). The ports, tier, job timeout, image digest and env-file path are known fields and are carried into the
 // settings; any other difference, in any unit, is returned in a *DiffError.
 func AdoptUnits(installed, reference map[string][]byte) (Adopted, error) {
+	return adoptUnits(installed, reference, false)
+}
+
+// adoptUnits is AdoptUnits; with refreshDB (an upgrade) an installed database unit that pins another digest-pinned PostgreSQL
+// image is not a difference: the upgrade replaces the pin, and the pin it found is returned in DBImage.
+func adoptUnits(installed, reference map[string][]byte, refreshDB bool) (Adopted, error) {
 	if reference == nil {
 		var err error
 		if reference, err = embeddedUnits(); err != nil {
@@ -127,13 +137,21 @@ func AdoptUnits(installed, reference map[string][]byte) (Adopted, error) {
 	if !imageKnown {
 		skip = "Image=" + releaseImageRepo
 	}
+	dbImage := ""
+	if m := postgresImageLine.FindSubmatch(installed[dbUnit]); m != nil {
+		dbImage = string(m[1])
+	}
 	for _, name := range sortedKeys(rendered) {
 		got, ok := installed[name]
 		if !ok {
 			diffs = append(diffs, Diff{Source: name, Field: "file", Want: "the unit file"})
 			continue
 		}
-		diffs = append(diffs, diffUnitLines(name, rendered[name], got, skip)...)
+		skipLine := skip
+		if refreshDB && name == dbUnit && dbImage != "" {
+			skipLine = "Image=" + postgresRepo
+		}
+		diffs = append(diffs, diffUnitLines(name, rendered[name], got, skipLine)...)
 	}
 	if len(diffs) > 0 {
 		return Adopted{}, &DiffError{diffs}
@@ -142,6 +160,7 @@ func AdoptUnits(installed, reference map[string][]byte) (Adopted, error) {
 		Settings: Settings{Tier: params.Tier, Runtime: RuntimePodman, HTTPPort: params.HTTPPort, MCPPort: params.MCPPort, JobTimeout: params.JobTimeout},
 		Image:    releaseImageRepo + "@" + params.Digest,
 		EnvFile:  params.EnvFile,
+		DBImage:  dbImage,
 	}, nil
 }
 

@@ -41,37 +41,61 @@ const generatorPath = "/usr/lib/systemd/system-generators/podman-system-generato
 
 const appDatabaseRole = "suiteward_app"
 
-func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out io.Writer) error {
+// isolatedHost is the service account's machine as the isolated commands find it: the checks passed and the paths are known.
+type isolatedHost struct {
+	d            Deps
+	rt           Runtime
+	run          func(name string, args ...string) (string, error)
+	configDir    string
+	unitsDir     string
+	settingsPath string
+	envPath      string // the GitHub env file of the account
+}
+
+// openIsolatedHost refuses what the isolated commands refuse before they look at anything else: a system that is not Linux,
+// root or another account, invalid settings, a Podman that is not rootless and a user manager that is not ready.
+func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, error) {
 	if err := d.validate(); err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	if d.GOOS != "linux" {
-		return fmt.Errorf("the isolated tier runs on Linux, this system is %s", d.GOOS)
+		return isolatedHost{}, fmt.Errorf("the isolated tier runs on Linux, this system is %s", d.GOOS)
 	}
-	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
 	run := func(name string, args ...string) (string, error) {
 		b, err := d.Exec(ctx, name, args, nil)
 		return strings.TrimSpace(string(b)), err
 	}
 	home, err := checkAccount(run, d.Getenv("HOME"))
 	if err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	if err := s.Validate(); err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	rt, err := NewPodman(ctx, d, s.Connection)
 	if err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	if err := checkUserManager(run); err != nil {
+		return isolatedHost{}, err
+	}
+	configDir := filepath.Join(home, ".config", "suiteward")
+	return isolatedHost{
+		d: d, rt: rt, run: run, configDir: configDir, unitsDir: filepath.Join(home, ".config", "containers", "systemd"),
+		settingsPath: filepath.Join(configDir, "settings.yaml"), envPath: filepath.Join(configDir, "github.env"),
+	}, nil
+}
+
+func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out io.Writer) error {
+	host, err := openIsolatedHost(ctx, s, d)
+	if err != nil {
 		return err
 	}
+	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
+	rt, configDir, unitsDir, settingsPath := host.rt, host.configDir, host.unitsDir, host.settingsPath
+	run := host.run
 
 	// The adoption guard and the image, before anything is changed.
-	configDir := filepath.Join(home, ".config", "suiteward")
-	unitsDir := filepath.Join(home, ".config", "containers", "systemd")
-	settingsPath := filepath.Join(configDir, "settings.yaml")
 	neverStarted := func() (bool, error) { return stackNeverStarted(run, settingsPath) }
 	digest, oldEnvFile, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, say)
 	if err != nil {
@@ -172,10 +196,7 @@ func appKeyIfMissing(ctx context.Context, store SecretStore, r *Resolver, out io
 // migrate first) and checks the three units (install.md 10.11 to 10.13). It reports whether the service was already running:
 // starting a running service does nothing, so it keeps what it read at its last start.
 func startStack(ctx context.Context, rt Runtime, d Deps) (wasRunning bool, err error) {
-	systemctl := func(ctx context.Context, args ...string) (string, error) {
-		b, err := d.Exec(ctx, "systemctl", append([]string{"--user"}, args...), nil)
-		return strings.TrimSpace(string(b)), err
-	}
+	systemctl := userSystemctl(d)
 	before, err := systemctl(ctx, "show", "--property=ActiveState", "--value", "suiteward.service")
 	if err != nil {
 		return false, fmt.Errorf("ask for the state of suiteward.service: %w", err)
@@ -195,12 +216,25 @@ func startStack(ctx context.Context, rt Runtime, d Deps) (wasRunning bool, err e
 	if _, err := systemctl(startCtx, "start", "suiteward.service"); err != nil {
 		return wasRunning, fmt.Errorf("start the service (read the migration with `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
 	}
+	return wasRunning, checkUnitsActive(ctx, systemctl)
+}
+
+// userSystemctl runs `systemctl --user` and returns its trimmed output.
+func userSystemctl(d Deps) func(ctx context.Context, args ...string) (string, error) {
+	return func(ctx context.Context, args ...string) (string, error) {
+		b, err := d.Exec(ctx, "systemctl", append([]string{"--user"}, args...), nil)
+		return strings.TrimSpace(string(b)), err
+	}
+}
+
+// checkUnitsActive checks the three units after a start (install.md 10.13).
+func checkUnitsActive(ctx context.Context, systemctl func(ctx context.Context, args ...string) (string, error)) error {
 	for _, unit := range []string{"suiteward-db.service", "suiteward-migrate.service", "suiteward.service"} {
 		if state, err := systemctl(ctx, "show", "--property=ActiveState", "--value", unit); err != nil || state != "active" {
-			return wasRunning, fmt.Errorf("%s is %q after the start, want active: read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
+			return fmt.Errorf("%s is %q after the start, want active: read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
 		}
 	}
-	return wasRunning, nil
+	return nil
 }
 
 // checkAccount refuses a run by root, by another user than the service account, or with a HOME that is not the account's
@@ -277,41 +311,61 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 // The second result is the env file the installed units read when it is not the account's own, so the caller can say when it
 // may go. What is installed replaces what was asked for, and each such replacement is reported.
 func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, string, error) {
-	templates, err := embeddedUnits()
+	st, err := adoptUnitsDir(unitsDir, homeEnvFile, false)
 	if err != nil {
 		return "", "", err
 	}
-	installed := map[string][]byte{}
-	containers := false
+	installedDigest := ""
+	if st.found {
+		reportAdopted(say, *s, st.adopted.Settings)
+		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = st.adopted.Settings.Tier, st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout
+		installedDigest = strings.TrimPrefix(st.adopted.Image, releaseImageRepo+"@")
+	}
+	digest, err := chooseImage(r, installedDigest, neverStarted, say)
+	return digest, st.oldEnv, err
+}
+
+// installedStack is what an account's unit directory holds.
+type installedStack struct {
+	found   bool // at least one container unit is installed
+	adopted Adopted
+	oldEnv  string            // the env file the installed units read when it is not the account's own
+	units   map[string][]byte // the installed unit files by name
+}
+
+// adoptUnitsDir reads the installed units and compares them with the units of this release. A difference it cannot carry is a
+// *DiffError. With refreshDB (an upgrade) a database unit on another PostgreSQL pin is not a difference. When the installed
+// units read an env file that is not the account's own, that file must already be copied to homeEnvFile.
+func adoptUnitsDir(unitsDir, homeEnvFile string, refreshDB bool) (installedStack, error) {
+	templates, err := embeddedUnits()
+	if err != nil {
+		return installedStack{}, err
+	}
+	st := installedStack{units: map[string][]byte{}}
 	for name := range templates {
 		raw, err := os.ReadFile(filepath.Clean(filepath.Join(unitsDir, name)))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return "", "", fmt.Errorf("read the installed unit %s: %w", name, err)
+			return installedStack{}, fmt.Errorf("read the installed unit %s: %w", name, err)
 		}
-		installed[name] = raw
-		containers = containers || strings.HasSuffix(name, ".container")
+		st.units[name] = raw
+		st.found = st.found || strings.HasSuffix(name, ".container")
 	}
-	installedDigest, oldEnv := "", ""
-	if containers {
-		adopted, err := AdoptUnits(installed, nil)
-		if err != nil {
-			return "", "", err
-		}
-		reportAdopted(say, *s, adopted.Settings)
-		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = adopted.Settings.Tier, adopted.Settings.HTTPPort, adopted.Settings.MCPPort, adopted.Settings.JobTimeout
-		installedDigest = strings.TrimPrefix(adopted.Image, releaseImageRepo+"@")
-		if adopted.EnvFile != DefaultEnvFile {
-			oldEnv = adopted.EnvFile
-			if _, err := os.Stat(homeEnvFile); err != nil {
-				return "", "", fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host`, which copies it to %s, then run this again", adopted.EnvFile, homeEnvFile)
-			}
+	if !st.found {
+		return st, nil
+	}
+	if st.adopted, err = adoptUnits(st.units, nil, refreshDB); err != nil {
+		return installedStack{}, err
+	}
+	if st.adopted.EnvFile != DefaultEnvFile {
+		st.oldEnv = st.adopted.EnvFile
+		if _, err := os.Stat(homeEnvFile); err != nil {
+			return installedStack{}, fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host`, which copies it to %s, then run this again", st.adopted.EnvFile, homeEnvFile)
 		}
 	}
-	digest, err := chooseImage(r, installedDigest, neverStarted, say)
-	return digest, oldEnv, err
+	return st, nil
 }
 
 // reportAdopted says which installed values replace the ones that were asked for.
@@ -556,16 +610,22 @@ func dryRun(ctx context.Context, d Deps, units map[string][]byte) error {
 		}
 	}
 	for _, file := range sortedKeys(units) {
-		name, kind, _ := strings.Cut(file, ".")
-		service := name + ".service"
-		if kind != "container" {
-			service = name + "-" + kind + ".service"
-		}
+		service := unitService(file)
 		if !listed[service] {
 			return fmt.Errorf("the Podman generator did not list %s for %s: it could not read that unit; run `%s --user --dryrun` and read its error", service, file, generatorPath)
 		}
 	}
 	return nil
+}
+
+// unitService is the service the Podman generator makes of a unit file: suiteward.container is suiteward.service, a volume or a
+// network gets its kind as a suffix.
+func unitService(file string) string {
+	name, kind, _ := strings.Cut(file, ".")
+	if kind != "container" {
+		return name + "-" + kind + ".service"
+	}
+	return name + ".service"
 }
 
 // waitHealthy waits for the database container to report healthy; the guide's loop has no limit, this one has.

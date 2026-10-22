@@ -70,6 +70,10 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
+	// A different release than the one that runs is an upgrade: it backs up first, so it has its own command.
+	if asked, ok := r.optional("image"); ok && previous.Known && previous.Image != "" && !sameImage(asked, previous.Image) {
+		return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, previous.Image)
+	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)
 	if err != nil {
 		return err
@@ -113,9 +117,12 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 // openRuntime chooses the runtime and the connection and identifies the engine behind it. Docker needs a confirmation
 // when the command installs.
 func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, confirm bool) (Runtime, string, error) {
-	name, err := r.Value("runtime", "Container runtime (podman recommended, docker discouraged)", saved.Runtime)
-	if err != nil {
-		return nil, "", err
+	name := r.preset("runtime", saved.Runtime) // only an install asks which runtime to use
+	var err error
+	if confirm {
+		if name, err = r.Value("runtime", "Container runtime (podman recommended, docker discouraged)", saved.Runtime); err != nil {
+			return nil, "", err
+		}
 	}
 	if name != RuntimePodman && name != RuntimeDocker {
 		return nil, "", fmt.Errorf("runtime %q is not %s or %s", name, RuntimePodman, RuntimeDocker)
@@ -179,12 +186,17 @@ func (c *colocatedInstall) preflight(ctx context.Context) error {
 	if err := c.checkTokenFile(); err != nil {
 		return err
 	}
+	return c.pullImages(ctx)
+}
+
+// pullImages pulls the release image and the database image. Pulling before anything is removed means a wrong digest is found
+// while the running service is still there. An image the engine already has is not pulled, so an offline re-run works and a
+// locally built image can be named by its digest.
+func (c *colocatedInstall) pullImages(ctx context.Context) error {
 	postgres, err := PostgresImage()
 	if err != nil {
 		return err
 	}
-	// Pulling now means a wrong digest is found before the running service is removed. An image the engine already has is
-	// not pulled, so an offline re-run works and a locally built image can be named by its digest.
 	for _, img := range []string{c.image, postgres} {
 		if c.rt.ImageExists(ctx, img) {
 			continue
@@ -207,6 +219,11 @@ type stackInstalled struct {
 // command, and the carried fields become the defaults. A Docker stack keeps its secrets in volumes and is known only by
 // the settings file of the install that made it.
 func existingStack(ctx context.Context, rt Runtime, saved Settings, haveSaved bool) (Settings, stackInstalled, error) {
+	return existingStackFor(ctx, rt, saved, haveSaved, false)
+}
+
+// existingStackFor is existingStack; with refreshDB (an upgrade) a database on another PostgreSQL pin is no difference.
+func existingStackFor(ctx context.Context, rt Runtime, saved Settings, haveSaved bool, refreshDB bool) (Settings, stackInstalled, error) {
 	serve, err := rt.Exists(ctx, KindContainer, ContainerServe)
 	if err != nil {
 		return Settings{}, stackInstalled{}, err
@@ -235,7 +252,7 @@ func existingStack(ctx context.Context, rt Runtime, saved Settings, haveSaved bo
 			return Settings{}, stackInstalled{}, err
 		}
 	}
-	adopted, err := AdoptContainers(raw)
+	adopted, err := adoptContainers(raw, refreshDB)
 	if err != nil {
 		return Settings{}, stackInstalled{}, err
 	}
@@ -578,16 +595,8 @@ func writeTokenFile(ctx context.Context, d Deps, path, token string) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
-	if d.GOOS == "windows" {
-		user := d.Getenv("USERNAME")
-		if user == "" {
-			return errors.New("USERNAME is not set, so the token copy cannot be restricted to this user")
-		}
-		if _, err := d.Exec(ctx, "icacls", []string{path, "/inheritance:r", "/grant:r", user + ":F"}, nil); err != nil {
-			return fmt.Errorf("restrict %s to this user: %w", path, err)
-		}
-	} else if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("restrict %s to this user: %w", path, err)
+	if err := restrictPath(ctx, d, path, false); err != nil {
+		return err
 	}
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)

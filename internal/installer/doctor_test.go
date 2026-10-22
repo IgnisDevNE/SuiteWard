@@ -198,7 +198,7 @@ func wantFail(t *testing.T, res map[string]doctorResult, name string, detail ...
 }
 
 // stateOf is the State of an inspected container.
-func stateJSON(status string, exit int, health string) map[string]any {
+func doctorStateOf(status string, exit int, health string) map[string]any {
 	state := map[string]any{"Status": status, "ExitCode": exit}
 	if health != "" {
 		state["Health"] = map[string]any{"Status": health}
@@ -206,8 +206,8 @@ func stateJSON(status string, exit int, health string) map[string]any {
 	return state
 }
 
-// fakeColocated builds the fake of a healthy co-located stack; every field is a way to break it.
-type fakeColocated struct {
+// colocated builds the fake of a healthy co-located stack; every field is a way to break it.
+type colocated struct {
 	goos     string
 	engine   string // RuntimePodman by default
 	over     []rule // checked before the healthy answers
@@ -220,7 +220,7 @@ type fakeColocated struct {
 	checkOut string
 }
 
-func (c fakeColocated) build(t *testing.T) (*fakeEngine, Settings) {
+func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 	t.Helper()
 	if c.goos == "" {
 		c.goos = "linux"
@@ -246,7 +246,7 @@ func (c fakeColocated) build(t *testing.T) (*fakeEngine, Settings) {
 	f := newFake(c.goos)
 	f.rules = append(f.rules, c.over...)
 
-	states := map[string]map[string]any{ContainerDB: stateJSON("running", 0, "healthy"), ContainerServe: stateJSON("running", 0, "")}
+	states := map[string]map[string]any{ContainerDB: doctorStateOf("running", 0, "healthy"), ContainerServe: doctorStateOf("running", 0, "")}
 	for name, state := range c.state {
 		states[name] = state
 	}
@@ -286,7 +286,7 @@ func (c fakeColocated) build(t *testing.T) (*fakeEngine, Settings) {
 }
 
 func TestDoctorHealthyColocatedPodman(t *testing.T) {
-	f, s := fakeColocated{}.build(t)
+	f, s := colocated{}.build(t)
 	code, res, names := runDoctor(t, f, s)
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
@@ -301,7 +301,7 @@ func TestDoctorHealthyColocatedPodman(t *testing.T) {
 }
 
 func TestDoctorHealthyColocatedDocker(t *testing.T) {
-	f, s := fakeColocated{engine: RuntimeDocker}.build(t)
+	f, s := colocated{engine: RuntimeDocker}.build(t)
 	code, res, _ := runDoctor(t, f, s)
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
@@ -317,7 +317,7 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 
 func TestDoctorDockerPinsAreCheckedByImage(t *testing.T) {
 	other := "ghcr.io/ignisdevne/suiteward@sha256:" + strings.Repeat("c", 64)
-	f, s := fakeColocated{engine: RuntimeDocker, migrate: stateJSON("exited", 0, ""), edit: func(name string, obj map[string]any) {
+	f, s := colocated{engine: RuntimeDocker, migrate: doctorStateOf("exited", 0, ""), edit: func(name string, obj map[string]any) {
 		if name == ContainerMigrate {
 			obj["Config"].(map[string]any)["Image"] = other
 		}
@@ -335,29 +335,29 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 	}
 	cases := []struct {
 		name  string
-		rig   fakeColocated
+		rig   colocated
 		check string
 		want  []string
 	}{
-		{"the engine does not answer", fakeColocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}, "runtime", []string{"connection refused"}},
-		{"a rootful connection", fakeColocated{over: []rule{{match: "info --format", out: "false\n"}}}, "runtime", []string{"rootless"}},
-		{"an unhealthy database", fakeColocated{state: map[string]map[string]any{ContainerDB: stateJSON("running", 0, "unhealthy")}}, "containers", []string{ContainerDB, "unhealthy"}},
-		{"a stopped service", fakeColocated{state: map[string]map[string]any{ContainerServe: stateJSON("exited", 137, "")}}, "containers", []string{ContainerServe, "exited"}},
-		{"a migrate container that failed", fakeColocated{migrate: stateJSON("exited", 3, "")}, "containers", []string{ContainerMigrate, "exit"}},
-		{"a migrate container that still runs", fakeColocated{migrate: stateJSON("running", 0, "")}, "containers", []string{ContainerMigrate, "running"}},
-		{"a missing container", fakeColocated{over: []rule{{match: "inspect --type container " + ContainerDB, err: errors.New("no such container")}}}, "containers", []string{ContainerDB, "no such container"}},
-		{"restart through podman-restart.service off", fakeColocated{over: []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}}, "restart", []string{"podman-restart.service", "disabled"}},
-		{"a user that does not linger", fakeColocated{over: []rule{{match: "show-user", out: "Linger=no\n"}}}, "linger", []string{"linger"}},
-		{"a drifted database image", fakeColocated{edit: driftedDB}, "pins", []string{"image"}},
-		{"a service that is not ready", fakeColocated{ready: http.StatusServiceUnavailable}, "ports", []string{"/readyz", "503"}},
-		{"a health answer that is not ok", fakeColocated{health: `{"status":"degraded"}`}, "healthz", []string{"/healthz", "degraded"}},
-		{"a health answer that is not JSON", fakeColocated{health: `<html>`}, "healthz", []string{"/healthz"}},
-		{"failed outbox messages", fakeColocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":0},"outbox":{"failed":2}}`}, "status", []string{"outbox", "2"}},
-		{"discarded jobs", fakeColocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":1},"outbox":{"failed":0}}`}, "status", []string{"discarded", "1"}},
-		{"no schema version", fakeColocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"schemaVersion"}},
-		{"another tier than the settings", fakeColocated{status: strings.Replace(okStatus, `"tier":"co-located"`, `"tier":"isolated"`, 1)}, "status", []string{"tier", "isolated", "co-located"}},
-		{"no tier", fakeColocated{status: strings.Replace(okStatus, `"tier":"co-located",`, ``, 1)}, "status", []string{"tier"}},
-		{"a status that is not JSON", fakeColocated{status: `<html>`}, "status", []string{"/status"}},
+		{"the engine does not answer", colocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}, "runtime", []string{"connection refused"}},
+		{"a rootful connection", colocated{over: []rule{{match: "info --format", out: "false\n"}}}, "runtime", []string{"rootless"}},
+		{"an unhealthy database", colocated{state: map[string]map[string]any{ContainerDB: doctorStateOf("running", 0, "unhealthy")}}, "containers", []string{ContainerDB, "unhealthy"}},
+		{"a stopped service", colocated{state: map[string]map[string]any{ContainerServe: doctorStateOf("exited", 137, "")}}, "containers", []string{ContainerServe, "exited"}},
+		{"a migrate container that failed", colocated{migrate: doctorStateOf("exited", 3, "")}, "containers", []string{ContainerMigrate, "exit"}},
+		{"a migrate container that still runs", colocated{migrate: doctorStateOf("running", 0, "")}, "containers", []string{ContainerMigrate, "running"}},
+		{"a missing container", colocated{over: []rule{{match: "inspect --type container " + ContainerDB, err: errors.New("no such container")}}}, "containers", []string{ContainerDB, "no such container"}},
+		{"restart through podman-restart.service off", colocated{over: []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}}, "restart", []string{"podman-restart.service", "disabled"}},
+		{"a user that does not linger", colocated{over: []rule{{match: "show-user", out: "Linger=no\n"}}}, "linger", []string{"linger"}},
+		{"a drifted database image", colocated{edit: driftedDB}, "pins", []string{"image"}},
+		{"a service that is not ready", colocated{ready: http.StatusServiceUnavailable}, "ports", []string{"/readyz", "503"}},
+		{"a health answer that is not ok", colocated{health: `{"status":"degraded"}`}, "healthz", []string{"/healthz", "degraded"}},
+		{"a health answer that is not JSON", colocated{health: `<html>`}, "healthz", []string{"/healthz"}},
+		{"failed outbox messages", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":0},"outbox":{"failed":2}}`}, "status", []string{"outbox", "2"}},
+		{"discarded jobs", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":1},"outbox":{"failed":0}}`}, "status", []string{"discarded", "1"}},
+		{"no schema version", colocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"schemaVersion"}},
+		{"another tier than the settings", colocated{status: strings.Replace(okStatus, `"tier":"co-located"`, `"tier":"isolated"`, 1)}, "status", []string{"tier", "isolated", "co-located"}},
+		{"no tier", colocated{status: strings.Replace(okStatus, `"tier":"co-located",`, ``, 1)}, "status", []string{"tier"}},
+		{"a status that is not JSON", colocated{status: `<html>`}, "status", []string{"/status"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -377,7 +377,7 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 }
 
 func TestDoctorDoesNotCheckWhatNeedsAFailedRuntime(t *testing.T) {
-	f, s := fakeColocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}.build(t)
+	f, s := colocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}.build(t)
 	_, res, _ := runDoctor(t, f, s)
 	for _, name := range []string{"containers", "restart", "pins", "instance.check"} {
 		wantFail(t, res, name, "not checked: runtime")
@@ -389,7 +389,7 @@ func TestDoctorInstanceCheck(t *testing.T) {
 	line := "exec -i " + ContainerServe + " /suiteward check --json"
 	t.Run("results of a failing check are merged", func(t *testing.T) {
 		// Exit 1 with the JSON on stdout: the contract of `check`, if the runtime hands the output over with the error.
-		f, s := fakeColocated{over: []rule{{match: line, out: failingCheck, err: errors.New("exit status 1")}}}.build(t)
+		f, s := colocated{over: []rule{{match: line, out: failingCheck, err: errors.New("exit status 1")}}}.build(t)
 		code, res, _ := runDoctor(t, f, s)
 		if code != 1 {
 			t.Errorf("exit %d, want 1", code)
@@ -403,7 +403,7 @@ func TestDoctorInstanceCheck(t *testing.T) {
 	t.Run("exit 2 with the usage on stderr is one failure", func(t *testing.T) {
 		hunter := "hunter" + "2" // run-time concatenation keeps gosec from reading a credential in a URL
 		stderr := `podman exec -i suiteward /suiteward check --json: exit status 2: suiteward: configuration: SUITEWARD_DATABASE_URL: parse "postgres://suiteward_app:` + hunter + `@db:5432/x": invalid port`
-		f, s := fakeColocated{over: []rule{{match: line, err: errors.New(stderr)}}}.build(t)
+		f, s := colocated{over: []rule{{match: line, err: errors.New(stderr)}}}.build(t)
 		code, out := runDoctorRaw(t, f, s, true)
 		if code != 1 || strings.Contains(out, hunter) {
 			t.Errorf("exit %d, output %s", code, out)
@@ -424,19 +424,19 @@ func TestDoctorInstanceCheck(t *testing.T) {
 	})
 	t.Run("a password with a slash is hidden too", func(t *testing.T) {
 		secret := "ab/" + "cd"
-		f, s := fakeColocated{over: []rule{{match: line, err: errors.New("exit status 2: parse \"postgres://app:" + secret + "@db/x\": bad")}}}.build(t)
+		f, s := colocated{over: []rule{{match: line, err: errors.New("exit status 2: parse \"postgres://app:" + secret + "@db/x\": bad")}}}.build(t)
 		_, out := runDoctorRaw(t, f, s, true)
 		if strings.Contains(out, secret) || strings.Contains(out, "cd@") {
 			t.Errorf("the output still has the password: %s", out)
 		}
 	})
 	t.Run("output that is not JSON is one failure", func(t *testing.T) {
-		f, s := fakeColocated{checkOut: "usage: suiteward serve\n"}.build(t)
+		f, s := colocated{checkOut: "usage: suiteward serve\n"}.build(t)
 		_, res, _ := runDoctor(t, f, s)
 		wantFail(t, res, "instance.check", "JSON")
 	})
 	t.Run("an empty list is one failure", func(t *testing.T) {
-		f, s := fakeColocated{checkOut: "[]"}.build(t)
+		f, s := colocated{checkOut: "[]"}.build(t)
 		_, res, _ := runDoctor(t, f, s)
 		wantFail(t, res, "instance.check")
 	})
@@ -466,7 +466,7 @@ func TestDoctorStopsAtMissingOrInvalidSettings(t *testing.T) {
 }
 
 func TestDoctorOutputFormats(t *testing.T) {
-	f, s := fakeColocated{ready: http.StatusServiceUnavailable}.build(t)
+	f, s := colocated{ready: http.StatusServiceUnavailable}.build(t)
 	code, text := runDoctorRaw(t, f, s, false)
 	if code != 1 {
 		t.Errorf("exit %d", code)
@@ -493,7 +493,7 @@ func TestDoctorOutputFormats(t *testing.T) {
 		t.Errorf("a failure reads %q, want `FAIL name: detail — fix`", failed)
 	}
 
-	f, s = fakeColocated{}.build(t)
+	f, s = colocated{}.build(t)
 	_, raw := runDoctorRaw(t, f, s, true)
 	var list []map[string]any
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
@@ -511,7 +511,7 @@ func TestDoctorOutputFormats(t *testing.T) {
 // ---- Podman machine (Windows and macOS) ----
 
 func TestDoctorPodmanMachineReachesThePortsAndTheRestartServiceThroughSSH(t *testing.T) {
-	f, s := fakeColocated{goos: "windows"}.build(t)
+	f, s := colocated{goos: "windows"}.build(t)
 	code, res, _ := runDoctor(t, f, s)
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
@@ -529,7 +529,7 @@ func TestDoctorPodmanMachineReachesThePortsAndTheRestartServiceThroughSSH(t *tes
 }
 
 func TestDoctorStoppedMachine(t *testing.T) {
-	f, s := fakeColocated{goos: "windows", over: []rule{{match: "machine list", out: stoppedList}}}.build(t)
+	f, s := colocated{goos: "windows", over: []rule{{match: "machine list", out: stoppedList}}}.build(t)
 	code, res, _ := runDoctor(t, f, s)
 	if code != 1 {
 		t.Errorf("exit %d", code)
@@ -547,7 +547,7 @@ func TestDoctorStoppedMachine(t *testing.T) {
 }
 
 func TestDoctorMachineMustExist(t *testing.T) {
-	f, s := fakeColocated{goos: "windows", over: []rule{{match: "machine list", out: `[]`}}}.build(t)
+	f, s := colocated{goos: "windows", over: []rule{{match: "machine list", out: `[]`}}}.build(t)
 	_, res, _ := runDoctor(t, f, s)
 	wantFail(t, res, "machine", "podman-machine-default")
 }
@@ -555,7 +555,7 @@ func TestDoctorMachineMustExist(t *testing.T) {
 func TestDoctorSaysWhoOwnsTheDockerPipeOnWindows(t *testing.T) {
 	const pipe = "--host npipe:////./pipe/docker_engine"
 	t.Run("another engine", func(t *testing.T) {
-		f, s := fakeColocated{goos: "windows", over: []rule{{match: pipe, out: podmanBehindDocker + "\n"}}}.build(t)
+		f, s := colocated{goos: "windows", over: []rule{{match: pipe, out: podmanBehindDocker + "\n"}}}.build(t)
 		_, res, _ := runDoctor(t, f, s)
 		wantOK(t, res, "runtime")
 		if d := res["runtime"].Detail; !strings.Contains(d, "docker_engine") || !strings.Contains(strings.ToLower(d), "not docker") {
@@ -563,7 +563,7 @@ func TestDoctorSaysWhoOwnsTheDockerPipeOnWindows(t *testing.T) {
 		}
 	})
 	t.Run("asks Docker Desktop's own CLI, not the docker command of the PATH", func(t *testing.T) {
-		f, s := fakeColocated{goos: "windows", over: []rule{{match: pipe + " info", out: `["name=seccomp"]` + "\n"}, {match: pipe, out: dockerDesktopServer + "\n"}}}.build(t)
+		f, s := colocated{goos: "windows", over: []rule{{match: pipe + " info", out: `["name=seccomp"]` + "\n"}, {match: pipe, out: dockerDesktopServer + "\n"}}}.build(t)
 		_, res, _ := runDoctor(t, f, s)
 		if d := res["runtime"].Detail; !strings.Contains(d, "docker_engine") || !strings.Contains(d, "Docker Desktop") {
 			t.Errorf("the runtime result does not name Docker Desktop as the pipe's owner: %q", d)
@@ -576,7 +576,7 @@ func TestDoctorSaysWhoOwnsTheDockerPipeOnWindows(t *testing.T) {
 	// Information only: an unanswered pipe is no failure.
 	for name, err := range map[string]error{"nothing answers": errors.New("pipe not found"), "no Docker CLI": fmt.Errorf("start docker: %w", exec.ErrNotFound)} {
 		t.Run(name, func(t *testing.T) {
-			f, s := fakeColocated{goos: "windows", over: []rule{{match: pipe, err: err}}}.build(t)
+			f, s := colocated{goos: "windows", over: []rule{{match: pipe, err: err}}}.build(t)
 			code, res, _ := runDoctor(t, f, s)
 			if code != 0 {
 				t.Errorf("exit %d, an unanswered pipe failed doctor: %+v", code, res)
@@ -745,7 +745,7 @@ func TestDoctorNeverPrintsEnvironmentValuesOfADiff(t *testing.T) {
 		}
 	}
 	t.Run("containers", func(t *testing.T) {
-		f, s := fakeColocated{edit: func(name string, obj map[string]any) {
+		f, s := colocated{edit: func(name string, obj map[string]any) {
 			if name == ContainerServe {
 				cfg := obj["Config"].(map[string]any)
 				cfg["Env"] = append(cfg["Env"].([]string), "POSTGRES_PASSWORD="+password, "SUITEWARD_MCP_TOKEN="+token)
@@ -785,7 +785,7 @@ func TestDoctorBoundsEveryQuery(t *testing.T) {
 	old := queryTimeout
 	queryTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { queryTimeout = old })
-	f, s := fakeColocated{goos: "windows"}.build(t)
+	f, s := colocated{goos: "windows"}.build(t)
 	deps := f.deps()
 	inner := deps.Exec
 	deps.Exec = func(ctx context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {

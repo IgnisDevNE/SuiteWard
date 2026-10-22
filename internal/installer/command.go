@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -338,17 +339,13 @@ func tierNeeded(r *Resolver, haveSaved bool, goos string) error {
 	return nil
 }
 
+var plainArg = regexp.MustCompile(`^[A-Za-z0-9_+=.,:/\\@%-]+$`)
+
 // quoteArg is a command-line argument as a person can paste it into a shell: as it is when it is plain, else in single quotes.
 // shortcut: a path with a single quote is put in double quotes, where bash still expands $; no installer path has either.
 func quoteArg(arg string) string {
-	plain := arg != ""
-	for _, c := range arg {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune(`_-+=.,:/\@%`, c)) {
-			plain = false
-		}
-	}
 	switch {
-	case plain:
+	case plainArg.MatchString(arg):
 		return arg
 	case strings.Contains(arg, "'"):
 		return `"` + arg + `"`

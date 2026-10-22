@@ -295,7 +295,7 @@ func (h *host) accountHome(ctx context.Context) (string, error) {
 }
 
 // configDir makes ~/.config/suiteward owned by the account, where the service-account step writes the GitHub env file, and
-// moves a hand-made /etc/suiteward/github.env there (install.md 10.6 before this installer).
+// copies a hand-made /etc/suiteward/github.env there (install.md 10.6 before this installer).
 func (h *host) configDir(ctx context.Context) error {
 	home, err := h.accountHome(ctx)
 	if err != nil {
@@ -313,15 +313,16 @@ func (h *host) configDir(ctx context.Context) error {
 	dest := path.Join(dir, "github.env")
 	if h.exists(ctx, dest) {
 		if _, err := h.run(ctx, "cmp", "-s", etcEnvFile, dest); err != nil {
-			return fmt.Errorf("%s and %s both exist and differ: keep the one you want, remove the other, and run this again", etcEnvFile, dest)
+			return fmt.Errorf("%s and %s both exist and differ: make the new one hold the values you want (it is the one the service will read), and run this again", etcEnvFile, dest)
 		}
-	} else if _, err := h.run(ctx, "install", "-o", ServiceAccount, "-g", ServiceAccount, "-m", "0600", etcEnvFile, dest); err != nil {
-		return fmt.Errorf("move %s: %w", etcEnvFile, err)
+		return nil
 	}
-	if _, err := h.run(ctx, "rm", "-f", etcEnvFile); err != nil {
-		return fmt.Errorf("remove %s: %w", etcEnvFile, err)
+	if _, err := h.run(ctx, "install", "-o", ServiceAccount, "-g", ServiceAccount, "-m", "0600", etcEnvFile, dest); err != nil {
+		return fmt.Errorf("copy %s: %w", etcEnvFile, err)
 	}
-	h.say("Moved %s to %s, owned by %s.\n", etcEnvFile, dest, ServiceAccount)
+	// The source stays: a running hand-installed service reads it and could not restart until the service step re-renders
+	// its units. The service step says when it may be removed.
+	h.say("Copied %s to %s, owned by %s. The old file stays until the service step has moved the units to the new one.\n", etcEnvFile, dest, ServiceAccount)
 	return nil
 }
 

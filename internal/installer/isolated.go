@@ -76,7 +76,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 	// The adoption guard and the image, before anything is changed.
 	configDir := filepath.Join(home, ".config", "suiteward")
 	unitsDir := filepath.Join(home, ".config", "containers", "systemd")
-	digest, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r)
+	digest, oldEnvFile, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,15 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 	say("Next, turn off recording of this terminal session (setup prints the TOTP secret), then enroll yourself as the owner:\n\n")
 	say("  podman exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>'\n\n")
 	say("Then run `suiteward doctor`.\n")
+	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile)
 	return nil
+}
+
+// sayOldEnvFile tells the administrator when the old /etc env file may go: only once the service runs on the new one.
+func sayOldEnvFile(out io.Writer, current, old string) {
+	if old != "" {
+		_, _ = fmt.Fprintf(out, "\nThe service now reads its GitHub settings from %s. An administrator may remove the old file: sudo rm %s\n", current, old)
+	}
 }
 
 // appKeyIfMissing reads the App key unless its secret exists, and reports the fingerprint to compare with GitHub's page.
@@ -209,11 +217,11 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 
 // adoptInstalled compares units installed earlier (by hand from the install guide, or by this installer) with the units of
 // this release, carries their tier, ports and job timeout into s and returns the image digest to pin. A difference it cannot
-// carry stops the run with the diff. Without installed units the digest comes from the "image" answer.
-func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver) (string, error) {
+// carry stops the run with the diff. Without installed units the digest comes from the "image" answer. The second result is the env file the installed units read when it is not the account's own, so the caller can say when it may go.
+func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver) (string, string, error) {
 	templates, err := embeddedUnits()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	installed := map[string][]byte{}
 	containers := false
@@ -223,22 +231,23 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver) (str
 			continue
 		}
 		if err != nil {
-			return "", fmt.Errorf("read the installed unit %s: %w", name, err)
+			return "", "", fmt.Errorf("read the installed unit %s: %w", name, err)
 		}
 		installed[name] = raw
 		containers = containers || strings.HasSuffix(name, ".container")
 	}
-	installedDigest := ""
+	installedDigest, oldEnv := "", ""
 	if containers {
 		adopted, err := AdoptUnits(installed, nil)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = adopted.Settings.Tier, adopted.Settings.HTTPPort, adopted.Settings.MCPPort, adopted.Settings.JobTimeout
 		installedDigest = strings.TrimPrefix(adopted.Image, releaseImageRepo+"@")
 		if adopted.EnvFile != DefaultEnvFile {
+			oldEnv = adopted.EnvFile
 			if _, err := os.Stat(homeEnvFile); err != nil {
-				return "", fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host`, which moves it to %s, then run this again", adopted.EnvFile, homeEnvFile)
+				return "", "", fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host`, which copies it to %s, then run this again", adopted.EnvFile, homeEnvFile)
 			}
 		}
 	}
@@ -246,15 +255,15 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver) (str
 	asked = strings.TrimPrefix(asked, releaseImageRepo+"@")
 	switch {
 	case asked == "" && installedDigest == "":
-		return "", errors.New("the release image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
+		return "", "", errors.New("the release image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
 	case asked == "":
-		return installedDigest, nil
+		return installedDigest, oldEnv, nil
 	case !imageDigest.MatchString(asked):
-		return "", fmt.Errorf("--image %q is not a digest of the form sha256:<64 lowercase hex characters>: the installer never pins a tag", asked)
+		return "", "", fmt.Errorf("--image %q is not a digest of the form sha256:<64 lowercase hex characters>: the installer never pins a tag", asked)
 	case installedDigest != "" && asked != installedDigest:
-		return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, installedDigest)
+		return "", "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, installedDigest)
 	}
-	return asked, nil
+	return asked, oldEnv, nil
 }
 
 // optional returns the flag or answers-file value of key, when there is one: it never prompts.
@@ -444,7 +453,10 @@ func dryRun(ctx context.Context, d Deps, units map[string][]byte) error {
 	if err != nil {
 		return fmt.Errorf("the Podman generator rejects the units (if it is not at %s, find it with `rpm -ql podman | grep generator`): %w", generatorPath, err)
 	}
-	// Each generated unit starts with a ---name--- header line (an assumption the first AlmaLinux run confirms). A header,
+	// Each generated unit starts with a ---name--- header line (confirmed on Podman 6.1.4 with the repo units: the six are
+	// ---suiteward-data-volume.service---, ---suiteward-db-data-volume.service---, ---suiteward-network.service---,
+	// ---suiteward-db.service---, ---suiteward-migrate.service--- and ---suiteward.service---; volume and network units get a
+	// -volume or -network suffix). A header,
 	// not the bare name: the units name each other in Requires= and After= lines, so a skipped unit's name still appears.
 	listed := map[string]bool{}
 	for _, line := range strings.Split(string(out), "\n") {

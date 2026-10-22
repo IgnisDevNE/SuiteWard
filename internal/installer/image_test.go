@@ -17,6 +17,8 @@ func TestParseImageIsOneRuleForEveryCommand(t *testing.T) {
 		{"a local image by digest", "localhost/suiteward@sha256:" + hex, "localhost/suiteward@sha256:" + hex, true},
 		{"a tag and a digest: the digest decides", releaseImageRepo + ":v1@sha256:" + hex, releaseImageRepo + ":v1@sha256:" + hex, true},
 		{"a tag", releaseImageRepo + ":v0.3.0", "", false},
+		{"a repository that starts with a dash", "-v/x@sha256:" + hex, "", false},
+		{"a flag as the repository", "--privileged@sha256:" + hex, "", false},
 		{"no tag and no digest", releaseImageRepo, "", false},
 		{"nothing", "", "", false},
 		{"a short digest", "sha256:abc", "", false},
@@ -62,6 +64,18 @@ func TestInstallColocatedRerunWithTheBareInstalledDigestIsNotAnUpgrade(t *testin
 	h.busy[18081], h.busy[18091] = true, true
 	if err := h.install("--runtime", "podman", "--connection", "pm", "--image", testDigest, "--http-port", "18081", "--mcp-port", "18091"); err != nil {
 		t.Fatalf("the installed release, named by its bare digest, is a plain re-run: %v", err)
+	}
+}
+
+// The release image with a tag and a digest names the same release as without the tag: the digest decides.
+func TestInstallIsolatedAcceptsTheReleaseImageWithATagAndADigest(t *testing.T) {
+	f := newIsoFake(t.TempDir())
+	f.noImage = true
+	if _, err := runIsolated(t, f, map[string]string{"image": releaseImageRepo + ":v0.3.0@" + testDigest}, ""); err != nil {
+		t.Fatalf("a tag beside the digest was refused: %v", err)
+	}
+	if !f.has("podman pull " + releaseImageRepo + "@" + testDigest) {
+		t.Errorf("the digest of the reference is not the one pulled: %v", f.lines())
 	}
 }
 

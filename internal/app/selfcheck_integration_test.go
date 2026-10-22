@@ -59,8 +59,17 @@ func TestSelfCheckDatabasePassesForAnEnrolledOwnerAndTheApplicationRole(t *testi
 	}
 }
 
+// With GitHub configured, a missing owner is a failure: setup can be run. Without GitHub setup cannot be run, so it is a warning.
 func TestSelfCheckDatabaseReportsAnOwnerWhoIsNotEnrolledYet(t *testing.T) {
-	cfg := selfCheckConfig(t, newDatabase(t))
+	databaseURL := newDatabase(t)
+	t.Run("without GitHub it is a warning", func(t *testing.T) {
+		_, _, enrolled, _ := selfCheckDatabaseResults(t.Context(), selfCheckConfig(t, databaseURL))
+		if !enrolled.OK || !enrolled.Warning || !strings.Contains(enrolled.Detail, "no owner") {
+			t.Errorf("owner.enrolled = %+v; want a passing warning that GitHub is not configured", enrolled)
+		}
+	})
+	cfg := selfCheckConfig(t, databaseURL)
+	cfg.GitHub = &config.GitHub{} // the database half only asks whether GitHub is configured
 
 	schema, role, enrolled, projects := selfCheckDatabaseResults(t.Context(), cfg)
 

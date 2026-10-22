@@ -32,8 +32,8 @@ func TestInstallIsolatedStopsAtTheFirstFailingCommand(t *testing.T) {
 		notAfter string // a command that must not have run
 		setup    func(f *isoFake)
 	}{
-		{name: "the user id", match: "id -u", want: "find out who is running the installer", notAfter: "podman"},
-		{name: "the passwd entry", match: "getent passwd", want: "look up the account", notAfter: "podman"},
+		{name: "the user id", match: "id -u", want: "find out who is running the installer", notAfter: "secret create"},
+		{name: "the passwd entry", match: "getent passwd", want: "look up the account", notAfter: "secret create"},
 		{name: "the user manager", match: "systemctl --user show --property=SystemState", want: "ask the systemd user manager", notAfter: "secret create"},
 		{name: "linger", match: "loginctl show-user", want: "linger is not enabled", notAfter: "secret create"},
 		{name: "the Podman connection", match: "podman info", want: "the Podman connection is unavailable", notAfter: "secret create"},
@@ -63,7 +63,7 @@ func TestInstallIsolatedStopsAtTheFirstFailingCommand(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("install = %v, want an error containing %q", err, tc.want)
 			}
-			if tc.notAfter != "" && f.has(tc.notAfter) && tc.notAfter != "podman" {
+			if tc.notAfter != "" && f.has(tc.notAfter) {
 				t.Errorf("%q ran after the failure:\n%s", tc.notAfter, strings.Join(f.lines(), "\n"))
 			}
 			f.secretValuesNotInArgs(t)

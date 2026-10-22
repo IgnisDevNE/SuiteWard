@@ -11,8 +11,8 @@ On Windows, start the Podman machine first: `podman machine start`. Windows with
 **1. Get and verify the installer** ([section 4](install.md#4-get-and-verify-the-installer)). From the release page of the release you chose, download the binary for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json`, then verify them once, with PowerShell 7.2 or later and cosign 3.x, from the release source:
 
 ```powershell
-pwsh ./scripts/verify-release.ps1 -Blob SHA256SUMS -Bundle SHA256SUMS.sigstore.json
-pwsh ./scripts/verify-release.ps1 -Sums SHA256SUMS -File suiteward_<tag>_windows_amd64.exe
+pwsh ./scripts/verify-release.ps1 -Blob <folder>/SHA256SUMS -Bundle <folder>/SHA256SUMS.sigstore.json
+pwsh ./scripts/verify-release.ps1 -Sums <folder>/SHA256SUMS -File <folder>/suiteward_<tag>_windows_amd64.exe
 ```
 
 Rename the binary to `suiteward.exe` and put it on your PATH.
@@ -60,7 +60,7 @@ sudo suiteward install host
 suiteward install --tier isolated --github yes --manifest-port 8765
 ```
 
-The binary carries its release's image digest, so no `--image` is needed. From your PC, forward the port the installer names and open `http://127.0.0.1:8765/` in your browser ([step 10.4](install.md#10-running-on-a-separate-host-operators)). The installer walks through the App, the repositories and the test checks, and writes a ruleset file for each repository on the host: print it with `cat` in the session, save it on your PC and import it. It then runs setup on the terminal (turn off session recording first) and you run `suiteward doctor`. With an App you made by hand, give its values and key file instead.
+The binary carries its release's image digest, so no `--image` is needed. From your PC, forward the port the installer names and open `http://127.0.0.1:8765/` in your browser, with the same number on both sides of the forward ([step 10.4](install.md#10-running-on-a-separate-host-operators)). The installer walks through the App, the repositories and the test checks, and writes a ruleset file for each repository on the host: print it with `cat` in the session, save it on your PC and import it. It then runs setup on the terminal (turn off session recording first) and you run `suiteward doctor`. With an App you made by hand, give its values and key file instead.
 
 ## The first contract ([section 8](install.md#8-first-use-bootstrap))
 

@@ -59,7 +59,7 @@ In that shell, run the installer with the manifest port pinned, so that you can 
 /usr/local/bin/suiteward install --tier isolated --github yes --manifest-port 8765
 ```
 
-On your PC, in another terminal, forward the port and open `http://127.0.0.1:8765/` in your browser:
+On your PC, in another terminal, forward the port and open `http://127.0.0.1:8765/` in your browser. Use the same number for `portNumber`, `localPortNumber` and the browser: the listener answers 403 to any other Host, and GitHub redirects to `127.0.0.1:8765`.
 
 ```
 aws ssm start-session --target <instance-id> --region us-east-2 --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["8765"],"localPortNumber":["8765"]}'

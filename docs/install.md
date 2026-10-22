@@ -5,7 +5,7 @@ This guide installs SuiteWard with its installer, the `suiteward` binary: one gu
 Two rules apply to every command:
 
 - Pin one release. Replace `<tag>` with the release you install, everywhere it appears (the first release that has the installer is `v0.3.0-alpha.1`). Do not use a moving tag. Where a command names the image index digest of the release, replace `<index>` with it. The release notes name it, on the line `Index digest:`.
-- Replace each value in angle brackets, such as `<owner/name>`, with your own value. Never put a secret, a token or a TOTP code into a file, a log, a pull request or a chat.
+- Replace each value in angle brackets, such as `<owner/name>`, with your own value. Never put a token or a TOTP secret or code into a file, a log, a pull request or a chat. The one secret a file may hold is the App's private key, in a file at mode 600 that you delete afterwards (`--github-app-key-file`, or `github-app-key` in the answers file).
 
 ## 1. What SuiteWard does and does not do
 
@@ -34,7 +34,7 @@ Never let two SuiteWard instances watch the same repository; one instance serves
   - **Docker is allowed on the co-located tier only, and discouraged.** Its daemon is rootful by default, and Docker has no secret store outside Swarm, so the installer keeps the secrets in named volumes that anyone who controls the Docker daemon can read. Podman keeps them in its own rootless secret store. Section 5 says how to choose Docker anyway.
 - **A real terminal.** The installer prompts, and setup prints your TOTP secret there. A pipe, a script or a coding agent cannot run setup.
 - **Co-located PC:** Windows with a Podman machine that has a rootless connection (`podman machine init`, then `podman machine start`), or Docker Desktop. Co-located on Windows is the path validated live. macOS and Linux are covered by build and unit tests with a fake runtime only: expect rough edges there. PowerShell 7.2 or later and cosign 3.x are needed only to verify the download (section 4).
-- **Isolated host:** AlmaLinux 9 (EL9) with systemd user services. Other distributions are not covered. `sudo suiteward install host` checks Podman 5.5 or later with the fix for CVE-2026-57231 and offers to install it (section 10). To create the GitHub App from the host, your PC needs the AWS CLI and the Session Manager plugin for a port forward, or an App you made by hand.
+- **Isolated host:** AlmaLinux 9 (EL9) with systemd user services. Other distributions are not covered. `sudo suiteward install host` checks Podman 5.5 or later with the fix for CVE-2026-57231 and offers to install it (section 10). To create the GitHub App from the host, your PC needs a port forward to the host: the AWS CLI and the Session Manager plugin on AWS, or your own, such as `ssh -L <port>:127.0.0.1:<port> <host>`. Or give an App you made by hand.
 
 ## 4. Get and verify the installer
 
@@ -88,7 +88,7 @@ suiteward install
 
 It asks only what it cannot decide, and each question also has a flag and an answers-file key (section 12). It works in this order and changes nothing until the checks pass:
 
-1. **Choices.** The tier (`co-located`), the runtime (`podman`), the HTTP port (default 8081) and the MCP port (default 8091), both on 127.0.0.1, and the release image. The image defaults to the one already installed, else to the release the binary carries. It prints `Using <engine> <version> (rootless).`, or `(a rootful daemon)` for Docker: it names the engine it is about to use.
+1. **Choices.** On a terminal, it asks for the tier (`co-located`) and the runtime (`podman`). It then prints `Using <engine> <version> (rootless).`, or `(a rootful daemon)` for Docker: it names the engine it is about to use. Then it asks for the HTTP port (default 8081) and the MCP port (default 8091), both on 127.0.0.1, and the release image. Each question shows its default in brackets, and Enter takes it. The image defaults to the one already installed, else to the release the binary carries.
 2. **Checks.** Both ports are free (inside the Podman machine on Windows), no stranger's container uses the stack's names, and the database secrets are consistent. It pulls the two images by digest before it removes anything.
 3. **GitHub** (section 5.3), if you say yes.
 4. **The stack** (section 5.4).
@@ -154,7 +154,7 @@ Run setup with your login and one `--test-check` for each configured repository.
 podman exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
 ```
 
-The installer prints the exact command for your engine. On the co-located PC, run it in the PowerShell session where you selected the rootless connection (step 5.1), so that `podman exec` finds the stack.
+The installer prints the exact command for your engine. On the co-located PC, run it in the PowerShell session where you selected the rootless connection (step 5.1), so that `podman exec` finds the stack. On Windows with Podman, the printed command already carries `--connection <name>`, so it reaches the stack in any session.
 
 Setup then works through these steps:
 
@@ -174,7 +174,7 @@ Running setup again replaces the TOTP secret, and the new entry has the same nam
 
 ## 7. Create the ruleset
 
-SuiteWard reports protection and never changes it, so you set the protection of each repository once, on its default branch. On the co-located tier, the installer wrote a ruleset file for each repository (`suiteward-ruleset-<owner>-<name>.json`, section 5.3, step 7): open `https://github.com/<owner>/<repo>/settings/rules`, choose **New ruleset**, then **Import a ruleset**, and select it. The App must be installed on the repository first, or GitHub refuses the import with `Invalid parameter required_status_checks: Invalid integration ids`. On a private repository on GitHub Free, GitHub imports the ruleset but does not enforce it (section 3). Otherwise, and on the isolated tier, open the same address and create a ruleset (or classic branch protection, at `https://github.com/<owner>/<repo>/settings/branches`) by hand. Either way, it must do the following:
+SuiteWard reports protection and never changes it, so you set the protection of each repository once, on its default branch. On both tiers, the installer wrote a ruleset file for each repository (`suiteward-ruleset-<owner>-<name>.json`, in the folder of its settings file: `~/.config/suiteward` on the isolated host; section 5.3, step 7, and step 10.4): open `https://github.com/<owner>/<repo>/settings/rules`, choose **New ruleset**, then **Import a ruleset**, and select it. The App must be installed on the repository first, or GitHub refuses the import with `Invalid parameter required_status_checks: Invalid integration ids`. On a private repository on GitHub Free, GitHub imports the ruleset but does not enforce it (section 3). Create the rules by hand only when GitHub was skipped, or you did not use the file: open the same address and create a ruleset (or classic branch protection, at `https://github.com/<owner>/<repo>/settings/branches`). Either way, it must do the following:
 
 - [ ] Targets the default branch. SuiteWard reads the rules of that branch.
 - [ ] Requires the status check `SuiteWard / Contract`, with your SuiteWard App as its source. A check from any other source does not count.
@@ -409,7 +409,7 @@ Pass `--tier isolated`: the default tier is `co-located`. The installer asks for
 2. It adopts an existing install (step 10.6), and decides the image: `--image` if you give it, else the one installed, else the release the binary carries. A development build has no release, so it needs `--image sha256:<index>`: take the index digest from the release notes and verify it first, from the release source on a machine that has cosign 3.x (`pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>`).
 3. It pulls the PostgreSQL image and the release image by digest.
 4. **GitHub**, the same flow as section 5.3, with the choice of App described below.
-5. It checks that there is an App key to store, and prints its fingerprint when this run stores one: `SHA256:` followed by base64 text. Compare it with the fingerprint that the App's settings page shows for that key. A wrong or revoked key looks right to every other check, and GitHub calls then stop about an hour later. A fresh install with neither GitHub nor an App key secret is refused here, before any change: the service mounts that secret, so it cannot start without it.
+5. It checks that there is an App key to store, and prints its fingerprint when you give the key of an App that exists (a key that the flow created and stored itself is not printed): `SHA256:` followed by base64 text. Compare it with the fingerprint that the App's settings page shows for that key. A wrong or revoked key looks right to every other check, and GitHub calls then stop about an hour later. A fresh install with neither GitHub nor an App key secret is refused here, before any change: the service mounts that secret, so it cannot start without it.
 6. It writes `~/.config/suiteward/github.env` (the three GitHub values; they are not secrets), then creates the Podman secrets that are missing: the database password and the owner's URL, the MCP token and the App key. It never prints them, and it never replaces a database password that exists, because the database keeps it in its volume.
 7. It writes the six unit files into `~/.config/containers/systemd/`, runs the Podman generator's dry run to be sure Podman reads every one of them, and reloads systemd.
 8. It starts the database, waits until it is healthy, creates the application role `suiteward_app` with its URL secret, starts the service (which runs the migration first) and checks that the three units are active. It saves its settings in `~/.config/suiteward/settings.yaml`.
@@ -421,7 +421,7 @@ Pass `--tier isolated`: the default tier is `co-located`. The installer asks for
 aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["<port>"],"localPortNumber":["<port>"]}'
 ```
 
-Leave it open and open `http://127.0.0.1:<port>/` in the browser of your PC. From there, the steps are those of section 5.3: confirm the App on GitHub, install it on the repositories to protect, choose the repositories, the owner and the test checks. If the forward is not up, the paste fallback of section 5.3 works in the Session Manager terminal: paste the address that the browser's error page shows, or its `code=` value. The App key goes from the response of GitHub straight into the Podman secret store of the host.
+Leave it open and open `http://127.0.0.1:<port>/` in the browser of your PC. Use the same number for `portNumber` and `localPortNumber`, and for the browser: the listener answers 403 to any other Host, and GitHub redirects to `127.0.0.1:<port>`. On a host that is not on AWS, use your own forward, for example `ssh -L <port>:127.0.0.1:<port> <host>`. From there, the steps are those of section 5.3: confirm the App on GitHub, install it on the repositories to protect, choose the repositories, the owner and the test checks. If the forward is not up, the paste fallback of section 5.3 works in the Session Manager terminal: paste the address that the browser's error page shows, or its `code=` value. The App key goes from the response of GitHub straight into the Podman secret store of the host.
 
 *Use an App that exists* (`--github-app-id`). Create it by hand first, by the checklist below, and give `--github-app-id <app id> --github-installation-id <installation id> --github-repositories '<owner/name>,<owner/name>' --github-owner <login>`, with one `--test-check 'owner/name=<check name>'` for each repository. The key comes from `--github-app-key-file <path>`, from `-` (standard input; then every other answer must be a flag or in the answers file), or from `github-app-key` in the answers file (mode 600): never as an argument. To paste the key without echo into a file, run this in the shell of step 10.3, wait until the cursor stops, paste the whole PEM, press Enter, then press Ctrl-D. You see nothing while you paste:
 
@@ -458,7 +458,7 @@ Keep these permissions off, for these reasons:
 
 **10.5 Setup and check (as `suiteward`).** On a real terminal, the installer runs setup for you at the end, after it warns you to turn off session recording: it passes the terminal through and never captures or logs setup's output. Without a real terminal it prints the exact command to run on one. Section 6 says what setup does, and when the installer skips it. Then run `suiteward doctor` and expect `ok` on every line.
 
-The ports are published on the host's loopback only (8081 and 8091). To read `/status` from your PC, forward the port with your own remote-access tool, for example `aws ssm start-session --target <instance-id> --region <region> --document-name AWS-StartPortForwardingSession --parameters portNumber=8081,localPortNumber=8081`. SuiteWard provides no remote access.
+The ports are published on the host's loopback only (8081 and 8091). To read `/status` from your PC, forward the port with your own remote-access tool (on a host that is not on AWS, for example `ssh -L 8081:127.0.0.1:8081 <host>`), or on AWS for example `aws ssm start-session --target <instance-id> --region <region> --document-name AWS-StartPortForwardingSession --parameters portNumber=8081,localPortNumber=8081`. SuiteWard provides no remote access.
 
 **10.6 Re-runs and a host installed by hand.** A second run creates only what is missing. A host from the v0.2.0 install guide is adopted: the installer compares the installed units with the units of the release, carries over the tier, the ports and the job timeout, and moves the GitHub env file from `/etc/suiteward/github.env` to the account's folder (step 10.2 copies it, and the installer prints the `sudo rm` line for the old file once the service uses the new one). Any other difference stops the run and prints the diff: nothing is overwritten silently. When the settings file holds no GitHub values, the installer reads them from `~/.config/suiteward/github.env`. It parses that file strictly: exactly the three keys once each, a positive App id and installation id, and one to 20 `owner/name` pairs of one owner. A file that is not that stops the install before any change, and the error names the file and the line. So a host with a GitHub App already is never offered a second one. For a release that differs from the installed one, use `install --upgrade` (section 11).
 
@@ -653,7 +653,7 @@ test-check: "owner/name=CI / test"
 ruleset-imported: "yes"
 ```
 
-`test-check.owner/name` sets the check of one repository. Never put the TOTP secret, a code or a key in this file.
+`test-check.owner/name` sets the check of one repository. Never put the TOTP secret or a code in this file. The App's private key may be in it, only as `github-app-key` and only at mode 600: delete the file afterwards.
 
 ### What the installer does, for review
 
@@ -667,7 +667,7 @@ The installer replaces about 11 manual commands on the co-located tier and about
 | Checks both ports before it changes anything. | A refusal must leave a running stack alone. |
 | Creates the network, the two volumes and the database owner secrets, with a generated password. | The password is never typed, shown or passed as an argument. |
 | Starts the database, creates the role `suiteward_app`, runs `suiteward migrate`, and only then starts the service. | The service runs as a role that owns nothing and cannot change the schema or the immutability triggers. Only the one-shot migrate container holds the owner's URL. |
-| Runs every container read-only, with all capabilities dropped and `no-new-privileges`, as user 65532, with the published ports on 127.0.0.1 only. | Defence in depth: the listeners are never reachable from the network. |
+| Runs every container read-only, with all capabilities dropped and `no-new-privileges`, the service and migrate as user 65532 and the database as 999, with the published ports on 127.0.0.1 only. | Defence in depth: the listeners are never reachable from the network. |
 | Creates the App through the manifest flow, with exactly five permissions, no webhook, `public: false`. | No Contents write and no Administration write: SuiteWard never commits and never changes protection. |
 | Converts the manifest code on the machine that keeps the key, with a random `state`, and writes the key straight into the secret store. | The key never touches disk or the terminal. The code passes through your browser, as a downloaded key would. |
 | Writes the ruleset JSON and waits for your Import. | The App has no permission to change rules. A rule change stays a human click for each repository. |

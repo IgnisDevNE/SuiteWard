@@ -392,7 +392,7 @@ The installer creates the volumes and the roles only when it runs, and a run als
 
    Expect a list of entries under `artifacts/` and no error.
 
-3. Remove the stack's containers and data volumes, then start a clean stack of the same version. Take the index digest of that release from its release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` (on this PC, with cosign 3.x; [install guide, section 4](install.md#4-get-and-verify-the-installer)), and pass it to `--image`. The `version` in `status.json` names the release (the release you upgrade to, for a backup from v0.1.x).
+3. Remove the stack's containers and data volumes, then start a clean stack of the same version. Take the index digest of that release from its release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` (on this PC, with cosign 3.x; [install guide, step 10.4](install.md#10-running-on-a-separate-host-operators)), and pass it to `--image`. The `version` in `status.json` names the release (the release you upgrade to, for a backup from v0.1.x).
 
    ```powershell
    suiteward uninstall --yes
@@ -406,7 +406,7 @@ The installer creates the volumes and the roles only when it runs, and a run als
    suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index>
    ```
 
-   The first command removes the three containers and keeps the secrets and the settings. The second deletes the current data. The install then creates the volumes, starts the database from the kept password, creates the role `suiteward_app` again with a new password, migrates and starts the service on an empty database with the schema of this release, and the next steps replace that data. Expect `suiteward migrate finished: the schema is up to date.`, then `Started suiteward-db and suiteward`. It does not run the GitHub flow: the settings hold the App, and its key secret exists.
+   The first command removes the three containers and keeps the secrets and the settings. The second deletes the current data. The install then creates the volumes, starts the database from the kept password, creates the role `suiteward_app` again with a new password, migrates and starts the service on an empty database with the schema of this release, and the next steps replace that data. Expect `suiteward migrate finished: the schema is up to date.`, then `Started suiteward-db and suiteward`. It does not run the GitHub flow: the settings hold the App, and its key secret exists. It ends with a note that no owner is enrolled, and the command to enroll one: ignore it and do not run setup, because the restore brings the owner back.
 
    On a new PC, there are no secrets or settings to keep: install without GitHub, with `suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github no`, and put GitHub back after step 8 (below).
 
@@ -440,7 +440,7 @@ The installer creates the volumes and the roles only when it runs, and a run als
 
    Expect no output.
 
-7. Run the install of step 3 again, with the same `--image`. It replaces the stopped service, runs the migration again (it applies the grants to `suiteward_app` and any migration the dump lacks), and starts the service on the restored data. The secrets and volumes it finds are kept.
+7. Run the install of step 3 again, with the same `--image` (and, on a new PC, with `--github no` again). It replaces the stopped service, runs the migration again (it applies the grants to `suiteward_app` and any migration the dump lacks), and starts the service on the restored data. The secrets and volumes it finds are kept.
 
    ```powershell
    suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index>

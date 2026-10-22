@@ -28,7 +28,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | `GITHUB_INSTALLATION_ID` (M1.4) | no | none | Positive integer. |
 | `GITHUB_REPOSITORIES` (M1.4) | no | none | Comma-separated `owner/name`, 1 to 20 (D-SYNC), no duplicates. An owner has at most 39 characters and a name at most 100, as on GitHub (since the M1.9 release review). |
 | `GITHUB_API_URL` (M1.4) | no | `https://api.github.com` | Absolute `https` URL (an `http` URL is accepted only for a loopback host, for tests). |
-| `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, and `suiteward install` sets the tier it installs (`co-located` by default). |
+| `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, and `suiteward install` sets it on the service container to the tier it installs (`--tier`, `co-located` by default; `internal/installer/stack.go` for the co-located containers, the rendered quadlet for the isolated ones). |
 
 Later phases add settings under the same rules. The GitHub settings of M1.4 are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide (see [github](github.md#configuration-interim-m14)).
 

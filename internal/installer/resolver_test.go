@@ -219,3 +219,24 @@ func TestNewResolverRefusesAnIncompleteTerminal(t *testing.T) {
 		t.Errorf("a terminal-less console without ReadPassword was refused: %v", err)
 	}
 }
+
+// A value is the text the user wrote: a number-like token must not be rewritten by the YAML decoder.
+func TestLoadAnswersKeepsTheTextOfEveryScalar(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "answers.yaml")
+	content := "version: 1.10\ntoken: 123456789012345678901234567890123456789012345678901234567890123456\nhex: 0x10\nexp: 1e5\noct: 0o17\nflag: yes\nempty:\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadAnswers(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"version": "1.10", "token": strings.Repeat("1234567890", 6) + "123456", "hex": "0x10", "exp": "1e5", "oct": "0o17", "flag": "yes", "empty": "",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s: got %q, want %q", k, got[k], v)
+		}
+	}
+}

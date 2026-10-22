@@ -176,3 +176,25 @@ func TestDockerOperationsUseTheContext(t *testing.T) {
 		t.Fatalf("tty calls: %+v", f.tty)
 	}
 }
+
+// What Podman's own `podman version --format "{{json .Server}}"` prints (checked on a rootless machine): no Platform and no
+// Components, which is what the docker shim of podman-docker reaches on Linux and macOS.
+const podmanNativeServer = `{"APIVersion":"6.1.4","Version":"6.1.4","GoVersion":"go1.26.9","GitCommit":"464c15f","OsArch":"linux/amd64","Os":"linux"}`
+
+func TestDockerRefusesPodmansOwnVersionShape(t *testing.T) {
+	for name, server := range map[string]string{
+		"podman native":           podmanNativeServer,
+		"no engine component":     `{"Platform":{"Name":"Something"},"Version":"1","Components":[{"Name":"containerd"}]}`,
+		"no components at all":    `{"Platform":{"Name":"Something"},"Version":"1"}`,
+		"podman compat component": podmanBehindDocker,
+	} {
+		f := newFake("linux").on("version --format", server+"\n").on("info --format", "[]\n")
+		_, err := NewDocker(context.Background(), f.deps(), DockerOptions{})
+		if !errors.Is(err, ErrNotDocker) {
+			t.Errorf("%s: got %v, want ErrNotDocker", name, err)
+		}
+		if len(f.find("info --format")) != 0 {
+			t.Errorf("%s: the engine was read further after it was refused", name)
+		}
+	}
+}

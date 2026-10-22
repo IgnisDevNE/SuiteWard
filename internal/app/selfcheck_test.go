@@ -646,15 +646,15 @@ func TestSelfCheckDatabaseGivesUpOnAHostThatNeverAnswers(t *testing.T) {
 	}
 }
 
-// githubVars are the settings of the GitHub part of the service: an instance installed without GitHub has none of them.
-var githubVars = []string{"SUITEWARD_GITHUB_APP_ID", "SUITEWARD_GITHUB_APP_KEY", "SUITEWARD_GITHUB_INSTALLATION_ID", "SUITEWARD_GITHUB_REPOSITORIES", "SUITEWARD_GITHUB_API_URL"}
+// githubSettingNames are the settings of the GitHub part of the service: an instance installed without GitHub has none of them.
+var githubSettingNames = []string{"SUITEWARD_GITHUB_APP_ID", "SUITEWARD_GITHUB_APP_KEY", "SUITEWARD_GITHUB_INSTALLATION_ID", "SUITEWARD_GITHUB_REPOSITORIES", "SUITEWARD_GITHUB_API_URL"}
 
 // The install allows "GitHub is not configured": check then runs the database checks and reports each GitHub check as not
 // configured, a warning that does not fail it, instead of refusing to run.
 func TestSelfCheckWithoutGitHubChecksTheDatabaseAndWarnsAboutGitHub(t *testing.T) {
 	fake := newSelfCheckGitHub(t)
 	vars := selfCheckVars(t, fake)
-	for _, name := range githubVars {
+	for _, name := range githubSettingNames {
 		delete(vars, name)
 	}
 

@@ -194,6 +194,7 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	d.checkPins()
 	d.checkPorts(ctx)
 	if isolated {
+		d.checkHost(ctx)
 		d.checkMetadata(ctx)
 	}
 	d.checkInstance(ctx)
@@ -657,18 +658,35 @@ func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
 
 func (d *doctor) checkPorts(ctx context.Context) {
 	if !d.needMachine("ports") {
+		d.skip("healthz", "machine")
 		d.skip("status", "machine")
 		return
 	}
 	if _, err := d.get(ctx, "/readyz"); err != nil {
 		d.fail("ports", fmt.Sprintf("GET /readyz on port %d: %v", d.s.HTTPPort, err),
 			"check the containers or units above, and that http_port in the settings is the port the service publishes")
+		d.skip("healthz", "ports")
 		d.skip("status", "ports")
 		return
 	}
 	d.pass("ports", fmt.Sprintf("/readyz answers on 127.0.0.1:%d", d.s.HTTPPort))
 
-	body, err := d.get(ctx, "/status")
+	var health struct{ Status string }
+	body, err := d.get(ctx, "/healthz")
+	if err == nil {
+		if err = json.Unmarshal(body, &health); err != nil {
+			err = errors.New("the answer is not JSON")
+		} else if health.Status != "ok" {
+			err = fmt.Errorf("status %q, want ok", health.Status)
+		}
+	}
+	if err != nil {
+		d.fail("healthz", fmt.Sprintf("GET /healthz on port %d: %v", d.s.HTTPPort, err), "read the service log for why the process is not healthy")
+	} else {
+		d.pass("healthz", "/healthz answers ok")
+	}
+
+	body, err = d.get(ctx, "/status")
 	var status struct {
 		Version       string
 		SchemaVersion *int
@@ -709,6 +727,48 @@ func (d *doctor) checkPorts(ctx context.Context) {
 }
 
 // ---- metadata and the instance ----
+
+// The values the isolated host must apply to the stack (docs/install.md, step 10.14).
+const (
+	networkBackend = "netavark"
+	dbMemoryBytes  = 402653184 // 384 MiB, the limit of suiteward-db.container
+)
+
+// checkHost reads what Podman applies on the isolated host: the network backend, and the memory limit of the database.
+func (d *doctor) checkHost(ctx context.Context) {
+	args := []string{"info", "--format", "{{.Host.NetworkBackend}}"}
+	if d.s.Connection != "" {
+		args = append([]string{"--connection", d.s.Connection}, args...)
+	}
+	out, err := d.deps.Exec(ctx, "podman", args, nil)
+	switch backend := strings.TrimSpace(string(out)); {
+	case err != nil:
+		d.fail("network", "read the Podman network backend: "+err.Error(), "check that `podman info` works for this user")
+	case backend != networkBackend:
+		d.fail("network", fmt.Sprintf("the Podman network backend is %q, want %s", backend, networkBackend),
+			"install netavark and check the Podman setup (docs/install.md, step 10.14); the metadata rule and the service network rely on it")
+	default:
+		d.pass("network", "the network backend is "+networkBackend)
+	}
+
+	if !d.needRuntime("memory") {
+		return
+	}
+	raw, err := d.rt.Inspect(ctx, ContainerDB)
+	var in inspected
+	if err == nil {
+		in, err = parseInspect(ContainerDB, raw)
+	}
+	switch {
+	case err != nil:
+		d.fail("memory", "read the memory limit of "+ContainerDB+": "+err.Error(), "start the database container, then run doctor again")
+	case in.HostConfig.Memory != dbMemoryBytes:
+		d.fail("memory", fmt.Sprintf("%s has memory limit %d bytes, want %d", ContainerDB, in.HostConfig.Memory, dbMemoryBytes),
+			"check that suiteward-db.container sets PodmanArgs=--memory=384m and that Podman applies it (docs/install.md, step 10.14)")
+	default:
+		d.pass("memory", fmt.Sprintf("%s is limited to %d bytes", ContainerDB, dbMemoryBytes))
+	}
+}
 
 // checkMetadata probes from the database container, which is on the service network. Every host of the isolated tier is
 // checked: where no metadata service exists the connection simply fails.

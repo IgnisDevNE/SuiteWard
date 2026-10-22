@@ -90,12 +90,12 @@ func TestResolveGitHubReusesTheAppOfTheSettings(t *testing.T) {
 			t.Errorf("the App was not reused: %v", g.requests)
 		}
 	})
-	t.Run("a missing key secret creates a new App", func(t *testing.T) {
+	t.Run("a missing key secret stops the flow: no App is created behind the settings' back", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		env, _ := flowEnv(t, g, manifestFlags(), strings.NewReader(""), false)
 		withKey(&env)
 		env.KeyExists = func(context.Context) (bool, error) { return false, nil }
-		if _, err := resolve(t, env); err != nil || !g.sawRequest("POST /app-manifests") {
+		if _, err := resolve(t, env); err == nil || g.sawRequest("POST /app-manifests") {
 			t.Fatalf("resolveGitHub = %v, requests %v", err, g.requests)
 		}
 	})

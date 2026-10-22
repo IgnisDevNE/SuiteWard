@@ -151,7 +151,7 @@ func TestInstallColocatedARecordedAppWithoutItsKeySecretIsANamedError(t *testing
 	if err == nil {
 		t.Fatal("an App whose key secret is missing must stop the run")
 	}
-	for _, want := range []string{"settings/apps/suiteward-abcd", pendingAppPath(h.settingsPath()), SecretGitHubAppKey, "--github-app-key-file"} {
+	for _, want := range []string{"settings/apps/suiteward-abcd", pendingAppPath(h.settingsPath()), SecretGitHubAppKey, "--github-app-key-file", "--github new-app"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error does not name %q:\n%v", want, err)
 		}
@@ -294,7 +294,7 @@ func TestInstallIsolatedARecordedAppWithoutItsKeySecretIsANamedError(t *testing.
 	if err == nil {
 		t.Fatal("an App whose key secret is missing must stop the run")
 	}
-	for _, want := range []string{"settings/apps/suiteward-abcd", pendingAppPath(settingsFile(g.home)), SecretGitHubAppKey, "--github-app-key-file"} {
+	for _, want := range []string{"settings/apps/suiteward-abcd", pendingAppPath(settingsFile(g.home)), SecretGitHubAppKey, "--github-app-key-file", "--github new-app"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error does not name %q:\n%v", want, err)
 		}

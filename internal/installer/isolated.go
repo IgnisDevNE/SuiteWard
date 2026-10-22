@@ -132,16 +132,17 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return err
 	}
 
-	// Changes begin here.
+	// Changes begin here. The env file comes before the secrets: when the flow just created the App (its key is stored already), a
+	// failure in between must still leave a file for a re-run to take the App from.
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", configDir, err)
-	}
-	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
-		return err
 	}
 	gh := g.s.GitHub // an env file that already holds these values stays as its author wrote it
 	inFile := gh.AppID == fromFile.AppID && gh.InstallationID == fromFile.InstallationID && slices.Equal(gh.Repositories, fromFile.Repositories)
 	if err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !inFile); err != nil {
+		return err
+	}
+	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
 	units, err := RenderUnits(UnitParamsFrom(g.s, digest))
@@ -166,16 +167,15 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return err
 	}
 	say("\nSuiteWard %s is running on this account. Settings are saved in %s.\n\n", digest, settingsPath)
-	switch {
-	case g.setupOwner != "":
+	if gh.AppID == 0 {
+		say("GitHub is not configured in the settings of this run: if the service should reach GitHub, run the install again with --github yes (or the GitHub values).\n")
+	} else {
 		status := func(ctx context.Context) ([]byte, error) {
 			return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(g.s.HTTPPort)+"/status")
 		}
 		if err := g.enroll(ctx, status); err != nil {
 			return err
 		}
-	case gh.AppID == 0:
-		say("GitHub is not configured in the settings of this run: if the service should reach GitHub, run the install again with --github yes (or the GitHub values).\n")
 	}
 	say("Then run `suiteward doctor`.\n")
 	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, wasRunning)
@@ -236,12 +236,15 @@ func startStack(ctx context.Context, rt Runtime, d Deps) (wasRunning bool, err e
 	if err := ensureAppRole(ctx, rt); err != nil {
 		return wasRunning, err
 	}
-	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	if _, err := systemctl(startCtx, "start", "suiteward.service"); err != nil {
-		return wasRunning, fmt.Errorf("start the service (read the migration with `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
+	if wasRunning { // a running service keeps what it started with: starting it again does nothing
+		if _, err := systemctl(ctx, "start", "suiteward.service"); err != nil {
+			return true, fmt.Errorf("start the service: %w", err)
+		}
+		return true, checkUnitsActive(ctx, systemctl)
 	}
-	return wasRunning, checkUnitsActive(ctx, systemctl)
+	// The migration unit stays active after it ran (RemainAfterExit), so starting the service would not run it again for a release
+	// that changed since: a stopped service gets the migration restarted first.
+	return false, migrateAndStart(ctx, d)
 }
 
 // userSystemctl runs `systemctl --user` and returns its trimmed output.

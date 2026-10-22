@@ -202,13 +202,19 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 	for _, repo := range repos {
 		checks = append(checks, "--test-check '"+repo+"="+g.setupChecks[repo]+"'")
 	}
-	command := fmt.Sprintf("%s exec -it %s /suiteward setup --owner %s %s", cmd, ContainerServe, g.setupOwner, strings.Join(checks, " "))
+	owner := g.setupOwner
+	if owner == "" { // a run that took the App from the env file knows neither the owner nor the checks
+		owner, checks = "<login>", []string{"--test-check '<owner/name>=<check name>'"}
+	}
+	command := fmt.Sprintf("%s exec -it %s /suiteward setup --owner %s %s", cmd, ContainerServe, owner, strings.Join(checks, " "))
 	login, err := g.enrolledOwner(ctx, status)
 	switch {
 	case err != nil:
 		g.say("Setup was not run: /status of the service could not be read (%v), so it is not known whether an owner is enrolled, and setup would replace the TOTP secret of one. Once the service answers, check /status, and if it has no owner, run on a real terminal with session recording off:\n  %s\n", err, command)
 	case login != "":
 		g.say("Note: an owner (%s) is already enrolled; setup was skipped, so the TOTP secret is unchanged. To re-enroll (for example after losing the authenticator), run on a real terminal with session recording off: %s\n", login, command)
+	case g.setupOwner == "":
+		g.say("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner (replace <login> and the check):\n  %s\n", command)
 	case setupTerminal():
 		if err := runSetup(ctx, g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
 			return fmt.Errorf("the stack is running, but enrolling the owner failed: %w", err)

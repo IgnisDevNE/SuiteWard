@@ -713,17 +713,14 @@ func (c *colocatedInstall) finish(ctx context.Context, t installTarget) error {
 	if !t.defaultPath {
 		doctor += " --settings " + t.settingsPath
 	}
-	switch {
-	case c.s.GitHub.AppID == 0:
+	if c.s.GitHub.AppID == 0 {
 		c.say("GitHub is not configured. Run the install again with --github yes (or the GitHub values) to set it up, then enroll the owner.\n")
-	case c.setupOwner == "":
-		c.say("Then check the instance with `%s`.\n", doctor)
-	default:
-		if err := c.enroll(ctx, c.readStatus); err != nil {
-			return err
-		}
-		c.say("Then check the instance with `%s`.\n", doctor)
+		return nil
 	}
+	if err := c.enroll(ctx, c.readStatus); err != nil {
+		return err
+	}
+	c.say("Then check the instance with `%s`.\n", doctor)
 	return nil
 }
 

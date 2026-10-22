@@ -189,9 +189,11 @@ func withBackup(err error, dir, unitsDir string) error {
 	var stopped stoppedError
 	switch {
 	case unitsDir == "":
-		advice += " The service may be down: run `suiteward install` with the options of this run to start the release in the settings again, and `suiteward install --upgrade` to retry."
+		advice += " If the service is not running, run `suiteward install` with the options of this run to start the release in the settings again; `suiteward install --upgrade` retries the upgrade."
 	case errors.As(err, &stopped):
-		advice += fmt.Sprintf(" suiteward.service is stopped, and the units this upgrade replaced are in %s. To go back, copy them to %s, run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`. To go on once the cause is fixed, run `suiteward install --tier isolated` (the units already name the new release), after `systemctl --user restart suiteward-db.service` if the database image changed.", filepath.Join(dir, backupUnits), unitsDir)
+		// suiteward-migrate.service stays active after it ran (RemainAfterExit), so going on restarts it; starting the service alone
+		// would run the new release on the old schema.
+		advice += fmt.Sprintf(" suiteward.service is stopped, and the units this upgrade replaced are in %s. To go back, copy them to %s, run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`. To go on once the cause is fixed, run `systemctl --user daemon-reload`, then `systemctl --user restart suiteward-db.service` (only if the database image changed), then `systemctl --user restart suiteward-migrate.service` and `systemctl --user start suiteward.service`.", filepath.Join(dir, backupUnits), unitsDir)
 	default:
 		advice += " Fix the cause and run `suiteward install --upgrade` again."
 	}

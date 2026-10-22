@@ -249,6 +249,11 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 			return nil, fmt.Errorf("appauth: permission %q has an empty name or level", name)
 		}
 	}
+	return a.newInstallation(id, repositories, permissions, httpClient, baseURL)
+}
+
+// newInstallation builds the token source; no repositories asks for every repository of the installation.
+func (a App) newInstallation(id int64, repositories []string, permissions map[string]string, httpClient *http.Client, baseURL string) (*Installation, error) {
 	if httpClient == nil {
 		return nil, errors.New("appauth: http client is required")
 	}
@@ -258,7 +263,7 @@ func (a App) Installation(id int64, repositories []string, permissions map[strin
 	}
 	perms := maps.Clone(permissions)
 	body, err := json.Marshal(struct {
-		Repositories []string          `json:"repositories"`
+		Repositories []string          `json:"repositories,omitempty"`
 		Permissions  map[string]string `json:"permissions"`
 	}{repositories, perms})
 	if err != nil {
@@ -373,6 +378,12 @@ func (t Token) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, t.String()
 // drain reads a refused answer up to maxAnswer so the connection can be reused; its text is never kept.
 func drain(body io.Reader) { _, _ = io.Copy(io.Discard, io.LimitReader(body, maxAnswer)) }
 
+// listPageSize and listMaxPages bound a listing: more than their product is an error, never a silent truncation.
+const (
+	listPageSize = 100
+	listMaxPages = 10
+)
+
 // InstallationInfo is one installation of the App, as GET /app/installations lists it.
 type InstallationInfo struct {
 	ID                  int64
@@ -384,10 +395,111 @@ type InstallationInfo struct {
 
 // Installations lists the installations of the App (GET /app/installations, with the App JWT).
 func (a App) Installations(ctx context.Context, httpClient *http.Client, baseURL string) ([]InstallationInfo, error) {
-	return nil, nil
+	if httpClient == nil {
+		return nil, errors.New("appauth: http client is required")
+	}
+	base, err := cleanBase(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	var all []InstallationInfo
+	for page := 1; page <= listMaxPages; page++ {
+		req, err := a.signedRequest(ctx, http.MethodGet, listURL(base+"/app/installations", page), nil, a.clock())
+		if err != nil {
+			return nil, err
+		}
+		var entries []struct {
+			ID      int64 `json:"id"`
+			Account struct {
+				Login string `json:"login"`
+				Type  string `json:"type"`
+			} `json:"account"`
+			RepositorySelection string            `json:"repository_selection"`
+			Permissions         map[string]string `json:"permissions"`
+		}
+		if err := getJSON(httpClient, req, "installations", &entries); err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if e.ID <= 0 {
+				return nil, errors.New("appauth: installations answer has an entry without an id")
+			}
+			all = append(all, InstallationInfo{ID: e.ID, Account: e.Account.Login, AccountType: e.Account.Type, RepositorySelection: e.RepositorySelection, Permissions: e.Permissions})
+		}
+		if len(entries) < listPageSize {
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("appauth: more than %d installations", listPageSize*listMaxPages)
 }
 
-// InstallationRepositories lists the full names of the repositories installation id can read, with a token narrowed to Metadata read.
+// InstallationRepositories lists the full names of the repositories installation id grants. It mints a token narrowed
+// to Metadata read with no repository list, so the token covers every repository of the installation and nothing more.
 func (a App) InstallationRepositories(ctx context.Context, id int64, httpClient *http.Client, baseURL string) ([]string, error) {
-	return nil, nil
+	if id <= 0 {
+		return nil, errors.New("appauth: installation id must be positive")
+	}
+	installation, err := a.newInstallation(id, nil, map[string]string{"metadata": "read"}, httpClient, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	token, err := installation.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	base, err := cleanBase(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	var all []string
+	for page := 1; page <= listMaxPages; page++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL(base+"/installation/repositories", page), nil)
+		if err != nil {
+			return nil, fmt.Errorf("appauth: build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token.Reveal())
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		var out struct {
+			Repositories []struct {
+				FullName string `json:"full_name"`
+			} `json:"repositories"`
+		}
+		if err := getJSON(httpClient, req, "installation/repositories", &out); err != nil {
+			return nil, err
+		}
+		for _, r := range out.Repositories {
+			if r.FullName == "" {
+				return nil, errors.New("appauth: repositories answer has an entry without a full name")
+			}
+			all = append(all, r.FullName)
+		}
+		if len(out.Repositories) < listPageSize {
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("appauth: more than %d repositories", listPageSize*listMaxPages)
+}
+
+// listURL is endpoint for page, by number: a Link header is never followed, so a credential only goes where the base URL says.
+func listURL(endpoint string, page int) string {
+	return endpoint + "?page=" + strconv.Itoa(page) + "&per_page=" + strconv.Itoa(listPageSize)
+}
+
+// getJSON sends req, requires 200 and decodes the bounded answer into out. An error never carries a header or answer text.
+func getJSON(httpClient *http.Client, req *http.Request, endpoint string, out any) error {
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		// The transport error names the URL, never a header.
+		return fmt.Errorf("appauth: request %s: %w", endpoint, err)
+	}
+	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
+	if resp.StatusCode != http.StatusOK {
+		drain(resp.Body)
+		return &StatusError{Endpoint: endpoint, Status: resp.StatusCode}
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAnswer)).Decode(out); err != nil {
+		return fmt.Errorf("appauth: %s answer is malformed", endpoint)
+	}
+	return nil
 }

@@ -27,6 +27,7 @@ type hostFake struct {
 	ruleOnDisk  string          // the nft rule file as it is on the host; empty means there is none
 	envsDiffer  bool
 	dnfFixesCVE bool
+	failOn      map[string]error // command name + " " + arguments containing the key -> its error
 }
 
 func newHostFake() *hostFake {
@@ -61,6 +62,11 @@ func (h *hostFake) deps() Deps {
 
 func (h *hostFake) answer(c call) ([]byte, error) {
 	line := c.line()
+	for match, err := range h.failOn {
+		if strings.Contains(c.name+" "+line, match) {
+			return nil, err
+		}
+	}
 	fail := errors.New(c.name + ": exit status 1")
 	switch {
 	case c.name == "id" && line == "-u":

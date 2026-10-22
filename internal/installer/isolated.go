@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -103,6 +104,15 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err != nil {
 		return err
 	}
+	// An App the settings do not name, but the env file does (a host installed by hand, or a run that stopped after it wrote the
+	// file), is the App of this install: the flow must not offer to create another.
+	var fromFile GitHub
+	if s.GitHub.AppID == 0 {
+		if fromFile, err = readGitHubEnvFile(filepath.Join(configDir, "github.env")); err != nil {
+			return err
+		}
+		s.GitHub = fromFile
+	}
 
 	// Every input, resolved and checked: the images first, so a wrong digest fails before the flow creates an App.
 	postgres, err := PostgresImage()
@@ -129,8 +139,9 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
-	gh := g.s.GitHub
-	if err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0); err != nil {
+	gh := g.s.GitHub // an env file that already holds these values stays as its author wrote it
+	inFile := gh.AppID == fromFile.AppID && gh.InstallationID == fromFile.InstallationID && slices.Equal(gh.Repositories, fromFile.Repositories)
+	if err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !inFile); err != nil {
 		return err
 	}
 	units, err := RenderUnits(UnitParamsFrom(g.s, digest))
@@ -179,6 +190,7 @@ func (g *githubInstall) checkAppKey(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		g.githubKey = append(bytes.TrimSpace(g.githubKey), '\n') // one trailing newline, whatever the file or stdin had
 		g.say("App private key fingerprint: %s\nCompare it with the fingerprint of the key on the App's settings page; a wrong or revoked key looks right to every other check.\n", fingerprint)
 		return nil
 	}
@@ -628,4 +640,66 @@ func ensureAppRole(ctx context.Context, rt Runtime) error {
 		return fmt.Errorf("create the role %s: %w", appDatabaseRole, err)
 	}
 	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appDatabaseRole, password)), false)
+}
+
+// The names the service reads its GitHub values by; the installer writes them to the env file (writeEnvFile).
+const (
+	envAppID          = "SUITEWARD_GITHUB_APP_ID"
+	envInstallationID = "SUITEWARD_GITHUB_INSTALLATION_ID"
+	envRepositories   = "SUITEWARD_GITHUB_REPOSITORIES"
+)
+
+// readGitHubEnvFile reads the GitHub values of an env file: the App of a host installed by hand, or of a run that stopped after
+// it wrote the file. A missing or empty file holds none. Anything else must be exactly the three keys once each, with a positive
+// App id and installation id and 1 to MaxRepositories owner/name of one owner; a file that is not that is an error, which names
+// the file, the line or the key and never a value.
+func readGitHubEnvFile(path string) (GitHub, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return GitHub{}, nil
+	}
+	if err != nil {
+		return GitHub{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	values := map[string]string{}
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		switch {
+		case !ok:
+			return GitHub{}, fmt.Errorf("%s line %d is not KEY=value", path, i+1)
+		case key != envAppID && key != envInstallationID && key != envRepositories:
+			return GitHub{}, fmt.Errorf("%s line %d is not one of %s, %s and %s", path, i+1, envAppID, envInstallationID, envRepositories)
+		}
+		if _, repeated := values[key]; repeated {
+			return GitHub{}, fmt.Errorf("%s line %d repeats %s", path, i+1, key)
+		}
+		values[key] = value
+	}
+	if len(values) == 0 {
+		return GitHub{}, nil
+	}
+	for _, key := range []string{envAppID, envInstallationID, envRepositories} {
+		if _, ok := values[key]; !ok {
+			return GitHub{}, fmt.Errorf("%s has some of the three GitHub values but not %s: the service stops at startup when only some are set; complete the file or remove it", path, key)
+		}
+	}
+	appID, err := strconv.ParseInt(values[envAppID], 10, 64)
+	if err != nil || appID < 1 {
+		return GitHub{}, fmt.Errorf("%s: %s is not a positive number", path, envAppID)
+	}
+	installationID, err := strconv.ParseInt(values[envInstallationID], 10, 64)
+	if err != nil || installationID < 1 {
+		return GitHub{}, fmt.Errorf("%s: %s is not a positive number", path, envInstallationID)
+	}
+	repos := strings.Split(values[envRepositories], ",")
+	owner, _, _ := strings.Cut(repos[0], "/")
+	gh := GitHub{AppID: appID, InstallationID: installationID, Owner: owner, Repositories: repos}
+	if gh.validate() != nil { // its message repeats the values
+		return GitHub{}, fmt.Errorf("%s: %s is not 1 to %d owner/name pairs of one owner, separated by commas without spaces", path, envRepositories, MaxRepositories)
+	}
+	return gh, nil
 }

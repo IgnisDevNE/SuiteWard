@@ -612,7 +612,7 @@ func TestInstallIsolatedSaysWhenTheOldEnvFileMayGoAccordingToTheServiceState(t *
 		if err := os.MkdirAll(filepath.Dir(envFile(home)), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(envFile(home), []byte("SUITEWARD_GITHUB_APP_ID=1\n"), 0o600); err != nil {
+		if err := os.WriteFile(envFile(home), []byte(fullEnv), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		f := newIsoFake(home)
@@ -641,7 +641,7 @@ func TestInstallIsolatedAdoptionOfAnEtcEnvFileNeedsTheHostStep(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(envFile(home)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(envFile(home), []byte("SUITEWARD_GITHUB_APP_ID=1\n"), 0o600); err != nil {
+	if err := os.WriteFile(envFile(home), []byte(fullEnv), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f = newIsoFake(home)
@@ -653,7 +653,7 @@ func TestInstallIsolatedAdoptionOfAnEtcEnvFileNeedsTheHostStep(t *testing.T) {
 	if !strings.Contains(string(serve), "EnvironmentFile=%h/.config/suiteward/github.env") {
 		t.Errorf("the unit must point at the account's env file:\n%s", serve)
 	}
-	if raw, _ := os.ReadFile(envFile(home)); string(raw) != "SUITEWARD_GITHUB_APP_ID=1\n" {
+	if raw, _ := os.ReadFile(envFile(home)); string(raw) != fullEnv {
 		t.Errorf("a moved env file must not be overwritten: %q", raw)
 	}
 	if !strings.Contains(lastOut, "sudo rm /etc/suiteward/github.env") {
@@ -741,14 +741,14 @@ func TestInstallIsolatedWritesTheGitHubEnvFileFromTheFlowAndLeavesAnExistingOneA
 	if err := os.MkdirAll(filepath.Dir(envFile(home)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(envFile(home), []byte("SUITEWARD_GITHUB_APP_ID=9\n"), 0o600); err != nil {
+	if err := os.WriteFile(envFile(home), []byte(fullEnv), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f = newIsoFake(home)
 	if _, err := runIsolated(t, f, withoutGitHub(f), ""); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(envFile(home)); string(got) != "SUITEWARD_GITHUB_APP_ID=9\n" {
+	if got, _ := os.ReadFile(envFile(home)); string(got) != fullEnv {
 		t.Errorf("an existing env file must stay: %q", got)
 	}
 }
@@ -816,3 +816,6 @@ func addAnswers(m map[string]string, key, value string) map[string]string {
 	m[key] = value
 	return m
 }
+
+// fullEnv is a GitHub env file that holds all three values.
+const fullEnv = "SUITEWARD_GITHUB_APP_ID=1\nSUITEWARD_GITHUB_INSTALLATION_ID=2\nSUITEWARD_GITHUB_REPOSITORIES=octo/one\n"

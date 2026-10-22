@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
@@ -520,39 +519,6 @@ func TestSetupStillSucceedsWhenAProtectionResultCannotBeStoredAfterEnrolling(t *
 	}
 	if !strings.Contains(r.stderr.String(), setupWidgetsRepo+" could not be stored") || strings.Contains(r.stderr.String(), "hunter2") {
 		t.Fatalf("stderr = %q; want the repository and not the cause", r.stderr.String())
-	}
-}
-
-func TestProtectionFactsMapsEveryFieldAndClassicState(t *testing.T) {
-	for _, state := range []struct {
-		from github.ClassicState
-		to   protection.ClassicState
-	}{
-		{github.ClassicAbsent, protection.ClassicAbsent},
-		{github.ClassicUnreadable, protection.ClassicUnreadable},
-		{github.ClassicPresent, protection.ClassicPresent},
-	} {
-		got, err := protectionFacts(github.Protection{Classic: github.Classic{State: state.from}}, false)
-		if err != nil || got.Classic.State != state.to {
-			t.Errorf("classic state %v mapped to %v, %v; want %v", state.from, got.Classic.State, err, state.to)
-		}
-	}
-	if _, err := protectionFacts(github.Protection{Classic: github.Classic{State: github.ClassicState(9)}}, false); err == nil {
-		t.Error("an unknown classic state was mapped")
-	}
-
-	got, err := protectionFacts(github.Protection{
-		RulesForbidden: true, FromRuleset: true,
-		Rules:   []github.Rule{{RulesetID: 7, Strict: true, Checks: []github.Check{{Context: "a", SourceID: 1}, {Context: "b", SourceID: 2}}}, {RulesetID: 8}},
-		Classic: github.Classic{State: github.ClassicPresent, Strict: true, EnforceAdmins: true, Checks: []github.Check{{Context: "c", SourceID: -1}}},
-	}, true)
-	want := protection.Facts{
-		Private: true, RulesForbidden: true, FromRuleset: true,
-		Rules:   []protection.Rule{{RulesetID: 7, Strict: true, Checks: []protection.Check{{Context: "a", SourceID: 1}, {Context: "b", SourceID: 2}}}, {RulesetID: 8}},
-		Classic: protection.Classic{State: protection.ClassicPresent, Strict: true, EnforceAdmins: true, Checks: []protection.Check{{Context: "c", SourceID: -1}}},
-	}
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("protectionFacts = %+v, %v; want %+v", got, err, want)
 	}
 }
 

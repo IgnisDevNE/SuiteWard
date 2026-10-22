@@ -628,7 +628,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		read, err := reader.Protection(ctx, r.name, r.branch)
 		if err != nil {
 			ghSay(env.Out, "  %s: could not read the protection (%v)\n", r.name, err)
-		} else if facts, err := protectionFacts(read, r.private); err != nil {
+		} else if facts, err := read.Facts(r.private); err != nil {
 			ghSay(env.Out, "  %s: the protection answer is not usable (%v)\n", r.name, err)
 		} else {
 			result = protection.Evaluate(facts, res.AppID, res.TestChecks[r.name])
@@ -648,38 +648,6 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 	}
 	ghSay(env.Out, "Run the checks again at any time with suiteward doctor.\n")
 	return results, nil
-}
-
-// protectionFacts maps what the adapter read into the evaluator's facts.
-// shortcut: a copy of internal/app's mapping, which the installer cannot import (app will import the installer); move both to one shared place.
-func protectionFacts(p github.Protection, private bool) (protection.Facts, error) {
-	var state protection.ClassicState
-	switch p.Classic.State {
-	case github.ClassicAbsent:
-		state = protection.ClassicAbsent
-	case github.ClassicUnreadable:
-		state = protection.ClassicUnreadable
-	case github.ClassicPresent:
-		state = protection.ClassicPresent
-	default:
-		return protection.Facts{}, fmt.Errorf("unknown classic protection state %d", p.Classic.State)
-	}
-	facts := protection.Facts{
-		Private: private, RulesForbidden: p.RulesForbidden, FromRuleset: p.FromRuleset,
-		Classic: protection.Classic{State: state, Checks: protectionChecks(p.Classic.Checks), Strict: p.Classic.Strict, EnforceAdmins: p.Classic.EnforceAdmins},
-	}
-	for _, rule := range p.Rules {
-		facts.Rules = append(facts.Rules, protection.Rule{RulesetID: rule.RulesetID, Checks: protectionChecks(rule.Checks), Strict: rule.Strict})
-	}
-	return facts, nil
-}
-
-func protectionChecks(checks []github.Check) []protection.Check {
-	var out []protection.Check
-	for _, c := range checks {
-		out = append(out, protection.Check{Context: c.Context, SourceID: c.SourceID})
-	}
-	return out
 }
 
 // runSetup runs `suiteward setup` in the serving container with the real terminal passed through. Setup prints the TOTP

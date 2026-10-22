@@ -88,7 +88,7 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings) (Run
 	connection := r.preset("connection", savedConnection)
 	var rt Runtime
 	if name == RuntimeDocker {
-		if err = confirmDocker(r); err != nil {
+		if err := confirmDocker(r); err != nil {
 			return nil, "", err
 		}
 		rt, err = NewDocker(ctx, env.Deps, DockerOptions{Context: connection})
@@ -140,7 +140,7 @@ func (c *colocated) preflight(ctx context.Context, keyFile func() ([]byte, error
 	}
 	// Pulling now means a wrong digest is found before the running service is removed.
 	for _, img := range []string{c.image, c.stack.DB.Image} {
-		if err = c.rt.Pull(ctx, img); err != nil {
+		if err := c.rt.Pull(ctx, img); err != nil {
 			return err
 		}
 	}

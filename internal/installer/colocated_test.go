@@ -1364,3 +1364,50 @@ func TestInstallSkipsSetupWhenStatusCannotBeRead(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testing.T) {
+	const placeholder = "podman --connection pm exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>'"
+	for name, c := range map[string]struct {
+		status func(context.Context, string) ([]byte, error)
+		want   []string
+	}{
+		"enrolled": {
+			func(context.Context, string) ([]byte, error) {
+				return []byte(`{"version":"v0.2.0","owner":{"login":"bob","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"}}`), nil
+			},
+			[]string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged"},
+		},
+		"no owner": {
+			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },
+			[]string{"no owner is enrolled", placeholder},
+		},
+		"unreadable": {
+			func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") },
+			[]string{"connection refused", placeholder},
+		},
+	} {
+		was := setupTerminal
+		setupTerminal = func() bool { return true }
+		h := newHarness(t, "linux")
+		s := localPS1Settings()
+		s.Connection = "pm"
+		if err := SaveSettings(h.settingsPath(), s); err != nil {
+			t.Fatal(err)
+		}
+		h.have(kindSecret, SecretGitHubAppKey)
+		h.status = c.status
+		err := h.podman("--http-port", "18081", "--mcp-port", "18091")
+		setupTerminal = was
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(h.githubSeen) != 0 || len(h.f.tty) != 0 {
+			t.Errorf("%s: the flow or setup ran on a re-run that has no owner login", name)
+		}
+		for _, want := range c.want {
+			if !strings.Contains(h.out.String(), want) {
+				t.Errorf("%s: the output lacks %q:\n%s", name, want, h.out.String())
+			}
+		}
+	}
+}

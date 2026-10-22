@@ -3,6 +3,7 @@ package installer
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
 	"errors"
 	"maps"
 	"os"
@@ -31,9 +32,11 @@ type isoGitHub struct {
 	seen   []githubEnv
 	atFlow []string // the changes that were made when the flow was called
 	envAt  bool     // the GitHub env file existed when the flow was called
-	asked  []string // the addresses read for /status
-	slept  int
-	out    bytes.Buffer
+	// pullsAtFlow is how many images had been pulled when the flow was called
+	pullsAtFlow int
+	asked       []string // the addresses read for /status
+	slept       int
+	out         bytes.Buffer
 }
 
 func newIsoGitHub(t *testing.T) *isoGitHub {
@@ -79,7 +82,12 @@ func (g *isoGitHub) run() error {
 		Deps: g.f.deps(), Term: term, Sleep: func(time.Duration) { g.slept++ },
 		ResolveGitHub: func(ctx context.Context, e githubEnv) (GitHubResult, error) {
 			g.seen = append(g.seen, e)
-			g.atFlow = nil
+			g.atFlow, g.pullsAtFlow = nil, 0
+			for _, line := range g.f.lines() {
+				if strings.Contains(line, "podman pull") {
+					g.pullsAtFlow++
+				}
+			}
 			for _, line := range g.f.lines() {
 				if strings.Contains(line, "secret create") || strings.Contains(line, "start") || strings.Contains(line, "daemon-reload") {
 					g.atFlow = append(g.atFlow, line)
@@ -120,6 +128,9 @@ func TestInstallIsolatedRunsTheGitHubFlowBeforeAnyChange(t *testing.T) {
 	}
 	if len(g.atFlow) != 0 || g.envAt {
 		t.Errorf("something was changed before the flow ran: %v (env file %v)", g.atFlow, g.envAt)
+	}
+	if g.pullsAtFlow != 2 {
+		t.Errorf("both images must be pulled before the flow runs, so a wrong digest fails before an App exists: %d pulled", g.pullsAtFlow)
 	}
 	if g.f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
 		t.Errorf("the App key did not reach the secret store")
@@ -393,15 +404,18 @@ func withoutGitHub(f *isoFake) map[string]string {
 }
 
 func TestInstallIsolatedRefusesAKeyThatIsNotAnRSAKeyBeforeAnyChange(t *testing.T) {
-	g := newIsoGitHub(t)
-	g.flow = func(context.Context, githubEnv) (GitHubResult, error) {
-		return GitHubResult{
-			AppID: 123, InstallationID: 456, Account: "octo", OwnerLogin: "alice",
-			Repositories: []string{"octo/one"}, TestChecks: map[string]string{"octo/one": "CI"}, PrivateKey: []byte("not a key"),
-		}, nil
-	}
-	if err := g.run(); err == nil || g.f.has("secret create") || g.f.has("start") {
-		t.Fatalf("a key that is not a private key must stop the run before any change: %v, %v", err, g.f.lines())
+	certificate := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("x")}))
+	for name, bad := range map[string]string{"text": "not a key", "certificate": certificate} {
+		g := newIsoGitHub(t)
+		g.flow = func(context.Context, githubEnv) (GitHubResult, error) {
+			return GitHubResult{
+				AppID: 123, InstallationID: 456, Account: "octo", OwnerLogin: "alice",
+				Repositories: []string{"octo/one"}, TestChecks: map[string]string{"octo/one": "CI"}, PrivateKey: []byte(bad),
+			}, nil
+		}
+		if err := g.run(); err == nil || g.f.has("secret create") || g.f.has("start") {
+			t.Fatalf("%s: a key that is not a private key must stop the run before any change: %v, %v", name, err, g.f.lines())
+		}
 	}
 }
 

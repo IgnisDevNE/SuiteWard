@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -142,5 +143,120 @@ func TestInstallIsolatedStoresTheAppKeyWithOneTrailingNewline(t *testing.T) {
 		if g.f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
 			t.Errorf("%s: the stored key is %q, want the PEM with one trailing newline", name, g.f.secrets[SecretGitHubAppKey])
 		}
+	}
+}
+
+const placeholderCommand = "exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>'"
+
+func TestInstallIsolatedRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testing.T) {
+	enrolled := `{"version":"v0.2.0","owner":{"login":"bob","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"}}`
+	for name, c := range map[string]struct {
+		status func(context.Context, string) ([]byte, error)
+		want   []string
+	}{
+		"enrolled": {
+			func(context.Context, string) ([]byte, error) { return []byte(enrolled), nil },
+			[]string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged"},
+		},
+		"no owner": {
+			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },
+			[]string{"no owner is enrolled", "podman " + placeholderCommand},
+		},
+		"unreadable": {
+			func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") },
+			[]string{"connection refused", "podman " + placeholderCommand},
+		},
+	} {
+		terminalForSetup(t)
+		g := newIsoGitHub(t)
+		handInstalled(t, g, handMadeEnv)
+		g.status = c.status
+		if err := g.run(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(g.f.tty) != 0 || len(g.seen) != 0 {
+			t.Errorf("%s: setup or the flow ran although there is no owner login: %v", name, g.f.tty)
+		}
+		for _, want := range c.want {
+			if !strings.Contains(g.out.String(), want) {
+				t.Errorf("%s: the output lacks %q:\n%s", name, want, g.out.String())
+			}
+		}
+	}
+}
+
+func TestInstallIsolatedWritesTheEnvFileBeforeTheSecretsSoAFailureInBetweenKeepsTheApp(t *testing.T) {
+	g := newIsoGitHub(t)
+	inner := g.flow
+	g.flow = func(ctx context.Context, e githubEnv) (GitHubResult, error) {
+		if err := e.StoreKey(ctx, []byte(appKeyPEM(t))); err != nil { // the App was just created
+			return GitHubResult{}, err
+		}
+		return inner(ctx, e)
+	}
+	g.f.secrets[SecretDatabaseOwnerURL] = DatabaseURL("suiteward", strings.Repeat("cd", 24)) // ensureSecrets refuses this
+	if err := g.run(); err == nil {
+		t.Fatal("ensureSecrets must refuse an owner URL without its password")
+	}
+	if got := string(readFileOrFail(t, envFile(g.home))); !strings.Contains(got, "SUITEWARD_GITHUB_APP_ID=123") {
+		t.Fatalf("the App created by the flow must reach the env file before anything else can fail: %q", got)
+	}
+	delete(g.f.secrets, SecretDatabaseOwnerURL)
+	for _, key := range []string{"github-app-id", "github-installation-id", "github-repositories", "github-owner"} {
+		g.answers[key] = ""
+	}
+	if err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.seen) != 1 {
+		t.Errorf("the re-run created another App (%d flow runs)", len(g.seen))
+	}
+	if saved, err := LoadSettings(settingsFile(g.home)); err != nil || saved.GitHub.AppID != 123 {
+		t.Errorf("the re-run must reuse the App: %+v, %v", saved.GitHub, err)
+	}
+}
+
+func TestReadGitHubEnvFileAcceptsMaxRepositoriesAndRefusesOneMore(t *testing.T) {
+	file := func(n int) string {
+		var repos []string
+		for i := range n {
+			repos = append(repos, "octo/r"+strconv.Itoa(i))
+		}
+		path := filepath.Join(t.TempDir(), "github.env")
+		text := "SUITEWARD_GITHUB_APP_ID=1\nSUITEWARD_GITHUB_INSTALLATION_ID=2\nSUITEWARD_GITHUB_REPOSITORIES=" + strings.Join(repos, ",") + "\n"
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	if gh, err := readGitHubEnvFile(file(MaxRepositories)); err != nil || len(gh.Repositories) != MaxRepositories {
+		t.Fatalf("%d repositories must pass: %v", MaxRepositories, err)
+	}
+	if _, err := readGitHubEnvFile(file(MaxRepositories + 1)); err == nil {
+		t.Fatalf("%d repositories must be refused", MaxRepositories+1)
+	}
+}
+
+func TestInstallIsolatedRunsTheMigrationAgainWhenTheServiceIsNotRunning(t *testing.T) {
+	// suiteward-migrate.service stays active after it ran (RemainAfterExit), so starting the service alone would not migrate to
+	// a release that changed since.
+	g := newIsoGitHub(t)
+	if err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	role := g.f.index("exec -i suiteward-db psql", 0)
+	migrate := g.f.index("systemctl --user restart suiteward-migrate.service", max(role, 0))
+	start := g.f.index("systemctl --user start suiteward.service", max(migrate, 0))
+	if role < 0 || migrate < 0 || start < 0 {
+		t.Fatalf("the migration must be restarted after the role and before the service starts:\n%s", strings.Join(g.f.lines(), "\n"))
+	}
+
+	g = newIsoGitHub(t)
+	g.f.serviceRunning, g.f.everActive = true, true
+	if err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	if g.f.has("restart suiteward-migrate.service") {
+		t.Errorf("a service that runs is not restarted by a re-run: %v", g.f.lines())
 	}
 }

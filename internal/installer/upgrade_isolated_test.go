@@ -520,8 +520,11 @@ func TestUpgradeIsolatedBeforeMigrateSaysTheDatabaseIsUnchangedAndNamesTheOldUni
 		t.Fatalf("backups: %v", dirs)
 	}
 	for _, want := range []string{
-		"schema and the data are unchanged", dirs[0], filepath.Join(dirs[0], backupUnits), "suiteward install --tier isolated",
-		"suiteward.service is stopped", "systemctl --user daemon-reload", "systemctl --user start suiteward.service",
+		"schema and the data are unchanged", dirs[0], filepath.Join(dirs[0], backupUnits), "suiteward.service is stopped",
+		// To go back: the old units, then the reload and the start. To go on: the units name the new release, and the migration unit
+		// stays active from the old one, so it is restarted, not just the service started.
+		"copy them to " + unitDir(u.home) + ", run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`",
+		"run `systemctl --user daemon-reload`, then `systemctl --user restart suiteward-db.service` (only if the database image changed), then `systemctl --user restart suiteward-migrate.service` and `systemctl --user start suiteward.service`",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the advice lacks %q:\n%v", want, err)

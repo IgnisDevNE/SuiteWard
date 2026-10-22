@@ -560,7 +560,7 @@ func TestUpgradeColocatedBeforeMigrateSaysTheDatabaseIsUnchanged(t *testing.T) {
 	if err == nil {
 		t.Fatal("the database start must fail")
 	}
-	for _, want := range []string{"schema and the data are unchanged", u.backup(), "`suiteward install` with the options", "suiteward install --upgrade"} {
+	for _, want := range []string{"schema and the data are unchanged", u.backup(), "If the service is not running, run `suiteward install` with the options of this run", "suiteward install --upgrade"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the advice lacks %q:\n%v", want, err)
 		}

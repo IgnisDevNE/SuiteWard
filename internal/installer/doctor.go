@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -27,8 +28,8 @@ import (
 // It reads the settings at settingsPath (the default location when empty), checks the engine, the containers or units, the
 // pins, the ports and /status of the instance those settings describe, runs `suiteward check --json` in the service
 // container and merges its results. It prints `ok <name>` or `FAIL <name>: <detail> — <fix>` per result (the same style as
-// `check`; an ok line adds its detail after a colon), or with jsonOut the array of {name, ok, detail, fix}. The exit code is
-// 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
+// `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. The
+// exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
 func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, jsonOut bool) int {
 	d := &doctor{deps: deps, raw: map[string][]byte{}, units: map[string]map[string]string{}}
 	if err := deps.validate(); err != nil {
@@ -61,8 +62,6 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 	var b strings.Builder
 	for _, r := range results {
 		switch {
-		case r.OK && r.Detail != "":
-			b.WriteString("ok " + r.Name + ": " + r.Detail + "\n")
 		case r.OK:
 			b.WriteString("ok " + r.Name + "\n")
 		default:
@@ -92,7 +91,7 @@ var isolatedUnits = []struct{ name, active, sub string }{
 }
 
 // secretInURL hides the credentials of a URL that an error quoted.
-var secretInURL = regexp.MustCompile(`://[^/@\s"]*@`)
+var secretInURL = regexp.MustCompile(`://[^\s"]*@`) // up to the last @, so a password with a slash is hidden too
 
 // oneLine makes a command error fit one line of a result: no credentials of a quoted URL, no line breaks, bounded.
 func oneLine(text string) string {
@@ -301,15 +300,23 @@ func (d *doctor) runtimeFix(err error) string {
 // pipeOwner says which engine answers on the default Docker pipe; whichever engine started first owns it (spike S2). It is
 // information: the installer addresses its engine by its own endpoint and never uses the pipe.
 func (d *doctor) pipeOwner(ctx context.Context) string {
-	dk := &Docker{cli: cli{bin: "docker", base: []string{"--host", dockerPipe}, d: d.deps}}
+	// Docker Desktop's CLI by its path, as NewDocker does: the docker command of the PATH may be Podman's shim, which cannot
+	// address a named pipe.
+	programFiles := d.deps.Getenv("ProgramFiles")
+	if programFiles == "" {
+		programFiles = `C:\Program Files`
+	}
+	dk := &Docker{cli: cli{bin: programFiles + dockerDesktopRelativeCLI, base: []string{"--host", dockerPipe}, d: d.deps}}
 	engine, err := dk.identify(ctx)
 	switch {
 	case err == nil:
-		return strings.TrimSpace("Docker " + engine.Version)
+		return strings.TrimSpace(engine.Name + " " + engine.Version)
 	case errors.Is(err, ErrNotDocker):
 		return "an engine that is not Docker, normally the Podman machine"
+	case errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist):
+		return "unknown: there is no Docker CLI to ask"
 	default:
-		return "nothing that answers (or there is no docker CLI to ask)"
+		return "nothing that answers"
 	}
 }
 
@@ -741,8 +748,14 @@ func (d *doctor) checkInstance(ctx context.Context) {
 		d.results = append(d.results, list...)
 	case err != nil:
 		d.fail("instance.check", "`suiteward check --json` in "+ContainerServe+" failed without a result list: "+err.Error(),
-			"update the service image to a release that has `suiteward check`, or fix the error above")
+			d.readFix())
 	default:
-		d.fail("instance.check", "`suiteward check --json` printed no JSON result list: "+oneLine(string(out)), "update the service image to a release that has `suiteward check`")
+		d.fail("instance.check", "`suiteward check --json` printed no JSON result list: "+oneLine(string(out)), d.readFix())
 	}
+}
+
+// readFix points to the command whose output says why the instance check has no result list: the runtime hands doctor
+// the error of a command that exited non-zero, but not what it printed, and `check` exits 1 whenever one of its checks fails.
+func (d *doctor) readFix() string {
+	return fmt.Sprintf("read the results with `%s exec %s /suiteward check`; if the command is unknown, update the service image to a release that has it", d.rt.Name(), ContainerServe)
 }

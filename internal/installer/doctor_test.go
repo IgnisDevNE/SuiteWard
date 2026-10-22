@@ -476,7 +476,7 @@ func TestDoctorSaysWhoOwnsTheDockerPipeOnWindows(t *testing.T) {
 		}
 	})
 	t.Run("asks Docker Desktop's own CLI, not the docker command of the PATH", func(t *testing.T) {
-		f, s := colocated{goos: "windows", over: []rule{{match: pipe, out: dockerDesktopServer + "\n"}}}.build(t)
+		f, s := colocated{goos: "windows", over: []rule{{match: pipe + " info", out: `["name=seccomp"]` + "\n"}, {match: pipe, out: dockerDesktopServer + "\n"}}}.build(t)
 		_, res, _ := runDoctor(t, f, s)
 		if d := res["runtime"].Detail; !strings.Contains(d, "docker_engine") || !strings.Contains(d, "Docker Desktop") {
 			t.Errorf("the runtime result does not name Docker Desktop as the pipe's owner: %q", d)

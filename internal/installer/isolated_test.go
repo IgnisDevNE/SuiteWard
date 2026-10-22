@@ -38,10 +38,16 @@ type isoFake struct {
 	failOn      map[string]error  // command name + " " + argument text -> error
 	active      map[string]string
 	home        string
+
+	user           string // who `id -un` says is running (default: the service account)
+	passwdHome     string // the home the passwd entry of the account holds (default: home)
+	everActive     bool   // suiteward.service was active once before this run
+	serviceRunning bool   // suiteward.service is active when the run begins
+	started        bool   // suiteward.service was started by this run
 }
 
 func newIsoFake(home string) *isoFake {
-	return &isoFake{goos: "linux", euid: "1001", systemState: "running", linger: "yes", health: "healthy", secrets: map[string]string{}, failOn: map[string]error{}, active: map[string]string{}, home: home}
+	return &isoFake{goos: "linux", euid: "1001", systemState: "running", linger: "yes", health: "healthy", secrets: map[string]string{}, failOn: map[string]error{}, active: map[string]string{}, home: home, user: ServiceAccount, passwdHome: home}
 }
 
 var generatedUnits = []string{"suiteward-db.service", "suiteward-migrate.service", "suiteward.service", "suiteward-network.service", "suiteward-data-volume.service", "suiteward-db-data-volume.service"}
@@ -77,13 +83,25 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 	case c.name == "id" && line == "-u":
 		return []byte(f.euid + "\n"), nil
 	case c.name == "id" && line == "-un":
-		return []byte("suiteward\n"), nil
+		return []byte(f.user + "\n"), nil
+	case c.name == "getent":
+		return []byte("suiteward:x:1001:1001::" + f.passwdHome + ":/usr/sbin/nologin\n"), nil
+	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=ActiveEnterTimestamp"):
+		if f.everActive {
+			return []byte("Thu 2026-10-22 10:00:00 UTC\n"), nil
+		}
+		return []byte("\n"), nil
+	case c.name == "systemctl" && line == "--user start suiteward.service":
+		f.started = true
 	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=SystemState"):
 		return []byte(f.systemState + "\n"), nil
 	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=ActiveState --value "):
 		unit := strings.TrimPrefix(line, "--user show --property=ActiveState --value ")
 		if state, ok := f.active[unit]; ok {
 			return []byte(state + "\n"), nil
+		}
+		if unit == "suiteward.service" && !f.serviceRunning && !f.started {
+			return []byte("inactive\n"), nil
 		}
 		return []byte("active\n"), nil
 	case c.name == "loginctl":
@@ -473,8 +491,12 @@ func TestInstallIsolatedAdoptsAnInstallAndCarriesItsFields(t *testing.T) {
 	installedUnits(t, home, p)
 
 	f := newIsoFake(home)
-	if _, err := runIsolated(t, f, map[string]string{"image": ""}, ""); err != nil {
+	out, err := runIsolated(t, f, map[string]string{"image": ""}, "")
+	if err != nil {
 		t.Fatalf("an adopted install needs no --image: %v", err)
+	}
+	if !strings.Contains(out, "9081") || !strings.Contains(out, "8081") {
+		t.Errorf("an adopted port that replaces the requested one must be reported, with both values:\n%s", out)
 	}
 	serve, _ := os.ReadFile(filepath.Join(unitDir(home), "suiteward.container"))
 	if !strings.Contains(string(serve), "127.0.0.1:9081:8080") || !strings.Contains(string(serve), "@"+other) {
@@ -490,6 +512,88 @@ func TestInstallIsolatedAdoptsAnInstallAndCarriesItsFields(t *testing.T) {
 	}
 	if f.has("secret create") || f.has("start") {
 		t.Fatalf("nothing may change before that refusal: %v", f.lines())
+	}
+}
+
+func TestInstallIsolatedLetsAFailedFirstRunRetryWithAnotherImage(t *testing.T) {
+	other := "sha256:" + strings.Repeat("b", 64)
+	retry := func(t *testing.T, mutate func(home string, f *isoFake)) (string, *isoFake, string, error) {
+		t.Helper()
+		home := t.TempDir()
+		installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: DefaultEnvFile})
+		f := newIsoFake(home)
+		mutate(home, f)
+		out, err := runIsolated(t, f, map[string]string{"image": other}, "")
+		return home, f, out, err
+	}
+
+	// A first run that wrote the units and then failed: the service never ran and no settings were saved.
+	home, f, out, err := retry(t, func(string, *isoFake) {})
+	if err != nil {
+		t.Fatalf("a stack that never started may take another image: %v", err)
+	}
+	if !strings.Contains(out, testDigest) || !strings.Contains(out, other) {
+		t.Errorf("the replaced image must be reported with both digests:\n%s", out)
+	}
+	if serve := string(readFileOrFail(t, filepath.Join(unitDir(home), "suiteward.container"))); !strings.Contains(serve, "@"+other) {
+		t.Errorf("the units must carry the new image:\n%s", serve)
+	}
+	if !f.has("podman pull " + releaseImageRepo + "@" + other) {
+		t.Errorf("the new image is the one pulled: %v", f.lines())
+	}
+
+	// Anything that shows the stack ran refuses, as an upgrade.
+	for name, mutate := range map[string]func(string, *isoFake){
+		"service was active": func(_ string, f *isoFake) { f.everActive = true },
+		"settings were saved": func(home string, _ *isoFake) {
+			if err := SaveSettings(settingsFile(home), isolatedSettings()); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		if _, f, _, err := retry(t, mutate); err == nil || !strings.Contains(err.Error(), "--upgrade") || f.has("secret create") {
+			t.Fatalf("%s: a stack that ran needs --upgrade, got %v", name, err)
+		}
+	}
+}
+
+func TestInstallIsolatedRefusesAnotherUserOrAnUnexpectedHome(t *testing.T) {
+	for name, mutate := range map[string]func(*isoFake){
+		"another user":           func(f *isoFake) { f.user = "alice" },
+		"home differs from user": func(f *isoFake) { f.passwdHome = filepath.Join(f.home, "elsewhere") },
+		"relative home":          func(f *isoFake) { f.home, f.passwdHome = "relative/home", "relative/home" },
+	} {
+		f := newIsoFake(t.TempDir())
+		mutate(f)
+		_, err := runIsolated(t, f, nil, "")
+		if err == nil || !strings.Contains(err.Error(), "sudo -u suiteward") {
+			t.Fatalf("%s: the run must be refused with the command to use, got %v", name, err)
+		}
+		if f.has("podman") || f.has("secret create") || f.has("start") {
+			t.Fatalf("%s: nothing may run before the account is verified: %v", name, f.lines())
+		}
+	}
+}
+
+func TestInstallIsolatedSaysWhenTheOldEnvFileMayGoAccordingToTheServiceState(t *testing.T) {
+	for running, want := range map[bool]string{true: "on its next start", false: "now reads"} {
+		home := t.TempDir()
+		installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: "/etc/suiteward/github.env"})
+		if err := os.MkdirAll(filepath.Dir(envFile(home)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(envFile(home), []byte("SUITEWARD_GITHUB_APP_ID=1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f := newIsoFake(home)
+		f.serviceRunning, f.everActive = running, running
+		out, err := runIsolated(t, f, map[string]string{"image": ""}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, want) || !strings.Contains(out, "sudo rm /etc/suiteward/github.env") {
+			t.Errorf("running=%v: the output must say %q and name the file to remove:\n%s", running, want, out)
+		}
 	}
 }
 

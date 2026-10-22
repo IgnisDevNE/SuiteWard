@@ -23,6 +23,8 @@ type hostFake struct {
 	metadata    string // the HTTP code the metadata probe prints; empty means the probe fails (no answer)
 	nftOutput   string
 	paths       map[string]bool // paths `test -e` finds
+	symlinks    map[string]bool // paths `test -L` finds
+	ruleOnDisk  string          // the nft rule file as it is on the host; empty means there is none
 	envsDiffer  bool
 	dnfFixesCVE bool
 }
@@ -33,6 +35,7 @@ func newHostFake() *hostFake {
 		subuid: "suiteward:100000:65536\n", subgid: "suiteward:100000:65536\n",
 		nftOutput: "table inet suiteward_imds { chain output { meta skuid suiteward ip daddr 169.254.169.254 reject } }",
 		paths:     map[string]bool{"/etc/suiteward/github.env": true},
+		symlinks:  map[string]bool{},
 	}
 }
 
@@ -111,6 +114,15 @@ func (h *hostFake) answerSystem(c call) ([]byte, error) {
 		return []byte("/usr/sbin/nft\n"), nil
 	case c.name == "nft":
 		return []byte(h.nftOutput), nil
+	case c.name == "cat" && line == imdsRuleFile:
+		if h.ruleOnDisk == "" {
+			return nil, fail
+		}
+		return []byte(h.ruleOnDisk), nil
+	case c.name == "test" && strings.HasPrefix(line, "-L "):
+		if !h.symlinks[strings.TrimPrefix(line, "-L ")] {
+			return nil, fail
+		}
 	case c.name == "test":
 		if !h.paths[strings.TrimPrefix(line, "-e ")] {
 			return nil, fail
@@ -483,5 +495,56 @@ func TestPrepareHostPrintsTheNextCommandAndNeverRunsTheServiceStep(t *testing.T)
 		if c.name == "sudo" || c.name == "su" || c.name == "runuser" {
 			t.Fatalf("the service step must never run from the host step: %v", c)
 		}
+	}
+}
+
+func TestPrepareHostRefusesASymlinkWhereRootWouldChownAndCopy(t *testing.T) {
+	for _, link := range []string{"/home/suiteward/.config", "/home/suiteward/.config/suiteward", "/home/suiteward/.config/suiteward/github.env"} {
+		h := newHostFake()
+		h.symlinks[link] = true
+		_, err := runHost(t, h, declineMetadataRule, false, "")
+		if err == nil || !strings.Contains(err.Error(), "symbolic link") || !strings.Contains(err.Error(), link) {
+			t.Fatalf("a symbolic link at %s must stop the run naming it, got %v", link, err)
+		}
+		if h.has("install", "-m 0700") && link != "/home/suiteward/.config/suiteward/github.env" || h.has("install", "-m 0600 /etc") {
+			t.Fatalf("root must not chown or copy through a link at %s: %v", link, h.lines())
+		}
+	}
+}
+
+func TestPrepareHostRestartsAnInstalledRuleUnitOnlyWhenTheRuleChanged(t *testing.T) {
+	first := newHostFake()
+	first.metadata = "200"
+	if _, err := runHost(t, first, map[string]string{"metadata-rule": "yes"}, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	var rule string
+	for _, c := range first.callsTo("tee") {
+		if strings.HasSuffix(c.line(), "imds-block.nft") {
+			rule = c.stdin
+		}
+	}
+	if first.has("systemctl", "restart") {
+		t.Fatalf("a first install starts the unit with enable --now, no restart: %v", first.lines())
+	}
+
+	changed := newHostFake()
+	changed.paths["/etc/systemd/system/suiteward-imds-block.service"] = true
+	changed.ruleOnDisk = "table inet suiteward_imds { an older rule }\n"
+	if _, err := runHost(t, changed, nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !changed.has("systemctl", "restart suiteward-imds-block.service") {
+		t.Fatalf("enable --now does nothing for a unit that is active, so a changed rule needs a restart: %v", changed.lines())
+	}
+
+	same := newHostFake()
+	same.paths["/etc/systemd/system/suiteward-imds-block.service"] = true
+	same.ruleOnDisk = rule
+	if _, err := runHost(t, same, nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if same.has("systemctl", "restart") {
+		t.Fatalf("an unchanged rule needs no restart: %v", same.lines())
 	}
 }

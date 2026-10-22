@@ -117,6 +117,14 @@ type githubEnv struct {
 	ManifestWait    time.Duration // the manifest code, 15 minutes
 	InstallWait     time.Duration // the installation, 10 minutes
 	PollEvery       time.Duration // 5 seconds
+
+	// StoreKey puts a key the flow created into the secret store, right after the conversion and before anything else can fail.
+	StoreKey func(ctx context.Context, key []byte) error
+	// Existing is the GitHub part of the settings. With an App id and an installation id, an App whose key secret exists
+	// (KeyExists) is reused instead of created; ReadKey reads that secret to verify the App.
+	Existing  *GitHub
+	KeyExists func(ctx context.Context) (bool, error)
+	ReadKey   func(ctx context.Context) ([]byte, error)
 }
 
 func (e githubEnv) withDefaults() (githubEnv, error) {

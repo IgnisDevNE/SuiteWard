@@ -480,16 +480,73 @@ func TestUpgradeUsageIsInTheHelp(t *testing.T) {
 	}
 }
 
-func TestUpgradeBacksUpAServiceThatDoesNotAnswer(t *testing.T) {
+func TestUpgradeStopsWhenTheServiceDoesNotAnswerStatus(t *testing.T) {
 	u := newUpgradeHarness(t, func(s *Settings) { s.HTTPPort, s.MCPPort = 1, 2 }) // nothing listens there
-	if err := u.upgrade("--image", testImage, "--yes"); err != nil {
-		t.Fatalf("a service that is down is often the reason to upgrade: %v", err)
+	err := u.upgrade("--image", testImage, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "backup") || !strings.Contains(err.Error(), "status") {
+		t.Fatalf("status.json is part of the backup, so a service that does not answer fails it: %v", err)
 	}
-	dir := u.backup()
-	if !exists(filepath.Join(dir, "suiteward.sql")) || exists(filepath.Join(dir, "status.json")) {
-		t.Errorf("the backup should hold the data and no status")
+	u.noChanges()
+	if dirs, _ := filepath.Glob(filepath.Join(u.backups, "*")); len(dirs) != 0 {
+		t.Errorf("a partial backup was left behind: %v", dirs)
 	}
-	if !strings.Contains(u.out.String(), "status.json was not written") {
-		t.Errorf("the missing status must be reported:\n%s", u.out.String())
+}
+
+func TestInstallRefusesToChangeTheReleaseOfAStackThatRuns(t *testing.T) {
+	h := newHarness(t, "linux")
+	h.existingStack(colocatedSettings(), oldImage, nil)
+	h.have(KindNetwork, NetworkName)
+	h.have(KindVolume, VolumeData, VolumeDBData)
+	h.busy[18081], h.busy[18091] = true, true // the running service holds its own ports
+	err := h.podman("--http-port", "18081", "--mcp-port", "18091") // --image testImage: not the installed release
+	if err == nil || !strings.Contains(err.Error(), "--upgrade") {
+		t.Fatalf("a different release than the installed one is an upgrade, which backs up first: %v", err)
+	}
+	h.mustNotMutate()
+
+	// The installed release itself is a plain re-run.
+	h = newHarness(t, "linux")
+	h.existingStack(colocatedSettings(), testImage, nil)
+	h.have(KindNetwork, NetworkName)
+	h.have(KindVolume, VolumeData, VolumeDBData)
+	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth)
+	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
+	h.roleExists = true
+	h.busy[18081], h.busy[18091] = true, true
+	if err := h.podman("--http-port", "18081", "--mcp-port", "18091"); err != nil {
+		t.Fatalf("a re-run on the installed release must work: %v", err)
+	}
+}
+
+func TestUpgradeColocatedKeepsItsBackupBesideTheTokenNotInTheRoamingProfile(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	tokens := filepath.Join(u.dir, "private")
+	token := filepath.Join(tokens, "mcp-token")
+	if err := os.MkdirAll(tokens, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(token, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--settings", u.settingsPath(), "--token-file", token, "--upgrade", "--yes", "--runtime", "podman", "--connection", "pm", "--image", testImage}
+	if err := Install(context.Background(), args, u.env()); err != nil {
+		t.Fatal(err)
+	}
+	if dirs, _ := filepath.Glob(filepath.Join(tokens, "backups", "suiteward-backup-*")); len(dirs) != 1 {
+		t.Errorf("the backup is not beside the token file: %v", dirs)
+	}
+	if dirs, _ := filepath.Glob(filepath.Join(u.dir, "backups", "*")); len(dirs) != 0 {
+		t.Errorf("a backup was made beside the settings, which live in the roaming profile by default: %v", dirs)
+	}
+}
+
+func TestUpgradeAsksForTheTierOfAHostWithoutSettingsOnLinux(t *testing.T) {
+	h := newHarness(t, "linux")
+	err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--upgrade", "--yes", "--image", testImage}, h.newEnv())
+	if err == nil || !strings.Contains(err.Error(), "--tier") {
+		t.Fatalf("got %v, want a request for --tier", err)
+	}
+	if len(h.f.calls) != 0 {
+		t.Errorf("something ran before the tier was known: %v", h.f.lines())
 	}
 }

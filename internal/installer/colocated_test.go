@@ -1256,6 +1256,7 @@ func TestInstallDockerDoesNotAdoptAndRerunsFromItsSettings(t *testing.T) {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
+	again.f.on("--format {{json .State}} suiteward", stateExited) // a service that runs as installed is left alone (colocated_rerun_test.go)
 	again.roleExists = true
 	if err := os.WriteFile(again.tokenPath(), []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1411,6 +1412,7 @@ func TestInstallRemembersTheImageSoADockerRerunNeedsNoFlag(t *testing.T) {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
+	again.f.on("--format {{json .State}} suiteward", stateExited) // a service that runs as installed is left alone (colocated_rerun_test.go)
 	again.roleExists = true
 	if err := again.install("--runtime", "docker", "--accept-docker"); err != nil {
 		t.Fatalf("a re-run without --image: %v", err)

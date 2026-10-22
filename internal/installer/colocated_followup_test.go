@@ -478,3 +478,41 @@ func TestMainInstallStillInstalls(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 }
+
+// ---- the image of the release binary ----
+
+func TestInstallDefaultsTheImageToTheReleaseTheBinaryCarries(t *testing.T) {
+	was := ImageDigest
+	ImageDigest = testDigest
+	t.Cleanup(func() { ImageDigest = was })
+	h := newHarness(t, "linux")
+	if err := h.install("--runtime", "podman", "--connection", "pm"); err != nil {
+		t.Fatalf("no --image on a release binary: %v", err)
+	}
+	if run := h.f.find("--name suiteward --network"); len(run) != 1 || !strings.HasSuffix(run[0].line(), " "+testImage) {
+		t.Errorf("the service did not start from the embedded release: %v", run)
+	}
+	if got := h.settings().Image; got != testImage {
+		t.Errorf("saved image %q", got)
+	}
+	// An installed image is kept by a plain re-run, and --image still wins.
+	h2 := newHarness(t, "linux")
+	other := "ghcr.io/ignisdevne/suiteward@sha256:" + strings.Repeat("c", 64)
+	if err := h2.install("--runtime", "podman", "--connection", "pm", "--image", other); err != nil {
+		t.Fatal(err)
+	}
+	if got := h2.settings().Image; got != other {
+		t.Errorf("--image did not win over the embedded digest: %q", got)
+	}
+}
+
+func TestInstallOfADevelopmentBuildNeedsTheImage(t *testing.T) {
+	was := ImageDigest
+	ImageDigest = ""
+	t.Cleanup(func() { ImageDigest = was })
+	h := newHarness(t, "linux")
+	if err := h.install("--runtime", "podman", "--connection", "pm"); err == nil || !strings.Contains(err.Error(), "image") {
+		t.Fatalf("got %v", err)
+	}
+	h.mustNotMutate()
+}

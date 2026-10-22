@@ -748,14 +748,14 @@ func TestInstallRunsTheGitHubFlowAndAppliesItsResult(t *testing.T) {
 	if len(h.f.tty) != 0 {
 		t.Error("setup ran without a terminal")
 	}
-	want := "suiteward enroll --settings " + h.settingsPath()
+	want := "suiteward enroll --settings " + quoteArg(h.settingsPath())
 	if strings.Contains(h.out.String(), "exec -it") {
 		t.Errorf("the next steps still name the raw engine command:\n%s", h.out.String())
 	}
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the next steps lack %q:\n%s", want, h.out.String())
 	}
-	if !strings.Contains(h.out.String(), "suiteward doctor --settings "+h.settingsPath()) {
+	if !strings.Contains(h.out.String(), "suiteward doctor --settings "+quoteArg(h.settingsPath())) {
 		t.Errorf("the next steps do not say to run doctor:\n%s", h.out.String())
 	}
 }
@@ -1340,7 +1340,7 @@ func TestInstallSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 			t.Fatalf("terminal=%v: setup ran although an owner is enrolled: %v", terminal, h.f.tty)
 		}
 		out := h.out.String()
-		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "suiteward enroll --settings " + h.settingsPath()} {
+		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
 			if !strings.Contains(out, want) {
 				t.Errorf("terminal=%v: the output lacks %q:\n%s", terminal, want, out)
 			}
@@ -1361,7 +1361,7 @@ func TestInstallSkipsSetupWhenStatusCannotBeRead(t *testing.T) {
 	if len(h.f.tty) != 0 {
 		t.Fatalf("setup ran although /status could not be read: %v", h.f.tty)
 	}
-	for _, want := range []string{"connection refused", "suiteward enroll --settings " + h.settingsPath()} {
+	for _, want := range []string{"connection refused", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
 		if !strings.Contains(h.out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, h.out.String())
 		}

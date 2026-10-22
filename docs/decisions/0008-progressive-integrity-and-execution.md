@@ -45,14 +45,14 @@ The owner brought forward three controls for the release image; the threat is a 
 - **Keyless signing.** The `publish` job of `release.yml` (the owner-approved `release` environment) signs the pushed index digest with cosign through GitHub's OIDC token (`id-token: write` on that job only). The certificate identity is that workflow at a `refs/tags/v*` ref; the issuer is `https://token.actions.githubusercontent.com`. Signing the index covers the attestation manifests it references, so none is signed separately. `:deploy` builds are not signed: the owner's approval of the `remote-poc` environment and the digest-pinned units are their control.
 - **Order.** The build pushes only the version tag. After the signature is created and verified, a final release moves `latest-stable` to the signed digest; a pre-release never does. The version tag is therefore public before signing completes: a failed signing leaves an unsigned version tag and a red job, while `latest-stable` moves only after a verified signature.
 - **Transparency.** Keyless signing records the signature in the public Rekor log, which publishes the repository, workflow and tag of each release. The owner confirmed this on 2026-10-20.
-
-## Amendment 2026-10-21: the Deploy workflow is retired
-
-`deploy.yml`, its `:deploy` tag and the `remote-poc` environment were removed (D-DEPLOY). The statements above about `deploy.yml` describe it as it was. `release.yml` is now the only workflow that pushes an image, so every published image carries the provenance, the SBOM and the signature. CI builds the image for both platforms without pushing it.
 - **Verification.** The workflow verifies the signature right after signing. An operator runs `scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<digest>` (a wrapper over `cosign verify` with the fixed identity and issuer; a tag reference is refused) before pinning the digest, and may read the attestations with `docker buildx imagetools inspect <image>@<digest> --format '{{ json .Provenance }}'` and `--format '{{ json .SBOM }}'`.
 - **Tool pin.** cosign 3.1.4 (linux-amd64) is pinned by URL and SHA-256 in `dev/tools.json` and checked in the workflow before it runs; no third-party action is used.
 
 This verifies that the image was built and signed by this repository's release workflow at a tag. It does not prove the source is free of defects, and it does not replace the owner's approval of the release.
+
+## Amendment 2026-10-21: the Deploy workflow is retired
+
+`deploy.yml`, its `:deploy` tag and the `remote-poc` environment were removed (D-DEPLOY). The statements above about `deploy.yml` describe it as it was. `release.yml` is now the only workflow that pushes an image, so every published image carries the provenance, the SBOM and the signature. CI builds the image for both platforms without pushing it.
 
 ## Alternatives and consequences
 

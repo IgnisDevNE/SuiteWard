@@ -20,6 +20,8 @@ type githubInstall struct {
 	out io.Writer
 	s   Settings // the GitHub flow changes its GitHub part
 
+	pending *PendingApp // the App an earlier run created and did not finish with
+
 	githubKey   []byte // the App key to store, nil when its secret exists or GitHub is off
 	setupOwner  string // the instance owner, when the GitHub flow ran: the login setup enrolls
 	setupChecks map[string]string

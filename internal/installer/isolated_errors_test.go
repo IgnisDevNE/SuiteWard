@@ -374,35 +374,44 @@ func TestEnsureSecretsStopsAtTheFirstFailingCall(t *testing.T) {
 	}
 }
 
-// The install builds the files of the account where they go; when a place is taken by a file, it stops and names the place.
+// The install builds the files of the account where they go; when a place is taken by a directory it cannot read as a file, it stops
+// and names the place before it changes anything.
 func TestInstallIsolatedStopsWhenAFilePlaceIsTaken(t *testing.T) {
-	cases := []struct {
-		name  string
-		block func(home string) string // the path made into a file
-	}{
-		{"the configuration directory", func(home string) string { return filepath.Join(home, ".config", "suiteward") }},
-		{"the units directory", func(home string) string { return filepath.Join(home, ".config", "containers", "systemd") }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			place := tc.block(home)
-			if err := os.MkdirAll(filepath.Dir(place), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(place, []byte("x"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			f := newIsoFake(home)
-			_, err := runIsolated(t, f, nil, "")
-			if err == nil || !strings.Contains(err.Error(), place) {
-				t.Fatalf("install = %v, want an error naming %s", err, place)
-			}
-			if f.has("daemon-reload") {
-				t.Errorf("the units were loaded although a file place was taken: %v", f.lines())
-			}
-		})
-	}
+	t.Run("the env file is a directory", func(t *testing.T) {
+		home := t.TempDir()
+		place := envFile(home)
+		if err := os.MkdirAll(place, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		f := newIsoFake(home)
+		g := isoGitHubOn(t, f)
+		g.answers = map[string]string{"github-app-id": "", "github-installation-id": "", "github-repositories": "", "github-owner": ""}
+		err := g.run()
+		if err == nil || !strings.Contains(err.Error(), place) {
+			t.Fatalf("install = %v, want an error naming %s", err, place)
+		}
+		if f.has("secret create") || f.has("daemon-reload") {
+			t.Errorf("something was changed although the env file could not be read: %v", f.lines())
+		}
+	})
+	t.Run("the units directory is a file", func(t *testing.T) {
+		home := t.TempDir()
+		place := unitDir(home)
+		if err := os.MkdirAll(filepath.Dir(place), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(place, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f := newIsoFake(home)
+		_, err := runIsolated(t, f, nil, "")
+		if err == nil || !strings.Contains(err.Error(), place) {
+			t.Fatalf("install = %v, want an error naming %s", err, place)
+		}
+		if f.has("daemon-reload") {
+			t.Errorf("the units were loaded although their place is taken: %v", f.lines())
+		}
+	})
 }
 
 func TestInstallIsolatedRefusesAMalformedEnvFileBeforeChangingAnything(t *testing.T) {

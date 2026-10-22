@@ -212,3 +212,9 @@ func writeFileAtomic(path string, data []byte, dirMode os.FileMode) error {
 	}
 	return nil
 }
+
+// Flushes of writeFileAtomic; tests replace them to see when they happen.
+var (
+	syncFile = func(*os.File) error { return nil }
+	syncDir  = func(string) error { return nil }
+)

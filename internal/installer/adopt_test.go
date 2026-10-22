@@ -334,9 +334,11 @@ func TestAdoptContainersStopsOnAnythingUnknown(t *testing.T) {
 		"another network": {ContainerServe, func(o map[string]any) {
 			o["NetworkSettings"] = map[string]any{"Networks": map[string]any{"host": map[string]any{}}}
 		}, "etwork"},
-		"another stop timeout":   {ContainerServe, func(o map[string]any) { cfg(o)["StopTimeout"] = 10 }, "top"},
-		"another database user":  {ContainerDB, func(o map[string]any) { cfg(o)["User"] = "0:0" }, "ser"},
-		"a changed health check": {ContainerDB, func(o map[string]any) { cfg(o)["Healthcheck"].(map[string]any)["Retries"] = 3 }, "ealth"},
+		"another stop timeout":        {ContainerServe, func(o map[string]any) { cfg(o)["StopTimeout"] = 10 }, "top"},
+		"another database user":       {ContainerDB, func(o map[string]any) { cfg(o)["User"] = "0:0" }, "ser"},
+		"a changed health check":      {ContainerDB, func(o map[string]any) { cfg(o)["Healthcheck"].(map[string]any)["Retries"] = 3 }, "ealth"},
+		"another database image":      {ContainerDB, func(o map[string]any) { cfg(o)["Image"] = "docker.io/library/postgres:17" }, "image"},
+		"another service image shape": {ContainerServe, func(o map[string]any) { cfg(o)["Image"] = "" }, "image"},
 		"another database image setting": {ContainerDB, func(o map[string]any) {
 			cfg(o)["Env"] = append(cfg(o)["Env"].([]string), "POSTGRES_INITDB_ARGS=--data-checksums")
 		}, "POSTGRES_INITDB_ARGS"},
@@ -391,5 +393,37 @@ func TestParseMemory(t *testing.T) {
 		if _, err := parseMemory(in); err == nil {
 			t.Errorf("%q accepted", in)
 		}
+	}
+}
+
+func TestAdoptContainersStopsWhenMigrateRunsAnotherImage(t *testing.T) {
+	s := colocatedSettings()
+	inspected := inspectedStack(t, s, testImage, nil)
+	stack, _ := ColocatedStack(s, testImage)
+	inspected[ContainerMigrate] = podmanInspect(t, stack.Migrate, func(o map[string]any) {
+		o["Config"].(map[string]any)["Image"] = releaseImagePrefix + "sha256:" + strings.Repeat("c", 64)
+	})
+	diff := asDiffError(t, func() error { _, err := AdoptContainers(inspected); return err }())
+	if !diffMentions(diff, ContainerMigrate) || !diffMentions(diff, "image") {
+		t.Fatalf("got %v", diff)
+	}
+}
+
+func TestAdoptContainersReportsEveryDifferenceAtOnce(t *testing.T) {
+	inspected := inspectedStack(t, localPS1Settings(), testImage, func(c string, obj map[string]any) {
+		switch c {
+		case ContainerServe: // a known field that cannot be carried: the tier
+			cfg := obj["Config"].(map[string]any)
+			cfg["Env"] = append(cfg["Env"].([]string), "SUITEWARD_INSTALLATION_TIER=isolated")
+		case ContainerDB:
+			obj["HostConfig"].(map[string]any)["ReadonlyRootfs"] = false
+		}
+	})
+	diff := asDiffError(t, func() error { _, err := AdoptContainers(inspected); return err }())
+	if !diffMentions(diff, "SUITEWARD_INSTALLATION_TIER") || !diffMentions(diff, ContainerDB) {
+		t.Fatalf("not every difference was reported: %v", diff)
+	}
+	if !strings.Contains(diff.Error(), "run again") {
+		t.Fatalf("the error gives no way forward: %v", diff)
 	}
 }

@@ -82,6 +82,7 @@ type Runtime interface {
 	Exec(ctx context.Context, container string, argv []string, stdin io.Reader) ([]byte, error)
 	ExecTTY(ctx context.Context, container string, argv []string) error // the real terminal, nothing captured
 	State(ctx context.Context, container string) (ContainerState, error)
+	Inspect(ctx context.Context, container string) ([]byte, error) // the JSON of `inspect --type container`, for the adoption guard
 	Secrets() SecretStore
 }
 

@@ -113,7 +113,7 @@ func TestDockerSecretsGoToOneVolumePerConsumer(t *testing.T) {
 	for i, run := range runs {
 		line := run.line()
 		for _, want := range []string{
-			"run --rm -i --user 0 --entrypoint sh --volume " + wantVolumes[i] + ":/s " + postgres + " -c ",
+			"run --rm -i --network none --user 0 --entrypoint sh --volume " + wantVolumes[i] + ":/s " + postgres + " -c ",
 			"cat > /s/database-url", "chown 65532:65532 /s/database-url", "chmod 0400 /s/database-url", "umask 077",
 		} {
 			if !strings.Contains(line, want) {
@@ -150,8 +150,8 @@ func TestDockerWriteWithoutReplaceKeepsAnExistingSecret(t *testing.T) {
 	f := newFake("linux")
 	secrets := newDocker(t, f, dockerDesktopServer, `[]`, DockerOptions{}).Secrets()
 	f.on("volume ls", "suiteward-secrets-"+ContainerServe+"\n").on("test -f", "yes\n")
-	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), false); err == nil {
-		t.Fatal("an existing secret was overwritten without replace")
+	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), false); !errors.Is(err, ErrSecretExists) {
+		t.Fatalf("got %v, want ErrSecretExists", err)
 	}
 	if len(f.find("cat >")) != 0 {
 		t.Fatal("the secret was written")
@@ -246,5 +246,25 @@ func TestPostgresImageComesFromTheEmbeddedDatabaseUnit(t *testing.T) {
 	}
 	if !regexp.MustCompile(`^docker\.io/library/postgres:[^@]+@sha256:[0-9a-f]{64}$`).MatchString(image) {
 		t.Fatalf("got %q", image)
+	}
+}
+
+func TestPodmanWriteWithoutReplaceKeepsAnExistingSecret(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("linux")
+	secrets := newRootlessPodman(t, f, "").Secrets()
+	f.on("secret ls", SecretMCPAuth+"\n")
+	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), false); !errors.Is(err, ErrSecretExists) {
+		t.Fatalf("got %v, want ErrSecretExists", err)
+	}
+	if len(f.find("secret create")) != 0 {
+		t.Fatal("podman secret create ran for an existing secret")
+	}
+	// Replacing needs no look first.
+	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), true); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.find("secret create --replace")) != 1 {
+		t.Fatalf("calls: %v", f.lines())
 	}
 }

@@ -2,6 +2,7 @@ package installer
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -201,5 +202,53 @@ func TestDefaultSettingsPathIsPerUser(t *testing.T) {
 	}
 	if want := filepath.Join(dir, "suiteward", "settings.yaml"); got != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// The temporary file is flushed before it replaces the settings, and the directory entry after: a crash must leave the
+// old file or the new one, never an empty one.
+func TestWriteFileAtomicFlushesBeforeAndAfterTheRename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.yaml")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var events []string
+	origFile, origDir := syncFile, syncDir
+	t.Cleanup(func() { syncFile, syncDir = origFile, origDir })
+	syncFile = func(f *os.File) error {
+		current, _ := os.ReadFile(path)
+		written, _ := os.ReadFile(f.Name())
+		events = append(events, fmt.Sprintf("file(old kept=%t, temp written=%t)", string(current) == "old", string(written) == "new"))
+		return nil
+	}
+	syncDir = func(d string) error {
+		current, _ := os.ReadFile(path)
+		events = append(events, fmt.Sprintf("dir %s (replaced=%t)", filepath.Base(d), string(current) == "new"))
+		return nil
+	}
+	if err := writeFileAtomic(path, []byte("new"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"file(old kept=true, temp written=true)", "dir " + filepath.Base(dir) + " (replaced=true)"}
+	if strings.Join(events, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %v, want %v", events, want)
+	}
+}
+
+func TestWriteFileAtomicFailsWhenTheFlushFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.yaml")
+	orig := syncFile
+	t.Cleanup(func() { syncFile = orig })
+	syncFile = func(*os.File) error { return errors.New("disk full") }
+	if err := writeFileAtomic(path, []byte("new"), 0o700); err == nil {
+		t.Fatal("a failed flush was ignored")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the file was put in place after a failed flush: %v", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("a temporary file was left behind: %v", entries)
 	}
 }

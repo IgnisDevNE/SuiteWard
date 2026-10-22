@@ -186,7 +186,7 @@ func TestPodmanCommonOperations(t *testing.T) {
 	if err != nil || state.Status != "running" || state.Health != "healthy" {
 		t.Fatalf("state: %+v %v", state, err)
 	}
-	if len(f.find("inspect --format {{json .State}} "+ContainerDB)) != 1 {
+	if len(f.find("inspect --type container --format {{json .State}} "+ContainerDB)) != 1 {
 		t.Fatalf("calls: %v", f.lines())
 	}
 	// A container without a health check has no Health in its state; the template of an earlier version failed on it.
@@ -257,5 +257,19 @@ func servingSpec() RunSpec {
 		Secrets: []string{SecretDatabaseURL, SecretMCPAuth}, Volumes: []string{VolumeData + ":/data"},
 		Health:  &Health{Cmd: "pg_isready", Interval: "5s", Timeout: "3s", Retries: 12},
 		Publish: []string{"127.0.0.1:8081:8080"}, Args: []string{"serve"},
+	}
+}
+
+func TestInspectAsksForAContainer(t *testing.T) {
+	// The service container and the network are both called suiteward; without --type inspect may answer for the network.
+	f := newFake("linux")
+	rt := newRootlessPodman(t, f, "")
+	f.on("inspect", `[{"Name":"suiteward"}]`)
+	out, err := rt.Inspect(context.Background(), ContainerServe)
+	if err != nil || string(out) != `[{"Name":"suiteward"}]` {
+		t.Fatalf("got %q, %v", out, err)
+	}
+	if len(f.find("inspect --type container suiteward")) != 1 {
+		t.Fatalf("calls: %v", f.lines())
 	}
 }

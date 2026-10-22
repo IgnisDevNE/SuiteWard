@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -238,5 +239,30 @@ func TestLoadAnswersKeepsTheTextOfEveryScalar(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("%s: got %q, want %q", k, got[k], v)
 		}
+	}
+}
+
+func TestLoadAnswersRefusesAFileOthersCanRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes do not apply on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "answers.yaml")
+	if err := os.WriteFile(path, []byte("runtime: podman\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []os.FileMode{0o640, 0o604, 0o644, 0o666} {
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadAnswers(path)
+		if err == nil || !strings.Contains(err.Error(), "chmod 600") {
+			t.Errorf("mode %o: got %v, want a refusal that names chmod 600", mode, err)
+		}
+	}
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAnswers(path); err != nil {
+		t.Errorf("an owner-only file was refused: %v", err)
 	}
 }

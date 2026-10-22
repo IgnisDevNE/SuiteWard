@@ -144,3 +144,7 @@ func (c *cli) State(ctx context.Context, container string) (ContainerState, erro
 	}
 	return result, nil
 }
+
+func (c *cli) Inspect(ctx context.Context, container string) ([]byte, error) {
+	return nil, fmt.Errorf("inspect %s: not implemented", container)
+}

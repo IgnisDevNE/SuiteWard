@@ -44,10 +44,14 @@ type isoFake struct {
 	everActive     bool   // suiteward.service was active once before this run
 	serviceRunning bool   // suiteward.service is active when the run begins
 	started        bool   // suiteward.service was started by this run
+
+	dump    string          // what pg_dump prints in the database container
+	noImage bool            // no image is in the engine yet, so every pull is real
+	objects map[string]bool // volumes and networks that exist, by name
 }
 
 func newIsoFake(home string) *isoFake {
-	return &isoFake{goos: "linux", euid: "1001", systemState: "running", linger: "yes", health: "healthy", secrets: map[string]string{}, failOn: map[string]error{}, active: map[string]string{}, home: home, user: ServiceAccount, passwdHome: home}
+	return &isoFake{goos: "linux", euid: "1001", systemState: "running", linger: "yes", health: "healthy", secrets: map[string]string{}, objects: map[string]bool{}, failOn: map[string]error{}, active: map[string]string{}, home: home, user: ServiceAccount, passwdHome: home}
 }
 
 var generatedUnits = []string{"suiteward-db.service", "suiteward-migrate.service", "suiteward.service", "suiteward-network.service", "suiteward-data-volume.service", "suiteward-db-data-volume.service"}
@@ -138,6 +142,21 @@ func (f *isoFake) answerPodman(c call) ([]byte, error) {
 		return []byte(f.secrets[c.args[len(c.args)-1]] + "\n"), nil
 	case strings.HasPrefix(line, "secret create"):
 		f.secrets[c.args[len(c.args)-2]] = c.stdin
+	case strings.HasPrefix(line, "volume export "):
+		fields := strings.Fields(line)
+		if len(fields) == 5 && fields[3] == "--output" {
+			return nil, os.WriteFile(fields[4], []byte("TARBYTES"), 0o644) //nolint:gosec // the engine writes it world-readable
+		}
+	case strings.HasPrefix(line, "exec -i suiteward-db pg_dump"):
+		return []byte(f.dump), nil
+	case strings.HasPrefix(line, "image inspect "):
+		if f.noImage {
+			return nil, errors.New("no such image")
+		}
+	case strings.HasPrefix(line, "volume ls --filter name="), strings.HasPrefix(line, "network ls --filter name="):
+		if name := strings.Fields(line)[3][len("name="):]; f.objects[name] {
+			return []byte(name + "\n"), nil
+		}
 	case strings.HasPrefix(line, "inspect --type container --format {{json .State}}"):
 		return []byte(`{"Status":"running","Health":{"Status":"` + f.health + `"}}`), nil
 	case strings.HasPrefix(line, "exec -i suiteward-db psql") && strings.Contains(line, "-t -A"):

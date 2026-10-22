@@ -19,6 +19,7 @@ var ErrUsage = errors.New("usage")
 
 // Usage is printed with a usage error; each command lists its flags with --help.
 const Usage = `usage: suiteward install [flags]
+       suiteward install --upgrade [--yes] [--backup-dir DIR] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
        suiteward uninstall [--purge] [--yes] [flags]
        suiteward doctor [--json] [--settings PATH]
@@ -136,6 +137,9 @@ func newInstallFlagSet() *flag.FlagSet {
 	}
 	fs.Var(&listFlag{}, "test-check", "the test check of a repository, OWNER/NAME=CHECK; repeat it, or give one plain name for a single repository")
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
+	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
+	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading")
+	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: backups beside the settings file)")
 	return fs
 }
 
@@ -190,6 +194,9 @@ func Install(ctx context.Context, args []string, env Env) error {
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {
 		return err
+	}
+	if flags["upgrade"] == "true" {
+		return errors.New("--upgrade is not implemented yet")
 	}
 	answers := map[string]string{}
 	if path, ok := flags["answers"]; ok {

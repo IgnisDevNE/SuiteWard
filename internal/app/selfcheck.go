@@ -99,15 +99,15 @@ func parseSelfCheck(args []string, stderr io.Writer) (bool, error) {
 // The database is checked first because the protection check needs the test check of the enrollment.
 func runSelfCheck(ctx context.Context, cfg config.Config, asJSON bool, stdout, stderr io.Writer) int {
 	schema, role, enrolled, projects := selfCheckDatabaseResults(ctx, cfg)
-	var github []selfCheckResult
+	var results []selfCheckResult
 	if cfg.GitHub == nil { // the install allows an instance without GitHub: its checks are warnings, the database ones still run
 		for _, name := range []string{nameApp, nameInstallation, namePermissions, nameRepositories} {
-			github = append(github, checkNotConfigured(name))
+			results = append(results, checkNotConfigured(name))
 		}
 	} else {
-		github = selfCheckGitHubResults(ctx, *cfg.GitHub, projects)
+		results = selfCheckGitHubResults(ctx, *cfg.GitHub, projects)
 	}
-	results := append(github, enrolled, schema, role)
+	results = append(results, enrolled, schema, role)
 	if err := writeSelfCheck(stdout, results, asJSON); err != nil {
 		reportf(stderr, "write output: %v\n", err)
 		return 1

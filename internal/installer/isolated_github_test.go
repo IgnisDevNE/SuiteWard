@@ -115,6 +115,7 @@ func terminalForSetup(t *testing.T) {
 
 func TestInstallIsolatedRunsTheGitHubFlowBeforeAnyChange(t *testing.T) {
 	g := newIsoGitHub(t)
+	g.f.noImage = true // the images are pulled
 	g.answers["manifest-port"] = "18765"
 	if err := g.run(); err != nil {
 		t.Fatal(err)
@@ -230,6 +231,7 @@ func TestInstallIsolatedDefaultsToTheReleaseTheBinaryCarries(t *testing.T) {
 
 	ImageDigest = testDigest
 	g := newIsoGitHub(t)
+	g.f.noImage = true
 	g.answers["image"] = ""
 	if err := g.run(); err != nil {
 		t.Fatalf("a release binary needs no --image: %v", err)

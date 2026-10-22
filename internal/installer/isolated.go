@@ -117,10 +117,8 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err != nil {
 		return err
 	}
-	for _, image := range []string{postgres, releaseImageRepo + "@" + digest} {
-		if err := rt.Pull(ctx, image); err != nil {
-			return err
-		}
+	if err := pullMissing(ctx, rt, postgres, releaseImageRepo+"@"+digest); err != nil {
+		return err
 	}
 	g := &githubInstall{rt: rt, env: env, out: out, s: s}
 	if err := g.githubFlow(ctx, r, configDir); err != nil {

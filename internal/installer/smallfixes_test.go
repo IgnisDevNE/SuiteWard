@@ -76,7 +76,7 @@ func TestRestrictPathGrantsTheSIDOfTheCurrentUserOnWindows(t *testing.T) {
 		if err := restrictPath(context.Background(), d, filepath.Join(t.TempDir(), "f"), dir); err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 5 || got[1] != "/inheritance:r" || got[2] != "/grant:r" || got[3] != want {
+		if len(got) != 4 || got[1] != "/inheritance:r" || got[2] != "/grant:r" || got[3] != want {
 			t.Errorf("dir=%v: icacls args %q, want the grant %q", dir, got, want)
 		}
 		if strings.Contains(strings.Join(got, " "), "tester") {

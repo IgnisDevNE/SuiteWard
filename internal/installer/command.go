@@ -241,7 +241,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
 		if upgrade {
-			return upgradeIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
+			return upgradeIsolated(ctx, isolated, r, env)
 		}
 		return installIsolated(ctx, isolated, r, env)
 	case config.TierCoLocated:

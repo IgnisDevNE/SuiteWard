@@ -283,6 +283,7 @@ func TestInstallIsolatedRefusesOtherSystemsAndRoot(t *testing.T) {
 func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 	home := t.TempDir()
 	f := newIsoFake(home)
+	f.noImage = true // the images are pulled
 	out, err := runIsolated(t, f, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -442,6 +443,7 @@ func TestInstallIsolatedRequiresAnImageDigestBeforeChangingAnything(t *testing.T
 
 func TestInstallIsolatedAcceptsTheFullImageReference(t *testing.T) {
 	f := newIsoFake(t.TempDir())
+	f.noImage = true
 	if _, err := runIsolated(t, f, map[string]string{"image": testImage}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -559,6 +561,7 @@ func TestInstallIsolatedLetsAFailedFirstRunRetryWithAnotherImage(t *testing.T) {
 		home := t.TempDir()
 		installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: DefaultEnvFile})
 		f := newIsoFake(home)
+		f.noImage = true
 		mutate(home, f)
 		out, err := runIsolated(t, f, map[string]string{"image": other}, "")
 		return home, f, out, err

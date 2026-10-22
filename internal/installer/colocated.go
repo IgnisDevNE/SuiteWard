@@ -198,11 +198,16 @@ func (c *colocatedInstall) pullImages(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, img := range []string{c.image, postgres} {
-		if c.rt.ImageExists(ctx, img) {
+	return pullMissing(ctx, c.rt, c.image, postgres)
+}
+
+// pullMissing pulls the images the engine does not have yet.
+func pullMissing(ctx context.Context, rt Runtime, images ...string) error {
+	for _, img := range images {
+		if rt.ImageExists(ctx, img) {
 			continue
 		}
-		if err := c.rt.Pull(ctx, img); err != nil {
+		if err := rt.Pull(ctx, img); err != nil {
 			return err
 		}
 	}

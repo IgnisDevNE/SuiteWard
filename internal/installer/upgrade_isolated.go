@@ -3,7 +3,6 @@ package installer
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,7 +16,8 @@ import (
 // installed units (a difference stops the run before any change), show what changes and ask, back up, pull, stop the service,
 // render the units again with the new digest (and the database unit with the new pin), restart the database when its pin changed,
 // and restart the migration, which migrates and restarts the service.
-func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, out io.Writer) error {
+func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) error {
+	d, out := env.Deps, env.Term.Out
 	image, err := upgradeTarget(r)
 	if err != nil {
 		return err
@@ -68,20 +68,15 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, o
 		return nil
 	}
 	status := func(ctx context.Context) ([]byte, error) {
-		return httpGet(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
+		return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
 	}
 	dir, err := takeBackup(ctx, backup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, now: time.Now})
 	if err != nil {
 		return err
 	}
 	say("Backup written to %s.\n", dir)
-	for _, img := range []string{postgres, image} {
-		if host.rt.ImageExists(ctx, img) {
-			continue
-		}
-		if err := host.rt.Pull(ctx, img); err != nil {
-			return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
-		}
+	if err := pullMissing(ctx, host.rt, postgres, image); err != nil {
+		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
 	}
 	if err := replaceUnits(ctx, host, d, s, digest, plan.dbChanges()); err != nil {
 		return withBackup(err, dir, host.unitsDir)

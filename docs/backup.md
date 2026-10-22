@@ -67,6 +67,12 @@ The command opens a new shell and waits for commands, so it prints nothing. Chec
    podman volume export suiteward-data --output ~/suiteward-backup/suiteward-artifacts.tar
    ```
 
+   Expect no output. The export writes the archive world-readable even under `umask 077`, so restrict it:
+
+   ```bash
+   chmod 600 ~/suiteward-backup/suiteward-artifacts.tar
+   ```
+
    Expect no output.
 
 4. Start the service.

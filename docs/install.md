@@ -928,7 +928,7 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
 
 **11.5 Upgrade an isolated host from v0.1.x.** v0.1.x ran the service as the database owner and migrated inside it. This release splits the roles, so the first upgrade needs three extra steps before the update of step 11.3: the owner URL moves to its own secret, the role `suiteward_app` is created with a new secret, and the migration unit is installed. This guide covers AlmaLinux 9 only. A v0.1.x host on another distribution is not covered: install a new host as in section 10, then restore your backup there ([the backup runbook](backup.md)). An instance on v0.1.1 or older upgrades to v0.1.3 first, so that its queued comments drain, and then to v0.2.0, because v0.2.0 no longer reads comment payloads queued by v0.1.1 or older. On the AlmaLinux 9 host, as `suiteward`:
 
-1. Back up, as in step 11.1, and keep the copy of the units (the `cp` command of step 11.3). Pull the release (step 11.2).
+1. Back up, as in step 11.1, and keep the copy of the units (the `cp` command of step 11.3). Pull the release (step 11.2), and the database image that the new release's `suiteward-db.container` pins, by its digest (the `podman pull` of step 10.9).
 2. Stop the service. The database keeps running. If the v0.1.x docs had you enable automatic updates, disable the timer too, and keep it disabled (also before a rollback to v0.1.x): Podman cannot update the migration unit, so an automatic update would start the service alone on an old schema and loop. Disabling it when it was never enabled does no harm:
 
    ```
@@ -938,6 +938,8 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
    ```
    systemctl --user disable --now podman-auto-update.timer
    ```
+
+   Both commands print nothing, and so does the second when the timer was never enabled.
 
 3. Copy the owner URL into its own secret. In v0.1.x, the secret `suiteward-database-url` holds the owner URL. The command reads it into a variable and writes it without a trailing newline. It prints the ID of the new secret, not its value:
 
@@ -959,8 +961,10 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
    podman secret rm suiteward-database-url
    ```
 
+   It prints the ID of the secret it removed. That is not a creation.
+
 6. Create the role and the new `suiteward-database-url`: run the chain and the check of step 10.11, which follow the wait for the healthy database. The database is already running. Do not run the earlier commands of step 10.11 again.
-7. Install the migration unit. Create `~/.config/containers/systemd/suiteward-migrate.container` and overwrite `suiteward.container`, from the new release's `deploy/quadlet/`, as in step 10.9: run `cat >` for each, paste, press Ctrl-D. Keep the `SUITEWARD_INSTALLATION_TIER` line your old unit had. The new `suiteward.container` has no `AutoUpdate=` line: the units are pinned by digest and nothing moves them by itself.
+7. Install the units. Create `~/.config/containers/systemd/suiteward-migrate.container`, and overwrite `suiteward.container` and `suiteward-db.container`, from the new release's `deploy/quadlet/`, as in step 10.9: run `cat >` for each, paste, press Ctrl-D. Before you overwrite a unit, compare it with the copy you kept in step 1 (`~/systemd-units-<date>`, step 11.3), and re-apply every local edit it had: the `SUITEWARD_INSTALLATION_TIER` line, and any changed `PublishPort=` or added `Environment=` line, for example `SUITEWARD_JOB_TIMEOUT`. The new `suiteward-db.container` pins a refreshed PostgreSQL image digest under the same tag (`18.6-trixie`) and reuses the same volume, so the data stays. The new `suiteward.container` has no `AutoUpdate=` line: the units are pinned by digest and nothing moves them by itself.
 8. Pin both units to the index digest of the release, with the chain of step 11.3 and its check (set `d` first, as that step says).
 9. Run the dry run of step 10.10, then reload and start. The new units are not active yet, so start the service, which starts the migration first:
 
@@ -968,11 +972,23 @@ Expect `suiteward-migrate` active (exited) and `suiteward` active (running). If 
    systemctl --user daemon-reload
    ```
 
+   The running database container still has the old image. Restart it, so that it is recreated from the new pin on the same volume, and wait until it is healthy:
+
+   ```
+   systemctl --user restart suiteward-db.service
+   ```
+
+   ```
+   until [ "$(podman inspect --format '{{.State.Health.Status}}' suiteward-db)" = healthy ]; do sleep 2; done
+   ```
+
    ```
    systemctl --user start suiteward.service
    ```
 
 10. Check the units and the service as in steps 10.13 and 10.16. `/status` shows the new `version` and `schemaVersion`.
+
+Validated live on 2026-10-21: an instance on v0.1.3 was upgraded in place to v0.2.0-rc.3 with steps 11.1, 11.2 and 11.5, on a Fedora 44 machine with Podman 6.1.4. The upgrade kept the owner enrollment, the bootstrapped V1 and an approval. The application ran as a role without superuser, role-creation, database-creation or row-security-bypass privileges, and a later push on the pull request got a passing check. That run did not cover AlmaLinux itself (`dnf`, SELinux volume labels, Podman 5.8.2), the verification of the release signature, or the cloud metadata step. The AlmaLinux host was upgraded from rc.2 to rc.3 the same day through step 11.3.
 
 **11.6 Roll back.** Migrations only go forward, so there is no downgrade. You return to the pre-upgrade state by restoring the pre-upgrade backup with the old image. Everything after that backup is lost ([the backup runbook](backup.md)). Use it when the new image does not work and you cannot fix it. Do not start an older image on the upgraded database: it refuses to run.
 

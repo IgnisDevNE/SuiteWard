@@ -149,7 +149,7 @@ func newInstallFlagSet() *flag.FlagSet {
 	fs.Var(&listFlag{}, "test-check", "the test check of a repository, OWNER/NAME=CHECK; repeat it, or give one plain name for a single repository")
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
 	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
-	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading")
+	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading (it does not start a service that is down: that is asked on its own)")
 	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
 	return fs
 }

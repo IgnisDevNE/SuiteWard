@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -159,6 +160,14 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if c.secrets, err = c.readSecretState(ctx); err != nil {
 		return err
 	}
+	engine, err := engineCommand(rt, env.Deps.GOOS)
+	if err != nil {
+		return err
+	}
+	startCommand := fmt.Sprintf("`%s start %s`, then, once it is healthy, `%s start %s`", engine, ContainerDB, engine, ContainerServe)
+	if err := ensureServiceUp(ctx, r, env, c.readStatus, c.startInstalled, startCommand); err != nil {
+		return err
+	}
 	parent := backupParent(r, filepath.Dir(c.tokenFile))
 	if err := confirmUpgrade(r, plan, parent); err != nil {
 		return err
@@ -188,4 +197,61 @@ func upgraded(say func(string, ...any), previous, image, backupDir, doctor strin
 	say("The backup is in %s. It holds the TOTP secret: keep it offline and private.\n", backupDir)
 	say("To go back, restore that backup with the previous image %s (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous))
 	say("Check the instance with `%s`.\n", doctor)
+}
+
+// startWaitTries bounds, in seconds, the wait for /status of a service the upgrade started.
+const startWaitTries = 60
+
+// startServicePrompt is what an upgrade asks of a service that does not answer /status, which the backup records.
+const startServicePrompt = "The service is not running, so the backup cannot record its status. Start the installed service now?"
+
+// ensureServiceUp makes sure /status answers before the backup. A service that does not is started as it is installed, on a terminal
+// and after a yes; otherwise, or when the start does not help, the upgrade refuses. --yes confirms the upgrade plan only: nothing
+// here reads it.
+func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(context.Context) ([]byte, error), start func(context.Context) error, startCommand string) error {
+	if _, err := status(ctx); err == nil {
+		return nil
+	}
+	refuse := fmt.Errorf("the service is not running, so the backup cannot record its status: start it (%s) and run the upgrade again; --yes confirms the upgrade plan only, it does not start the service", startCommand)
+	if !r.term.IsTerminal {
+		return refuse
+	}
+	r.say("%s [Y/n]: ", startServicePrompt)
+	line, err := r.in.ReadString('\n')
+	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
+		return fmt.Errorf("read the answer to the start of the service: %w", err)
+	}
+	if line = strings.TrimSpace(line); line != "" {
+		if yes, err := parseYesNo("start", line); err != nil || !yes {
+			return refuse
+		}
+	}
+	const manual = "take the backup by hand instead (docs/backup.md, section 2), then upgrade"
+	if err := start(ctx); err != nil {
+		return fmt.Errorf("start the installed service: %w; %s", err, manual)
+	}
+	var lastErr error
+	for i := range startWaitTries {
+		if _, lastErr = status(ctx); lastErr == nil || ctx.Err() != nil {
+			break
+		}
+		if i < startWaitTries-1 {
+			env.Sleep(statusEvery)
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("the service was started, but /status still does not answer (%w): read its logs; or %s", lastErr, manual)
+	}
+	return nil
+}
+
+// startInstalled starts the containers the stack has, the database first and only once it is healthy: nothing is created.
+func (c *colocatedInstall) startInstalled(ctx context.Context) error {
+	if err := c.rt.Start(ctx, ContainerDB); err != nil {
+		return err
+	}
+	if err := c.waitHealthy(ctx); err != nil {
+		return err
+	}
+	return c.rt.Start(ctx, ContainerServe)
 }

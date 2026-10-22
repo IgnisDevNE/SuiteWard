@@ -187,3 +187,11 @@ func (c *cli) Inspect(ctx context.Context, container string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// Start starts a container that exists, as it was made: it is not created again.
+func (c *cli) Start(ctx context.Context, container string) error {
+	if _, err := c.run(ctx, nil, "start", container); err != nil {
+		return fmt.Errorf("start %s: %w", container, err)
+	}
+	return nil
+}

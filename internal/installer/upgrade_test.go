@@ -497,7 +497,7 @@ func TestInstallRefusesToChangeTheReleaseOfAStackThatRuns(t *testing.T) {
 	h.existingStack(colocatedSettings(), oldImage, nil)
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	h.busy[18081], h.busy[18091] = true, true // the running service holds its own ports
+	h.busy[18081], h.busy[18091] = true, true                      // the running service holds its own ports
 	err := h.podman("--http-port", "18081", "--mcp-port", "18091") // --image testImage: not the installed release
 	if err == nil || !strings.Contains(err.Error(), "--upgrade") {
 		t.Fatalf("a different release than the installed one is an upgrade, which backs up first: %v", err)

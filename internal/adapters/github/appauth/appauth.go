@@ -191,10 +191,10 @@ func (a App) Slug(ctx context.Context, httpClient *http.Client, baseURL string) 
 		Slug string `json:"slug"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAnswer)).Decode(&out); err != nil {
-		return "", errors.New("appauth: app answer is not an app object")
+		return "", fmt.Errorf("%w: the app answer is not an app object", ErrMalformedAnswer)
 	}
 	if !slugPattern.MatchString(out.Slug) {
-		return "", errors.New("appauth: app answer has no valid slug")
+		return "", fmt.Errorf("%w: the app answer has no valid slug", ErrMalformedAnswer)
 	}
 	return out.Slug, nil
 }
@@ -422,7 +422,7 @@ func (a App) Installations(ctx context.Context, httpClient *http.Client, baseURL
 		}
 		for _, e := range entries {
 			if e.ID <= 0 {
-				return nil, errors.New("appauth: installations answer has an entry without an id")
+				return nil, fmt.Errorf("%w: the installations answer has an entry without an id", ErrMalformedAnswer)
 			}
 			all = append(all, InstallationInfo{ID: e.ID, Account: e.Account.Login, AccountType: e.Account.Type, RepositorySelection: e.RepositorySelection, Permissions: e.Permissions})
 		}
@@ -430,7 +430,7 @@ func (a App) Installations(ctx context.Context, httpClient *http.Client, baseURL
 			return all, nil
 		}
 	}
-	return nil, fmt.Errorf("appauth: more than %d installations", listPageSize*listMaxPages)
+	return nil, fmt.Errorf("%w: more than %d installations", ErrTooManyEntries, MaxListed)
 }
 
 // InstallationRepositories lists the full names of the repositories installation id grants. It mints a token narrowed
@@ -470,7 +470,7 @@ func (a App) InstallationRepositories(ctx context.Context, id int64, httpClient 
 		}
 		for _, r := range out.Repositories {
 			if r.FullName == "" {
-				return nil, errors.New("appauth: repositories answer has an entry without a full name")
+				return nil, fmt.Errorf("%w: the repositories answer has an entry without a full name", ErrMalformedAnswer)
 			}
 			all = append(all, r.FullName)
 		}
@@ -478,7 +478,7 @@ func (a App) InstallationRepositories(ctx context.Context, id int64, httpClient 
 			return all, nil
 		}
 	}
-	return nil, fmt.Errorf("appauth: more than %d repositories", listPageSize*listMaxPages)
+	return nil, fmt.Errorf("%w: more than %d repositories", ErrTooManyEntries, MaxListed)
 }
 
 // listURL is endpoint for page, by number: a Link header is never followed, so a credential only goes where the base URL says.
@@ -499,7 +499,7 @@ func getJSON(httpClient *http.Client, req *http.Request, endpoint string, out an
 		return &StatusError{Endpoint: endpoint, Status: resp.StatusCode}
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAnswer)).Decode(out); err != nil {
-		return fmt.Errorf("appauth: %s answer is malformed", endpoint)
+		return fmt.Errorf("%w: the %s answer is not the expected JSON", ErrMalformedAnswer, endpoint)
 	}
 	return nil
 }

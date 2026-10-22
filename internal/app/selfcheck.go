@@ -119,6 +119,12 @@ func writeSelfCheck(w io.Writer, results []selfCheckResult, asJSON bool) error {
 
 // readDetail is the classification of a failed GitHub read and its HTTP status, never text GitHub sent.
 func readDetail(err error) string {
+	switch {
+	case errors.Is(err, appauth.ErrMalformedAnswer):
+		return "GitHub's answer was malformed"
+	case errors.Is(err, appauth.ErrTooManyEntries):
+		return fmt.Sprintf("more than %d entries", appauth.MaxListed)
+	}
 	failure := readFailure(err)
 	if failure.Status == 0 {
 		return string(failure.Kind)
@@ -303,6 +309,10 @@ type repositoryReads struct {
 // A token that names an uncovered repository is refused by GitHub, so the readers ask for the covered ones only.
 func selfCheckRepositories(ctx context.Context, g config.GitHub, access githubAccess) repositoryReads {
 	listed, err := access.app.InstallationRepositories(ctx, g.InstallationID, access.httpClient, g.APIURL)
+	if errors.Is(err, appauth.ErrTooManyEntries) {
+		return repositoryReads{result: checkFailed(nameRepositories, fmt.Sprintf("the installation has more than %d repositories, more than check can list", appauth.MaxListed),
+			"install the App on selected repositories, at most the 20 SuiteWard supports, instead of all of them")}
+	}
 	if err != nil {
 		return repositoryReads{result: checkFailed(nameRepositories, "the installation's repositories could not be listed: "+readDetail(err), appFix)}
 	}
@@ -378,6 +388,8 @@ func (neverWrites) Insert(context.Context, pgx.Tx, governance.Job) (int64, error
 // selfCheckDatabaseResults checks the schema version, the connected role and the enrollment, and returns the enrolled
 // projects. The role is checked even when the schema is not ready; the enrollment needs the schema.
 func selfCheckDatabaseResults(ctx context.Context, cfg config.Config) (schema, role, enrolled selfCheckResult, projects []owner.ProjectPolicy) {
+	ctx, cancel := context.WithTimeout(ctx, selfCheckDatabaseTimeout)
+	defer cancel()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL.Reveal())
 	if err != nil { // the cause is dropped: pgx can echo part of the connection string
 		down := func(name string) selfCheckResult {
@@ -387,7 +399,10 @@ func selfCheckDatabaseResults(ctx context.Context, cfg config.Config) (schema, r
 	}
 	defer pool.Close()
 	role = selfCheckRole(ctx, pool)
-	store, err := postgres.NewStore(pool, neverWrites{}, neverWrites{})
+	var store *postgres.Store
+	if err = ctx.Err(); err == nil { // NewStore has a clock of its own and ignores ctx: it is not started once the time is up
+		store, err = postgres.NewStore(pool, neverWrites{}, neverWrites{})
+	}
 	switch {
 	case errors.Is(err, postgres.ErrSchemaNewer):
 		schema = checkFailed(nameSchema, "the database was migrated by a newer release than this binary", "run the newer release, or restore a backup taken before it")

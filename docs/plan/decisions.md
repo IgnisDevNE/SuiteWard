@@ -1,6 +1,6 @@
 # Decision register
 
-- **Updated:** 2026-10-21 (D-DEPLOY and D-JOB-RETENTION decided, the Deploy workflow retired; phase SH, 2026-10-20: security review decisions (closed pull requests, commands on another pull request, case-fold collisions, declaration size and unconfigured repositories), the isolated host, updates and scanners; stale release, update and host lines corrected)
+- **Updated:** 2026-10-22 (D-INSTALLER decided for phase M1.12, the installer; `v0.2.0` released; 2026-10-21: D-DEPLOY and D-JOB-RETENTION decided, the Deploy workflow retired; phase SH, 2026-10-20: security review decisions (closed pull requests, commands on another pull request, case-fold collisions, declaration size and unconfigured repositories), the isolated host, updates and scanners; stale release, update and host lines corrected)
 
 These gates record product and implementation choices that accepted ADRs deliberately left open. They do not reopen accepted ADRs. The integrator can resolve implementation choices within accepted policy; changes to product authority, scope, or release commitments need the project owner. Do not choose an unresolved product policy to unblock a task; record the decision needed and take independent ready work.
 
@@ -18,7 +18,7 @@ Accepted 2026-10-05. A single `suiteward serve` binary runs the API and the work
 
 Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 
-- Poll every 60 s with conditional (ETag) requests.
+- Poll every 60 s (initial default; see the amendments) with conditional (ETag) requests.
 - Use at most 50% of the installation's API rate budget.
 - Supported limit: at most 20 repositories.
 - MCP is limited to sync and status, authenticated with a local token.
@@ -380,9 +380,9 @@ Accepted 2026-10-15 (owner, phase M1.7), from the S1 proposals ([s1-github](../s
 
 Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisions/0009-agpl-3.0-distribution.md).
 
-- **Platforms.** The MVP ships only the container image `ghcr.io/ignisdevne/suiteward` for `linux/amd64` and `linux/arm64`. A native binary comes after the MVP.
+- **Platforms.** The MVP ships only the container image `ghcr.io/ignisdevne/suiteward` for `linux/amd64` and `linux/arm64`. A native binary comes after the MVP. *Amended 2026-10-21: [D-INSTALLER](#d-installer-the-installer-and-the-first-distributable-version) ships the `suiteward` binary as release assets with the alpha, and its pre-release tags are `vX.Y.Z-alpha.N`.*
 - **Versions.**
-  - A release is a `vX.Y.Z` git tag on a commit of `main`, and the release workflow checks that the commit is an ancestor of `main`. A pre-release `vX.Y.Z-rc.N` may sit on a phase branch.
+  - A release is a `vX.Y.Z` git tag on a commit of `main`, and the release workflow checks that the commit is an ancestor of `main`. A pre-release `vX.Y.Z-rc.N` may sit on a phase branch. *Amended 2026-10-21 by D-INSTALLER: the alpha uses `vX.Y.Z-alpha.N` pre-release tags.*
   - The workflow publishes the image tag `vX.Y.Z`. A release that is not a pre-release also moves `latest-stable`; a pre-release never moves it.
   - `sha-<commit>` and `deploy` were our internal build and promotion tags; both were retired on 2026-10-21 (D-DEPLOY), and releases are the only published images.
   - **Publishing needs the owner's approval in a protected `release` environment**, as the retired `remote-poc` did for promotion. The bot could push a tag by itself: it has Contents write, and it is the governed party once SuiteWard governs its own tests. So the tag alone is not the authorization.
@@ -419,8 +419,8 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
   - It needs what the self-hosted design does not have: a public App, several owners per instance (D-IDENTITY is one owner), enrollment through a web page with a GitHub login instead of `setup`, and a trust model in which we are the host administrator (ADR 0027). It is recorded as D-MANAGED-SERVICE in Post-MVP.
   - For the MVP, the install guide leads with the co-located path, one command on the user's machine. The isolated host is the operator path: ours, and for whoever self-hosts on a separate machine.
 - **Ruleset.** The user creates it, guided by a direct link to the repository's rulesets page and the exact boxes to tick. The App keeps no Administration write, so it can never change its own protection.
-- **GitHub App.** The user creates it by hand, from a checklist in the install guide that lists the exact permissions of [D-GITHUB-ACCESS](#d-github-access-github-app-permissions-and-token-lifecycle). The manifest flow is backlog.
-- **Updates.** The user pins the image by digest and updates when they choose: pull the new `vX.Y.Z`, verify its signature, change both `Image=` lines to its digest, then `restart suiteward-migrate.service`, which migrates and restarts the service (install guide, section 11). Automatic updates are not supported (amended 2026-10-20, below): the migration unit cannot be updated by Podman, so an automatic update would start the service alone on an old schema.
+- **GitHub App.** The user creates it by hand, from a checklist in the install guide that lists the exact permissions of [D-GITHUB-ACCESS](#d-github-access-github-app-permissions-and-token-lifecycle). The manifest flow is backlog. *Amended 2026-10-21: [D-INSTALLER](#d-installer-the-installer-and-the-first-distributable-version) creates the App through the manifest flow.*
+- **Updates.** The user pins the image by digest and updates when they choose: pull the new `vX.Y.Z`, verify its signature, change both `Image=` lines to its digest, then `restart suiteward-migrate.service`, which migrates and restarts the service (install guide, section 11). *Amended 2026-10-21 by [D-INSTALLER](#d-installer-the-installer-and-the-first-distributable-version): the install guide is rewritten around the installer, which leads with one command and updates through `suiteward install --upgrade`.* Automatic updates are not supported (amended 2026-10-20, below): the migration unit cannot be updated by Podman, so an automatic update would start the service alone on an old schema.
 - **Backup.** The MVP backup is a plain `pg_dump` plus a tarball of the artifact volume, kept by the user. The runbook warns that it holds the TOTP secret and the enrollment. Encrypted backups and guided restore stay post-MVP (D-ARCHIVE, D-RESTORE).
 - **Dogfooding.**
   - SuiteWard governs its own tests on the isolated host, with `CI / Gate` as the test check (the name of the required check of `ci.yml`), after the acceptance run on a test repository.
@@ -479,6 +479,41 @@ Decided 2026-10-06 and settled by the S1 findings; the deployment workflow was r
 ### D-JOB-RETENTION: How long finished jobs stay visible
 
 Decided 2026-10-21 (owner): River's cleaner defaults, with no configuration. Completed and cancelled jobs stay 24 hours, discarded jobs 7 days (River v0.49.0). The outbox keeps its terminal rows. It was raised by the M1.2 phase review.
+
+### D-INSTALLER: The installer and the first distributable version
+
+Accepted 2026-10-21 (owner, M1.12 planning). It amends D-INSTALL: the App is created through the manifest flow, and the install guide is rewritten around the installer. The phase is [M1.12](phases/M1.12.md); it ships as `v0.3.0-alpha.1`.
+
+- **Why.** Installing takes about 11 commands co-located and about 62 isolated, with nine pastes, the image digest typed three times and a hand-made App, and several mistakes stay silent. Most of that can be automated.
+- **Order of work:** `doctor`, then the isolated installer with the ruleset and setup assistance, then the App manifest flow, then the release-pinned binary.
+- **One App per instance, created through the manifest flow.** One owner per instance, up to 20 repositories. The App keeps exactly the five permissions of D-GITHUB-ACCESS: no Contents write, no Administration write, webhook off and `public: false`. So the ruleset stays a human Import click per repository, from a JSON the installer writes. The manifest code is converted on the machine that keeps the key (for isolated, the host), with a random `state` and a listener on 127.0.0.1 only. The code passes through the user's browser, as the PEM download does today; the threat model says so.
+- **GitHub Free and private repositories (owner, 2026-10-22).** GitHub does not enforce rulesets on a private repository of an account or organization on the Free plan (spike S2). The installer warns plainly before the ruleset Import that the repository will not be protected there, suggests a public repository or a paid plan, and continues. `doctor` and `/status` report `enforcement-unavailable`.
+- **Starting the Podman machine after a reboot (owner, 2026-10-22).** The co-located installer makes the stack come back whenever the machine starts. Starting the machine at Windows logon stays out of the alpha: `doctor` reports a stopped machine and the docs say to run `podman machine start`. Auto-start is post-MVP.
+- **Runtimes.**
+  - **Isolated:** Podman only.
+  - **Co-located:** Podman is strongly recommended. Docker is allowed co-located only, as an explicitly discouraged option, and the installer and the docs say so plainly. The reasons:
+    - the Docker daemon is rootful by default;
+    - Docker has no secrets outside Swarm. Amended by spike S2 (2026-10-22): a file bind-mounted from Windows shows up as mode `777` inside Docker's VM, so the installer keeps Docker's secrets in named volumes instead, **one volume per consumer**, each mounted read-only into its own container only:
+      - the database password, for the database;
+      - the owner URL and the app URL, for migrate;
+      - the app URL, the App key and the MCP token, for serve.
+
+      `serve` therefore never sees the owner URL, as on Podman. Each secret is written through stdin, owned by the uid that reads it, mode `0400`, so it never touches the Windows disk. Whoever controls the rootful daemon can still read that volume, where Podman keeps them in its rootless secret store ([S2](../spikes/s2-installer.md)).
+  - A rootful Podman connection is refused. The installer never runs as root: isolated splits the administrator steps (`sudo suiteward install host`) from the service-account steps (`suiteward install`).
+- **The GitHub env file moves to the service account.** `/etc/suiteward/github.env` (written by an administrator, install guide 10.6) becomes `~/.config/suiteward/github.env`, owned by `suiteward` and loaded with `EnvironmentFile=%h/.config/suiteward/github.env`. Its values (App ID, installation ID, repositories) only exist after the manifest flow, which runs as `suiteward`. Administrator ownership was never a control: the install guide records no reason for it, and the file holds no secret. What the instance can reach is bounded by the installation's repository selection on GitHub, not by this file. Adoption copies an existing `/etc` file to the account and keeps the source; the installer prints the `sudo rm` line once the service reads the new file, and never deletes anything under `/etc` itself.
+- **Plain prompts, not `huh`.** The prompts are plain line prompts (standard library plus `golang.org/x/term` for no-echo input), which work in every terminal and are accessible, and each has a flag and an answers-file key. The TUI library `huh` is rejected for its dependency weight; polish is post-MVP.
+- **The binary is a release asset.**
+  - `suiteward` is built for linux/amd64, linux/arm64, windows/amd64 and darwin/arm64 and uploaded to the Release the owner created, with `SHA256SUMS` and a keyless `cosign sign-blob` bundle per file, under the same workflow identity as the image. macOS is covered by build and tests only.
+  - Each binary embeds the signed index digest of its own release, so an install never takes an image from a tag. A development build without that digest requires `--image`.
+  - On the isolated host, which has no cosign or PowerShell, the binary is verified once on the PC and the host checks the same files against `SHA256SUMS`.
+- **`deploy/local.ps1` is removed in the alpha.** The installer adopts a stack it made, and `suiteward install --upgrade` converts one. `suiteward uninstall [--purge]` replaces `local.ps1 -Down`; `--purge` also removes the secrets, volumes and settings and keeps the backups.
+- **Before the alpha (owner, 2026-10-22, from the M1.12 reviews):**
+  - **Setup guard, and `suiteward enroll`.** `install` runs setup only when `/status` shows no owner. When an owner is enrolled, or `/status` cannot be read, setup is skipped, so a re-run or a restore never replaces the TOTP secret. Re-enrolling is the deliberate verb `suiteward enroll`, and the installer's messages name it.
+  - **Upgrade with the service down.** `install --upgrade` refuses, because the backup includes `/status`. On a terminal it first asks whether to start the installed service, then continues once `/status` answers.
+  - **Pasting the manifest code.** The fallback paste prompt may echo. The code is never a flag, so it never reaches argv.
+  - **An App named in the settings without its key secret.** The installer stops and offers two routes: give the App's key file, or create a new App (the old one is named for deletion). A terminal asks; otherwise the error names both.
+  - **`v0.1.x` isolated hosts** are not converted by `--upgrade`. No installation of v0.1.x exists outside our own hosts, which already run v0.2.0.
+- **Hand-over.** `v0.3.0-alpha.1`, a pre-release, goes to individual testers. Everything after the alpha is post-MVP.
 
 ### D-MIGRATIONS: Migration tooling
 

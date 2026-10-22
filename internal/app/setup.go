@@ -356,7 +356,7 @@ func evaluateProtection(ctx context.Context, logger *slog.Logger, protect *githu
 		logReadFailure(ctx, logger, "github protection read failed", name, err)
 		return protection.Unknown(), waits(err)
 	}
-	facts, err := protectionFacts(read, repo.Private)
+	facts, err := read.Facts(repo.Private)
 	if err != nil {
 		logger.WarnContext(ctx, "github protection answer is not usable", "repo", name)
 		return protection.Unknown(), false
@@ -375,43 +375,6 @@ func codeStrings(codes []protection.Code) []string {
 	var out []string
 	for _, c := range codes {
 		out = append(out, string(c))
-	}
-	return out
-}
-
-// protectionFacts maps what the adapter read, field by field, into the
-// evaluator's facts; private comes from the repository read.
-func protectionFacts(p github.Protection, private bool) (protection.Facts, error) {
-	state, err := classicState(p.Classic.State)
-	if err != nil {
-		return protection.Facts{}, err
-	}
-	facts := protection.Facts{
-		Private: private, RulesForbidden: p.RulesForbidden, FromRuleset: p.FromRuleset,
-		Classic: protection.Classic{State: state, Checks: protectionChecks(p.Classic.Checks), Strict: p.Classic.Strict, EnforceAdmins: p.Classic.EnforceAdmins},
-	}
-	for _, rule := range p.Rules {
-		facts.Rules = append(facts.Rules, protection.Rule{RulesetID: rule.RulesetID, Checks: protectionChecks(rule.Checks), Strict: rule.Strict})
-	}
-	return facts, nil
-}
-
-func classicState(state github.ClassicState) (protection.ClassicState, error) {
-	switch state {
-	case github.ClassicAbsent:
-		return protection.ClassicAbsent, nil
-	case github.ClassicUnreadable:
-		return protection.ClassicUnreadable, nil
-	case github.ClassicPresent:
-		return protection.ClassicPresent, nil
-	}
-	return 0, fmt.Errorf("unknown classic protection state %d", state)
-}
-
-func protectionChecks(checks []github.Check) []protection.Check {
-	var out []protection.Check
-	for _, c := range checks {
-		out = append(out, protection.Check{Context: c.Context, SourceID: c.SourceID})
 	}
 	return out
 }

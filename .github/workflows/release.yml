@@ -1,9 +1,10 @@
-# Publishes a release image to GHCR when a `vX.Y.Z` or `vX.Y.Z-rc.N` tag is pushed (D-RELEASE).
+# Publishes a release image to GHCR and the installer binaries when a `vX.Y.Z`, `vX.Y.Z-rc.N` or `vX.Y.Z-alpha.N` tag is pushed (D-RELEASE).
 # Not part of the CI gate and not a required check.
 # The tag alone does not publish: the `publish` job waits for the owner's approval in the protected `release` environment.
-# A final `vX.Y.Z` must sit on a commit of `main`; a pre-release may sit anywhere and never moves `latest-stable`.
+# A final `vX.Y.Z` must sit on a commit of `main`; a pre-release (-rc.N or -alpha.N) may sit anywhere and never moves `latest-stable`.
+# The `binaries` job runs after `publish` and uploads to the GitHub Release the owner created on the tag first: four binaries with the version, the source and the signed image index digest embedded, SHA256SUMS, and a cosign blob signature (bundle) for each file.
 # CI builds the same Containerfile for both platforms on every change without pushing; here the tag is the version and the tag's source tree is the corresponding source (AGPL section 13).
-# No third-party actions: the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
+# No third-party actions (only actions/checkout and actions/setup-go): the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
 # The pushed index carries a SLSA provenance and an SBOM (BuildKit attestation manifests) and is signed keyless with cosign through GitHub OIDC; the signature is recorded in the public Rekor log (ADR 0008).
 # Consumers verify the signature with scripts/verify-release.ps1; the signing identity is this workflow at a `v*` tag.
 name: Release
@@ -45,16 +46,28 @@ jobs:
           TAG: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: |
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
-            echo "::error::The tag $TAG is neither vX.Y.Z nor vX.Y.Z-rc.N"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha)\.[0-9]+)?$ ]]; then
+            echo "::error::The tag $TAG is none of vX.Y.Z, vX.Y.Z-rc.N and vX.Y.Z-alpha.N"
             exit 1
           fi
-          if [[ "$TAG" == *-rc.* ]]; then
+          # The pattern above leaves only -rc.N and -alpha.N after a hyphen.
+          if [[ "$TAG" == *-* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             git merge-base --is-ancestor "$COMMIT" origin/main || { echo "::error::The final release $TAG is not on a commit of main"; exit 1; }
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Check that the GitHub Release exists and its pre-release flag matches the tag
+        # Before the owner's approval and the image push: the binaries are uploaded to this Release, so a missing one must stop the run now.
+        env:
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          flag=$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease) || { echo "::error::Create the published GitHub Release for $TAG first; the binaries are uploaded to it"; exit 1; }
+          [ "$flag" = "$PRERELEASE" ] || { echo "::error::The GitHub Release $TAG has prerelease=$flag but the tag needs prerelease=$PRERELEASE"; exit 1; }
 
   publish:
     name: Build and push the release (owner approval)
@@ -62,10 +75,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     permissions:
       contents: read
       packages: write
-      # Only this job: cosign exchanges the run's OIDC token for a short-lived signing certificate.
+      # Only this job and binaries: cosign exchanges the run's OIDC token for a short-lived signing certificate.
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,3 +141,69 @@ jobs:
           { echo "Index digest: $DIGEST"; echo "Reference: $IMAGE@$DIGEST"; } >> "$GITHUB_STEP_SUMMARY"
           # Only a verified signature moves latest-stable; the version tag is public before this step runs.
           if [ "$PRERELEASE" = false ]; then docker buildx imagetools create --tag "$IMAGE:latest-stable" "$IMAGE@$DIGEST"; fi
+
+  binaries:
+    name: Build, sign and upload the binaries
+    # Runs only after publish succeeded, so the owner's approval of the release environment covers it; it needs no second approval.
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      # Only this job: gh release upload writes the assets to the Release.
+      contents: write
+      # Only this job and publish: cosign exchanges the run's OIDC token for a short-lived signing certificate.
+      id-token: write
+    env:
+      GOTOOLCHAIN: local
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Install cosign
+        run: |
+          read -r url sha256 < <(jq -er '.cosign.assets["linux-amd64"] | "\(.url) \(.sha256)"' dev/tools.json)
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$RUNNER_TEMP/cosign" "$url"
+          echo "$sha256  $RUNNER_TEMP/cosign" | sha256sum --check --strict -
+          chmod +x "$RUNNER_TEMP/cosign"
+      - name: Build the four binaries and SHA256SUMS
+        env:
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Unexpected image digest"; exit 1; }
+          mkdir "$RUNNER_TEMP/dist"
+          pkg=github.com/IgnisDevNE/SuiteWard/internal
+          for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            file="$RUNNER_TEMP/dist/suiteward_${TAG}_${os}_${arch}"
+            if [ "$os" = windows ]; then file="$file.exe"; fi
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+              -ldflags "-X $pkg/app.Version=$TAG -X $pkg/app.Source=https://github.com/IgnisDevNE/SuiteWard/tree/$TAG -X $pkg/installer.ImageDigest=$DIGEST" \
+              -o "$file" ./cmd/suiteward
+            # -X silently ignores a symbol that no longer exists: the digest must really be in the binary.
+            grep -aqF "$DIGEST" "$file" || { echo "::error::The image digest is not embedded in $file"; exit 1; }
+          done
+          (cd "$RUNNER_TEMP/dist" && sha256sum suiteward_* > SHA256SUMS)
+      - name: Sign every file and verify the signatures
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd "$RUNNER_TEMP/dist"
+          for file in suiteward_* SHA256SUMS; do
+            "$RUNNER_TEMP/cosign" sign-blob --yes --bundle "$file.sigstore.json" "$file"
+            pwsh "$GITHUB_WORKSPACE/scripts/verify-release.ps1" -Blob "$file" -Bundle "$file.sigstore.json" -Cosign "$RUNNER_TEMP/cosign"
+          done
+          { echo "Files for the release $TAG:"; ls -1; echo; echo "SHA256SUMS:"; echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the files to the GitHub Release
+        # The only step with the contents: write token; it runs nothing but gh.
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/dist"
+          gh release upload "$TAG" suiteward_* SHA256SUMS SHA256SUMS.sigstore.json --clobber

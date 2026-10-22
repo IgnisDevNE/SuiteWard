@@ -132,14 +132,14 @@ Patterns are gitignore-style. A pattern with no slash inside it matches at any d
 
 ## Install
 
-SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App that the owner creates. The [install guide](docs/install.md) covers both tiers:
-- **Isolated:** an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance. The guide describes the v0.2.0 install.
-- **Co-located:** Podman on the developer's Windows PC.
+SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App. You install it with the `suiteward` installer, a signed release binary for linux/amd64, linux/arm64, windows/amd64 and darwin/arm64 that carries the digest of its own image. The [install guide](docs/install.md) covers both tiers:
+- **Co-located:** `suiteward install` on the developer's Windows PC, with Podman (strongly recommended) or Docker (discouraged). It starts the stack, creates the GitHub App through your browser, writes the ruleset for you to import, and runs the owner setup. Windows is validated live; macOS and Linux are covered by tests only.
+- **Isolated:** `sudo suiteward install host`, then `suiteward install --tier isolated` as the service account (it creates the GitHub App through a Session Manager port forward, or takes one you made), on an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance.
 
-The guide also covers TOTP enrollment, the ruleset, upgrades and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
+Verify the download once with `scripts/verify-release.ps1` ([how](docs/install.md#4-get-and-verify-the-installer)), and check an instance at any time with `suiteward doctor`. The guide also covers TOTP enrollment, the ruleset, upgrades (`suiteward install --upgrade`, which backs up first) and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
 
-- **In a hurry?** The [quickstart](docs/quickstart.md) is the short co-located path, in five steps.
-- **Installing with a coding agent?** Point it to [agent-install.md](docs/agent-install.md). It says what the agent may prepare, and which steps (the App key, TOTP enrollment, the ruleset, every `/suiteward` command) only you do.
+- **In a hurry?** The [quickstart](docs/quickstart.md) is the short path for each tier.
+- **Installing with a coding agent?** Point it to [agent-install.md](docs/agent-install.md). It says what the agent may prepare, and which steps (the installer's GitHub flow and App key, TOTP enrollment, the ruleset, every `/suiteward` command) only you do.
 
 ## Status
 

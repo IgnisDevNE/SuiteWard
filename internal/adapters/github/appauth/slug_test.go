@@ -81,6 +81,9 @@ func TestSlugFailuresAreErrorsWithoutTheJWT(t *testing.T) {
 			if c.wantStatus == 0 && errors.As(err, &status) {
 				t.Errorf("err = %v, want a malformed-answer error, not a StatusError", err)
 			}
+			if c.wantStatus == 0 && !errors.Is(err, appauth.ErrMalformedAnswer) {
+				t.Errorf("err = %v, want ErrMalformedAnswer", err)
+			}
 			reqs := g.requests()
 			if len(reqs) != 1 {
 				t.Fatalf("%d requests, want 1", len(reqs))

@@ -1,7 +1,7 @@
 # SuiteWard engineering plan
 
-- **Updated:** 2026-10-21 (phase SH done; phase M1.11 approved)
-- **Status:** Delivered through M1.10 (`v0.1.3`) and the security hardening phase [SH](plan/phases/SH.md), released as `v0.2.0-rc.1` and `v0.2.0-rc.2`. [M1.11](plan/phases/M1.11.md) ships as `v0.2.0-rc.3`, and the final `v0.2.0` follows it.
+- **Updated:** 2026-10-22 (the MVP `v0.2.0` is released; phase M1.12, the installer, is next)
+- **Status:** Delivered through M1.11 and released as `v0.2.0` (2026-10-22), after the security hardening phase [SH](plan/phases/SH.md) and `v0.2.0-rc.1` to `rc.3`. [M1.12](plan/phases/M1.12.md), the installer, is next and ships as `v0.3.0-alpha.1`, the first version handed to testers.
 
 This plan builds on the [project baseline](project-baseline.md) and the [accepted ADRs](decisions/README.md). It concerns how SuiteWard itself is developed; the product's rules for governing customer repositories are separate.
 

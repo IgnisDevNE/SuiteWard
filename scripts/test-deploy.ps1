@@ -1,5 +1,5 @@
-# Offline checks of the deploy files: the quadlet units (migrate before serve, least-privilege secrets, digest pin) and deploy/local.ps1
-# (rootless connection only, no password in an argument, migrate before serve). Nothing here talks to a real Podman.
+# Offline checks of the deploy files: the quadlet units (migrate before serve, least-privilege secrets, digest pin).
+# The co-located stack is started by `suiteward install`, which has Go tests over the same flag sets (internal/installer). Nothing here talks to a real Podman.
 #Requires -Version 7.2
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -37,96 +37,6 @@ Assert-That (-not (Has $serve 'AutoUpdate=')) 'serve has AutoUpdate (it is a doc
 $serveImage = @($serve | Where-Object { $_.StartsWith('Image=') })
 Assert-That ($serveImage.Count -eq 1 -and $serveImage[0] -match '^Image=ghcr\.io/ignisdevne/suiteward@sha256:(<digest>|[0-9a-f]{64})$') 'serve Image is not pinned by digest'
 Assert-That ($serveImage.Count -eq 1 -and (@($migrate | Where-Object { $_.StartsWith('Image=') }) -ceq $serveImage)) 'migrate and serve run different Image lines'
-
-$localPath = Join-Path $root 'deploy/local.ps1'
-$local = Get-Lines $localPath
-# A password in an argument shows in the process list. For every `podman run`/`podman exec` of the script (backtick continuations joined) the
-# argument list may expand only these variables: nothing else, not even a subexpression, may reach a command line. A psql invocation must
-# read its SQL on stdin (`exec -i ... psql ... -f -`) and never take -c.
-$allowedArgumentVariables = 'Image', 'postgres', 'null'
-function Get-ArgvViolations([string]$Script) {
-    $code = ($Script -split '\r?\n' | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
-    $violations = [Collections.Generic.List[string]]::new()
-    $stdinPsql = 0
-    foreach ($line in ($code -replace '`\r?\n\s*', ' ') -split "`n") {
-        $call = [regex]::Match($line, '(?i)(&\s*podman|Invoke-Podman)\s+(run|exec)\b')
-        if (-not $call.Success) { continue }
-        $invocation = $line.Substring($call.Index)
-        foreach ($expansion in [regex]::Matches(($invocation -replace "'[^']*'", "''"), '\$(\{\w+\}|\w+|\()')) {
-            $name = $expansion.Value.TrimStart('$').Trim('{', '}')
-            if ($name -notin $allowedArgumentVariables) { $violations.Add("$($expansion.Value) reaches a command line: $invocation") }
-        }
-        if ($invocation -cmatch '\bpsql\b') {
-            if ($invocation -cmatch 'exec -i\b.*\bpsql\b.*\s-f -(\s|$)' -and $invocation -cnotmatch '\bpsql\b.*\s(-c|--command)\b') { $stdinPsql++ }
-            else { $violations.Add("psql is not fed on stdin (podman exec -i ... psql -f -): $invocation") }
-        }
-    }
-    if (-not $stdinPsql) { $violations.Add('no psql invocation is fed on stdin (podman exec -i ... psql -f -)') }
-    $violations
-}
-$text = Get-Content -LiteralPath $localPath -Raw
-foreach ($violation in Get-ArgvViolations $text) { $failures.Add($violation) }
-# The check must bite: a password variable on a continuation line, a psql without -f -, and a subexpression are each refused.
-Assert-That (@(Get-ArgvViolations $text.Replace('$Image migrate', "--env LEAK=`$appPassword ``$([Environment]::NewLine)    `$Image migrate")).Count -ge 1) 'the argument check accepts --env LEAK=$appPassword on a continuation line'
-Assert-That (@(Get-ArgvViolations $text.Replace(' -f -', '')).Count -ge 1) 'the argument check accepts a psql that is not fed on stdin'
-Assert-That (@(Get-ArgvViolations $text.Replace('--memory 256m `', '--memory $($appPassword) `')).Count -ge 1) 'the argument check accepts a subexpression in an argument list'
-Assert-That ($text -cmatch "SET log_statement = 'none'; SET log_min_error_statement = 'panic'; SET log_min_duration_statement = -1;") 'the role SQL does not switch every kind of statement logging off first'
-$migrateAt = $text.IndexOf('--name suiteward-migrate '); $serveAt = $text.IndexOf('--name suiteward --network')
-Assert-That ($migrateAt -ge 0 -and $migrateAt -lt $serveAt) 'migrate does not run before serve'
-Assert-That ([regex]::IsMatch($text, 'migrate\r?\n\s*if \(\$LASTEXITCODE -ne 0\) \{ throw')) 'a failed migrate does not stop the script'
-Assert-That ($text.Contains('podman machine ssh --username user "sh -s"')) 'the smoke instruction does not use the rootless ssh user'
-# -JobTimeout reaches the serve container only (an argument array, so the argument check above still holds), and there is no default image.
-$serveCall = [regex]::Match($text, '(?s)--name suiteward --network.*?\$Image \| Out-Null').Value
-$migrateCall = [regex]::Match($text, '(?s)--name suiteward-migrate .*?\$Image migrate').Value
-Assert-That ($serveCall -and $serveCall.Contains('@jobTimeoutArgs')) 'serve does not get the job timeout arguments'
-Assert-That ($migrateCall -and -not $migrateCall.Contains('jobTimeout')) 'migrate gets the job timeout'
-Assert-That ($text -cmatch '"SUITEWARD_JOB_TIMEOUT=\$JobTimeout"') 'the job timeout is not passed as SUITEWARD_JOB_TIMEOUT'
-Assert-That ($text -cnotmatch ':deploy') 'local.ps1 still names the :deploy tag'
-
-# Behavior with a fake podman (a function the script sees): a rootful connection is refused before anything is created; -Down -Purge removes the owner secret too.
-$global:swCalls = [Collections.Generic.List[string]]::new()
-$global:swRootless = 'false'
-$global:swSeen = [Collections.Generic.List[string]]::new()
-function podman {
-    $global:swCalls.Add("$args"); $global:swSeen.Add("$env:CONTAINER_CONNECTION")
-    $global:LASTEXITCODE = 0
-    if ("$args" -like 'system connection list*') {
-        '[{"Name":"podman-machine-default","URI":"ssh://user@127.0.0.1:1/run/user/1000/podman/podman.sock","IsMachine":true},{"Name":"podman-machine-default-root","URI":"ssh://root@127.0.0.1:1/run/podman/podman.sock","IsMachine":true}]'
-    } elseif ("$args" -like 'info*') { $global:swRootless }
-}
-$savedLocal = $env:LOCALAPPDATA; $savedConnection = $env:CONTAINER_CONNECTION; $savedHost = $env:CONTAINER_HOST
-Remove-Item Env:CONTAINER_CONNECTION -ErrorAction Ignore
-$env:CONTAINER_HOST = 'ssh://caller-host'
-$env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) "suiteward-deploy-test-$([Guid]::NewGuid().ToString('N'))"
-try {
-    # Without LOCALAPPDATA (a host that is not Windows) the script says so instead of failing in Join-Path with a null argument.
-    $savedAppData = $env:LOCALAPPDATA; Remove-Item Env:LOCALAPPDATA
-    $noAppData = $null
-    try { & $localPath -Down } catch { $noAppData = $_.Exception.Message }
-    $env:LOCALAPPDATA = $savedAppData
-    Assert-That ($noAppData -match 'LOCALAPPDATA') "a missing LOCALAPPDATA was not named (got: $noAppData)"
-    # A start without -Image is refused before any podman call, and the message names the signed index digest.
-    $global:swCalls.Clear()
-    $noImage = $null
-    try { & $localPath } catch { $noImage = $_.Exception.Message }
-    Assert-That ($noImage -match '-Image' -and $noImage -match 'index digest') "a start without -Image was not refused clearly (got: $noImage)"
-    Assert-That ($global:swCalls.Count -eq 0) 'podman was called before the missing -Image was refused'
-    $refused = $null
-    try { & $localPath -PodmanConnection podman-machine-default-root -Down } catch { $refused = $_.Exception.Message }
-    Assert-That ($refused -match 'rootless') "a rootful connection was not refused (got: $refused)"
-    Assert-That (-not ($global:swCalls | Where-Object { $_ -match '^(rm|secret|volume|network|run) ' })) 'podman changed something before the rootful refusal'
-    Assert-That ($global:swSeen -ccontains 'podman-machine-default-root') 'the requested connection was not the one used'
-    Assert-That ($null -eq $env:CONTAINER_CONNECTION -and $env:CONTAINER_HOST -ceq 'ssh://caller-host') 'a refused run left the caller''s Podman environment changed'
-
-    $global:swSeen.Clear(); $global:swCalls.Clear(); $global:swRootless = 'true'
-    & $localPath -Down -Purge
-    if ($IsWindows) { Assert-That ($global:swSeen -ccontains 'podman-machine-default') 'the rootless machine connection was not selected' }
-    Assert-That ($null -eq $env:CONTAINER_CONNECTION -and $env:CONTAINER_HOST -ceq 'ssh://caller-host') 'the run left the caller''s Podman environment changed'
-    Assert-That (@($global:swCalls | Where-Object { $_ -match '^secret rm .*suiteward-database-owner-url' }).Count -eq 1) '-Down -Purge does not remove the owner URL secret'
-} finally {
-    Remove-Item -LiteralPath Function:\podman
-    $env:LOCALAPPDATA = $savedLocal; $env:CONTAINER_CONNECTION = $savedConnection; $env:CONTAINER_HOST = $savedHost
-}
 
 if ($failures.Count) { throw "Deploy checks failed:`n  $($failures -join "`n  ")" }
 Write-Host 'Deploy checks passed.'

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer"
 )
 
 // Version is the build version that /status reports. The release build sets it:
@@ -26,6 +27,12 @@ const usage = `usage: suiteward serve
        suiteward migrate
        suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
        suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]
+       suiteward check [--json]
+       suiteward install [flags]
+       suiteward install host [flags]
+       suiteward uninstall [--purge] [--yes] [flags]
+       suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]
+       suiteward doctor [--json] [--settings PATH]
 `
 
 // Env is the process environment that the settings are read from, and the
@@ -48,7 +55,42 @@ func OSEnv() Env {
 // prints JSON lines to stdout; setup prints only the TOTP enrollment to stdout
 // and logs JSON to stderr; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
+	// The commands of the machine that installs run before the settings are read: it has no SUITEWARD_* environment.
+	if len(args) > 0 && (args[0] == "install" || args[0] == "uninstall" || args[0] == "enroll" || args[0] == "doctor") {
+		return installer.Main(ctx, args, installer.OSEnv(stdout), stderr)
+	}
 	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
+}
+
+// commandFlags are the parsed flags of the commands that have any.
+type commandFlags struct {
+	probe  probeOptions
+	setup  setupFlags
+	asJSON bool // check --json
+}
+
+// parseCommand reads the arguments of command, which are the ones after its name. A nonzero exit code means the
+// usage error has been reported on stderr.
+func parseCommand(command string, args []string, stderr io.Writer) (flags commandFlags, exit int) {
+	var err error
+	switch command {
+	case "serve", "migrate":
+		if len(args) != 0 {
+			return flags, usageError(stderr)
+		}
+	case "probe":
+		flags.probe, err = parseProbe(args, stderr)
+	case "setup":
+		flags.setup, err = parseSetup(args, stderr)
+	case "check":
+		flags.asJSON, err = parseSelfCheck(args, stderr)
+	default:
+		return flags, usageError(stderr)
+	}
+	if err != nil {
+		return flags, 2
+	}
+	return flags, 0
 }
 
 // runWith is Run with the wait of migrate, which a test bounds.
@@ -57,27 +99,9 @@ func runWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writ
 	if len(args) > 0 {
 		command = args[0]
 	}
-	var (
-		probe probeOptions
-		flags setupFlags
-	)
-	switch command {
-	case "serve", "migrate":
-		if len(args) != 1 {
-			return usageError(stderr)
-		}
-	case "probe":
-		var err error
-		if probe, err = parseProbe(args[1:], stderr); err != nil {
-			return 2
-		}
-	case "setup":
-		var err error
-		if flags, err = parseSetup(args[1:], stderr); err != nil {
-			return 2
-		}
-	default:
-		return usageError(stderr)
+	flags, exit := parseCommand(command, args[min(1, len(args)):], stderr)
+	if exit != 0 {
+		return exit
 	}
 
 	cfg, warnings, err := config.Load(env.Lookup, env.Environ, env.ReadFile)
@@ -105,7 +129,7 @@ func runWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writ
 			reportf(stderr, "setup needs the GitHub settings (SUITEWARD_GITHUB_*)\n")
 			return usageError(stderr)
 		}
-		if setupOpts, err = flags.options(cfg.GitHub.Repositories); err != nil {
+		if setupOpts, err = flags.setup.options(cfg.GitHub.Repositories); err != nil {
 			reportf(stderr, "%v\n", err)
 			return usageError(stderr)
 		}
@@ -134,8 +158,10 @@ func runWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writ
 		return runMigrate(ctx, cfg, service.ConnConfig.User, wait, stderr, logger)
 	case "setup":
 		return runSetup(ctx, cfg, setupOpts, env.Stdin, stdout, stderr, logger)
+	case "check":
+		return runSelfCheck(ctx, cfg, flags.asJSON, stdout, stderr)
 	}
-	return runProbe(ctx, cfg, probe, stdout, stderr)
+	return runProbe(ctx, cfg, flags.probe, stdout, stderr)
 }
 
 func usageError(stderr io.Writer) int {

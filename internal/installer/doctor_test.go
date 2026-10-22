@@ -814,3 +814,38 @@ func TestDoctorBoundsEveryQuery(t *testing.T) {
 		t.Fatal("doctor did not return: a query has no deadline")
 	}
 }
+
+// An instance installed without GitHub is a valid install: its `check` reports GitHub as not configured, and doctor shows
+// those results as warnings, not failures.
+func TestDoctorShowsAnInstanceWithoutGitHubAsWarnings(t *testing.T) {
+	const noGitHub = `[{"name":"github.app","ok":true,"warning":true,"detail":"not configured: GitHub is off in this instance","fix":"set GitHub up"},` +
+		`{"name":"owner.enrolled","ok":true,"warning":true,"detail":"no owner is enrolled","fix":"set GitHub up first"},` +
+		`{"name":"database.schema","ok":true,"detail":"schema version 20","fix":""}]`
+	f, s := colocated{checkOut: noGitHub}.build(t)
+	code, res, _ := runDoctor(t, f, s)
+	if code != 0 {
+		t.Errorf("exit %d: a warning is not a failure, results %+v", code, res)
+	}
+	for _, name := range []string{"github.app", "owner.enrolled"} {
+		if r := res[name]; !r.OK || !r.Warning {
+			t.Errorf("%s = %+v, want a passing warning", name, r)
+		}
+	}
+	if r := res["database.schema"]; !r.OK || r.Warning {
+		t.Errorf("database.schema = %+v, want a plain pass", r)
+	}
+	if _, failed := res["instance.check"]; failed {
+		t.Error("instance.check failed although check printed its results")
+	}
+
+	f, s = colocated{checkOut: noGitHub}.build(t)
+	_, text := runDoctorRaw(t, f, s, false)
+	for _, want := range []string{"WARN github.app: not configured: GitHub is off in this instance — set GitHub up\n", "WARN owner.enrolled: no owner is enrolled — set GitHub up first\n", "ok database.schema\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("doctor's output lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "FAIL") {
+		t.Errorf("doctor printed a failure:\n%s", text)
+	}
+}

@@ -52,6 +52,8 @@ type selfCheckResult struct {
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail"`
 	Fix    string `json:"fix"`
+	// Warning marks a passing result that needs a look, such as GitHub not being configured; it is in the JSON only when set.
+	Warning bool `json:"warning,omitempty"`
 }
 
 func checkPassed(name, detail string) selfCheckResult {

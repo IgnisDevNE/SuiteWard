@@ -50,10 +50,11 @@ func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, 
 // doctorResult is one line of `suiteward doctor`: the JSON keys are those of `suiteward check --json`, whose results are
 // merged into the same list.
 type doctorResult struct {
-	Name   string `json:"name"`
-	OK     bool   `json:"ok"`
-	Detail string `json:"detail"`
-	Fix    string `json:"fix"`
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Detail  string `json:"detail"`
+	Fix     string `json:"fix"`
+	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
 }
 
 func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {

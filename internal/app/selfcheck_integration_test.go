@@ -190,3 +190,23 @@ func TestSelfCheckChangesNothingInTheDatabase(t *testing.T) {
 		t.Errorf("row counts (enrollment, test checks, TOTP steps, protection results, outbox, jobs) = %s after check, %s before; check must change nothing", after, before)
 	}
 }
+
+// An instance without GitHub passes check: the database checks run for real, GitHub and the enrollment (which setup cannot do
+// without GitHub) are warnings.
+func TestSelfCheckRunOnPostgreSQLWithoutGitHubPassesAndWarns(t *testing.T) {
+	databaseURL := newDatabase(t)
+
+	code, stdout, stderr := run([]string{"check"}, testEnv(serveVars(t, databaseURL)))
+
+	if code != 0 || stderr != "" {
+		t.Fatalf("check = %d, stderr %q, stdout:\n%s", code, stderr, stdout)
+	}
+	for _, line := range []string{"WARN github.app: ", "WARN github.repositories: ", "WARN owner.enrolled: ", "ok database.schema\n", "ok database.role\n"} {
+		if !strings.Contains(stdout, line) {
+			t.Errorf("stdout lacks %q:\n%s", line, stdout)
+		}
+	}
+	if strings.Contains(stdout, "FAIL") {
+		t.Errorf("stdout has a failure:\n%s", stdout)
+	}
+}

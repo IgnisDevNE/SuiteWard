@@ -123,7 +123,7 @@ var installFlags = []struct{ name, usage string }{
 	{"http-port", "loopback port of the HTTP listener (default 8081)"},
 	{"mcp-port", "loopback port of the MCP listener (default 8091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
-	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub"},
+	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub, new-app: create a new App although the settings name one (the old App stays on GitHub)"},
 	{"github-account", `the account that owns the new App: "personal" or an organization login`},
 	{"manifest-port", "the port of the manifest listener on 127.0.0.1 (default: any free port)"},
 	{"ruleset-imported", "yes once the ruleset of each repository is imported"},
@@ -131,7 +131,7 @@ var installFlags = []struct{ name, usage string }{
 	{"github-installation-id", "the installation of that App"},
 	{"github-owner", "the GitHub login of the instance owner"},
 	{"github-repositories", "comma-separated owner/name list, at most 20"},
-	{"github-app-key-file", "file with the App's private key (PEM), or - for standard input; read only while the key secret is missing"},
+	{"github-app-key-file", "file with the App's private key (PEM), or - for standard input; read only while the key secret is missing (it also gives the key of an App the settings name, or a recorded App, whose key secret is gone)"},
 }
 
 func newFlagSet(name string) *flag.FlagSet {

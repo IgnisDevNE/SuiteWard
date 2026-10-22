@@ -138,11 +138,14 @@ func TestResolveGitHubNamedAppWithoutKeyOnATerminal(t *testing.T) {
 }
 
 func TestResolveGitHubNewAppReplacesTheAppOfTheSettings(t *testing.T) {
-	flags := manifestFlags()
-	flags["github"] = "new-app"
+	newAppFlags := func() map[string]string { // flowEnv takes the manifest code out of the map it is given
+		flags := manifestFlags()
+		flags["github"] = "new-app"
+		return flags
+	}
 	t.Run("without its key secret", func(t *testing.T) {
 		g := newFakeGitHub(t)
-		env, out := namedAppWithoutKey(t, g, flags, "", false)
+		env, out := namedAppWithoutKey(t, g, newAppFlags(), "", false)
 		if _, err := resolve(t, env); err != nil || !g.sawRequest("POST /app-manifests") {
 			t.Fatalf("got %v, requests %v", err, g.requests)
 		}
@@ -152,7 +155,7 @@ func TestResolveGitHubNewAppReplacesTheAppOfTheSettings(t *testing.T) {
 	})
 	t.Run("with its key secret in the way, before an App is created", func(t *testing.T) {
 		g := newFakeGitHub(t)
-		env, _ := namedAppWithoutKey(t, g, flags, "", false)
+		env, _ := namedAppWithoutKey(t, g, newAppFlags(), "", false)
 		env.KeyExists = func(context.Context) (bool, error) { return true, nil }
 		_, err := resolve(t, env)
 		if err == nil || !strings.Contains(err.Error(), SecretGitHubAppKey) || len(g.requests) != 0 {
@@ -161,7 +164,7 @@ func TestResolveGitHubNewAppReplacesTheAppOfTheSettings(t *testing.T) {
 	})
 	t.Run("ignores the App an earlier run recorded", func(t *testing.T) {
 		g := newFakeGitHub(t)
-		env, _ := namedAppWithoutKey(t, g, flags, "", false)
+		env, _ := namedAppWithoutKey(t, g, newAppFlags(), "", false)
 		env.Existing = &GitHub{}
 		env.Pending = &PendingApp{AppID: 9, Slug: "suiteward-old", Account: "acme", AccountType: "Organization"}
 		if _, err := resolve(t, env); err != nil || !g.sawRequest("POST /app-manifests") {
@@ -186,7 +189,7 @@ func TestResolveGitHubRecordedAppWithoutKey(t *testing.T) {
 		if err == nil {
 			t.Fatal("a recorded App without its key must stop the flow")
 		}
-		for _, want := range []string{"--github-app-key-file", "--github new-app", "https://github.example/settings/apps/suiteward-abcd"} {
+		for _, want := range []string{"--github-app-key-file", "--github new-app", "https://github.example/organizations/acme/settings/apps/suiteward-abcd"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the error does not name %q:\n%v", want, err)
 			}
@@ -222,7 +225,7 @@ func TestResolveGitHubRecordedAppWithoutKey(t *testing.T) {
 		if _, err := resolve(t, env); err != nil || !g.sawRequest("POST /app-manifests") {
 			t.Fatalf("got %v, requests %v", err, g.requests)
 		}
-		if !strings.Contains(out.String(), "https://github.example/settings/apps/suiteward-abcd") {
+		if !strings.Contains(out.String(), "https://github.example/organizations/acme/settings/apps/suiteward-abcd") {
 			t.Errorf("the page of the old App is not printed:\n%s", out.String())
 		}
 	})

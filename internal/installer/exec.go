@@ -28,6 +28,8 @@ type Deps struct {
 	Interactive Interactive
 	GOOS        string
 	Getenv      func(string) string
+	// UserSID is the Windows SID of the current user, which restrictPath grants; only a Windows run asks for it.
+	UserSID func() (string, error)
 }
 
 // validate refuses a Deps with a missing function: a nil one would fail later, at the first container command.

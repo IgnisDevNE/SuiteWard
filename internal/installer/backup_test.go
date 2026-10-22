@@ -44,6 +44,7 @@ func TestBackupRestrictsItsDirectoryAndEveryFileToThisUserOnWindows(t *testing.T
 	d := Deps{
 		GOOS:        "windows",
 		Getenv:      func(k string) string { return map[string]string{"USERNAME": "tester"}[k] },
+		UserSID:     func() (string, error) { return testSID, nil },
 		Interactive: func(context.Context, string, []string) error { return nil },
 		Exec: func(_ context.Context, name string, args []string, _ io.Reader) ([]byte, error) {
 			if name != "icacls" {
@@ -61,10 +62,10 @@ func TestBackupRestrictsItsDirectoryAndEveryFileToThisUserOnWindows(t *testing.T
 		t.Fatal(err)
 	}
 	want := [][]string{
-		{"icacls", dir, "/inheritance:r", "/grant:r", "tester:(OI)(CI)F"},
-		{"icacls", filepath.Join(dir, backupStatus), "/inheritance:r", "/grant:r", "tester:F"},
-		{"icacls", filepath.Join(dir, backupDump), "/inheritance:r", "/grant:r", "tester:F"},
-		{"icacls", filepath.Join(dir, backupVolume), "/inheritance:r", "/grant:r", "tester:F"},
+		{"icacls", dir, "/inheritance:r", "/grant:r", "*"+testSID+":(OI)(CI)F"},
+		{"icacls", filepath.Join(dir, backupStatus), "/inheritance:r", "/grant:r", "*"+testSID+":F"},
+		{"icacls", filepath.Join(dir, backupDump), "/inheritance:r", "/grant:r", "*"+testSID+":F"},
+		{"icacls", filepath.Join(dir, backupVolume), "/inheritance:r", "/grant:r", "*"+testSID+":F"},
 	}
 	if len(acl) != len(want) {
 		t.Fatalf("icacls ran %d times, want %d: %v", len(acl), len(want), acl)

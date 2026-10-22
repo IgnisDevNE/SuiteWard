@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
@@ -50,22 +52,90 @@ func serveHTTP(t *testing.T, ready int, status, health string) int {
 	return port
 }
 
-// assertReadOnly fails when any command of the fake is one that changes the machine: no argument token is a verb that
-// creates, starts, stops or removes, and nothing ran on the real terminal.
+// baseName is the file name of a command given by a Windows or a POSIX path.
+func baseName(path string) string {
+	path = path[strings.LastIndexAny(path, `/\`)+1:]
+	return strings.TrimSuffix(strings.ToLower(path), ".exe")
+}
+
+// readOnlyViolation says why a command is not one of the probes doctor may run, or "" when it is. The allowlist is exact
+// verbs: a new kind of command fails here until it is reviewed and added.
+func readOnlyViolation(c call) string {
+	args := c.args
+	switch baseName(c.name) {
+	case "podman", "docker":
+		for len(args) >= 2 && slices.Contains([]string{"--connection", "--context", "--host"}, args[0]) {
+			args = args[2:] // which engine, not what to do
+		}
+		return engineViolation(args)
+	case "systemctl":
+		if len(args) >= 2 && args[0] == "--user" && args[1] == "show" {
+			return ""
+		}
+	case "loginctl":
+		if len(args) >= 1 && args[0] == "show-user" {
+			return ""
+		}
+	case "id":
+		if slices.Equal(args, []string{"-un"}) {
+			return ""
+		}
+	}
+	return "not an allowed command"
+}
+
+func engineViolation(args []string) string {
+	has := func(prefix ...string) bool {
+		return len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix)
+	}
+	switch {
+	case has("inspect"), has("info"), has("version"), has("container", "ls"), has("system", "connection", "list"), has("machine", "list"):
+		return ""
+	case has("machine", "ssh"): // the last argument is the command run in the machine
+		remote := args[len(args)-1]
+		if strings.HasPrefix(remote, "systemctl --user show ") || strings.HasPrefix(remote, "curl -fsS -m 5 http://127.0.0.1:") {
+			return ""
+		}
+	case has("exec", "-i"):
+		if len(args) >= 6 && args[3] == "/suiteward" && slices.Equal(args[4:], []string{"check", "--json"}) {
+			return ""
+		}
+		if len(args) >= 6 && args[3] == "bash" && args[4] == "-c" {
+			return ""
+		}
+	}
+	return "not an allowed verb"
+}
+
+// assertReadOnly fails when any command of the fake is not an allowlisted probe, or anything ran on the real terminal.
 func assertReadOnly(t *testing.T, f *fakeEngine) {
 	t.Helper()
-	banned := []string{"run", "rm", "start", "stop", "restart", "create", "pull", "kill", "enable", "disable", "daemon-reload"}
 	for _, c := range f.calls {
-		for _, arg := range append([]string{c.name}, c.args...) {
-			for _, token := range strings.Fields(arg) {
-				if slices.Contains(banned, token) {
-					t.Errorf("doctor ran a command that changes things (%q): %s %v", token, c.name, c.args)
-				}
-			}
+		if why := readOnlyViolation(c); why != "" {
+			t.Errorf("doctor ran a command that is not a read-only probe (%s): %s %v", why, c.name, c.args)
 		}
 	}
 	if len(f.tty) != 0 {
 		t.Errorf("doctor used the terminal: %v", f.tty)
+	}
+}
+
+func TestTheReadOnlyAllowlistRefusesWhatChangesThings(t *testing.T) {
+	for _, c := range []call{
+		{name: "podman", args: []string{"run", "--rm", "x"}},
+		{name: "podman", args: []string{"--connection", "c", "rm", "suiteward"}},
+		{name: "podman", args: []string{"container", "stop", "suiteward"}},
+		{name: "podman", args: []string{"machine", "start"}},
+		{name: "podman", args: []string{"machine", "ssh", "user", "m", "systemctl --user restart suiteward"}},
+		{name: "podman", args: []string{"exec", "-i", "suiteward", "/suiteward", "serve"}},
+		{name: `C:\Program Files\Docker\Docker\resources\bin\docker.exe`, args: []string{"create", "x"}},
+		{name: "systemctl", args: []string{"--user", "restart", "suiteward.service"}},
+		{name: "loginctl", args: []string{"enable-linger", "me"}},
+		{name: "rm", args: []string{"-rf", "/"}},
+	} {
+		if readOnlyViolation(c) == "" {
+			t.Errorf("%s %v passes the read-only allowlist", c.name, c.args)
+		}
 	}
 }
 
@@ -206,6 +276,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 		f.on("info --format", "true\n")
 	}
 	f.on("podman-restart.service", "LoadState=loaded\nUnitFileState=enabled\n")
+	f.on("-un", "suiteward\n").on("show-user suiteward", "Linger=yes\n")
 	if c.goos == "windows" || c.goos == "darwin" {
 		s.Connection = "podman-machine-default"
 		f.on("machine list", machineList)
@@ -220,7 +291,7 @@ func TestDoctorHealthyColocatedPodman(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
-	wantOK(t, res, "settings", "runtime", "containers", "restart", "pins", "ports", "healthz", "status", "github.app", "database.schema")
+	wantOK(t, res, "settings", "runtime", "containers", "restart", "linger", "pins", "ports", "healthz", "status", "github.app", "database.schema")
 	if slices.Contains(names, "machine") {
 		t.Error("a machine check on Linux")
 	}
@@ -238,6 +309,9 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 	wantOK(t, res, "runtime", "containers", "restart", "pins", "ports", "healthz", "status", "github.app")
 	if !strings.Contains(res["runtime"].Detail, "Docker Desktop") {
 		t.Errorf("the runtime result does not identify the engine: %q", res["runtime"].Detail)
+	}
+	if _, has := res["linger"]; has {
+		t.Error("a linger check for Docker, which has its own daemon")
 	}
 }
 
@@ -273,6 +347,7 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 		{"a migrate container that still runs", colocated{migrate: stateOf("running", 0, "")}, "containers", []string{ContainerMigrate, "running"}},
 		{"a missing container", colocated{over: []rule{{match: "inspect --type container " + ContainerDB, err: errors.New("no such container")}}}, "containers", []string{ContainerDB, "no such container"}},
 		{"restart through podman-restart.service off", colocated{over: []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}}, "restart", []string{"podman-restart.service", "disabled"}},
+		{"a user that does not linger", colocated{over: []rule{{match: "show-user", out: "Linger=no\n"}}}, "linger", []string{"linger"}},
 		{"a drifted database image", colocated{edit: driftedDB}, "pins", []string{"image"}},
 		{"a service that is not ready", colocated{ready: http.StatusServiceUnavailable}, "ports", []string{"/readyz", "503"}},
 		{"a health answer that is not ok", colocated{health: `{"status":"degraded"}`}, "healthz", []string{"/healthz", "degraded"}},
@@ -280,6 +355,8 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 		{"failed outbox messages", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":0},"outbox":{"failed":2}}`}, "status", []string{"outbox", "2"}},
 		{"discarded jobs", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":1},"outbox":{"failed":0}}`}, "status", []string{"discarded", "1"}},
 		{"no schema version", colocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"schemaVersion"}},
+		{"another tier than the settings", colocated{status: strings.Replace(okStatus, `"tier":"co-located"`, `"tier":"isolated"`, 1)}, "status", []string{"tier", "isolated", "co-located"}},
+		{"no tier", colocated{status: strings.Replace(okStatus, `"tier":"co-located",`, ``, 1)}, "status", []string{"tier"}},
 		{"a status that is not JSON", colocated{status: `<html>`}, "status", []string{"/status"}},
 	}
 	for _, c := range cases {
@@ -514,9 +591,22 @@ func TestDoctorSaysWhoOwnsTheDockerPipeOnWindows(t *testing.T) {
 // ---- isolated tier ----
 
 type isolatedRig struct {
-	over   []rule
-	files  func(units map[string][]byte)
-	noHome bool
+	over       []rule
+	files      func(units map[string][]byte)
+	noHome     bool
+	serveImage string // what the running service container reports as its image
+	dbImage    string // and the database container
+}
+
+// taglessPostgres is the pinned database image as Podman reports it: repository and digest, the tag dropped.
+func taglessPostgres(t *testing.T) string {
+	t.Helper()
+	pinned, err := PostgresImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, digest, _ := strings.Cut(pinned, "@")
+	return repo[:strings.LastIndex(repo, ":")] + "@" + digest
 }
 
 func unitShow(active, sub, fileState string) string {
@@ -527,7 +617,7 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	t.Helper()
 	s := DefaultSettings()
 	s.Tier = config.TierIsolated
-	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, okStatus, `{"status":"ok"}`), DefaultMCPPort
+	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, strings.Replace(okStatus, "co-located", "isolated", 1), `{"status":"ok"}`), DefaultMCPPort
 	if s.HTTPPort == s.MCPPort {
 		s.MCPPort++
 	}
@@ -554,7 +644,8 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	f.on("exec -i "+ContainerDB+" bash", "blocked\n")
 	f.on("exec -i "+ContainerServe+" /suiteward check --json", okCheck)
 	f.on("NetworkBackend", "netavark\n")
-	f.on("inspect --type container "+ContainerDB, `[{"HostConfig":{"Memory":402653184}}]`)
+	f.on("inspect --type container "+ContainerDB, fmt.Sprintf(`[{"Config":{"Image":%q},"HostConfig":{"Memory":402653184}}]`, cmp.Or(r.dbImage, taglessPostgres(t))))
+	f.on("inspect --type container "+ContainerServe, fmt.Sprintf(`[{"Config":{"Image":%q}}]`, cmp.Or(r.serveImage, testImage)))
 	f.on("info --format", "true\n")
 	return f, s
 }
@@ -566,6 +657,9 @@ func TestDoctorHealthyIsolated(t *testing.T) {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
 	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "healthz", "status", "metadata", "network", "memory", "github.app")
+	if d := res["pins"].Detail; !strings.Contains(d, "consistent with the units") || strings.Contains(d, "equals this release") {
+		t.Errorf("the pins detail overstates what was compared: %q", d)
+	}
 	if _, has := res["containers"]; has {
 		t.Error("a containers result for the isolated tier, whose containers are units")
 	}
@@ -589,10 +683,14 @@ func TestDoctorIsolatedFailures(t *testing.T) {
 		{"a unit is not enabled", isolatedRig{over: []rule{{match: "suiteward-db.service", out: unitShow("active", "running", "disabled")}}}, "restart", []string{"suiteward-db.service", "disabled"}, ""},
 		{"a drifted unit file", isolatedRig{files: driftedUnit}, "pins", []string{"Type="}, ""},
 		{"no unit directory", isolatedRig{noHome: true}, "pins", []string{"unit"}, ""},
+		{"the service runs another digest than its unit", isolatedRig{serveImage: "ghcr.io/ignisdevne/suiteward@sha256:" + strings.Repeat("e", 64)}, "pins", []string{ContainerServe, "unit"}, ""},
+		{"the database runs another image than its unit", isolatedRig{dbImage: "docker.io/library/postgres:99@sha256:" + strings.Repeat("f", 64)}, "pins", []string{ContainerDB, "unit"}, ""},
 		{"another network backend", isolatedRig{over: []rule{{match: "NetworkBackend", out: "cni\n"}}}, "network", []string{"cni", "netavark"}, "netavark"},
 		{"the network backend cannot be read", isolatedRig{over: []rule{{match: "NetworkBackend", err: errors.New("podman: not found")}}}, "network", []string{"not found"}, ""},
 		{"another memory limit on the database", isolatedRig{over: []rule{{match: "inspect --type container " + ContainerDB, out: `[{"HostConfig":{"Memory":0}}]`}}}, "memory", []string{"402653184", "0"}, ""},
 		{"the metadata address answers", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "reachable\n"}}}, "metadata", []string{"169.254.169.254"}, "10.5"},
+		{"the control connection fails", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "control-failed\n"}}}, "metadata", []string{"control"}, ""},
+		{"an answer nobody expected", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "maybe\n"}}}, "metadata", []string{"maybe"}, ""},
 		{"the metadata probe cannot run", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", err: errors.New("container is not running")}}}, "metadata", []string{"not running"}, ""},
 	}
 	for _, c := range cases {
@@ -610,8 +708,109 @@ func TestDoctorIsolatedFailures(t *testing.T) {
 	}
 }
 
+func TestDoctorMetadataProbeHasAPositiveControl(t *testing.T) {
+	f, s := isolatedRig{}.build(t)
+	runDoctor(t, f, s)
+	calls := f.find("exec -i " + ContainerDB + " bash")
+	if len(calls) != 1 {
+		t.Fatalf("the probe ran %d times", len(calls))
+	}
+	script := calls[0].args[len(calls[0].args)-1]
+	control, probe := strings.Index(script, "/dev/tcp/127.0.0.1/5432"), strings.Index(script, "/dev/tcp/169.254.169.254/80")
+	if control < 0 || probe < 0 || control > probe || !strings.Contains(script, "control-failed") {
+		t.Errorf("the script does not check the database port before it probes the metadata address: %s", script)
+	}
+}
+
 func TestDoctorAcceptsQuadletsThatSystemdEnabledThroughInstall(t *testing.T) {
 	f, s := isolatedRig{over: []rule{{match: "suiteward.service", out: unitShow("active", "running", "enabled")}}}.build(t)
 	_, res, _ := runDoctor(t, f, s)
 	wantOK(t, res, "restart")
+}
+
+func TestDoctorNeverPrintsEnvironmentValuesOfADiff(t *testing.T) {
+	password, token := "pw-"+"3f9a0c", "tok-"+"77e1d2"
+	secrets := []string{password, token}
+	assertHidden := func(t *testing.T, out string, names ...string) {
+		t.Helper()
+		for _, secret := range secrets {
+			if strings.Contains(out, secret) {
+				t.Errorf("the output has the value %q: %s", secret, out)
+			}
+		}
+		for _, name := range names {
+			if !strings.Contains(out, name) {
+				t.Errorf("the output does not name %s: %s", name, out)
+			}
+		}
+	}
+	t.Run("containers", func(t *testing.T) {
+		f, s := colocated{edit: func(name string, obj map[string]any) {
+			if name == ContainerServe {
+				cfg := obj["Config"].(map[string]any)
+				cfg["Env"] = append(cfg["Env"].([]string), "POSTGRES_PASSWORD="+password, "SUITEWARD_MCP_TOKEN="+token)
+			}
+		}}.build(t)
+		_, out := runDoctorRaw(t, f, s, true)
+		assertHidden(t, out, "POSTGRES_PASSWORD", "SUITEWARD_MCP_TOKEN")
+		if !strings.Contains(out, `"name":"pins","ok":false`) {
+			t.Errorf("the planted variables are not a pins failure: %s", out)
+		}
+	})
+	t.Run("units", func(t *testing.T) {
+		f, s := isolatedRig{files: func(units map[string][]byte) {
+			units["suiteward.container"] = bytes.Replace(units["suiteward.container"], []byte("[Service]"),
+				[]byte("Environment=SUITEWARD_MCP_TOKEN="+token+"\n\n[Service]"), 1)
+		}}.build(t)
+		_, out := runDoctorRaw(t, f, s, true)
+		assertHidden(t, out, "SUITEWARD_MCP_TOKEN")
+		if !strings.Contains(out, `"name":"pins","ok":false`) {
+			t.Errorf("the planted line is not a pins failure: %s", out)
+		}
+	})
+	t.Run("the message of a DiffError", func(t *testing.T) {
+		e := &DiffError{Diffs: []Diff{
+			{Source: ContainerServe, Field: "environment", Want: "SUITEWARD_INSTALLATION_TIER=co-located", Got: "POSTGRES_PASSWORD=" + password + ", SUITEWARD_MCP_TOKEN=" + token},
+			{Source: "suiteward.container", Field: "[Service]", Got: "Environment=SUITEWARD_MCP_TOKEN=" + token},
+			{Source: "suiteward.container", Field: "[Container]", Want: "ReadOnly=true", Got: "ReadOnly=false"},
+		}}
+		assertHidden(t, e.Error(), "POSTGRES_PASSWORD", "SUITEWARD_MCP_TOKEN")
+		if !strings.Contains(e.Error(), "ReadOnly=false") {
+			t.Errorf("a line that is not an environment value is hidden too: %s", e.Error())
+		}
+	})
+}
+
+func TestDoctorBoundsEveryQuery(t *testing.T) {
+	old := queryTimeout
+	queryTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { queryTimeout = old })
+	f, s := colocated{goos: "windows"}.build(t)
+	deps := f.deps()
+	inner := deps.Exec
+	deps.Exec = func(ctx context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
+		if slices.Contains(args, "list") && slices.Contains(args, "machine") {
+			<-ctx.Done() // a Podman machine that never answers
+			return nil, ctx.Err()
+		}
+		return inner(ctx, name, args, stdin)
+	}
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string)
+	go func() {
+		var out bytes.Buffer
+		Doctor(context.Background(), deps, path, &out, true)
+		done <- out.String()
+	}()
+	select {
+	case out := <-done:
+		if !strings.Contains(out, `"name":"machine","ok":false`) {
+			t.Errorf("a hung query is not a machine failure: %s", out)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("doctor did not return: a query has no deadline")
+	}
 }

@@ -819,3 +819,6 @@ func (d *doctor) checkInstance(ctx context.Context) {
 func (d *doctor) readFix() string {
 	return fmt.Sprintf("read the results with `%s exec %s /suiteward check`; if the command is unknown, update the service image to a release that has it", d.rt.Name(), ContainerServe)
 }
+
+// queryTimeout bounds one runtime, systemctl or pipe query.
+var queryTimeout = 20 * time.Second

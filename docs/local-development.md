@@ -105,7 +105,7 @@ Subsequent commands reuse that recorded connection. They reject an implicit move
 
 ## Agents, source of truth, and GitHub
 
-Versioned ADRs and project documents are the canonical record. Memtrace is supplementary: query it with `repo_id: SuiteWard` and `branch` as `list_watched_paths` shows it. If it is unavailable or inconsistent, report that and use gopls and targeted local reads; this does not block development or authorize changing Memtrace configuration in other repositories.
+Versioned ADRs and project documents are the canonical record. Memtrace is supplementary: query it with `repo_id: SuiteWard` and the branch the checkout is on, and follow the known limits in `AGENTS.md`. If it is unavailable or inconsistent, report that and use gopls and targeted local reads; this does not block development or authorize changing Memtrace configuration in other repositories.
 
 Use a separate working copy and branch for each implementation task. Run its own setup and checks. Share reviewed interfaces, not mutable database state or tool installation directories. Memtrace worktree/Fleet coordination needs separate validation before relying on it.
 

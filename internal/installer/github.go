@@ -46,33 +46,19 @@ import (
 //
 // Without an app-id answer, githubEnv.Existing (the settings' GitHub part) with KeyExists and ReadKey reuses its App when the
 // key secret exists; otherwise the App is created and githubEnv.StoreKey, when set, receives the key right after the
-// conversion, so the flow does not depend on keeping it in memory.
+// conversion, so the flow does not depend on keeping it in memory, and githubEnv.RecordApp, when set, records the App (never the key)
+// right after that. A re-run whose githubEnv.Pending holds that record, and which has no App from an answer or the settings, takes
+// the App up (its key secret is reused, and it waits for or finds the installation) instead of creating a second one.
 func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	env, err := env.withDefaults()
 	if err != nil {
 		return GitHubResult{}, err
 	}
-	var (
-		app     appauth.App
-		res     GitHubResult
-		created string // the page that deletes the App, when this run created it
-	)
-	if _, ok := env.R.given("app-id"); ok { // an answer wins over the settings
-		if app, res, err = existingApp(ctx, env); err != nil {
-			return GitHubResult{}, err
-		}
-	} else {
-		var reused bool
-		if app, res, reused, err = settingsApp(ctx, env); err != nil {
-			return GitHubResult{}, err
-		}
-		if !reused {
-			if app, res, created, err = createApp(ctx, env); err != nil {
-				return GitHubResult{}, createdError(err, created)
-			}
-		}
+	app, res, created, err := chooseApp(ctx, env)
+	if err != nil {
+		return GitHubResult{}, createdError(err, created)
 	}
-	// A failure after the App was created leaves an App nobody uses: the error says how to start over.
+	// A failure after the App was created leaves an App that is used only when the run is repeated: the error says how.
 	fail := func(err error) (GitHubResult, error) { return GitHubResult{}, createdError(err, created) }
 
 	if res.Repositories, err = chooseRepositories(ctx, env, app, res); err != nil {
@@ -107,12 +93,38 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	return res, nil
 }
 
-// createdError says how to start over when this run created the App; the key may be only in memory (no StoreKey).
+// chooseApp finds the App the flow works with: the one an answer names, else the one the settings name, else the one an earlier
+// run created and recorded (PendingApp), else a new one. created is the page that deletes the App, when one was created by this
+// run or an earlier one.
+func chooseApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubResult, created string, err error) {
+	if _, ok := env.R.given("app-id"); ok { // an answer wins over the settings
+		app, res, err = existingApp(ctx, env)
+		return app, res, "", err
+	}
+	app, res, reused, err := settingsApp(ctx, env)
+	switch {
+	case err != nil || reused:
+		return app, res, "", err
+	case env.Pending != nil:
+		return resumeApp(ctx, env)
+	}
+	return createApp(ctx, env)
+}
+
+// createdError says how to start over when the App was created by this run or an earlier one.
 func createdError(err error, deleteURL string) error {
 	if deleteURL == "" {
 		return err
 	}
-	return fmt.Errorf("%w (this run created the App, and unless its key reached the secret store it exists only in memory: if you cannot continue, delete the App at %s and run the installer again)", err, deleteURL)
+	return fmt.Errorf("%w (the GitHub App was created by this run or an earlier one: if you cannot continue, delete it at %s)", err, deleteURL)
+}
+
+// appPage is the settings page of an App, where it is deleted.
+func appPage(webURL, slug, ownerLogin, ownerType string) string {
+	if ownerType == "Organization" {
+		return webURL + "/organizations/" + ownerLogin + "/settings/apps/" + slug
+	}
+	return webURL + "/settings/apps/" + slug
 }
 
 // githubBudget is the fraction of the rate limit the installer may use; it matches the service's.
@@ -135,6 +147,12 @@ type githubEnv struct {
 
 	// StoreKey puts a key the flow created into the secret store, right after the conversion and before anything else can fail.
 	StoreKey func(ctx context.Context, key []byte) error
+	// RecordApp records the App the flow created, right after its key is stored, so that a run that stops before the flow ends
+	// can take the App up again; it never receives the key.
+	RecordApp func(ctx context.Context, app PendingApp) error
+	// Pending is the App an earlier run recorded and did not finish with: with no App named by an answer or the settings, the
+	// flow takes it up (its key secret must exist, see KeyExists) instead of creating another.
+	Pending *PendingApp
 	// Existing is the GitHub part of the settings. With an App id and an installation id, an App whose key secret exists
 	// (KeyExists) is reused instead of created; ReadKey reads that secret to verify the App.
 	Existing  *GitHub
@@ -317,10 +335,7 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	}
 	conv, err := convertManifest(ctx, env.HTTP, env.APIURL, code, account, appName)
 	if conv.Slug != "" {
-		created = env.WebURL + "/settings/apps/" + conv.Slug
-		if conv.OwnerType == "Organization" {
-			created = env.WebURL + "/organizations/" + conv.OwnerLogin + "/settings/apps/" + conv.Slug
-		}
+		created = appPage(env.WebURL, conv.Slug, conv.OwnerLogin, conv.OwnerType)
 	}
 	if err != nil {
 		return app, res, created, err
@@ -335,12 +350,54 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 		}
 		ghSay(env.Out, "The App key is in the secret store.\n")
 	}
+	if env.RecordApp != nil { // after the key: a record without its key would send a re-run to an App it cannot use
+		if err := env.RecordApp(ctx, PendingApp{AppID: conv.ID, Slug: conv.Slug, Account: conv.OwnerLogin, AccountType: conv.OwnerType}); err != nil {
+			return app, res, created, fmt.Errorf("record the App: %w", err)
+		}
+	}
 	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, conv.Slug, conv.OwnerLogin)
 	info, err := waitForInstallation(ctx, env, app, conv.OwnerLogin)
 	if err != nil {
 		return app, res, created, err
 	}
 	return app, GitHubResult{AppID: conv.ID, Slug: conv.Slug, InstallationID: info.ID, Account: info.Account, AccountType: info.AccountType, PrivateKey: conv.PrivateKey}, created, nil
+}
+
+// errPendingKeyMissing means an App an earlier run recorded has no key secret: it cannot be used, and it is not replaced.
+var errPendingKeyMissing = errors.New("an earlier run created a GitHub App and recorded it, but its key secret is gone")
+
+// resumeApp takes up the App an earlier run created and recorded: its key is in the secret store, so what is left is the
+// installation and the rest of the flow. created is the page that deletes the App.
+func resumeApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubResult, created string, err error) {
+	p := *env.Pending
+	created = appPage(env.WebURL, p.Slug, p.Account, p.AccountType)
+	if env.KeyExists == nil || env.ReadKey == nil {
+		return app, res, created, fmt.Errorf("the App %s is recorded, but the flow has no way to look for its key secret", p.Slug)
+	}
+	exists, err := env.KeyExists(ctx)
+	if err != nil {
+		return app, res, created, fmt.Errorf("look for the App key secret: %w", err)
+	}
+	if !exists {
+		return app, res, created, fmt.Errorf("%w (the App %s, id %d)", errPendingKeyMissing, p.Slug, p.AppID)
+	}
+	key, err := env.ReadKey(ctx)
+	if err != nil {
+		return app, res, created, fmt.Errorf("read the App key secret: %w", err)
+	}
+	if app, err = appauth.NewApp(p.AppID, key, env.Now); err != nil {
+		return app, res, created, err
+	}
+	if _, err = app.Slug(ctx, env.HTTP, env.APIURL); err != nil {
+		return app, res, created, fmt.Errorf("verify the App with GET /app: %w", err)
+	}
+	ghSay(env.Out, "Taking up the GitHub App %s that an earlier run created; its key is in the secret store.\n", p.Slug)
+	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, p.Slug, p.Account)
+	info, err := waitForInstallation(ctx, env, app, p.Account)
+	if err != nil {
+		return app, res, created, err
+	}
+	return app, GitHubResult{AppID: p.AppID, Slug: p.Slug, InstallationID: info.ID, Account: info.Account, AccountType: info.AccountType, PrivateKey: key}, created, nil
 }
 
 // waitForInstallation polls the App's installations until one is on account, or InstallWait passes.

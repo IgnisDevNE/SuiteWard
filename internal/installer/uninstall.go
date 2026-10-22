@@ -107,7 +107,7 @@ func purgeState(ctx context.Context, rt Runtime, file, settingsPath string) erro
 	if err := rt.Delete(ctx, KindNetwork, NetworkName); err != nil {
 		return err
 	}
-	for _, path := range []string{file, settingsPath} {
+	for _, path := range []string{file, settingsPath, pendingAppPath(settingsPath)} {
 		if err := os.Remove(filepath.Clean(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}

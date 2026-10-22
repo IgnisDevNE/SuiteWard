@@ -120,7 +120,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := pullMissing(ctx, rt, postgres, releaseImageRepo+"@"+digest); err != nil {
 		return err
 	}
-	g := &githubInstall{rt: rt, env: env, out: out, s: s}
+	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath)}
 	if err := g.githubFlow(ctx, r, configDir); err != nil {
 		return err
 	}
@@ -162,6 +162,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := SaveSettings(settingsPath, g.s); err != nil {
 		return err
 	}
+	g.clearPending() // the settings name the App now
 	say("\nSuiteWard %s is running on this account. Settings are saved in %s.\n\n", digest, settingsPath)
 	if gh.AppID == 0 {
 		say("GitHub is not configured in the settings of this run: if the service should reach GitHub, run the install again with --github yes (or the GitHub values).\n")

@@ -93,7 +93,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -108,7 +108,14 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
 		return err
 	}
-	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
+	save := func() error {
+		if err := SaveSettings(t.settingsPath, c.s); err != nil {
+			return err
+		}
+		c.clearPending() // the settings name the App now
+		return nil
+	}
+	if err := c.bringUp(ctx, save); err != nil {
 		return err
 	}
 	c.restartAfterReboot(ctx)

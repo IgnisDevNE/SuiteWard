@@ -2,6 +2,8 @@ package installer
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -556,5 +560,24 @@ func TestGitHubResultNeverRendersTheKey(t *testing.T) {
 	res := GitHubResult{AppID: 1, PrivateKey: testKeyPEM()}
 	for _, text := range []string{fmt.Sprintf("%v", res), fmt.Sprintf("%+v", res), fmt.Sprintf("%#v", res), fmt.Sprint(&res)} {
 		assertNoKey(t, text)
+	}
+}
+
+func TestGitHubResultKeyDoesNotSurviveAnEncoder(t *testing.T) {
+	res := GitHubResult{AppID: 1, PrivateKey: testKeyPEM()}
+	// An encoder writes a []byte as base64, so that is what to look for.
+	leak := base64.StdEncoding.EncodeToString(testKeyPEM())[:40]
+	asJSON, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asYAML, err := yaml.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, encoded := range map[string]string{"json": string(asJSON), "yaml": string(asYAML)} {
+		if strings.Contains(encoded, leak) {
+			t.Errorf("%s of a GitHubResult carries the private key:\n%s", name, encoded)
+		}
 	}
 }

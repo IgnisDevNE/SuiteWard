@@ -91,7 +91,7 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 			return true, nil // values for the GitHub App of the saved settings
 		}
 	}
-	if g.pending != nil { // an App an earlier run created and did not finish with
+	if g.pending != nil && g.s.GitHub.AppID == 0 { // an App an earlier run created and did not finish with; once the settings name an App, the record is not used
 		return true, nil
 	}
 	if existing {
@@ -191,7 +191,7 @@ func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
 	case errors.Is(err, ErrSecretExists):
 		return fmt.Errorf("%w. The secret %s already exists, so the key of the App this run created was not stored: an earlier run left it behind. Delete the App that this run created (the link above) and the one of the earlier run on GitHub, remove the secret %s, then run the installer again", err, SecretGitHubAppKey, secret)
 	case errors.Is(err, errPendingKeyMissing) && g.pending != nil:
-		return fmt.Errorf("%w. The key secret %s is not in the secret store (it was removed or purged). Either delete that App (the link above) and the record %s, then run the installer again; or create a new private key on the App's settings page and run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, SecretGitHubAppKey, g.pendingPath, g.pending.AppID)
+		return fmt.Errorf("%w. The key secret %s is not in the secret store (it was removed or purged). Either delete that App (the link above) and the record %s, then run the installer again; or install the App if it is not installed yet, create a new private key on its settings page and run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, SecretGitHubAppKey, g.pendingPath, g.pending.AppID)
 	case stored && recorded:
 		return fmt.Errorf("%w. The key of the App is in the secret store as %s and the App is recorded in %s: run the installer again to take up that App. To start over instead, delete the App (the link above), remove the secret and delete the record", err, secret, g.pendingPath)
 	case stored:

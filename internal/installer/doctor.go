@@ -821,7 +821,7 @@ func (d *doctor) checkHost(ctx context.Context) {
 		d.fail("memory", "read the memory limit of "+ContainerDB+": "+err.Error(), "start the database container, then run doctor again")
 	case in.HostConfig.Memory != dbMemoryBytes:
 		d.fail("memory", fmt.Sprintf("%s has memory limit %d bytes, want %d", ContainerDB, in.HostConfig.Memory, dbMemoryBytes),
-			"the database unit must limit it to 384 MiB (PodmanArgs=--memory=384m in suiteward-db.container): run `suiteward install` as the service account to write the unit again, then `systemctl --user restart suiteward-db.service`")
+			"the database must run with a 384 MiB limit: check that suiteward-db.container has PodmanArgs=--memory=384m, restart it with `systemctl --user restart suiteward-db.service`, and check that `podman inspect suiteward-db --format {{.HostConfig.Memory}}` prints 402653184 (rootless Podman needs cgroup v2 with the memory controller delegated to the account)")
 	default:
 		d.pass("memory", fmt.Sprintf("%s is limited to %d bytes", ContainerDB, dbMemoryBytes))
 	}

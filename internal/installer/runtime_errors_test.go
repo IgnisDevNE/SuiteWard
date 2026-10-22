@@ -367,11 +367,6 @@ func TestDockerSecretsRefuseWhatIsNotInTheCatalogOrCannotBeDone(t *testing.T) {
 
 func TestDockerSecretsReportAnEngineThatFails(t *testing.T) {
 	ctx := context.Background()
-	consistent := func(s SecretStore, name string) (bool, error) {
-		return s.(interface {
-			Consistent(context.Context, string) (bool, error)
-		}).Consistent(ctx, name)
-	}
 	t.Run("a volume probe fails", func(t *testing.T) {
 		rt, f := linuxDocker(t)
 		f.on("volume ls --filter name=suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward-migrate\n")
@@ -414,6 +409,15 @@ func TestDockerSecretsReportAnEngineThatFails(t *testing.T) {
 			t.Errorf("Write = %v", err)
 		}
 	})
+}
+
+func TestDockerSecretsReportAReadOrARemoveThatFails(t *testing.T) {
+	ctx := context.Background()
+	consistent := func(s SecretStore, name string) (bool, error) {
+		return s.(interface {
+			Consistent(context.Context, string) (bool, error)
+		}).Consistent(ctx, name)
+	}
 	t.Run("a read fails and says nothing of why", func(t *testing.T) {
 		rt, f := linuxDocker(t)
 		f.fail("cat /s/mcp-token", errors.New("sh: "+secretValue))

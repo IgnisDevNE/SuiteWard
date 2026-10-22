@@ -66,7 +66,7 @@ func TestWritePrivateFileNeverReplacesAFile(t *testing.T) {
 	if err := writePrivateFile(path, []byte("two")); err == nil || !strings.Contains(err.Error(), "create "+path) {
 		t.Fatalf("a file that exists was written again: %v", err)
 	}
-	if raw, _ := os.ReadFile(path); string(raw) != "one" {
+	if raw := readFile(t, path); raw != "one" {
 		t.Errorf("the file was replaced: %q", raw)
 	}
 	if err := writePrivateFile(filepath.Join(dir, "missing", "dump.sql"), nil); err == nil {
@@ -86,7 +86,7 @@ func TestEnsureParentRefusesWhatIsNotADirectory(t *testing.T) {
 	if err := ensureParent(filepath.Join(file, "sub")); err == nil || !strings.Contains(err.Error(), file) {
 		t.Errorf("a parent below a file: %v", err)
 	}
-	if err := ensureParent(filepath.Join(dir, "bad\x00name")); err == nil {
+	if err := ensureParent(dir + "/bad\x00name"); err == nil {
 		t.Error("a parent that cannot be examined was accepted")
 	}
 	made := filepath.Join(dir, "a", "b")

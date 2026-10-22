@@ -184,7 +184,7 @@ func TestStackNeverStartedReadsTheSettingsAndTheService(t *testing.T) {
 	if _, err := stackNeverStarted(never("", errInjected), missing); err == nil || !strings.Contains(err.Error(), "ask when suiteward.service was last active") {
 		t.Errorf("a failing systemctl: %v", err)
 	}
-	if _, err := stackNeverStarted(never("", nil), filepath.Join(t.TempDir(), "bad\x00name")); err == nil || !strings.Contains(err.Error(), "look for") {
+	if _, err := stackNeverStarted(never("", nil), t.TempDir()+"/bad\x00name"); err == nil || !strings.Contains(err.Error(), "look for") {
 		t.Errorf("a settings path that cannot be examined: %v", err)
 	}
 	present := filepath.Join(t.TempDir(), "settings.yaml")
@@ -199,10 +199,10 @@ func TestStackNeverStartedReadsTheSettingsAndTheService(t *testing.T) {
 func TestCheckUserManagerNamesWhatIsWrong(t *testing.T) {
 	run := func(state, linger string, failID bool) func(string, ...string) (string, error) {
 		return func(name string, args ...string) (string, error) {
-			switch {
-			case name == "systemctl":
+			switch name {
+			case "systemctl":
 				return state, nil
-			case name == "id":
+			case "id":
 				if failID {
 					return "", errInjected
 				}

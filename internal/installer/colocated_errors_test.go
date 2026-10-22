@@ -101,7 +101,8 @@ func TestDefaultTokenFile(t *testing.T) {
 	deps := func(goos string, env map[string]string) Deps {
 		return Deps{GOOS: goos, Getenv: func(k string) string { return env[k] }}
 	}
-	if got, err := defaultTokenFile(deps("windows", map[string]string{"LOCALAPPDATA": `C:\Users\u\AppData\Local`})); err != nil || got != filepath.Join(`C:\Users\u\AppData\Local`, "SuiteWard", "mcp-token") {
+	local := t.TempDir()
+	if got, err := defaultTokenFile(deps("windows", map[string]string{"LOCALAPPDATA": local})); err != nil || got != filepath.Join(local, "SuiteWard", "mcp-token") {
 		t.Errorf("windows: %q, %v", got, err)
 	}
 	if _, err := defaultTokenFile(deps("windows", nil)); err == nil || !strings.Contains(err.Error(), "LOCALAPPDATA") {
@@ -182,7 +183,7 @@ func TestInstallStopsWhenAnExistingSecretCannotBeRead(t *testing.T) {
 func TestInstallTokenFileErrors(t *testing.T) {
 	t.Run("the path cannot be examined", func(t *testing.T) {
 		h := newHarness(t, "linux")
-		err := h.podman("--token-file", filepath.Join(h.dir, "bad\x00name"))
+		err := h.podman("--token-file", h.dir+"/bad\x00name")
 		if err == nil || !strings.Contains(err.Error(), "look for") {
 			t.Fatalf("install = %v", err)
 		}

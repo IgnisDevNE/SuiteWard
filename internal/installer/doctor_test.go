@@ -198,7 +198,7 @@ func wantFail(t *testing.T, res map[string]doctorResult, name string, detail ...
 }
 
 // stateOf is the State of an inspected container.
-func stateOf(status string, exit int, health string) map[string]any {
+func doctorStateOf(status string, exit int, health string) map[string]any {
 	state := map[string]any{"Status": status, "ExitCode": exit}
 	if health != "" {
 		state["Health"] = map[string]any{"Status": health}
@@ -246,7 +246,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 	f := newFake(c.goos)
 	f.rules = append(f.rules, c.over...)
 
-	states := map[string]map[string]any{ContainerDB: stateOf("running", 0, "healthy"), ContainerServe: stateOf("running", 0, "")}
+	states := map[string]map[string]any{ContainerDB: doctorStateOf("running", 0, "healthy"), ContainerServe: doctorStateOf("running", 0, "")}
 	for name, state := range c.state {
 		states[name] = state
 	}
@@ -317,7 +317,7 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 
 func TestDoctorDockerPinsAreCheckedByImage(t *testing.T) {
 	other := "ghcr.io/ignisdevne/suiteward@sha256:" + strings.Repeat("c", 64)
-	f, s := colocated{engine: RuntimeDocker, migrate: stateOf("exited", 0, ""), edit: func(name string, obj map[string]any) {
+	f, s := colocated{engine: RuntimeDocker, migrate: doctorStateOf("exited", 0, ""), edit: func(name string, obj map[string]any) {
 		if name == ContainerMigrate {
 			obj["Config"].(map[string]any)["Image"] = other
 		}
@@ -341,10 +341,10 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 	}{
 		{"the engine does not answer", colocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}, "runtime", []string{"connection refused"}},
 		{"a rootful connection", colocated{over: []rule{{match: "info --format", out: "false\n"}}}, "runtime", []string{"rootless"}},
-		{"an unhealthy database", colocated{state: map[string]map[string]any{ContainerDB: stateOf("running", 0, "unhealthy")}}, "containers", []string{ContainerDB, "unhealthy"}},
-		{"a stopped service", colocated{state: map[string]map[string]any{ContainerServe: stateOf("exited", 137, "")}}, "containers", []string{ContainerServe, "exited"}},
-		{"a migrate container that failed", colocated{migrate: stateOf("exited", 3, "")}, "containers", []string{ContainerMigrate, "exit"}},
-		{"a migrate container that still runs", colocated{migrate: stateOf("running", 0, "")}, "containers", []string{ContainerMigrate, "running"}},
+		{"an unhealthy database", colocated{state: map[string]map[string]any{ContainerDB: doctorStateOf("running", 0, "unhealthy")}}, "containers", []string{ContainerDB, "unhealthy"}},
+		{"a stopped service", colocated{state: map[string]map[string]any{ContainerServe: doctorStateOf("exited", 137, "")}}, "containers", []string{ContainerServe, "exited"}},
+		{"a migrate container that failed", colocated{migrate: doctorStateOf("exited", 3, "")}, "containers", []string{ContainerMigrate, "exit"}},
+		{"a migrate container that still runs", colocated{migrate: doctorStateOf("running", 0, "")}, "containers", []string{ContainerMigrate, "running"}},
 		{"a missing container", colocated{over: []rule{{match: "inspect --type container " + ContainerDB, err: errors.New("no such container")}}}, "containers", []string{ContainerDB, "no such container"}},
 		{"restart through podman-restart.service off", colocated{over: []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}}, "restart", []string{"podman-restart.service", "disabled"}},
 		{"a user that does not linger", colocated{over: []rule{{match: "show-user", out: "Linger=no\n"}}}, "linger", []string{"linger"}},

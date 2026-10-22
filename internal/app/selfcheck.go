@@ -149,11 +149,15 @@ func selfCheckGitHubResults(ctx context.Context, g config.GitHub, projects []own
 	if !result.OK {
 		return skipFrom(results, nameInstallation, append([]string{namePermissions, nameRepositories}, protections...)...)
 	}
-	results = append(results, selfCheckPermissions(ctx, g, access, installed))
-	readers, repos, result := selfCheckRepositories(ctx, g)
-	results = append(results, result)
+	repositories := selfCheckRepositories(ctx, g, access)
+	if repositories.covered {
+		results = append(results, selfCheckPermissions(ctx, g, access, installed))
+	} else { // GitHub refuses every token that names a repository outside the installation
+		results = append(results, checkSkipped(namePermissions, nameRepositories))
+	}
+	results = append(results, repositories.result)
 	for _, name := range g.Repositories {
-		repo, readable := repos[name]
+		repo, readable := repositories.found[name]
 		if !readable {
 			results = append(results, checkSkipped(nameProtection+name, nameRepositories))
 			continue
@@ -164,7 +168,7 @@ func selfCheckGitHubResults(ctx context.Context, g config.GitHub, projects []own
 				testCheck = project.TestCheck
 			}
 		}
-		evaluated, _ := evaluateProtection(ctx, slog.New(slog.DiscardHandler), readers.protect, g.AppID, name, repo, testCheck) // a wait is a failure here
+		evaluated, _ := evaluateProtection(ctx, slog.New(slog.DiscardHandler), repositories.readers.protect, g.AppID, name, repo, testCheck) // a wait is a failure here
 		results = append(results, selfCheckProtection(name, evaluated))
 	}
 	return results
@@ -228,7 +232,7 @@ func permissionRank(level string) int {
 // selfCheckPermissions checks that every token the service uses mints with exactly the permissions it asks for, and that
 // the installation grants nothing more than those tokens use (the install guide: exactly the five, and nothing else).
 func selfCheckPermissions(ctx context.Context, g config.GitHub, access githubAccess, installed appauth.InstallationInfo) selfCheckResult {
-	var problems []string
+	var problems, mismatches []string
 	missing := map[string]bool{}
 	required := map[string]string{} // the highest level any token asks for
 	for _, token := range selfCheckTokens {
@@ -244,7 +248,12 @@ func selfCheckPermissions(ctx context.Context, g config.GitHub, access githubAcc
 		if err == nil {
 			continue
 		}
-		problems = append(problems, fmt.Sprintf("the %s token cannot be minted: %s", token.use, readDetail(err)))
+		if errors.Is(err, appauth.ErrPermissionsMismatch) { // GitHub's answer is not printed, SuiteWard's own request is
+			problems = append(problems, fmt.Sprintf("the %s token was granted other permissions than the ones it requests", token.use))
+			mismatches = append(mismatches, fmt.Sprintf("the %s token requests %s", token.use, formatPermissions(token.permissions)))
+		} else {
+			problems = append(problems, fmt.Sprintf("the %s token cannot be minted: %s", token.use, readDetail(err)))
+		}
 		for name, level := range token.permissions {
 			if permissionRank(installed.Permissions[name]) < permissionRank(level) {
 				missing[name+": "+level] = true
@@ -271,33 +280,67 @@ func selfCheckPermissions(ctx context.Context, g config.GitHub, access githubAcc
 		detail = append(detail, "the App grants more than SuiteWard uses: "+strings.Join(excess, ", "))
 		fix = append(fix, "remove "+strings.Join(excess, ", ")+" from the App's permissions: SuiteWard needs exactly the five of the install guide")
 	}
+	if len(mismatches) > 0 {
+		fix = append(fix, "compare the App's permissions with the install guide ("+strings.Join(mismatches, "; ")+")")
+	}
 	if len(fix) == 0 {
 		fix = append(fix, "compare the App's repository permissions with the install guide")
 	}
 	return checkFailed(namePermissions, strings.Join(detail, "; "), strings.Join(fix, "; "))
 }
 
-// selfCheckRepositories reads every configured repository and returns the ones that could be read, by configured name.
-func selfCheckRepositories(ctx context.Context, g config.GitHub) (setupReaders, map[string]github.Repository, selfCheckResult) {
-	readers, err := composeSetupReaders(g)
+// repositoryReads is what selfCheckRepositories found: the readers and the repositories read, by configured name, and
+// whether the installation covers every configured repository.
+type repositoryReads struct {
+	result  selfCheckResult
+	readers setupReaders
+	found   map[string]github.Repository
+	covered bool
+}
+
+// selfCheckRepositories checks that the installation covers every configured repository and reads the covered ones.
+// A token that names an uncovered repository is refused by GitHub, so the readers ask for the covered ones only.
+func selfCheckRepositories(ctx context.Context, g config.GitHub, access githubAccess) repositoryReads {
+	listed, err := access.app.InstallationRepositories(ctx, g.InstallationID, access.httpClient, g.APIURL)
 	if err != nil {
-		return setupReaders{}, nil, checkFailed(nameRepositories, err.Error(), appFix)
+		return repositoryReads{result: checkFailed(nameRepositories, "the installation's repositories could not be listed: "+readDetail(err), appFix)}
 	}
-	repos := make(map[string]github.Repository, len(g.Repositories))
-	var problems []string
+	var uncovered []string
+	covered := g
+	covered.Repositories = nil
 	for _, name := range g.Repositories {
-		repo, err := readers.read.Repository(ctx, name)
-		if err != nil {
-			problems = append(problems, name+": "+readDetail(err))
-			continue
+		if slices.ContainsFunc(listed, func(full string) bool { return strings.EqualFold(full, name) }) { // GitHub names are case-insensitive
+			covered.Repositories = append(covered.Repositories, name)
+		} else {
+			uncovered = append(uncovered, name)
 		}
-		repos[name] = repo
+	}
+	var problems []string
+	if len(uncovered) > 0 {
+		problems = append(problems, "not covered by the installation: "+strings.Join(uncovered, ", "))
+	}
+	reads := repositoryReads{found: make(map[string]github.Repository, len(covered.Repositories)), covered: len(uncovered) == 0}
+	if len(covered.Repositories) > 0 {
+		if reads.readers, err = composeSetupReaders(covered); err != nil {
+			reads.result = checkFailed(nameRepositories, err.Error(), appFix)
+			return reads
+		}
+		for _, name := range covered.Repositories {
+			repo, err := reads.readers.read.Repository(ctx, name)
+			if err != nil {
+				problems = append(problems, name+" is not readable: "+readDetail(err))
+				continue
+			}
+			reads.found[name] = repo
+		}
 	}
 	if len(problems) > 0 {
-		return readers, repos, checkFailed(nameRepositories, "not readable: "+strings.Join(problems, "; "),
-			"make sure the installation covers every configured repository (the App's repository access) and that each is spelled OWNER/NAME")
+		reads.result = checkFailed(nameRepositories, strings.Join(problems, "; "),
+			"add the repositories to the installation's repository access, or remove them from SUITEWARD_GITHUB_REPOSITORIES, and make sure each is spelled OWNER/NAME")
+		return reads
 	}
-	return readers, repos, checkPassed(nameRepositories, strings.Join(g.Repositories, ", ")+" readable")
+	reads.result = checkPassed(nameRepositories, strings.Join(g.Repositories, ", ")+" covered and readable")
+	return reads
 }
 
 // selfCheckProtection is the result of one repository's protection: enforced passes; findings, enforcement-unavailable
@@ -391,4 +434,13 @@ func selfCheckRole(ctx context.Context, pool *pgxpool.Pool) selfCheckResult {
 			"connect the service as the least-privilege application role that `suiteward migrate` grants, never as the owner or a superuser")
 	}
 	return checkPassed(nameRole, "role "+name+" is not a superuser and cannot create roles or bypass row-level security")
+}
+
+// formatPermissions renders a permission map in name order, for the fix.
+func formatPermissions(permissions map[string]string) string {
+	names := slices.Sorted(maps.Keys(permissions))
+	for i, name := range names {
+		names[i] = name + ": " + permissions[name]
+	}
+	return strings.Join(names, ", ")
 }

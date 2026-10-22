@@ -51,8 +51,10 @@ The command opens a new shell and waits for commands, so it prints nothing. Chec
 
 2. Dump the database as its owner, `suiteward`, which the command below uses over the container's local socket. The dump is plain SQL, so restoring it needs only `psql`.
 
+   The dump holds the TOTP secret, so the directory is readable only by `suiteward`:
+
    ```bash
-   mkdir -p ~/suiteward-backup
+   mkdir -p ~/suiteward-backup && chmod 700 ~/suiteward-backup
    ```
 
    ```bash

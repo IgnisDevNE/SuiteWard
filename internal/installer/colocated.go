@@ -63,7 +63,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w: %s", ErrNotDigestImage, image)
 	}
 	s.Image = image
-	c := colocated{rt: rt, env: env, out: env.Term.Out, s: s, image: image, tokenFile: r.preset("token-file", "")}
+	c := colocatedInstall{rt: rt, env: env, out: env.Term.Out, s: s, image: image, tokenFile: r.preset("token-file", "")}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -141,7 +141,7 @@ func chooseSettings(r *Resolver, base Settings, runtimeName, connection string) 
 }
 
 // preflight does everything that can fail without changing anything, so a refusal leaves a running stack alone.
-func (c *colocated) preflight(ctx context.Context, keyFile func() ([]byte, error), previous stackInstalled) error {
+func (c *colocatedInstall) preflight(ctx context.Context, keyFile func() ([]byte, error), previous stackInstalled) error {
 	if err := c.loadGitHubKey(ctx, keyFile); err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (c *colocated) preflight(ctx context.Context, keyFile func() ([]byte, error
 }
 
 // loadGitHubKey reads the App key when GitHub is configured and its secret does not exist yet.
-func (c *colocated) loadGitHubKey(ctx context.Context, keyFile func() ([]byte, error)) error {
+func (c *colocatedInstall) loadGitHubKey(ctx context.Context, keyFile func() ([]byte, error)) error {
 	if c.s.GitHub.AppID == 0 {
 		return nil
 	}
@@ -257,7 +257,7 @@ func defaultTokenFile(d Deps) (string, error) {
 	return filepath.Join(dir, "suiteward", "mcp-token"), nil
 }
 
-type colocated struct {
+type colocatedInstall struct {
 	rt        Runtime
 	env       Env
 	out       io.Writer
@@ -275,11 +275,11 @@ type secretState struct {
 	needAppURL                   bool // the application URL secret is missing, or still the owner URL of a v0.1.x stack
 }
 
-func (c colocated) say(format string, args ...any) { _, _ = fmt.Fprintf(c.out, format, args...) }
+func (c colocatedInstall) say(format string, args ...any) { _, _ = fmt.Fprintf(c.out, format, args...) }
 
 // checkPorts refuses a loopback port that something else listens on. The stack's own service holds its ports while it runs
 // (it is replaced below), so a port it already publishes is not a conflict.
-func (c colocated) checkPorts(previous Settings, known bool) error {
+func (c colocatedInstall) checkPorts(previous Settings, known bool) error {
 	for _, p := range []struct {
 		flag      string
 		port, old int
@@ -295,7 +295,7 @@ func (c colocated) checkPorts(previous Settings, known bool) error {
 }
 
 // readSecretState reads which database secrets exist and refuses a state the install cannot repair.
-func (c colocated) readSecretState(ctx context.Context) (secretState, error) {
+func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, error) {
 	secrets := c.rt.Secrets()
 	haveDB, err := secrets.Exists(ctx, SecretDBAuth)
 	if err != nil {
@@ -337,7 +337,7 @@ func (c colocated) readSecretState(ctx context.Context) (secretState, error) {
 }
 
 // bringUp creates what is missing and starts the stack in the order of the quadlets: database, role, migrate, service.
-func (c colocated) bringUp(ctx context.Context) error {
+func (c colocatedInstall) bringUp(ctx context.Context) error {
 	secrets := c.rt.Secrets()
 
 	if err := c.ensure(ctx, KindNetwork, NetworkName); err != nil {
@@ -406,7 +406,7 @@ func (c colocated) bringUp(ctx context.Context) error {
 	return nil
 }
 
-func (c colocated) ensure(ctx context.Context, kind Kind, name string) error {
+func (c colocatedInstall) ensure(ctx context.Context, kind Kind, name string) error {
 	have, err := c.rt.Exists(ctx, kind, name)
 	if err != nil || have {
 		return err
@@ -416,7 +416,7 @@ func (c colocated) ensure(ctx context.Context, kind Kind, name string) error {
 
 // checkTokenFile refuses to overwrite a token copy that this instance did not make: the file exists, but this instance has
 // no MCP token secret, so the file belongs to another instance (or is left by an interrupted install of this one).
-func (c colocated) checkTokenFile() error {
+func (c colocatedInstall) checkTokenFile() error {
 	if c.secrets.haveToken {
 		return nil
 	}
@@ -432,7 +432,7 @@ func (c colocated) checkTokenFile() error {
 
 // ensureMCPToken makes the MCP token once. Its copy for the client is written first and restricted to this user, so a
 // failure after it leaves a file the next run overwrites.
-func (c colocated) ensureMCPToken(ctx context.Context) error {
+func (c colocatedInstall) ensureMCPToken(ctx context.Context) error {
 	if c.secrets.haveToken {
 		if _, err := os.Stat(c.tokenFile); err != nil {
 			c.say("Warning: the secret %s exists but %s does not. Remove the stack and its secrets to generate a new token.\n", SecretMCPAuth, c.tokenFile)
@@ -480,7 +480,7 @@ func writeTokenFile(ctx context.Context, d Deps, path, token string) error {
 }
 
 // waitHealthy polls the database for 90 s, one check a second.
-func (c colocated) waitHealthy(ctx context.Context) error {
+func (c colocatedInstall) waitHealthy(ctx context.Context) error {
 	logs := c.rt.Name() + " logs " + ContainerDB
 	for range 90 {
 		if err := ctx.Err(); err != nil {
@@ -504,7 +504,7 @@ func (c colocated) waitHealthy(ctx context.Context) error {
 // psql runs SQL as the database owner over the container's local socket. The SQL goes in on stdin: an argument would show
 // in the process list. A sensitive statement carries a password and a failing statement echoes itself, so its error says
 // only that it failed.
-func (c colocated) psql(ctx context.Context, sql string, sensitive bool) (string, error) {
+func (c colocatedInstall) psql(ctx context.Context, sql string, sensitive bool) (string, error) {
 	argv := []string{"psql", "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", ownerRole, "-d", "suiteward", "-f", "-"}
 	out, err := c.rt.Exec(ctx, ContainerDB, argv, strings.NewReader(sql))
 	if err != nil {
@@ -518,7 +518,7 @@ func (c colocated) psql(ctx context.Context, sql string, sensitive bool) (string
 
 // ensureRole creates the application role, or gives it a new password when its secret is missing or still the owner's,
 // so a purged database or an interrupted conversion is repaired. Statements are not logged, not even a failing one.
-func (c colocated) ensureRole(ctx context.Context, needAppURL bool) error {
+func (c colocatedInstall) ensureRole(ctx context.Context, needAppURL bool) error {
 	exists, err := c.psql(ctx, "SELECT 1 FROM pg_roles WHERE rolname = '"+appRole+"'", false)
 	if err != nil {
 		return err
@@ -542,7 +542,7 @@ func (c colocated) ensureRole(ctx context.Context, needAppURL bool) error {
 
 // restartAfterReboot enables podman-restart.service of the rootless user, which is what starts a --restart always
 // container after the machine restarts. A failure is reported, not fatal.
-func (c colocated) restartAfterReboot(ctx context.Context) {
+func (c colocatedInstall) restartAfterReboot(ctx context.Context) {
 	podman, ok := c.rt.(*Podman)
 	if !ok {
 		return
@@ -555,7 +555,7 @@ func (c colocated) restartAfterReboot(ctx context.Context) {
 		_, err = d.Exec(ctx, "systemctl", []string{"--user", "enable", unit}, nil)
 	default:
 		var user string
-		if user, err = machineUser(ctx, podman, machine); err == nil {
+		if user, err = connectionUser(ctx, podman, machine); err == nil {
 			_, err = d.Exec(ctx, "podman", []string{"machine", "ssh", "--username", user, machine, "systemctl", "--user", "enable", unit}, nil)
 		}
 	}
@@ -567,8 +567,8 @@ func (c colocated) restartAfterReboot(ctx context.Context) {
 	}
 }
 
-// machineUser is the user of the machine connection's ssh URI: the machine's rootless user.
-func machineUser(ctx context.Context, p *Podman, connection string) (string, error) {
+// connectionUser is the user of the machine connection's ssh URI: the machine's rootless user.
+func connectionUser(ctx context.Context, p *Podman, connection string) (string, error) {
 	out, err := p.run(ctx, nil, "system", "connection", "list", "--format", "json")
 	if err != nil {
 		return "", fmt.Errorf("list the Podman connections: %w", err)
@@ -591,7 +591,7 @@ func machineUser(ctx context.Context, p *Podman, connection string) (string, err
 }
 
 // nextSteps prints what to do now: setup is run inside the service container with the real terminal.
-func (c colocated) nextSteps() {
+func (c colocatedInstall) nextSteps() {
 	c.say("The MCP token for a client is in %s (it is not printed).\n", c.tokenFile)
 	g := c.s.GitHub
 	if g.AppID == 0 {

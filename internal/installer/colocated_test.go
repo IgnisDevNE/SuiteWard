@@ -534,10 +534,10 @@ func TestInstallNeedsTheImage(t *testing.T) {
 	h.mustNotMutate()
 }
 
-func TestInstallTheIsolatedTierIsNotAvailableYet(t *testing.T) {
-	h := newHarness(t, "linux")
+func TestInstallTheIsolatedTierRunsOnLinuxOnly(t *testing.T) {
+	h := newHarness(t, "windows")
 	err := h.install("--tier", "isolated", "--image", testImage)
-	if err == nil || !strings.Contains(err.Error(), "not available") {
+	if err == nil || !strings.Contains(err.Error(), "Linux") {
 		t.Fatalf("got %v", err)
 	}
 	if len(h.f.calls) != 0 {

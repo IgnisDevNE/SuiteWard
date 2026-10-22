@@ -26,9 +26,33 @@ func (e *DiffError) Error() string {
 	var b strings.Builder
 	b.WriteString("the installed stack differs from the release; nothing was changed. Undo each edit to keep it as it is, or move it to a setting the installer supports, then run again:")
 	for _, d := range e.Diffs {
-		fmt.Fprintf(&b, "\n  %s %s: want %q, got %q", d.Source, d.Field, d.Want, d.Got)
+		want, got := d.printable()
+		fmt.Fprintf(&b, "\n  %s %s: want %q, got %q", d.Source, d.Field, want, got)
 	}
 	return b.String()
+}
+
+// environmentName finds the NAME of the NAME=value assignments in a list or a unit line.
+var environmentName = regexp.MustCompile(`(?:^|[ ,"'])([A-Z_][A-Z0-9_]*)=`)
+
+// printable is the want and got of a diff as a message may show them: an environment value can be a password or a token,
+// so a variable is named and its value never printed.
+func (d Diff) printable() (want, got string) {
+	return hideEnvironment(d.Field == "environment", d.Want), hideEnvironment(d.Field == "environment", d.Got)
+}
+
+func hideEnvironment(list bool, text string) string {
+	if rest, ok := strings.CutPrefix(text, "Environment="); ok {
+		text, list = rest, true
+	}
+	if !list || text == "" {
+		return text
+	}
+	var names []string
+	for _, m := range environmentName.FindAllStringSubmatch(text, -1) {
+		names = append(names, m[1])
+	}
+	return strings.Join(names, ", ") + " (values hidden)"
 }
 
 // Adopted is what an adoption carries over from an installed stack.

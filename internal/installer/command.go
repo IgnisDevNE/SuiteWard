@@ -159,16 +159,13 @@ func Install(ctx context.Context, args []string, env Env) error {
 	}
 	switch config.Tier(tier) {
 	case config.TierIsolated:
-		return installIsolated(ctx, r, env)
+		isolated := saved
+		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
+		return installIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
 	case config.TierCoLocated:
 		return installColocated(ctx, r, env, installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved})
 	}
 	return fmt.Errorf("tier %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
-}
-
-// installIsolated is replaced by the isolated install (task I5).
-func installIsolated(context.Context, *Resolver, Env) error {
-	return errors.New("the isolated install is not available yet: only --tier co-located is")
 }
 
 // preset is an answer that is never asked for: the flag or the answers file, else def.

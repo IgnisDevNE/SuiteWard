@@ -24,6 +24,9 @@ const dockerDesktopRelativeCLI = `\Docker\Docker\resources\bin\docker.exe`
 
 // NewDocker identifies the engine behind the CLI and refuses Podman's docker shim.
 func NewDocker(ctx context.Context, d Deps, o DockerOptions) (Runtime, error) {
+	if err := d.validate(); err != nil {
+		return nil, err
+	}
 	bin, dockerContext := o.Binary, o.Context
 	desktop := d.GOOS == "windows" || d.GOOS == "darwin"
 	if bin == "" {

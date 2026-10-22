@@ -21,6 +21,9 @@ type Podman struct {
 // CONTAINER_CONNECTION, else (off Linux, where Podman runs in a machine) the single machine connection that ends in
 // /run/user/<n>/podman/podman.sock. On Linux without a connection it is the local rootless Podman.
 func NewPodman(ctx context.Context, d Deps, connection string) (Runtime, error) {
+	if err := d.validate(); err != nil {
+		return nil, err
+	}
 	p := &Podman{cli: cli{bin: "podman", d: d}}
 	p.secrets = podmanSecrets{p}
 	if connection == "" {

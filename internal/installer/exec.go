@@ -3,6 +3,7 @@ package installer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,14 @@ type Deps struct {
 	Interactive Interactive
 	GOOS        string
 	Getenv      func(string) string
+}
+
+// validate refuses a Deps with a missing function: a nil one would fail later, at the first container command.
+func (d Deps) validate() error {
+	if d.Exec == nil || d.Interactive == nil || d.Getenv == nil {
+		return errors.New("the container runtime needs Exec, Interactive and Getenv")
+	}
+	return nil
 }
 
 // OSDeps runs real commands on this machine.

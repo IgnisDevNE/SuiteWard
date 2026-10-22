@@ -43,6 +43,9 @@ type Resolver struct {
 
 // NewResolver returns a Resolver over the flags the user set, the answers file's values and a terminal.
 func NewResolver(flags, answers map[string]string, term Terminal) (*Resolver, error) {
+	if term.In == nil || term.Out == nil || (term.IsTerminal && term.ReadPassword == nil) {
+		return nil, errors.New("the console needs an input and an output, and a password reader when it is a terminal")
+	}
 	return &Resolver{flags: flags, answers: answers, term: term, in: bufio.NewReader(term.In)}, nil
 }
 

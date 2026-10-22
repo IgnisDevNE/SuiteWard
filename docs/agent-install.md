@@ -13,7 +13,7 @@ The installer (`suiteward install`) does most of the work in one command, and it
 | Never | Why |
 | --- | --- |
 | Run `suiteward install` with GitHub (the manifest flow, or an App's ID and key), or create the GitHub App, or see, copy, move or store its private key (`.pem`), or the manifest code | Whoever holds the key can publish SuiteWard's check and comments. The code is a credential until the installer converts it. |
-| Run `suiteward setup`, or the installer's setup step, or see its output, the `otpauth://` URI, the base32 secret or a 6-digit code | They are the owner's second factor; with them, the agent could approve its own changes. |
+| Run `suiteward enroll` or `suiteward setup`, or the installer's setup step, or see its output, the `otpauth://` URI, the base32 secret or a 6-digit code | They are the owner's second factor; with them, the agent could approve its own changes. |
 | Import, create, change or bypass the ruleset or branch protection | The ruleset is what makes the check binding. The installer writes a file, and only the owner imports it. |
 | Post any `/suiteward` command | Commands are the owner's. A command from any other account is ignored anyway. |
 | Install on, log in to, or run commands on an isolated host (`sudo suiteward install host`, the service-account install) | Isolation means the agent cannot reach it. |
@@ -29,7 +29,7 @@ The installer (`suiteward install`) does most of the work in one command, and it
 | Install ([section 5](install.md#5-install-co-located)) | Prepare the exact `suiteward install` command line with placeholders, and explain each prompt. The agent never runs the GitHub flow. When the user explicitly asks for a stack without GitHub, it may run `suiteward install --github no`, which creates no App and enrolls no owner; the user runs the install again for GitHub. The installer never changes the Podman default connection, and the agent never does either. |
 | Update ([section 11](install.md#11-updating)) | Prepare the `suiteward install --upgrade` command and remind the user that it backs up first, and that the backup holds the TOTP secret. The agent never reads the backup. |
 | Check ([section 12](install.md#12-the-installer-flags-answers-file-and-what-it-does)) | Run `suiteward doctor` or `suiteward doctor --json`, read the result and explain each `FAIL` and its fix. It only reads, and its results carry identifiers, logins and repository names, never a key, a token or a connection string. |
-| Setup ([section 6](install.md#6-run-setup)) | Prepare the `setup` command line with the owner login and the test check names. The user runs it in their own terminal, with recording off. |
+| Setup ([section 6](install.md#6-run-setup)) | Prepare the `suiteward enroll` command line (with `--tier isolated` on the isolated tier) for the user, not `setup`: the agent never runs either. The user runs it in their own terminal, with recording off. |
 | Ruleset ([section 7](install.md#7-create-the-ruleset)) | Explain what the ruleset must contain, and read `/status` afterwards to confirm `enforced`. |
 | Declaration ([section 8](install.md#8-first-use-bootstrap)) | Draft or improve `.suiteward.yml` and open a pull request with it. The owner reviews it and posts `/suiteward propose`. |
 | Day to day | Read SuiteWard's comments and `/status`, explain them, and explain why the agent's own changes touched protected files when the owner asks. |

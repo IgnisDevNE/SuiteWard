@@ -28,7 +28,7 @@ It starts the stack, and it walks you through the rest, on this PC:
 - one click in your browser creates the GitHub App, and one more installs it on the repositories to protect;
 - you choose the repositories and the test check of each;
 - it writes a ruleset file for each repository and tells you where to import it (GitHub, Settings, Rules, New ruleset, Import a ruleset);
-- it runs setup: turn off terminal recording first. Setup prints your TOTP secret once. Scan it with your authenticator and type the current code. Never paste the output, the secret or a code anywhere.
+- it runs setup: turn off terminal recording first. Setup prints your TOTP secret once. Scan it with your authenticator and type the current code. Never paste the output, the secret or a code anywhere. To enroll again later (a lost authenticator), run `suiteward enroll`: it asks you to type `enroll` before it replaces the secret.
 
 **3. Check** ([section 5.7](install.md#5-install-co-located)):
 
@@ -81,5 +81,5 @@ From then on, every pull request that changes a protected file needs your `/suit
 
 - **Back up** with the [backup runbook](backup.md). The backup holds the TOTP secret.
 - **Never run two SuiteWard instances on the same repository.**
-- **Update** with `suiteward install --upgrade`, which backs up first ([section 11](install.md#11-updating)).
+- **Update** with `suiteward install --upgrade`, which backs up first ([section 11](install.md#11-updating)). If the service is down, it asks on a terminal whether to start it first; `--yes` does not answer that question.
 - **Agents:** to let a coding agent help with the installation, point it to [agent-install.md](agent-install.md), which says where it must stop.

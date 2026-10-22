@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ const Usage = `usage: suiteward install [flags]
        suiteward install --upgrade [--yes] [--backup-dir DIR] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
        suiteward uninstall [--purge] [--yes] [flags]
+       suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]
        suiteward doctor [--json] [--settings PATH]
 `
 
@@ -69,7 +71,7 @@ func (e Env) validate() error {
 	return nil
 }
 
-// Main runs one command of the installer: args start with the command name (install, install host, uninstall or doctor).
+// Main runs one command of the installer: args start with the command name (install, install host, uninstall, enroll or doctor).
 // It returns the process exit code and prints a problem to stderr.
 func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	command, rest := "", []string(nil)
@@ -82,6 +84,8 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		err = installHost(ctx, rest[1:], env)
 	case command == "install":
 		err = Install(ctx, rest, env)
+	case command == "enroll":
+		err = Enroll(ctx, rest, env)
 	case command == "uninstall":
 		err = Uninstall(ctx, rest, env)
 	case command == "doctor":
@@ -120,7 +124,7 @@ var installFlags = []struct{ name, usage string }{
 	{"http-port", "loopback port of the HTTP listener (default 8081)"},
 	{"mcp-port", "loopback port of the MCP listener (default 8091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
-	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub"},
+	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub, new-app: create a new App although the settings name one (the old App stays on GitHub)"},
 	{"github-account", `the account that owns the new App: "personal" or an organization login`},
 	{"manifest-port", "the port of the manifest listener on 127.0.0.1 (default: any free port)"},
 	{"ruleset-imported", "yes once the ruleset of each repository is imported"},
@@ -128,7 +132,7 @@ var installFlags = []struct{ name, usage string }{
 	{"github-installation-id", "the installation of that App"},
 	{"github-owner", "the GitHub login of the instance owner"},
 	{"github-repositories", "comma-separated owner/name list, at most 20"},
-	{"github-app-key-file", "file with the App's private key (PEM), or - for standard input; read only while the key secret is missing"},
+	{"github-app-key-file", "file with the App's private key (PEM), or - for standard input; read only while the key secret is missing (it also gives the key of an App the settings name, or a recorded App, whose key secret is gone)"},
 }
 
 func newFlagSet(name string) *flag.FlagSet {
@@ -146,7 +150,7 @@ func newInstallFlagSet() *flag.FlagSet {
 	fs.Var(&listFlag{}, "test-check", "the test check of a repository, OWNER/NAME=CHECK; repeat it, or give one plain name for a single repository")
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
 	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
-	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading")
+	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading (it does not start a service that is down: that is asked on its own)")
 	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
 	return fs
 }
@@ -227,9 +231,8 @@ func Install(ctx context.Context, args []string, env Env) error {
 	upgrade := flags["upgrade"] == "true"
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
-		// A host installed by hand has no settings file, and the default tier would be a guess: on Linux that is the isolated host.
-		if _, given := r.given("tier"); !given && !haveSaved && env.Deps.GOOS == "linux" {
-			return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+		if err := tierNeeded(r, haveSaved, env.Deps.GOOS); err != nil {
+			return err
 		}
 		tier = r.preset("tier", string(saved.Tier))
 	} else if tier, err = r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier)); err != nil {
@@ -325,4 +328,27 @@ func confirmDocker(r *Resolver) error {
 		return errors.New("the use of Docker was not confirmed: pass --accept-docker, or install with --runtime podman")
 	}
 	return nil
+}
+
+// tierNeeded refuses a command that works on what is installed when it cannot tell the tier: a host installed by hand has no
+// settings file, and the default tier would be a guess (on Linux that is the isolated host).
+func tierNeeded(r *Resolver, haveSaved bool, goos string) error {
+	if _, given := r.given("tier"); !given && !haveSaved && goos == "linux" {
+		return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+	}
+	return nil
+}
+
+var plainArg = regexp.MustCompile(`^[A-Za-z0-9_+=.,:/\\@%-]+$`)
+
+// quoteArg is a command-line argument as a person can paste it into a shell: as it is when it is plain, else in single quotes.
+// shortcut: a path with a single quote is put in double quotes, where bash still expands $; no installer path has either.
+func quoteArg(arg string) string {
+	switch {
+	case plainArg.MatchString(arg):
+		return arg
+	case strings.Contains(arg, "'"):
+		return `"` + arg + `"`
+	}
+	return "'" + arg + "'"
 }

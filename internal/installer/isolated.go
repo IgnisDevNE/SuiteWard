@@ -120,7 +120,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := pullMissing(ctx, rt, postgres, releaseImageRepo+"@"+digest); err != nil {
 		return err
 	}
-	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath)}
+	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath), enrollHint: enrollCommand(r, true)}
 	if err := g.githubFlow(ctx, r, configDir); err != nil {
 		return err
 	}

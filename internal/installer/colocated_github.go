@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +27,7 @@ type githubInstall struct {
 	githubKey   []byte // the App key to store, nil when its secret exists or GitHub is off
 	setupOwner  string // the instance owner, when the GitHub flow ran: the login setup enrolls
 	setupChecks map[string]string
+	enrollHint  string // the command the messages name to enroll the owner (enrollCommand)
 }
 
 func (g githubInstall) say(format string, args ...any) { _, _ = fmt.Fprintf(g.out, format, args...) }
@@ -69,6 +69,12 @@ func (e Env) githubFlow() func(context.Context, githubEnv) (GitHubResult, error)
 // yes, or a yes at the prompt of a terminal), or when the saved settings have GitHub but the key secret is gone. A
 // re-run with settings that are complete does not ask GitHub again. GitHub values without an App are an error.
 func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, error) {
+	if wantsNewApp(r) {
+		if _, ok := r.given("app-id"); ok {
+			return false, errors.New("--github new-app creates a new App and --github-app-id names one that exists: pass only one")
+		}
+		return true, nil
+	}
 	if id, ok := r.given("app-id"); ok {
 		if strings.EqualFold(strings.TrimSpace(id), "none") {
 			g.s.GitHub = GitHub{}
@@ -91,7 +97,7 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 			return true, nil // values for the GitHub App of the saved settings
 		}
 	}
-	if g.pending != nil && g.s.GitHub.AppID == 0 { // an App an earlier run created and did not finish with; once the settings name an App, the record is not used
+	if recordWins(&g.s.GitHub, g.pending) { // an App an earlier run created and did not finish with, and not the settings' own: its key is the secret
 		return true, nil
 	}
 	if existing {
@@ -195,7 +201,13 @@ func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
 	case errors.Is(err, ErrSecretExists):
 		return fmt.Errorf("%w. The secret %s already exists, so the key of the App this run created was not stored: an earlier run left it behind. Delete the App that this run created (the link above) and the one of the earlier run on GitHub, remove the secret %s, then run the installer again", err, SecretGitHubAppKey, secret)
 	case errors.Is(err, errPendingKeyMissing) && g.pending != nil:
-		return fmt.Errorf("%w. The key secret %s is not in the secret store (it was removed or purged). Either delete that App (the link above) and the record %s, then run the installer again; or install the App if it is not installed yet, create a new private key on its settings page and run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, SecretGitHubAppKey, g.pendingPath, g.pending.AppID)
+		return fmt.Errorf("%w. The record of that App is %s (a new App replaces it). The key file works with the App id too, once the App is installed: run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, g.pendingPath, g.pending.AppID)
+	case errors.Is(err, errNewAppKeyExists):
+		note := g.removeKeySecret()
+		if g.pending != nil {
+			note += "; the record is " + g.pendingPath
+		}
+		return fmt.Errorf("%w (%s)", err, note)
 	case errors.Is(err, errResuming) && g.pending != nil:
 		return fmt.Errorf("%w. This run took up the App %s, which an earlier run recorded in %s; its key is the secret %s. Run the installer again to retry. A 401 can also mean a wrong system clock or a key that was replaced on GitHub: check those first. If the App no longer exists (404 above), or to start over, delete the old App on GitHub if it is still there, delete the record file and remove the secret, then run again to create a new App", err, g.pending.Slug, g.pendingPath, secret)
 	case stored && recorded:
@@ -223,6 +235,9 @@ const (
 	statusEvery = time.Second
 )
 
+// unknownLogin stands for an owner that /status reports without a login.
+const unknownLogin = "unknown login"
+
 // enrolledOwner reads /status of the service, which may still be starting, and returns the login of the enrolled owner, or
 // "" when there is none. An answer it cannot read is an error: it is not "no owner".
 func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.Context) ([]byte, error)) (string, error) {
@@ -239,6 +254,11 @@ func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.C
 	if err != nil {
 		return "", err
 	}
+	return parseEnrolledOwner(body)
+}
+
+// parseEnrolledOwner is the login of the owner /status reports, or "" when it reports none.
+func parseEnrolledOwner(body []byte) (string, error) {
 	var parsed struct {
 		Owner *struct{ Login string } `json:"owner"`
 	}
@@ -249,32 +269,28 @@ func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.C
 	case parsed.Owner == nil:
 		return "", nil
 	case parsed.Owner.Login == "":
-		return "unknown login", nil
+		return unknownLogin, nil
 	}
 	return parsed.Owner.Login, nil
+}
+
+// enrollCommand is the command that enrolls the owner again, as the messages of the installer name it: the tier and the
+// settings file are named when they are not the defaults.
+func enrollCommand(r *Resolver, isolated bool) string {
+	command := "suiteward enroll"
+	if isolated {
+		command += " --tier isolated"
+	}
+	if path, ok := r.flags["settings"]; ok { // the command line of this run, as doctorHint takes it, not the answers file
+		command += " --settings " + quoteArg(path)
+	}
+	return command
 }
 
 // enroll runs setup on a real terminal, and otherwise prints the command to run on one. It never runs setup over an owner that is
 // enrolled, nor when it cannot tell: setup enrolls again, which replaces the owner's TOTP secret.
 func (g *githubInstall) enroll(ctx context.Context, status func(context.Context) ([]byte, error)) error {
-	cmd, err := engineCommand(g.rt, g.env.Deps.GOOS)
-	if err != nil {
-		return err
-	}
-	repos := make([]string, 0, len(g.setupChecks))
-	for repo := range g.setupChecks {
-		repos = append(repos, repo)
-	}
-	slices.Sort(repos)
-	var checks []string
-	for _, repo := range repos {
-		checks = append(checks, "--test-check '"+repo+"="+g.setupChecks[repo]+"'")
-	}
-	owner := g.setupOwner
-	if owner == "" { // a run that took the App from the env file knows neither the owner nor the checks
-		owner, checks = "<login>", []string{"--test-check '<owner/name>=<check name>'"}
-	}
-	command := fmt.Sprintf("%s exec -it %s /suiteward setup --owner %s %s", cmd, ContainerServe, owner, strings.Join(checks, " "))
+	command := g.enrollHint
 	login, err := g.enrolledOwner(ctx, status)
 	switch {
 	case err != nil:
@@ -282,7 +298,7 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 	case login != "":
 		g.say("Note: an owner (%s) is already enrolled; setup was skipped, so the TOTP secret is unchanged. To re-enroll (for example after losing the authenticator), run on a real terminal with session recording off: %s\n", login, command)
 	case g.setupOwner == "":
-		g.say("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner (replace <login> and the check):\n  %s\n", command)
+		g.say("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner:\n  %s\n", command)
 	case setupTerminal():
 		if err := runSetup(ctx, g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
 			return fmt.Errorf("the stack is running, but enrolling the owner failed: %w", err)

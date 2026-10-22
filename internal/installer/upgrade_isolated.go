@@ -50,8 +50,19 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
 		return nil
 	}
+	status := func(ctx context.Context) ([]byte, error) {
+		return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
+	}
+	start := func(ctx context.Context) error {
+		_, err := userSystemctl(d)(ctx, "start", "suiteward.service")
+		return err
+	}
+	started, err := ensureServiceUp(ctx, r, env, status, start, "systemctl --user start suiteward.service")
+	if err != nil {
+		return err
+	}
 	parent := backupParent(r, host.configDir)
-	if err := confirmUpgrade(r, plan, parent); err != nil {
+	if err := confirmUpgrade(r, plan, parent, started); err != nil {
 		return err
 	}
 	// The replaced units go into the backup, so a rollback can put them back.
@@ -66,9 +77,6 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 			}
 		}
 		return nil
-	}
-	status := func(ctx context.Context) ([]byte, error) {
-		return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
 	}
 	dir, err := takeBackup(ctx, backup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, now: time.Now})
 	if err != nil {

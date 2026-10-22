@@ -108,13 +108,31 @@ A stack that the PowerShell start script of v0.2.0 and earlier made is adopted u
 
 In PowerShell, quote a comma-separated list, as in `--github-repositories 'owner/a,owner/b'`: unquoted, PowerShell passes two arguments and the installer stops with a usage error. To use an App you already have, give `--github-app-id`, `--github-installation-id`, `--github-owner` and `--github-repositories`, and the key as `--github-app-key-file <path>` (or `-` for standard input). Create such an App by the checklist in section 10, step 10.4. `--github no` (or `--github-app-id none`) skips GitHub: the stack then runs without it, and a later run with `--github yes` sets it up. Any GitHub value given without an App is refused.
 
+**An App named without its key.** When the settings, the isolated env file (`~/.config/suiteward/github.env`) or the record of an unfinished install name an App whose key secret is not in the secret store (it was purged, or the host was rebuilt), the installer never creates a new App behind your back, and the old one would stay on GitHub. It stops, before any change, and offers two routes:
+
+1. **The App's private key file.** Give `--github-app-key-file <file>`. The installer checks the key with `GET /app` (it must be that App's key; the key of another App is refused), stores it, and goes on. Create a key on the App's settings page if you have none.
+2. **A new App.** Give `--github new-app`. The installer names the old App (or Apps) first, with the page that deletes each (the settings only hold the App's id, so it names the lists of Apps of your account and of the organization, and the ID to look for), runs the manifest flow, and prints the same note at the end.
+
+On a terminal, it asks instead, and only the person at the terminal answers (no flag or answers-file key does):
+
+```
+The App 4242 of the settings has no key in the secret store (suiteward-github-app-key).
+  1) give the App's private key file
+  2) create a new App (the old one stays on GitHub: delete it at https://github.com/settings/apps (or, if an organization owns it, https://github.com/organizations/<owner>/settings/apps), the App with the ID 4242)
+Choose 1 or 2:
+```
+
+Without a terminal, the error names both flags. `--github new-app` stops, before it creates anything, while a key secret exists, because the key of the new App cannot be stored over it. The error says whose key the secret holds. If it is the key of the App of the settings, remove the secret (the error gives the command), then run again: that App stops working on this instance, and you delete it on GitHub. If it is the key of an App an earlier run created and recorded, run again without `--github new-app` to take that App up.
+
+**A new App that stops partway.** From the moment a new App exists, its key is the secret and the App is recorded (`settings.yaml.pending-app`). If the run stops after that (the installation does not arrive, Ctrl-C, a prompt), run the installer again with the same answers and without `--github new-app`: the recorded App wins over the App of the settings, so the run takes it up, waits for its installation, and replaces the App in the settings when it succeeds. Nothing creates a third App, and the old App never runs with the new key.
+
 **5.4 The stack.** The installer creates the network and the volumes, generates the database owner password, the application role's password and the MCP token, and starts the stack in this order: the database (it waits up to 90 seconds for it to be healthy), the application role `suiteward_app`, the one-shot `suiteward migrate`, then the service, only when migrate succeeded. The service connects as `suiteward_app`, which cannot change the schema; only the migrate container holds the owner's URL. Secrets are written through standard input and never printed. Expect `suiteward migrate finished: the schema is up to date.`, then `Started suiteward-db and suiteward (<image>), GitHub configured.`
 
 The installer also writes a copy of the MCP token for a local agent's client, readable by your user only: `%LOCALAPPDATA%\SuiteWard\mcp-token` on Windows, `suiteward/mcp-token` in your configuration directory elsewhere (`--token-file` changes it). It prints the path, never the token. The MCP listener serves a local agent's `sync` and `status` tools, nothing else.
 
 **5.5 After a restart.** On Podman, the installer enables `podman-restart.service` for the machine's rootless user, so the containers start whenever the machine starts. It does not start the machine itself: after Windows restarts, run `podman machine start`. Starting the machine at logon is not part of this release. `suiteward doctor` reports a stopped machine. On Docker, the containers restart when Docker Desktop starts.
 
-**5.6 Setup.** On a real terminal, the installer runs setup for you, as section 6 describes, after it told you to turn off session recording. It runs setup only when `/status` shows no owner: an owner that is enrolled is never replaced. Without a real terminal, it prints the command to run yourself and stops.
+**5.6 Setup.** On a real terminal, the installer runs setup for you, as section 6 describes, after it told you to turn off session recording. It runs setup only when `/status` shows no owner: an owner that is enrolled is never replaced. Without a real terminal, it prints `suiteward enroll` for you to run on one, and stops.
 
 **5.7 Check the instance.**
 
@@ -130,14 +148,14 @@ Expect `ok` on every line and exit code 0. A line that starts with `FAIL` names 
 
 ## 6. Run setup
 
-Setup binds you as the owner and enrolls your TOTP secret. On the co-located tier, the installer runs it for you at the end of the install, on a real terminal: it passes your terminal through to the service container, never captures or logs setup's output, and refuses to run it without one (it prints the command instead). The isolated install does the same, as `suiteward` in the shell of step 10.3. It needs a real terminal, and it never runs unless `/status` shows no owner.
+Setup binds you as the owner and enrolls your TOTP secret. On the co-located tier, the installer runs it for you at the end of the install, on a real terminal: it passes your terminal through to the service container, never captures or logs setup's output, and refuses to run it without one (it prints `suiteward enroll` instead). The isolated install does the same, as `suiteward` in the shell of step 10.3. It needs a real terminal, and it never runs unless `/status` shows no owner.
 
 **When the installer runs setup.** After it starts the stack, it reads `/status` (it waits up to about 30 seconds for the service) and acts on what it finds:
 
-- **No owner is enrolled,** and this run knows the owner login and the test checks: on a real terminal it runs setup; without one it prints the exact command.
-- **No owner is enrolled,** and this run does not know them (a re-run that took the App from the settings or the env file): it prints the command with placeholders, `<login>` and `<owner/name>=<check name>`.
-- **An owner is enrolled:** it skips setup and the TOTP secret stays as it was, so a re-run, an upgrade, or a restore onto a new machine is safe. It prints the command for the case where you want to enroll again, for example after losing the authenticator: that is a deliberate manual `podman exec -it suiteward /suiteward setup ...`, and it replaces the secret.
-- **`/status` cannot be read in time:** it does not run setup, and prints the reason and the command.
+- **No owner is enrolled,** and this run knows the owner login and the test checks: on a real terminal it runs setup; without one it prints `suiteward enroll` (section 6, "Enroll again").
+- **No owner is enrolled,** and this run does not know them (a re-run that took the App from the settings or the env file): it prints `suiteward enroll`, which asks for the login and takes the test checks from the settings.
+- **An owner is enrolled:** it skips setup and the TOTP secret stays as it was, so a re-run, an upgrade, or a restore onto a new machine is safe. It prints `suiteward enroll` for the case where you want to enroll again, for example after losing the authenticator: that is a deliberate command, and it replaces the secret.
+- **`/status` cannot be read in time:** it does not run setup, and prints the reason and `suiteward enroll`.
 
 Run setup on the machine that runs the instance you are enrolling: the PC for co-located, the host for isolated. Its `--test-check` options name only the repositories of that instance, and each instance keeps its own owner and secret.
 
@@ -148,13 +166,13 @@ Before you start:
 - Have your authenticator app ready.
 - Turn off recording of the terminal session. Setup prints the `otpauth://` URI and the base32 secret to the terminal, and a recorded session keeps them. If recording was on, turn it off and run setup again. That replaces the secret, so the old one stops working.
 
-Run setup with your login and one `--test-check` for each configured repository. The check name is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset. Do not use `SuiteWard / Contract`: SuiteWard publishes that check itself. Quote each `--test-check` value, for example `--test-check 'owner/name=CI / test'`: check names often contain spaces and slashes, and an unquoted value would be split by the shell.
+Setup takes your login and one `--test-check` for each configured repository (`suiteward enroll` fills them in, see "Enroll again" below). The check name is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset. Do not use `SuiteWard / Contract`: SuiteWard publishes that check itself. Quote each `--test-check` value, for example `--test-check 'owner/name=CI / test'`: check names often contain spaces and slashes, and an unquoted value would be split by the shell.
 
 ```
 podman exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
 ```
 
-The installer prints the exact command for your engine. On the co-located PC, run it in the PowerShell session where you selected the rootless connection (step 5.1), so that `podman exec` finds the stack. On Windows with Podman, the printed command already carries `--connection <name>`, so it reaches the stack in any session.
+`suiteward enroll` runs this command for you, on the right engine and connection, so you do not type it. Run it by hand only when `suiteward` is not on the machine: on the co-located PC, in the PowerShell session where you selected the rootless connection (step 5.1), so that `podman exec` finds the stack (on Windows with Podman, add `--connection <name>`).
 
 Setup then works through these steps:
 
@@ -171,6 +189,24 @@ Afterwards, check the result with `suiteward doctor`, or read `/status`: on the 
 Only a setup that prints the protection result of each repository and exits with code 0 counts. Confirm it with `/status`: `owner.enrolledAt` changes on every successful run, so a value that did not change means that setup did not complete. An interrupted setup can leave an authenticator entry that matches nothing: delete it.
 
 Running setup again replaces the TOTP secret, and the new entry has the same name as the old one of this instance. Before you scan it, delete any existing entry with this exact name. Entries of other instances (another id in the name) stay. An older entry named `SuiteWard:<login>`, with no instance in its name, predates this release: delete it once the new entry's code is accepted. Never paste the setup output, the URI, the secret or a code into a chat, an issue or a pull request.
+
+### Enroll again
+
+Enroll again when you lost the authenticator, or when setup ran with session recording on. Run it on a real terminal with session recording off, on the machine that runs the instance:
+
+```
+suiteward enroll [--owner <login>] [--test-check '<owner/name>=<check name>' ...] [--settings <path>] [--tier isolated]
+```
+
+On the isolated host, run it as `suiteward` in the shell of step 10.3, with `--tier isolated`. Give `--settings` when the install used a settings file of its own. On Linux with no settings file (a host installed by hand), it needs `--tier isolated` (as the service account) or `--tier co-located`, as `install --upgrade` does. The command finds the instance as `install` and `uninstall` do (a stack that this installer did not make, or that was edited, is left alone), reads `/status`, and then runs setup exactly as above, with the terminal passed through and its output never captured or logged:
+
+- **It needs a real terminal** on standard input and standard output, because setup prints the TOTP secret. Without one it stops: `enroll needs a terminal: setup prints the TOTP secret`.
+- **The service must be running.** When `/status` cannot be read it stops and tells you to start the service: it cannot tell whether an owner is enrolled.
+- **The owner login** is `--owner`, else asked, with the enrolled login as the default. It is resolved first, so that the warning below can name it.
+- **An owner is enrolled:** it warns that enrolling again replaces the TOTP secret (and the owner `<old>` with `<new>`, when `--owner` is another login), so that the old authenticator entry stops working, and asks you to type `enroll`. Anything else, or the end of the input, stops it with nothing changed. There is no flag that answers this question.
+- **The test checks** are the `--test-check` values, else the ones of the settings; it asks for a repository that has none. It refuses a check for a repository that the instance does not serve, and `SuiteWard / Contract`, which SuiteWard publishes itself and is never the test check (the install and setup refuse it too).
+
+Then delete the old entry of this instance in your authenticator before you scan the new one, as described above.
 
 ## 7. Create the ruleset
 
@@ -189,7 +225,7 @@ SuiteWard checks protection when you run setup, and then every 15 minutes. `/sta
 | --- | --- | --- |
 | `enforced` | Nothing is missing. | Nothing. |
 | finding `missing-contract-check` | `SuiteWard / Contract` is not required from your App. | Require it, with your App as the source. |
-| finding `missing-test-check` | The test check you gave to setup is not required. Before setup, this result appears too. | Require the check, or run setup again. |
+| finding `missing-test-check` | The test check you gave to setup is not required. Before setup, this result appears too. | Require the check, or enroll again with `suiteward enroll` (with `--tier isolated` on the isolated tier). |
 | finding `not-up-to-date` | The required checks do not require branches to be up to date. | Turn on the up-to-date requirement. |
 | finding `admin-bypass` | Classic protection does not apply to administrators. | Enforce it for administrators. |
 | `enforcement-unavailable` | GitHub does not enforce rules on this private repository, or the App cannot read the rules. SuiteWard does not claim protection here. | Either use a GitHub plan that enforces rules on private repositories (GitHub Free does not), or give the App the read permission (the checklist of step 10.4). |
@@ -358,7 +394,7 @@ A correction puts an earlier version's protected files back, for example the pre
 
 A repository stays enrolled until setup runs again without it. While it is enrolled but missing from the configuration, SuiteWard skips it: nothing is synchronized or checked there, and the commands of the other repositories keep working. A command it had already observed there can still be decided, and its reply may fail. `/status` and the MCP `status` tool name it in `unconfiguredRepositories`, and the log warns once. Deleting the repository on GitHub has the same effect.
 1. Remove the repository from the list: run `suiteward install --github-repositories '<owner/name>,<owner/name>'` with the repositories you keep (on an isolated host, as `suiteward` in the shell of step 10.3, with `--tier isolated`). The installer verifies the App again, asks the test checks again and writes the rulesets. It skips setup, because an owner is enrolled. A running service keeps the settings it started with, so on an isolated host restart it afterwards with `systemctl --user restart suiteward.service`.
-2. Run setup again by hand (section 6) with one `--test-check` for each repository you keep: `podman exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>' ...`. Setup replaces the TOTP secret, so delete the entry of this instance from your authenticator app before you scan the new one (the entry with this exact name, `<tier> <instance>` included; entries of other instances stay), then add the new entry. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted.
+2. Enroll again (section 6, "Enroll again") with one `--test-check` for each repository you keep: `suiteward enroll --test-check '<owner/name>=<check name>' ...` (on an isolated host, with `--tier isolated`). Setup replaces the TOTP secret, so delete the entry of this instance from your authenticator app before you scan the new one (the entry with this exact name, `<tier> <instance>` included; entries of other instances stay), then add the new entry. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted.
 3. Comment your command again. A command written before the new setup is ignored and gets no reply.
 
 SuiteWard changes nothing on GitHub: remove the App from the repository, and the ruleset rule that requires `SuiteWard / Contract`, yourself.
@@ -456,7 +492,7 @@ Keep these permissions off, for these reasons:
 
 *The ruleset.* For each repository, the flow writes a ruleset file on the host, `~/.config/suiteward/suiteward-ruleset-<owner>-<name>.json`, and prints its path and the Import steps of section 5.3 (step 7), with the Free-plan warning for a private repository. The Import is a click in your browser, so get the file to your PC: print it in the Session Manager session with `cat ~/.config/suiteward/suiteward-ruleset-<owner>-<name>.json`, copy the text and save it as a file on your PC, or copy the file over with your own tool. Then import it. The installer waits for you at `Press Enter when the rulesets are imported` and then reads the protection back. Without a terminal it does not wait: `ruleset-imported` defaults to yes, so give `--ruleset-imported yes` knowingly, and read the protection result.
 
-**10.5 Setup and check (as `suiteward`).** On a real terminal, the installer runs setup for you at the end, after it warns you to turn off session recording: it passes the terminal through and never captures or logs setup's output. Without a real terminal it prints the exact command to run on one. Section 6 says what setup does, and when the installer skips it. Then run `suiteward doctor` and expect `ok` on every line.
+**10.5 Setup and check (as `suiteward`).** On a real terminal, the installer runs setup for you at the end, after it warns you to turn off session recording: it passes the terminal through and never captures or logs setup's output. Without a real terminal it prints `suiteward enroll --tier isolated` to run on one. Section 6 says what setup does, and when the installer skips it. Then run `suiteward doctor` and expect `ok` on every line.
 
 The ports are published on the host's loopback only (8081 and 8091). To read `/status` from your PC, forward the port with your own remote-access tool (on a host that is not on AWS, for example `ssh -L 8081:127.0.0.1:8081 <host>`), or on AWS for example `aws ssm start-session --target <instance-id> --region <region> --document-name AWS-StartPortForwardingSession --parameters portNumber=8081,localPortNumber=8081`. SuiteWard provides no remote access.
 
@@ -474,11 +510,11 @@ Download and verify the new release's installer as section 4 says, then run it w
 suiteward install --upgrade
 ```
 
-On the isolated host, run it as `suiteward` in the shell of step 10.3. The release is the one the binary carries, or `--image sha256:<index>` (a development build needs it). `--yes` skips the question, and `--backup-dir <directory>` chooses where the backup directory is made. The upgrade takes these steps, in order:
+On the isolated host, run it as `suiteward` in the shell of step 10.3. The release is the one the binary carries, or `--image sha256:<index>` (a development build needs it). `--yes` answers the question about the upgrade plan only (it never starts a service that is down, see step 2), and `--backup-dir <directory>` chooses where the backup directory is made. The upgrade takes these steps, in order:
 
 1. **It adopts what is installed.** A difference it cannot carry over stops the run, with the diff, before any change. The tier comes from the settings file. On Linux with no settings file (a host installed by hand), pass `--tier isolated` as the service account, or `--tier co-located`.
-2. **It shows what changes** (the release, and the PostgreSQL pin when it moves) and asks. When the stack already runs this release, it says `Nothing to upgrade`.
-3. **A backup first,** in a new directory `suiteward-backup-<date>-<time>` under the backup folder, made private (mode 0700 with mode 0600 files, or an owner-only ACL on Windows, granted to your user's SID). It holds `status.json` (the version the files belong to), `suiteward.sql` (a `pg_dump` of the database) and `suiteward-artifacts.tar` (the artifact volume), the same files that [the backup runbook](backup.md) makes by hand, and on the isolated tier a `units` folder with the unit files the upgrade replaces. It holds the TOTP secret, so keep it as a secret. The default folder is `backups` beside the MCP token copy on the co-located tier (so `%LOCALAPPDATA%\SuiteWard\backups` on Windows, not the roaming profile), and `~/.config/suiteward/backups` on the isolated tier. The service must be running: the backup reads its `/status`, so a service that is down cannot be upgraded until it is up. A backup that fails leaves nothing behind and changes nothing.
+2. **It makes sure the service answers, shows what changes** (the release, and the PostgreSQL pin when it moves) **and asks.** When the stack already runs this release, it says `Nothing to upgrade`. When the service does not answer `/status`, which the backup records, it first asks on a terminal: `The service is not running, so the backup cannot record its status. Start the installed service now? [Y/n]`. On a yes it starts the installed stack as it is, without changing the release (isolated: `systemctl --user start suiteward.service`; co-located: `start` on the existing containers, the database first, and nothing is created again), waits up to about 90 seconds for `/status` (at most 60 probes, one a second, within that deadline), and goes on to the plan and its question. A no to the plan after it started the service stops with the note that the service was started and nothing else was changed. On a no, at the end of the input, without a terminal, or when the start does not help, it refuses and names the command that starts the service, or the manual backup ([the backup runbook](backup.md#2-back-up)). `--yes` does not answer this question and never starts the service.
+3. **A backup first,** in a new directory `suiteward-backup-<date>-<time>` under the backup folder, made private (mode 0700 with mode 0600 files, or an owner-only ACL on Windows, granted to your user's SID). It holds `status.json` (the version the files belong to), `suiteward.sql` (a `pg_dump` of the database) and `suiteward-artifacts.tar` (the artifact volume), the same files that [the backup runbook](backup.md) makes by hand, and on the isolated tier a `units` folder with the unit files the upgrade replaces. It holds the TOTP secret, so keep it as a secret. The default folder is `backups` beside the MCP token copy on the co-located tier (so `%LOCALAPPDATA%\SuiteWard\backups` on Windows, not the roaming profile), and `~/.config/suiteward/backups` on the isolated tier. The service must be running: the backup reads its `/status`, so a service that is down is started first (step 2) or the upgrade waits until it is up. A backup that fails leaves nothing behind and changes nothing.
 4. **It pulls the new images, and replaces the release.** Co-located, it recreates the containers as an install does: database, role, migrate, then the service. Isolated, it stops the service, writes the new units, checks them with the generator's dry run, reloads systemd, restarts the database when its image changed, restarts the migration unit (which migrates) and starts the service. An `/etc` env file of a hand-made install is moved to the account, and the installer prints the `sudo rm` line for the old one.
 5. Then run `suiteward doctor`. Check that `version` in `/status` is the release you meant.
 
@@ -506,7 +542,7 @@ It asks first (`--yes` skips the question), then removes the stack and keeps the
 
 ### Rotating the App key
 
-Rotate the key when it may have been seen by something it should not, for example by a coding agent. Do it yourself, from a terminal that no agent can reach. A co-located install gives the agent access to the key anyway (section 2): there, rotation helps against a past exposure and a key that left the machine, not against an agent that still shares your PC user. The installer has no command for rotation: once the key secret is gone, a run with GitHub values would verify an App again or, with the settings alone, create a new App. Replace the secret by hand.
+Rotate the key when it may have been seen by something it should not, for example by a coding agent. Do it yourself, from a terminal that no agent can reach. A co-located install gives the agent access to the key anyway (section 2): there, rotation helps against a past exposure and a key that left the machine, not against an agent that still shares your PC user. The installer has no command for rotation: once the key secret is gone, a run with the key file (`--github-app-key-file`) verifies that App again, and a run without it stops and offers the key file or a new App (section 5.3). Replace the secret by hand.
 
 The order matters. After you replace the key, the service keeps working for up to an hour on installation tokens that it already holds. A wrong key therefore shows up late, when every GitHub call stops. So check the fingerprint at each step, and delete the old key last.
 
@@ -616,23 +652,25 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 | `--image` | The release image pinned by digest: a bare `sha256:<64 hex>` (the release image `ghcr.io/ignisdevne/suiteward`), or `repo[:tag]@sha256:<64 hex>`, never a tag alone. This holds on every command that takes it. The isolated tier runs `ghcr.io/ignisdevne/suiteward` only; a local image is for co-located. Default on both tiers: the installed image, else the release the binary carries. A development build carries none, and needs it. With `--upgrade`: the release to move to. |
 | `--http-port`, `--mcp-port` | The loopback ports of the two listeners (defaults 8081 and 8091). Co-located only. |
 | `--job-timeout` | A Go duration for `SUITEWARD_JOB_TIMEOUT` (the service only). Co-located only. |
-| `--github` | `yes`: create the GitHub App now. `no`: skip GitHub. |
+| `--github` | `yes`: create the GitHub App now. `no`: skip GitHub. `new-app`: create a new App although the settings (or the isolated env file, or the record of an earlier run) name one: the old App stays on GitHub, and the installer prints where to delete it. It stops when the key secret of the old App still exists: remove that secret first. |
 | `--github-account` | The account that owns the new App: `personal`, or an organization login. |
 | `--manifest-port` | The port of the manifest listener on 127.0.0.1 (section 5.3). The manifest code is not a flag: it is `manifest-code` in the answers file, or pasted at the prompt. |
 | `--github-app-id` | The ID of an App that exists, or `none` to skip GitHub. |
 | `--github-installation-id` | The installation of that App. |
 | `--github-owner` | The GitHub login of the instance owner. |
 | `--github-repositories` | A comma-separated `owner/name` list, at most 20. |
-| `--github-app-key-file` | A file with the App's private key (PEM), or `-` for standard input. Read only while the key secret is missing. |
+| `--github-app-key-file` | A file with the App's private key (PEM), or `-` for standard input. Read only while the key secret is missing. Also the way out when the settings (or the env file, or the record of an unfinished App) name an App whose key secret is gone: the key must be that App's, which `GET /app` checks. |
 | `--test-check` | The test check of a repository, `OWNER/NAME=CHECK`. Repeat it, or give one plain name for a single repository. |
 | `--ruleset-imported` | `yes` once the ruleset of each repository is imported: it skips the wait. Without a terminal it defaults to yes. |
 | `--upgrade` | Back up, then move to the release the binary carries, or `--image` (section 11). |
-| `--yes` | With `--upgrade`: do not ask before backing up and upgrading. |
+| `--yes` | With `--upgrade`: do not ask before backing up and upgrading. It does not start a service that is down: that is a question of its own (section 11). |
 | `--backup-dir` | With `--upgrade`: the folder the backup directory is made in (default: `backups` beside the MCP token copy, or in `~/.config/suiteward` on the isolated tier). |
 
 `sudo suiteward install host`: `--answers PATH`, `--yes` (answer yes to installing Podman with `dnf`) and `--metadata-rule yes|no`.
 
 `suiteward uninstall`: `--purge`, `--yes`, `--settings`, `--token-file`, `--tier`, `--runtime` and `--connection`, as above. On the isolated tier, give `--tier isolated` when there is no settings file.
+
+`suiteward enroll`: `--owner LOGIN`, `--test-check OWNER/NAME=CHECK` (repeat it), `--settings PATH` and `--tier` (give `--tier isolated` as the service account). It needs a real terminal and a running service, and asks you to type `enroll` before it replaces the TOTP secret of an enrolled owner (section 6, "Enroll again").
 
 `suiteward doctor`: `--json` and `--settings PATH`.
 
@@ -760,7 +798,7 @@ If the log shows `github_checks` ending in `context deadline exceeded` again and
 
 These are the `/status` fields you read:
 
-- `tier` is the effective tier. `tierNote` appears when the setting and the enrollment disagree. Run setup again (section 6).
+- `tier` is the effective tier. `tierNote` appears when the setting and the enrollment disagree. Run `suiteward enroll` (section 6; `--tier isolated` on the isolated tier).
 - `owner` shows the enrolled login. It is absent until setup succeeds.
 - `budget` is the GitHub API budget: `budget.remaining` is the number of requests left in the current hourly window, and `budget.reset` is when the window resets. It is absent until GitHub has answered once, and when GitHub is not configured.
 - `unconfiguredRepositories` lists the enrolled repositories that the configuration does not name. It is absent when there are none.
@@ -795,7 +833,7 @@ Common problems:
 - **The service stays down after a power loss.** If PostgreSQL's crash recovery takes longer than the migration's wait, the migration fails closed and the service stays down. Wait until the database accepts connections (`podman ps` shows `suiteward-db` healthy), then start the service again: `systemctl --user start suiteward.service` on the isolated host, `suiteward install` on a co-located PC.
 - **`/readyz` answers 503.** The database does not answer, or the schema is not ready. Check that `suiteward-db` is healthy with `podman ps` (on the isolated host, as `suiteward`), and read its logs.
 - **The log says `github commands stopped: the bot account could not be resolved`, with a status of 401.** GitHub refuses the App key that is installed, for example because it was revoked or is not the key you meant. All GitHub calls (reads, checks and comments) stop within about an hour, when the tokens that the service already holds expire. This line is an early signal after a restart, not the first symptom. Follow [Rotating the App key](#rotating-the-app-key), and compare the fingerprints.
-- **An install failed after it created the GitHub App.** The installer records that App in `<settings path>.pending-app`: beside `settings.yaml` (`%APPDATA%\suiteward` on Windows, `~/.config/suiteward` on Linux, including the isolated account's). The record holds the App's id, slug and owner, never the key, which is in the secret store as `suiteward-github-app-key`. Run the installer again with `--github yes`: it takes up that App, with no second App, and waits for the installation. If the App is gone from GitHub, or its key secret is gone, the error names the record, the secret and the command that removes it: delete the App on GitHub, the record and the secret, then run again. A run with `--github no` keeps the record and prints a note on how to take the App up or throw it away. A successful install removes the record, and so does `uninstall --purge`.
+- **An install failed after it created the GitHub App.** The installer records that App in `<settings path>.pending-app`: beside `settings.yaml` (`%APPDATA%\suiteward` on Windows, `~/.config/suiteward` on Linux, including the isolated account's). The record holds the App's id, slug and owner, never the key, which is in the secret store as `suiteward-github-app-key`. Run the installer again with `--github yes`: it takes up that App, with no second App, and waits for the installation. If the App is gone from GitHub (404 on `GET /app`), the error names the record, the secret and the command that removes it: delete the App on GitHub, the record and the secret, then run again. If only its key secret is gone, the error offers the two routes of section 5.3 (an App named without its key): give `--github-app-key-file <file>` with a key of that App, which takes the App up, or `--github new-app`, which creates a new App, replaces the record and prints the page that deletes the old one. Running with `--github-app-id`, `--github-installation-id` and the key file works too. A run with `--github no` keeps the record and prints a note on how to take the App up or throw it away. A successful install removes the record, and so does `uninstall --purge`.
 - **The browser cannot reach the manifest listener, or the manifest wait timed out.** Paste the code or the whole address from the error page into the terminal (section 5.3), or run the installer again: GitHub's code lives one hour. On the isolated tier, start the Session Manager port forward that the installer printed first, and pin the port with `--manifest-port` (step 10.4).
 - **GitHub says `Invalid integration ids` when you import the ruleset.** The App must be installed on the repository first. Add the repository to the installation, then import the file again.
 - **Setup exits with code 2.** The `--test-check` list does not match the configured repositories. Give exactly one per repository, with no duplicates.

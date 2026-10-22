@@ -42,8 +42,8 @@ func TestUpgradeIsolatedReadsStatusThroughTheEnvSeam(t *testing.T) {
 	if err := Install(context.Background(), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if len(asked) != 1 || !strings.HasSuffix(asked[0], "/status") {
-		t.Fatalf("the seam was asked %v, want /status once", asked)
+	if len(asked) != 2 || !strings.HasSuffix(asked[0], "/status") || asked[0] != asked[1] { // the probe before the offer, then the backup
+		t.Fatalf("the seam was asked %v, want /status twice: the probe, then the backup", asked)
 	}
 	files, _ := filepath.Glob(filepath.Join(u.backups, "*", backupStatus))
 	if len(files) != 1 || !strings.Contains(readFile(t, files[0]), "v9.9.9") {

@@ -283,7 +283,7 @@ func TestInstallIsolatedPrintsTheExactSetupCommandWithoutATerminal(t *testing.T)
 	if len(g.f.tty) != 0 {
 		t.Fatalf("setup must not run without a terminal: %v", g.f.tty)
 	}
-	want := "podman exec -it suiteward /suiteward setup --owner alice --test-check 'octo/one=CI / test' --test-check 'octo/two=CI / test'"
+	want := "suiteward enroll --tier isolated"
 	if !strings.Contains(g.out.String(), want) {
 		t.Errorf("the output lacks the exact command %q:\n%s", want, g.out.String())
 	}
@@ -308,7 +308,7 @@ func TestInstallIsolatedSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 			t.Fatalf("setup ran although an owner is enrolled: %v", g.f.tty)
 		}
 		out := g.out.String()
-		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "podman exec -it suiteward /suiteward setup --owner alice"} {
+		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "suiteward enroll --tier isolated"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("tty=%v: the output lacks %q:\n%s", tty, want, out)
 			}
@@ -327,7 +327,7 @@ func TestInstallIsolatedSkipsSetupWhenStatusCannotBeRead(t *testing.T) {
 		t.Fatalf("setup ran although /status could not be read: %v", g.f.tty)
 	}
 	out := g.out.String()
-	for _, want := range []string{"connection refused", "podman exec -it suiteward /suiteward setup --owner alice"} {
+	for _, want := range []string{"connection refused", "suiteward enroll --tier isolated"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output lacks %q:\n%s", want, out)
 		}

@@ -27,7 +27,7 @@ import (
 //
 // It reads the settings at settingsPath (the default location when empty), checks the engine, the containers or units, the
 // pins, the ports and /status of the instance those settings describe, runs `suiteward check --json` in the service
-// container and merges its results. It prints `ok <name>` or `FAIL <name>: <detail> — <fix>` per result (the same style as
+// container and merges its results. It prints `ok <name>`, `WARN <name>: <detail> — <fix>` (a pass that needs a look) or `FAIL <name>: <detail> — <fix>` per result (the same style as
 // `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. The
 // exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
 func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, jsonOut bool) int {
@@ -64,6 +64,8 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 	var b strings.Builder
 	for _, r := range results {
 		switch {
+		case r.OK && r.Warning:
+			b.WriteString("WARN " + r.Name + ": " + r.Detail + " — " + r.Fix + "\n")
 		case r.OK:
 			b.WriteString("ok " + r.Name + "\n")
 		default:

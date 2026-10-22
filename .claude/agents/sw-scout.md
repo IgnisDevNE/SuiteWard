@@ -2,7 +2,7 @@
 name: sw-scout
 description: Fast read-only explorer for SuiteWard. Maps code, finds symbols, callers and impact, and returns a structured summary. Use for discovery, inventories and "where/what touches X" questions before planning or implementing. Never edits files.
 model: haiku
-effort: medium
+effort: max
 tools: Read, Grep, Glob, Bash, PowerShell, Skill, mcp__memtrace__*, mcp__gopls__*
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: sw-reviewer
 description: Independently reviews a SuiteWard task or phase diff against its brief and the project invariants, runs the relevant checks, and reports prioritized findings. Read-only; never edits files.
-model: sonnet
+model: claude-opus-5-5
 effort: high
 tools: Read, Grep, Glob, Bash, PowerShell, Skill, mcp__memtrace__*, mcp__gopls__*
 ---

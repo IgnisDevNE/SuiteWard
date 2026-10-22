@@ -6,9 +6,9 @@ The main Claude session orchestrates SuiteWard work. It delegates exploration, i
 | --- | --- | --- |
 | Orchestrator (main session) | Sonnet, high effort | Plans, briefs, integrates, verifies, publishes, reports. |
 | Advisor (`advisorModel`) | Opus, on demand | Reviews the plan before it locks, a repeated failure, and the diff before done or publication. Each call re-reads the whole transcript, so keep one session per phase. |
-| `sw-scout` | Haiku, medium effort | Read-only discovery: Memtrace, then gopls, then targeted reads; structured summaries. |
-| `sw-implementer` | Sonnet, high effort | One task per worktree, test-first. |
-| `sw-reviewer` | Sonnet, high effort | Independent review of each task and of the phase diff. |
+| `sw-scout` | Haiku, max effort | Read-only discovery: Memtrace, then gopls, then targeted reads; structured summaries. |
+| `sw-implementer` | Sonnet, very high (`xhigh`) effort | One task per worktree, test-first. |
+| `sw-reviewer` | Opus 5.5, high effort | Independent review of each task and of the phase diff. |
 | Orbit executor (optional) | per prompt complexity | Runs queued prompts built from briefs in isolated worktrees, through MCP. Its output is evidence, not authority. See [Orbit executor](orbit.md). |
 | Hooks and `./scripts/dev.ps1` | none | Formatting after edits, repeated-failure reminders, checks, lint. |
 

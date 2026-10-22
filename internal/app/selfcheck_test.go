@@ -30,15 +30,14 @@ type selfCheckGitHubFake struct {
 	permissions         map[string]string // the permissions of the listed installation, fivePermissions unless set
 	denyPermission      string            // a token request that names this permission is answered 422
 
-	mu       sync.Mutex
-	handled  []string // "METHOD path" of every request
-	tokenFor []string
+	mu      sync.Mutex
+	handled []string // "METHOD path" of every request
 }
 
 func newSelfCheckGitHub(t *testing.T) *selfCheckGitHubFake {
 	t.Helper()
 	f := &selfCheckGitHubFake{setupGitHub: newSetupGitHub(t)}
-	f.setupGitHub.rules = pinnedRules
+	f.rules = pinnedRules
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)
 	return f

@@ -34,9 +34,9 @@ const (
 
 var (
 	// A manifest code is alphanumeric (GitHub sends 20 hex characters); the shape keeps it safe in a URL path.
-	codePattern  = regexp.MustCompile(`^[A-Za-z0-9]{1,128}$`)
-	loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
-	slugPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	codePattern    = regexp.MustCompile(`^[A-Za-z0-9]{1,128}$`)
+	ghLoginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+	slugPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 	// appManifestPermissions are exactly the five of the install guide: no Contents write, no Administration write.
 	appManifestPermissions = map[string]string{
@@ -135,12 +135,18 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		ErrorLog:          log.New(io.Discard, "", 0),
 	}
 	go func() { _ = srv.Serve(ln) }() // the server ends with Close below
-	defer func() { _ = srv.Close() }()
+	defer func() {                    // Shutdown lets the callback's own answer reach the browser; Close only if that takes too long
+		stop, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if srv.Shutdown(stop) != nil {
+			_ = srv.Close()
+		}
+	}()
 
-	say(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub.\n  http://%s/\n", addr)
+	ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub.\n  http://%s/\n", addr)
 	if env.Tier == config.TierIsolated {
 		port := addr[strings.LastIndex(addr, ":")+1:]
-		say(env.Out, "This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward).\n"+
+		ghSay(env.Out, "This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward).\n"+
 			"  aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"%s\"],\"localPortNumber\":[\"%s\"]}'\n", port, port)
 	}
 
@@ -157,14 +163,14 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		}()
 	}
 	if env.R.term.IsTerminal {
-		say(env.Out, "If the browser cannot reach this machine, paste the code (or the whole address the browser shows after GitHub redirects) here and press Enter: ")
+		ghSay(env.Out, "If the browser cannot reach this machine, paste the code (or the whole address the browser shows after GitHub redirects) here and press Enter: ")
 		readLine()
 	}
 	for {
 		select {
 		case code := <-codes:
 			if paste != nil { // a read is still pending: the user's next Enter ends it, so it cannot take a later answer
-				say(env.Out, "\nGitHub answered. Press Enter to continue: ")
+				ghSay(env.Out, "\nGitHub answered. Press Enter to continue: ")
 				select {
 				case <-paste:
 				case <-ctx.Done():
@@ -179,9 +185,9 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 			case perr == nil:
 				return code, nil
 			case p.err != nil: // end of input: nothing more can be pasted
-				say(env.Out, "\nNo more input: waiting for GitHub's callback only.\n")
+				ghSay(env.Out, "\nNo more input: waiting for GitHub's callback only.\n")
 			default:
-				say(env.Out, "That was refused: %v\nPaste the code or the whole address again: ", perr)
+				ghSay(env.Out, "That was refused: %v\nPaste the code or the whole address again: ", perr)
 				readLine()
 			}
 		case <-ctx.Done():
@@ -197,7 +203,7 @@ func waitError(ctx context.Context, wait time.Duration) error {
 	return ctx.Err()
 }
 
-func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+func ghSay(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
 // parseManifestCode reads a pasted code, or a pasted callback URL. A URL that carries a state must carry the expected one;
 // with no expected state (a code from an earlier attempt) the state is not checked. Errors never echo the input.

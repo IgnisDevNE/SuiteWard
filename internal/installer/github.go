@@ -70,7 +70,7 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	if res.OwnerLogin, err = env.R.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", defaultOwner); err != nil {
 		return fail(err)
 	}
-	if !loginPattern.MatchString(res.OwnerLogin) {
+	if !ghLoginPattern.MatchString(res.OwnerLogin) {
 		return fail(fmt.Errorf("owner %q is not a GitHub login", res.OwnerLogin))
 	}
 
@@ -159,7 +159,7 @@ type GitHubResult struct {
 	Repositories   []string
 	TestChecks     map[string]string            // repository -> test check
 	Protection     map[string]protection.Result // repository -> the result of the re-read
-	PrivateKey     []byte                       // in memory only, for the SecretStore
+	PrivateKey     []byte                       `json:"-" yaml:"-"` // in memory only, for the SecretStore; no encoder may carry it
 }
 
 // Format never renders the private key, whatever the verb.
@@ -213,7 +213,7 @@ func existingApp(ctx context.Context, env githubEnv) (appauth.App, GitHubResult,
 	}
 	for _, in := range installations {
 		if in.ID == installationID {
-			say(env.Out, "Using the existing App %s, installation %d on %s.\n", slug, in.ID, in.Account)
+			ghSay(env.Out, "Using the existing App %s, installation %d on %s.\n", slug, in.ID, in.Account)
 			return app, GitHubResult{AppID: appID, Slug: slug, InstallationID: in.ID, Account: in.Account, AccountType: in.AccountType, PrivateKey: key}, nil
 		}
 	}
@@ -227,7 +227,7 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	if err != nil {
 		return app, res, "", err
 	}
-	if !loginPattern.MatchString(account) {
+	if !ghLoginPattern.MatchString(account) {
 		return app, res, "", fmt.Errorf("github-account %q is not %q or a GitHub login", account, accountPersonal)
 	}
 	code, err := obtainManifestCode(ctx, env, account)
@@ -247,8 +247,8 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	if app, err = appauth.NewApp(conv.ID, conv.PrivateKey, env.Now); err != nil {
 		return app, res, created, fmt.Errorf("the key GitHub returned for the App %s is not usable: %w", conv.Slug, err)
 	}
-	say(env.Out, "Created the GitHub App %s. Its key stays in memory until it goes into the secret store.\n", conv.Slug)
-	say(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, conv.Slug, conv.OwnerLogin)
+	ghSay(env.Out, "Created the GitHub App %s. Its key stays in memory until it goes into the secret store.\n", conv.Slug)
+	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, conv.Slug, conv.OwnerLogin)
 	info, err := waitForInstallation(ctx, env, app, conv.OwnerLogin)
 	if err != nil {
 		return app, res, created, err
@@ -260,7 +260,7 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 func waitForInstallation(ctx context.Context, env githubEnv, app appauth.App, account string) (appauth.InstallationInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, env.InstallWait)
 	defer cancel()
-	say(env.Out, "Waiting for the installation on %s (checking every %s, up to %s)...\n", account, env.PollEvery, env.InstallWait)
+	ghSay(env.Out, "Waiting for the installation on %s (checking every %s, up to %s)...\n", account, env.PollEvery, env.InstallWait)
 	tick := time.NewTicker(env.PollEvery)
 	defer tick.Stop()
 	for {
@@ -301,9 +301,9 @@ func chooseRepositories(ctx context.Context, env githubEnv, app appauth.App, res
 			return nil, fmt.Errorf("the installation lists %s, which is not owned by %s: one instance serves one owner", name, res.Account)
 		}
 	}
-	say(env.Out, "The App can reach these repositories:\n")
+	ghSay(env.Out, "The App can reach these repositories:\n")
 	for i, name := range all {
-		say(env.Out, "  %d) %s\n", i+1, name)
+		ghSay(env.Out, "  %d) %s\n", i+1, name)
 	}
 	def := ""
 	if len(all) <= MaxRepositories {
@@ -448,20 +448,20 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 		}
 		names, err := checkRunNames(ctx, client, r)
 		if err != nil {
-			say(env.Out, "Could not read the check runs of %s (%v); you will type the name.\n", r.name, err)
+			ghSay(env.Out, "Could not read the check runs of %s (%v); you will type the name.\n", r.name, err)
 		}
 		def, label := "", fmt.Sprintf("Name of the check your CI publishes for %s", r.name)
 		if len(names) > 0 {
-			say(env.Out, "Check runs on the %s branch of %s:\n", r.branch, r.name)
+			ghSay(env.Out, "Check runs on the %s branch of %s:\n", r.branch, r.name)
 			for i, n := range names {
-				say(env.Out, "  %d) %s\n", i+1, n)
+				ghSay(env.Out, "  %d) %s\n", i+1, n)
 			}
 			label = fmt.Sprintf("Required test check for %s (number or name)", r.name)
 			if len(names) == 1 {
 				def = names[0]
 			}
 		} else {
-			say(env.Out, "%s has no check runs yet. Type the name your CI will publish; until a check with that name exists, /status reports missing-test-check.\n", r.name)
+			ghSay(env.Out, "%s has no check runs yet. Type the name your CI will publish; until a check with that name exists, /status reports missing-test-check.\n", r.name)
 		}
 		answer, err := env.R.Value(key, label, def)
 		if err != nil {
@@ -494,11 +494,11 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		if err != nil {
 			return nil, fmt.Errorf("write the ruleset of %s: %w", r.name, err)
 		}
-		say(env.Out, "\nRuleset for %s: %s\n", r.name, path)
+		ghSay(env.Out, "\nRuleset for %s: %s\n", r.name, path)
 		if r.private {
-			say(env.Out, "Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
+			ghSay(env.Out, "Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
 		}
-		say(env.Out, "Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", env.WebURL, r.name)
+		ghSay(env.Out, "Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", env.WebURL, r.name)
 	}
 	if !env.SkipRulesetWait {
 		if _, err := env.R.Value("ruleset-imported", "\nPress Enter when the rulesets are imported", "yes"); err != nil {
@@ -514,31 +514,31 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
 	results := make(map[string]protection.Result, len(repos))
-	say(env.Out, "\nProtection as GitHub reports it now:\n")
+	ghSay(env.Out, "\nProtection as GitHub reports it now:\n")
 	for _, r := range repos {
 		result := protection.Unknown()
 		read, err := reader.Protection(ctx, r.name, r.branch)
 		if err != nil {
-			say(env.Out, "  %s: could not read the protection (%v)\n", r.name, err)
+			ghSay(env.Out, "  %s: could not read the protection (%v)\n", r.name, err)
 		} else if facts, err := protectionFacts(read, r.private); err != nil {
-			say(env.Out, "  %s: the protection answer is not usable (%v)\n", r.name, err)
+			ghSay(env.Out, "  %s: the protection answer is not usable (%v)\n", r.name, err)
 		} else {
 			result = protection.Evaluate(facts, res.AppID, res.TestChecks[r.name])
 		}
 		results[r.name] = result
-		say(env.Out, "  %s: %s\n", r.name, result.Kind)
+		ghSay(env.Out, "  %s: %s\n", r.name, result.Kind)
 		if len(result.Findings) > 0 {
 			codes := make([]string, len(result.Findings))
 			for i, c := range result.Findings {
 				codes[i] = string(c)
 			}
-			say(env.Out, "    findings: %s\n", strings.Join(codes, ", "))
+			ghSay(env.Out, "    findings: %s\n", strings.Join(codes, ", "))
 		}
 		for _, line := range result.Instructions {
-			say(env.Out, "    - %s\n", line)
+			ghSay(env.Out, "    - %s\n", line)
 		}
 	}
-	say(env.Out, "Run the checks again at any time with suiteward doctor.\n")
+	ghSay(env.Out, "Run the checks again at any time with suiteward doctor.\n")
 	return results, nil
 }
 
@@ -577,7 +577,7 @@ func protectionChecks(checks []github.Check) []protection.Check {
 // runSetup runs `suiteward setup` in the serving container with the real terminal passed through. Setup prints the TOTP
 // enrollment URI and secret there, so nothing is captured or logged, and the user is told to stop session recording first.
 func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]string, out io.Writer) error {
-	if !loginPattern.MatchString(owner) {
+	if !ghLoginPattern.MatchString(owner) {
 		return fmt.Errorf("owner %q is not a GitHub login", owner)
 	}
 	if len(checks) == 0 {
@@ -595,7 +595,7 @@ func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]s
 	for _, repo := range repos {
 		argv = append(argv, "--test-check", repo+"="+checks[repo])
 	}
-	say(out, "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n")
+	ghSay(out, "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n")
 	if err := rt.ExecTTY(ctx, ContainerServe, argv); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}

@@ -18,6 +18,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+# The installer embeds the quadlet units, so a build that imports deploy needs them in the context.
+COPY deploy/units.go ./deploy/units.go
+COPY deploy/quadlet ./deploy/quadlet
 COPY LICENSE ./
 COPY deploy/notices.sh /notices.sh
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-X github.com/IgnisDevNE/SuiteWard/internal/app.Version=${VERSION} -X github.com/IgnisDevNE/SuiteWard/internal/app.Source=${SOURCE}" -o /out/suiteward ./cmd/suiteward \

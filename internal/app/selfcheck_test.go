@@ -34,6 +34,7 @@ type selfCheckGitHubFake struct {
 	denyPermission      string            // a token request that names this permission is answered 422
 	covered             []string          // the repositories (names without the owner) the installation covers, widgets unless set
 	malformedListing    bool              // GET /app/installations answers a body that is not a list
+	repositoriesStatus  int               // answer to GET /installation/repositories, 200 unless set
 	endlessRepositories bool              // GET /installation/repositories answers full pages for ever
 
 	mu      sync.Mutex
@@ -82,6 +83,11 @@ func (f *selfCheckGitHubFake) serve(w http.ResponseWriter, r *http.Request) {
 			"id": id, "account": map[string]any{"login": "octo", "type": "User"}, "repository_selection": "selected", "permissions": permissions,
 		}})
 	case r.URL.Path == "/installation/repositories":
+		if f.repositoriesStatus != 0 {
+			w.WriteHeader(f.repositoriesStatus)
+			_, _ = w.Write([]byte(setupGitHubBody))
+			return
+		}
 		var repositories []map[string]any
 		if f.endlessRepositories {
 			for i := range 100 {

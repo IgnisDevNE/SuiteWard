@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -106,6 +107,9 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
+		return err
+	}
+	if err := c.planKeep(ctx); err != nil {
 		return err
 	}
 	save := func() error {
@@ -314,6 +318,10 @@ type colocatedInstall struct {
 	tokenFile string
 	secrets   secretState
 
+	// A re-run leaves these containers alone: they run as the install that made them defined them (planKeep). An upgrade keeps
+	// neither.
+	keepDB, keepServe bool
+
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
 }
 
@@ -460,38 +468,25 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 // save runs once migrate has succeeded and before the service starts: a service that runs without settings is a container
 // that a later run cannot tell from a stranger's.
 func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error {
-	secrets := c.rt.Secrets()
-
-	if err := c.ensure(ctx, KindNetwork, NetworkName); err != nil {
+	if err := c.ensureObjects(ctx); err != nil {
 		return err
 	}
-	for _, volume := range []string{VolumeData, VolumeDBData} {
-		if err := c.ensure(ctx, KindVolume, volume); err != nil {
-			return err
-		}
-	}
 
-	if err := c.ensureOwnerSecrets(ctx); err != nil {
-		return err
+	// The old service, and a migrate container an interrupted run left, go first: the database may restart below and the
+	// application secret may be replaced. A service that a re-run keeps stays.
+	remove := []string{ContainerMigrate}
+	if !c.keepServe {
+		remove = []string{ContainerServe, ContainerMigrate}
 	}
-	if err := c.ensureMCPToken(ctx); err != nil {
-		return err
-	}
-	if c.githubKey != nil {
-		if err := secrets.Write(ctx, SecretGitHubAppKey, c.githubKey, false); err != nil {
-			return err
-		}
-	}
-
-	// The old service, and a migrate container an interrupted run left, go first: the database restarts below and the
-	// application secret may be replaced.
-	for _, name := range []string{ContainerServe, ContainerMigrate} {
+	for _, name := range remove {
 		if err := c.rt.Remove(ctx, name); err != nil {
 			return err
 		}
 	}
-	if err := c.rt.Run(ctx, c.stack.DB); err != nil {
-		return err
+	if !c.keepDB {
+		if err := c.rt.Run(ctx, c.stack.DB); err != nil {
+			return err
+		}
 	}
 	c.say("Waiting for %s to become healthy (up to 90 s)...\n", ContainerDB)
 	if err := c.waitHealthy(ctx); err != nil {
@@ -507,14 +502,94 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 	if err := save(); err != nil {
 		return migratingError{err}
 	}
-	if err := c.rt.Run(ctx, c.stack.Serve); err != nil {
-		return migratingError{err}
+	if !c.keepServe {
+		if err := c.rt.Run(ctx, c.stack.Serve); err != nil {
+			return migratingError{err}
+		}
+	}
+	c.reportStarted()
+	return nil
+}
+
+// ensureObjects creates the network, the volumes and the secrets that are missing.
+func (c colocatedInstall) ensureObjects(ctx context.Context) error {
+	if err := c.ensure(ctx, KindNetwork, NetworkName); err != nil {
+		return err
+	}
+	for _, volume := range []string{VolumeData, VolumeDBData} {
+		if err := c.ensure(ctx, KindVolume, volume); err != nil {
+			return err
+		}
+	}
+	if err := c.ensureOwnerSecrets(ctx); err != nil {
+		return err
+	}
+	if err := c.ensureMCPToken(ctx); err != nil {
+		return err
+	}
+	if c.githubKey == nil {
+		return nil
+	}
+	return c.rt.Secrets().Write(ctx, SecretGitHubAppKey, c.githubKey, false)
+}
+
+// reportStarted says which containers were started and which a re-run left running.
+func (c colocatedInstall) reportStarted() {
+	var started []string
+	for _, part := range []struct {
+		name string
+		kept bool
+	}{{ContainerDB, c.keepDB}, {ContainerServe, c.keepServe}} {
+		if part.kept {
+			c.say("%s already runs as installed: it was not recreated.\n", part.name)
+		} else {
+			started = append(started, part.name)
+		}
+	}
+	if len(started) == 0 {
+		return
 	}
 	github := "not configured"
 	if c.s.GitHub.AppID != 0 {
 		github = "configured"
 	}
-	c.say("Started %s and %s (%s), GitHub %s.\n", ContainerDB, ContainerServe, c.image, github)
+	c.say("Started %s (%s), GitHub %s.\n", strings.Join(started, " and "), c.image, github)
+}
+
+// planKeep decides which containers a re-run leaves alone: the ones that run as the install that made them defined them.
+// shortcut: Docker only. Its stack is known by the settings file of that install, so the settings and the image are what the
+// containers were made from; a Podman re-run still replaces both containers (its stack is adopted from them instead), extend
+// this when a Podman re-run should keep them too. An upgrade never calls it: it replaces on purpose, after a backup.
+func (c *colocatedInstall) planKeep(ctx context.Context) error {
+	s := c.secrets
+	// A settings file from before the image was saved cannot tell what the service was made from.
+	if c.rt.Name() != RuntimeDocker || !c.previous.Known || c.previous.Image == "" || !s.haveDB || !s.haveOwner {
+		return nil
+	}
+	exists, err := c.rt.Exists(ctx, KindContainer, ContainerDB)
+	if err != nil || !exists {
+		return err
+	}
+	db, err := c.rt.State(ctx, ContainerDB)
+	if err != nil {
+		return err
+	}
+	if c.keepDB = db.Status == "running" && db.Health == "healthy"; !c.keepDB {
+		return nil
+	}
+	was, err := ColocatedStack(c.previous.Settings, c.previous.Image)
+	if err != nil {
+		return err
+	}
+	// The service reads its secrets when it starts, so one that this run makes or rewrites needs a new service.
+	if !reflect.DeepEqual(was.Serve, c.stack.Serve) || !s.haveToken || s.needAppURL || c.githubKey != nil {
+		return nil
+	}
+	serve, err := c.rt.State(ctx, ContainerServe)
+	if err != nil {
+		return err
+	}
+	c.keepServe = serve.Status == "running"
 	return nil
 }
 

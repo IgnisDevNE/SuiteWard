@@ -113,3 +113,6 @@ const (
 	SecretGitHubAppKey     = secretPrefix + "github-app-key"
 	SecretMCPAuth          = secretPrefix + "mcp-token"
 )
+
+// parseImage is a stub for the RED commit of the --image rule.
+func parseImage(string) (string, error) { return "", errors.New("not implemented") }

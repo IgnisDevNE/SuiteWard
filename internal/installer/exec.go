@@ -15,7 +15,7 @@ import (
 )
 
 // Exec runs a command and returns its standard output. Every container CLI call goes through one, so tests inject a fake and
-// check the argument list of each call.
+// check the argument list of each call. A command that fails returns what it printed together with the error.
 type Exec func(ctx context.Context, name string, args []string, stdin io.Reader) (stdout []byte, err error)
 
 // Interactive runs a command with the real stdin, stdout and stderr connected and returns when it exits. It never captures
@@ -53,7 +53,8 @@ func OSExec(ctx context.Context, name string, args []string, stdin io.Reader) ([
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %w: %s", describe(name, args), err, failureOutput(stdout.Bytes(), stderr.Bytes()))
+		// The output is returned with the error: a failing check prints its report on stdout. Every caller reads the error first.
+		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", describe(name, args), err, failureOutput(stdout.Bytes(), stderr.Bytes()))
 	}
 	return stdout.Bytes(), nil
 }

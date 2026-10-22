@@ -507,6 +507,7 @@ func (r *ttyRuntime) ExecTTY(_ context.Context, container string, argv []string)
 }
 
 func TestRunSetupPassesTheTerminalThroughAndCapturesNothing(t *testing.T) {
+	withTerminal(t, true)
 	rt := &ttyRuntime{}
 	var out strings.Builder
 	checks := map[string]string{"acme/lib": "build", "acme/app": "CI / test"}
@@ -531,6 +532,7 @@ func TestRunSetupPassesTheTerminalThroughAndCapturesNothing(t *testing.T) {
 }
 
 func TestRunSetupRefusesWhatSetupWouldRefuse(t *testing.T) {
+	withTerminal(t, true)
 	for name, tc := range map[string]struct {
 		owner  string
 		checks map[string]string

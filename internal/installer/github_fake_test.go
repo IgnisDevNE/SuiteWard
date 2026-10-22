@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -87,6 +88,9 @@ type fakeGitHub struct {
 	headers  map[string]http.Header
 
 	ownerLogin, ownerType string
+	convertRaw            string              // when set, the 201 answer of the conversion is this text
+	tokenRequests         []map[string]string // the permissions each access_tokens request asked for
+	checkRunAuth          string              // the Authorization header of the last check-runs read
 	convertPerms          map[string]string
 	convertStatus         int
 	installAfter          int // GET /app/installations answers an empty list for this many calls
@@ -150,6 +154,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func (g *fakeGitHub) convert(w http.ResponseWriter, _ *http.Request) {
+	if g.convertRaw != "" {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(g.convertRaw))
+		return
+	}
 	if g.convertStatus != http.StatusCreated {
 		w.WriteHeader(g.convertStatus)
 		_, _ = w.Write([]byte("leak-me-in-no-error"))
@@ -193,7 +202,10 @@ func (g *fakeGitHub) token(w http.ResponseWriter, r *http.Request) {
 		Permissions map[string]string `json:"permissions"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	writeJSON(w, http.StatusCreated, map[string]any{"token": strings.Repeat("t", 12), "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": req.Permissions})
+	g.mu.Lock()
+	g.tokenRequests = append(g.tokenRequests, req.Permissions)
+	g.mu.Unlock()
+	writeJSON(w, http.StatusCreated, map[string]any{"token": fakeTokenFor(req.Permissions), "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": req.Permissions})
 }
 
 func (g *fakeGitHub) installationRepos(w http.ResponseWriter, _ *http.Request) {
@@ -224,6 +236,9 @@ func (g *fakeGitHub) repo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *fakeGitHub) checkRunList(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	g.checkRunAuth = r.Header.Get("Authorization")
+	g.mu.Unlock()
 	repo, ok := g.find(r)
 	if !ok || r.PathValue("branch") != repo.branch {
 		http.NotFound(w, r)
@@ -323,4 +338,14 @@ func callback(t *testing.T, base, code, state string) int {
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode
+}
+
+// fakeTokenFor is the token the fake mints for a permission map, so a request shows which map its token came from.
+func fakeTokenFor(perms map[string]string) string {
+	pairs := make([]string, 0, len(perms))
+	for k, v := range perms {
+		pairs = append(pairs, k+"="+v)
+	}
+	slices.Sort(pairs)
+	return "tok-" + strings.Join(pairs, ",")
 }

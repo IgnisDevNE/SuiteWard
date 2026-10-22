@@ -14,6 +14,9 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
+// testAppName is the name the manifest of a test run carries.
+const testAppName = "suiteward-q1w2e3"
+
 func TestListenLoopbackBindsOnlyTheLoopbackInterface(t *testing.T) {
 	l, err := listenLoopback(0)
 	if err != nil {
@@ -30,7 +33,7 @@ func TestConvertManifestAccepts(t *testing.T) {
 	ctx := context.Background()
 	t.Run("a good conversion", func(t *testing.T) {
 		g := newFakeGitHub(t)
-		app, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", "acme")
+		app, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", "acme", testAppName)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +50,7 @@ func TestConvertManifestAccepts(t *testing.T) {
 	t.Run("a personal account", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		g.ownerLogin, g.ownerType = "alice", "User"
-		app, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", accountPersonal)
+		app, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", accountPersonal, testAppName)
 		if err != nil || app.OwnerLogin != "alice" {
 			t.Fatalf("convertManifest = %+v, %v", app, err)
 		}
@@ -72,7 +75,7 @@ func TestConvertManifestRefusals(t *testing.T) {
 		t.Run("refuses "+name, func(t *testing.T) {
 			g := newFakeGitHub(t)
 			mutate(g)
-			_, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", "acme")
+			_, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", "acme", testAppName)
 			if err == nil {
 				t.Fatal("the conversion was accepted")
 			}
@@ -88,7 +91,7 @@ func TestConvertManifestRefusals(t *testing.T) {
 	}
 	t.Run("refuses an organization owner for a personal App", func(t *testing.T) {
 		g := newFakeGitHub(t)
-		if _, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", accountPersonal); err == nil {
+		if _, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", accountPersonal, testAppName); err == nil {
 			t.Fatal("an organization-owned App was accepted as personal")
 		}
 	})
@@ -99,7 +102,7 @@ func TestConvertManifestFailures(t *testing.T) {
 	t.Run("a refused status carries no answer text", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		g.convertStatus = http.StatusNotFound
-		_, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", "acme")
+		_, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, "abc123", "acme", testAppName)
 		if err == nil || !strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "leak-me-in-no-error") {
 			t.Fatalf("error = %v", err)
 		}
@@ -108,7 +111,7 @@ func TestConvertManifestFailures(t *testing.T) {
 		g := newFakeGitHub(t)
 		url := g.srv.URL
 		g.srv.Close()
-		_, err := convertManifest(ctx, g.srv.Client(), url, "secretcode9", "acme")
+		_, err := convertManifest(ctx, g.srv.Client(), url, "secretcode9", "acme", testAppName)
 		if err == nil || strings.Contains(err.Error(), "secretcode9") {
 			t.Fatalf("error = %v", err)
 		}
@@ -116,7 +119,7 @@ func TestConvertManifestFailures(t *testing.T) {
 	t.Run("a code that is not a code is refused before any request", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		for _, code := range []string{"", "../x", "a/b", "a b", "a?b=c"} {
-			if _, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, code, "acme"); err == nil {
+			if _, err := convertManifest(ctx, g.srv.Client(), g.srv.URL, code, "acme", testAppName); err == nil {
 				t.Errorf("code %q was accepted", code)
 			}
 		}
@@ -165,15 +168,15 @@ func manifestEnv(t *testing.T, in io.Reader, terminal bool) (githubEnv, *syncBuf
 }
 
 type codeResult struct {
-	code string
-	err  error
+	code, name string
+	err        error
 }
 
 func startManifest(env githubEnv, account string) <-chan codeResult {
 	done := make(chan codeResult, 1)
 	go func() {
-		code, err := obtainManifestCode(context.Background(), env, account)
-		done <- codeResult{code, err}
+		code, name, err := obtainManifestCode(context.Background(), env, account)
+		done <- codeResult{code, name, err}
 	}()
 	return done
 }
@@ -203,11 +206,14 @@ func TestManifestPageCarriesTheFiveAndTheState(t *testing.T) {
 			if !strings.HasPrefix(action, wantPrefix) || len(stateOf(t, action)) < 16 {
 				t.Fatalf("form action = %q, want prefix %q and a random state", action, wantPrefix)
 			}
-			checkManifest(t, base, manifest)
+			name := checkManifest(t, base, manifest)
+			if !strings.Contains(out.String(), name) {
+				t.Errorf("the App name %q was not printed before the form is sent:\n%s", name, out.String())
+			}
 			if status := callback(t, base, "thecode1", stateOf(t, action)); status != http.StatusOK {
 				t.Errorf("the callback answered %d", status)
 			}
-			if res := await(t, done); res.err != nil || res.code != "thecode1" {
+			if res := await(t, done); res.err != nil || res.code != "thecode1" || res.name != name {
 				t.Fatalf("result = %+v", res)
 			}
 		})
@@ -358,7 +364,7 @@ func TestManifestCoLocatedPrintsNoPortForward(t *testing.T) {
 }
 
 // checkManifest asserts the manifest the page sends: the five permissions, no webhook, private, the loopback redirect.
-func checkManifest(t *testing.T, base string, manifest []byte) {
+func checkManifest(t *testing.T, base string, manifest []byte) (name string) {
 	t.Helper()
 	var m map[string]any
 	if err := json.Unmarshal(manifest, &m); err != nil {
@@ -370,7 +376,8 @@ func checkManifest(t *testing.T, base string, manifest []byte) {
 	if m["public"] != false || m["url"] != "https://github.com/IgnisDevNE/SuiteWard" || m["redirect_url"] != strings.TrimSuffix(base, "/")+"/callback" {
 		t.Errorf("manifest = %v", m)
 	}
-	if name, _ := m["name"].(string); !strings.HasPrefix(name, "suiteward-") || len(name) > 34 {
+	name, _ = m["name"].(string)
+	if !strings.HasPrefix(name, "suiteward-") || len(name) > 34 {
 		t.Errorf("name = %q", name)
 	}
 	perms, _ := m["default_permissions"].(map[string]any)
@@ -382,4 +389,26 @@ func checkManifest(t *testing.T, base string, manifest []byte) {
 			t.Errorf("default_permissions[%s] = %v, want %s", k, perms[k], v)
 		}
 	}
+	return name
+}
+
+func TestConvertManifestNamesTheAppWhenTheAnswerIsUnusable(t *testing.T) {
+	for name, raw := range map[string]string{"undecodable": "not json at all", "incomplete": `{"id": 0}`, "without a key": `{"id": 5, "slug": "x", "owner": {"login": "acme"}}`} {
+		t.Run(name, func(t *testing.T) {
+			g := newFakeGitHub(t)
+			g.convertRaw = raw
+			_, err := convertManifest(context.Background(), g.srv.Client(), g.srv.URL, "abc123", "acme", testAppName)
+			if err == nil || !strings.Contains(err.Error(), testAppName) {
+				t.Fatalf("error = %v, want one that names the App %s so an orphan can be found", err, testAppName)
+			}
+		})
+	}
+	t.Run("a code from an earlier attempt has no name to give", func(t *testing.T) {
+		g := newFakeGitHub(t)
+		g.convertRaw = "not json at all"
+		_, err := convertManifest(context.Background(), g.srv.Client(), g.srv.URL, "abc123", "acme", "")
+		if err == nil || strings.Contains(err.Error(), "named") {
+			t.Fatalf("error = %v", err)
+		}
+	})
 }

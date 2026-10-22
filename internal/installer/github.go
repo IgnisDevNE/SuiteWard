@@ -21,6 +21,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"golang.org/x/term"
 )
 
 // resolveGitHub is the one entry the tier flows call (M1.12-I6):
@@ -284,11 +285,11 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	if !ghLoginPattern.MatchString(account) {
 		return app, res, "", fmt.Errorf("github-account %q is not %q or a GitHub login", account, accountPersonal)
 	}
-	code, err := obtainManifestCode(ctx, env, account)
+	code, appName, err := obtainManifestCode(ctx, env, account)
 	if err != nil {
 		return app, res, "", err
 	}
-	conv, err := convertManifest(ctx, env.HTTP, env.APIURL, code, account)
+	conv, err := convertManifest(ctx, env.HTTP, env.APIURL, code, account, appName)
 	if conv.Slug != "" {
 		created = env.WebURL + "/settings/apps/" + conv.Slug
 		if conv.OwnerType == "Organization" {
@@ -676,4 +677,9 @@ func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]s
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	return nil
+}
+
+// setupTerminal tells whether setup can have a real terminal: stdin and stdout are both terminals. Tests replace it.
+var setupTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }

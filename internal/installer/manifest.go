@@ -82,20 +82,22 @@ type pasted struct {
 
 // obtainManifestCode serves the manifest form on a loopback listener and returns the code, from GitHub's callback or pasted
 // into the terminal, whichever comes first. The code is a credential until it is converted: it is never printed.
-func obtainManifestCode(ctx context.Context, env githubEnv, account string) (string, error) {
+func obtainManifestCode(ctx context.Context, env githubEnv, account string) (string, string, error) {
 	if given, ok := env.R.given("manifest-code"); ok { // a code from an earlier attempt, within its hour
-		return parseManifestCode(given, "")
+		code, err := parseManifestCode(given, "")
+		return code, "", err
 	}
 	ln, err := listenLoopback(env.ManifestPort)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	addr := ln.Addr().String()
 	state := rand.Text()
-	manifest, err := manifestJSON("suiteward-"+strings.ToLower(rand.Text()[:6]), "http://"+addr+"/callback")
+	name := "suiteward-" + strings.ToLower(rand.Text()[:6])
+	manifest, err := manifestJSON(name, "http://"+addr+"/callback")
 	if err != nil {
 		_ = ln.Close()
-		return "", fmt.Errorf("encode the manifest: %w", err)
+		return "", "", fmt.Errorf("encode the manifest: %w", err)
 	}
 	action := env.WebURL + "/settings/apps/new?state=" + state
 	if account != accountPersonal {
@@ -174,16 +176,16 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 				select {
 				case <-paste:
 				case <-ctx.Done():
-					return "", waitError(ctx, wait)
+					return "", "", waitError(ctx, wait)
 				}
 			}
-			return code, nil
+			return code, name, nil
 		case p := <-paste:
 			paste = nil
 			code, perr := parseManifestCode(p.line, state)
 			switch {
 			case perr == nil:
-				return code, nil
+				return code, name, nil
 			case p.err != nil: // end of input: nothing more can be pasted
 				ghSay(env.Out, "\nNo more input: waiting for GitHub's callback only.\n")
 			default:
@@ -191,7 +193,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 				readLine()
 			}
 		case <-ctx.Done():
-			return "", waitError(ctx, wait)
+			return "", "", waitError(ctx, wait)
 		}
 	}
 }
@@ -238,7 +240,7 @@ type convertedApp struct {
 // convertManifest exchanges the manifest code for the App (POST /app-manifests/{code}/conversions, no authentication: the
 // code is the credential). It refuses an App whose permissions are not exactly the five or whose owner is not the chosen
 // account; on a refusal the App exists on GitHub, so the returned app carries its slug (and no key) beside the error.
-func convertManifest(ctx context.Context, client *http.Client, apiURL, code, account string) (convertedApp, error) {
+func convertManifest(ctx context.Context, client *http.Client, apiURL, code, account, appName string) (convertedApp, error) {
 	if !codePattern.MatchString(code) {
 		return convertedApp{}, errors.New("the manifest code is not a code (letters and digits only)")
 	}

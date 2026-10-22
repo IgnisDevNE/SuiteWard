@@ -1,8 +1,11 @@
 package installer
 
 import (
+	"io"
+
 	"context"
 	"errors"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"slices"
 	"strings"
 	"testing"
@@ -175,4 +178,79 @@ func TestResolveGitHubTestCheckList(t *testing.T) {
 			t.Fatalf("resolveGitHub = %v, %v", res.TestChecks, err)
 		}
 	})
+}
+
+func TestResolveGitHubReadsCheckRunsWithExactlyTheCheckReadToken(t *testing.T) {
+	g := newFakeGitHub(t)
+	env, _ := flowEnv(t, g, existingFlags(t, nil), strings.NewReader(""), false)
+	if _, err := resolve(t, env); err != nil {
+		t.Fatal(err)
+	}
+	checksRead := map[string]string{"metadata": "read", "checks": "read"}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if want := "Bearer " + fakeTokenFor(checksRead); g.checkRunAuth != want {
+		t.Errorf("the check runs were read with %q, want the token minted for exactly %v", g.checkRunAuth, checksRead)
+	}
+	for _, perms := range g.tokenRequests {
+		for name, level := range perms {
+			if level != "read" {
+				t.Errorf("a token asked for %s: %s; the install flow only reads", name, level)
+			}
+		}
+		if _, ok := perms["contents"]; ok {
+			t.Errorf("a token asked for contents: %v", perms)
+		}
+	}
+}
+
+func TestResolveGitHubRefusesATestCheckListThatNamesARepositoryTwice(t *testing.T) {
+	for name, list := range map[string]string{
+		"the same case": "acme/r1=one\nacme/r1=two\nacme/r2=three",
+		"another case":  "acme/r1=one\nACME/R1=two\nacme/r2=three",
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newFakeGitHub(t)
+			g.repos = manyRepos(2)
+			flags := existingFlags(t, map[string]string{"repositories": "acme/r1,acme/r2", "test-check": list})
+			env, _ := flowEnv(t, g, flags, strings.NewReader(""), false)
+			if _, err := resolve(t, env); err == nil || !strings.Contains(err.Error(), "twice") {
+				t.Fatalf("error = %v, want a refusal that says the repository is listed twice", err)
+			}
+		})
+	}
+}
+
+// withTerminal makes runSetup see a terminal, or not, for the test.
+func withTerminal(t *testing.T, terminal bool) {
+	t.Helper()
+	old := setupTerminal
+	setupTerminal = func() bool { return terminal }
+	t.Cleanup(func() { setupTerminal = old })
+}
+
+func TestRunSetupNeedsARealTerminal(t *testing.T) {
+	withTerminal(t, false)
+	rt := &ttyRuntime{}
+	var out strings.Builder
+	err := runSetup(context.Background(), rt, "alice", map[string]string{"acme/app": "CI"}, &out)
+	if err == nil || rt.calls != 0 || !strings.Contains(err.Error(), "terminal") {
+		t.Fatalf("runSetup = %v after %d calls; want a refusal that names the terminal", err, rt.calls)
+	}
+	if strings.Contains(out.String(), "recording") {
+		t.Errorf("the warning was printed although setup does not run:\n%s", out.String())
+	}
+}
+
+func TestRunSetupBoundsEachCheck(t *testing.T) {
+	withTerminal(t, true)
+	rt := &ttyRuntime{}
+	long := strings.Repeat("c", owner.MaxTestCheckBytes+1)
+	if err := runSetup(context.Background(), rt, "alice", map[string]string{"acme/app": long}, io.Discard); err == nil || rt.calls != 0 || !strings.Contains(err.Error(), "acme/app") {
+		t.Fatalf("runSetup = %v after %d calls; want a refusal naming the repository", err, rt.calls)
+	}
+	exact := strings.Repeat("c", owner.MaxTestCheckBytes)
+	if err := runSetup(context.Background(), rt, "alice", map[string]string{"acme/app": exact}, io.Discard); err != nil || rt.calls != 1 {
+		t.Fatalf("runSetup at the limit = %v after %d calls", err, rt.calls)
+	}
 }

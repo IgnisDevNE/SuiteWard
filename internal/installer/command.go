@@ -342,7 +342,9 @@ func tierNeeded(r *Resolver, haveSaved bool, goos string) error {
 var plainArg = regexp.MustCompile(`^[A-Za-z0-9_+=.,:/\\@%-]+$`)
 
 // quoteArg is a command-line argument as a person can paste it into a shell: as it is when it is plain, else in single quotes.
-// shortcut: a path with a single quote is put in double quotes, where bash still expands $; no installer path has either.
+// shortcut: a path with a single quote goes in double quotes, inside which bash and PowerShell both still expand $ and backticks, so
+// such a path is not safe to paste; and a path with backslashes is left bare, which is right in PowerShell and cmd, where a path is
+// not escaped, and wrong in bash. An installer path has none of these: the upgrade is to escape per shell once one does.
 func quoteArg(arg string) string {
 	switch {
 	case plainArg.MatchString(arg):

@@ -66,7 +66,8 @@ func TestInstallIsolatedGitHubNoRefusesWhileARecordedAppHoldsTheKey(t *testing.T
 	g.answers["github"] = "no"
 	before := len(g.f.calls)
 	err := g.run()
-	if err == nil || !strings.Contains(err.Error(), "--github-app-id none") || !strings.Contains(err.Error(), pendingAppPath(settingsFile(g.home))) {
+	// --github-app-id none is no way out here: the units read the env file of the settings' App whatever the run says.
+	if err == nil || strings.Contains(err.Error(), "--github-app-id none") || !strings.Contains(err.Error(), "drop --github no") || !strings.Contains(err.Error(), pendingAppPath(settingsFile(g.home))) {
 		t.Fatalf("got %v, want the refusal that names the way out", err)
 	}
 	for _, c := range g.f.lines()[before:] {

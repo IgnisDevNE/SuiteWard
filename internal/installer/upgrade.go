@@ -81,7 +81,7 @@ func confirmUpgrade(r *Resolver, plan upgradePlan, parent string, serviceStarted
 func doctorHint(settingsPath string, defaultPath bool) string {
 	hint := "suiteward doctor"
 	if !defaultPath {
-		hint += " --settings " + settingsPath
+		hint += " --settings " + quoteArg(settingsPath)
 	}
 	return hint
 }
@@ -133,6 +133,9 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	}
 	if !previous.Known {
 		return ErrNothingInstalled
+	}
+	if err := refuseUnfinishedInstall(pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
+		return err
 	}
 	dbImage, err := installedDBImage(ctx, rt)
 	if err != nil {
@@ -265,4 +268,23 @@ func (c *colocatedInstall) startInstalled(ctx context.Context) error {
 		return err
 	}
 	return c.rt.Start(ctx, ContainerServe)
+}
+
+// refuseUnfinishedInstall refuses an upgrade while an earlier install is unfinished: the App it recorded holds the key secret, and the
+// upgrade would start the stack again with the App of the settings, which GitHub refuses with that key. settings is called only when
+// a record exists.
+func refuseUnfinishedInstall(pendingPath string, settings func() (GitHub, error)) error {
+	pending, found, err := loadPendingApp(pendingPath)
+	if err != nil || !found {
+		return err
+	}
+	gh, err := settings()
+	if err != nil {
+		return err
+	}
+	if !recordWins(&gh, &pending) {
+		return nil
+	}
+	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `suiteward install` (it takes the recorded App up), then upgrade",
+		pending.Slug, pendingPath, SecretGitHubAppKey)
 }

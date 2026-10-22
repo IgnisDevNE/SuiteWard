@@ -185,7 +185,7 @@ func replacedNote(env githubEnv) string {
 	if env.Existing != nil && env.Existing.AppID != 0 {
 		note = fmt.Sprintf("The App %d that the settings named stays on GitHub. Delete it at %s.\n", env.Existing.AppID, appListPages(env.WebURL, *env.Existing))
 	}
-	if p := env.Pending; p != nil && (env.Existing == nil || env.Existing.AppID != p.AppID) {
+	if p := env.Pending; recordWins(env.Existing, p) {
 		note += fmt.Sprintf("The App %s that an earlier run recorded stays on GitHub. Delete it at %s; the record is replaced.\n", p.Slug, appPage(env.WebURL, p.Slug, p.Account, p.AccountType))
 	}
 	return note

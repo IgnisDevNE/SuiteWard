@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
 // githubInstall is the GitHub part of an install, which both tiers run: the flow with its settings, and the enrollment of the
@@ -120,7 +122,10 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 	}
 	run, err := g.wantsGitHub(ctx, r)
 	if err != nil || !run {
-		if err == nil && g.pending != nil { // GitHub is off in this run, but the App an earlier run created is still there
+		if err == nil && recordWins(&g.s.GitHub, g.pending) { // GitHub is off in this run, but the App an earlier run created is still there
+			if g.s.GitHub.AppID != 0 {
+				return g.offOverRecordError()
+			}
 			g.say("Note: GitHub is off in this run, and the App %s that an earlier run created is not used. It still exists on GitHub (%s) and its key is the secret %s (%s); the record is %s. A re-run without --github no takes it up again (or pass --github yes). To throw it away, delete the App, remove the secret and delete the record.\n",
 				g.pending.Slug, appPage("https://github.com", g.pending.Slug, g.pending.Account, g.pending.AccountType), SecretGitHubAppKey, g.removeKeySecret(), g.pendingPath)
 		}
@@ -307,4 +312,19 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 		g.say("Next: setup needs a real terminal (it prints the TOTP secret). Turn off any session recording of that terminal, then enroll the owner:\n  %s\n", command)
 	}
 	return nil
+}
+
+// offOverRecordError refuses --github no while the settings name an App and an earlier run recorded another: the key secret is the
+// recorded App's, so the stack would run the App of the settings with it. On the isolated tier, the units read the env file of the
+// settings' App whatever the run says, so --github-app-id none is no way out there.
+func (g *githubInstall) offOverRecordError() error {
+	p := g.pending
+	ways := "drop --github no to take the recorded App up"
+	if g.s.Tier != config.TierIsolated {
+		ways += ", or pass --github-app-id none to run without GitHub"
+	}
+	ways += fmt.Sprintf(", or delete that App (%s), remove the secret (%s) and delete the record %s to go on with the App of the settings",
+		appPage("https://github.com", p.Slug, p.Account, p.AccountType), g.removeKeySecret(), g.pendingPath)
+	return fmt.Errorf("GitHub is off in this run, but an earlier run created the App %s and recorded it, and its key is the secret %s now, while the settings name the App %d: the stack would run that App with this key and GitHub would refuse it. To go on, %s",
+		p.Slug, SecretGitHubAppKey, g.s.GitHub.AppID, ways)
 }

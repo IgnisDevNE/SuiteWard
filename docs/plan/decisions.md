@@ -507,6 +507,12 @@ Accepted 2026-10-21 (owner, M1.12 planning). It amends D-INSTALL: the App is cre
   - Each binary embeds the signed index digest of its own release, so an install never takes an image from a tag. A development build without that digest requires `--image`.
   - On the isolated host, which has no cosign or PowerShell, the binary is verified once on the PC and the host checks the same files against `SHA256SUMS`.
 - **`deploy/local.ps1` is removed in the alpha.** The installer adopts a stack it made, and `suiteward install --upgrade` converts one. `suiteward uninstall [--purge]` replaces `local.ps1 -Down`; `--purge` also removes the secrets, volumes and settings and keeps the backups.
+- **Before the alpha (owner, 2026-10-22, from the M1.12 reviews):**
+  - **Setup guard, and `suiteward enroll`.** `install` runs setup only when `/status` shows no owner. When an owner is enrolled, or `/status` cannot be read, setup is skipped, so a re-run or a restore never replaces the TOTP secret. Re-enrolling is the deliberate verb `suiteward enroll`, and the installer's messages name it.
+  - **Upgrade with the service down.** `install --upgrade` refuses, because the backup includes `/status`. On a terminal it first asks whether to start the installed service, then continues once `/status` answers.
+  - **Pasting the manifest code.** The fallback paste prompt may echo. The code is never a flag, so it never reaches argv.
+  - **An App named in the settings without its key secret.** The installer stops and offers two routes: give the App's key file, or create a new App (the old one is named for deletion). A terminal asks; otherwise the error names both.
+  - **`v0.1.x` isolated hosts** are not converted by `--upgrade`. No installation of v0.1.x exists outside our own hosts, which already run v0.2.0.
 - **Hand-over.** `v0.3.0-alpha.1`, a pre-release, goes to individual testers. Everything after the alpha is post-MVP.
 
 ### D-MIGRATIONS: Migration tooling
@@ -522,12 +528,6 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 - **D-EXECUTION:** first executable profile and execution trust model; decided in M2 before implementation.
 - **D-MANAGED-EXECUTION:** future provider-hosted or customer-infrastructure execution; nothing scheduled.
 - **D-HARDENING-CONTROLS:** further signing, provenance and transparency controls where a concrete threat justifies them. Signing the release image against `release.yml` on a `refs/tags/v*` ref, with a provenance and an SBOM, is in place from the first release built after the 2026-10-20 amendment of ADR 0008 (D-RELEASE); what remains is M3's key management and other controls. Encrypting the TOTP secret at rest with a host key is an M3 candidate with ADR 0019 (ADR 0027).
-- **D-INSTALLER-ALPHA (raised 2026-10-22 by the M1.12 reviews; the owner decides before or with `v0.3.0-alpha.1`):**
-  1. **Setup guard.** As built, `install` runs setup only when `/status` shows no owner. When an owner is enrolled, or `/status` cannot be read, setup is skipped and the command is printed, so a re-run or a restore never replaces the TOTP secret, and re-enrolling is a deliberate manual command. Confirm this rule.
-  2. **Upgrade of a stopped service.** `install --upgrade` refuses while the service is down, because the backup includes `/status`. The alternative is to warn and back up the database and volume without it. As built: refuse.
-  3. **Pasting the manifest code.** The flag is gone (the code is a credential for its hour). The fallback paste prompt still echoes, and stdin is not a source, because a no-echo read racing the browser callback cannot be abandoned safely. As built: echo.
-  4. **An App named in the settings without its key secret.** The installer creates a new App, leaving the old one on GitHub. The alternative is to stop and ask for the key. As built: new App.
-  5. **`v0.1.x` isolated hosts** (no migrate unit) are not converted by `--upgrade` and keep the manual path. As built: manual.
 
 ## Post-MVP
 

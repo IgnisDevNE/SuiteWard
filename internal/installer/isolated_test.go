@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +52,10 @@ type isoFake struct {
 	dump    string          // what pg_dump prints in the database container
 	noImage bool            // no image is in the engine yet, so every pull is real
 	objects map[string]bool // volumes and networks that exist, by name
+
+	listening []int // the TCP ports something listens on, as `ss -ltn` shows them
+	restarts  []int // what NRestarts of suiteward.service answers, one per question; the last one repeats, none means 0
+	asked     int   // how many times NRestarts was asked
 }
 
 func newIsoFake(home string) *isoFake {
@@ -105,6 +111,19 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 		return []byte("\n"), nil
 	case c.name == "systemctl" && line == "--user start suiteward.service":
 		f.started = true
+	case c.name == "ss" && line == "-ltn":
+		out := "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+		for _, port := range f.listening {
+			out += "LISTEN 0      4096       127.0.0.1:" + strconv.Itoa(port) + "      0.0.0.0:*\n"
+		}
+		return []byte(out), nil
+	case c.name == "systemctl" && line == "--user show --property=NRestarts --value suiteward.service":
+		n := 0
+		if len(f.restarts) > 0 {
+			n = f.restarts[min(f.asked, len(f.restarts)-1)]
+		}
+		f.asked++
+		return []byte(strconv.Itoa(n) + "\n"), nil
 	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=SystemState"):
 		return []byte(f.systemState + "\n"), nil
 	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=ActiveState --value "):
@@ -829,3 +848,270 @@ func addAnswers(m map[string]string, key, value string) map[string]string {
 
 // fullEnv is a GitHub env file that holds all three values.
 const fullEnv = "SUITEWARD_GITHUB_APP_ID=1\nSUITEWARD_GITHUB_INSTALLATION_ID=2\nSUITEWARD_GITHUB_REPOSITORIES=octo/one\n"
+
+// ---- the isolated install of v0.3.0-alpha.2: its flags, GitHub off, a stable service and free ports ----
+
+// installIsolatedArgs runs `suiteward install --tier isolated` on the machine f with the GitHub flow faked, as the command line
+// does: the answers of the flow are flags, and args are the flags under test.
+func installIsolatedArgs(t *testing.T, f *isoFake, args ...string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	env := Env{
+		Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &out}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {},
+		ResolveGitHub: func(context.Context, githubEnv) (GitHubResult, error) {
+			return GitHubResult{
+				AppID: 123, InstallationID: 456, Account: "octo", AccountType: "User", OwnerLogin: "alice",
+				Repositories: []string{"octo/one", "octo/two"}, TestChecks: map[string]string{"octo/one": "CI / test", "octo/two": "CI / test"},
+				PrivateKey: []byte(appKeyPEM(t)),
+			}, nil
+		},
+		HTTPGet: func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },
+	}
+	base := []string{"--tier", "isolated", "--settings", settingsFile(f.home), "--image", testDigest,
+		"--github-app-id", "123", "--github-installation-id", "456", "--github-repositories", "octo/one,octo/two", "--github-owner", "alice"}
+	err := Install(context.Background(), append(base, args...), env)
+	return out.String(), err
+}
+
+func TestInstallIsolatedHonorsThePortsAndTheJobTimeoutItIsAsked(t *testing.T) {
+	check := func(t *testing.T, home string) {
+		t.Helper()
+		serve := string(readFileOrFail(t, filepath.Join(unitDir(home), "suiteward.container")))
+		for _, want := range []string{"\nPublishPort=127.0.0.1:18082:8080\n", "\nPublishPort=127.0.0.1:18092:8090\n", "\nEnvironment=SUITEWARD_JOB_TIMEOUT=5m\n"} {
+			if !strings.Contains(serve, want) {
+				t.Errorf("the unit lacks %q:\n%s", want, serve)
+			}
+		}
+		if saved, err := LoadSettings(settingsFile(home)); err != nil || saved.HTTPPort != 18082 || saved.MCPPort != 18092 || saved.JobTimeout != "5m" {
+			t.Errorf("the settings keep %+v, %v", saved, err)
+		}
+	}
+
+	t.Run("flags", func(t *testing.T) {
+		f := newIsoFake(t.TempDir())
+		if _, err := installIsolatedArgs(t, f, "--http-port", "18082", "--mcp-port", "18092", "--job-timeout", "5m"); err != nil {
+			t.Fatal(err)
+		}
+		check(t, f.home)
+	})
+	t.Run("answers file", func(t *testing.T) {
+		f := newIsoFake(t.TempDir())
+		file := filepath.Join(t.TempDir(), "answers.yaml")
+		if err := os.WriteFile(file, []byte("http-port: 18082\nmcp-port: 18092\njob-timeout: 5m\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := installIsolatedArgs(t, f, "--answers", file); err != nil {
+			t.Fatal(err)
+		}
+		check(t, f.home)
+	})
+	t.Run("a flag wins over the answers file", func(t *testing.T) {
+		f := newIsoFake(t.TempDir())
+		file := filepath.Join(t.TempDir(), "answers.yaml")
+		if err := os.WriteFile(file, []byte("http-port: 9999\nmcp-port: 18092\njob-timeout: 5m\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := installIsolatedArgs(t, f, "--answers", file, "--http-port", "18082"); err != nil {
+			t.Fatal(err)
+		}
+		check(t, f.home)
+	})
+}
+
+func TestInstallIsolatedRefusesInvalidPortsAndJobTimeoutBeforeAnyChange(t *testing.T) {
+	for name, args := range map[string][]string{
+		"port out of range": {"--http-port", "70000"},
+		"port not a number": {"--mcp-port", "abc"},
+		"the same port":     {"--http-port", "8091"}, // the default MCP port
+		"job timeout":       {"--job-timeout", "soon"},
+	} {
+		f := newIsoFake(t.TempDir())
+		f.noImage = true
+		if _, err := installIsolatedArgs(t, f, args...); err == nil {
+			t.Fatalf("%s: the install must be refused", name)
+		}
+		if f.has("secret create") || f.has("pull") || f.has("start") || f.has("daemon-reload") || exists(filepath.Join(f.home, ".config")) {
+			t.Errorf("%s: something was changed: %v", name, f.lines())
+		}
+	}
+}
+
+func TestInstallIsolatedWithoutGitHubRunsWithoutTheKeyLines(t *testing.T) {
+	keyLines := []string{"Secret=suiteward-github-app-key", "SUITEWARD_GITHUB_APP_KEY_FILE"}
+	for name, answers := range map[string]map[string]string{
+		"none":   {"github-app-id": "none"},
+		"no":     {"github-app-id": "", "github": "no"},
+		"absent": {"github-app-id": "", "github-installation-id": "", "github-repositories": "", "github-owner": ""},
+	} {
+		g := newIsoGitHub(t) // no key secret exists: GitHub off must not need one
+		maps.Copy(g.answers, answers)
+		if err := g.run(); err != nil {
+			t.Fatalf("%s: an install without GitHub must work without a key secret: %v", name, err)
+		}
+		serve := string(readFileOrFail(t, filepath.Join(unitDir(g.home), "suiteward.container")))
+		for _, line := range keyLines {
+			if strings.Contains(serve, line) {
+				t.Errorf("%s: the unit mounts a key that does not exist (%s):\n%s", name, line, serve)
+			}
+		}
+		if g.f.has("secret create " + SecretGitHubAppKey) {
+			t.Errorf("%s: a key secret was created without a key", name)
+		}
+		if !strings.Contains(g.out.String(), "GitHub is not configured") {
+			t.Errorf("%s: the output must say GitHub is off:\n%s", name, g.out.String())
+		}
+		if raw := readFileOrFail(t, envFile(g.home)); len(raw) != 0 {
+			t.Errorf("%s: the env file must be empty: %q", name, raw)
+		}
+		if saved, err := LoadSettings(settingsFile(g.home)); err != nil || saved.GitHub.AppID != 0 {
+			t.Errorf("%s: the settings keep %+v, %v", name, saved, err)
+		}
+	}
+
+	// With an App the unit mounts the key and reads its name from the environment, as before.
+	g := newIsoGitHub(t)
+	if err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	serve := string(readFileOrFail(t, filepath.Join(unitDir(g.home), "suiteward.container")))
+	for _, line := range keyLines {
+		if !strings.Contains(serve, line) {
+			t.Errorf("with an App the unit lacks %s:\n%s", line, serve)
+		}
+	}
+}
+
+func TestInstallIsolatedRefusesToDropTheAppOfTheEnvFileBeforeAnyChange(t *testing.T) {
+	// --github-app-id none does not empty an env file that holds an App, and the service reads that file: without the key lines
+	// it would stop at startup, so the run says so instead.
+	g := newIsoGitHub(t)
+	handInstalled(t, g, handMadeEnv)
+	g.answers["github-app-id"] = "none"
+	err := g.run()
+	if err == nil || !strings.Contains(err.Error(), envFile(g.home)) {
+		t.Fatalf("the run must name the env file that still holds an App, got %v", err)
+	}
+	if g.f.has("secret create") || g.f.has("start") || g.f.has("daemon-reload") || exists(unitDir(g.home)) {
+		t.Fatalf("nothing may change: %v", g.f.lines())
+	}
+	if got := string(readFileOrFail(t, envFile(g.home))); got != handMadeEnv {
+		t.Errorf("the env file was rewritten: %q", got)
+	}
+}
+
+func TestInstallIsolatedSaysRunningOnlyOnceTheServiceIsStable(t *testing.T) {
+	journal := "journalctl --user -u suiteward.service"
+	// ready answers /readyz from a script: true is a 200, false a 503; once the script ends it answers 200.
+	ready := func(g *isoGitHub, script ...bool) *int {
+		polls := 0
+		g.status = func(_ context.Context, address string) ([]byte, error) {
+			if !strings.HasSuffix(address, "/readyz") {
+				return []byte(`{"version":"v0.2.0"}`), nil
+			}
+			ok := true
+			if polls < len(script) {
+				ok = script[polls]
+			}
+			polls++
+			if !ok {
+				return nil, errors.New("HTTP 503")
+			}
+			return []byte("ok"), nil
+		}
+		return &polls
+	}
+	notStable := func(t *testing.T, g *isoGitHub, want string) {
+		t.Helper()
+		err := g.run()
+		if err == nil || !strings.Contains(err.Error(), journal) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("the install must fail naming %q and %q, got %v", want, journal, err)
+		}
+		if strings.Contains(g.out.String(), "is running") {
+			t.Errorf("a service that is not stable must not be called running:\n%s", g.out.String())
+		}
+		if _, statErr := os.Stat(settingsFile(g.home)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("the settings must stay unsaved while the service is not stable: %v", statErr)
+		}
+	}
+
+	t.Run("readyz never answers", func(t *testing.T) {
+		g := newIsoGitHub(t)
+		ready(g, slices.Repeat([]bool{false}, 500)...)
+		notStable(t, g, "/readyz")
+	})
+	t.Run("the service restarts while it is polled", func(t *testing.T) {
+		g := newIsoGitHub(t)
+		ready(g)
+		g.f.restarts = []int{0, 1} // one restart after the first question
+		notStable(t, g, "restart")
+	})
+	t.Run("a failed poll starts the count again", func(t *testing.T) {
+		g := newIsoGitHub(t)
+		polls := ready(g, true, true, false)
+		if err := g.run(); err != nil {
+			t.Fatal(err)
+		}
+		if *polls != 6 {
+			t.Errorf("polled %d times, want 6: two answers, a failure, then three in a row", *polls)
+		}
+		if !strings.Contains(g.out.String(), "is running") {
+			t.Errorf("the install must say it runs:\n%s", g.out.String())
+		}
+	})
+	t.Run("three answers in a row", func(t *testing.T) {
+		g := newIsoGitHub(t)
+		g.answers["http-port"] = "18082"
+		polls := ready(g)
+		if err := g.run(); err != nil {
+			t.Fatal(err)
+		}
+		if *polls != 3 {
+			t.Errorf("polled %d times, want 3", *polls)
+		}
+		if !slices.Contains(g.asked, "http://127.0.0.1:18082/readyz") {
+			t.Errorf("/readyz is read on the HTTP port of the install: %v", g.asked)
+		}
+		if !strings.Contains(g.out.String(), "is running") {
+			t.Errorf("the install must say it runs:\n%s", g.out.String())
+		}
+	})
+}
+
+func TestInstallIsolatedRefusesAPortSomethingElseListensOn(t *testing.T) {
+	for name, tc := range map[string]struct {
+		port int
+		flag string
+	}{"http": {8081, "--http-port"}, "mcp": {8091, "--mcp-port"}} {
+		f := newIsoFake(t.TempDir())
+		f.noImage, f.listening = true, []int{tc.port}
+		_, err := runIsolated(t, f, nil, "")
+		if err == nil || !strings.Contains(err.Error(), strconv.Itoa(tc.port)) || !strings.Contains(err.Error(), tc.flag) {
+			t.Fatalf("%s: the run must name the port and %s, got %v", name, tc.flag, err)
+		}
+		if f.has("secret create") || f.has("pull") || f.has("start") || f.has("daemon-reload") || exists(filepath.Join(f.home, ".config")) {
+			t.Errorf("%s: something was changed: %v", name, f.lines())
+		}
+	}
+}
+
+func TestInstallIsolatedDoesNotRefuseThePortsTheInstalledStackPublishes(t *testing.T) {
+	home := t.TempDir()
+	installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: 18081, MCPPort: 18091, EnvFile: DefaultEnvFile})
+	f := newIsoFake(home)
+	f.listening = []int{18081, 18091} // the running service holds them
+	if _, err := runIsolated(t, f, nil, ""); err != nil {
+		t.Fatalf("the ports of the installed stack are its own: %v", err)
+	}
+}
+
+func TestInstallIsolatedCarriesOnWhenTheListenersCannotBeListed(t *testing.T) {
+	f := newIsoFake(t.TempDir())
+	f.failOn["ss -ltn"] = errors.New("ss: not found")
+	out, err := runIsolated(t, f, nil, "")
+	if err != nil {
+		t.Fatalf("a check that cannot run is reported, and the readiness wait still catches a port in use: %v", err)
+	}
+	if !strings.Contains(out, "could not be checked") {
+		t.Errorf("the output must say the ports were not checked:\n%s", out)
+	}
+}

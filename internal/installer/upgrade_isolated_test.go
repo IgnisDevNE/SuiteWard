@@ -557,3 +557,58 @@ func TestUpgradeIsolatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeIsolatedKeepsTheGitHubKeyLinesOrTheirAbsence(t *testing.T) {
+	for name, withLines := range map[string]bool{"units of an install with GitHub": true, "units of an install without GitHub": false} {
+		// The settings name no App (a host installed by hand, or without GitHub): what the units have is what stays.
+		u := newIsoUpgrade(t, nil)
+		if !withLines {
+			path := filepath.Join(unitDir(u.home), "suiteward.container")
+			if err := os.WriteFile(path, withoutLines(t, readFileOrFail(t, path), githubKeyUnitLines...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := u.upgrade("--image", testDigest, "--yes"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		serve := u.unit("suiteward.container")
+		for _, line := range githubKeyUnitLines {
+			if strings.Contains(serve, line) != withLines {
+				t.Errorf("%s: the line %q must be there: %v\n%s", name, line, withLines, serve)
+			}
+		}
+		if !strings.Contains(serve, "@"+testDigest) {
+			t.Errorf("%s: the units were not upgraded:\n%s", name, serve)
+		}
+	}
+}
+
+func TestUpgradeIsolatedSaysItKeepsTheInstalledPortsAndTimeout(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	before := u.unit("suiteward.container")
+	if err := u.upgrade("--image", testDigest, "--yes", "--http-port", strconv.Itoa(u.port+100), "--job-timeout", "9m"); err != nil {
+		t.Fatal(err)
+	}
+	out := u.out.String()
+	for _, want := range []string{"Keeping the installed HTTP port " + strconv.Itoa(u.port), "Keeping the installed job timeout \"3m\""} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "MCP port") {
+		t.Errorf("the MCP port was not asked for:\n%s", out)
+	}
+	for _, line := range []string{"PublishPort=127.0.0.1:" + strconv.Itoa(u.port) + ":8080", "Environment=SUITEWARD_JOB_TIMEOUT=3m"} {
+		if !strings.Contains(u.unit("suiteward.container"), line) || !strings.Contains(before, line) {
+			t.Errorf("an upgrade keeps %q", line)
+		}
+	}
+
+	// An invalid value is refused before any change, not ignored.
+	u = newIsoUpgrade(t, nil)
+	before = u.unit("suiteward.container")
+	if err := u.upgrade("--image", testDigest, "--yes", "--http-port", "70000"); err == nil {
+		t.Fatal("an invalid port must be refused")
+	}
+	u.untouched(map[string]string{"suiteward.container": before})
+}

@@ -42,8 +42,6 @@ var (
 // generatorPath is the Podman quadlet generator, whose dry run lists every unit it reads.
 const generatorPath = "/usr/lib/systemd/system-generators/podman-system-generator"
 
-const appDatabaseRole = "suiteward_app"
-
 // isolatedHost is the service account's machine as the isolated commands find it: the checks passed and the paths are known.
 type isolatedHost struct {
 	d            Deps
@@ -611,35 +609,22 @@ func waitHealthy(ctx context.Context, rt Runtime) error {
 	}
 }
 
-// ensureAppRole creates the application role and its URL secret once. The SQL, which holds the password,
-// goes through stdin only, with the SET lines that keep it out of the database log. A role left by an earlier attempt gets
-// the new password instead.
+// ensureAppRole creates the application role and its URL secret once. A role left by an earlier attempt gets the new password
+// instead.
 func ensureAppRole(ctx context.Context, rt Runtime) error {
 	store := rt.Secrets()
 	if have, err := store.Exists(ctx, SecretDatabaseURL); err != nil || have {
 		return err
 	}
-	psql := func(extra []string, sql string) ([]byte, error) {
-		argv := append(append([]string{"psql", "-X", "-q"}, extra...), "-v", "ON_ERROR_STOP=1", "-U", "suiteward", "-d", "suiteward", "-f", "-")
-		return rt.Exec(ctx, ContainerDB, argv, strings.NewReader(sql))
-	}
-	found, err := psql([]string{"-t", "-A"}, "SELECT 1 FROM pg_roles WHERE rolname = '"+appDatabaseRole+"';\n")
+	exists, err := appRoleExists(ctx, rt)
 	if err != nil {
-		return fmt.Errorf("look for the role %s: %w", appDatabaseRole, err)
+		return fmt.Errorf("look for the role %s: %w", appRole, err)
 	}
-	statement := "CREATE ROLE " + appDatabaseRole + " LOGIN PASSWORD"
-	if strings.TrimSpace(string(found)) == "1" {
-		statement = "ALTER ROLE " + appDatabaseRole + " PASSWORD"
-	}
-	password, err := NewPassword()
+	password, err := setAppRolePassword(ctx, rt, exists)
 	if err != nil {
-		return err
+		return fmt.Errorf("create the role %s: %w", appRole, err)
 	}
-	sql := "SET log_statement = 'none';\nSET log_min_error_statement = 'panic';\nSET log_min_duration_statement = -1;\n" + statement + " '" + password + "';\n"
-	if _, err := psql(nil, sql); err != nil {
-		return fmt.Errorf("create the role %s: %w", appDatabaseRole, err)
-	}
-	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appDatabaseRole, password)), false)
+	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appRole, password)), false)
 }
 
 // The names the service reads its GitHub values by; the installer writes them to the env file (writeEnvFile).

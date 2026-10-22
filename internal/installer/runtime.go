@@ -123,7 +123,7 @@ func parseImage(asked string) (string, error) {
 	if imageDigest.MatchString(asked) {
 		return releaseImageRepo + "@" + asked, nil
 	}
-	if repo, digest, ok := strings.Cut(asked, "@"); !ok || repo == "" || !imageDigest.MatchString(digest) {
+	if repo, digest, ok := strings.Cut(asked, "@"); !ok || repo == "" || strings.HasPrefix(repo, "-") || !imageDigest.MatchString(digest) {
 		return "", fmt.Errorf("%w: %q is neither sha256:<64 lowercase hex characters> nor a reference ending in @sha256:<64 lowercase hex characters> (the installer never pins a tag)", ErrNotDigestImage, asked)
 	}
 	return asked, nil

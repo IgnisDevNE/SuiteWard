@@ -93,6 +93,7 @@ type fakeGitHub struct {
 	checkRunAuth          string              // the Authorization header of the last check-runs read
 	convertPerms          map[string]string
 	convertStatus         int
+	appStatus             int // GET /app answers this status when set (the App was deleted: 404; the key is refused: 401)
 	installAfter          int // GET /app/installations answers an empty list for this many calls
 	installAccount        string
 	installType           string
@@ -171,6 +172,13 @@ func (g *fakeGitHub) convert(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (g *fakeGitHub) app(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	status := g.appStatus
+	g.mu.Unlock()
+	if status != 0 {
+		w.WriteHeader(status)
+		return
+	}
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 		w.WriteHeader(http.StatusUnauthorized)
 		return

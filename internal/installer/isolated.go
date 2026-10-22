@@ -426,8 +426,8 @@ func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool,
 	if err != nil {
 		return "", err
 	}
-	digest, ok := strings.CutPrefix(image, releaseImageRepo+"@")
-	if !ok {
+	repo, digest, _ := strings.Cut(image, "@") // parseImage made sure there is a digest
+	if withoutTag(repo) != releaseImageRepo {
 		return "", fmt.Errorf("%w: the isolated tier runs %s only, not %s", ErrNotDigestImage, releaseImageRepo, image)
 	}
 	if installedDigest != "" && digest != installedDigest {

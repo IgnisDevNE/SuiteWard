@@ -420,3 +420,103 @@ func TestInstallIsolatedTheKeyGivenAgainFinishesARecordedApp(t *testing.T) {
 		t.Error("the record is still there after the settings were saved")
 	}
 }
+
+// ---- an App that is gone, and a run that leaves it ----
+
+func (g *fakeGitHub) answersAppWith(status int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.appStatus = status
+}
+
+// The App was deleted on GitHub, or its key is refused: the resume fails on GET /app. The error says what is left (the record,
+// the key secret and how to remove it) and what to do when the App is gone.
+func TestInstallColocatedAResumeThatFailsNamesWhatIsLeft(t *testing.T) {
+	for _, status := range []int{404, 401} {
+		h, g, args := colocatedFlow(t)
+		g.neverInstalled(true)
+		if err := h.podman(args...); err == nil {
+			t.Fatal("the first run must fail")
+		}
+		g.answersAppWith(status)
+		h.theKeySecretIsThere()
+		err := h.podman(args...)
+		if err == nil {
+			t.Fatalf("HTTP %d: the resume must fail", status)
+		}
+		for _, want := range []string{"GET /app", pendingAppPath(h.settingsPath()), SecretGitHubAppKey, "podman --connection pm secret rm " + SecretGitHubAppKey, "create a new App"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("HTTP %d: the error does not name %q:\n%v", status, want, err)
+			}
+		}
+		if n := g.count("POST /app-manifests"); n != 1 {
+			t.Errorf("HTTP %d: %d Apps were created, want one", status, n)
+		}
+	}
+}
+
+func TestInstallIsolatedAResumeThatFailsNamesWhatIsLeft(t *testing.T) {
+	for _, status := range []int{404, 401} {
+		g, fake := isolatedFlow(t)
+		fake.neverInstalled(true)
+		if err := g.run(); err == nil {
+			t.Fatal("the first run must fail")
+		}
+		fake.answersAppWith(status)
+		err := g.run()
+		if err == nil {
+			t.Fatalf("HTTP %d: the resume must fail", status)
+		}
+		for _, want := range []string{"GET /app", pendingAppPath(settingsFile(g.home)), SecretGitHubAppKey, "podman secret rm " + SecretGitHubAppKey, "create a new App"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("HTTP %d: the error does not name %q:\n%v", status, want, err)
+			}
+		}
+	}
+}
+
+// GitHub turned off must not silently drop an App that still exists with its key: the run says so, naming each leftover.
+func TestInstallColocatedWithoutGitHubSaysWhichAppAndKeyAreLeft(t *testing.T) {
+	h, g, args := colocatedFlow(t)
+	g.neverInstalled(true)
+	if err := h.podman(args...); err == nil {
+		t.Fatal("the first run must fail")
+	}
+	h.theKeySecretIsThere()
+	h.out.Reset()
+	if err := h.podman("--github", "no"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"suiteward-abcd", pendingAppPath(h.settingsPath()), SecretGitHubAppKey, "secret rm " + SecretGitHubAppKey, "--github yes"} {
+		if !strings.Contains(h.out.String(), want) {
+			t.Errorf("the output does not name %q:\n%s", want, h.out.String())
+		}
+	}
+	if !exists(pendingAppPath(h.settingsPath())) {
+		t.Error("the record was dropped")
+	}
+}
+
+func TestInstallIsolatedWithoutGitHubSaysWhichAppAndKeyAreLeft(t *testing.T) {
+	g, fake := isolatedFlow(t)
+	fake.neverInstalled(true)
+	if err := g.run(); err == nil {
+		t.Fatal("the first run must fail")
+	}
+	for _, key := range []string{"github", "github-account", "github-repositories", "github-owner", "test-check", "manifest-code"} {
+		g.answers[key] = ""
+	}
+	g.answers["github-app-id"] = "none"
+	g.out.Reset()
+	if err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"suiteward-abcd", pendingAppPath(settingsFile(g.home)), SecretGitHubAppKey, "secret rm " + SecretGitHubAppKey, "--github yes"} {
+		if !strings.Contains(g.out.String(), want) {
+			t.Errorf("the output does not name %q:\n%s", want, g.out.String())
+		}
+	}
+	if !exists(pendingAppPath(settingsFile(g.home))) {
+		t.Error("the record was dropped")
+	}
+}

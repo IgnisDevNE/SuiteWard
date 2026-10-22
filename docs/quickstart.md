@@ -18,6 +18,8 @@ This is the short path for one owner on a Windows PC, the **co-located** tier, w
 
 ## 2. Start SuiteWard ([section 5](install.md#5-install-co-located))
 
+> `deploy/local.ps1` was removed: the co-located stack is started by `suiteward install` (see [install.md](install.md)); the commands below are rewritten by the installer documentation task.
+
 The stack must run rootless. In the release source folder (`vX.Y.Z`), list the Podman connections and select the rootless one for this PowerShell session (its URI holds `/run/user/<number>/podman/podman.sock`). `deploy/local.ps1` refuses a rootful connection and never changes your Podman default:
 
 ```powershell

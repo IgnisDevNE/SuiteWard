@@ -37,7 +37,7 @@ type harness struct {
 	github      func(ctx context.Context, env githubEnv) (GitHubResult, error)
 	githubSeen  []githubEnv
 	status      func(ctx context.Context, address string) ([]byte, error) // GET /status of the service; nil: no owner is enrolled yet
-	atServe     map[string]bool // facts at the moment the service container was started
+	atServe     map[string]bool                                           // facts at the moment the service container was started
 }
 
 func newHarness(t *testing.T, goos string) *harness {

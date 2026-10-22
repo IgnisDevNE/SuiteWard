@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -75,10 +76,28 @@ type backup struct {
 	now    func() time.Time
 }
 
+// ensureParent makes the directory the backup directory goes in. A symbolic link is refused: the backup holds the TOTP secret,
+// and a link could send it anywhere. Only the last component is looked at, which is the one the installer chooses.
+func ensureParent(parent string) error {
+	info, err := os.Lstat(parent)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.MkdirAll(parent, 0o700); err != nil {
+			return fmt.Errorf("create %s: %w", parent, err)
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("look at %s: %w", parent, err)
+	case info.Mode().Type() != fs.ModeDir:
+		return fmt.Errorf("%s is a symbolic link or not a directory: a backup is never written through a link, so name a real directory with --backup-dir", parent)
+	}
+	return nil
+}
+
 // take returns the directory the backup is in.
 func (b backup) take(ctx context.Context) (string, error) {
-	if err := os.MkdirAll(b.parent, 0o700); err != nil {
-		return "", fmt.Errorf("create %s: %w", b.parent, err)
+	if err := ensureParent(b.parent); err != nil {
+		return "", err
 	}
 	// Mkdir, not MkdirAll: an existing directory is never reused, so a backup never mixes with another.
 	dir := filepath.Join(b.parent, "suiteward-backup-"+b.now().Format("20060102-150405"))
@@ -104,6 +123,7 @@ func (b backup) fill(ctx context.Context, dir string) error {
 	if err := b.write(ctx, filepath.Join(dir, backupStatus), status); err != nil {
 		return err
 	}
+	// shortcut: the dump is held in memory until it is written, so it must fit in the installer's memory; stream it to the file when a database outgrows that.
 	dump, err := b.rt.Exec(ctx, ContainerDB, []string{"pg_dump", "-U", ownerRole, "-d", "suiteward"}, nil)
 	if err != nil {
 		return fmt.Errorf("pg_dump in %s: %w", ContainerDB, err)
@@ -146,7 +166,29 @@ func takeBackup(ctx context.Context, b backup) (string, error) {
 	return dir, nil
 }
 
-// withBackup adds where the backup is to the error of a step that came after it.
-func withBackup(err error, dir string) error {
-	return fmt.Errorf("%w\nThe backup is in %s; restore it with the previous image to go back (docs/install.md, section 11.6)", err, dir)
+// An error of an upgrade step that came after the backup says how far the upgrade got, which decides what to advise. A step
+// before migrate leaves the database as it was; stoppedError is that, on the isolated tier, once suiteward.service was stopped.
+type (
+	stoppedError   struct{ error }
+	migratingError struct{ error }
+)
+
+func (e stoppedError) Unwrap() error   { return e.error }
+func (e migratingError) Unwrap() error { return e.error }
+
+// withBackup adds where the backup is, and the way back that fits how far the upgrade got, to the error of a step that came
+// after the backup. unitsDir is the account's unit directory on the isolated tier, empty on the co-located one.
+func withBackup(err error, dir, unitsDir string) error {
+	var migrating migratingError
+	if errors.As(err, &migrating) {
+		return fmt.Errorf("%w\nThe backup is in %s; restore it with the previous image to go back, and everything after the backup is lost (docs/backup.md, section 3)", err, dir)
+	}
+	advice := fmt.Sprintf("The database is unchanged: migrate did not run. The backup is in %s.", dir)
+	var stopped stoppedError
+	if errors.As(err, &stopped) && unitsDir != "" {
+		advice += fmt.Sprintf(" suiteward.service is stopped, and the units this upgrade replaced are in %s. To start the old release again, copy them to %s, run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`; or fix the cause and run the upgrade again.", filepath.Join(dir, backupUnits), unitsDir)
+	} else {
+		advice += " Fix the cause and run the upgrade again."
+	}
+	return fmt.Errorf("%w\n%s", err, advice)
 }

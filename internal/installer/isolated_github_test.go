@@ -38,8 +38,13 @@ type isoGitHub struct {
 
 func newIsoGitHub(t *testing.T) *isoGitHub {
 	t.Helper()
-	home := t.TempDir()
-	g := &isoGitHub{t: t, f: newIsoFake(home), home: home, answers: map[string]string{}}
+	return isoGitHubOn(t, newIsoFake(t.TempDir()))
+}
+
+// isoGitHubOn is a run on the machine f, whose home is the account home.
+func isoGitHubOn(t *testing.T, f *isoFake) *isoGitHub {
+	t.Helper()
+	g := &isoGitHub{t: t, f: f, home: f.home, answers: map[string]string{}}
 	g.flow = func(context.Context, githubEnv) (GitHubResult, error) {
 		return GitHubResult{
 			AppID: 123, InstallationID: 456, Account: "octo", AccountType: "User", OwnerLogin: "alice",
@@ -377,5 +382,25 @@ func TestNoCitationOfAStepNumberOfTheInstallGuide(t *testing.T) {
 				t.Errorf("%s:%d cites %q: the guide has no such step, name the section or none", file, i+1, m)
 			}
 		}
+	}
+}
+
+// withoutGitHub are the answers of a run that does not go through the GitHub flow, on a machine that has the App key secret
+// already (a host installed by hand, or a re-run).
+func withoutGitHub(f *isoFake) map[string]string {
+	f.secrets[SecretGitHubAppKey] = "existing"
+	return map[string]string{"github-app-id": "", "github-installation-id": "", "github-repositories": "", "github-owner": "", "github": "no"}
+}
+
+func TestInstallIsolatedRefusesAKeyThatIsNotAnRSAKeyBeforeAnyChange(t *testing.T) {
+	g := newIsoGitHub(t)
+	g.flow = func(context.Context, githubEnv) (GitHubResult, error) {
+		return GitHubResult{
+			AppID: 123, InstallationID: 456, Account: "octo", OwnerLogin: "alice",
+			Repositories: []string{"octo/one"}, TestChecks: map[string]string{"octo/one": "CI"}, PrivateKey: []byte("not a key"),
+		}, nil
+	}
+	if err := g.run(); err == nil || g.f.has("secret create") || g.f.has("start") {
+		t.Fatalf("a key that is not a private key must stop the run before any change: %v, %v", err, g.f.lines())
 	}
 }

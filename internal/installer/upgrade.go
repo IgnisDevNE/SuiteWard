@@ -156,7 +156,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	c := &colocatedInstall{rt: rt, env: env, out: env.Term.Out, s: s, image: image, previous: previous, tokenFile: r.preset("token-file", "")}
+	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: r.preset("token-file", "")}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -178,10 +178,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
-		return withBackup(err, dir)
+		return withBackup(err, dir, "")
 	}
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
-		return withBackup(err, dir)
+		return withBackup(err, dir, "")
 	}
 	c.restartAfterReboot(ctx)
 	upgraded(c.say, previous.Image, image, dir, doctor)
@@ -192,6 +192,6 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 func upgraded(say func(string, ...any), previous, image, backupDir, doctor string) {
 	say("Upgraded to %s.\n", digestOf(image))
 	say("The backup is in %s. It holds the TOTP secret: keep it offline and private.\n", backupDir)
-	say("To go back, restore that backup with the previous image %s (docs/install.md, section 11.6; migrations only go forward).\n", digestOf(previous))
+	say("To go back, restore that backup with the previous image %s (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous))
 	say("Check the instance with `%s`.\n", doctor)
 }

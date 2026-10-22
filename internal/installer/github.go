@@ -37,7 +37,7 @@ import (
 //
 // The private key is returned in GitHubResult.PrivateKey for the caller to put into the SecretStore. Nothing here writes it
 // to disk, prints it or puts it in an error. An App given through flags or answers needs "app-id", "installation-id" and the
-// key: "app-key-file" (a path) or "app-key" (the answers file, a no-echo prompt, or stdin; when stdin carries the key, every
+// key: "app-key-file" (a path, or - for stdin) or "app-key" (the answers file, a no-echo prompt, or stdin; when stdin carries the key, every
 // other answer must come from flags or the answers file, because reading the key consumes the rest of stdin).
 //
 // Answer keys (flag names and answers-file keys): github-account (personal, or an organization login), manifest-code,
@@ -216,7 +216,12 @@ func existingApp(ctx context.Context, env githubEnv) (appauth.App, GitHubResult,
 	}
 	var key []byte
 	if path, ok := env.R.given("app-key-file"); ok {
-		if key, err = os.ReadFile(filepath.Clean(path)); err != nil {
+		if path == "-" { // standard input, as the flag says
+			key, err = io.ReadAll(env.R.in)
+		} else {
+			key, err = os.ReadFile(filepath.Clean(path))
+		}
+		if err != nil {
 			return appauth.App{}, GitHubResult{}, fmt.Errorf("read the App key file: %w", err)
 		}
 	} else if key, err = env.R.Secret("app-key", "GitHub App private key (PEM)"); err != nil {

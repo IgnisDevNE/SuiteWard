@@ -13,7 +13,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-// upgradeIsolated is `suiteward install --upgrade` for the isolated tier, as the service account (docs/install.md 11.3): adopt the
+// upgradeIsolated is `suiteward install --upgrade` for the isolated tier, as the service account (docs/install.md, section 11): adopt the
 // installed units (a difference stops the run before any change), show what changes and ask, back up, pull, stop the service,
 // render the units again with the new digest (and the database unit with the new pin), restart the database when its pin changed,
 // and restart the migration, which migrates and restarts the service.
@@ -54,7 +54,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, o
 	if err := confirmUpgrade(r, plan, parent); err != nil {
 		return err
 	}
-	// The replaced units go into the backup: install.md 11.3 keeps them for a rollback.
+	// The replaced units go into the backup, so a rollback can put them back.
 	keepUnits := func(dir string) error {
 		units := filepath.Join(dir, backupUnits)
 		if err := os.Mkdir(units, 0o700); err != nil {
@@ -84,24 +84,35 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, o
 		}
 	}
 	if err := replaceUnits(ctx, host, d, s, digest, plan.dbChanges()); err != nil {
-		return withBackup(err, dir)
+		return withBackup(err, dir, host.unitsDir)
 	}
 	s.Image = image
 	if err := SaveSettings(host.settingsPath, s); err != nil {
-		return withBackup(err, dir)
+		return withBackup(migratingError{err}, dir, host.unitsDir)
 	}
 	upgraded(say, st.adopted.Image, image, dir, "suiteward doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return nil
 }
 
-// replaceUnits does the steps after the backup: stop the service, write the units, check them, reload, refresh the database when
-// its pin changed, then migrate and start.
+// replaceUnits does the steps after the backup: stop the service, then prepare the new units, then migrate and start. An error
+// says how far it got (stoppedError, migratingError) for the advice of withBackup.
 func replaceUnits(ctx context.Context, host isolatedHost, d Deps, s Settings, digest string, dbChanges bool) error {
 	systemctl := userSystemctl(d)
 	if _, err := systemctl(ctx, "stop", "suiteward.service"); err != nil {
 		return fmt.Errorf("stop the service: %w", err)
 	}
+	if err := prepareUnits(ctx, host, d, s, digest, dbChanges); err != nil {
+		return stoppedError{err}
+	}
+	if err := migrateAndStart(ctx, d); err != nil {
+		return migratingError{err}
+	}
+	return nil
+}
+
+// prepareUnits writes the units, checks them, reloads and refreshes the database when its pin changed.
+func prepareUnits(ctx context.Context, host isolatedHost, d Deps, s Settings, digest string, dbChanges bool) error {
 	units, err := RenderUnits(UnitParamsFrom(s, digest))
 	if err != nil {
 		return err
@@ -117,16 +128,20 @@ func replaceUnits(ctx context.Context, host isolatedHost, d Deps, s Settings, di
 	}
 	if dbChanges {
 		// The running database container has the old image: restart it, so it is recreated from the new pin on the same volume.
-		if _, err := systemctl(ctx, "restart", "suiteward-db.service"); err != nil {
+		if _, err := userSystemctl(d)(ctx, "restart", "suiteward-db.service"); err != nil {
 			return fmt.Errorf("restart the database: %w", err)
 		}
-		if err := waitHealthy(ctx, host.rt); err != nil {
-			return err
-		}
+		return waitHealthy(ctx, host.rt)
 	}
+	return nil
+}
+
+// migrateAndStart migrates and starts the service.
+func migrateAndStart(ctx context.Context, d Deps) error {
+	systemctl := userSystemctl(d)
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	// The migration unit migrates, and the service requires it; the service was stopped above, so it is started explicitly.
+	// The migration unit migrates, and the service requires it; the service was stopped before, so it is started explicitly.
 	if _, err := systemctl(startCtx, "restart", "suiteward-migrate.service"); err != nil {
 		return fmt.Errorf("the migration failed, so the service was not started (read `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
 	}

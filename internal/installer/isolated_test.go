@@ -59,8 +59,8 @@ var generatedUnits = []string{"suiteward-db.service", "suiteward-migrate.service
 
 func (f *isoFake) deps() Deps {
 	return Deps{
-		GOOS:        f.goos,
-		Getenv:      func(k string) string { return map[string]string{"HOME": f.home}[k] },
+		GOOS:   f.goos,
+		Getenv: func(k string) string { return map[string]string{"HOME": f.home}[k] },
 		Interactive: func(_ context.Context, name string, args []string) error {
 			f.tty = append(f.tty, call{name: name, args: append([]string(nil), args...)})
 			return nil
@@ -242,22 +242,14 @@ func settingsFile(home string) string {
 
 func envFile(home string) string { return filepath.Join(home, ".config", "suiteward", "github.env") }
 
-// runIsolated runs installIsolated with the image and the App key given as answers unless the test overrides them.
+// runIsolated runs installIsolated through the GitHub flow of isoGitHub (an App that exists), with the image given as an answer,
+// unless the test overrides the answers; an empty value removes one.
 func runIsolated(t *testing.T, f *isoFake, answers map[string]string, stdin string) (string, error) {
 	t.Helper()
-	merged := map[string]string{"image": testDigest, "github-app-key": appKeyPEM(t)}
-	for k, v := range answers {
-		if v == "" {
-			delete(merged, k)
-			continue
-		}
-		merged[k] = v
-	}
-	term, _ := fakeTerminal(false, stdin)
-	r := newTestResolver(t, nil, merged, term)
-	var out bytes.Buffer
-	err := installIsolated(context.Background(), isolatedSettings(), r, Env{Deps: f.deps(), Term: Terminal{Out: &out}})
-	return out.String(), err
+	g := isoGitHubOn(t, f)
+	g.answers, g.stdin = answers, stdin
+	err := g.run()
+	return g.out.String(), err
 }
 
 func fastHealthWait(t *testing.T) {
@@ -625,7 +617,7 @@ func TestInstallIsolatedSaysWhenTheOldEnvFileMayGoAccordingToTheServiceState(t *
 		}
 		f := newIsoFake(home)
 		f.serviceRunning, f.everActive = running, running
-		out, err := runIsolated(t, f, map[string]string{"image": ""}, "")
+		out, err := runIsolated(t, f, addAnswers(withoutGitHub(f), "image", ""), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -641,7 +633,7 @@ func TestInstallIsolatedAdoptionOfAnEtcEnvFileNeedsTheHostStep(t *testing.T) {
 	p.EnvFile = "/etc/suiteward/github.env"
 	installedUnits(t, home, p)
 	f := newIsoFake(home)
-	_, err := runIsolated(t, f, map[string]string{"image": ""}, "")
+	_, err := runIsolated(t, f, addAnswers(withoutGitHub(f), "image", ""), "")
 	if err == nil || !strings.Contains(err.Error(), "install host") {
 		t.Fatalf("a manual install still on the /etc env file needs the host step first: %v", err)
 	}
@@ -653,7 +645,7 @@ func TestInstallIsolatedAdoptionOfAnEtcEnvFileNeedsTheHostStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	f = newIsoFake(home)
-	lastOut, err := runIsolated(t, f, map[string]string{"image": ""}, "")
+	lastOut, err := runIsolated(t, f, addAnswers(withoutGitHub(f), "image", ""), "")
 	if err != nil {
 		t.Fatalf("with the file moved the units are re-rendered on the new path: %v", err)
 	}
@@ -716,78 +708,26 @@ func TestInstallIsolatedStopsWhenAUnitIsNotActiveAfterTheStart(t *testing.T) {
 	}
 }
 
-func TestInstallIsolatedReadsTheAppKeyFromAFileOrStdinAndChecksIt(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "app.pem")
-	if err := os.WriteFile(file, []byte(appKeyPEM(t)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f := newIsoFake(t.TempDir())
-	if _, err := runIsolated(t, f, map[string]string{"github-app-key": "", "github-app-key-file": file}, ""); err != nil {
-		t.Fatal(err)
-	}
-	if f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
-		t.Errorf("the key file must reach the secret store")
-	}
-
-	f = newIsoFake(t.TempDir())
-	if _, err := runIsolated(t, f, map[string]string{"github-app-key": "", "github-app-key-file": "-"}, appKeyPEM(t)); err != nil || f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
-		t.Fatalf("a key file of - reads standard input: %v", err)
-	}
-
-	f = newIsoFake(t.TempDir())
-	if _, err := runIsolated(t, f, map[string]string{"github-app-key": ""}, appKeyPEM(t)); err != nil {
-		t.Fatalf("the key piped to stdin must work: %v", err)
-	}
-	if f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
-		t.Errorf("the stdin key must reach the secret store")
-	}
-
-	for name, bad := range map[string]string{"text": "not a key", "certificate": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("x")}))} {
-		home := t.TempDir()
-		f = newIsoFake(home)
-		if _, err := runIsolated(t, f, map[string]string{"github-app-key": bad}, ""); err == nil {
-			t.Fatalf("%s: a value that is not a private key must be refused", name)
-		}
-		if f.has("secret create") || f.has("pull") {
-			t.Fatalf("%s: nothing may be created before the key is checked: %v", name, f.lines())
-		}
-	}
-}
-
-func TestInstallIsolatedNeverTakesTheAppKeyAsAnArgument(t *testing.T) {
-	f := newIsoFake(t.TempDir())
-	term, _ := fakeTerminal(false, "")
-	r := newTestResolver(t, map[string]string{"github-app-key": appKeyPEM(t)}, map[string]string{"image": testDigest}, term)
-	if err := installIsolated(context.Background(), isolatedSettings(), r, Env{Deps: f.deps(), Term: Terminal{Out: io.Discard}}); err == nil || f.has("secret create") {
-		t.Fatalf("a key on the command line must be refused: %v", err)
-	}
-}
-
-func TestInstallIsolatedAsksNoAppKeyWhenTheSecretExists(t *testing.T) {
+func TestInstallIsolatedKeepsAnInstalledAppKey(t *testing.T) {
 	f := newIsoFake(t.TempDir())
 	f.secrets[SecretGitHubAppKey] = "existing"
-	if _, err := runIsolated(t, f, map[string]string{"github-app-key": ""}, ""); err != nil {
-		t.Fatalf("an installed key is not asked for again: %v", err)
+	if _, err := runIsolated(t, f, nil, ""); err != nil {
+		t.Fatalf("an installed key is not stored again: %v", err)
 	}
-	if f.secrets[SecretGitHubAppKey] != "existing" {
+	if f.secrets[SecretGitHubAppKey] != "existing" || f.has("secret create "+SecretGitHubAppKey) {
 		t.Errorf("an installed key must not be replaced")
 	}
 }
 
-func TestInstallIsolatedWritesTheGitHubEnvFileAllOrNone(t *testing.T) {
+func TestInstallIsolatedWritesTheGitHubEnvFileFromTheFlowAndLeavesAnExistingOneAlone(t *testing.T) {
 	home := t.TempDir()
 	f := newIsoFake(home)
-	answers := map[string]string{"github-app-id": "123", "github-installation-id": "456", "github-repositories": "octo/one, octo/two"}
-	if _, err := runIsolated(t, f, answers, ""); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(envFile(home))
-	if err != nil {
+	if _, err := runIsolated(t, f, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	want := "SUITEWARD_GITHUB_APP_ID=123\nSUITEWARD_GITHUB_INSTALLATION_ID=456\nSUITEWARD_GITHUB_REPOSITORIES=octo/one,octo/two\n"
-	if string(raw) != want {
-		t.Errorf("the env file must hold the three values:\n%s", raw)
+	if got := string(readFileOrFail(t, envFile(home))); got != want {
+		t.Errorf("the env file must hold the three values:\n%s", got)
 	}
 	if info, _ := os.Stat(envFile(home)); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("the env file must be 0600, got %o", info.Mode().Perm())
@@ -796,16 +736,7 @@ func TestInstallIsolatedWritesTheGitHubEnvFileAllOrNone(t *testing.T) {
 		t.Errorf("the GitHub values must reach the settings: %+v, %v", saved.GitHub, err)
 	}
 
-	home = t.TempDir()
-	f = newIsoFake(home)
-	if _, err := runIsolated(t, f, map[string]string{"github-app-id": "123"}, ""); err == nil || f.has("secret create") {
-		t.Fatalf("one or two of the three values must be refused before any change: %v", err)
-	}
-	if _, err := runIsolated(t, newIsoFake(home), map[string]string{"github-app-id": "123", "github-installation-id": "456", "github-repositories": "bad"}, ""); err == nil {
-		t.Fatalf("a repository that is not owner/name must be refused")
-	}
-
-	// Without values an existing file (for example the one moved from /etc) is left as it is.
+	// A run that does not go through the flow leaves an existing file (for example the one moved from /etc) as it is.
 	home = t.TempDir()
 	if err := os.MkdirAll(filepath.Dir(envFile(home)), 0o700); err != nil {
 		t.Fatal(err)
@@ -813,7 +744,8 @@ func TestInstallIsolatedWritesTheGitHubEnvFileAllOrNone(t *testing.T) {
 	if err := os.WriteFile(envFile(home), []byte("SUITEWARD_GITHUB_APP_ID=9\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runIsolated(t, newIsoFake(home), nil, ""); err != nil {
+	f = newIsoFake(home)
+	if _, err := runIsolated(t, f, withoutGitHub(f), ""); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(envFile(home)); string(got) != "SUITEWARD_GITHUB_APP_ID=9\n" {
@@ -877,4 +809,10 @@ func assertFilesAndSettings(t *testing.T, home string) {
 	if err != nil || saved.Tier != config.TierIsolated {
 		t.Errorf("the settings must be saved as isolated: %+v, %v", saved, err)
 	}
+}
+
+// addAnswers puts one more answer into a map of answers.
+func addAnswers(m map[string]string, key, value string) map[string]string {
+	m[key] = value
+	return m
 }

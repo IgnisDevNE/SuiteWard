@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// ServiceAccount is the account the isolated stack runs as (install.md 10.1).
+// ServiceAccount is the account the isolated stack runs as.
 const ServiceAccount = "suiteward"
 
 const (
@@ -34,7 +34,7 @@ type host struct {
 	out io.Writer
 }
 
-// PrepareHost is `sudo suiteward install host`, the administrator half of the isolated install (install.md 10.1 and 10.5).
+// PrepareHost is `sudo suiteward install host`, the administrator half of the isolated install (docs/install.md, section 10).
 // It checks or installs Podman, creates the service account with its subordinate id ranges, enables linger, offers the rule
 // that refuses the cloud metadata address, makes the account's configuration directory and moves a hand-made /etc env file
 // into it. It never runs the service-account step: it prints the command for it. It asks before any dnf call (answer key
@@ -91,7 +91,7 @@ func (h *host) dnf(ctx context.Context, why string, args ...string) error {
 	return nil
 }
 
-// podman makes sure Podman is there, is 5.5 or later and has the fix for CVE-2026-57231 (install.md 10.1).
+// podman makes sure Podman is there, is 5.5 or later and has the fix for CVE-2026-57231.
 func (h *host) podman(ctx context.Context) error {
 	out, err := h.run(ctx, "podman", "--version")
 	if err != nil {
@@ -198,7 +198,7 @@ func freeSubidRange(content, account string) (start int, has bool, err error) {
 	return start, has, nil
 }
 
-// metadata offers the rule that refuses the cloud metadata address for the service account (install.md 10.5), only on a
+// metadata offers the rule that refuses the cloud metadata address for the service account, only on a
 // host where that address answers, and never without an explicit yes. A rule that is already installed is applied again.
 func (h *host) metadata(ctx context.Context) error {
 	installed := h.exists(ctx, "/etc/systemd/system/"+imdsUnit)
@@ -304,7 +304,7 @@ func (h *host) accountHome(ctx context.Context) (string, error) {
 }
 
 // configDir makes ~/.config/suiteward owned by the account, where the service-account step writes the GitHub env file, and
-// copies a hand-made /etc/suiteward/github.env there (install.md 10.6 before this installer).
+// copies a hand-made /etc/suiteward/github.env there.
 func (h *host) configDir(ctx context.Context) error {
 	home, err := h.accountHome(ctx)
 	if err != nil {
@@ -351,13 +351,22 @@ func (h *host) next(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("find this program: %w", err)
 	}
+	command := exe + " install --tier isolated"
+	_, carriesRelease := ReleaseImage()
+	if !carriesRelease {
+		command += " --image sha256:<signed index digest>"
+	}
 	h.say("\nThe host is ready. Now run the installer as the service account, in a shell with its user bus (the account has no login shell):\n\n")
-	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s install --image sha256:<signed index digest>\n\n", ServiceAccount, uid, uid, exe)
+	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s\n\n", ServiceAccount, uid, uid, command)
 	h.say("The account must be able to run %s", exe)
 	if strings.HasPrefix(exe, "/root/") || strings.HasPrefix(exe, "/home/") {
 		h.say(": that path is inside a home directory, so copy the binary to a shared place such as /usr/local/bin first")
 	}
-	h.say(". The --image flag is needed until the release binary carries its own digest.\n")
+	if carriesRelease {
+		h.say(".\n")
+		return nil
+	}
+	h.say(". The --image flag is needed because this binary carries no release digest (it is a development build).\n")
 	return nil
 }
 

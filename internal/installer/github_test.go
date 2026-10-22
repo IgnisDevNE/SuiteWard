@@ -25,7 +25,12 @@ import (
 func flowEnv(t *testing.T, g *fakeGitHub, flags map[string]string, in io.Reader, terminal bool) (githubEnv, *syncBuffer) {
 	t.Helper()
 	out := &syncBuffer{}
-	r, err := NewResolver(flags, map[string]string{}, Terminal{In: in, Out: out, IsTerminal: terminal, ReadPassword: func() ([]byte, error) { return nil, errors.New("no password here") }})
+	answers := map[string]string{}
+	if code, ok := flags["manifest-code"]; ok { // a credential: the answers file carries it, never a flag
+		answers["manifest-code"] = code
+		delete(flags, "manifest-code")
+	}
+	r, err := NewResolver(flags, answers, Terminal{In: in, Out: out, IsTerminal: terminal, ReadPassword: func() ([]byte, error) { return nil, errors.New("no password here") }})
 	if err != nil {
 		t.Fatal(err)
 	}

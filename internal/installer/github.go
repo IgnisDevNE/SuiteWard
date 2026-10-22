@@ -40,7 +40,7 @@ import (
 // key: "app-key-file" (a path, or - for stdin) or "app-key" (the answers file, a no-echo prompt, or stdin; when stdin carries the key, every
 // other answer must come from flags or the answers file, because reading the key consumes the rest of stdin).
 //
-// Answer keys (flag names and answers-file keys): github-account (personal, or an organization login), manifest-code,
+// Answer keys (flag names and answers-file keys): github-account (personal, or an organization login), manifest-code (the answers file only: it is a credential for an hour),
 // app-id, installation-id, app-key-file, app-key, repositories, owner, test-check (a plain check name for one repository,
 // or OWNER/NAME=CHECK entries one per line as setup takes them; test-check.OWNER/NAME for one repository wins), ruleset-imported.
 //

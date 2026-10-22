@@ -122,7 +122,6 @@ var installFlags = []struct{ name, usage string }{
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
 	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub"},
 	{"github-account", `the account that owns the new App: "personal" or an organization login`},
-	{"manifest-code", "the code from the manifest redirect, when the browser could not reach the listener"},
 	{"manifest-port", "the port of the manifest listener on 127.0.0.1 (default: any free port)"},
 	{"ruleset-imported", "yes once the ruleset of each repository is imported"},
 	{"github-app-id", "the ID of an App that exists, or none to skip GitHub"},

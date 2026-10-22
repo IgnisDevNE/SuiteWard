@@ -46,13 +46,15 @@ sudo suiteward install host
 
 It checks Podman and its CVE fix, creates the `suiteward` account with its subordinate ids and linger, and, because this is an EC2 instance, asks whether to refuse the metadata address `169.254.169.254` for that account: answer yes (`--metadata-rule yes`). D-DEPLOY says IMDSv2 with hop limit 1 keeps containers from the instance role; S1 showed that a rootless container can still obtain a token, because rootless networking makes the connection from a process of the `suiteward` user on the host. The rule covers IPv4 only, which is enough because the IPv6 metadata endpoint is off by default on EC2. It leaves the SSM agent alone, which runs as root: after the step, check that `sudo systemctl is-active amazon-ssm-agent.service` prints `active` and that a second `aws ssm start-session` from your workstation still opens.
 
-Then paste the App key without echo and run the installer as `suiteward`, as [install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators) gives it, with `--tier isolated`, `--image sha256:<index>` and the App values. Open the shell for the account as the printed command does (the account has a `nologin` shell, so `sudo -iu` fails). Paste the key in the same shell:
+Then, still as `ssm-user`, open a shell as `suiteward` with its user bus (the account has a `nologin` shell, so `sudo -iu` fails), paste the App key without echo into that shell, and run the installer there, as [install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators) gives it:
 
 ```
+r=/run/user/$(id -u suiteward)
+sudo -u suiteward -H env XDG_RUNTIME_DIR=$r DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus bash
 trap 'stty echo' INT; stty -echo; (umask 077; cat > ~/app-key.pem); stty echo; trap - INT
 ```
 
-Run the first command, wait until the cursor stops, paste the whole PEM, press Enter, then Ctrl-D. Compare the fingerprint the installer prints with the one on the App's settings page. Then `shred -u ~/app-key.pem`.
+For the second command, wait until the cursor stops, paste the whole PEM, press Enter, then Ctrl-D. Then, in the same shell, run `/usr/local/bin/suiteward install --tier isolated --image sha256:<index>` with the App values (`--github-app-id`, `--github-installation-id`, `--github-repositories`, `--github-app-key-file ~/app-key.pem`). Compare the fingerprint the installer prints with the one on the App's settings page. Then `shred -u ~/app-key.pem`.
 
 If Session Manager session logging (S3 or CloudWatch) is on for this instance, treat the MCP token as exposed to that log whenever you print it, and replace it once the verification is done.
 

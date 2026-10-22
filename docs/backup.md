@@ -464,10 +464,10 @@ The installer creates the volumes and the roles only when it runs, and a run als
    podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status"
    ```
 
-On a new PC, put GitHub back now: the stack runs without it. Run the installer again with the App's values and key file, and with standard input redirected from `NUL`, so that it cannot run setup (setup needs a real terminal, and the restore brought the enrollment back). `--ruleset-imported yes` skips the wait for a ruleset import: the rulesets are already on GitHub.
+On a new PC, put GitHub back now: the stack runs without it. Run the installer again with the App's values and key file, and with a piped standard input, so that it cannot run setup (setup needs a real terminal, and the restore brought the enrollment back). `--ruleset-imported yes` skips the wait for a ruleset import: the rulesets are already on GitHub.
 
 ```powershell
-cmd /c "suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories <owner/name> --github-app-key-file <path to the App key file> --test-check <owner/name>=<check name> --ruleset-imported yes < NUL"
+'' | suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories '<owner/name>' --github-app-key-file <path to the App key file> --test-check '<owner/name>=<check name>' --ruleset-imported yes
 ```
 
 Expect the installer to print the protection result of each repository and the setup command it did not run. Do not run that command: running setup replaces the TOTP secret. Delete your copy of the key file afterwards. The GitHub values stay in the settings file, so a later install needs none of them.
@@ -550,7 +550,7 @@ Run every `podman` command in the PowerShell session where you selected the root
 2. Install the same version again, by the digest of its signed image index (take it from the release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` on this PC, with cosign 3.x, and pass it to `--image`), with the App you already have: the installer creates both roles, migrates, starts the service, writes the rulesets (they are already imported: answer the wait with Enter, or pass `--ruleset-imported yes`), and runs setup on a real terminal. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`. Give no GitHub values only if this stack does not use GitHub.
 
    ```powershell
-   suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories <owner/name>,<owner/name> --github-app-key-file <path to the App key file> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
+   suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories '<owner/name>,<owner/name>' --github-app-key-file <path to the App key file> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
    ```
 
    Expect `suiteward migrate finished: the schema is up to date.`, then `Started suiteward-db and suiteward`, and then setup (the next section, step 1, says what it asks).

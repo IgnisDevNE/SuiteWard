@@ -54,7 +54,7 @@ Copy the binary to `/usr/local/bin/suiteward`. Create the GitHub App by hand, fr
 sudo suiteward install host
 ```
 
-**3. Install the stack** as the account `suiteward`, with the command that step prints, plus `--tier isolated`, `--image sha256:<index>` (from the release notes) and the App values ([step 10.4](install.md#10-running-on-a-separate-host-operators)). Then run setup with the command it prints, create the ruleset by hand ([section 7](install.md#7-create-the-ruleset)), and run `suiteward doctor`.
+**3. Install the stack** in a shell as the account `suiteward`: paste the App key into `~/app-key.pem` without echo, then run `suiteward install --tier isolated --image sha256:<index>` (from the release notes) with the App values and `--github-app-key-file ~/app-key.pem` ([step 10.4](install.md#10-running-on-a-separate-host-operators) opens the shell and gives the whole command). Then run setup with the command it prints, create the ruleset by hand ([section 7](install.md#7-create-the-ruleset)), and run `suiteward doctor`.
 
 ## The first contract ([section 8](install.md#8-first-use-bootstrap))
 

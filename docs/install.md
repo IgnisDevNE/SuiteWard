@@ -106,7 +106,7 @@ A stack that the PowerShell start script of v0.2.0 and earlier made is adopted u
 6. **The test check.** For each repository, the installer offers the check runs on the head of the default branch, and you choose one or type the name your CI publishes. It never offers a check from a ruleset that does not exist yet. When the repository has no check runs yet, type the name: `suiteward doctor` and `/status` report `missing-test-check` until a check with that name exists. `--test-check 'owner/name=CI / test'` answers it, once for each repository, or give one plain name for a single repository.
 7. **The ruleset.** For each repository the installer writes a JSON file, `suiteward-ruleset-<owner>-<name>.json`, into the folder of its settings file (`%APPDATA%\suiteward` on Windows, `~/.config/suiteward` on Linux), and prints its path. It requires `SuiteWard / Contract` with your App as the source, and your test check, on the default branch, with branches up to date and an empty bypass list. You import it yourself, because the App has no permission to change rules: open `https://github.com/<owner>/<repo>/settings/rules`, choose **New ruleset**, then **Import a ruleset**, select the file and create it. For a private repository, the installer first warns that GitHub Free does not enforce rules there (section 3); the install continues. Press Enter when every ruleset is imported. The installer then reads the protection back and prints the result of each repository (section 7).
 
-To use an App you already have, give `--github-app-id`, `--github-installation-id`, `--github-owner` and `--github-repositories`, and the key as `--github-app-key-file <path>` (or `-` for standard input). Create such an App by the checklist in section 10, step 10.2. `--github no` (or `--github-app-id none`) skips GitHub: the stack then runs without it, and a later run with `--github yes` sets it up. Any GitHub value given without an App is refused.
+In PowerShell, quote a comma-separated list, as in `--github-repositories 'owner/a,owner/b'`: unquoted, PowerShell passes two arguments and the installer stops with a usage error. To use an App you already have, give `--github-app-id`, `--github-installation-id`, `--github-owner` and `--github-repositories`, and the key as `--github-app-key-file <path>` (or `-` for standard input). Create such an App by the checklist in section 10, step 10.2. `--github no` (or `--github-app-id none`) skips GitHub: the stack then runs without it, and a later run with `--github yes` sets it up. Any GitHub value given without an App is refused.
 
 **5.4 The stack.** The installer creates the network and the volumes, generates the database owner password, the application role's password and the MCP token, and starts the stack in this order: the database (it waits up to 90 seconds for it to be healthy), the application role `suiteward_app`, the one-shot `suiteward migrate`, then the service, only when migrate succeeded. The service connects as `suiteward_app`, which cannot change the schema; only the migrate container holds the owner's URL. Secrets are written through standard input and never printed. Expect `suiteward migrate finished: the schema is up to date.`, then `Started suiteward-db and suiteward (<image>), GitHub configured.`
 
@@ -406,20 +406,25 @@ It asks before it changes anything that you did not ask for, and does these step
 
 It ends by printing the command for the next step, with the account's user bus filled in. `--answers <file>` gives the answers from a file (section 12).
 
-**10.4 Install the stack (as `suiteward`).** The account has a `nologin` shell, so `sudo -iu suiteward` fails: run the installer through `sudo -u suiteward -H` with the account's user bus, as the previous step printed. Put the App's key into a file readable only by you, without echo: run this, wait until the cursor stops, paste the whole PEM, press Enter, then press Ctrl-D. You see nothing while you paste:
+**10.4 Install the stack (as `suiteward`).** The account has a `nologin` shell, so `sudo -iu suiteward` fails. As the administrator, open a shell as `suiteward` with its user bus. The command that step 10.3 printed runs the installer in one go; use this one to get a shell, because the key must be pasted into the account's own home:
+
+```
+r=/run/user/$(id -u suiteward)
+sudo -u suiteward -H env XDG_RUNTIME_DIR=$r DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus bash
+```
+
+Check it with `whoami`, which prints `suiteward`. Start every new session this way. Everything in this step and in the next ones runs in that shell. Put the App's key into a file readable only by you, without echo: run this, wait until the cursor stops, paste the whole PEM, press Enter, then press Ctrl-D. You see nothing while you paste:
 
 ```
 trap 'stty echo' INT; stty -echo; (umask 077; cat > ~/app-key.pem); stty echo; trap - INT
 ```
 
-Then run the installer, with the tier, the digest of the release and the App's values. Pass `--tier isolated`: the default tier is `co-located`. <!-- I9: the command that `install host` prints omits --tier isolated; verify it when that message is fixed -->
+Then run the installer in the same shell, with the tier, the digest of the release and the App's values. Pass `--tier isolated`: the default tier is `co-located`. <!-- I9: the command that `install host` prints omits --tier isolated; verify it when that message is fixed -->
 
 ```
-r=/run/user/$(id -u suiteward)
-sudo -u suiteward -H env XDG_RUNTIME_DIR=$r DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus \
-  /usr/local/bin/suiteward install --tier isolated --image sha256:<index> \
+/usr/local/bin/suiteward install --tier isolated --image sha256:<index> \
   --github-app-id <app id> --github-installation-id <installation id> \
-  --github-repositories '<owner/name>,<owner/name>' --github-app-key-file /home/suiteward/app-key.pem
+  --github-repositories '<owner/name>,<owner/name>' --github-app-key-file ~/app-key.pem
 ```
 
 `--image` is required on a fresh install: the isolated install does not read the digest embedded in the binary. Take the index digest from the release notes and verify it first, from the release source on a machine that has cosign 3.x (the host does not need it):
@@ -440,7 +445,7 @@ Expect `Verified: … was signed by the SuiteWard release workflow.` The GitHub 
 8. It starts the database, waits until it is healthy, creates the application role `suiteward_app` with its URL secret, starts the service (which runs the migration first) and checks that the three units are active.
 9. It saves its settings in `~/.config/suiteward/settings.yaml`.
 
-Then delete the key file: `shred -u ~/app-key.pem`, as `suiteward`, and delete your own copy of the `.pem`.
+Then delete the key file in the same shell, `shred -u ~/app-key.pem`, and delete your own copy of the `.pem`.
 
 **10.5 Setup, ruleset and check.** The isolated installer does not write the ruleset and does not run setup. It prints the setup command. As `suiteward`, in a shell opened as in step 10.4, with session recording off:
 

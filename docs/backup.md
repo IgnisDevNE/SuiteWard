@@ -2,7 +2,7 @@
 
 This runbook backs up one SuiteWard instance, restores it from a backup, and rebuilds it from the protected default branch when no backup can be used.
 
-There are two installation tiers, and each section that has commands gives one complete flow for each, so follow only the flow of your tier. The **isolated** installation runs the quadlets on an AlmaLinux 9 host with `systemctl --user`, and its flows are bash, run as the user that runs the SuiteWard units (`suiteward`). The **co-located** installation is the stack that `deploy/local.ps1` starts with Podman on a Windows PC, and its flows are PowerShell. Every command uses the names the installation creates: the containers `suiteward`, `suiteward-migrate` (the one-shot migration) and `suiteward-db`, the volumes `suiteward-data` and `suiteward-db-data`, and the database and its owner `suiteward`. The service connects as another role, `suiteward_app`.
+There are two installation tiers, and each section that has commands gives one complete flow for each, so follow only the flow of your tier. The **isolated** installation runs the quadlets on an AlmaLinux 9 host with `systemctl --user`, and its flows are bash, run as the user that runs the SuiteWard units (`suiteward`). The **co-located** installation is the stack that `suiteward install` starts with Podman on a Windows PC, and its flows are PowerShell. They are written for Podman: Docker has no `volume export` and `volume import`, so the manual flows do not cover a Docker stack. The installer's own backup, taken by `suiteward install --upgrade`, does (section 2). Every command uses the names the installation creates: the containers `suiteward`, `suiteward-migrate` (the one-shot migration) and `suiteward-db`, the volumes `suiteward-data` and `suiteward-db-data`, and the database and its owner `suiteward`. The service connects as another role, `suiteward_app`.
 
 ## 1. What a backup holds
 
@@ -15,10 +15,14 @@ A backup does not hold what the installation keeps around that data:
 
 - the Podman secrets: the database owner password and URL (`suiteward-db-password`, `suiteward-database-owner-url`), the URL of the application role (`suiteward-database-url`), the GitHub App key (`suiteward-github-app-key`) and the MCP token (`suiteward-mcp-token`);
 - the database roles: `pg_dump` does not carry roles. The owner `suiteward` is created when PostgreSQL initialises its volume, and the deployment creates the application role `suiteward_app`. The dump records the grants to `suiteward_app`, so the role must exist when the dump is loaded;
-- `/etc/suiteward/github.env`, the file of the three GitHub settings on the isolated host;
+- `~/.config/suiteward/github.env`, the file of the three GitHub settings on the isolated host, and the installer's settings file, `settings.yaml` (next to it on the isolated host, in the per-user configuration directory of the co-located PC), which records the ports, the image and the GitHub values;
 - the quadlet files, in `~/.config/containers/systemd/` on the isolated host.
 
-A restore on a new machine re-creates them first: install the stack as the [install guide](install.md) says for the backup's version (its section 10 for the isolated host, or section 5 co-located), but do not run its `setup` step (section 6), because the restore brings the enrollment back. That install creates the owner password and URL, the application role and its URL secret, and the units. Only then restore the data (section 3). The database passwords and the MCP token are generated again there, which is fine because the dump holds no password; your MCP client needs the new token. Co-located, there is no settings file and no quadlet: `deploy/local.ps1` creates the roles and the secrets, stores none of the GitHub parameters, and needs the App key file again. Carry over every setting you changed in the old units, such as an `Environment=SUITEWARD_JOB_TIMEOUT=` line in `suiteward.container`, and use the App key of the same App as the old host: a new install starts from the release's units, without your edits.
+A restore on a new machine re-creates them first, with the installer, for the backup's version ([install guide](install.md), section 10 for the isolated host, section 5 co-located). The install creates the owner password and URL, the application role and its URL secret, and the units. Only then restore the data (section 3). The restore brings the enrollment back, so the install must not replace it: the installer runs setup only when `/status` shows no owner, and on a new machine there is none yet.
+- **Co-located PC:** install without GitHub first (`suiteward install --image <image of the backup's version> --github no`). That creates no App and enrolls no owner. After the restore, run the installer again with the App's values: the restored owner is enrolled, so it skips setup and the TOTP secret stays.
+- **Isolated host:** the install needs the App key, so give it the App's values and key file as step 10.4 of the install guide says. Run it with standard input from `/dev/null` and every answer as a flag, so that it prints the setup command instead of running it, and do not run that command: setup would enroll an owner in the empty database, and the restore replaces it anyway.
+
+The database passwords and the MCP token are generated again there, which is fine because the dump holds no password; your MCP client needs the new token. Carry over every setting you changed in the old units, such as an `Environment=SUITEWARD_JOB_TIMEOUT=` line in `suiteward.container`, and use the App key of the same App as the old host: a new install starts from the release's units, without your edits.
 
 > [!WARNING]
 > A backup holds the TOTP secret, so anyone with it can approve as the owner. Keep every backup offline and encrypted at rest by your own means. SuiteWard does not encrypt backups.
@@ -27,11 +31,13 @@ Encrypted backup archives and a guided restore come after the MVP: see [ADR 0019
 
 ## 2. Back up
 
+**The installer's backup.** `suiteward install --upgrade` takes a backup before it changes anything ([install guide, section 11](install.md#11-updating)). It keeps the service running, and writes a new directory `suiteward-backup-<date>-<time>` that only you can read (mode 0700 with mode 0600 files, or an owner-only ACL on Windows, granted to your user's SID), under `backups` beside the MCP token copy on a co-located PC (`%LOCALAPPDATA%\SuiteWard\backups` on Windows) or `~/.config/suiteward/backups` on the isolated host; `--backup-dir <directory>` chooses another folder. It holds the same two parts as the flows below, with the same names, so [section 3](#3-restore) restores it (read the directory of the installer's backup where the flows say `suiteward-backup`): `status.json`, `suiteward.sql` and `suiteward-artifacts.tar`, and on the isolated host a `units` folder with the unit files the upgrade replaced. The service must be running, because the backup reads its `/status`. It works on Docker too, where the manual flows below do not. Use the manual flows for a backup that is not part of an upgrade: they stop the service first, so that the database and the artifacts come from the same moment.
+
 Stop the service container, not the database, so that the database and the artifacts come from the same moment. Follow the flow of your tier from its first step to the last.
 
 ### Isolated host (bash, as `suiteward`)
 
-The `suiteward` account has a `nologin` shell, so `sudo -iu suiteward` fails. As the administrator, open a shell as `suiteward` with a working user bus, as [step 10.1 of the install guide](install.md#10-running-on-a-separate-host-operators) does:
+The `suiteward` account has a `nologin` shell, so `sudo -iu suiteward` fails. As the administrator, open a shell as `suiteward` with a working user bus, as [step 10.3 of the install guide](install.md#10-running-on-a-separate-host-operators) does:
 
 ```bash
 r=/run/user/$(id -u suiteward)
@@ -126,7 +132,7 @@ The command opens a new shell and waits for commands, so it prints nothing. Chec
 
 ### Co-located PC (PowerShell)
 
-Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.2](install.md#5-install-co-located)).
+Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.1](install.md#5-install-co-located)).
 
 1. Stop the service.
 
@@ -178,7 +184,7 @@ Run every `podman` command in the PowerShell session where you selected the root
 
    Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`.
 
-   The port is published inside the Podman machine and may not answer from Windows, as `deploy/local.ps1` notes when it starts the stack. A `curl.exe` that cannot connect keeps retrying for minutes: stop it with Ctrl-C, then run both commands through the Podman machine as its rootless user, `podman machine ssh --username user` (the default ssh user is `root`, which is the rootful store and does not hold this stack). Redirect on the Windows side to save the file:
+   The port is published inside the Podman machine and may not answer from Windows, as the status command that `suiteward install` prints shows. A `curl.exe` that cannot connect keeps retrying for minutes: stop it with Ctrl-C, then run both commands through the Podman machine as its rootless user, `podman machine ssh --username user` (the default ssh user is `root`, which is the rootful store and does not hold this stack). Redirect on the Windows side to save the file:
 
    ```powershell
    podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz"
@@ -199,7 +205,7 @@ Run every `podman` command in the PowerShell session where you selected the root
 
 Restore with the **same SuiteWard version** that made the backup. Migrations move forward only: a newer image may migrate the restored database afterwards, but an older image cannot read a newer schema. Never leave `suiteward-migrate` on an image that is newer than the restored schema and then run the service on an older one: the two units must name the same image, and that image must not be older than the schema in the dump. That version is the `version` value in `status.json`.
 
-The one exception is a backup made by v0.1.x. That release has no `migrate` command, and the units and `deploy/local.ps1` of this layout run it, so they cannot start the v0.1.x image. Restore such a backup with the release you upgrade to: its migration brings the restored schema forward. `/status` then shows the new `version` and `schemaVersion`, and the same `owner`.
+The one exception is a backup made by v0.1.x. That release has no `migrate` command, and the units and the installer of this layout run it, so they cannot start the v0.1.x image. Restore such a backup with the release you upgrade to: its migration brings the restored schema forward. `/status` then shows the new `version` and `schemaVersion`, and the same `owner`.
 
 Follow the flow of your tier. Each one starts by checking the backup before anything is replaced.
 
@@ -223,7 +229,7 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
 
    Expect a list of entries under `artifacts/` and no error.
 
-3. Pin both units to the backup's version, by the digest of its signed image index. The version is the `version` value in `status.json` (the release you upgrade to, for a backup from v0.1.x). The release notes of every release name the index digest (the owner adds it when publishing). The log of the release workflow's step "Sign the image index, verify the signature, then move latest-stable", also prints it, in the line `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one. Verify it on your PC, or any machine with cosign 3.x, as [step 10.9 of the install guide](install.md#10-running-on-a-separate-host-operators) says (the host does not need cosign). This command runs on that machine, not in the host shell:
+3. Pin both units to the backup's version, by the digest of its signed image index. The version is the `version` value in `status.json` (the release you upgrade to, for a backup from v0.1.x). The release notes of every release name the index digest (the owner adds it when publishing). The log of the release workflow's step "Sign the image index, verify the signature, then move latest-stable", also prints it, in the line `Verified: ghcr.io/ignisdevne/suiteward@sha256:<index> was signed by the SuiteWard release workflow.` Do not take it from `podman image inspect --format '{{.Digest}}'`: that prints the digest of the platform manifest Podman pulled, which is not the signed one. Verify it on your PC, or any machine with cosign 3.x, as [step 10.4 of the install guide](install.md#10-running-on-a-separate-host-operators) says (the host does not need cosign). This command runs on that machine, from the release source, not in the host shell:
 
    ```
    pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>
@@ -279,7 +285,26 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
    podman exec suiteward-db psql -U suiteward -d suiteward -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'suiteward_app'"
    ```
 
-   Expect `1`. On the host that made the backup, the role is still in the cluster. On a new machine, the install of section 1 created it. If the output is empty, create the role and its URL secret as [step 10.11 of the install guide](install.md#10-running-on-a-separate-host-operators) says, after `podman secret rm suiteward-database-url` (the secret exists but names a role with another password).
+   Expect `1`. On the host that made the backup, the role is still in the cluster. On a new machine, the install of section 1 created it. If the output is empty, create the role and its URL secret with the chain below, after `podman secret rm suiteward-database-url` (the secret exists but names a role with another password). The password is generated here and travels only through standard input, never as an argument, so it appears in no process list and no shell history. The three `SET` lines keep it out of the database log, even if the statement fails. The chain stops at the first failure and prints only the ID of the new secret:
+
+   ```bash
+   apw=$(openssl rand -hex 24) &&
+   { printf "SET log_statement = 'none';\n"
+     printf "SET log_min_error_statement = 'panic';\n"
+     printf "SET log_min_duration_statement = -1;\n"
+     printf "CREATE ROLE suiteward_app LOGIN PASSWORD '%s';\n" "$apw"; } |
+     podman exec -i suiteward-db psql -X -q -v ON_ERROR_STOP=1 -U suiteward -d suiteward -f - &&
+   h='suiteward-db:5432/suiteward?sslmode=disable' &&
+   printf 'postgres://suiteward_app:%s@%s' "$apw" "$h" |
+     podman secret create suiteward-database-url -
+   unset apw h
+   ```
+
+   If the role exists already and only the secret is missing, run the same chain with `ALTER ROLE suiteward_app PASSWORD '%s';` in place of `CREATE ROLE suiteward_app LOGIN PASSWORD '%s';`. Check the secret's shape without showing it. It must print `1`:
+
+   ```bash
+   podman secret inspect --showsecret --format '{{.SecretData}}' suiteward-database-url | grep -Ecx 'postgres://suiteward_app:[0-9a-f]{48}@suiteward-db:5432/suiteward[?]sslmode=disable'
+   ```
 
 5. Empty the database, then load the dump. The application keeps every table in the `public` schema, so emptying that schema empties the database. This deletes the database's current content.
 
@@ -321,7 +346,7 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
    systemctl --user start suiteward.service
    ```
 
-   Expect no output from either. If the first one fails, read its journal (`journalctl --user -u suiteward-migrate.service -n 50 --no-pager`) and see the [install guide's troubleshooting](install.md#14-troubleshooting).
+   Expect no output from either. If the first one fails, read its journal (`journalctl --user -u suiteward-migrate.service -n 50 --no-pager`) and see the [install guide's troubleshooting](install.md#15-troubleshooting).
 
 8. Wait until the service is ready, then check `/status` against `status.json`.
 
@@ -337,7 +362,7 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
 
    Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts, right after each promotion and then every hour, so wait a moment for it. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup.
 
-9. Return the units to your update path. Step 3 pinned both `Image=` lines to the backup's version, and the stack stays on that version until you change them. The install guide's [Updating](install.md#11-updating) gives the way: pull the new release, set BOTH `Image=` lines to its index digest, reload the units and restart `suiteward-migrate.service`, which migrates and restarts the service. Update when you choose, with a fresh backup first. Never leave `suiteward-migrate` on a newer image than the one the service runs, and never restart `suiteward.service` alone after changing an image: the service refuses a schema that is not the one of its image. Automatic updates are not supported. After step 3 the units are already loaded; if you edited them again, reload them:
+9. Return the units to your update path. Step 3 pinned both `Image=` lines to the backup's version, and the stack stays on that version until you change them. The install guide's [Updating](install.md#11-updating) gives the way: `suiteward install --upgrade` backs up first, then moves both `Image=` lines to the new release, migrates and restarts the service. Update when you choose. Never leave `suiteward-migrate` on a newer image than the one the service runs, and never restart `suiteward.service` alone after changing an image: the service refuses a schema that is not the one of its image. Automatic updates are not supported. After step 3 the units are already loaded; if you edited them again, reload them:
 
    ```bash
    systemctl --user daemon-reload
@@ -347,9 +372,9 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
 
 ### Co-located restore
 
-Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.2](install.md#5-install-co-located)), from the repository root.
+Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.1](install.md#5-install-co-located)).
 
-The co-located stack creates its volumes and roles only when the script runs, and a run also starts the service. So after the two checks, the restore begins with an empty installation of the same version (the release you upgrade to, for a backup from v0.1.x: see the start of this section), instead of pinning the image and replacing the volume. The script creates the roles `suiteward` and `suiteward_app`, migrates, and starts the service.
+The installer creates the volumes and the roles only when it runs, and a run also starts the service. So after the two checks, the restore removes the containers and the data volumes, and starts a clean stack of the same version (the release you upgrade to, for a backup from v0.1.x: see the start of this section), instead of pinning the image and replacing the volume. The installer creates the roles `suiteward` and `suiteward_app`, migrates, and starts the service. It keeps the secrets and its settings, so a run with no GitHub flags does not create an App and does not run setup: the restore brings the enrollment back.
 
 1. Check that the dump is complete.
 
@@ -367,17 +392,23 @@ The co-located stack creates its volumes and roles only when the script runs, an
 
    Expect a list of entries under `artifacts/` and no error.
 
-3. Purge the stack, then reinstall the same version. Install it by the digest of its signed image index: take the index digest of that release from its release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` (on this PC, with cosign 3.x; [install guide, step 5.3](install.md#5-install-co-located)), and pass it to `-Image`. The `version` in `status.json` names the release (the release you upgrade to, for a backup from v0.1.x).
+3. Remove the stack's containers and data volumes, then start a clean stack of the same version. Take the index digest of that release from its release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` (on this PC, with cosign 3.x; [install guide, step 10.4](install.md#10-running-on-a-separate-host-operators)), and pass it to `--image`. The `version` in `status.json` names the release (the release you upgrade to, for a backup from v0.1.x).
 
    ```powershell
-   ./deploy/local.ps1 -Down -Purge
+   suiteward uninstall --yes
    ```
 
    ```powershell
-   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
+   podman volume rm suiteward-data suiteward-db-data
    ```
 
-   Give the GitHub flags only if this stack uses GitHub. The purge removes the volumes, the secrets and the MCP token. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`. Expect the line `database migrated` from the migration, then `Started suiteward-db and suiteward`. The service starts on an empty database with the schema of this release, and the next steps replace that schema.
+   ```powershell
+   suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index>
+   ```
+
+   The first command removes the three containers and keeps the secrets and the settings. The second deletes the current data. The install then creates the volumes, starts the database from the kept password, creates the role `suiteward_app` again with a new password, migrates and starts the service on an empty database with the schema of this release, and the next steps replace that data. Expect `suiteward migrate finished: the schema is up to date.`, then `Started suiteward-db and suiteward`. It does not run the GitHub flow: the settings hold the App, and its key secret exists. It ends with a note that no owner is enrolled, and the command to enroll one: ignore it and do not run setup, because the restore brings the owner back.
+
+   On a new PC, there are no secrets or settings to keep: install without GitHub, with `suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github no`, and put GitHub back after step 8 (below).
 
 4. Stop the service.
 
@@ -409,10 +440,10 @@ The co-located stack creates its volumes and roles only when the script runs, an
 
    Expect no output.
 
-7. Run the same install command of step 3 again, with the same `-Image` and GitHub flags. It replaces the stopped service, runs the migration again (it applies the grants to `suiteward_app` and any migration the dump lacks), and starts the service on the restored data. The secrets and volumes it finds are kept, and the App key file is not read again.
+7. Run the install of step 3 again, with the same `--image` (and, on a new PC, with `--github no` again). It replaces the stopped service, runs the migration again (it applies the grants to `suiteward_app` and any migration the dump lacks), and starts the service on the restored data. The secrets and volumes it finds are kept.
 
    ```powershell
-   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
+   suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index>
    ```
 
 8. Wait until the service is ready, then check `/status` against `status.json`.
@@ -439,7 +470,15 @@ The co-located stack creates its volumes and roles only when the script runs, an
    podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status"
    ```
 
-There is nothing to return to an update path afterwards, because each update names its own `-Image`.
+On a new PC, put GitHub back now: the stack runs without it. Run the installer again with the App's values and key file. The restore brought the enrollment back, so the installer finds an owner in `/status` and skips setup: the TOTP secret stays as it was. `--ruleset-imported yes` skips the wait for a ruleset import: the rulesets are already on GitHub.
+
+```powershell
+suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories '<owner/name>' --github-app-key-file <path to the App key file> --test-check '<owner/name>=<check name>' --ruleset-imported yes
+```
+
+Expect the installer to print the protection result of each repository and a note that an owner is already enrolled and setup was skipped. Do not run the setup command it prints: running setup replaces the TOTP secret. Delete your copy of the key file afterwards. The GitHub values stay in the settings file, so a later install needs none of them.
+
+Nothing else returns to an update path, because `suiteward install --upgrade` moves the release when you choose.
 
 ## 4. Re-bootstrap from the protected default branch
 
@@ -484,7 +523,11 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
    podman secret rm suiteward-database-url
    ```
 
-   Then run the wait for the healthy database, the role chain and the check of [step 10.11 of the install guide](install.md#10-running-on-a-separate-host-operators). Do not run that step's `daemon-reload` and start commands again.
+   Then wait until the database is healthy, and run the role chain and the shape check of step 4 of the isolated restore above (its role-creation block):
+
+   ```bash
+   until [ "$(podman inspect --format '{{.State.Health.Status}}' suiteward-db)" = healthy ]; do sleep 2; done
+   ```
 
 4. Start the service. It runs the migration first, and the migration needs the role:
 
@@ -502,21 +545,21 @@ Run the commands in the shell of the `suiteward` account, which [section 2](#iso
 
 ### Co-located re-bootstrap
 
-Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.2](install.md#5-install-co-located)), from the repository root.
+Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.1](install.md#5-install-co-located)).
 
-1. Purge the stack. This removes the volumes, the secrets and the MCP token.
-
-   ```powershell
-   ./deploy/local.ps1 -Down -Purge
-   ```
-
-2. Install the same version again, by the digest of its signed image index (take it from the release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` on this PC, with cosign 3.x, and pass it to `-Image`), with the GitHub flags: the script creates both roles, migrates, and starts the service. Give the GitHub flags only if this stack uses GitHub. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`.
+1. Purge the stack. This removes the containers, the volumes, the secrets, the MCP token copy and the settings file.
 
    ```powershell
-   ./deploy/local.ps1 -Image ghcr.io/ignisdevne/suiteward@sha256:<index> -GitHubAppKeyFile <path to the App key file> -GitHubAppId <id> -GitHubInstallationId <id> -GitHubRepositories '<owner/name>'
+   suiteward uninstall --purge --yes
    ```
 
-   Expect the line `database migrated` from the migration, then `Started suiteward-db and suiteward`.
+2. Install the same version again, by the digest of its signed image index (take it from the release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` on this PC, with cosign 3.x, and pass it to `--image`), with the App you already have: the installer creates both roles, migrates, starts the service, writes the rulesets (they are already imported: answer the wait with Enter, or pass `--ruleset-imported yes`), and runs setup on a real terminal. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`. Give no GitHub values only if this stack does not use GitHub.
+
+   ```powershell
+   suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<index> --github-app-id <id> --github-installation-id <id> --github-owner <login> --github-repositories '<owner/name>,<owner/name>' --github-app-key-file <path to the App key file> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
+   ```
+
+   Expect `suiteward migrate finished: the schema is up to date.`, then `Started suiteward-db and suiteward`, and then setup (the next section, step 1, says what it asks).
 
 3. Wait until the service is ready.
 
@@ -534,13 +577,13 @@ Run every `podman` command in the PowerShell session where you selected the root
 
 These steps are the same on both tiers. Run the first one in the shell of your flow: the `suiteward` shell of the isolated host, or the PowerShell session of the co-located PC.
 
-1. Run `setup` once for the instance, not once for each repository: it enrolls one owner for all of them, and every run replaces the TOTP secret. This starts a new enrollment: the new entry is named `SuiteWard:<login> (<tier> <instance>)`, and the database is new, so its instance id (shown as `instance` in `/status`) differs from the old one. Before you scan the new entry, delete the old entry of this instance, the one with the old id in its name. Entries of other instances stay. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted. It needs the GitHub settings in place. On the isolated host they are in `/etc/suiteward/github.env`. On the co-located PC they are there only when the stack was started with its GitHub parameters.
+1. Run `setup` once for the instance, not once for each repository: it enrolls one owner for all of them, and every run replaces the TOTP secret. This starts a new enrollment: the new entry is named `SuiteWard:<login> (<tier> <instance>)`, and the database is new, so its instance id (shown as `instance` in `/status`) differs from the old one. Before you scan the new entry, delete the old entry of this instance, the one with the old id in its name. Entries of other instances stay. An entry named only `SuiteWard:<login>` predates this release: delete it once the new entry's code is accepted. It needs the GitHub settings in place. On the isolated host they are in `~/.config/suiteward/github.env`. On the co-located PC the installer ran setup at the end of its install when the stack has GitHub (step 2 of the co-located re-bootstrap): then this step is done, and you go on to the next one. If it printed the command instead, run it here.
 
    ```
    podman exec -it suiteward /suiteward setup --owner <your GitHub login> --test-check '<owner/name>=<check name>' --test-check '<owner/name>=<check name>'
    ```
 
-   Give exactly one `--test-check` for each configured repository (on the isolated host, those of `SUITEWARD_GITHUB_REPOSITORIES` in `/etc/suiteward/github.env`; on the co-located PC, the `-GitHubRepositories` you gave `deploy/local.ps1`), in single quotes as shown, because a check name can hold spaces and slashes. `<check name>` is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset, never `SuiteWard / Contract`. A missing, extra or duplicate `--test-check` is a usage error, and nothing is written.
+   Give exactly one `--test-check` for each configured repository (on the isolated host, those of `SUITEWARD_GITHUB_REPOSITORIES` in `~/.config/suiteward/github.env`; on the co-located PC, the `--github-repositories` you gave the installer), in single quotes as shown, because a check name can hold spaces and slashes. `<check name>` is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset, never `SuiteWard / Contract`. A missing, extra or duplicate `--test-check` is a usage error, and nothing is written.
 
    Setup is interactive: run it yourself in a real terminal, with any recording of the session turned off, because it prints the TOTP secret and its `otpauth://` URI there. It looks up your login and every repository first, then waits for you to press Enter before it generates the secret. After that it prints the secret and the URI once, asks for a code, and prints the protection result of each repository. The command is the same in bash and in PowerShell, where the single quotes work the same way.
 

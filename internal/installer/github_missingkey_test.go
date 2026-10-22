@@ -452,3 +452,30 @@ func TestInstallIsolatedGitHubNewAppCreatesAnotherApp(t *testing.T) {
 		t.Errorf("--github new-app: %d Apps created\n%s", fake.count("POST /app-manifests"), g.out.String())
 	}
 }
+
+// A key file that GitHub refuses for a recorded App is not a failed resume: the key secret does not exist, so nothing is "retried"
+// and no secret is to be removed. The error says the file is not that App's key and names the routes.
+func TestInstallColocatedAWrongKeyFileForARecordedAppIsNotAFailedResume(t *testing.T) {
+	h, g, args := colocatedFlow(t)
+	g.neverInstalled(true)
+	if err := h.podman(args...); err == nil {
+		t.Fatal("the first run must fail")
+	}
+	g.neverInstalled(false)
+	g.answersAppWith(401)
+	err := h.podman(append(args, "--github-app-key-file", writeKeyFile(t))...)
+	if err == nil {
+		t.Fatal("a key that GitHub refuses must stop the run")
+	}
+	for _, want := range []string{"GET /app", "--github new-app", "--github-app-key-file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %q:\n%v", want, err)
+		}
+	}
+	for _, wrong := range []string{"its key is the secret", "to retry"} {
+		if strings.Contains(err.Error(), wrong) {
+			t.Errorf("the error says %q, which is false here:\n%v", wrong, err)
+		}
+	}
+	assertNoKey(t, err.Error(), h.out.String())
+}

@@ -1,7 +1,7 @@
 # SuiteWard project baseline
 
-- **Updated:** 2026-10-21 (phase SH done; phase M1.11 approved)
-- **Stage:** the MVP phases through M1.10 are delivered and released (v0.1.0 to v0.1.3), the security hardening (phase SH) is released as v0.2.0-rc.1 and rc.2, and phase M1.11 prepares v0.2.0-rc.3 and the final v0.2.0. The [delivery plan](plan/README.md) lists each phase.
+- **Updated:** 2026-10-22 (the MVP `v0.2.0` is released; phase M1.12, the installer, is next)
+- **Stage:** the MVP phases through M1.11 are delivered and `v0.2.0` is released (2026-10-22). Phase M1.12, the installer, is next and ships as `v0.3.0-alpha.1`, the first version handed to testers. The [delivery plan](plan/README.md) lists each phase.
 
 ## Product identity and audience
 

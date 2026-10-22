@@ -54,8 +54,17 @@ try {
     $sums = Join-Path $testRoot 'SHA256SUMS'
     Set-Content -LiteralPath $sums -Value "$('b' * 64)  other`n$hash  suiteward_v1.2.3_linux_amd64"
     Remove-Item -LiteralPath $log
-    & $verify -Sums $sums -File $binary *>$null
+    $sumsOutput = & $verify -Sums $sums -File $binary *>&1 | Out-String
     if (Test-Path -LiteralPath $log) { throw 'Sums mode ran cosign.' }
+    # The host compares the hash of SHA256SUMS itself with the one the signature covers: it is printed, in this exact shape.
+    $sumsHash = (Get-FileHash -LiteralPath $sums -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($sumsOutput -notmatch "(?m)^SHA256SUMS sha256: $sumsHash\r?$") { throw "Sums mode must print 'SHA256SUMS sha256: <hash of the file>': $sumsOutput" }
+    # Blob mode prints it too when the signed blob is SHA256SUMS, and only then.
+    $blobOutput = & $verify -Blob $sums -Bundle "$sums.sigstore.json" -Cosign $fake *>&1 | Out-String
+    if ($blobOutput -notmatch "(?m)^SHA256SUMS sha256: $sumsHash\r?$") { throw "Blob mode must print the hash of a signed SHA256SUMS: $blobOutput" }
+    $otherOutput = & $verify -Blob $binary -Bundle "$binary.sigstore.json" -Cosign $fake *>&1 | Out-String
+    if ($otherOutput -match 'SHA256SUMS sha256') { throw 'Blob mode printed a SHA256SUMS hash for another file.' }
+    Remove-Item -LiteralPath $log
     Set-Content -LiteralPath $sums -Value "$('b' * 64)  suiteward_v1.2.3_linux_amd64"
     Assert-Rejected { & $verify -Sums $sums -File $binary } 'does not match'
     Set-Content -LiteralPath $sums -Value "$hash  other"

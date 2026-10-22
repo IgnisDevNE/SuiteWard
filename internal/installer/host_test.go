@@ -422,7 +422,7 @@ func TestPrepareHostReappliesAnInstalledRuleWithoutAsking(t *testing.T) {
 	}
 }
 
-func TestPrepareHostOwnsTheAccountConfigDirectoryAndMovesTheEtcEnvFile(t *testing.T) {
+func TestPrepareHostOwnsTheAccountConfigDirectoryAndCopiesTheEtcEnvFileLeavingTheSource(t *testing.T) {
 	h := newHostFake()
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
@@ -433,8 +433,8 @@ func TestPrepareHostOwnsTheAccountConfigDirectoryAndMovesTheEtcEnvFile(t *testin
 	if !h.has("install", "-o suiteward -g suiteward -m 0600 /etc/suiteward/github.env /home/suiteward/.config/suiteward/github.env") {
 		t.Fatalf("the /etc env file must move with owner and mode: %v", h.lines())
 	}
-	if !h.has("rm", "/etc/suiteward/github.env") {
-		t.Fatalf("the source must go after the copy: %v", h.lines())
+	if h.has("rm", "") {
+		t.Fatalf("the source must stay: a running hand-installed service reads it until the service step re-renders its units: %v", h.lines())
 	}
 }
 
@@ -449,7 +449,7 @@ func TestPrepareHostLeavesAHostWithoutAnEtcEnvFileAlone(t *testing.T) {
 	}
 }
 
-func TestPrepareHostStopsOnADifferentExistingEnvFileAndDropsAnIdenticalOne(t *testing.T) {
+func TestPrepareHostStopsOnADifferentExistingEnvFileAndLeavesAnIdenticalOneAlone(t *testing.T) {
 	const dest = "/home/suiteward/.config/suiteward/github.env"
 	h := newHostFake()
 	h.paths[dest] = true
@@ -463,8 +463,8 @@ func TestPrepareHostStopsOnADifferentExistingEnvFileAndDropsAnIdenticalOne(t *te
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if h.has("install", "-m 0600 /etc") || !h.has("rm", "/etc/suiteward/github.env") {
-		t.Fatalf("an identical destination only loses the old file: %v", h.lines())
+	if h.has("install", "-m 0600 /etc") || h.has("rm", "") {
+		t.Fatalf("an identical destination needs neither a copy nor a removal: %v", h.lines())
 	}
 }
 

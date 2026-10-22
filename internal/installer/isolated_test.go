@@ -511,7 +511,8 @@ func TestInstallIsolatedAdoptionOfAnEtcEnvFileNeedsTheHostStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	f = newIsoFake(home)
-	if _, err := runIsolated(t, f, map[string]string{"image": ""}, ""); err != nil {
+	lastOut, err := runIsolated(t, f, map[string]string{"image": ""}, "")
+	if err != nil {
 		t.Fatalf("with the file moved the units are re-rendered on the new path: %v", err)
 	}
 	serve, _ := os.ReadFile(filepath.Join(unitDir(home), "suiteward.container"))
@@ -520,6 +521,12 @@ func TestInstallIsolatedAdoptionOfAnEtcEnvFileNeedsTheHostStep(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(envFile(home)); string(raw) != "SUITEWARD_GITHUB_APP_ID=1\n" {
 		t.Errorf("a moved env file must not be overwritten: %q", raw)
+	}
+	if !strings.Contains(lastOut, "sudo rm /etc/suiteward/github.env") {
+		t.Errorf("once the service runs on the new file the old one may go, and the output must say so:\n%s", lastOut)
+	}
+	if fresh, err := runIsolated(t, newIsoFake(t.TempDir()), nil, ""); err != nil || strings.Contains(fresh, "sudo rm") {
+		t.Errorf("a fresh install has no old file to remove: %v\n%s", err, fresh)
 	}
 }
 

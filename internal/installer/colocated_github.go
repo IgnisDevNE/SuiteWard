@@ -114,6 +114,10 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 	}
 	run, err := g.wantsGitHub(ctx, r)
 	if err != nil || !run {
+		if err == nil && g.pending != nil { // GitHub is off in this run, but the App an earlier run created is still there
+			g.say("Note: GitHub is off in this run, and the App %s that an earlier run created is not used. It still exists on GitHub (%s) and its key is the secret %s (%s); the record is %s. To take it up, run again with --github yes. To throw it away, delete the App, remove the secret and delete the record.\n",
+				g.pending.Slug, appPage("https://github.com", g.pending.Slug, g.pending.Account, g.pending.AccountType), SecretGitHubAppKey, g.removeKeySecret(), g.pendingPath)
+		}
 		return err
 	}
 	port := 0
@@ -192,6 +196,8 @@ func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
 		return fmt.Errorf("%w. The secret %s already exists, so the key of the App this run created was not stored: an earlier run left it behind. Delete the App that this run created (the link above) and the one of the earlier run on GitHub, remove the secret %s, then run the installer again", err, SecretGitHubAppKey, secret)
 	case errors.Is(err, errPendingKeyMissing) && g.pending != nil:
 		return fmt.Errorf("%w. The key secret %s is not in the secret store (it was removed or purged). Either delete that App (the link above) and the record %s, then run the installer again; or install the App if it is not installed yet, create a new private key on its settings page and run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, SecretGitHubAppKey, g.pendingPath, g.pending.AppID)
+	case errors.Is(err, errResuming) && g.pending != nil:
+		return fmt.Errorf("%w. This run took up the App %s, which an earlier run recorded in %s; its key is the secret %s. Run the installer again to retry. If the App no longer exists on GitHub (deleted, or answered 401 or 404 above), delete the record file and remove the secret, then run again to create a new App", err, g.pending.Slug, g.pendingPath, secret)
 	case stored && recorded:
 		return fmt.Errorf("%w. The key of the App is in the secret store as %s and the App is recorded in %s: run the installer again to take up that App. To start over instead, delete the App (the link above), remove the secret and delete the record", err, secret, g.pendingPath)
 	case stored:
@@ -200,10 +206,10 @@ func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
 	return err
 }
 
-// clearPending deletes the record of an App once the settings, which name it, are saved. A record that stays is not used again
+// clearPending deletes the record of an App once the settings, which name an App, are saved. A record that stays is not used again
 // (the settings come first), so a failure is only reported.
 func (g *githubInstall) clearPending() {
-	if g.pendingPath == "" {
+	if g.pendingPath == "" || g.s.GitHub.AppID == 0 { // a run without GitHub keeps the record: the App and its key are still there
 		return
 	}
 	if err := os.Remove(g.pendingPath); err != nil && !errors.Is(err, fs.ErrNotExist) {

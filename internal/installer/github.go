@@ -106,7 +106,11 @@ func chooseApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	case err != nil || reused:
 		return app, res, "", err
 	case env.Pending != nil:
-		return resumeApp(ctx, env)
+		app, res, created, err = resumeApp(ctx, env)
+		if err != nil && !errors.Is(err, errPendingKeyMissing) {
+			err = fmt.Errorf("%w: %w", errResuming, err)
+		}
+		return app, res, created, err
 	}
 	return createApp(ctx, env)
 }
@@ -365,6 +369,9 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 
 // errPendingKeyMissing means an App an earlier run recorded has no key secret: it cannot be used, and it is not replaced.
 var errPendingKeyMissing = errors.New("an earlier run created a GitHub App and recorded it, but its key secret is gone")
+
+// errResuming marks the failure of taking up a recorded App, which may be gone from GitHub: the record and the key remain.
+var errResuming = errors.New("the App an earlier run recorded could not be taken up")
 
 // resumeApp takes up the App an earlier run created and recorded: its key is in the secret store, so what is left is the
 // installation and the rest of the flow. created is the page that deletes the App.

@@ -94,6 +94,9 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 			if unit != f.dryRunSkips {
 				out.WriteString("---" + unit + "---\n[Service]\n")
 			}
+			if unit == "suiteward-migrate.service" { // the units name each other, so a skipped unit's name still shows up
+				out.WriteString("Requires=suiteward-db.service\nAfter=suiteward-network.service\n")
+			}
 		}
 		return []byte(out.String()), nil
 	case c.name != "podman":
@@ -140,27 +143,27 @@ func (f *isoFake) index(text string, from int) int {
 func (f *isoFake) has(text string) bool { return f.index(text, 0) >= 0 }
 
 var (
-	testKeyOnce sync.Once
-	testKeyPEM  string
+	isoKeyOnce sync.Once
+	isoKeyPEM  string
 )
 
 // appKeyPEM is a throwaway RSA key in the shape of a GitHub App key.
 func appKeyPEM(t *testing.T) string {
 	t.Helper()
-	testKeyOnce.Do(func() {
+	isoKeyOnce.Do(func() {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
 			t.Fatal(err)
 		}
-		testKeyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+		isoKeyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 	})
-	return testKeyPEM
+	return isoKeyPEM
 }
 
 // appKeyStored is what the secret store should hold for the key: the PEM with exactly one trailing newline.
 func appKeyStored(t *testing.T) string { return strings.TrimSpace(appKeyPEM(t)) + "\n" }
 
-func mustRead(t *testing.T, path string) []byte {
+func readFileOrFail(t *testing.T, path string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
@@ -235,7 +238,12 @@ func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 
 	assertSecretShapes(t, f)
 
-	// No secret value in any argument list.
+	// No secret value in any argument list: I3's helper over the values, and the check of this file over the SQL.
+	var values []string
+	for _, v := range f.secrets {
+		values = append(values, v)
+	}
+	(&fakeEngine{calls: f.calls}).assertNoSecret(t, values...)
 	f.secretValuesNotInArgs(t)
 
 	// Order: pulls and units, the dry run, the reload, the database, its health, the role, the service, the check.
@@ -436,7 +444,7 @@ func TestInstallIsolatedAdoptionStopsWithTheDiffBeforeAnyChange(t *testing.T) {
 	p.EnvFile = "%h/.config/suiteward/github.env"
 	installedUnits(t, home, p)
 	path := filepath.Join(unitDir(home), "suiteward-db.container")
-	edited := slices.Concat(mustRead(t, path), []byte("PodmanArgs=--privileged\n"))
+	edited := slices.Concat(readFileOrFail(t, path), []byte("PodmanArgs=--privileged\n"))
 	if err := os.WriteFile(filepath.Clean(path), edited, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +458,7 @@ func TestInstallIsolatedAdoptionStopsWithTheDiffBeforeAnyChange(t *testing.T) {
 	if f.has("secret create") || f.has("pull") || f.has("start") || f.has("daemon-reload") {
 		t.Fatalf("nothing may change after a DiffError: %v", f.lines())
 	}
-	if !bytes.Equal(mustRead(t, path), edited) {
+	if !bytes.Equal(readFileOrFail(t, path), edited) {
 		t.Errorf("the edited unit was overwritten")
 	}
 	if _, err := os.Stat(settingsFile(home)); !errors.Is(err, os.ErrNotExist) {
@@ -528,6 +536,14 @@ func TestInstallIsolatedStopsWhenTheGeneratorFindsAProblem(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "suiteward-migrate.service") || f.has("start") {
 		t.Fatalf("a unit the generator skipped must be named and stop the run: %v", err)
 	}
+
+	// The migrate unit's body still names suiteward-db.service; the database unit itself is gone from the listing.
+	f = newIsoFake(t.TempDir())
+	f.dryRunSkips = "suiteward-db.service"
+	_, err = runIsolated(t, f, nil, "")
+	if err == nil || !strings.Contains(err.Error(), "suiteward-db.container") || f.has("start") {
+		t.Fatalf("a skipped unit whose name another unit mentions must still be found: %v", err)
+	}
 }
 
 func TestInstallIsolatedWaitsForTheDatabaseAndGivesUp(t *testing.T) {
@@ -562,6 +578,11 @@ func TestInstallIsolatedReadsTheAppKeyFromAFileOrStdinAndChecksIt(t *testing.T) 
 	}
 	if f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
 		t.Errorf("the key file must reach the secret store")
+	}
+
+	f = newIsoFake(t.TempDir())
+	if _, err := runIsolated(t, f, map[string]string{"github-app-key": "", "github-app-key-file": "-"}, appKeyPEM(t)); err != nil || f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
+		t.Fatalf("a key file of - reads standard input: %v", err)
 	}
 
 	f = newIsoFake(t.TempDir())
@@ -683,7 +704,7 @@ func assertFilesAndSettings(t *testing.T, home string) {
 	t.Helper()
 	// The rendered units: one digest in both, the isolated tier, the env file under the home of the account.
 	for _, unit := range []string{"suiteward-migrate.container", "suiteward.container"} {
-		raw := mustRead(t, filepath.Join(unitDir(home), unit))
+		raw := readFileOrFail(t, filepath.Join(unitDir(home), unit))
 		if !strings.Contains(string(raw), "\nImage="+releaseImageRepo+"@"+testDigest+"\n") {
 			t.Errorf("%s does not carry the digest", unit)
 		}

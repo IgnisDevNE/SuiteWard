@@ -161,19 +161,19 @@ func runHost(t *testing.T, h *hostFake, flags map[string]string, tty bool, input
 	return out.String() + termOut.String(), err
 }
 
-// no is the answer that declines the metadata rule, for tests about other steps.
-var no = map[string]string{"metadata-rule": "no"}
+// declineMetadataRule is the answer that declines the metadata rule, for tests about other steps.
+var declineMetadataRule = map[string]string{"metadata-rule": "no"}
 
 func TestPrepareHostRefusesOtherSystemsAndNonRoot(t *testing.T) {
 	h := newHostFake()
 	h.goos = "windows"
-	if _, err := runHost(t, h, no, false, ""); err == nil || len(h.calls) != 0 {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || len(h.calls) != 0 {
 		t.Fatalf("a non-Linux system must be refused before any command: %v, calls %v", err, h.lines())
 	}
 
 	h = newHostFake()
 	h.euid = "1000"
-	if _, err := runHost(t, h, no, false, ""); err == nil || !strings.Contains(err.Error(), "root") {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "root") {
 		t.Fatalf("a non-root run must be refused naming root, got %v", err)
 	}
 	if h.has("useradd", "") || h.has("dnf", "") || h.has("loginctl", "") {
@@ -184,13 +184,13 @@ func TestPrepareHostRefusesOtherSystemsAndNonRoot(t *testing.T) {
 func TestPrepareHostInstallsPodmanOnlyWithConsent(t *testing.T) {
 	h := newHostFake()
 	h.podman = ""
-	if _, err := runHost(t, h, no, false, ""); err == nil || h.has("dnf", "") {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || h.has("dnf", "") {
 		t.Fatalf("without consent dnf must not run and the run must stop: %v, calls %v", err, h.lines())
 	}
 
 	h = newHostFake()
 	h.podman = ""
-	if _, err := runHost(t, h, no, true, "n\n"); err == nil || h.has("dnf", "") {
+	if _, err := runHost(t, h, declineMetadataRule, true, "n\n"); err == nil || h.has("dnf", "") {
 		t.Fatalf("a declined prompt must not run dnf: %v", err)
 	}
 
@@ -206,7 +206,7 @@ func TestPrepareHostInstallsPodmanOnlyWithConsent(t *testing.T) {
 
 func TestPrepareHostReportsAndChecksThePodmanVersion(t *testing.T) {
 	h := newHostFake()
-	out, err := runHost(t, h, no, false, "")
+	out, err := runHost(t, h, declineMetadataRule, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestPrepareHostReportsAndChecksThePodmanVersion(t *testing.T) {
 
 	h = newHostFake()
 	h.podman = "podman version 5.4.0"
-	if _, err := runHost(t, h, no, false, ""); err == nil || !strings.Contains(err.Error(), "5.5") {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "5.5") {
 		t.Fatalf("Podman older than 5.5 and no consent must stop naming 5.5, got %v", err)
 	}
 }
@@ -248,7 +248,7 @@ func TestPrepareHostRequiresTheFixForCVE202657231(t *testing.T) {
 func TestPrepareHostCreatesTheAccountOnceExactlyAsTheGuideDoes(t *testing.T) {
 	h := newHostFake()
 	h.account = false
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !h.has("useradd", "--create-home --shell /usr/sbin/nologin suiteward") {
@@ -256,7 +256,7 @@ func TestPrepareHostCreatesTheAccountOnceExactlyAsTheGuideDoes(t *testing.T) {
 	}
 
 	h = newHostFake()
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if h.has("useradd", "") {
@@ -268,7 +268,7 @@ func TestPrepareHostAddsSubordinateRangesOnlyWhereMissingAndFree(t *testing.T) {
 	h := newHostFake()
 	h.subuid = "other:100000:65536\n"
 	h.subgid = "suiteward:231072:65536\nother:100000:65536\n"
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	usermod := h.callsTo("usermod")
@@ -281,7 +281,7 @@ func TestPrepareHostAddsSubordinateRangesOnlyWhereMissingAndFree(t *testing.T) {
 	}
 
 	h = newHostFake()
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if h.has("usermod", "") {
@@ -291,7 +291,7 @@ func TestPrepareHostAddsSubordinateRangesOnlyWhereMissingAndFree(t *testing.T) {
 
 func TestPrepareHostEnablesLinger(t *testing.T) {
 	h := newHostFake()
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !h.has("loginctl", "enable-linger suiteward") {
@@ -331,7 +331,7 @@ func TestPrepareHostAsksAboutTheMetadataRuleAndNeverAssumes(t *testing.T) {
 
 func TestPrepareHostProbesTheMetadataAddressWithAShortTimeout(t *testing.T) {
 	h := newHostFake()
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !h.has("curl", "-m 3") || !h.has("curl", "http://169.254.169.254/latest/api/token") {
@@ -424,7 +424,7 @@ func TestPrepareHostReappliesAnInstalledRuleWithoutAsking(t *testing.T) {
 
 func TestPrepareHostOwnsTheAccountConfigDirectoryAndMovesTheEtcEnvFile(t *testing.T) {
 	h := newHostFake()
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !h.has("install", "-d -o suiteward -g suiteward -m 0700 /home/suiteward/.config /home/suiteward/.config/suiteward") {
@@ -441,7 +441,7 @@ func TestPrepareHostOwnsTheAccountConfigDirectoryAndMovesTheEtcEnvFile(t *testin
 func TestPrepareHostLeavesAHostWithoutAnEtcEnvFileAlone(t *testing.T) {
 	h := newHostFake()
 	delete(h.paths, "/etc/suiteward/github.env")
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if h.has("install", "github.env") || h.has("rm", "") {
@@ -454,13 +454,13 @@ func TestPrepareHostStopsOnADifferentExistingEnvFileAndDropsAnIdenticalOne(t *te
 	h := newHostFake()
 	h.paths[dest] = true
 	h.envsDiffer = true
-	if _, err := runHost(t, h, no, false, ""); err == nil || h.has("rm", "") || h.has("install", "-m 0600 /etc") {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || h.has("rm", "") || h.has("install", "-m 0600 /etc") {
 		t.Fatalf("two different env files must stop without deleting or overwriting anything: %v", err)
 	}
 
 	h = newHostFake()
 	h.paths[dest] = true
-	if _, err := runHost(t, h, no, false, ""); err != nil {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if h.has("install", "-m 0600 /etc") || !h.has("rm", "/etc/suiteward/github.env") {
@@ -470,7 +470,7 @@ func TestPrepareHostStopsOnADifferentExistingEnvFileAndDropsAnIdenticalOne(t *te
 
 func TestPrepareHostPrintsTheNextCommandAndNeverRunsTheServiceStep(t *testing.T) {
 	h := newHostFake()
-	out, err := runHost(t, h, no, false, "")
+	out, err := runHost(t, h, declineMetadataRule, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

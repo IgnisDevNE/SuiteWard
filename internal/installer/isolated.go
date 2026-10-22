@@ -39,7 +39,7 @@ var (
 // generatorPath is the Podman quadlet generator, whose dry run lists every unit it reads.
 const generatorPath = "/usr/lib/systemd/system-generators/podman-system-generator"
 
-const appRole = "suiteward_app"
+const appDatabaseRole = "suiteward_app"
 
 func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out io.Writer) error {
 	if err := d.validate(); err != nil {
@@ -149,7 +149,7 @@ func appKeyIfMissing(ctx context.Context, store SecretStore, r *Resolver, out io
 	if err != nil || have {
 		return nil, err
 	}
-	key, fingerprint, err := readAppKey(r)
+	key, fingerprint, err := readIsolatedAppKey(r)
 	if err != nil {
 		return nil, err
 	}
@@ -307,12 +307,14 @@ func githubInputs(r *Resolver, current GitHub) (GitHub, bool, error) {
 	return gh, true, nil
 }
 
-// readAppKey reads the App's PEM from a file path, the answers file, a prompt for the path or stdin, and checks that it is
+// readIsolatedAppKey reads the App's PEM from a file path, the answers file, a prompt for the path or stdin, and checks that it is
 // an RSA private key. The fingerprint is the one GitHub shows next to the key. The key is never written to disk by us.
-func readAppKey(r *Resolver) (pemKey []byte, fingerprint string, err error) {
+func readIsolatedAppKey(r *Resolver) (pemKey []byte, fingerprint string, err error) {
 	var raw []byte
 	_, flagged := r.optional("github-app-key")
-	if file, ok := r.optional("github-app-key-file"); ok {
+	if file, ok := r.optional("github-app-key-file"); ok && file == "-" {
+		raw, err = io.ReadAll(r.in)
+	} else if ok {
 		raw, err = os.ReadFile(filepath.Clean(file))
 	} else if r.term.IsTerminal && !flagged {
 		var file string
@@ -442,13 +444,21 @@ func dryRun(ctx context.Context, d Deps, units map[string][]byte) error {
 	if err != nil {
 		return fmt.Errorf("the Podman generator rejects the units (if it is not at %s, find it with `rpm -ql podman | grep generator`): %w", generatorPath, err)
 	}
+	// Each generated unit starts with a ---name--- header line (an assumption the first AlmaLinux run confirms). A header,
+	// not the bare name: the units name each other in Requires= and After= lines, so a skipped unit's name still appears.
+	listed := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); len(line) > 6 && strings.HasPrefix(line, "---") && strings.HasSuffix(line, "---") {
+			listed[line[3:len(line)-3]] = true
+		}
+	}
 	for _, file := range sortedKeys(units) {
 		name, kind, _ := strings.Cut(file, ".")
 		service := name + ".service"
 		if kind != "container" {
 			service = name + "-" + kind + ".service"
 		}
-		if !strings.Contains(string(out), service) {
+		if !listed[service] {
 			return fmt.Errorf("the Podman generator did not list %s for %s: it could not read that unit; run `%s --user --dryrun` and read its error", service, file, generatorPath)
 		}
 	}
@@ -490,13 +500,13 @@ func ensureAppRole(ctx context.Context, rt Runtime) error {
 		argv := append(append([]string{"psql", "-X", "-q"}, extra...), "-v", "ON_ERROR_STOP=1", "-U", "suiteward", "-d", "suiteward", "-f", "-")
 		return rt.Exec(ctx, ContainerDB, argv, strings.NewReader(sql))
 	}
-	found, err := psql([]string{"-t", "-A"}, "SELECT 1 FROM pg_roles WHERE rolname = '"+appRole+"';\n")
+	found, err := psql([]string{"-t", "-A"}, "SELECT 1 FROM pg_roles WHERE rolname = '"+appDatabaseRole+"';\n")
 	if err != nil {
-		return fmt.Errorf("look for the role %s: %w", appRole, err)
+		return fmt.Errorf("look for the role %s: %w", appDatabaseRole, err)
 	}
-	statement := "CREATE ROLE " + appRole + " LOGIN PASSWORD"
+	statement := "CREATE ROLE " + appDatabaseRole + " LOGIN PASSWORD"
 	if strings.TrimSpace(string(found)) == "1" {
-		statement = "ALTER ROLE " + appRole + " PASSWORD"
+		statement = "ALTER ROLE " + appDatabaseRole + " PASSWORD"
 	}
 	password, err := NewPassword()
 	if err != nil {
@@ -504,7 +514,7 @@ func ensureAppRole(ctx context.Context, rt Runtime) error {
 	}
 	sql := "SET log_statement = 'none';\nSET log_min_error_statement = 'panic';\nSET log_min_duration_statement = -1;\n" + statement + " '" + password + "';\n"
 	if _, err := psql(nil, sql); err != nil {
-		return fmt.Errorf("create the role %s: %w", appRole, err)
+		return fmt.Errorf("create the role %s: %w", appDatabaseRole, err)
 	}
-	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appRole, password)), false)
+	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appDatabaseRole, password)), false)
 }

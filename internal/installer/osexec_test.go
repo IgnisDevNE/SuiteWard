@@ -121,16 +121,15 @@ func TestUnitParamsFromSettings(t *testing.T) {
 	}
 }
 
-func TestOSExecFailureCarriesABoundedTailOfStdout(t *testing.T) {
+func TestOSExecErrorCarriesStderrOnly(t *testing.T) {
 	name, args := helperCommand(t, "failout")
 	_, err := OSExec(context.Background(), name, args, nil)
-	if err == nil || !strings.Contains(err.Error(), "migration 21 failed") || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("the error lacks the output of the failed command: %v", err)
+	// The stdout of a failed command is returned beside the error; the error says only what stderr said, so that a value
+	// a command printed (a secret read, say) cannot leak through an error message.
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("the error lacks stderr: %v", err)
 	}
-	if strings.Contains(err.Error(), "FIRSTLINE") {
-		t.Fatalf("the error keeps the start of a long output, not its end: %v", err)
-	}
-	if n := len(err.Error()); n > 4096 {
-		t.Fatalf("the error is %d bytes", n)
+	if strings.Contains(err.Error(), "migration 21 failed") || strings.Contains(err.Error(), "log log") {
+		t.Fatalf("the error repeats the standard output: %v", err)
 	}
 }

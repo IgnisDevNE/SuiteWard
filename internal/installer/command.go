@@ -30,6 +30,18 @@ type Env struct {
 	Term     Terminal
 	PortFree func(port int) error // nil when the port can be listened on
 	Sleep    func(time.Duration)
+	// ResolveGitHub is the GitHub flow; nil means resolveGitHub. A test replaces it.
+	ResolveGitHub func(ctx context.Context, env githubEnv) (GitHubResult, error)
+}
+
+// Uninstall is `suiteward uninstall [--purge]`.
+func Uninstall(ctx context.Context, args []string, env Env) error {
+	return errors.New("not implemented")
+}
+
+// Main runs one of the commands of the installer (args start with the command name) and returns the process exit code.
+func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
+	return 1
 }
 
 // OSEnv is this machine and this process's console, printing to stdout.

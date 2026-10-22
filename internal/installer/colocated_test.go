@@ -14,11 +14,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
 const testPEM = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n"
 
-var mutatingVerbs = []string{"network create", "volume create", "secret create", "secret rm", "rm ", "run ", "stop ", "exec "}
+var mutatingVerbs = []string{"network create", "volume create", "secret create", "secret rm", "volume rm", "network rm", "rm ", "run ", "stop ", "exec "}
 
 // harness runs the install command against a fake engine. newHarness is Podman; dockerHarness is Docker.
 type harness struct {
@@ -30,12 +32,18 @@ type harness struct {
 	roleExists bool
 	roleFails  bool
 	stdin      string
+
+	volumeFiles map[string]string // "volume|file" -> what cat /s/file prints in that Docker secret volume
+	github      func(ctx context.Context, env githubEnv) (GitHubResult, error)
+	githubSeen  []githubEnv
+	atServe     map[string]bool // facts at the moment the service container was started
 }
 
 func newHarness(t *testing.T, goos string) *harness {
 	t.Helper()
-	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}}
+	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
+	h.f.fail("image inspect", errors.New("no such image")) // pulled unless a test says the image is here
 	h.f.on("info --format {{.Host.Security.Rootless}}", "true\n")
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h
@@ -43,8 +51,9 @@ func newHarness(t *testing.T, goos string) *harness {
 
 func dockerHarness(t *testing.T, goos string) *harness {
 	t.Helper()
-	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}}
+	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
+	h.f.fail("image inspect", errors.New("no such image"))
 	h.f.on("version --format", dockerDesktopServer).on("info --format", `["name=seccomp,profile=builtin"]`)
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h
@@ -81,6 +90,16 @@ func (h *harness) install(args ...string) error {
 // installAt runs the install with the arguments as they are, apart from the token file.
 func (h *harness) installAt(args ...string) error {
 	h.t.Helper()
+	return Install(context.Background(), append([]string{"--token-file", h.tokenPath()}, args...), h.newEnv())
+}
+
+// uninstall runs the uninstall with the settings and token file of this harness.
+func (h *harness) uninstall(args ...string) error {
+	h.t.Helper()
+	return Uninstall(context.Background(), append([]string{"--settings", h.settingsPath(), "--token-file", h.tokenPath()}, args...), h.newEnv())
+}
+
+func (h *harness) newEnv() Env {
 	d := h.f.deps()
 	inner := d.Exec
 	d.Exec = func(ctx context.Context, name string, a []string, stdin io.Reader) ([]byte, error) {
@@ -92,8 +111,19 @@ func (h *harness) installAt(args ...string) error {
 			}
 			stdin = bytes.NewReader(data)
 		}
+		line := strings.Join(a, " ")
 		out, err := inner(ctx, name, a, stdin)
-		if strings.Contains(strings.Join(a, " "), "psql") {
+		if strings.Contains(line, "--name suiteward --network") { // the service is being started
+			_, statErr := os.Stat(h.settingsPath())
+			h.atServe["settings"] = statErr == nil
+		}
+		for key, value := range h.volumeFiles {
+			volume, file, _ := strings.Cut(key, "|")
+			if strings.Contains(line, volume+":/s") && strings.HasSuffix(line, "cat /s/"+file) {
+				return []byte(value), err
+			}
+		}
+		if strings.Contains(line, "psql") {
 			sql := string(data)
 			switch {
 			case h.roleFails && strings.Contains(sql, " ROLE "):
@@ -105,13 +135,19 @@ func (h *harness) installAt(args ...string) error {
 		}
 		return out, err
 	}
-	env := Env{
+	return Env{
 		Deps:     d,
 		Term:     Terminal{In: strings.NewReader(h.stdin), Out: &h.out},
 		PortFree: func(port int) error { return busyError(h.busy, port) },
 		Sleep:    func(time.Duration) {},
+		ResolveGitHub: func(ctx context.Context, e githubEnv) (GitHubResult, error) {
+			h.githubSeen = append(h.githubSeen, e)
+			if h.github == nil {
+				return GitHubResult{}, errors.New("the GitHub flow was not expected")
+			}
+			return h.github(ctx, e)
+		},
 	}
-	return Install(context.Background(), append([]string{"--token-file", h.tokenPath()}, args...), env)
 }
 
 func busyError(busy map[int]bool, port int) error {
@@ -639,26 +675,45 @@ func TestInstallDoesNotRefusePortsHeldByItsOwnService(t *testing.T) {
 
 // ---- GitHub ----
 
-func (h *harness) writeKey() string {
-	path := filepath.Join(h.dir, "app.pem")
-	if err := os.WriteFile(path, []byte(testPEM), 0o600); err != nil {
-		h.t.Fatal(err)
+// githubResult is what a finished GitHub flow returns.
+func githubResult() GitHubResult {
+	return GitHubResult{
+		AppID: 1234, Slug: "suiteward-acme", InstallationID: 5678, Account: "Acme", AccountType: "Organization", OwnerLogin: "alice",
+		Repositories: []string{"Acme/api", "Acme/web"}, TestChecks: map[string]string{"Acme/api": "CI / test", "Acme/web": "CI / test"},
+		PrivateKey: []byte(testPEM),
 	}
-	return path
 }
 
 var githubFlags = []string{
 	"--github-app-id", "1234", "--github-installation-id", "5678", "--github-owner", "Acme", "--github-repositories", "Acme/api,Acme/web",
 }
 
-func TestInstallConfiguresGitHubAndStoresTheKeyFromAFile(t *testing.T) {
+func TestInstallRunsTheGitHubFlowAndAppliesItsResult(t *testing.T) {
 	h := newHarness(t, "linux")
-	key := h.writeKey()
-	if err := h.podman(append(githubFlags, "--github-app-key-file", key)...); err != nil {
+	h.github = func(ctx context.Context, e githubEnv) (GitHubResult, error) {
+		if err := e.StoreKey(ctx, []byte(testPEM)); err != nil { // as the manifest flow does, right after the conversion
+			return GitHubResult{}, err
+		}
+		return githubResult(), nil
+	}
+	if err := h.podman(append(githubFlags, "--manifest-port", "9999")...); err != nil {
 		t.Fatal(err)
 	}
+	if len(h.githubSeen) != 1 {
+		t.Fatalf("the GitHub flow ran %d times", len(h.githubSeen))
+	}
+	e := h.githubSeen[0]
+	if e.Tier != config.TierCoLocated || e.SettingsDir != h.dir || e.ManifestPort != 9999 || e.Existing == nil || e.Existing.AppID != 0 ||
+		e.KeyExists == nil || e.ReadKey == nil || e.StoreKey == nil || e.Out == nil {
+		t.Errorf("the flow was given %+v", e)
+	}
+	for key, want := range map[string]string{"app-id": "1234", "installation-id": "5678", "owner": "Acme", "repositories": "Acme/api,Acme/web"} {
+		if got, ok := e.R.given(key); !ok || got != want {
+			t.Errorf("the answer %s is %q, %v; want %q", key, got, ok, want)
+		}
+	}
 	if writes := h.secretWrites(SecretGitHubAppKey); len(writes) != 1 || writes[0] != testPEM {
-		t.Fatalf("key writes: %q", writes)
+		t.Fatalf("the key was written %d times: %q", len(writes), writes)
 	}
 	h.assertOrder("secret create suiteward-github-app-key -", "rm --force --ignore --time 45 suiteward")
 	serve := h.f.find("--name suiteward --network")[0].line()
@@ -674,64 +729,144 @@ func TestInstallConfiguresGitHubAndStoresTheKeyFromAFile(t *testing.T) {
 	if strings.Contains(h.f.find("--name suiteward-migrate ")[0].line(), "github") {
 		t.Error("migrate gets GitHub")
 	}
-	if g := h.settings().GitHub; g.AppID != 1234 || g.InstallationID != 5678 || g.Owner != "Acme" || len(g.Repositories) != 2 {
+	if g := h.settings().GitHub; g.AppID != 1234 || g.InstallationID != 5678 || g.Owner != "Acme" || len(g.Repositories) != 2 || g.TestChecks["Acme/api"] != "CI / test" {
 		t.Errorf("saved GitHub settings: %+v", g)
 	}
 	h.f.assertNoSecret(t, testPEM, "MIIEvQIBADANBgkq")
-	want := "podman --connection pm exec -it suiteward /suiteward setup --owner Acme --test-check 'Acme/api=<check name>' --test-check 'Acme/web=<check name>'"
+	if len(h.f.tty) != 0 {
+		t.Error("setup ran without a terminal")
+	}
+	want := "podman --connection pm exec -it suiteward /suiteward setup --owner alice --test-check 'Acme/api=CI / test' --test-check 'Acme/web=CI / test'"
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the next steps lack %q:\n%s", want, h.out.String())
 	}
+	if !strings.Contains(h.out.String(), "suiteward doctor --settings "+h.settingsPath()) {
+		t.Errorf("the next steps do not say to run doctor:\n%s", h.out.String())
+	}
 }
 
-func TestInstallReadsTheKeyFromStdin(t *testing.T) {
+func TestInstallStoresTheKeyOfAnExistingApp(t *testing.T) {
 	h := newHarness(t, "linux")
-	h.stdin = testPEM
-	if err := h.podman(append(githubFlags, "--github-app-key-file", "-")...); err != nil {
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil } // StoreKey is not called
+	if err := h.podman(githubFlags...); err != nil {
 		t.Fatal(err)
 	}
 	if writes := h.secretWrites(SecretGitHubAppKey); len(writes) != 1 || writes[0] != testPEM {
 		t.Fatalf("key writes: %q", writes)
 	}
+	h2 := newHarness(t, "linux")
+	h2.have(kindSecret, SecretGitHubAppKey)
+	h2.github = h.github
+	if err := h2.podman(githubFlags...); err != nil {
+		t.Fatal(err)
+	}
+	if len(h2.secretWrites(SecretGitHubAppKey)) != 0 {
+		t.Error("an existing key secret was written again")
+	}
 }
 
-func TestInstallKeepsAnExistingKeyAndDoesNotAskForIt(t *testing.T) {
+func TestInstallRunsSetupOnARealTerminal(t *testing.T) {
+	was := setupTerminal
+	setupTerminal = func() bool { return true }
+	t.Cleanup(func() { setupTerminal = was })
 	h := newHarness(t, "linux")
-	h.have(kindSecret, SecretGitHubAppKey)
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
 	if err := h.podman(githubFlags...); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.secretWrites(SecretGitHubAppKey)) != 0 {
-		t.Error("the existing key was replaced")
+	if len(h.f.tty) != 1 {
+		t.Fatalf("setup ran %d times", len(h.f.tty))
 	}
+	want := "--connection pm exec -it suiteward /suiteward setup --owner alice --test-check Acme/api=CI / test --test-check Acme/web=CI / test"
+	if got := h.f.tty[0].line(); got != want {
+		t.Errorf("setup ran as %q, want %q", got, want)
+	}
+	h.f.assertNoSecret(t, testPEM)
 }
 
-func TestInstallGitHubNeedsAKeyWhenItsSecretIsMissing(t *testing.T) {
+func TestInstallDoesNotRunTheGitHubFlowAgainOnARerun(t *testing.T) {
 	h := newHarness(t, "linux")
-	err := h.podman(githubFlags...)
-	if err == nil || !strings.Contains(err.Error(), "github-app-key-file") {
-		t.Fatalf("got %v", err)
-	}
-	h.mustNotMutate()
-}
-
-func TestInstallRefusesAKeyThatIsNotAPEM(t *testing.T) {
-	h := newHarness(t, "linux")
-	path := filepath.Join(h.dir, "not-a-key")
-	if err := os.WriteFile(path, []byte("hello"), 0o600); err != nil {
+	s := localPS1Settings()
+	s.Connection = "pm"
+	if err := SaveSettings(h.settingsPath(), s); err != nil {
 		t.Fatal(err)
 	}
-	err := h.podman(append(githubFlags, "--github-app-key-file", path)...)
-	if err == nil || !strings.Contains(err.Error(), "PEM") {
-		t.Fatalf("got %v", err)
+	h.have(kindSecret, SecretGitHubAppKey)
+	if err := h.podman("--http-port", "18081", "--mcp-port", "18091"); err != nil {
+		t.Fatal(err)
 	}
-	h.mustNotMutate()
+	if len(h.githubSeen) != 0 {
+		t.Fatal("a re-run asked GitHub again")
+	}
+	if serve := h.f.find("--name suiteward --network")[0].line(); !strings.Contains(serve, "SUITEWARD_GITHUB_APP_ID=1234") {
+		t.Errorf("serve lost its GitHub settings: %s", serve)
+	}
 }
 
-func TestInstallGitHubIsAllOrNothing(t *testing.T) {
+func TestInstallRunsTheFlowWhenTheKeySecretOfSavedGitHubSettingsIsMissing(t *testing.T) {
 	h := newHarness(t, "linux")
-	err := h.podman("--github-app-id", "1234")
-	if err == nil || !strings.Contains(err.Error(), "installation") {
+	s := localPS1Settings()
+	s.Connection = "pm"
+	if err := SaveSettings(h.settingsPath(), s); err != nil {
+		t.Fatal(err)
+	}
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	if err := h.podman("--http-port", "18081", "--mcp-port", "18091"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.githubSeen) != 1 || h.githubSeen[0].Existing == nil || h.githubSeen[0].Existing.AppID != 1234 {
+		t.Fatalf("the flow was not given the saved GitHub settings: %+v", h.githubSeen)
+	}
+}
+
+func TestInstallCreatesAnAppOnRequestAndPassesTheTestChecks(t *testing.T) {
+	h := newHarness(t, "linux")
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	if err := h.podman("--github", "yes", "--test-check", "Acme/api=CI / test", "--test-check", "Acme/web=CI / test"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.githubSeen) != 1 {
+		t.Fatal("--github yes did not run the flow")
+	}
+	if got, _ := h.githubSeen[0].R.given("test-check"); got != "Acme/api=CI / test\nAcme/web=CI / test" {
+		t.Errorf("test checks: %q", got)
+	}
+}
+
+func TestInstallGitHubNoneSkipsTheFlow(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := h.podman("--github-app-id", "none"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.githubSeen) != 0 || h.settings().GitHub.AppID != 0 {
+		t.Error("none did not skip GitHub")
+	}
+}
+
+func TestInstallRefusesGitHubValuesWithoutAnApp(t *testing.T) {
+	for _, args := range [][]string{
+		{"--github-installation-id", "5678"}, {"--github-repositories", "Acme/api"}, {"--github-app-key-file", "key.pem"}, {"--github-owner", "Acme"},
+	} {
+		h := newHarness(t, "linux")
+		h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+		err := h.podman(args...)
+		if err == nil || !strings.Contains(err.Error(), "--github-app-id") {
+			t.Errorf("%v: got %v", args, err)
+		}
+		if len(h.githubSeen) != 0 {
+			t.Errorf("%v: the flow ran", args)
+		}
+		h.mustNotMutate()
+	}
+}
+
+func TestInstallStopsWhenTheGitHubFlowFails(t *testing.T) {
+	h := newHarness(t, "linux")
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) {
+		return GitHubResult{}, errors.New("the installation never appeared")
+	}
+	err := h.podman(githubFlags...)
+	if err == nil || !strings.Contains(err.Error(), "never appeared") {
 		t.Fatalf("got %v", err)
 	}
 	h.mustNotMutate()

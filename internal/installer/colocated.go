@@ -598,7 +598,11 @@ func (c colocatedInstall) nextSteps() {
 		c.say("GitHub is not configured. Run the install again with the GitHub values before setup.\n")
 		return
 	}
-	cmd := engineCommand(c.rt, c.env.Deps.GOOS)
+	cmd, err := engineCommand(c.rt, c.env.Deps.GOOS)
+	if err != nil {
+		c.say("Next: enroll the owner with `exec -it %s /suiteward setup` in the service container (%v).\n", ContainerServe, err)
+		return
+	}
 	var checks []string
 	for _, repo := range g.Repositories {
 		checks = append(checks, "--test-check '"+repo+"=<check name>'")
@@ -608,13 +612,15 @@ func (c colocatedInstall) nextSteps() {
 }
 
 // engineCommand is how to run the engine's CLI by hand against this stack's engine.
-func engineCommand(rt Runtime, goos string) string {
+func engineCommand(rt Runtime, goos string) (string, error) {
 	var c cli
 	switch r := rt.(type) {
 	case *Podman:
 		c = r.cli
 	case *Docker:
 		c = r.cli
+	default:
+		return "", fmt.Errorf("%T is not a container engine this installer drives", rt)
 	}
 	bin := c.bin
 	if strings.Contains(bin, " ") {
@@ -623,5 +629,5 @@ func engineCommand(rt Runtime, goos string) string {
 			bin = "& " + bin
 		}
 	}
-	return strings.Join(append([]string{bin}, c.base...), " ")
+	return strings.Join(append([]string{bin}, c.base...), " "), nil
 }

@@ -164,6 +164,7 @@ func TestAdoptUnitsComparesWithTheNamedRelease(t *testing.T) {
 // where --cap-drop all is recorded as the list of default capabilities, the network is under NetworkSettings and the
 // secrets under Config.Secrets.
 func podmanInspect(t *testing.T, spec RunSpec, edit func(map[string]any)) []byte {
+	image := podmanImageName(spec.Image)
 	t.Helper()
 	env := []string{"PATH=/usr/bin", "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"}
 	if strings.Contains(spec.Image, "suiteward@") {
@@ -198,7 +199,7 @@ func podmanInspect(t *testing.T, spec RunSpec, edit func(map[string]any)) []byte
 		}
 		secrets = append(secrets, map[string]any{"Name": name, "UID": uid, "GID": 0, "Mode": 256})
 	}
-	config := map[string]any{"Image": spec.Image, "User": "65532:65532", "Env": env, "StopTimeout": spec.StopTimeout, "Secrets": secrets}
+	config := map[string]any{"Image": image, "User": "65532:65532", "Env": env, "StopTimeout": spec.StopTimeout, "Secrets": secrets}
 	if spec.User != "" {
 		config["User"] = spec.User
 	}
@@ -208,7 +209,7 @@ func podmanInspect(t *testing.T, spec RunSpec, edit func(map[string]any)) []byte
 		config["Healthcheck"] = map[string]any{"Test": []string{"CMD-SHELL", h.Cmd}, "Interval": int64(interval), "Timeout": int64(timeout), "Retries": h.Retries}
 	}
 	obj := map[string]any{
-		"Name": spec.Name, "ImageName": spec.Image, "Config": config, "Mounts": mounts,
+		"Name": spec.Name, "ImageName": image, "Config": config, "Mounts": mounts,
 		"NetworkSettings": map[string]any{"Networks": map[string]any{spec.Network: map[string]any{}}},
 		"HostConfig": map[string]any{
 			"ReadonlyRootfs": true, "SecurityOpt": []string{"no-new-privileges"}, "Memory": memory, "NetworkMode": "bridge",
@@ -426,4 +427,75 @@ func TestAdoptContainersReportsEveryDifferenceAtOnce(t *testing.T) {
 	if !strings.Contains(diff.Error(), "run again") {
 		t.Fatalf("the error gives no way forward: %v", diff)
 	}
+}
+
+func TestSameImage(t *testing.T) {
+	pg, _ := PostgresImage() // docker.io/library/postgres:18.6-trixie@sha256:<digest>
+	repo, digest, _ := strings.Cut(pg, "@")
+	untagged := strings.TrimSuffix(repo, ":18.6-trixie") + "@" + digest
+	otherDigest := strings.TrimSuffix(repo, ":18.6-trixie") + "@sha256:" + strings.Repeat("e", 64)
+	for _, tc := range []struct {
+		name      string
+		want, got string
+		same      bool
+	}{
+		{"the same tagged reference", pg, pg, true},
+		{"Podman's tagless form of a tagged reference", pg, untagged, true},
+		{"another tag with the same digest", pg, repo[:strings.LastIndex(repo, ":")] + ":19@" + digest, true},
+		{"another digest", pg, otherDigest, false},
+		{"another repository, same digest", pg, "docker.io/library/other@" + digest, false},
+		{"another registry, same digest", pg, "quay.io/library/postgres@" + digest, false},
+		{"no digest on the installed one", pg, strings.TrimSuffix(repo, ":18.6-trixie") + ":18.6-trixie", false},
+		{"a tag only, equal", "localhost/suiteward:local", "localhost/suiteward:local", true},
+		{"a tag only, different", "localhost/suiteward:local", "localhost/suiteward:other", false},
+		{"empty", pg, "", false},
+	} {
+		if got := sameImage(tc.want, tc.got); got != tc.same {
+			t.Errorf("%s: sameImage(%q, %q) = %v, want %v", tc.name, tc.want, tc.got, got, tc.same)
+		}
+	}
+}
+
+func TestAdoptContainersAcceptsTheTaggedImageToo(t *testing.T) {
+	pg, _ := PostgresImage()
+	inspected := inspectedStack(t, localPS1Settings(), testImage, func(name string, obj map[string]any) {
+		if name == ContainerDB {
+			obj["Config"].(map[string]any)["Image"] = pg
+		}
+	})
+	if _, err := AdoptContainers(inspected); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdoptContainersRefusesAnotherRepositoryOrDigestOfTheDatabaseImage(t *testing.T) {
+	pg, _ := PostgresImage()
+	repo, digest, _ := strings.Cut(pg, "@")
+	base := strings.TrimSuffix(repo, ":18.6-trixie")
+	for name, image := range map[string]string{
+		"another digest":     base + "@sha256:" + strings.Repeat("e", 64),
+		"another repository": "docker.io/library/other@" + digest,
+	} {
+		inspected := inspectedStack(t, localPS1Settings(), testImage, func(c string, obj map[string]any) {
+			if c == ContainerDB {
+				obj["Config"].(map[string]any)["Image"] = image
+			}
+		})
+		_, err := AdoptContainers(inspected)
+		if diff := asDiffError(t, err); !diffMentions(diff, "image") {
+			t.Errorf("%s: %v", name, diff)
+		}
+	}
+}
+
+// podmanImageName is how Podman records an image created from name:tag@digest: the tag is dropped.
+func podmanImageName(image string) string {
+	repo, digest, pinned := strings.Cut(image, "@")
+	if !pinned {
+		return image
+	}
+	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
+		repo = repo[:i]
+	}
+	return repo + "@" + digest
 }

@@ -130,6 +130,9 @@ func AdoptContainers(raw map[string][]byte) (Adopted, error) {
 	return Adopted{Settings: settings, Image: image}, nil
 }
 
+// sameImage says whether an installed container runs the image the stack expects.
+func sameImage(want, got string) bool { return want == got }
+
 func envMap(env []string) map[string]string {
 	m := make(map[string]string, len(env))
 	for _, kv := range env {

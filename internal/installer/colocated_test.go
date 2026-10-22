@@ -75,6 +75,12 @@ func (h *harness) haveDockerSecret(file string) { h.f.on("test -f /s/"+file, "ye
 
 func (h *harness) install(args ...string) error {
 	h.t.Helper()
+	return h.installAt(append([]string{"--settings", h.settingsPath()}, args...)...)
+}
+
+// installAt runs the install with the arguments as they are, apart from the token file.
+func (h *harness) installAt(args ...string) error {
+	h.t.Helper()
 	d := h.f.deps()
 	inner := d.Exec
 	d.Exec = func(ctx context.Context, name string, a []string, stdin io.Reader) ([]byte, error) {
@@ -105,8 +111,7 @@ func (h *harness) install(args ...string) error {
 		PortFree: func(port int) error { return busyError(h.busy, port) },
 		Sleep:    func(time.Duration) {},
 	}
-	base := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath()}
-	return Install(context.Background(), append(base, args...), env)
+	return Install(context.Background(), append([]string{"--token-file", h.tokenPath()}, args...), env)
 }
 
 func busyError(busy map[int]bool, port int) error {
@@ -1053,5 +1058,115 @@ func TestInstallUsageErrorIsShortAndHelpListsTheFlags(t *testing.T) {
 	}
 	if err := h.install("--help"); !errors.Is(err, flag.ErrHelp) || !strings.Contains(h.out.String(), "-image") {
 		t.Fatalf("--help: %v\n%s", err, h.out.String())
+	}
+}
+
+// ---- paths shared by every runtime ----
+
+// useDefaultConfigDir points the per-user configuration directory at a temporary one.
+func useDefaultConfigDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, key := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
+		t.Setenv(key, dir)
+	}
+	return dir
+}
+
+func TestInstallRefusesTheDefaultSettingsOfAnotherRuntime(t *testing.T) {
+	for _, tc := range []struct{ saved, selected string }{{RuntimeDocker, RuntimePodman}, {RuntimePodman, RuntimeDocker}} {
+		t.Run(tc.selected, func(t *testing.T) {
+			useDefaultConfigDir(t)
+			path, err := DefaultSettingsPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			other := DefaultSettings()
+			other.Runtime = tc.saved
+			if err := SaveSettings(path, other); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(path)
+			h := newHarness(t, "linux")
+			if tc.selected == RuntimeDocker {
+				h = dockerHarness(t, "linux")
+			}
+			err = h.installAt("--runtime", tc.selected, "--accept-docker", "--connection", "pm", "--image", testImage)
+			if err == nil || !strings.Contains(err.Error(), "--settings") || !strings.Contains(err.Error(), "--token-file") {
+				t.Fatalf("got %v, want a message about --settings and --token-file", err)
+			}
+			h.mustNotMutate()
+			if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+				t.Error("the settings of the other instance were changed")
+			}
+		})
+	}
+}
+
+func TestInstallKeepsTheDefaultSettingsOfTheSameRuntime(t *testing.T) {
+	useDefaultConfigDir(t)
+	path, err := DefaultSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(path, DefaultSettings()); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, "linux")
+	if err := h.installAt("--runtime", "podman", "--image", testImage); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInstallRefusesAnExistingTokenCopyWithoutItsSecret(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := os.WriteFile(h.tokenPath(), []byte("another instance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := h.podman()
+	if err == nil || !strings.Contains(err.Error(), "--token-file") || !strings.Contains(err.Error(), "--settings") {
+		t.Fatalf("got %v, want a message about --settings and --token-file", err)
+	}
+	h.mustNotMutate()
+	if got, _ := os.ReadFile(h.tokenPath()); string(got) != "another instance" {
+		t.Error("the token copy of the other instance was overwritten")
+	}
+}
+
+// ---- the installed image ----
+
+func TestInstallRemembersTheImageSoADockerRerunNeedsNoFlag(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	if err := h.docker(); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.settings().Image; got != testImage {
+		t.Fatalf("saved image %q", got)
+	}
+	again := dockerHarness(t, "windows")
+	again.dir = h.dir
+	again.have(KindContainer, ContainerDB, ContainerServe)
+	again.have(KindNetwork, NetworkName)
+	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+		again.haveDockerSecret(file)
+	}
+	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
+	again.roleExists = true
+	if err := again.install("--runtime", "docker", "--accept-docker"); err != nil {
+		t.Fatalf("a re-run without --image: %v", err)
+	}
+	if run := again.f.find("--name suiteward --network"); len(run) != 1 || !strings.Contains(run[0].line(), " "+testImage) {
+		t.Errorf("the service did not start from the installed image: %v", run)
+	}
+}
+
+func TestInstallSavesTheImageOfAPodmanInstall(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.settings().Image; got != testImage {
+		t.Fatalf("saved image %q", got)
 	}
 }

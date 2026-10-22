@@ -29,6 +29,10 @@ func TestMain(m *testing.M) {
 		fmt.Print(string(buf[:n]))
 		fmt.Fprint(os.Stderr, "helper note")
 		os.Exit(0)
+	case "failout": // a long stdout that ends with the reason, then stderr, then a failure
+		fmt.Print("FIRSTLINE ", strings.Repeat("log ", 3000), "migration 21 failed")
+		fmt.Fprint(os.Stderr, "boom")
+		os.Exit(3)
 	case "fail":
 		fmt.Fprint(os.Stderr, "something went wrong")
 		os.Exit(3)
@@ -111,5 +115,19 @@ func TestUnitParamsFromSettings(t *testing.T) {
 	p := UnitParamsFrom(s, testDigest)
 	if p.Digest != testDigest || p.Tier != config.TierIsolated || p.HTTPPort != 18081 || p.MCPPort != 18091 || p.JobTimeout != "3m" || p.EnvFile != "" {
 		t.Fatalf("got %+v", p)
+	}
+}
+
+func TestOSExecFailureCarriesABoundedTailOfStdout(t *testing.T) {
+	name, args := helperCommand(t, "failout")
+	_, err := OSExec(context.Background(), name, args, nil)
+	if err == nil || !strings.Contains(err.Error(), "migration 21 failed") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("the error lacks the output of the failed command: %v", err)
+	}
+	if strings.Contains(err.Error(), "FIRSTLINE") {
+		t.Fatalf("the error keeps the start of a long output, not its end: %v", err)
+	}
+	if n := len(err.Error()); n > 4096 {
+		t.Fatalf("the error is %d bytes", n)
 	}
 }

@@ -52,6 +52,7 @@ type Settings struct {
 	HTTPPort   int         `yaml:"http_port"`
 	MCPPort    int         `yaml:"mcp_port"`
 	JobTimeout string      `yaml:"job_timeout,omitempty"` // a Go duration
+	Image      string      `yaml:"image,omitempty"`       // the release image installed, pinned by digest
 	GitHub     GitHub      `yaml:"github,omitempty"`
 }
 

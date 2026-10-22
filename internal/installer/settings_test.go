@@ -252,3 +252,20 @@ func TestWriteFileAtomicFailsWhenTheFlushFails(t *testing.T) {
 		t.Fatalf("a temporary file was left behind: %v", entries)
 	}
 }
+
+func TestSettingsKeepTheInstalledImage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	s := DefaultSettings()
+	s.Image = testImage
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSettings(path)
+	if err != nil || got.Image != testImage {
+		t.Fatalf("got %q, %v", got.Image, err)
+	}
+	s.Image = "ghcr.io/ignisdevne/suiteward:v0.2.0"
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "image") {
+		t.Fatalf("an image that is not pinned by digest was accepted: %v", err)
+	}
+}

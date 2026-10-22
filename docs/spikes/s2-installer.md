@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-21/22
 - **Phase:** [M1.12](../plan/phases/M1.12.md)
-- **Decision:** [D-INSTALLER](../plan/decisions.md)
+- **Decision:** [D-INSTALLER](../plan/decisions.md#d-installer-the-installer-and-the-first-distributable-version)
 
 The live checks run before the installer's design was locked. The tools ran outside the repository and none is kept. Every App, installation and repository named below was throwaway and is deleted after the spike.
 
@@ -86,4 +86,4 @@ Checked: the migrate container lists only `database-owner-url`; the serve contai
   `doctor` checks whichever is chosen.
 - **Not closed by that:** after a Windows reboot, the Podman machine itself is not running until someone starts it. Starting the machine at logon is a separate gap. Until it is decided, `doctor` reports a stopped machine, and the docs say to run `podman machine start`.
 
-**Consequence for D-INSTALLER:** on Docker, the secrets go into a named volume (`suiteward-secrets`), one file per secret, owned by the uid that reads it (65532 for the service, 999 for the database password), mode 0400. They are written from memory through stdin, so **they never touch the Windows disk**. That replaces the private per-user directory in the plan. Docker stays discouraged, for its rootful daemon and because the volume is readable by anyone who controls that daemon.
+**Consequence for D-INSTALLER:** on Docker, the secrets go into named volumes, one volume per consumer (see above), one file per secret, owned by the uid that reads it (65532 for the service, 999 for the database password), mode 0400. They are written from memory through stdin, so **they never touch the Windows disk**. That replaces the private per-user directory in the plan. Docker stays discouraged, for its rootful daemon and because the volume is readable by anyone who controls that daemon.

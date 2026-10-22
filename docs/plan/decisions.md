@@ -18,7 +18,7 @@ Accepted 2026-10-05. A single `suiteward serve` binary runs the API and the work
 
 Accepted 2026-10-05 as initial defaults; it no longer gates the runtime phase.
 
-- Poll every 60 s with conditional (ETag) requests.
+- Poll every 60 s (initial default; see the amendments) with conditional (ETag) requests.
 - Use at most 50% of the installation's API rate budget.
 - Supported limit: at most 20 repositories.
 - MCP is limited to sync and status, authenticated with a local token.
@@ -380,9 +380,9 @@ Accepted 2026-10-15 (owner, phase M1.7), from the S1 proposals ([s1-github](../s
 
 Accepted 2026-10-17 (owner answers, M1.8 planning), within [ADR 0009](../decisions/0009-agpl-3.0-distribution.md).
 
-- **Platforms.** The MVP ships only the container image `ghcr.io/ignisdevne/suiteward` for `linux/amd64` and `linux/arm64`. A native binary comes after the MVP.
+- **Platforms.** The MVP ships only the container image `ghcr.io/ignisdevne/suiteward` for `linux/amd64` and `linux/arm64`. A native binary comes after the MVP. *Amended 2026-10-21: [D-INSTALLER](#d-installer-the-installer-and-the-first-distributable-version) ships the `suiteward` binary as release assets with the alpha, and its pre-release tags are `vX.Y.Z-alpha.N`.*
 - **Versions.**
-  - A release is a `vX.Y.Z` git tag on a commit of `main`, and the release workflow checks that the commit is an ancestor of `main`. A pre-release `vX.Y.Z-rc.N` may sit on a phase branch.
+  - A release is a `vX.Y.Z` git tag on a commit of `main`, and the release workflow checks that the commit is an ancestor of `main`. A pre-release `vX.Y.Z-rc.N` may sit on a phase branch. *Amended 2026-10-21 by D-INSTALLER: the alpha uses `vX.Y.Z-alpha.N` pre-release tags.*
   - The workflow publishes the image tag `vX.Y.Z`. A release that is not a pre-release also moves `latest-stable`; a pre-release never moves it.
   - `sha-<commit>` and `deploy` were our internal build and promotion tags; both were retired on 2026-10-21 (D-DEPLOY), and releases are the only published images.
   - **Publishing needs the owner's approval in a protected `release` environment**, as the retired `remote-poc` did for promotion. The bot could push a tag by itself: it has Contents write, and it is the governed party once SuiteWard governs its own tests. So the tag alone is not the authorization.
@@ -420,7 +420,7 @@ Accepted 2026-10-17 (owner answers, M1.8 planning).
   - For the MVP, the install guide leads with the co-located path, one command on the user's machine. The isolated host is the operator path: ours, and for whoever self-hosts on a separate machine.
 - **Ruleset.** The user creates it, guided by a direct link to the repository's rulesets page and the exact boxes to tick. The App keeps no Administration write, so it can never change its own protection.
 - **GitHub App.** The user creates it by hand, from a checklist in the install guide that lists the exact permissions of [D-GITHUB-ACCESS](#d-github-access-github-app-permissions-and-token-lifecycle). The manifest flow is backlog. *Amended 2026-10-21: [D-INSTALLER](#d-installer-the-installer-and-the-first-distributable-version) creates the App through the manifest flow.*
-- **Updates.** The user pins the image by digest and updates when they choose: pull the new `vX.Y.Z`, verify its signature, change both `Image=` lines to its digest, then `restart suiteward-migrate.service`, which migrates and restarts the service (install guide, section 11). Automatic updates are not supported (amended 2026-10-20, below): the migration unit cannot be updated by Podman, so an automatic update would start the service alone on an old schema.
+- **Updates.** The user pins the image by digest and updates when they choose: pull the new `vX.Y.Z`, verify its signature, change both `Image=` lines to its digest, then `restart suiteward-migrate.service`, which migrates and restarts the service (install guide, section 11). *Amended 2026-10-21 by [D-INSTALLER](#d-installer-the-installer-and-the-first-distributable-version): the install guide is rewritten around the installer, which leads with one command and updates through `suiteward install --upgrade`.* Automatic updates are not supported (amended 2026-10-20, below): the migration unit cannot be updated by Podman, so an automatic update would start the service alone on an old schema.
 - **Backup.** The MVP backup is a plain `pg_dump` plus a tarball of the artifact volume, kept by the user. The runbook warns that it holds the TOTP secret and the enrollment. Encrypted backups and guided restore stay post-MVP (D-ARCHIVE, D-RESTORE).
 - **Dogfooding.**
   - SuiteWard governs its own tests on the isolated host, with `CI / Gate` as the test check (the name of the required check of `ci.yml`), after the acceptance run on a test repository.

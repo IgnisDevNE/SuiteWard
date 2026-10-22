@@ -71,8 +71,19 @@ Docker Desktop 29.9.2 (`desktop-linux` context), with throwaway `busybox` contai
 | `docker exec -t` | A TTY is allocated (`/dev/pts/0`), so `exec -it` can carry setup's terminal. |
 | `-p 127.0.0.1:18081:8080` | Reachable from Windows on `http://127.0.0.1:18081` (HTTP 200), with no machine ssh. |
 
+**One secret volume per consumer.** migrate and serve both run as uid 65532, so file modes cannot keep the owner URL away from `serve`. On Podman, that separation comes from which secrets are mounted into which container (SH). The same holds on Docker with one volume per consumer, each mounted only into its own container:
+- the database password, for the database container;
+- the owner URL and the app URL, for migrate;
+- the app URL, the App key and the MCP token, for serve.
+
+Checked: the migrate container lists only `database-owner-url`; the serve container lists only `database-url`, and `cat /run/secrets/database-owner-url` there gives `No such file or directory`. The full stack on Docker (postgres reading its password from a volume as uid 999, then migrate, then serve) has not run yet. It is the first acceptance test of I4.
+
 **Podman machine restart.** After the Podman machine was stopped and started again (to let Docker Desktop take the pipe), the co-located stack made by `local.ps1` stayed stopped: both containers showed `Exited`, and `/readyz` did not answer until they were started by hand.
 - Rootless Podman honours `--restart always` only while the user's `podman-restart.service` is enabled, and on this machine it is not. So today every reboot of the PC also stops a co-located instance.
-- The installer either enables `podman-restart.service` for the machine's user, or runs the co-located stack as quadlet units inside the machine. `doctor` checks this.
+- In `podman-machine-default`, the user's systemd manager is `running`, linger is `yes`, and `podman-restart.service` is `disabled`. So both options work:
+  - the installer can enable `podman-restart.service` for that user;
+  - or it can run the co-located stack as quadlet units inside the machine.
+  `doctor` checks whichever is chosen.
+- **Not closed by that:** after a Windows reboot, the Podman machine itself is not running until someone starts it. Starting the machine at logon is a separate gap. Until it is decided, `doctor` reports a stopped machine, and the docs say to run `podman machine start`.
 
 **Consequence for D-INSTALLER:** on Docker, the secrets go into a named volume (`suiteward-secrets`), one file per secret, owned by the uid that reads it (65532 for the service, 999 for the database password), mode 0400. They are written from memory through stdin, so **they never touch the Windows disk**. That replaces the private per-user directory in the plan. Docker stays discouraged, for its rootful daemon and because the volume is readable by anyone who controls that daemon.

@@ -39,6 +39,15 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if !st.found {
 		return ErrNothingInstalled
 	}
+	err = refuseUnfinishedInstall(pendingAppPath(host.settingsPath), func() (GitHub, error) {
+		if s.GitHub.AppID != 0 {
+			return s.GitHub, nil
+		}
+		return readGitHubEnvFile(host.envPath) // a host installed by hand, or a run that stopped after it wrote the file
+	})
+	if err != nil {
+		return err
+	}
 	s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = st.adopted.Settings.Tier, st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout
 	postgres, err := PostgresImage()
 	if err != nil {

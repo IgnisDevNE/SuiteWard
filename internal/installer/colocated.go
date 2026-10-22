@@ -702,7 +702,7 @@ func (c *colocatedInstall) finish(ctx context.Context, t installTarget) error {
 	c.say("Read the status of the service: %s\n", c.statusHint(ctx))
 	doctor := "suiteward doctor"
 	if !t.defaultPath {
-		doctor += " --settings " + t.settingsPath
+		doctor += " --settings " + quoteArg(t.settingsPath)
 	}
 	if c.s.GitHub.AppID == 0 {
 		c.say("GitHub is not configured. Run the install again with --github yes (or the GitHub values) to set it up, then enroll the owner.\n")

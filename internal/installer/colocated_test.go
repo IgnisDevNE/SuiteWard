@@ -243,7 +243,7 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.assertOrder(
-		"network create suiteward",
+		"pull " + testImage, "network create suiteward",
 		"volume create suiteward-data", "volume create suiteward-db-data",
 		"secret create suiteward-db-password -", "secret create suiteward-database-owner-url -", "secret create suiteward-mcp-token -",
 		"rm --force --ignore --time 45 suiteward", "rm --force --ignore --time 45 suiteward-migrate",
@@ -281,10 +281,8 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 	if s.Runtime != RuntimePodman || s.Connection != "pm" || s.HTTPPort != 18081 || s.MCPPort != 18091 {
 		t.Errorf("saved settings: %+v", s)
 	}
-	for _, want := range []string{"exec -it suiteward /suiteward setup", "podman --connection pm"} {
-		if !strings.Contains(h.out.String(), want) {
-			t.Errorf("the next steps lack %q:\n%s", want, h.out.String())
-		}
+	if !strings.Contains(h.out.String(), "GitHub is not configured") {
+		t.Errorf("the next steps do not say that setup needs GitHub:\n%s", h.out.String())
 	}
 }
 
@@ -674,6 +672,10 @@ func TestInstallConfiguresGitHubAndStoresTheKeyFromAFile(t *testing.T) {
 		t.Errorf("saved GitHub settings: %+v", g)
 	}
 	h.f.assertNoSecret(t, testPEM, "MIIEvQIBADANBgkq")
+	want := "podman --connection pm exec -it suiteward /suiteward setup --owner Acme --test-check 'Acme/api=<check name>' --test-check 'Acme/web=<check name>'"
+	if !strings.Contains(h.out.String(), want) {
+		t.Errorf("the next steps lack %q:\n%s", want, h.out.String())
+	}
 }
 
 func TestInstallReadsTheKeyFromStdin(t *testing.T) {
@@ -947,6 +949,9 @@ func TestInstallDockerBringsTheStackUpWithSecretVolumes(t *testing.T) {
 		"run --detach --name suiteward --network",
 	)
 	for _, c := range h.f.calls {
+		if c.name == "icacls" {
+			continue
+		}
 		if c.name != dockerDesktopCLI || c.args[0] != "--context" || c.args[1] != "desktop-linux" {
 			t.Errorf("a call is not addressed to Docker Desktop: %s %v", c.name, c.args)
 		}

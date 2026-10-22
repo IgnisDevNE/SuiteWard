@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer"
 )
 
 // Version is the build version that /status reports. The release build sets it:
@@ -26,6 +27,7 @@ const usage = `usage: suiteward serve
        suiteward migrate
        suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
        suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]
+       suiteward install [flags]
 `
 
 // Env is the process environment that the settings are read from, and the
@@ -56,6 +58,9 @@ func runWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writ
 	command := ""
 	if len(args) > 0 {
 		command = args[0]
+	}
+	if command == "install" { // before the settings are read: the machine that installs has no SUITEWARD_* environment
+		return installer.Run(ctx, args[1:], installer.OSEnv(stdout), stderr)
 	}
 	var (
 		probe probeOptions

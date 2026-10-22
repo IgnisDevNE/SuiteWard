@@ -74,7 +74,13 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	image, err := r.Value("image", "Release image (pinned by digest)", previous.Image)
+	// The installed image is kept by a re-run; a fresh install takes the release this binary carries (a development build
+	// carries none, and then --image is required).
+	defaultImage := previous.Image
+	if embedded, ok := ReleaseImage(); defaultImage == "" && ok {
+		defaultImage = embedded
+	}
+	image, err := r.Value("image", "Release image (pinned by digest)", defaultImage)
 	if err != nil {
 		return err
 	}

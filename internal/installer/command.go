@@ -106,7 +106,7 @@ var installFlags = []struct{ name, usage string }{
 	{"tier", "co-located (this PC) or isolated"},
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},
-	{"image", "the release image pinned by digest: ghcr.io/ignisdevne/suiteward@sha256:<64 hex>"},
+	{"image", "the release image pinned by digest, ghcr.io/ignisdevne/suiteward@sha256:<64 hex> (default: the installed image, else the release this binary carries; a development build needs it)"},
 	{"http-port", "loopback port of the HTTP listener (default 8081)"},
 	{"mcp-port", "loopback port of the MCP listener (default 8091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},

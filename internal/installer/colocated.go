@@ -443,27 +443,8 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 		}
 	}
 
-	// The owner password is generated once; an existing one is kept, because replacing it would lock the owner out.
-	if !c.secrets.haveOwner {
-		var password string
-		if c.secrets.haveDB {
-			existing, err := secrets.Read(ctx, SecretDBAuth)
-			if err != nil {
-				return err
-			}
-			password = string(existing)
-		} else {
-			var err error
-			if password, err = NewPassword(); err != nil {
-				return err
-			}
-			if err := secrets.Write(ctx, SecretDBAuth, []byte(password), false); err != nil {
-				return err
-			}
-		}
-		if err := secrets.Write(ctx, SecretDatabaseOwnerURL, []byte(DatabaseURL(ownerRole, password)), false); err != nil {
-			return err
-		}
+	if err := c.ensureOwnerSecrets(ctx); err != nil {
+		return err
 	}
 	if err := c.ensureMCPToken(ctx); err != nil {
 		return err
@@ -507,6 +488,32 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 	}
 	c.say("Started %s and %s (%s), GitHub %s.\n", ContainerDB, ContainerServe, c.image, github)
 	return nil
+}
+
+// ensureOwnerSecrets makes the owner password and the owner URL. The password is generated once; an existing one is kept,
+// because replacing it would lock the owner out.
+func (c colocatedInstall) ensureOwnerSecrets(ctx context.Context) error {
+	if c.secrets.haveOwner {
+		return nil
+	}
+	secrets := c.rt.Secrets()
+	var password string
+	if c.secrets.haveDB {
+		existing, err := secrets.Read(ctx, SecretDBAuth)
+		if err != nil {
+			return err
+		}
+		password = string(existing)
+	} else {
+		var err error
+		if password, err = NewPassword(); err != nil {
+			return err
+		}
+		if err := secrets.Write(ctx, SecretDBAuth, []byte(password), false); err != nil {
+			return err
+		}
+	}
+	return secrets.Write(ctx, SecretDatabaseOwnerURL, []byte(DatabaseURL(ownerRole, password)), false)
 }
 
 func (c colocatedInstall) ensure(ctx context.Context, kind Kind, name string) error {
@@ -750,7 +757,7 @@ func (c *colocatedInstall) statusHint(ctx context.Context) string {
 	if err != nil {
 		user = "user"
 	}
-	return fmt.Sprintf(`podman machine ssh --username %s %s "%s"`, user, c.s.Connection, curl)
+	return fmt.Sprintf("podman machine ssh --username %s %s %q", user, c.s.Connection, curl)
 }
 
 // engineCommand is how to run the engine's CLI by hand against this stack's engine.

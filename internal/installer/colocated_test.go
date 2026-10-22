@@ -688,6 +688,20 @@ var githubFlags = []string{
 	"--github-app-id", "1234", "--github-installation-id", "5678", "--github-owner", "Acme", "--github-repositories", "Acme/api,Acme/web",
 }
 
+// assertGitHubEnv checks what the install gave the GitHub flow.
+func assertGitHubEnv(t *testing.T, h *harness, e githubEnv) {
+	t.Helper()
+	if e.Tier != config.TierCoLocated || e.SettingsDir != h.dir || e.ManifestPort != 9999 || e.Existing == nil || e.Existing.AppID != 0 ||
+		e.KeyExists == nil || e.ReadKey == nil || e.StoreKey == nil || e.Out == nil {
+		t.Errorf("the flow was given %+v", e)
+	}
+	for key, want := range map[string]string{"app-id": "1234", "installation-id": "5678", "owner": "Acme", "repositories": "Acme/api,Acme/web"} {
+		if got, ok := e.R.given(key); !ok || got != want {
+			t.Errorf("the answer %s is %q, %v; want %q", key, got, ok, want)
+		}
+	}
+}
+
 func TestInstallRunsTheGitHubFlowAndAppliesItsResult(t *testing.T) {
 	h := newHarness(t, "linux")
 	h.github = func(ctx context.Context, e githubEnv) (GitHubResult, error) {
@@ -702,16 +716,7 @@ func TestInstallRunsTheGitHubFlowAndAppliesItsResult(t *testing.T) {
 	if len(h.githubSeen) != 1 {
 		t.Fatalf("the GitHub flow ran %d times", len(h.githubSeen))
 	}
-	e := h.githubSeen[0]
-	if e.Tier != config.TierCoLocated || e.SettingsDir != h.dir || e.ManifestPort != 9999 || e.Existing == nil || e.Existing.AppID != 0 ||
-		e.KeyExists == nil || e.ReadKey == nil || e.StoreKey == nil || e.Out == nil {
-		t.Errorf("the flow was given %+v", e)
-	}
-	for key, want := range map[string]string{"app-id": "1234", "installation-id": "5678", "owner": "Acme", "repositories": "Acme/api,Acme/web"} {
-		if got, ok := e.R.given(key); !ok || got != want {
-			t.Errorf("the answer %s is %q, %v; want %q", key, got, ok, want)
-		}
-	}
+	assertGitHubEnv(t, h, h.githubSeen[0])
 	if writes := h.secretWrites(SecretGitHubAppKey); len(writes) != 1 || writes[0] != testPEM {
 		t.Fatalf("the key was written %d times: %q", len(writes), writes)
 	}

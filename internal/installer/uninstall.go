@@ -78,6 +78,22 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 		r.say("The volumes, the secrets and the settings are kept: run the install again to start the stack, or use --purge to remove them too.\n")
 		return nil
 	}
+	tokenFile := r.preset("token-file", "")
+	if tokenFile == "" {
+		if tokenFile, err = defaultTokenFile(env.Deps); err != nil {
+			return err
+		}
+	}
+	if err := purgeState(ctx, rt, tokenFile, settingsPath); err != nil {
+		return err
+	}
+	r.say("Removed the volumes, the secrets, the network, %s and %s.\n", tokenFile, settingsPath)
+	return nil
+}
+
+// purgeState removes what the containers leave behind: the volumes, the secrets, the network, the MCP token copy and
+// the settings file. The containers are gone by now.
+func purgeState(ctx context.Context, rt Runtime, tokenFile, settingsPath string) error {
 	for _, volume := range []string{VolumeData, VolumeDBData} {
 		if err := rt.Delete(ctx, KindVolume, volume); err != nil {
 			return err
@@ -89,17 +105,10 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	if err := rt.Delete(ctx, KindNetwork, NetworkName); err != nil {
 		return err
 	}
-	tokenFile := r.preset("token-file", "")
-	if tokenFile == "" {
-		if tokenFile, err = defaultTokenFile(env.Deps); err != nil {
-			return err
-		}
-	}
 	for _, path := range []string{tokenFile, settingsPath} {
 		if err := os.Remove(filepath.Clean(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
 	}
-	r.say("Removed the volumes, the secrets, the network, %s and %s.\n", tokenFile, settingsPath)
 	return nil
 }

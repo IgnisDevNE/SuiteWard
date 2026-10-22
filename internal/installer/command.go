@@ -138,7 +138,8 @@ func Install(ctx context.Context, args []string, env Env) error {
 		return err
 	}
 	settingsPath := flags["settings"]
-	if settingsPath == "" {
+	defaultPath := settingsPath == ""
+	if defaultPath {
 		if settingsPath, err = DefaultSettingsPath(); err != nil {
 			return err
 		}
@@ -160,7 +161,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 	case config.TierIsolated:
 		return installIsolated(ctx, r, env)
 	case config.TierCoLocated:
-		return installColocated(ctx, r, env, settingsPath, saved, haveSaved)
+		return installColocated(ctx, r, env, installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved})
 	}
 	return fmt.Errorf("tier %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
 }

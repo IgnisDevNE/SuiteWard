@@ -106,6 +106,9 @@ func (s Settings) Validate() error {
 	if s.HTTPPort == s.MCPPort {
 		add("http_port and mcp_port must be distinct")
 	}
+	if s.Image != "" && !digestImage.MatchString(s.Image) {
+		add("image %q is not pinned by an sha256 digest", s.Image)
+	}
 	if s.JobTimeout != "" {
 		if d, err := time.ParseDuration(s.JobTimeout); err != nil || d <= 0 {
 			add("job_timeout %q is not a positive Go duration", s.JobTimeout)

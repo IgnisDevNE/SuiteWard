@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 )
 
 // Exec runs a command and returns its standard output. Every container CLI call goes through one, so tests inject a fake and
@@ -52,7 +53,7 @@ func OSExec(ctx context.Context, name string, args []string, stdin io.Reader) ([
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %w: %s", describe(name, args), err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("%s: %w: %s", describe(name, args), err, failureOutput(stdout.Bytes(), stderr.Bytes()))
 	}
 	return stdout.Bytes(), nil
 }
@@ -66,6 +67,25 @@ func OSInteractive(ctx context.Context, name string, args []string) error {
 		return fmt.Errorf("%s: %w", describe(name, args), err)
 	}
 	return nil
+}
+
+// failureOutputBytes bounds how much of the standard output an error repeats.
+const failureOutputBytes = 2048
+
+// failureOutput is what an error shows of a failed command: the end of its standard output, where a command says why it
+// stopped (migrate logs there), and its standard error.
+func failureOutput(stdout, stderr []byte) string {
+	if len(stdout) > failureOutputBytes {
+		stdout = stdout[len(stdout)-failureOutputBytes:]
+		for len(stdout) > 0 && !utf8.RuneStart(stdout[0]) {
+			stdout = stdout[1:]
+		}
+	}
+	out, errText := strings.TrimSpace(string(stdout)), strings.TrimSpace(string(stderr))
+	if out == "" {
+		return errText
+	}
+	return "stdout: " + out + "; stderr: " + errText
 }
 
 // describe names a command in an error without repeating a long script argument.

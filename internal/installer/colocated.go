@@ -28,13 +28,26 @@ var urlUser = regexp.MustCompile(`^postgres://([^:/@]+):`)
 // ErrForeignContainer means a container of the stack's name exists that this installer did not make.
 var ErrForeignContainer = errors.New("a container of the stack's name exists that this installer did not make")
 
+// installTarget is where the install keeps its settings and what is already there.
+type installTarget struct {
+	settingsPath string
+	defaultPath  bool // the settings file is the per-user default, shared by every instance on this PC
+	saved        Settings
+	haveSaved    bool
+}
+
 // installColocated is the co-located install: choose and check everything first, then bring the stack up.
-func installColocated(ctx context.Context, r *Resolver, env Env, settingsPath string, saved Settings, haveSaved bool) error {
-	rt, connection, err := openRuntime(ctx, r, env, saved)
+func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
+	rt, connection, err := openRuntime(ctx, r, env, t.saved)
 	if err != nil {
 		return err
 	}
-	base, previous, err := existingStack(ctx, rt, saved, haveSaved)
+	if t.defaultPath && t.haveSaved && t.saved.Runtime != rt.Name() {
+		return fmt.Errorf("the default settings file %s belongs to the %s instance of this PC, and the install would overwrite it: "+
+			"pass --settings and --token-file with files of their own for a second instance, or remove the other instance first",
+			t.settingsPath, t.saved.Runtime)
+	}
+	base, previous, err := existingStack(ctx, rt, t.saved, t.haveSaved)
 	if err != nil {
 		return err
 	}
@@ -49,6 +62,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, settingsPath st
 	if !digestImage.MatchString(image) {
 		return fmt.Errorf("%w: %s", ErrNotDigestImage, image)
 	}
+	s.Image = image
 	c := colocated{rt: rt, env: env, out: env.Term.Out, s: s, image: image, tokenFile: r.preset("token-file", "")}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
@@ -64,7 +78,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, settingsPath st
 	if err := c.bringUp(ctx); err != nil {
 		return err
 	}
-	if err := SaveSettings(settingsPath, s); err != nil {
+	if err := SaveSettings(t.settingsPath, c.s); err != nil {
 		return err
 	}
 	c.restartAfterReboot(ctx)
@@ -138,6 +152,9 @@ func (c *colocated) preflight(ctx context.Context, keyFile func() ([]byte, error
 	if c.secrets, err = c.readSecretState(ctx); err != nil {
 		return err
 	}
+	if err := c.checkTokenFile(); err != nil {
+		return err
+	}
 	// Pulling now means a wrong digest is found before the running service is removed.
 	for _, img := range []string{c.image, c.stack.DB.Image} {
 		if err := c.rt.Pull(ctx, img); err != nil {
@@ -176,9 +193,9 @@ func existingStack(ctx context.Context, rt Runtime, saved Settings, haveSaved bo
 		return Settings{}, stackInstalled{}, err
 	}
 	base := saved
-	known := stackInstalled{Settings: saved, Known: serve && haveSaved}
+	known := stackInstalled{Settings: saved, Known: serve && haveSaved, Image: saved.Image}
 	if !serve {
-		return base, stackInstalled{}, nil
+		return base, stackInstalled{Image: saved.Image}, nil
 	}
 	if rt.Name() == RuntimeDocker {
 		if !haveSaved || saved.Runtime != RuntimeDocker {
@@ -254,8 +271,8 @@ type colocated struct {
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
 type secretState struct {
-	haveDB, haveOwner bool
-	needAppURL        bool // the application URL secret is missing, or still the owner URL of a v0.1.x stack
+	haveDB, haveOwner, haveToken bool
+	needAppURL                   bool // the application URL secret is missing, or still the owner URL of a v0.1.x stack
 }
 
 func (c colocated) say(format string, args ...any) { _, _ = fmt.Fprintf(c.out, format, args...) }
@@ -296,7 +313,11 @@ func (c colocated) readSecretState(ctx context.Context) (secretState, error) {
 		return secretState{}, fmt.Errorf("database secrets exist without %s; remove the stack and its secrets to start over", SecretDBAuth)
 	}
 	// A v0.1.x stack has the owner URL where the application URL is now: its user is the owner.
-	state := secretState{haveDB: haveDB, haveOwner: haveOwner, needAppURL: !haveURL}
+	haveToken, err := secrets.Exists(ctx, SecretMCPAuth)
+	if err != nil {
+		return secretState{}, err
+	}
+	state := secretState{haveDB: haveDB, haveOwner: haveOwner, haveToken: haveToken, needAppURL: !haveURL}
 	if haveURL {
 		current, err := secrets.Read(ctx, SecretDatabaseURL)
 		if err != nil {
@@ -393,14 +414,26 @@ func (c colocated) ensure(ctx context.Context, kind Kind, name string) error {
 	return c.rt.Create(ctx, kind, name)
 }
 
+// checkTokenFile refuses to overwrite a token copy that this instance did not make: the file exists, but this instance has
+// no MCP token secret, so the file belongs to another instance (or is left by an interrupted install of this one).
+func (c colocated) checkTokenFile() error {
+	if c.secrets.haveToken {
+		return nil
+	}
+	if _, err := os.Stat(c.tokenFile); err == nil {
+		return fmt.Errorf("%s exists, but this instance has no %s secret, so the file belongs to another instance: "+
+			"pass --token-file and --settings with files of their own for a second instance, remove the other instance first, "+
+			"or delete the file if an interrupted install left it", c.tokenFile, SecretMCPAuth)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("look for %s: %w", c.tokenFile, err)
+	}
+	return nil
+}
+
 // ensureMCPToken makes the MCP token once. Its copy for the client is written first and restricted to this user, so a
 // failure after it leaves a file the next run overwrites.
 func (c colocated) ensureMCPToken(ctx context.Context) error {
-	have, err := c.rt.Secrets().Exists(ctx, SecretMCPAuth)
-	if err != nil {
-		return err
-	}
-	if have {
+	if c.secrets.haveToken {
 		if _, err := os.Stat(c.tokenFile); err != nil {
 			c.say("Warning: the secret %s exists but %s does not. Remove the stack and its secrets to generate a new token.\n", SecretMCPAuth, c.tokenFile)
 		}

@@ -76,8 +76,8 @@ func TestSelfCheckDatabaseReportsAnOwnerWhoIsNotEnrolledYet(t *testing.T) {
 	if !schema.OK || !role.OK || projects != nil {
 		t.Errorf("schema %+v, role %+v, projects %+v; want the first two to pass before setup", schema, role, projects)
 	}
-	if enrolled.OK || !strings.Contains(enrolled.Detail, "no owner") || !strings.Contains(enrolled.Fix, "suiteward setup") {
-		t.Errorf("owner.enrolled = %+v; want a failure that says to run setup", enrolled)
+	if enrolled.OK || !strings.Contains(enrolled.Detail, "no owner") || !strings.Contains(enrolled.Fix, "suiteward enroll") || strings.Contains(enrolled.Fix, "suiteward setup") {
+		t.Errorf("owner.enrolled = %+v; want a failure that names suiteward enroll, the installer's verb", enrolled)
 	}
 }
 

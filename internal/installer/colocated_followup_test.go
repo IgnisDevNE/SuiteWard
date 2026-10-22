@@ -126,8 +126,8 @@ func TestInstallDockerRepairsServeAndMigrateHoldingDifferentAppURLs(t *testing.T
 		h.haveDockerSecret(file)
 	}
 	h.volumeFiles = map[string]string{
-		"suiteward-secrets-suiteward-migrate|database-url": DatabaseURL(appRole, "aaa"),
-		"suiteward-secrets-suiteward|database-url":         DatabaseURL(appRole, "bbb"),
+		"suiteward-secrets-suiteward-migrate|database-url": DatabaseURL(appRole, "old-migrate"),
+		"suiteward-secrets-suiteward|database-url":         DatabaseURL(appRole, "old-serve"),
 	}
 	h.roleExists = true
 	if err := os.WriteFile(h.tokenPath(), []byte("old"), 0o600); err != nil {
@@ -140,7 +140,7 @@ func TestInstallDockerRepairsServeAndMigrateHoldingDifferentAppURLs(t *testing.T
 		t.Error("the role was not given a new password")
 	}
 	writes := h.secretWrites(SecretDatabaseURL)
-	if len(writes) != 2 || writes[0] != writes[1] || strings.Contains(writes[0], "aaa") || strings.Contains(writes[0], "bbb") {
+	if len(writes) != 2 || writes[0] != writes[1] || strings.Contains(writes[0], "old-migrate") || strings.Contains(writes[0], "old-serve") {
 		t.Errorf("both volumes should get the same new URL: %q", writes)
 	}
 }

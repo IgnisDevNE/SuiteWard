@@ -301,7 +301,7 @@ func TestInstallTheOwnerURLUsesTheOwnerPasswordAndTheAppURLTheRolePassword(t *te
 		t.Errorf("owner URL %q, want %q", owner[0], want)
 	}
 	m := passwordInSQL.FindStringSubmatch(strings.Join(sqlOf(h), "\n"))
-	if m == nil || app[0] != DatabaseURL(appRole, m[1]) {
+	if len(m) < 2 || app[0] != DatabaseURL(appRole, m[1]) {
 		t.Errorf("the app URL %q does not carry the password of the role", app[0])
 	}
 }
@@ -1028,6 +1028,18 @@ func TestInstallDockerRefusesPodmansShim(t *testing.T) {
 	h := dockerHarness(t, "windows")
 	h.first("version --format", podmanBehindDocker)
 	if err := h.docker(); !errors.Is(err, ErrNotDocker) {
+		t.Fatalf("got %v", err)
+	}
+	h.mustNotMutate()
+}
+
+func TestInstallDockerDoesNotTakeAPodmanInstallsSettingsAsItsOwn(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	if err := SaveSettings(h.settingsPath(), DefaultSettings()); err != nil { // the settings of a Podman install
+		t.Fatal(err)
+	}
+	h.have(KindContainer, ContainerServe)
+	if err := h.docker(); !errors.Is(err, ErrForeignContainer) {
 		t.Fatalf("got %v", err)
 	}
 	h.mustNotMutate()

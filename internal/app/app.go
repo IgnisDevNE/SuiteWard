@@ -50,6 +50,9 @@ func OSEnv() Env {
 // prints JSON lines to stdout; setup prints only the TOTP enrollment to stdout
 // and logs JSON to stderr; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "install" { // before the settings are read: the machine that installs has no SUITEWARD_* environment
+		return installer.Run(ctx, args[1:], installer.OSEnv(stdout), stderr)
+	}
 	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
 }
 
@@ -58,9 +61,6 @@ func runWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writ
 	command := ""
 	if len(args) > 0 {
 		command = args[0]
-	}
-	if command == "install" { // before the settings are read: the machine that installs has no SUITEWARD_* environment
-		return installer.Run(ctx, args[1:], installer.OSEnv(stdout), stderr)
 	}
 	var (
 		probe probeOptions

@@ -30,56 +30,16 @@ var ErrForeignContainer = errors.New("a container of the stack's name exists tha
 
 // installColocated is the co-located install: choose and check everything first, then bring the stack up.
 func installColocated(ctx context.Context, r *Resolver, env Env, settingsPath string, saved Settings, haveSaved bool) error {
-	runtimeName, err := r.Value("runtime", "Container runtime (podman recommended, docker discouraged)", saved.Runtime)
+	rt, connection, err := openRuntime(ctx, r, env, saved)
 	if err != nil {
 		return err
 	}
-	if runtimeName != RuntimePodman && runtimeName != RuntimeDocker {
-		return fmt.Errorf("runtime %q is not %s or %s", runtimeName, RuntimePodman, RuntimeDocker)
-	}
-	savedConnection := ""
-	if saved.Runtime == runtimeName {
-		savedConnection = saved.Connection
-	}
-	connection := r.preset("connection", savedConnection)
-	var rt Runtime
-	if runtimeName == RuntimeDocker {
-		if err := confirmDocker(r); err != nil {
-			return err
-		}
-		if rt, err = NewDocker(ctx, env.Deps, DockerOptions{Context: connection}); err != nil {
-			return err
-		}
-	} else {
-		if connection, err = podmanConnection(ctx, env.Deps, connection); err != nil {
-			return err
-		}
-		if rt, err = NewPodman(ctx, env.Deps, connection); err != nil {
-			return err
-		}
-	}
-	engine := rt.Engine()
-	r.say("Using %s (%s).\n", strings.TrimSpace(engine.Name+" "+engine.Version), map[bool]string{true: "rootless", false: "a rootful daemon"}[engine.Rootless])
-
 	base, previous, err := existingStack(ctx, rt, saved, haveSaved)
 	if err != nil {
 		return err
 	}
-	s := base
-	s.Tier, s.Runtime, s.Connection = config.TierCoLocated, runtimeName, connection
-	if s.HTTPPort, err = r.Int("http-port", "HTTP port on 127.0.0.1", base.HTTPPort); err != nil {
-		return err
-	}
-	if s.MCPPort, err = r.Int("mcp-port", "MCP port on 127.0.0.1", base.MCPPort); err != nil {
-		return err
-	}
-	s.JobTimeout = r.preset("job-timeout", base.JobTimeout)
-	github, keyFile, err := githubSettings(r, base.GitHub)
+	s, keyFile, err := chooseSettings(r, base, rt.Name(), connection)
 	if err != nil {
-		return err
-	}
-	s.GitHub = github
-	if err := s.Validate(); err != nil {
 		return err
 	}
 	image, err := r.Value("image", "Release image (pinned by digest)", previous.Image)
@@ -89,7 +49,6 @@ func installColocated(ctx context.Context, r *Resolver, env Env, settingsPath st
 	if !digestImage.MatchString(image) {
 		return fmt.Errorf("%w: %s", ErrNotDigestImage, image)
 	}
-
 	c := colocated{rt: rt, env: env, out: env.Term.Out, s: s, image: image, tokenFile: r.preset("token-file", "")}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
@@ -99,28 +58,9 @@ func installColocated(ctx context.Context, r *Resolver, env Env, settingsPath st
 	if c.stack, err = ColocatedStack(s, image); err != nil {
 		return err
 	}
-	// Everything that can fail without changing anything comes first, so a refusal leaves a running stack alone.
-	if github.AppID != 0 {
-		if have, err := rt.Secrets().Exists(ctx, SecretGitHubAppKey); err != nil {
-			return err
-		} else if !have {
-			if c.githubKey, err = keyFile(); err != nil {
-				return err
-			}
-		}
-	}
-	if err := c.checkPorts(previous.Settings, previous.Known); err != nil {
+	if err := c.preflight(ctx, keyFile, previous); err != nil {
 		return err
 	}
-	if c.secrets, err = c.readSecretState(ctx); err != nil {
-		return err
-	}
-	for _, img := range []string{image, c.stack.DB.Image} {
-		if err := rt.Pull(ctx, img); err != nil {
-			return err
-		}
-	}
-
 	if err := c.bringUp(ctx); err != nil {
 		return err
 	}
@@ -130,6 +70,94 @@ func installColocated(ctx context.Context, r *Resolver, env Env, settingsPath st
 	c.restartAfterReboot(ctx)
 	c.nextSteps()
 	return nil
+}
+
+// openRuntime chooses the runtime and the connection and identifies the engine behind it. Docker needs a confirmation.
+func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings) (Runtime, string, error) {
+	name, err := r.Value("runtime", "Container runtime (podman recommended, docker discouraged)", saved.Runtime)
+	if err != nil {
+		return nil, "", err
+	}
+	if name != RuntimePodman && name != RuntimeDocker {
+		return nil, "", fmt.Errorf("runtime %q is not %s or %s", name, RuntimePodman, RuntimeDocker)
+	}
+	savedConnection := ""
+	if saved.Runtime == name {
+		savedConnection = saved.Connection
+	}
+	connection := r.preset("connection", savedConnection)
+	var rt Runtime
+	if name == RuntimeDocker {
+		if err = confirmDocker(r); err != nil {
+			return nil, "", err
+		}
+		rt, err = NewDocker(ctx, env.Deps, DockerOptions{Context: connection})
+	} else {
+		if connection, err = podmanConnection(ctx, env.Deps, connection); err != nil {
+			return nil, "", err
+		}
+		rt, err = NewPodman(ctx, env.Deps, connection)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	engine := rt.Engine()
+	r.say("Using %s (%s).\n", strings.TrimSpace(engine.Name+" "+engine.Version), map[bool]string{true: "rootless", false: "a rootful daemon"}[engine.Rootless])
+	return rt, connection, nil
+}
+
+// chooseSettings resolves the ports, the job timeout and the GitHub values over base, and validates the result. The
+// returned function reads the App key, which is needed only while its secret does not exist.
+func chooseSettings(r *Resolver, base Settings, runtimeName, connection string) (Settings, func() ([]byte, error), error) {
+	s := base
+	s.Tier, s.Runtime, s.Connection = config.TierCoLocated, runtimeName, connection
+	var err error
+	if s.HTTPPort, err = r.Int("http-port", "HTTP port on 127.0.0.1", base.HTTPPort); err != nil {
+		return Settings{}, nil, err
+	}
+	if s.MCPPort, err = r.Int("mcp-port", "MCP port on 127.0.0.1", base.MCPPort); err != nil {
+		return Settings{}, nil, err
+	}
+	s.JobTimeout = r.preset("job-timeout", base.JobTimeout)
+	var keyFile func() ([]byte, error)
+	if s.GitHub, keyFile, err = githubSettings(r, base.GitHub); err != nil {
+		return Settings{}, nil, err
+	}
+	return s, keyFile, s.Validate()
+}
+
+// preflight does everything that can fail without changing anything, so a refusal leaves a running stack alone.
+func (c *colocated) preflight(ctx context.Context, keyFile func() ([]byte, error), previous stackInstalled) error {
+	if err := c.loadGitHubKey(ctx, keyFile); err != nil {
+		return err
+	}
+	if err := c.checkPorts(previous.Settings, previous.Known); err != nil {
+		return err
+	}
+	var err error
+	if c.secrets, err = c.readSecretState(ctx); err != nil {
+		return err
+	}
+	// Pulling now means a wrong digest is found before the running service is removed.
+	for _, img := range []string{c.image, c.stack.DB.Image} {
+		if err = c.rt.Pull(ctx, img); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadGitHubKey reads the App key when GitHub is configured and its secret does not exist yet.
+func (c *colocated) loadGitHubKey(ctx context.Context, keyFile func() ([]byte, error)) error {
+	if c.s.GitHub.AppID == 0 {
+		return nil
+	}
+	have, err := c.rt.Secrets().Exists(ctx, SecretGitHubAppKey)
+	if err != nil || have {
+		return err
+	}
+	c.githubKey, err = keyFile()
+	return err
 }
 
 // stackInstalled is what an existing installation tells the next run.
@@ -153,7 +181,7 @@ func existingStack(ctx context.Context, rt Runtime, saved Settings, haveSaved bo
 		return base, stackInstalled{}, nil
 	}
 	if rt.Name() == RuntimeDocker {
-		if !haveSaved {
+		if !haveSaved || saved.Runtime != RuntimeDocker {
 			return Settings{}, stackInstalled{}, fmt.Errorf("%w: %s; remove it or install with the settings file of the install that made it", ErrForeignContainer, ContainerServe)
 		}
 		return base, known, nil

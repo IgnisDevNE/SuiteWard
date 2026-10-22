@@ -61,14 +61,17 @@ func TestOSExecReturnsStdoutAndFeedsStdin(t *testing.T) {
 	}
 }
 
-func TestOSExecFailureCarriesStderrAndNoStdout(t *testing.T) {
+func TestOSExecFailureCarriesStderrAndReturnsStdout(t *testing.T) {
 	name, args := helperCommand(t, "fail")
-	out, err := OSExec(context.Background(), name, args, nil)
+	_, err := OSExec(context.Background(), name, args, nil)
 	if err == nil || !strings.Contains(err.Error(), "something went wrong") {
 		t.Fatalf("got %v", err)
 	}
-	if out != nil {
-		t.Fatalf("a failed command returned output: %q", out)
+	// Whatever the failed command printed is returned with the error (doctor reads a JSON report from a failing check).
+	name, args = helperCommand(t, "failout")
+	out, err := OSExec(context.Background(), name, args, nil)
+	if err == nil || !strings.HasPrefix(string(out), "FIRSTLINE ") || !strings.HasSuffix(string(out), "migration 21 failed") {
+		t.Fatalf("a failed command did not return its whole stdout: %d bytes, %v", len(out), err)
 	}
 	var exit interface{ ExitCode() int }
 	if !errors.As(err, &exit) || exit.ExitCode() != 3 {

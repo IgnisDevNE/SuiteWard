@@ -1086,7 +1086,7 @@ func TestInstallRefusesTheDefaultSettingsOfAnotherRuntime(t *testing.T) {
 			if err := SaveSettings(path, other); err != nil {
 				t.Fatal(err)
 			}
-			before, _ := os.ReadFile(path)
+			before, _ := os.ReadFile(filepath.Clean(path))
 			h := newHarness(t, "linux")
 			if tc.selected == RuntimeDocker {
 				h = dockerHarness(t, "linux")
@@ -1096,7 +1096,7 @@ func TestInstallRefusesTheDefaultSettingsOfAnotherRuntime(t *testing.T) {
 				t.Fatalf("got %v, want a message about --settings and --token-file", err)
 			}
 			h.mustNotMutate()
-			if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+			if after, _ := os.ReadFile(filepath.Clean(path)); !bytes.Equal(before, after) {
 				t.Error("the settings of the other instance were changed")
 			}
 		})

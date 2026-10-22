@@ -181,10 +181,25 @@ func TestPodmanCommonOperations(t *testing.T) {
 	}
 
 	f.rules = nil
-	f.on("inspect", "running healthy\n")
+	f.on("inspect", `{"Status":"running","Health":{"Status":"healthy","FailingStreak":0}}`+"\n")
 	state, err := rt.State(ctx, ContainerDB)
 	if err != nil || state.Status != "running" || state.Health != "healthy" {
 		t.Fatalf("state: %+v %v", state, err)
+	}
+	if len(f.find("inspect --format {{json .State}} "+ContainerDB)) != 1 {
+		t.Fatalf("calls: %v", f.lines())
+	}
+	// A container without a health check has no Health in its state; the template of an earlier version failed on it.
+	f.rules = nil
+	f.on("inspect", `{"Status":"running"}`+"\n")
+	state, err = rt.State(ctx, ContainerServe)
+	if err != nil || state.Status != "running" || state.Health != "" {
+		t.Fatalf("state without health: %+v %v", state, err)
+	}
+	f.rules = nil
+	f.on("inspect", "not json\n")
+	if _, err := rt.State(ctx, ContainerServe); err == nil {
+		t.Fatal("unreadable inspect output was accepted")
 	}
 }
 

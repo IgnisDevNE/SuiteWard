@@ -54,6 +54,7 @@ func newUpgradeHarness(t *testing.T, edit func(s *Settings)) *upgradeHarness {
 		t.Fatal(err)
 	}
 	h := newHarness(t, "linux")
+	h.status = httpGet // the service of this harness answers on a real port
 	s := colocatedSettings()
 	s.HTTPPort, s.MCPPort, s.Connection, s.Image = port, port+1, "pm", oldImage
 	if edit != nil {
@@ -432,6 +433,7 @@ func TestUpgradeBacksUpDockerThroughAThrowawayContainer(t *testing.T) {
 	}
 	port, _ := strconv.Atoi(u.Port())
 	h := dockerHarness(t, "windows")
+	h.status = httpGet
 	s := DefaultSettings()
 	s.Runtime, s.HTTPPort, s.MCPPort, s.Image = RuntimeDocker, port, port+1, oldImage
 	if err := SaveSettings(h.settingsPath(), s); err != nil {
@@ -548,5 +550,33 @@ func TestUpgradeAsksForTheTierOfAHostWithoutSettingsOnLinux(t *testing.T) {
 	}
 	if len(h.f.calls) != 0 {
 		t.Errorf("something ran before the tier was known: %v", h.f.lines())
+	}
+}
+
+func TestUpgradeColocatedBeforeMigrateSaysTheDatabaseIsUnchanged(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	u.f.rules = append([]rule{{match: "--name suiteward-db ", err: errors.New("the database did not start")}}, u.f.rules...)
+	err := u.upgrade("--image", testImage, "--yes")
+	if err == nil {
+		t.Fatal("the database start must fail")
+	}
+	for _, want := range []string{"database is unchanged", u.backup()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the advice lacks %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "restore") {
+		t.Errorf("a restore loses everything after the backup and the database was not migrated:\n%v", err)
+	}
+}
+
+func TestUpgradeColocatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
+	for name, fail := range map[string]string{"migrate": "--name suiteward-migrate ", "service": "--name suiteward --network"} {
+		u := newUpgradeHarness(t, nil)
+		u.f.rules = append([]rule{{match: fail, err: errors.New(name + " failed")}}, u.f.rules...)
+		err := u.upgrade("--image", testImage, "--yes")
+		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "database is unchanged") {
+			t.Fatalf("%s: once migrate ran the way back is the backup: %v", name, err)
+		}
 	}
 }

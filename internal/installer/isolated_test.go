@@ -26,6 +26,7 @@ import (
 // container. It answers from its state and records every call.
 type isoFake struct {
 	calls []call
+	tty   []call // the commands that got the real terminal
 	goos  string
 	euid  string
 
@@ -60,7 +61,10 @@ func (f *isoFake) deps() Deps {
 	return Deps{
 		GOOS:        f.goos,
 		Getenv:      func(k string) string { return map[string]string{"HOME": f.home}[k] },
-		Interactive: func(context.Context, string, []string) error { return nil },
+		Interactive: func(_ context.Context, name string, args []string) error {
+			f.tty = append(f.tty, call{name: name, args: append([]string(nil), args...)})
+			return nil
+		},
 		Exec: func(_ context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 			c := call{name: name, args: append([]string(nil), args...)}
 			if stdin != nil {

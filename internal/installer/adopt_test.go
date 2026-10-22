@@ -499,3 +499,27 @@ func podmanImageName(image string) string {
 	}
 	return repo + "@" + digest
 }
+
+func TestAdoptUnitsRelaxesExactlyOneDatabaseImageLineOnAnUpgrade(t *testing.T) {
+	postgres, err := PostgresImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := "docker.io/library/postgres:17-trixie@sha256:" + strings.Repeat("d", 64)
+	installed := renderedUnits(t, nil)
+	db := string(installed["suiteward-db.container"])
+
+	installed["suiteward-db.container"] = []byte(strings.Replace(db, "Image="+postgres, "Image="+oldPin, 1))
+	if _, err := adoptUnits(installed, nil, true); err != nil {
+		t.Fatalf("one older database pin is what an upgrade refreshes: %v", err)
+	}
+
+	installed["suiteward-db.container"] = []byte(strings.Replace(db, "Image="+postgres, "Image="+oldPin+"\nImage="+other, 1))
+	diff := asDiffError(t, errAfter(adoptUnits(installed, nil, true)))
+	if !diffMentions(diff, "Image="+other) {
+		t.Errorf("a second database image line is a difference, and the diff names it: %v", diff.Diffs)
+	}
+}
+
+// errAfter keeps the error of a call that also returns a value.
+func errAfter[T any](_ T, err error) error { return err }

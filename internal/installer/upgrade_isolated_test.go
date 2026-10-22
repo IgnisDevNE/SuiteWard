@@ -507,3 +507,50 @@ func TestUninstallIsolatedPurgesWhatIsLeftAfterAnEarlierUninstall(t *testing.T) 
 		t.Fatalf("uninstall of nothing without --purge must say so: %v", err)
 	}
 }
+
+func TestUpgradeIsolatedBeforeMigrateSaysTheDatabaseIsUnchangedAndNamesTheOldUnits(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	u.f.dryRunSkips = "suiteward-migrate.service" // a failure after the service was stopped and the units were written
+	err := u.upgrade("--image", testDigest, "--yes")
+	if err == nil {
+		t.Fatal("the dry run must fail")
+	}
+	dirs, _ := filepath.Glob(filepath.Join(u.backups, "*"))
+	if len(dirs) != 1 {
+		t.Fatalf("backups: %v", dirs)
+	}
+	for _, want := range []string{
+		"database is unchanged", dirs[0], filepath.Join(dirs[0], backupUnits),
+		"suiteward.service is stopped", "systemctl --user daemon-reload", "systemctl --user start suiteward.service",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the advice lacks %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "restore") {
+		t.Errorf("a restore loses everything after the backup and the database was not touched:\n%v", err)
+	}
+}
+
+func TestUpgradeIsolatedFailingToStopTheServiceDoesNotClaimItIsStopped(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	u.f.failOn["systemctl --user stop suiteward.service"] = errors.New("stop failed")
+	err := u.upgrade("--image", testDigest, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "database is unchanged") || strings.Contains(err.Error(), "is stopped") || strings.Contains(err.Error(), "restore") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestUpgradeIsolatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
+	for name, fail := range map[string]string{
+		"migrate": "systemctl --user restart suiteward-migrate.service",
+		"service": "systemctl --user start suiteward.service",
+	} {
+		u := newIsoUpgrade(t, nil)
+		u.f.failOn[fail] = errors.New(name + " failed")
+		err := u.upgrade("--image", testDigest, "--yes")
+		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "database is unchanged") {
+			t.Fatalf("%s: once migrate has run the way back is the backup: %v", name, err)
+		}
+	}
+}

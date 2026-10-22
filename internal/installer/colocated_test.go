@@ -36,6 +36,7 @@ type harness struct {
 	volumeFiles map[string]string // "volume|file" -> what cat /s/file prints in that Docker secret volume
 	github      func(ctx context.Context, env githubEnv) (GitHubResult, error)
 	githubSeen  []githubEnv
+	status      func(ctx context.Context, address string) ([]byte, error) // GET /status of the service; nil: no owner is enrolled yet
 	atServe     map[string]bool // facts at the moment the service container was started
 }
 
@@ -140,6 +141,12 @@ func (h *harness) newEnv() Env {
 		Term:     Terminal{In: strings.NewReader(h.stdin), Out: &h.out},
 		PortFree: func(port int) error { return busyError(h.busy, port) },
 		Sleep:    func(time.Duration) {},
+		HTTPGet: func(ctx context.Context, address string) ([]byte, error) {
+			if h.status != nil {
+				return h.status(ctx, address)
+			}
+			return []byte(`{"version":"v0.2.0"}`), nil
+		},
 		ResolveGitHub: func(ctx context.Context, e githubEnv) (GitHubResult, error) {
 			h.githubSeen = append(h.githubSeen, e)
 			if h.github == nil {
@@ -1308,5 +1315,52 @@ func TestInstallSavesTheImageOfAPodmanInstall(t *testing.T) {
 	}
 	if got := h.settings().Image; got != testImage {
 		t.Fatalf("saved image %q", got)
+	}
+}
+
+func TestInstallSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
+	for _, terminal := range []bool{true, false} {
+		if terminal {
+			was := setupTerminal
+			setupTerminal = func() bool { return true }
+			t.Cleanup(func() { setupTerminal = was })
+		}
+		h := newHarness(t, "linux")
+		h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+		h.status = func(context.Context, string) ([]byte, error) {
+			return []byte(`{"version":"v0.2.0","owner":{"login":"bob","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"}}`), nil
+		}
+		if err := h.podman(githubFlags...); err != nil {
+			t.Fatal(err)
+		}
+		if len(h.f.tty) != 0 {
+			t.Fatalf("terminal=%v: setup ran although an owner is enrolled: %v", terminal, h.f.tty)
+		}
+		out := h.out.String()
+		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "podman --connection pm exec -it suiteward /suiteward setup --owner alice"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("terminal=%v: the output lacks %q:\n%s", terminal, want, out)
+			}
+		}
+	}
+}
+
+func TestInstallSkipsSetupWhenStatusCannotBeRead(t *testing.T) {
+	was := setupTerminal
+	setupTerminal = func() bool { return true }
+	t.Cleanup(func() { setupTerminal = was })
+	h := newHarness(t, "linux")
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	h.status = func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") }
+	if err := h.podman(githubFlags...); err != nil {
+		t.Fatalf("the stack is up; only setup is skipped: %v", err)
+	}
+	if len(h.f.tty) != 0 {
+		t.Fatalf("setup ran although /status could not be read: %v", h.f.tty)
+	}
+	for _, want := range []string{"connection refused", "podman --connection pm exec -it suiteward /suiteward setup --owner alice"} {
+		if !strings.Contains(h.out.String(), want) {
+			t.Errorf("the output lacks %q:\n%s", want, h.out.String())
+		}
 	}
 }

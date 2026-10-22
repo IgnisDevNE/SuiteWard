@@ -548,3 +548,29 @@ func TestPrepareHostRestartsAnInstalledRuleUnitOnlyWhenTheRuleChanged(t *testing
 		t.Fatalf("an unchanged rule needs no restart: %v", same.lines())
 	}
 }
+
+func TestPrepareHostPrintsTheServiceStepWithItsTierAndAnImageOnlyForADevelopmentBuild(t *testing.T) {
+	was := ImageDigest
+	t.Cleanup(func() { ImageDigest = was })
+
+	ImageDigest = ""
+	out, err := runHost(t, newHostFake(), declineMetadataRule, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, " install --tier isolated --image sha256:<signed index digest>") {
+		t.Errorf("a development build carries no digest, so the command names the tier and asks for --image:\n%s", out)
+	}
+
+	ImageDigest = testDigest
+	out, err = runHost(t, newHostFake(), declineMetadataRule, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, " install --tier isolated\n") {
+		t.Errorf("the command must name the tier:\n%s", out)
+	}
+	if strings.Contains(out, "--image") || strings.Contains(out, "until the release binary") {
+		t.Errorf("a release binary carries its own digest and the command must not ask for one:\n%s", out)
+	}
+}

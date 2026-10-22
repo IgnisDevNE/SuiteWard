@@ -1,7 +1,7 @@
 # SuiteWard development conventions
 
-- **Updated:** 2026-10-21
-- **Status:** Accepted conventions; delivered through M1.10 (`v0.1.3`), phase SH done and phase M1.11 in progress.
+- **Updated:** 2026-10-22
+- **Status:** Accepted conventions; delivered through M1.11 and phase SH (`v0.2.0`, released 2026-10-22).
 - **Scope:** How contributors and agents write SuiteWard code and tests.
 
 These conventions complement the [project structure decision](decisions/0024-single-module-project-structure.md), [development environment decision](decisions/0023-development-environment-and-project-local-tooling.md), and [engineering preparation plan](engineering-plan.md). They do not define the frameworks used by customer repositories protected by SuiteWard.

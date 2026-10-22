@@ -1,6 +1,6 @@
 # Local development
 
-SuiteWard develops on Windows and verifies portable behavior on Windows and Linux. This bootstrap supports x64 Windows/Linux with PowerShell 7.2 or newer. Implementation is underway: M0, M1.01 and R1 delivered the domain and application packages and the PostgreSQL and filesystem adapters. This document covers the development infrastructure they run on.
+SuiteWard develops on Windows and verifies portable behavior on Windows and Linux. This bootstrap supports x64 Windows/Linux with PowerShell 7.2 or newer. SuiteWard is released (`v0.2.0`, 2026-10-22). This document covers the development infrastructure it is built on.
 
 ## Start here
 
@@ -29,7 +29,8 @@ Existing host prerequisites are Git, PowerShell 7, and a running Podman engine/m
 | golangci-lint | 2.14.0 | Official release archive, SHA-256 checked against the release's checksums file. |
 | zizmor | 1.31.1 | Official release archive, SHA-256 recorded from the GitHub release asset digest (upstream publishes no checksums file). |
 | gitleaks | 8.30.1 | Official release archive, SHA-256 checked against the release's checksums file. |
-| trivy | 0.76.0 | Official release archive, SHA-256 checked against the release's checksums file; used by the release workflow, not by `setup`. |
+| trivy | 0.76.0 | Official release archive, SHA-256 checked against the release's checksums file; used by the release workflow, the weekly `Image scan` workflow and `scripts/check-image.ps1`, not by `setup`. |
+| cosign | 3.1.4 | Release binary (`linux-amd64` only), SHA-256 recorded in `dev/tools.json`; used by the release workflow to sign the images and the release binaries, not by `setup`. |
 | govulncheck | 1.8.0 | Exact Go module version, verified using the public Go checksum database. |
 | gopls | 0.23.0 | Exact Go module version, installed like govulncheck. |
 | PostgreSQL | 18.6, Debian trixie | Official image pinned to an immutable multiarchitecture digest. |
@@ -104,7 +105,7 @@ Subsequent commands reuse that recorded connection. They reject an implicit move
 
 ## Agents, source of truth, and GitHub
 
-Versioned ADRs and project documents are the canonical record. Memtrace is supplementary: its Cortex decision lookup was verified, while code search currently returns an inconsistent `repo_scope_required` response. Report that limitation and use targeted local reads; this does not block development or authorize changing Memtrace configuration in other repositories.
+Versioned ADRs and project documents are the canonical record. Memtrace is supplementary: query it with `repo_id: SuiteWard` and `branch` as `list_watched_paths` shows it. If it is unavailable or inconsistent, report that and use gopls and targeted local reads; this does not block development or authorize changing Memtrace configuration in other repositories.
 
 Use a separate working copy and branch for each implementation task. Run its own setup and checks. Share reviewed interfaces, not mutable database state or tool installation directories. Memtrace worktree/Fleet coordination needs separate validation before relying on it.
 

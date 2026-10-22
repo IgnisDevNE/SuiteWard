@@ -1,6 +1,6 @@
 # SH: Security hardening
 
-**Goal:** close what the security-gate assessment found, before the final MVP release. The [threat model](../../security/threat-model.md) lists each control and the test that proves it. The phase shipped as `v0.2.0-rc.1` and `v0.2.0-rc.2`; the final `v0.2.0` follows [M1.11](M1.11.md).
+**Goal:** close what the security-gate assessment found, before the final MVP release. The [threat model](../../security/threat-model.md) lists each control and the test that proves it. The phase shipped as `v0.2.0-rc.1` and `v0.2.0-rc.2`; the final `v0.2.0` was published on 2026-10-22 after [M1.11](M1.11.md).
 
 **Decision:** owner request, 2026-10-19 (the security gate of the [roadmap](../README.md)); the findings and the choices below are the owner's, 2026-10-20.
 
@@ -56,7 +56,7 @@ Recorded in the [decision register](../decisions.md#d-security-review-decisions-
 - **The signing path first runs on the release candidate tag:** the workflow cannot be exercised on a branch, because the identity is the workflow at a `v*` tag. `v0.1.x` images are unsigned.
 - **The release scan covers `linux/amd64`** only; the arm64 image has the same packages and source.
 - **Signing does not stop another workflow from pushing a tag.** A host that pins and verifies the digest is protected; one that follows a tag is not ([D-RELEASE](../decisions.md#d-release-platforms-versions-license-and-notices)).
-- **The in-place v0.1.x upgrade of a quadlet host** (install 11.5) is not run live: there is no EL9 host on v0.1.x. The conversion logic is exercised on the co-located stack through `deploy/local.ps1`, and the restore of a v0.1.3 backup is exercised on the new host.
+- **The in-place v0.1.x upgrade of a quadlet host** (install 11.5) was not run live in this phase: there was no EL9 host on v0.1.x. The conversion logic is exercised on the co-located stack through `deploy/local.ps1`, and the restore of a v0.1.3 backup is exercised on the new host.
 - **Accepted:** the unencrypted TOTP secret at rest, the co-located tier's reduced assurance, and the fork pull request merge command (backlog).
 
 ## Outcome
@@ -66,8 +66,8 @@ Recorded in the [decision register](../decisions.md#d-security-review-decisions-
 **Releases.**
 - **`v0.2.0-rc.1`** was the first image built, scanned, attested and signed by the release workflow.
 - **`v0.2.0-rc.2`** added PR #43 (a backup runbook per tier, and the index digest) and PR #44 (the checks job reads a cold tree in parallel and keeps the blobs it read).
-- **`v0.2.0` is not published yet.** It follows [M1.11](M1.11.md) and a validation on three targets, as the [roadmap](../README.md) says.
+- **`v0.2.0` was published on 2026-10-22,** after [M1.11](M1.11.md) and a validation on three targets, as the [roadmap](../README.md) says.
 
 **Validation.** Both tiers were validated on rc.2: the co-located A3 stack and the isolated host. The isolated host is now AlmaLinux 9.
 
-**Follow-ups moved to M1.11:** the robustness findings and the retirement of the Deploy workflow, listed on the [M1.11 page](M1.11.md). The in-place v0.1.x upgrade of a quadlet host (install 11.5), which the known limits above say was not run live, is run on a throwaway AlmaLinux VM before the final release.
+**Follow-ups moved to M1.11:** the robustness findings and the retirement of the Deploy workflow, listed on the [M1.11 page](M1.11.md). The in-place v0.1.x upgrade of a quadlet host (install 11.5), which the known limits above say was not run live, ran before the final release; the [M1.11 outcome](M1.11.md#outcome) records where and what it covered.

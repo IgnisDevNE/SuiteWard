@@ -95,7 +95,7 @@ The installer runs `suiteward setup` for you at the end of the install, on a rea
 
 **Session Manager logging.** `setup` prints the `otpauth://` URI and the base32 secret to the terminal, so a logged session records them. Disable Session Manager logging before you run it. If it was on during setup, turn it off and run setup again: re-running replaces the secret, so the recorded one stops working, and it is safe only with logging off. Paste back only the protection result lines and `/status`, never the setup output or a code.
 
-The per-phase verification scenarios and the MVP acceptance rehearsal that this file once held (M1.5 to M1.8) were removed: they describe flows that no longer exist, such as pushing phase branches, pulling `:deploy`, and the manual install. They remain in git history, at the tag `v0.2.0`, and in the [phase pages](../docs/plan/phases/); the current behavior is in the [install guide](../docs/install.md) and the [runtime contract](../docs/contracts/runtime.md). The re-bootstrap and the restore are in the [backup runbook](../docs/backup.md).
+The per-phase verification scenarios and the MVP acceptance rehearsal that this file once held (M1.5 to M1.8) were removed: they describe flows that no longer exist, such as pushing phase branches, pulling `:deploy`, and the manual install. They remain in git history (the tag `v0.1.3` holds the M1.5 to M1.7c scenarios, `v0.2.0` the M1.8 rehearsal) and in the [phase pages](../docs/plan/phases/); the current behavior is in the [install guide](../docs/install.md) and the [runtime contract](../docs/contracts/runtime.md). The re-bootstrap and the restore are in the [backup runbook](../docs/backup.md).
 
 ## 5. Reach `/status`
 

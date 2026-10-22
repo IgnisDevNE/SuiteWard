@@ -727,7 +727,7 @@ Where you set them:
 | `SUITEWARD_GITHUB_APP_KEY` (secret) | none | The App's private key in PEM form. Use the `_FILE` form. |
 | `SUITEWARD_GITHUB_INSTALLATION_ID` | none | The installation ID, a positive integer. |
 | `SUITEWARD_GITHUB_REPOSITORIES` | none | `owner/name` entries, comma-separated, 1 to 20, no duplicates. |
-| `SUITEWARD_GITHUB_API_URL` | `https://api.github.com` | The GitHub API address. Keep the default for github.com. It must be `https`. |
+| `SUITEWARD_GITHUB_API_URL` | `https://api.github.com` | The GitHub API address. Keep the default for github.com. It must be `https`, except that `http` is accepted for a loopback host (for a local test server). |
 | `SUITEWARD_INSTALLATION_TIER` | `co-located` | `isolated` or `co-located`. Set the tier you installed. SuiteWard never claims more than you set. The isolated units set `isolated`. |
 | `SUITEWARD_MCP_ADDR` | `127.0.0.1:8090`. The image sets `0.0.0.0:8090` | Address of the MCP listener. It starts only when `SUITEWARD_MCP_TOKEN` is set. |
 | `SUITEWARD_MCP_TOKEN` (secret) | none | The MCP bearer token, at least 32 bytes. Use the `_FILE` form. |
@@ -756,12 +756,13 @@ Start with `suiteward doctor`: it names what is wrong and the fix, and it reads 
 
 On AlmaLinux, `journalctl --user` can report that no journal files were opened: user journals are readable only to members of `systemd-journal`. Read the service's own log instead, with `podman logs --since 30m suiteward` (and `suiteward-migrate` or `suiteward-db`).
 
-If the log shows `github_checks` ending in `context deadline exceeded` again and again, then `budget_exhausted`: a first assessment of a large test suite takes longer than `SUITEWARD_JOB_TIMEOUT`, and every cancelled attempt reads the files again and spends the API budget. Raise `SUITEWARD_JOB_TIMEOUT` (section 13; `3m` covered about 250 protected files). Read `budget` in `/status` (or the MCP `status` tool): `budget.remaining` is what is left and `budget.reset` is when requests resume. The budget recovers when GitHub's hourly window resets, and the queued check is then published by itself.
+If the log shows `github_checks` ending in `context deadline exceeded` again and again, then `budget_exhausted`: a first assessment of a large test suite takes longer than `SUITEWARD_JOB_TIMEOUT`, and every cancelled attempt reads the files again and spends the API budget. Raise `SUITEWARD_JOB_TIMEOUT` (section 13: one minute covers about a thousand protected files, read eight at a time). Read `budget` in `/status` (or the MCP `status` tool): `budget.remaining` is what is left and `budget.reset` is when requests resume. The budget recovers when GitHub's hourly window resets, and the queued check is then published by itself.
 
 These are the `/status` fields you read:
 
 - `tier` is the effective tier. `tierNote` appears when the setting and the enrollment disagree. Run setup again (section 6).
 - `owner` shows the enrolled login. It is absent until setup succeeds.
+- `budget` is the GitHub API budget: `budget.remaining` is the number of requests left in the current hourly window, and `budget.reset` is when the window resets. It is absent until GitHub has answered once, and when GitHub is not configured.
 - `unconfiguredRepositories` lists the enrolled repositories that the configuration does not name. It is absent when there are none.
 - `github` has one entry per repository:
   - `lastSuccess` is the last successful synchronization.

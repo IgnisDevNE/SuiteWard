@@ -146,9 +146,10 @@ Verify the download once with `scripts/verify-release.ps1` ([how](docs/install.m
 - **The MVP is feature-complete for a single owner on GitHub,** and accepted on both tiers. SuiteWard governs its own tests: every pull request to this repository that changes a protected file needs the owner's approval.
 - **Releases:**
   - `v0.1.0` is the first release, and `v0.1.1` adds scope discovery (M1.9).
-  - `v0.1.3` is the current release and runs on both tiers; its isolated tier runs on a Linux host, and v0.2.0 moves it to AlmaLinux 9.
-  - `v0.2.0` is in preparation: a least-privilege database role, `suiteward migrate`, signed releases with provenance and an SBOM, and an AlmaLinux 9 isolated host.
-  - The security assessment is done; the hardening phase is [SH](docs/plan/phases/SH.md).
+  - `v0.1.3` was the last release before the hardening phase.
+  - `v0.2.0` (2026-10-22) is the current release and runs on both tiers. It adds a least-privilege database role, `suiteward migrate`, signed releases with provenance and an SBOM, and an AlmaLinux 9 isolated host.
+  - The security assessment is done, and the hardening phase ([SH](docs/plan/phases/SH.md)) is merged and released.
+  - Next is the installer (phase M1.12, `v0.3.0-alpha.1`).
 - **Security:** see [SECURITY.md](SECURITY.md), the [threat model](docs/security/threat-model.md), and [`scripts/verify-release.ps1`](scripts/verify-release.ps1), which verifies a release's signature and provenance.
 - **After the MVP:**
   - canonical test execution (M2);

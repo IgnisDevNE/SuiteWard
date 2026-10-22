@@ -29,6 +29,7 @@ type selfCheckGitHubFake struct {
 	installationID      int64             // the installation listed, setupInstallID unless set
 	permissions         map[string]string // the permissions of the listed installation, fivePermissions unless set
 	denyPermission      string            // a token request that names this permission is answered 422
+	covered             []string          // the repositories (names without the owner) the installation covers, widgets unless set
 
 	mu      sync.Mutex
 	handled []string // "METHOD path" of every request
@@ -71,9 +72,23 @@ func (f *selfCheckGitHubFake) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{
 			"id": id, "account": map[string]any{"login": "octo", "type": "User"}, "repository_selection": "selected", "permissions": permissions,
 		}})
-	case r.Method == http.MethodPost && f.denyPermission != "":
+	case r.URL.Path == "/installation/repositories":
+		var repositories []map[string]any
+		for _, name := range f.coveredNames() {
+			repositories = append(repositories, map[string]any{"full_name": "acme/" + name})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(repositories), "repositories": repositories})
+	case r.Method == http.MethodPost:
 		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), `"`+f.denyPermission+`"`) {
+		var request struct {
+			Repositories []string `json:"repositories"`
+		}
+		_ = json.Unmarshal(body, &request) // a body that is not JSON asks for no repository
+		refused := f.denyPermission != "" && strings.Contains(string(body), `"`+f.denyPermission+`"`)
+		for _, name := range request.Repositories { // GitHub refuses a token for a repository outside the installation
+			refused = refused || !slices.Contains(f.coveredNames(), name)
+		}
+		if refused {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(setupGitHubBody))
 			return
@@ -163,7 +178,7 @@ func TestSelfCheckGitHubPassesAndOnlyReads(t *testing.T) {
 		t.Errorf("protection detail = %q; want enforced", got)
 	}
 	for _, request := range fake.requests() {
-		if request != "GET /app" && request != "GET /app/installations" && !strings.HasPrefix(request, "GET /repos/") &&
+		if request != "GET /app" && request != "GET /app/installations" && request != "GET /installation/repositories" && !strings.HasPrefix(request, "GET /repos/") &&
 			request != fmt.Sprintf("POST /app/installations/%d/access_tokens", setupInstallID) {
 			t.Errorf("check made the request %q; it must only read and mint tokens", request)
 		}
@@ -288,7 +303,49 @@ func TestSelfCheckGitHubReportsATokenWhoseGrantedPermissionsDiffer(t *testing.T)
 
 	results := selfCheckGitHubResults(t.Context(), fake.settings(), enrolledProjects)
 
-	wantFailures(t, results, "github.permissions", protectionName)
+	got := wantFailures(t, results, "github.permissions", protectionName)["github.permissions"]
+	if !strings.Contains(got.Detail, "protection token was granted other permissions") || !strings.Contains(got.Fix, "administration: read, metadata: read") {
+		t.Errorf("github.permissions = %+v; want the token and, in the fix, the permissions it requests (SuiteWard's own, not GitHub's answer)", got)
+	}
+	noSecret(t, results)
+}
+
+func TestSelfCheckGitHubNamesARepositoryTheInstallationDoesNotCover(t *testing.T) {
+	fake := newSelfCheckGitHub(t)
+	fake.covered = []string{"widgets"}
+	g := fake.settings()
+	g.Repositories = []string{setupWidgetsRepo, "acme/other"}
+
+	results := selfCheckGitHubResults(t.Context(), g, enrolledProjects)
+
+	found := byName(t, results)
+	repositories := found["github.repositories"]
+	if repositories.OK || !strings.Contains(repositories.Detail, "acme/other") || strings.Contains(repositories.Detail, setupWidgetsRepo) || !strings.Contains(repositories.Fix, "installation") {
+		t.Errorf("github.repositories = %+v; want exactly the uncovered repository named, and the installation's repository access to fix", repositories)
+	}
+	if permissions := found["github.permissions"]; permissions.OK || !strings.Contains(permissions.Detail, "not checked") {
+		t.Errorf("github.permissions = %+v; GitHub refuses every token that names an uncovered repository, so it is not checked", permissions)
+	}
+	if covered := found[protectionName]; !covered.OK {
+		t.Errorf("%s = %+v; a covered repository is still checked", protectionName, covered)
+	}
+	if uncovered := found["protection.acme/other"]; uncovered.OK || !strings.Contains(uncovered.Detail, "not checked") {
+		t.Errorf("protection.acme/other = %+v; want it not checked", uncovered)
+	}
+	noSecret(t, results)
+}
+
+func TestSelfCheckGitHubReportsAnInstallationThatCoversNoConfiguredRepository(t *testing.T) {
+	fake := newSelfCheckGitHub(t)
+	fake.covered = []string{}
+	g := fake.settings()
+
+	results := selfCheckGitHubResults(t.Context(), g, enrolledProjects)
+
+	found := wantFailures(t, results, "github.permissions", "github.repositories", protectionName)
+	if got := found["github.repositories"]; !strings.Contains(got.Detail, setupWidgetsRepo) {
+		t.Errorf("github.repositories = %+v; want the repository named as not covered", got)
+	}
 }
 
 func TestSelfCheckGitHubReportsARepositoryTheInstallationCannotRead(t *testing.T) {
@@ -489,4 +546,11 @@ func TestSelfCheckJSONFlagPrintsTheArrayAndExitsOne(t *testing.T) {
 	if strings.Contains(stdout+stderr, leakWord) {
 		t.Errorf("the database password is in the output:\n%s\n%s", stdout, stderr)
 	}
+}
+
+func (f *selfCheckGitHubFake) coveredNames() []string {
+	if f.covered == nil {
+		return []string{"widgets"}
+	}
+	return f.covered
 }

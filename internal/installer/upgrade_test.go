@@ -232,8 +232,7 @@ func TestUpgradeNeverShowsTheBackupOrAPassword(t *testing.T) {
 
 	// A failing dump does not put its output in the error either.
 	u = newUpgradeHarness(t, nil)
-	u.first("exec -i suiteward-db pg_dump", dumpText)
-	u.f.fail("pg_dump", errors.New("pg_dump: error: connection failed"))
+	u.f.rules = append([]rule{{match: "pg_dump", err: errors.New("pg_dump: error: connection failed")}}, u.f.rules...)
 	err := u.upgrade("--image", testImage, "--yes")
 	if err == nil || strings.Contains(err.Error(), "HUNTER2-TOTP") {
 		t.Fatalf("got %v", err)
@@ -242,9 +241,13 @@ func TestUpgradeNeverShowsTheBackupOrAPassword(t *testing.T) {
 
 func TestUpgradeStopsWhenTheBackupFailsAndChangesNothing(t *testing.T) {
 	for name, setup := range map[string]func(u *upgradeHarness){
-		"the dump":   func(u *upgradeHarness) { u.first("exec -i suiteward-db pg_dump", ""); u.f.fail("pg_dump", errors.New("pg_dump failed")) },
+		"the dump": func(u *upgradeHarness) {
+			u.f.rules = append([]rule{{match: "pg_dump", err: errors.New("pg_dump failed")}}, u.f.rules...)
+		},
 		"empty dump": func(u *upgradeHarness) { u.first("exec -i suiteward-db pg_dump", "") },
-		"the volume": func(u *upgradeHarness) { u.f.fail("volume export", errors.New("export failed")) },
+		"the volume": func(u *upgradeHarness) {
+			u.f.rules = append([]rule{{match: "volume export", err: errors.New("export failed")}}, u.f.rules...)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			u := newUpgradeHarness(t, nil)
@@ -474,5 +477,19 @@ const suiteward64 = "--user 65532:65532"
 func TestUpgradeUsageIsInTheHelp(t *testing.T) {
 	if !strings.Contains(Usage, "--upgrade") {
 		t.Errorf("the usage does not name --upgrade:\n%s", Usage)
+	}
+}
+
+func TestUpgradeBacksUpAServiceThatDoesNotAnswer(t *testing.T) {
+	u := newUpgradeHarness(t, func(s *Settings) { s.HTTPPort, s.MCPPort = 1, 2 }) // nothing listens there
+	if err := u.upgrade("--image", testImage, "--yes"); err != nil {
+		t.Fatalf("a service that is down is often the reason to upgrade: %v", err)
+	}
+	dir := u.backup()
+	if !exists(filepath.Join(dir, "suiteward.sql")) || exists(filepath.Join(dir, "status.json")) {
+		t.Errorf("the backup should hold the data and no status")
+	}
+	if !strings.Contains(u.out.String(), "status.json was not written") {
+		t.Errorf("the missing status must be reported:\n%s", u.out.String())
 	}
 }

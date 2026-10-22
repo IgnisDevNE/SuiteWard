@@ -108,23 +108,30 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 			return []byte("inactive\n"), nil
 		}
 		return []byte("active\n"), nil
+	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=LoadState --value "):
+		return []byte("loaded\n"), nil
 	case c.name == "loginctl":
 		return []byte(f.linger + "\n"), nil
 	case c.name == generatorPath:
-		var out strings.Builder
-		for _, unit := range generatedUnits {
-			if unit != f.dryRunSkips {
-				out.WriteString("---" + unit + "---\n[Service]\n")
-			}
-			if unit == "suiteward-migrate.service" { // the units name each other, so a skipped unit's name still shows up
-				out.WriteString("Requires=suiteward-db.service\nAfter=suiteward-network.service\n")
-			}
-		}
-		return []byte(out.String()), nil
+		return f.answerGenerator(), nil
 	case c.name == "podman":
 		return f.answerPodman(c)
 	}
 	return nil, nil
+}
+
+// answerGenerator is the dry run of the Podman generator.
+func (f *isoFake) answerGenerator() []byte {
+	var out strings.Builder
+	for _, unit := range generatedUnits {
+		if unit != f.dryRunSkips {
+			out.WriteString("---" + unit + "---\n[Service]\n")
+		}
+		if unit == "suiteward-migrate.service" { // the units name each other, so a skipped unit's name still shows up
+			out.WriteString("Requires=suiteward-db.service\nAfter=suiteward-network.service\n")
+		}
+	}
+	return []byte(out.String())
 }
 
 // answerPodman answers the podman commands: the secret store, the database container and psql.

@@ -195,9 +195,6 @@ func Install(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	if flags["upgrade"] == "true" {
-		return errors.New("--upgrade is not implemented yet")
-	}
 	answers := map[string]string{}
 	if path, ok := flags["answers"]; ok {
 		if answers, err = LoadAnswers(path); err != nil {
@@ -219,17 +216,27 @@ func Install(ctx context.Context, args []string, env Env) error {
 		return err
 	}
 
-	tier, err := r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier))
-	if err != nil {
+	upgrade := flags["upgrade"] == "true"
+	var tier string
+	if upgrade { // an upgrade works on what is installed: it never asks which tier
+		tier = r.preset("tier", string(saved.Tier))
+	} else if tier, err = r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier)); err != nil {
 		return err
 	}
 	switch config.Tier(tier) {
 	case config.TierIsolated:
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
+		if upgrade {
+			return upgradeIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
+		}
 		return installIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
 	case config.TierCoLocated:
-		return installColocated(ctx, r, env, installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved})
+		target := installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved}
+		if upgrade {
+			return upgradeColocated(ctx, r, env, target)
+		}
+		return installColocated(ctx, r, env, target)
 	}
 	return fmt.Errorf("tier %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
 }

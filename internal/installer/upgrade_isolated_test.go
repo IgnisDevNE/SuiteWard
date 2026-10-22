@@ -87,7 +87,9 @@ func (u *isoUpgrade) uninstall(args ...string) error {
 	return Uninstall(context.Background(), append([]string{"--tier", "isolated", "--settings", settingsFile(u.home)}, args...), u.env())
 }
 
-func (u *isoUpgrade) unit(name string) string { return readFile(u.t, filepath.Join(unitDir(u.home), name)) }
+func (u *isoUpgrade) unit(name string) string {
+	return readFile(u.t, filepath.Join(unitDir(u.home), name))
+}
 
 // untouched fails when the run changed anything: no service action, no pull, no unit written.
 func (u *isoUpgrade) untouched(unitsBefore map[string]string) {

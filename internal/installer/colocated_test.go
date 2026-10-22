@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -1043,4 +1044,14 @@ func TestInstallDockerDoesNotTakeAPodmanInstallsSettingsAsItsOwn(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 	h.mustNotMutate()
+}
+
+func TestInstallUsageErrorIsShortAndHelpListsTheFlags(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := h.install("--bogus"); !errors.Is(err, ErrUsage) || strings.Contains(h.out.String(), "-image") {
+		t.Fatalf("a usage error printed the flag list or was not a usage error: %v\n%s", err, h.out.String())
+	}
+	if err := h.install("--help"); !errors.Is(err, flag.ErrHelp) || !strings.Contains(h.out.String(), "-image") {
+		t.Fatalf("--help: %v\n%s", err, h.out.String())
+	}
 }

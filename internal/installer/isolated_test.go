@@ -252,7 +252,7 @@ func runIsolated(t *testing.T, f *isoFake, answers map[string]string, stdin stri
 	term, _ := fakeTerminal(false, stdin)
 	r := newTestResolver(t, nil, merged, term)
 	var out bytes.Buffer
-	err := installIsolated(context.Background(), isolatedSettings(), r, f.deps(), &out)
+	err := installIsolated(context.Background(), isolatedSettings(), r, Env{Deps: f.deps(), Term: Terminal{Out: &out}})
 	return out.String(), err
 }
 
@@ -754,7 +754,7 @@ func TestInstallIsolatedNeverTakesTheAppKeyAsAnArgument(t *testing.T) {
 	f := newIsoFake(t.TempDir())
 	term, _ := fakeTerminal(false, "")
 	r := newTestResolver(t, map[string]string{"github-app-key": appKeyPEM(t)}, map[string]string{"image": testDigest}, term)
-	if err := installIsolated(context.Background(), isolatedSettings(), r, f.deps(), io.Discard); err == nil || f.has("secret create") {
+	if err := installIsolated(context.Background(), isolatedSettings(), r, Env{Deps: f.deps(), Term: Terminal{Out: io.Discard}}); err == nil || f.has("secret create") {
 		t.Fatalf("a key on the command line must be refused: %v", err)
 	}
 }

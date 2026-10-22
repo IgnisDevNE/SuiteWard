@@ -20,8 +20,8 @@ import (
 )
 
 // The service-account half of the isolated install, run as the account `sudo suiteward install host` prepared and never as
-// root. installIsolated(ctx, s, r, d, out) takes the parsed settings, the Resolver (flags, answers file, prompts), the
-// machine's Deps and the writer for its report. It reads these answers: "image" (sha256:<index digest> or the full
+// root. installIsolated(ctx, s, r, env) takes the parsed settings, the Resolver (flags, answers file, prompts), the
+// machine's Env (its Deps and the writer for its report). It reads these answers: "image" (sha256:<index digest> or the full
 // reference; optional when an install is adopted), "github-app-key" (the PEM, from the answers file or stdin, never a flag),
 // "github-app-key-file" (a path to the PEM) and, all three or none, "github-app-id", "github-installation-id" and
 // "github-repositories" (comma separated). Every external command goes through Deps.Exec.
@@ -86,7 +86,8 @@ func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, er
 	}, nil
 }
 
-func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out io.Writer) error {
+func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
+	d, out := env.Deps, env.Term.Out
 	host, err := openIsolatedHost(ctx, s, d)
 	if err != nil {
 		return err

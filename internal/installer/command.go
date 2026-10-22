@@ -234,7 +234,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 		if upgrade {
 			return upgradeIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
 		}
-		return installIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
+		return installIsolated(ctx, isolated, r, env)
 	case config.TierCoLocated:
 		target := installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved}
 		if upgrade {

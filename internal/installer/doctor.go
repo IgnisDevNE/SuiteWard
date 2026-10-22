@@ -27,7 +27,7 @@ import (
 //
 // It reads the settings at settingsPath (the default location when empty), checks the engine, the containers or units, the
 // pins, the ports and /status of the instance those settings describe, runs `suiteward check --json` in the service
-// container and merges its results. It prints `ok <name>` or `FAIL <name>: <detail> — <fix>` per result (the same style as
+// container and merges its results. It prints `ok <name>`, `WARN <name>: <detail> — <fix>` (a pass that needs a look) or `FAIL <name>: <detail> — <fix>` per result (the same style as
 // `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. The
 // exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
 func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, jsonOut bool) int {
@@ -50,10 +50,11 @@ func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, 
 // doctorResult is one line of `suiteward doctor`: the JSON keys are those of `suiteward check --json`, whose results are
 // merged into the same list.
 type doctorResult struct {
-	Name   string `json:"name"`
-	OK     bool   `json:"ok"`
-	Detail string `json:"detail"`
-	Fix    string `json:"fix"`
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Detail  string `json:"detail"`
+	Fix     string `json:"fix"`
+	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
 }
 
 func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
@@ -63,6 +64,8 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 	var b strings.Builder
 	for _, r := range results {
 		switch {
+		case r.OK && r.Warning:
+			b.WriteString("WARN " + r.Name + ": " + r.Detail + " — " + r.Fix + "\n")
 		case r.OK:
 			b.WriteString("ok " + r.Name + "\n")
 		default:
@@ -78,7 +81,7 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "refuse 169.254.169.254 for the service account (docs/install.md, section 10), then run doctor again"
+	metadataFix    = "as an administrator run `sudo suiteward install host --metadata-rule yes`, which adds the nft rule that refuses 169.254.169.254 for the service account, then run doctor again"
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
 	// answers on its own output, so that an exec that fails is not read as "blocked", and first makes the same kind of
 	// connection to the database's own port: when that fails the probe would be "blocked" for any reason.
@@ -800,7 +803,7 @@ func (d *doctor) checkHost(ctx context.Context) {
 		d.fail("network", "read the Podman network backend: "+err.Error(), "check that `podman info` works for this user")
 	case backend != networkBackend:
 		d.fail("network", fmt.Sprintf("the Podman network backend is %q, want %s", backend, networkBackend),
-			"install netavark and check the Podman setup (docs/install.md, section 10); the metadata rule and the service network rely on it")
+			"the isolated tier needs Podman's netavark network backend, which the metadata rule and the service network rely on: install it (`sudo dnf install netavark`), set network_backend = \"netavark\" in containers.conf, then run doctor again")
 	default:
 		d.pass("network", "the network backend is "+networkBackend)
 	}
@@ -818,7 +821,7 @@ func (d *doctor) checkHost(ctx context.Context) {
 		d.fail("memory", "read the memory limit of "+ContainerDB+": "+err.Error(), "start the database container, then run doctor again")
 	case in.HostConfig.Memory != dbMemoryBytes:
 		d.fail("memory", fmt.Sprintf("%s has memory limit %d bytes, want %d", ContainerDB, in.HostConfig.Memory, dbMemoryBytes),
-			"check that suiteward-db.container sets PodmanArgs=--memory=384m and that Podman applies it (docs/install.md, section 10)")
+			"the database must run with a 384 MiB limit: check that suiteward-db.container has PodmanArgs=--memory=384m, restart it with `systemctl --user restart suiteward-db.service`, and check that `podman inspect suiteward-db --format {{.HostConfig.Memory}}` prints 402653184 (rootless Podman needs cgroup v2 with the memory controller delegated to the account)")
 	default:
 		d.pass("memory", fmt.Sprintf("%s is limited to %d bytes", ContainerDB, dbMemoryBytes))
 	}

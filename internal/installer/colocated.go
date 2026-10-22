@@ -17,11 +17,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-const (
-	appRole   = "suiteward_app" // the role serve connects as: least privilege, created here once
-	ownerRole = "suiteward"     // the bootstrap role, used only by migrate
-)
-
 // The user of a database URL, read without parsing the URL: a parse error would repeat the URL, password included.
 var urlUser = regexp.MustCompile(`^postgres://([^:/@]+):`)
 
@@ -70,8 +65,14 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	// A different release than the one that runs is an upgrade: it backs up first, so it has its own command.
-	if asked, ok := r.optional("image"); ok && previous.Known && previous.Image != "" && !sameImage(asked, previous.Image) {
-		return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, previous.Image)
+	if asked, ok := r.given("image"); ok && previous.Known && previous.Image != "" {
+		want, err := parseImage(asked)
+		if err != nil {
+			return err
+		}
+		if !sameImage(want, previous.Image) {
+			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", want, previous.Image)
+		}
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)
 	if err != nil {
@@ -83,15 +84,16 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if embedded, ok := ReleaseImage(); defaultImage == "" && ok {
 		defaultImage = embedded
 	}
-	image, err := r.Value("image", "Release image (pinned by digest)", defaultImage)
+	asked, err := r.Value("image", "Release image (pinned by digest)", defaultImage)
 	if err != nil {
 		return err
 	}
-	if !digestImage.MatchString(image) {
-		return fmt.Errorf("%w: %s", ErrNotDigestImage, image)
+	image, err := parseImage(asked)
+	if err != nil {
+		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -106,7 +108,14 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
 		return err
 	}
-	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
+	save := func() error {
+		if err := SaveSettings(t.settingsPath, c.s); err != nil {
+			return err
+		}
+		c.clearPending() // the settings name the App now
+		return nil
+	}
+	if err := c.bringUp(ctx, save); err != nil {
 		return err
 	}
 	c.restartAfterReboot(ctx)
@@ -196,11 +205,16 @@ func (c *colocatedInstall) pullImages(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, img := range []string{c.image, postgres} {
-		if c.rt.ImageExists(ctx, img) {
+	return pullMissing(ctx, c.rt, c.image, postgres)
+}
+
+// pullMissing pulls the images the engine does not have yet.
+func pullMissing(ctx context.Context, rt Runtime, images ...string) error {
+	for _, img := range images {
+		if rt.ImageExists(ctx, img) {
 			continue
 		}
-		if err := c.rt.Pull(ctx, img); err != nil {
+		if err := rt.Pull(ctx, img); err != nil {
 			return err
 		}
 	}
@@ -617,41 +631,18 @@ func (c colocatedInstall) waitHealthy(ctx context.Context) error {
 	return fmt.Errorf("%s did not become healthy within 90 s (%s)", ContainerDB, logs)
 }
 
-// psql runs SQL as the database owner over the container's local socket. The SQL goes in on stdin: an argument would show
-// in the process list. A sensitive statement carries a password and a failing statement echoes itself, so its error says
-// only that it failed.
-func (c colocatedInstall) psql(ctx context.Context, sql string, sensitive bool) (string, error) {
-	argv := []string{"psql", "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", ownerRole, "-d", "suiteward", "-f", "-"}
-	out, err := c.rt.Exec(ctx, ContainerDB, argv, strings.NewReader(sql))
-	if err != nil {
-		if sensitive {
-			return "", fmt.Errorf("psql in %s failed (the statement is not shown: it carries a password)", ContainerDB)
-		}
-		return "", fmt.Errorf("psql in %s failed: %w", ContainerDB, err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 // ensureRole creates the application role, or gives it a new password when its secret is missing, still the owner's or
-// different between volumes, so a purged database or an interrupted conversion is repaired. Statements are not logged,
-// not even a failing one.
+// different between volumes, so a purged database or an interrupted conversion is repaired.
 func (c colocatedInstall) ensureRole(ctx context.Context, needAppURL bool) error {
-	exists, err := c.psql(ctx, "SELECT 1 FROM pg_roles WHERE rolname = '"+appRole+"'", false)
+	exists, err := appRoleExists(ctx, c.rt)
 	if err != nil {
 		return err
 	}
-	if !needAppURL && exists == "1" {
+	if !needAppURL && exists {
 		return nil
 	}
-	password, err := NewPassword()
+	password, err := setAppRolePassword(ctx, c.rt, exists)
 	if err != nil {
-		return err
-	}
-	statement := "CREATE ROLE " + appRole + " LOGIN PASSWORD '" + password + "'"
-	if exists == "1" {
-		statement = "ALTER ROLE " + appRole + " PASSWORD '" + password + "'"
-	}
-	if _, err := c.psql(ctx, "SET log_statement = 'none'; SET log_min_error_statement = 'panic'; SET log_min_duration_statement = -1; "+statement+";", true); err != nil {
 		return err
 	}
 	return c.rt.Secrets().Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appRole, password)), true)

@@ -51,8 +51,9 @@ func (f *fakeEngine) fail(match string, err error) *fakeEngine {
 
 func (f *fakeEngine) deps() Deps {
 	return Deps{
-		GOOS:   f.goos,
-		Getenv: func(k string) string { return f.env[k] },
+		GOOS:    f.goos,
+		Getenv:  func(k string) string { return f.env[k] },
+		UserSID: func() (string, error) { return testSID, nil },
 		Exec: func(_ context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 			c := call{name: name, args: append([]string(nil), args...)}
 			if stdin != nil {

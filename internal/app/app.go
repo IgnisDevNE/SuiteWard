@@ -133,10 +133,6 @@ func runWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writ
 			return usageError(stderr)
 		}
 	}
-	if command == "check" && cfg.GitHub == nil {
-		reportf(stderr, "check needs the GitHub settings (SUITEWARD_GITHUB_*)\n")
-		return usageError(stderr)
-	}
 	// The cause is dropped: pgx redacts only up to the first @, so for an unencoded @ in the password it echoes the rest.
 	service, err := pgxpool.ParseConfig(cfg.DatabaseURL.Reveal())
 	if err != nil {

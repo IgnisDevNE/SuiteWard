@@ -949,7 +949,7 @@ func TestInstallWritesTheMCPTokenCopyAndRestrictsItOnWindows(t *testing.T) {
 			acl = append(acl, c)
 		}
 	}
-	if len(acl) != 1 || !slices.Equal(acl[0].args, []string{h.tokenPath(), "/inheritance:r", "/grant:r", "tester:F"}) {
+	if len(acl) != 1 || !slices.Equal(acl[0].args, []string{h.tokenPath(), "/inheritance:r", "/grant:r", "*" + testSID + ":F"}) {
 		t.Fatalf("icacls calls: %+v", acl)
 	}
 	// The copy is restricted before the token is in it, and the secret is made after the copy.

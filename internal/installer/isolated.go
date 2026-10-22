@@ -42,8 +42,6 @@ var (
 // generatorPath is the Podman quadlet generator, whose dry run lists every unit it reads.
 const generatorPath = "/usr/lib/systemd/system-generators/podman-system-generator"
 
-const appDatabaseRole = "suiteward_app"
-
 // isolatedHost is the service account's machine as the isolated commands find it: the checks passed and the paths are known.
 type isolatedHost struct {
 	d            Deps
@@ -119,12 +117,10 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err != nil {
 		return err
 	}
-	for _, image := range []string{postgres, releaseImageRepo + "@" + digest} {
-		if err := rt.Pull(ctx, image); err != nil {
-			return err
-		}
+	if err := pullMissing(ctx, rt, postgres, releaseImageRepo+"@"+digest); err != nil {
+		return err
 	}
-	g := &githubInstall{rt: rt, env: env, out: out, s: s}
+	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath)}
 	if err := g.githubFlow(ctx, r, configDir); err != nil {
 		return err
 	}
@@ -166,6 +162,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := SaveSettings(settingsPath, g.s); err != nil {
 		return err
 	}
+	g.clearPending() // the settings name the App now
 	say("\nSuiteWard %s is running on this account. Settings are saved in %s.\n\n", digest, settingsPath)
 	if gh.AppID == 0 {
 		say("GitHub is not configured in the settings of this run: if the service should reach GitHub, run the install again with --github yes (or the GitHub values).\n")
@@ -415,8 +412,7 @@ func reportAdopted(say func(string, ...any), asked, installed Settings) {
 // chooseImage picks the digest to pin from the "image" answer and the installed one. A different image is an upgrade, which
 // has its own command, unless the stack never completed a start: then it is a retry after a failed first run.
 func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool, error), say func(string, ...any)) (string, error) {
-	asked, _ := r.optional("image")
-	asked = strings.TrimPrefix(asked, releaseImageRepo+"@")
+	asked, _ := r.given("image")
 	switch {
 	case asked == "" && installedDigest == "":
 		if embedded, ok := ReleaseImage(); ok {
@@ -425,28 +421,26 @@ func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool,
 		return "", errors.New("this binary carries no release image (a development build), so --image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
 	case asked == "":
 		return installedDigest, nil
-	case !imageDigest.MatchString(asked):
-		return "", fmt.Errorf("--image %q is not a digest of the form sha256:<64 lowercase hex characters>: the installer never pins a tag", asked)
-	case installedDigest != "" && asked != installedDigest:
+	}
+	image, err := parseImage(asked)
+	if err != nil {
+		return "", err
+	}
+	repo, digest, _ := strings.Cut(image, "@") // parseImage made sure there is a digest
+	if withoutTag(repo) != releaseImageRepo {
+		return "", fmt.Errorf("%w: the isolated tier runs %s only, not %s", ErrNotDigestImage, releaseImageRepo, image)
+	}
+	if installedDigest != "" && digest != installedDigest {
 		never, err := neverStarted()
 		if err != nil {
 			return "", err
 		}
 		if !never {
-			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, installedDigest)
+			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", digest, installedDigest)
 		}
-		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, asked)
+		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, digest)
 	}
-	return asked, nil
-}
-
-// optional returns the flag or answers-file value of key, when there is one: it never prompts.
-func (r *Resolver) optional(key string) (string, bool) {
-	if v, ok := r.flags[key]; ok {
-		return v, true
-	}
-	v, ok := r.answers[key]
-	return v, ok
+	return digest, nil
 }
 
 func appKeyFingerprint(raw []byte) (string, error) {
@@ -614,35 +608,22 @@ func waitHealthy(ctx context.Context, rt Runtime) error {
 	}
 }
 
-// ensureAppRole creates the application role and its URL secret once. The SQL, which holds the password,
-// goes through stdin only, with the SET lines that keep it out of the database log. A role left by an earlier attempt gets
-// the new password instead.
+// ensureAppRole creates the application role and its URL secret once. A role left by an earlier attempt gets the new password
+// instead.
 func ensureAppRole(ctx context.Context, rt Runtime) error {
 	store := rt.Secrets()
 	if have, err := store.Exists(ctx, SecretDatabaseURL); err != nil || have {
 		return err
 	}
-	psql := func(extra []string, sql string) ([]byte, error) {
-		argv := append(append([]string{"psql", "-X", "-q"}, extra...), "-v", "ON_ERROR_STOP=1", "-U", "suiteward", "-d", "suiteward", "-f", "-")
-		return rt.Exec(ctx, ContainerDB, argv, strings.NewReader(sql))
-	}
-	found, err := psql([]string{"-t", "-A"}, "SELECT 1 FROM pg_roles WHERE rolname = '"+appDatabaseRole+"';\n")
+	exists, err := appRoleExists(ctx, rt)
 	if err != nil {
-		return fmt.Errorf("look for the role %s: %w", appDatabaseRole, err)
+		return fmt.Errorf("look for the role %s: %w", appRole, err)
 	}
-	statement := "CREATE ROLE " + appDatabaseRole + " LOGIN PASSWORD"
-	if strings.TrimSpace(string(found)) == "1" {
-		statement = "ALTER ROLE " + appDatabaseRole + " PASSWORD"
-	}
-	password, err := NewPassword()
+	password, err := setAppRolePassword(ctx, rt, exists)
 	if err != nil {
-		return err
+		return fmt.Errorf("create the role %s: %w", appRole, err)
 	}
-	sql := "SET log_statement = 'none';\nSET log_min_error_statement = 'panic';\nSET log_min_duration_statement = -1;\n" + statement + " '" + password + "';\n"
-	if _, err := psql(nil, sql); err != nil {
-		return fmt.Errorf("create the role %s: %w", appDatabaseRole, err)
-	}
-	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appDatabaseRole, password)), false)
+	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appRole, password)), false)
 }
 
 // The names the service reads its GitHub values by; the installer writes them to the env file (writeEnvFile).

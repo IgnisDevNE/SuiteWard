@@ -34,6 +34,7 @@ type isoFake struct {
 	linger      string
 	health      string // health of suiteward-db once started
 	roleExists  bool
+	roleFails   bool              // a statement that creates or alters a role fails, and its error echoes the statement as psql does
 	secrets     map[string]string // existing Podman secrets and their values
 	dryRunSkips string            // a generated unit the dry run leaves out
 	failOn      map[string]error  // command name + " " + argument text -> error
@@ -75,6 +76,9 @@ func (f *isoFake) deps() Deps {
 				c.stdin = string(data)
 			}
 			f.calls = append(f.calls, c)
+			if f.roleFails && strings.Contains(c.line(), "psql") && strings.Contains(c.stdin, " ROLE ") {
+				return nil, errors.New("psql: ERROR: LINE 1: " + c.stdin)
+			}
 			for match, err := range f.failOn {
 				if strings.Contains(name+" "+c.line(), match) {
 					return nil, err
@@ -279,6 +283,7 @@ func TestInstallIsolatedRefusesOtherSystemsAndRoot(t *testing.T) {
 func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 	home := t.TempDir()
 	f := newIsoFake(home)
+	f.noImage = true // the images are pulled
 	out, err := runIsolated(t, f, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -300,7 +305,10 @@ func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 	reload := f.index("systemctl --user daemon-reload", dry)
 	startDB := f.index("systemctl --user start suiteward-db.service", reload)
 	health := f.index("inspect --type container --format {{json .State}} suiteward-db", startDB)
-	role := f.index("exec -i suiteward-db psql -X -q -v ON_ERROR_STOP=1 -U suiteward -d suiteward -f -", health)
+	role := f.index("exec -i suiteward-db psql -X -q -t -A -v ON_ERROR_STOP=1 -U suiteward -d suiteward -f -", health) // the look for the role
+	for role >= 0 && !strings.Contains(f.calls[role].stdin, "CREATE ROLE") {
+		role = f.index("exec -i suiteward-db psql", role+1)
+	}
 	appURL := f.index("secret create "+SecretDatabaseURL+" -", role)
 	startSvc := f.index("systemctl --user start suiteward.service", appURL)
 	check := f.index("--property=ActiveState --value suiteward.service", startSvc)
@@ -320,7 +328,7 @@ func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 
 	// The role SQL: the SET lines first, the password in the statement, on stdin only.
 	sql := f.calls[role].stdin
-	re := regexp.MustCompile(`(?s)^SET log_statement = 'none';\nSET log_min_error_statement = 'panic';\nSET log_min_duration_statement = -1;\nCREATE ROLE suiteward_app LOGIN PASSWORD '([0-9a-f]{48})';\n$`)
+	re := regexp.MustCompile(`(?s)^SET log_statement = 'none'; SET log_min_error_statement = 'panic'; SET log_min_duration_statement = -1; CREATE ROLE suiteward_app LOGIN PASSWORD '([0-9a-f]{48})';$`)
 	m := re.FindStringSubmatch(sql)
 	if m == nil {
 		t.Fatalf("the role SQL has the wrong shape: %q", sql)
@@ -435,6 +443,7 @@ func TestInstallIsolatedRequiresAnImageDigestBeforeChangingAnything(t *testing.T
 
 func TestInstallIsolatedAcceptsTheFullImageReference(t *testing.T) {
 	f := newIsoFake(t.TempDir())
+	f.noImage = true
 	if _, err := runIsolated(t, f, map[string]string{"image": testImage}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -552,6 +561,7 @@ func TestInstallIsolatedLetsAFailedFirstRunRetryWithAnotherImage(t *testing.T) {
 		home := t.TempDir()
 		installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: DefaultEnvFile})
 		f := newIsoFake(home)
+		f.noImage = true
 		mutate(home, f)
 		out, err := runIsolated(t, f, map[string]string{"image": other}, "")
 		return home, f, out, err

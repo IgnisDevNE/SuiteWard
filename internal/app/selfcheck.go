@@ -52,6 +52,8 @@ type selfCheckResult struct {
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail"`
 	Fix    string `json:"fix"`
+	// Warning marks a passing result that needs a look, such as GitHub not being configured; it is in the JSON only when set.
+	Warning bool `json:"warning,omitempty"`
 }
 
 func checkPassed(name, detail string) selfCheckResult {
@@ -60,6 +62,14 @@ func checkPassed(name, detail string) selfCheckResult {
 
 func checkFailed(name, detail, fix string) selfCheckResult {
 	return selfCheckResult{Name: name, Detail: detail, Fix: fix}
+}
+
+// notConfiguredFix is how an instance installed without GitHub gets it.
+const notConfiguredFix = "run `suiteward install` on the host again with --github yes (or the GitHub values), then enroll the owner"
+
+// checkNotConfigured is the result of a GitHub check of an instance installed without GitHub: it passes, as a warning.
+func checkNotConfigured(name string) selfCheckResult {
+	return selfCheckResult{Name: name, OK: true, Warning: true, Detail: "not configured: GitHub is off in this instance", Fix: notConfiguredFix}
 }
 
 // checkSkipped is the result of a check that needs another one to pass first.
@@ -85,11 +95,19 @@ func parseSelfCheck(args []string, stderr io.Writer) (bool, error) {
 	return *asJSON, nil
 }
 
-// runSelfCheck runs every check, prints the results and returns the exit code: 0 when all pass, 1 otherwise.
+// runSelfCheck runs every check, prints the results and returns the exit code: 0 when none fails (a warning is not a failure), 1 otherwise.
 // The database is checked first because the protection check needs the test check of the enrollment.
 func runSelfCheck(ctx context.Context, cfg config.Config, asJSON bool, stdout, stderr io.Writer) int {
 	schema, role, enrolled, projects := selfCheckDatabaseResults(ctx, cfg)
-	results := append(selfCheckGitHubResults(ctx, *cfg.GitHub, projects), enrolled, schema, role)
+	var results []selfCheckResult
+	if cfg.GitHub == nil { // the install allows an instance without GitHub: its checks are warnings, the database ones still run
+		for _, name := range []string{nameApp, nameInstallation, namePermissions, nameRepositories} {
+			results = append(results, checkNotConfigured(name))
+		}
+	} else {
+		results = selfCheckGitHubResults(ctx, *cfg.GitHub, projects)
+	}
+	results = append(results, enrolled, schema, role)
 	if err := writeSelfCheck(stdout, results, asJSON); err != nil {
 		reportf(stderr, "write output: %v\n", err)
 		return 1
@@ -100,16 +118,19 @@ func runSelfCheck(ctx context.Context, cfg config.Config, asJSON bool, stdout, s
 	return 0
 }
 
-// writeSelfCheck prints `ok <name>` or `FAIL <name>: <detail> — <fix>` per result, or the JSON array.
+// writeSelfCheck prints `ok <name>`, `WARN <name>: <detail> — <fix>` or `FAIL <name>: <detail> — <fix>` per result, or the JSON array.
 func writeSelfCheck(w io.Writer, results []selfCheckResult, asJSON bool) error {
 	if asJSON {
 		return json.NewEncoder(w).Encode(results)
 	}
 	var out strings.Builder
 	for _, r := range results {
-		if r.OK {
+		switch {
+		case r.OK && r.Warning:
+			out.WriteString("WARN " + r.Name + ": " + r.Detail + " — " + r.Fix + "\n")
+		case r.OK:
 			out.WriteString("ok " + r.Name + "\n")
-		} else {
+		default:
 			out.WriteString("FAIL " + r.Name + ": " + r.Detail + " — " + r.Fix + "\n")
 		}
 	}
@@ -419,6 +440,10 @@ func selfCheckDatabaseResults(ctx context.Context, cfg config.Config) (schema, r
 	switch {
 	case err != nil:
 		return schema, role, checkFailed(nameOwnerEnrolled, "the enrollment could not be read", dbFix), nil
+	case !found && cfg.GitHub == nil: // setup needs GitHub, so without it no owner can be enrolled
+		warning := checkNotConfigured(nameOwnerEnrolled)
+		warning.Detail = "no owner is enrolled, and setup needs GitHub, which is not configured"
+		return schema, role, warning, nil
 	case !found:
 		return schema, role, checkFailed(nameOwnerEnrolled, "no owner is enrolled",
 			"run `suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK` once in the container (see the install guide)"), nil

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -23,13 +25,20 @@ const (
 func restrictPath(ctx context.Context, d Deps, path string, dir bool) error {
 	path = filepath.Clean(path)
 	if d.GOOS == "windows" {
-		user := d.Getenv("USERNAME")
-		if user == "" {
-			return errors.New("USERNAME is not set, so " + path + " cannot be restricted to this user")
+		// The SID, not the name: a domain or Entra ID account may not resolve by name in icacls.
+		if d.UserSID == nil {
+			return errors.New("the installer has no way to find the SID of this user, so " + path + " cannot be restricted to it")
 		}
-		grant := user + ":F"
+		sid, err := d.UserSID()
+		if err == nil && !strings.HasPrefix(sid, "S-1-") {
+			err = fmt.Errorf("%q is not a SID", sid)
+		}
+		if err != nil {
+			return fmt.Errorf("find the SID of this user, so that %s can be restricted to it: %w", path, err)
+		}
+		grant := "*" + sid + ":F"
 		if dir {
-			grant = user + ":(OI)(CI)F"
+			grant = "*" + sid + ":(OI)(CI)F"
 		}
 		if _, err := d.Exec(ctx, "icacls", []string{path, "/inheritance:r", "/grant:r", grant}, nil); err != nil {
 			return fmt.Errorf("restrict %s to this user: %w", path, err)
@@ -44,6 +53,15 @@ func restrictPath(ctx context.Context, d Deps, path string, dir bool) error {
 		return fmt.Errorf("restrict %s to this user: %w", path, err)
 	}
 	return nil
+}
+
+// osUserSID is the SID of the current user, which Windows reports as the user id.
+func osUserSID() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	return u.Uid, nil
 }
 
 // writePrivateFile creates path, which must not exist yet, with mode 0600 and writes data to it.

@@ -122,7 +122,6 @@ var installFlags = []struct{ name, usage string }{
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
 	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub"},
 	{"github-account", `the account that owns the new App: "personal" or an organization login`},
-	{"manifest-code", "the code from the manifest redirect, when the browser could not reach the listener"},
 	{"manifest-port", "the port of the manifest listener on 127.0.0.1 (default: any free port)"},
 	{"ruleset-imported", "yes once the ruleset of each repository is imported"},
 	{"github-app-id", "the ID of an App that exists, or none to skip GitHub"},
@@ -148,7 +147,7 @@ func newInstallFlagSet() *flag.FlagSet {
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
 	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
 	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading")
-	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: backups beside the settings file)")
+	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
 	return fs
 }
 
@@ -229,7 +228,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
 		// A host installed by hand has no settings file, and the default tier would be a guess: on Linux that is the isolated host.
-		if _, given := r.optional("tier"); !given && !haveSaved && env.Deps.GOOS == "linux" {
+		if _, given := r.given("tier"); !given && !haveSaved && env.Deps.GOOS == "linux" {
 			return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
 		}
 		tier = r.preset("tier", string(saved.Tier))
@@ -241,7 +240,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
 		if upgrade {
-			return upgradeIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
+			return upgradeIsolated(ctx, isolated, r, env)
 		}
 		return installIsolated(ctx, isolated, r, env)
 	case config.TierCoLocated:

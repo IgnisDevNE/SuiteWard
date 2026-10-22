@@ -59,8 +59,17 @@ func TestSelfCheckDatabasePassesForAnEnrolledOwnerAndTheApplicationRole(t *testi
 	}
 }
 
+// With GitHub configured, a missing owner is a failure: setup can be run. Without GitHub setup cannot be run, so it is a warning.
 func TestSelfCheckDatabaseReportsAnOwnerWhoIsNotEnrolledYet(t *testing.T) {
-	cfg := selfCheckConfig(t, newDatabase(t))
+	databaseURL := newDatabase(t)
+	t.Run("without GitHub it is a warning", func(t *testing.T) {
+		_, _, enrolled, _ := selfCheckDatabaseResults(t.Context(), selfCheckConfig(t, databaseURL))
+		if !enrolled.OK || !enrolled.Warning || !strings.Contains(enrolled.Detail, "no owner") {
+			t.Errorf("owner.enrolled = %+v; want a passing warning that GitHub is not configured", enrolled)
+		}
+	})
+	cfg := selfCheckConfig(t, databaseURL)
+	cfg.GitHub = &config.GitHub{} // the database half only asks whether GitHub is configured
 
 	schema, role, enrolled, projects := selfCheckDatabaseResults(t.Context(), cfg)
 
@@ -188,5 +197,25 @@ func TestSelfCheckChangesNothingInTheDatabase(t *testing.T) {
 
 	if after := databaseSnapshot(t, databaseURL); after != before {
 		t.Errorf("row counts (enrollment, test checks, TOTP steps, protection results, outbox, jobs) = %s after check, %s before; check must change nothing", after, before)
+	}
+}
+
+// An instance without GitHub passes check: the database checks run for real, GitHub and the enrollment (which setup cannot do
+// without GitHub) are warnings.
+func TestSelfCheckRunOnPostgreSQLWithoutGitHubPassesAndWarns(t *testing.T) {
+	databaseURL := newDatabase(t)
+
+	code, stdout, stderr := run([]string{"check"}, testEnv(serveVars(t, databaseURL)))
+
+	if code != 0 || stderr != "" {
+		t.Fatalf("check = %d, stderr %q, stdout:\n%s", code, stderr, stdout)
+	}
+	for _, line := range []string{"WARN github.app: ", "WARN github.repositories: ", "WARN owner.enrolled: ", "ok database.schema\n", "ok database.role\n"} {
+		if !strings.Contains(stdout, line) {
+			t.Errorf("stdout lacks %q:\n%s", line, stdout)
+		}
+	}
+	if strings.Contains(stdout, "FAIL") {
+		t.Errorf("stdout has a failure:\n%s", stdout)
 	}
 }

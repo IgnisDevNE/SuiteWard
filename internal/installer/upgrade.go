@@ -17,7 +17,7 @@ var ErrNothingInstalled = errors.New("nothing is installed here: install first w
 
 // upgradeTarget is the release image the upgrade moves to: --image, else the release this binary carries.
 func upgradeTarget(r *Resolver) (string, error) {
-	asked, ok := r.optional("image")
+	asked, ok := r.given("image")
 	if !ok {
 		embedded, have := ReleaseImage()
 		if !have {
@@ -25,13 +25,7 @@ func upgradeTarget(r *Resolver) (string, error) {
 		}
 		return embedded, nil
 	}
-	if strings.HasPrefix(asked, "sha256:") {
-		asked = releaseImageRepo + "@" + asked
-	}
-	if !digestImage.MatchString(asked) {
-		return "", fmt.Errorf("%w: %s", ErrNotDigestImage, asked)
-	}
-	return asked, nil
+	return parseImage(asked)
 }
 
 // upgradePlan is what an upgrade changes: the release image and the PostgreSQL pin, as installed and as wanted.

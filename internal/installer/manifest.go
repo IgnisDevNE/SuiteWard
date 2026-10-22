@@ -83,8 +83,12 @@ type pasted struct {
 // obtainManifestCode serves the manifest form on a loopback listener and returns the code, from GitHub's callback or pasted
 // into the terminal, whichever comes first. The code is a credential until it is converted: it is never printed.
 func obtainManifestCode(ctx context.Context, env githubEnv, account string) (string, string, error) {
-	if given, ok := env.R.given("manifest-code"); ok { // a code from an earlier attempt, within its hour
-		code, err := parseManifestCode(given, "")
+	if _, ok := env.R.given("manifest-code"); ok { // a code from an earlier attempt, within its hour; a secret, so never a flag
+		given, err := env.R.Secret("manifest-code", "The manifest code")
+		if err != nil {
+			return "", "", err
+		}
+		code, err := parseManifestCode(string(given), "")
 		return code, "", err
 	}
 	ln, err := listenLoopback(env.ManifestPort)

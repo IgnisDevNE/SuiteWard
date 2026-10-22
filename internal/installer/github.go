@@ -16,12 +16,14 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/appauth"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	appowner "github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
-	"golang.org/x/term"
 )
 
 // resolveGitHub is the one entry the tier flows call (M1.12-I6):
@@ -502,7 +504,10 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 		return nil, err
 	}
 	value, _ := env.R.given("test-check")
-	listed, isList := parseTestCheckList(value)
+	listed, isList, err := parseTestCheckList(value)
+	if err != nil {
+		return nil, err
+	}
 	for repo := range listed {
 		if !slices.ContainsFunc(repos, func(r repoInfo) bool { return strings.EqualFold(r.name, repo) }) {
 			return nil, fmt.Errorf("test-check names %s, which is not one of the chosen repositories", repo)
@@ -536,22 +541,29 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 }
 
 // parseTestCheckList reads OWNER/NAME=CHECK entries, one per line: the shape of setup's repeated --test-check, joined by
-// the caller. ok is false when the value is a plain check name.
-func parseTestCheckList(value string) (checks map[string]string, ok bool) {
+// the caller. ok is false when the value is a plain check name. A repository named twice, in any letter case, is an error.
+func parseTestCheckList(value string) (checks map[string]string, ok bool, err error) {
 	checks = map[string]string{}
+	seen := map[string]bool{}
 	for _, line := range strings.Split(value, "\n") {
 		if line = strings.TrimSpace(line); line == "" {
 			continue
 		}
 		repo, check, found := strings.Cut(line, "=")
 		if check = strings.TrimSpace(check); !found || !repositoryName.MatchString(repo) || check == "" {
-			return nil, false
+			return nil, false, nil
 		}
+		lower := strings.ToLower(repo)
+		if seen[lower] {
+			return nil, false, fmt.Errorf("test-check lists %s twice (repository names are not case-sensitive)", repo)
+		}
+		seen[lower] = true
 		checks[repo] = check
 	}
-	return checks, len(checks) > 0
+	return checks, len(checks) > 0, nil
 }
 
+// lookupFold finds key in m ignoring letter case; parseTestCheckList guarantees at most one match.
 func lookupFold(m map[string]string, key string) string {
 	for k, v := range m {
 		if strings.EqualFold(k, key) {
@@ -665,7 +677,15 @@ func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]s
 		if !repositoryName.MatchString(repo) || strings.TrimSpace(check) == "" {
 			return fmt.Errorf("the test check %q of %q is not a repository (owner/name) with a check name", check, repo)
 		}
+		if len(check) > appowner.MaxTestCheckBytes { // the limit setup enforces, so setup does not refuse after the container is entered
+			return fmt.Errorf("the test check of %s is longer than %d bytes", repo, appowner.MaxTestCheckBytes)
+		}
 		repos = append(repos, repo)
+	}
+	// Setup prints the TOTP enrollment URI and secret on its terminal: with no real terminal here, that output would go
+	// to a pipe or a file that a coding agent could read, so the installer does not run it.
+	if !setupTerminal() {
+		return errors.New("setup needs a real terminal on stdin and stdout: run the installer from your own terminal, not through a pipe, a script or a coding agent")
 	}
 	sort.Strings(repos)
 	argv := []string{"/suiteward", "setup", "--owner", owner}

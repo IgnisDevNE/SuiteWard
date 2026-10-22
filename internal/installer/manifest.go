@@ -145,7 +145,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		}
 	}()
 
-	ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub.\n  http://%s/\n", addr)
+	ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named %s unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://%s/\n", name, addr)
 	if env.Tier == config.TierIsolated {
 		port := addr[strings.LastIndex(addr, ":")+1:]
 		ghSay(env.Out, "This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward).\n"+
@@ -240,6 +240,8 @@ type convertedApp struct {
 // convertManifest exchanges the manifest code for the App (POST /app-manifests/{code}/conversions, no authentication: the
 // code is the credential). It refuses an App whose permissions are not exactly the five or whose owner is not the chosen
 // account; on a refusal the App exists on GitHub, so the returned app carries its slug (and no key) beside the error.
+// appName is the name the manifest carried ("" for a code from an earlier attempt): an unusable answer names it, because
+// the App may exist all the same.
 func convertManifest(ctx context.Context, client *http.Client, apiURL, code, account, appName string) (convertedApp, error) {
 	if !codePattern.MatchString(code) {
 		return convertedApp{}, errors.New("the manifest code is not a code (letters and digits only)")
@@ -267,6 +269,10 @@ func convertManifest(ctx context.Context, client *http.Client, apiURL, code, acc
 		}
 		return convertedApp{}, fmt.Errorf("the manifest conversion answered HTTP %d%s", resp.StatusCode, hint)
 	}
+	orphan := "" // the answer is unusable but the App may exist: its name is how to find it
+	if appName != "" {
+		orphan = " (the App may exist on GitHub under the name " + appName + " unless you renamed it: look for it in your GitHub App settings and delete it)"
+	}
 	// Only these fields are decoded: the answer also holds the client and webhook secrets.
 	var out struct {
 		ID    int64  `json:"id"`
@@ -279,10 +285,10 @@ func convertManifest(ctx context.Context, client *http.Client, apiURL, code, acc
 		PEM         string            `json:"pem"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxConversionAnswer)).Decode(&out); err != nil {
-		return convertedApp{}, errors.New("the manifest conversion answer is not an App object")
+		return convertedApp{}, fmt.Errorf("the manifest conversion answer is not an App object%s", orphan)
 	}
 	if out.ID <= 0 || !slugPattern.MatchString(out.Slug) || out.Owner.Login == "" || out.PEM == "" {
-		return convertedApp{}, errors.New("the manifest conversion answer lacks the App id, slug, owner or key")
+		return convertedApp{}, fmt.Errorf("the manifest conversion answer lacks the App id, slug, owner or key%s", orphan)
 	}
 	app := convertedApp{ID: out.ID, Slug: out.Slug, OwnerLogin: out.Owner.Login, OwnerType: out.Owner.Type}
 	refuse := func(reason string) (convertedApp, error) {

@@ -1,14 +1,14 @@
 package installer
 
 import (
-	"io"
-
 	"context"
 	"errors"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	"io"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 )
 
 func manifestFlags() map[string]string {

@@ -6,3 +6,5 @@
 !internal
 !LICENSE
 !deploy/notices.sh
+!deploy/units.go
+!deploy/quadlet

@@ -77,6 +77,16 @@ jobs:
         run: ./scripts/check-go.ps1
       - name: Verify fresh generated PostgreSQL queries
         run: ./scripts/check-persistence.ps1 -Mode Generated
+      - name: Cross-build the installer for the release targets
+        # The release workflow ships these four; building them on every change keeps the Windows and macOS code compiling. Go cross-compiles, so one runner is enough.
+        if: runner.os == 'Linux'
+        run: |
+          foreach ($target in 'linux/amd64', 'linux/arm64', 'windows/amd64', 'darwin/arm64') {
+            $goos, $goarch = $target -split '/'
+            $env:CGO_ENABLED = '0'; $env:GOOS = $goos; $env:GOARCH = $goarch
+            go build -trimpath -o (Join-Path $env:RUNNER_TEMP "suiteward-$goos-$goarch") ./cmd/suiteward
+            if ($LASTEXITCODE -ne 0) { throw "go build failed for $target" }
+          }
 
   coverage:
     name: Race, security, and coverage

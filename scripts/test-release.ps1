@@ -27,7 +27,7 @@ try {
     $issuer = $cosignArgs[[array]::IndexOf($cosignArgs, '--certificate-oidc-issuer') + 1]
     if ($issuer -cne 'https://token.actions.githubusercontent.com') { throw "Unexpected OIDC issuer: $issuer" }
     $workflow = 'https://github.com/IgnisDevNE/SuiteWard/.github/workflows/release.yml'
-    foreach ($identity in "$workflow@refs/tags/v1.2.3", "$workflow@refs/tags/v1.2.3-rc.1") { if ($identity -cnotmatch $regexp) { throw "The release identity $identity is refused." } }
+    foreach ($identity in "$workflow@refs/tags/v1.2.3", "$workflow@refs/tags/v1.2.3-rc.1", "$workflow@refs/tags/v1.2.3-alpha.4") { if ($identity -cnotmatch $regexp) { throw "The release identity $identity is refused." } }
     foreach ($identity in "$workflow@refs/heads/main", "$workflow@refs/tags/v1.2", "$workflow@refs/tags/v1.2.3/x",
         'https://github.com/IgnisDevNE/SuiteWard/.github/workflows/deploy.yml@refs/tags/v1.2.3',
         'https://github.com/Other/SuiteWard/.github/workflows/release.yml@refs/tags/v1.2.3',
@@ -37,10 +37,33 @@ try {
     # The verify job's tag check and the signing identity must accept the same tag shapes.
     $tagCheck = [regex]::Match((Get-Content -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/release.yml') -Raw), '\[\[ ! "\$TAG" =~ (?<re>\S+) \]\]').Groups['re'].Value
     if (-not $tagCheck) { throw 'The tag check was not found in release.yml.' }
-    foreach ($tag in 'v1.2.3', 'v10.20.30', 'v1.2.3-rc.1', 'v1.2.3-rc.12', 'v1.2', 'v1.2.3.4', 'v1.2.3-rc', 'v1.2.3-rc.', 'v1.2.3-beta.1', 'v1.2.3-rc.1x', 'v1.2.3/x', 'vx.y.z', '1.2.3', 'main') {
+    foreach ($tag in 'v1.2.3', 'v10.20.30', 'v1.2.3-rc.1', 'v1.2.3-rc.12', 'v1.2.3-alpha.1', 'v0.3.0-alpha.12', 'v1.2.3-alpha', 'v1.2.3-alpha.', 'v1.2.3-alpha.1x', 'v1.2.3-ALPHA.1', 'v1.2.3-alpha.1-rc.1', 'v1.2', 'v1.2.3.4', 'v1.2.3-rc', 'v1.2.3-rc.', 'v1.2.3-beta.1', 'v1.2.3-rc.1x', 'v1.2.3/x', 'vx.y.z', '1.2.3', 'main') {
         if (($tag -cmatch $tagCheck) -ne ("$workflow@refs/tags/$tag" -cmatch $regexp)) { throw "release.yml and verify-release.ps1 disagree about the tag $tag." }
     }
+    # Blob mode: the same identity and issuer, the bundle and the file passed through, a failing cosign refused.
+    Remove-Item -LiteralPath $log
+    & $verify -Blob 'suiteward_v1.2.3_linux_amd64' -Bundle 'suiteward_v1.2.3_linux_amd64.sigstore.json' -Cosign $fake *>$null
+    $blobArgs = @(Get-Content -LiteralPath $log)
+    if ($blobArgs[0] -cne 'verify-blob' -or $blobArgs[-1] -cne 'suiteward_v1.2.3_linux_amd64') { throw "cosign was not called as 'verify-blob ... <file>': $blobArgs" }
+    if ($blobArgs[[array]::IndexOf($blobArgs, '--bundle') + 1] -cne 'suiteward_v1.2.3_linux_amd64.sigstore.json') { throw "The bundle was not passed: $blobArgs" }
+    if ($blobArgs[[array]::IndexOf($blobArgs, '--certificate-identity-regexp') + 1] -cne $regexp -or $blobArgs[[array]::IndexOf($blobArgs, '--certificate-oidc-issuer') + 1] -cne $issuer) { throw "Blob mode must use the image identity and issuer: $blobArgs" }
+    # Sums mode: no cosign; the file must be listed exactly once with its hash.
+    $binary = Join-Path $testRoot 'suiteward_v1.2.3_linux_amd64'
+    Set-Content -LiteralPath $binary -Value 'binary' -NoNewline
+    $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sums = Join-Path $testRoot 'SHA256SUMS'
+    Set-Content -LiteralPath $sums -Value "$('b' * 64)  other`n$hash  suiteward_v1.2.3_linux_amd64"
+    Remove-Item -LiteralPath $log
+    & $verify -Sums $sums -File $binary *>$null
+    if (Test-Path -LiteralPath $log) { throw 'Sums mode ran cosign.' }
+    Set-Content -LiteralPath $sums -Value "$('b' * 64)  suiteward_v1.2.3_linux_amd64"
+    Assert-Rejected { & $verify -Sums $sums -File $binary } 'does not match'
+    Set-Content -LiteralPath $sums -Value "$hash  other"
+    Assert-Rejected { & $verify -Sums $sums -File $binary } 'exactly once'
+    Set-Content -LiteralPath $sums -Value "$hash  suiteward_v1.2.3_linux_amd64`n$hash  suiteward_v1.2.3_linux_amd64"
+    Assert-Rejected { & $verify -Sums $sums -File $binary } 'exactly once'
     $env:FAKE_COSIGN_EXIT = '1'
+    Assert-Rejected { & $verify -Blob 'f' -Bundle 'f.sigstore.json' -Cosign $fake } 'could not verify'
     Assert-Rejected { & $verify -Reference $digest -Cosign $fake } 'could not verify'
     Assert-Rejected { & $verify -Reference $digest -Cosign (Join-Path $testRoot 'missing') } 'was not found'
     Write-Host 'Release verification checks passed.'

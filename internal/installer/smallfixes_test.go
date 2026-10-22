@@ -99,4 +99,3 @@ func TestRestrictPathRefusesWhenTheSIDIsUnknownOnWindows(t *testing.T) {
 		}
 	}
 }
-

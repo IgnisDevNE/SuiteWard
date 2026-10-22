@@ -62,10 +62,10 @@ func TestBackupRestrictsItsDirectoryAndEveryFileToThisUserOnWindows(t *testing.T
 		t.Fatal(err)
 	}
 	want := [][]string{
-		{"icacls", dir, "/inheritance:r", "/grant:r", "*"+testSID+":(OI)(CI)F"},
-		{"icacls", filepath.Join(dir, backupStatus), "/inheritance:r", "/grant:r", "*"+testSID+":F"},
-		{"icacls", filepath.Join(dir, backupDump), "/inheritance:r", "/grant:r", "*"+testSID+":F"},
-		{"icacls", filepath.Join(dir, backupVolume), "/inheritance:r", "/grant:r", "*"+testSID+":F"},
+		{"icacls", dir, "/inheritance:r", "/grant:r", "*" + testSID + ":(OI)(CI)F"},
+		{"icacls", filepath.Join(dir, backupStatus), "/inheritance:r", "/grant:r", "*" + testSID + ":F"},
+		{"icacls", filepath.Join(dir, backupDump), "/inheritance:r", "/grant:r", "*" + testSID + ":F"},
+		{"icacls", filepath.Join(dir, backupVolume), "/inheritance:r", "/grant:r", "*" + testSID + ":F"},
 	}
 	if len(acl) != len(want) {
 		t.Fatalf("icacls ran %d times, want %d: %v", len(acl), len(want), acl)

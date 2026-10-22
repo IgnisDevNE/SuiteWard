@@ -34,7 +34,7 @@ type isoFake struct {
 	linger      string
 	health      string // health of suiteward-db once started
 	roleExists  bool
-	roleFails   bool // a statement that creates or alters a role fails, and its error echoes the statement as psql does
+	roleFails   bool              // a statement that creates or alters a role fails, and its error echoes the statement as psql does
 	secrets     map[string]string // existing Podman secrets and their values
 	dryRunSkips string            // a generated unit the dry run leaves out
 	failOn      map[string]error  // command name + " " + argument text -> error

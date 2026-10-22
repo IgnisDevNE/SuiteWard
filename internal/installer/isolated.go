@@ -415,7 +415,7 @@ func reportAdopted(say func(string, ...any), asked, installed Settings) {
 // chooseImage picks the digest to pin from the "image" answer and the installed one. A different image is an upgrade, which
 // has its own command, unless the stack never completed a start: then it is a retry after a failed first run.
 func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool, error), say func(string, ...any)) (string, error) {
-	asked, _ := r.optional("image")
+	asked, _ := r.given("image")
 	asked = strings.TrimPrefix(asked, releaseImageRepo+"@")
 	switch {
 	case asked == "" && installedDigest == "":
@@ -438,15 +438,6 @@ func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool,
 		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, asked)
 	}
 	return asked, nil
-}
-
-// optional returns the flag or answers-file value of key, when there is one: it never prompts.
-func (r *Resolver) optional(key string) (string, bool) {
-	if v, ok := r.flags[key]; ok {
-		return v, true
-	}
-	v, ok := r.answers[key]
-	return v, ok
 }
 
 func appKeyFingerprint(raw []byte) (string, error) {

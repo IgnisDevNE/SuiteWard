@@ -17,7 +17,7 @@ var ErrNothingInstalled = errors.New("nothing is installed here: install first w
 
 // upgradeTarget is the release image the upgrade moves to: --image, else the release this binary carries.
 func upgradeTarget(r *Resolver) (string, error) {
-	asked, ok := r.optional("image")
+	asked, ok := r.given("image")
 	if !ok {
 		embedded, have := ReleaseImage()
 		if !have {

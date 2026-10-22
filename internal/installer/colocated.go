@@ -70,7 +70,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	// A different release than the one that runs is an upgrade: it backs up first, so it has its own command.
-	if asked, ok := r.optional("image"); ok && previous.Known && previous.Image != "" && !sameImage(asked, previous.Image) {
+	if asked, ok := r.given("image"); ok && previous.Known && previous.Image != "" && !sameImage(asked, previous.Image) {
 		return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, previous.Image)
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -329,6 +330,18 @@ func TestDoctorInstanceCheck(t *testing.T) {
 			res[r.Name] = r
 		}
 		wantFail(t, res, "instance.check", "SUITEWARD_DATABASE_URL")
+		// Exit 1 reaches doctor as this same error while the runtime drops stdout, so the fix must not blame the image.
+		if fix := res["instance.check"].Fix; !strings.Contains(fix, "podman exec suiteward /suiteward check") {
+			t.Errorf("the fix does not show how to read the results: %q", fix)
+		}
+	})
+	t.Run("a password with a slash is hidden too", func(t *testing.T) {
+		secret := "ab/" + "cd"
+		f, s := colocated{over: []rule{{match: line, err: errors.New("exit status 2: parse \"postgres://app:" + secret + "@db/x\": bad")}}}.build(t)
+		_, out := runDoctorRaw(t, f, s, true)
+		if strings.Contains(out, secret) || strings.Contains(out, "cd@") {
+			t.Errorf("the output still has the password: %s", out)
+		}
 	})
 	t.Run("output that is not JSON is one failure", func(t *testing.T) {
 		f, s := colocated{checkOut: "usage: suiteward serve\n"}.build(t)
@@ -372,7 +385,12 @@ func TestDoctorOutputFormats(t *testing.T) {
 		t.Errorf("exit %d", code)
 	}
 	lines := strings.Split(strings.TrimSpace(text), "\n")
-	if lines[0] != "ok settings" && !strings.HasPrefix(lines[0], "ok settings:") {
+	for _, l := range lines {
+		if strings.HasPrefix(l, "ok ") && strings.Contains(l, ":") {
+			t.Errorf("an ok line carries a detail, which `check` does not print: %q", l)
+		}
+	}
+	if lines[0] != "ok settings" {
 		t.Errorf("first line %q", lines[0])
 	}
 	var failed string
@@ -448,17 +466,38 @@ func TestDoctorMachineMustExist(t *testing.T) {
 }
 
 func TestDoctorSaysWhoOwnsTheDockerPipeOnWindows(t *testing.T) {
-	f, s := colocated{goos: "windows", over: []rule{{match: "--host npipe:////./pipe/docker_engine", out: podmanBehindDocker + "\n"}}}.build(t)
-	_, res, _ := runDoctor(t, f, s)
-	wantOK(t, res, "runtime")
-	if d := res["runtime"].Detail; !strings.Contains(d, "docker_engine") || !strings.Contains(strings.ToLower(d), "podman") {
-		t.Errorf("the runtime result does not say who owns the Docker pipe: %q", d)
-	}
+	const pipe = "--host npipe:////./pipe/docker_engine"
+	t.Run("another engine", func(t *testing.T) {
+		f, s := colocated{goos: "windows", over: []rule{{match: pipe, out: podmanBehindDocker + "\n"}}}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		wantOK(t, res, "runtime")
+		if d := res["runtime"].Detail; !strings.Contains(d, "docker_engine") || !strings.Contains(strings.ToLower(d), "not docker") {
+			t.Errorf("the runtime result does not say who owns the Docker pipe: %q", d)
+		}
+	})
+	t.Run("asks Docker Desktop's own CLI, not the docker command of the PATH", func(t *testing.T) {
+		f, s := colocated{goos: "windows", over: []rule{{match: pipe, out: dockerDesktopServer + "\n"}}}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		if d := res["runtime"].Detail; !strings.Contains(d, "docker_engine") || !strings.Contains(d, "Docker Desktop") {
+			t.Errorf("the runtime result does not name Docker Desktop as the pipe's owner: %q", d)
+		}
+		calls := f.find(pipe)
+		if len(calls) == 0 || calls[0].name != dockerDesktopCLI {
+			t.Errorf("the pipe was asked through %v, want Docker Desktop's CLI %q", calls, dockerDesktopCLI)
+		}
+	})
 	// Information only: an unanswered pipe is no failure.
-	f, s = colocated{goos: "windows", over: []rule{{match: "--host npipe:////./pipe/docker_engine", err: errors.New("pipe not found")}}}.build(t)
-	code, res, _ := runDoctor(t, f, s)
-	if code != 0 {
-		t.Errorf("exit %d, an unanswered pipe failed doctor: %+v", code, res)
+	for name, err := range map[string]error{"nothing answers": errors.New("pipe not found"), "no Docker CLI": fmt.Errorf("start docker: %w", exec.ErrNotFound)} {
+		t.Run(name, func(t *testing.T) {
+			f, s := colocated{goos: "windows", over: []rule{{match: pipe, err: err}}}.build(t)
+			code, res, _ := runDoctor(t, f, s)
+			if code != 0 {
+				t.Errorf("exit %d, an unanswered pipe failed doctor: %+v", code, res)
+			}
+			if d := res["runtime"].Detail; name == "no Docker CLI" && !strings.Contains(d, "no Docker CLI") {
+				t.Errorf("a missing CLI is not told apart from a silent pipe: %q", d)
+			}
+		})
 	}
 }
 

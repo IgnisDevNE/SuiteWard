@@ -467,6 +467,7 @@ func resumeApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 		return app, res, created, fmt.Errorf("look for the App key secret: %w", err)
 	}
 	var key []byte
+	given := false // the key came from a file, not from the secret store
 	if exists {
 		if key, err = env.ReadKey(ctx); err != nil {
 			return app, res, created, fmt.Errorf("read the App key secret: %w", err)
@@ -475,14 +476,27 @@ func resumeApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 		return app, res, created, err
 	} else if err != nil {
 		return app, res, created, fmt.Errorf("%w: %w", errPendingKeyMissing, err)
+	} else {
+		given = true
+	}
+	// A key that is given is not this App's until GitHub accepts it: the secret does not exist, so nothing is retried with it.
+	notThisKey := func(err error) error {
+		if !given {
+			return err
+		}
+		return fmt.Errorf("%w: the key file is not the key of the App %s (give another key file with --github-app-key-file, or create a new App with --github %s): %w", errPendingKeyMissing, p.Slug, newAppAnswer, err)
 	}
 	if app, err = appauth.NewApp(p.AppID, key, env.Now); err != nil {
-		return app, res, created, err
+		return app, res, created, notThisKey(err)
 	}
 	if _, err = app.Slug(ctx, env.HTTP, env.APIURL); err != nil {
-		return app, res, created, fmt.Errorf("verify the App with GET /app: %w", err)
+		return app, res, created, notThisKey(fmt.Errorf("verify the App with GET /app: %w", err))
 	}
-	ghSay(env.Out, "Taking up the GitHub App %s that an earlier run created; its key is in the secret store.\n", p.Slug)
+	if given {
+		ghSay(env.Out, "Taking up the GitHub App %s that an earlier run created, with the key you gave.\n", p.Slug)
+	} else {
+		ghSay(env.Out, "Taking up the GitHub App %s that an earlier run created; its key is in the secret store.\n", p.Slug)
+	}
 	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, p.Slug, p.Account)
 	info, err := waitForInstallation(ctx, env, app, p.Account)
 	if err != nil {

@@ -193,7 +193,7 @@ func (g *fakeGitHub) token(w http.ResponseWriter, r *http.Request) {
 		Permissions map[string]string `json:"permissions"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	writeJSON(w, http.StatusCreated, map[string]any{"token": "ghs_faketoken", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": req.Permissions})
+	writeJSON(w, http.StatusCreated, map[string]any{"token": strings.Repeat("t", 12), "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "permissions": req.Permissions})
 }
 
 func (g *fakeGitHub) installationRepos(w http.ResponseWriter, _ *http.Request) {

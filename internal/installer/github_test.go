@@ -535,7 +535,7 @@ func TestRunSetupRefusesWhatSetupWouldRefuse(t *testing.T) {
 		"no owner":                      {"", map[string]string{"acme/app": "CI"}},
 		"no checks":                     {"alice", nil},
 		"an empty check":                {"alice", map[string]string{"acme/app": " "}},
-		"a bad repository":             {"alice", map[string]string{"acme": "CI"}},
+		"a bad repository":              {"alice", map[string]string{"acme": "CI"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rt := &ttyRuntime{}

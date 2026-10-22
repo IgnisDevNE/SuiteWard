@@ -26,7 +26,7 @@ func TestListenLoopbackBindsOnlyTheLoopbackInterface(t *testing.T) {
 	}
 }
 
-func TestConvertManifest(t *testing.T) {
+func TestConvertManifestAccepts(t *testing.T) {
 	ctx := context.Background()
 	t.Run("a good conversion", func(t *testing.T) {
 		g := newFakeGitHub(t)
@@ -52,6 +52,10 @@ func TestConvertManifest(t *testing.T) {
 			t.Fatalf("convertManifest = %+v, %v", app, err)
 		}
 	})
+}
+
+func TestConvertManifestRefusals(t *testing.T) {
+	ctx := context.Background()
 	refused := map[string]func(*fakeGitHub){
 		"wrong permissions": func(g *fakeGitHub) {
 			g.convertPerms = map[string]string{"metadata": "read", "pull_requests": "write", "contents": "write", "administration": "read", "checks": "write"}
@@ -88,6 +92,10 @@ func TestConvertManifest(t *testing.T) {
 			t.Fatal("an organization-owned App was accepted as personal")
 		}
 	})
+}
+
+func TestConvertManifestFailures(t *testing.T) {
+	ctx := context.Background()
 	t.Run("a refused status carries no answer text", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		g.convertStatus = http.StatusNotFound
@@ -195,28 +203,7 @@ func TestManifestPageCarriesTheFiveAndTheState(t *testing.T) {
 			if !strings.HasPrefix(action, wantPrefix) || len(stateOf(t, action)) < 16 {
 				t.Fatalf("form action = %q, want prefix %q and a random state", action, wantPrefix)
 			}
-			var m map[string]any
-			if err := json.Unmarshal(manifest, &m); err != nil {
-				t.Fatalf("the manifest is not JSON: %v\n%s", err, manifest)
-			}
-			if _, has := m["hook_attributes"]; has {
-				t.Error("the manifest carries hook_attributes; the webhook is off")
-			}
-			if m["public"] != false || m["url"] != "https://github.com/IgnisDevNE/SuiteWard" || m["redirect_url"] != strings.TrimSuffix(base, "/")+"/callback" {
-				t.Errorf("manifest = %v", m)
-			}
-			if name, _ := m["name"].(string); !strings.HasPrefix(name, "suiteward-") || len(name) > 34 {
-				t.Errorf("name = %q", name)
-			}
-			perms, _ := m["default_permissions"].(map[string]any)
-			if len(perms) != len(appPermissions) {
-				t.Errorf("default_permissions = %v, want exactly the five", perms)
-			}
-			for k, v := range appPermissions {
-				if perms[k] != v {
-					t.Errorf("default_permissions[%s] = %v, want %s", k, perms[k], v)
-				}
-			}
+			checkManifest(t, base, manifest)
 			if status := callback(t, base, "thecode1", stateOf(t, action)); status != http.StatusOK {
 				t.Errorf("the callback answered %d", status)
 			}
@@ -367,5 +354,32 @@ func TestManifestCoLocatedPrintsNoPortForward(t *testing.T) {
 	await(t, done)
 	if strings.Contains(out.String(), "ssm") {
 		t.Errorf("a co-located install printed a port-forward hint:\n%s", out.String())
+	}
+}
+
+// checkManifest asserts the manifest the page sends: the five permissions, no webhook, private, the loopback redirect.
+func checkManifest(t *testing.T, base string, manifest []byte) {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		t.Fatalf("the manifest is not JSON: %v\n%s", err, manifest)
+	}
+	if _, has := m["hook_attributes"]; has {
+		t.Error("the manifest carries hook_attributes; the webhook is off")
+	}
+	if m["public"] != false || m["url"] != "https://github.com/IgnisDevNE/SuiteWard" || m["redirect_url"] != strings.TrimSuffix(base, "/")+"/callback" {
+		t.Errorf("manifest = %v", m)
+	}
+	if name, _ := m["name"].(string); !strings.HasPrefix(name, "suiteward-") || len(name) > 34 {
+		t.Errorf("name = %q", name)
+	}
+	perms, _ := m["default_permissions"].(map[string]any)
+	if len(perms) != len(appPermissions) {
+		t.Errorf("default_permissions = %v, want exactly the five", perms)
+	}
+	for k, v := range appPermissions {
+		if perms[k] != v {
+			t.Errorf("default_permissions[%s] = %v, want %s", k, perms[k], v)
+		}
 	}
 }

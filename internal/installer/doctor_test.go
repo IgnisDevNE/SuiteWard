@@ -29,10 +29,12 @@ const (
 	stoppedList  = `[{"Name":"podman-machine-default","Running":false,"Starting":false,"RemoteUsername":"user"}]`
 )
 
-// serveHTTP answers /readyz and /status like the service and returns the port.
-func serveHTTP(t *testing.T, ready int, status string) int {
+// serveHTTP answers /healthz, /readyz and /status like the service and returns the port. health is the /healthz body,
+// answered with 200.
+func serveHTTP(t *testing.T, ready int, status, health string) int {
 	t.Helper()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(health)) })
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(ready) })
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(status)) })
 	srv := httptest.NewServer(mux)
@@ -141,6 +143,7 @@ type colocated struct {
 	over     []rule // checked before the healthy answers
 	ready    int
 	status   string
+	health   string                    // the /healthz body
 	state    map[string]map[string]any // by container
 	edit     func(name string, obj map[string]any)
 	migrate  map[string]any // State of a migrate container that exists
@@ -155,6 +158,9 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 	if c.ready == 0 {
 		c.ready = http.StatusOK
 	}
+	if c.health == "" {
+		c.health = `{"status":"ok"}`
+	}
 	if c.status == "" {
 		c.status = okStatus
 	}
@@ -163,7 +169,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 	}
 	s := colocatedSettings()
 	s.Runtime = cmp.Or(c.engine, RuntimePodman)
-	s.HTTPPort, s.MCPPort = serveHTTP(t, c.ready, c.status), DefaultMCPPort
+	s.HTTPPort, s.MCPPort = serveHTTP(t, c.ready, c.status, c.health), DefaultMCPPort
 	if s.HTTPPort == s.MCPPort {
 		s.MCPPort++
 	}
@@ -203,7 +209,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 	if c.goos == "windows" || c.goos == "darwin" {
 		s.Connection = "podman-machine-default"
 		f.on("machine list", machineList)
-		f.on("/readyz", `{"status":"ready"}`).on("/status", c.status)
+		f.on("/healthz", c.health).on("/readyz", `{"status":"ready"}`).on("/status", c.status)
 	}
 	return f, s
 }
@@ -214,7 +220,7 @@ func TestDoctorHealthyColocatedPodman(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
-	wantOK(t, res, "settings", "runtime", "containers", "restart", "pins", "ports", "status", "github.app", "database.schema")
+	wantOK(t, res, "settings", "runtime", "containers", "restart", "pins", "ports", "healthz", "status", "github.app", "database.schema")
 	if slices.Contains(names, "machine") {
 		t.Error("a machine check on Linux")
 	}
@@ -229,7 +235,7 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
-	wantOK(t, res, "runtime", "containers", "restart", "pins", "ports", "status", "github.app")
+	wantOK(t, res, "runtime", "containers", "restart", "pins", "ports", "healthz", "status", "github.app")
 	if !strings.Contains(res["runtime"].Detail, "Docker Desktop") {
 		t.Errorf("the runtime result does not identify the engine: %q", res["runtime"].Detail)
 	}
@@ -269,6 +275,8 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 		{"restart through podman-restart.service off", colocated{over: []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}}, "restart", []string{"podman-restart.service", "disabled"}},
 		{"a drifted database image", colocated{edit: driftedDB}, "pins", []string{"image"}},
 		{"a service that is not ready", colocated{ready: http.StatusServiceUnavailable}, "ports", []string{"/readyz", "503"}},
+		{"a health answer that is not ok", colocated{health: `{"status":"degraded"}`}, "healthz", []string{"/healthz", "degraded"}},
+		{"a health answer that is not JSON", colocated{health: `<html>`}, "healthz", []string{"/healthz"}},
 		{"failed outbox messages", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":0},"outbox":{"failed":2}}`}, "status", []string{"outbox", "2"}},
 		{"discarded jobs", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":1},"outbox":{"failed":0}}`}, "status", []string{"discarded", "1"}},
 		{"no schema version", colocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"schemaVersion"}},
@@ -282,8 +290,10 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 				t.Errorf("exit %d, want 1", code)
 			}
 			wantFail(t, res, c.check, c.want...)
-			if c.check == "ports" && !strings.Contains(res["status"].Detail, "not checked") {
-				t.Errorf("status after a failed ports check: %+v", res["status"])
+			for _, after := range []string{"healthz", "status"} {
+				if c.check == "ports" && !strings.Contains(res[after].Detail, "not checked") {
+					t.Errorf("%s after a failed ports check: %+v", after, res[after])
+				}
 			}
 		})
 	}
@@ -295,7 +305,7 @@ func TestDoctorDoesNotCheckWhatNeedsAFailedRuntime(t *testing.T) {
 	for _, name := range []string{"containers", "restart", "pins", "instance.check"} {
 		wantFail(t, res, name, "not checked: runtime")
 	}
-	wantOK(t, res, "ports", "status") // they need only the HTTP port
+	wantOK(t, res, "ports", "healthz", "status") // they need only the HTTP port
 }
 
 func TestDoctorInstanceCheck(t *testing.T) {
@@ -429,8 +439,8 @@ func TestDoctorPodmanMachineReachesThePortsAndTheRestartServiceThroughSSH(t *tes
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
-	wantOK(t, res, "machine", "runtime", "restart", "ports", "status")
-	for _, want := range []string{"/readyz", "/status", "podman-restart.service"} {
+	wantOK(t, res, "machine", "runtime", "restart", "ports", "healthz", "status")
+	for _, want := range []string{"/healthz", "/readyz", "/status", "podman-restart.service"} {
 		calls := f.find(want)
 		if len(calls) == 0 || calls[0].name != "podman" || !strings.HasPrefix(calls[0].line(), "machine ssh --username user podman-machine-default ") {
 			t.Errorf("%s is not reached through `podman machine ssh --username user <machine>`: %v", want, calls)
@@ -517,7 +527,7 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	t.Helper()
 	s := DefaultSettings()
 	s.Tier = config.TierIsolated
-	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, okStatus), DefaultMCPPort
+	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, okStatus, `{"status":"ok"}`), DefaultMCPPort
 	if s.HTTPPort == s.MCPPort {
 		s.MCPPort++
 	}
@@ -543,6 +553,8 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	f.on("-un", "suiteward\n").on("show-user suiteward", "Linger=yes\n")
 	f.on("exec -i "+ContainerDB+" bash", "blocked\n")
 	f.on("exec -i "+ContainerServe+" /suiteward check --json", okCheck)
+	f.on("NetworkBackend", "netavark\n")
+	f.on("inspect --type container "+ContainerDB, `[{"HostConfig":{"Memory":402653184}}]`)
 	f.on("info --format", "true\n")
 	return f, s
 }
@@ -553,7 +565,7 @@ func TestDoctorHealthyIsolated(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
-	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "status", "metadata", "github.app")
+	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "healthz", "status", "metadata", "network", "memory", "github.app")
 	if _, has := res["containers"]; has {
 		t.Error("a containers result for the isolated tier, whose containers are units")
 	}
@@ -577,6 +589,9 @@ func TestDoctorIsolatedFailures(t *testing.T) {
 		{"a unit is not enabled", isolatedRig{over: []rule{{match: "suiteward-db.service", out: unitShow("active", "running", "disabled")}}}, "restart", []string{"suiteward-db.service", "disabled"}, ""},
 		{"a drifted unit file", isolatedRig{files: driftedUnit}, "pins", []string{"Type="}, ""},
 		{"no unit directory", isolatedRig{noHome: true}, "pins", []string{"unit"}, ""},
+		{"another network backend", isolatedRig{over: []rule{{match: "NetworkBackend", out: "cni\n"}}}, "network", []string{"cni", "netavark"}, "netavark"},
+		{"the network backend cannot be read", isolatedRig{over: []rule{{match: "NetworkBackend", err: errors.New("podman: not found")}}}, "network", []string{"not found"}, ""},
+		{"another memory limit on the database", isolatedRig{over: []rule{{match: "inspect --type container " + ContainerDB, out: `[{"HostConfig":{"Memory":0}}]`}}}, "memory", []string{"402653184", "0"}, ""},
 		{"the metadata address answers", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "reachable\n"}}}, "metadata", []string{"169.254.169.254"}, "10.5"},
 		{"the metadata probe cannot run", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", err: errors.New("container is not running")}}}, "metadata", []string{"not running"}, ""},
 	}

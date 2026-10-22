@@ -128,8 +128,8 @@ func TestInstallationsRefusesMoreThanTheCapInsteadOfTruncating(t *testing.T) {
 	})
 
 	got, err := newApp(t, &fakeClock{now: t0}).Installations(context.Background(), g.srv.Client(), g.srv.URL)
-	if err == nil {
-		t.Fatalf("Installations answered %d entries for endless pages; want an error", len(got))
+	if !errors.Is(err, appauth.ErrTooManyEntries) {
+		t.Fatalf("Installations answered %d entries, err %v for endless pages; want ErrTooManyEntries", len(got), err)
 	}
 }
 
@@ -161,6 +161,9 @@ func TestInstallationsFailuresAreErrorsWithoutTheJWT(t *testing.T) {
 				t.Errorf("err = %v, want *StatusError{installations, %d}", err, c.wantStatus)
 			case c.wantStatus == 0 && errors.As(err, &status):
 				t.Errorf("err = %v, want a malformed-answer error, not a StatusError", err)
+			}
+			if c.wantStatus == 0 && !errors.Is(err, appauth.ErrMalformedAnswer) {
+				t.Errorf("err = %v, want ErrMalformedAnswer", err)
 			}
 			if reqs := g.requests(); len(reqs) > 0 && strings.Contains(err.Error(), bearerJWT(t, reqs[0])) {
 				t.Errorf("error %q holds the JWT", err)
@@ -241,8 +244,9 @@ func TestInstallationRepositoriesRefusesMoreThanTheCapAndReportsFailures(t *test
 		g := repositoriesFake(t, &queryLog{}, func(string) (int, string) {
 			return http.StatusOK, jsonBody(t, map[string]any{"total_count": 100000, "repositories": fullNames("octo", 100)})
 		})
-		if got, err := newApp(t, &fakeClock{now: t0}).InstallationRepositories(context.Background(), installationID, g.srv.Client(), g.srv.URL); err == nil {
-			t.Fatalf("answered %d repositories for endless pages; want an error", len(got))
+		got, err := newApp(t, &fakeClock{now: t0}).InstallationRepositories(context.Background(), installationID, g.srv.Client(), g.srv.URL)
+		if !errors.Is(err, appauth.ErrTooManyEntries) {
+			t.Fatalf("answered %d repositories, err %v for endless pages; want ErrTooManyEntries", len(got), err)
 		}
 	})
 	t.Run("token refused", func(t *testing.T) {

@@ -159,3 +159,34 @@ func TestSelfCheckRunOnPostgreSQLPassesWhenEverythingIsRight(t *testing.T) {
 		t.Errorf("stdout has a failure or the password:\n%s", stdout)
 	}
 }
+
+// databaseSnapshot is the row counts of the tables check could change if it wrote: the enrollment, its test checks,
+// the used TOTP steps, the protection results, the outbox and the jobs.
+func databaseSnapshot(t *testing.T, databaseURL string) string {
+	t.Helper()
+	return scalar(t, databaseURL, `SELECT concat_ws(',',
+		(SELECT count(*) FROM owner_enrollment), (SELECT count(*) FROM owner_test_checks), (SELECT count(*) FROM totp_consumed_steps),
+		(SELECT count(*) FROM github_protection_results), (SELECT count(*) FROM outbox), (SELECT count(*) FROM river_job))`)
+}
+
+func TestSelfCheckChangesNothingInTheDatabase(t *testing.T) {
+	fake := newSelfCheckGitHub(t)
+	databaseURL := newDatabase(t)
+	vars := serveVars(t, databaseURL)
+	for name, value := range fake.vars() {
+		vars[name] = value
+	}
+	enrollForCheck(t, selfCheckConfig(t, databaseURL))
+	before := databaseSnapshot(t, databaseURL)
+	if before == "0,0,0,0,0,0" {
+		t.Fatalf("snapshot %q has no enrollment: the test would prove nothing", before)
+	}
+
+	if code, stdout, stderr := run([]string{"check"}, testEnv(vars)); code != 0 {
+		t.Fatalf("check = %d, stderr %q, stdout:\n%s", code, stderr, stdout)
+	}
+
+	if after := databaseSnapshot(t, databaseURL); after != before {
+		t.Errorf("row counts (enrollment, test checks, TOTP steps, protection results, outbox, jobs) = %s after check, %s before; check must change nothing", after, before)
+	}
+}

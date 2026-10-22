@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -444,3 +445,6 @@ func formatPermissions(permissions map[string]string) string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// selfCheckDatabaseTimeout bounds the database checks together, so a host that never answers cannot hang `check`.
+var selfCheckDatabaseTimeout = 15 * time.Second

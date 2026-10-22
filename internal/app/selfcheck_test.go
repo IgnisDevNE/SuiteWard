@@ -3,14 +3,17 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -30,6 +33,8 @@ type selfCheckGitHubFake struct {
 	permissions         map[string]string // the permissions of the listed installation, fivePermissions unless set
 	denyPermission      string            // a token request that names this permission is answered 422
 	covered             []string          // the repositories (names without the owner) the installation covers, widgets unless set
+	malformedListing    bool              // GET /app/installations answers a body that is not a list
+	endlessRepositories bool              // GET /installation/repositories answers full pages for ever
 
 	mu      sync.Mutex
 	handled []string // "METHOD path" of every request
@@ -62,6 +67,10 @@ func (f *selfCheckGitHubFake) serve(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(setupGitHubBody))
 			return
 		}
+		if f.malformedListing {
+			_, _ = w.Write([]byte(`<html>`))
+			return
+		}
 		id, permissions := f.installationID, f.permissions
 		if id == 0 {
 			id = setupInstallID
@@ -74,6 +83,11 @@ func (f *selfCheckGitHubFake) serve(w http.ResponseWriter, r *http.Request) {
 		}})
 	case r.URL.Path == "/installation/repositories":
 		var repositories []map[string]any
+		if f.endlessRepositories {
+			for i := range 100 {
+				repositories = append(repositories, map[string]any{"full_name": fmt.Sprintf("acme/r%03d", i)})
+			}
+		}
 		for _, name := range f.coveredNames() {
 			repositories = append(repositories, map[string]any{"full_name": "acme/" + name})
 		}
@@ -553,4 +567,89 @@ func (f *selfCheckGitHubFake) coveredNames() []string {
 		return []string{"widgets"}
 	}
 	return f.covered
+}
+
+func TestSelfCheckGitHubSaysWhenAListingIsMalformedOrTooLong(t *testing.T) {
+	t.Run("a malformed installations answer", func(t *testing.T) {
+		fake := newSelfCheckGitHub(t)
+		fake.malformedListing = true
+
+		got := byName(t, selfCheckGitHubResults(t.Context(), fake.settings(), enrolledProjects))["github.installation"]
+
+		if got.OK || !strings.Contains(got.Detail, "malformed") || strings.Contains(got.Detail, "transport") {
+			t.Errorf("github.installation = %+v; want a malformed answer, not a transport failure", got)
+		}
+	})
+	t.Run("more repositories than can be listed", func(t *testing.T) {
+		fake := newSelfCheckGitHub(t)
+		fake.endlessRepositories = true
+
+		got := byName(t, selfCheckGitHubResults(t.Context(), fake.settings(), enrolledProjects))["github.repositories"]
+
+		if got.OK || !strings.Contains(got.Detail, "more than 1000 repositories") || !strings.Contains(got.Fix, "selected repositories") || strings.Contains(got.Detail, "transport") {
+			t.Errorf("github.repositories = %+v; want the limit named and selected repositories as the fix", got)
+		}
+	})
+}
+
+// silentServer accepts connections and never answers: the way a black-holed database host looks once the dial succeeds.
+func silentServer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		mu    sync.Mutex
+		conns []net.Conn
+	)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close() // the test is over; the accept loop ends with the error
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			_ = conn.Close() // idem
+		}
+	})
+	return listener.Addr().String()
+}
+
+func TestSelfCheckDatabaseGivesUpOnAHostThatNeverAnswers(t *testing.T) {
+	address := silentServer(t)
+	cfg, _, err := config.Load(func(name string) (string, bool) {
+		value, ok := map[string]string{
+			"SUITEWARD_DATABASE_URL": "postgres://suiteward:" + leakWord + "@" + address + "/suiteward?sslmode=disable",
+			"SUITEWARD_ARTIFACT_DIR": t.TempDir(),
+		}[name]
+		return value, ok
+	}, nil, func(string) ([]byte, error) { return nil, errors.New("no files") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := selfCheckDatabaseTimeout
+	selfCheckDatabaseTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { selfCheckDatabaseTimeout = previous })
+
+	started := time.Now()
+	schema, role, enrolled, _ := selfCheckDatabaseResults(t.Context(), cfg)
+
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("the database checks took %v against a host that never answers; want them bounded by the timeout", elapsed)
+	}
+	for _, r := range []selfCheckResult{schema, role, enrolled} {
+		if r.OK || r.Detail == "" || r.Fix == "" || strings.Contains(r.Detail+r.Fix, leakWord) {
+			t.Errorf("%+v; want a failure with a detail and a fix, and no password", r)
+		}
+	}
 }

@@ -503,3 +503,12 @@ func getJSON(httpClient *http.Client, req *http.Request, endpoint string, out an
 	}
 	return nil
 }
+
+// MaxListed is how many installations or repositories a listing returns at most.
+const MaxListed = listPageSize * listMaxPages
+
+// ErrTooManyEntries reports a listing of more than MaxListed entries.
+var ErrTooManyEntries = errors.New("appauth: too many entries")
+
+// ErrMalformedAnswer reports an answer that is not the object or list the endpoint documents.
+var ErrMalformedAnswer = errors.New("appauth: malformed answer")

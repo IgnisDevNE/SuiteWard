@@ -38,8 +38,12 @@ import (
 // other answer must come from flags or the answers file, because reading the key consumes the rest of stdin).
 //
 // Answer keys (flag names and answers-file keys): github-account (personal, or an organization login), manifest-code,
-// app-id, installation-id, app-key-file, app-key, repositories, owner, test-check (or test-check.OWNER/NAME for one
-// repository), ruleset-imported.
+// app-id, installation-id, app-key-file, app-key, repositories, owner, test-check (a plain check name for one repository,
+// or OWNER/NAME=CHECK entries one per line as setup takes them; test-check.OWNER/NAME for one repository wins), ruleset-imported.
+//
+// Without an app-id answer, githubEnv.Existing (the settings' GitHub part) with KeyExists and ReadKey reuses its App when the
+// key secret exists; otherwise the App is created and githubEnv.StoreKey, when set, receives the key right after the
+// conversion, so the flow does not depend on keeping it in memory.
 func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	env, err := env.withDefaults()
 	if err != nil {

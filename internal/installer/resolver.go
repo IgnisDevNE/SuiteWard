@@ -42,8 +42,8 @@ type Resolver struct {
 }
 
 // NewResolver returns a Resolver over the flags the user set, the answers file's values and a terminal.
-func NewResolver(flags, answers map[string]string, term Terminal) *Resolver {
-	return &Resolver{flags: flags, answers: answers, term: term, in: bufio.NewReader(term.In)}
+func NewResolver(flags, answers map[string]string, term Terminal) (*Resolver, error) {
+	return &Resolver{flags: flags, answers: answers, term: term, in: bufio.NewReader(term.In)}, nil
 }
 
 // FlagsSet returns the flags of fs that were set on the command line.

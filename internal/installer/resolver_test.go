@@ -23,7 +23,7 @@ func TestValuePrecedenceFlagThenAnswersThenPrompt(t *testing.T) {
 	answers := map[string]string{"runtime": "podman", "tier": "isolated"}
 
 	term, out := fakeTerminal(true, "co-located\n")
-	r := NewResolver(flags, answers, term)
+	r := newTestResolver(t, flags, answers, term)
 	if got, err := r.Value("runtime", "Runtime", ""); err != nil || got != "docker" {
 		t.Fatalf("flag must win over the answers file: %q, %v", got, err)
 	}
@@ -43,7 +43,7 @@ func TestValuePrecedenceFlagThenAnswersThenPrompt(t *testing.T) {
 
 func TestValuePromptDefault(t *testing.T) {
 	term, out := fakeTerminal(true, "\n")
-	got, err := NewResolver(nil, nil, term).Value("http-port", "HTTP port", "8081")
+	got, err := newTestResolver(t, nil, nil, term).Value("http-port", "HTTP port", "8081")
 	if err != nil || got != "8081" {
 		t.Fatalf("an empty line must take the default: %q, %v", got, err)
 	}
@@ -54,18 +54,18 @@ func TestValuePromptDefault(t *testing.T) {
 
 func TestValuePromptWithoutDefaultNeedsAnAnswer(t *testing.T) {
 	term, _ := fakeTerminal(true, "\n")
-	if _, err := NewResolver(nil, nil, term).Value("owner", "Owner", ""); err == nil {
+	if _, err := newTestResolver(t, nil, nil, term).Value("owner", "Owner", ""); err == nil {
 		t.Fatal("an empty answer to a question without default was accepted")
 	}
 	term, _ = fakeTerminal(true, "")
-	if _, err := NewResolver(nil, nil, term).Value("owner", "Owner", ""); err == nil {
+	if _, err := newTestResolver(t, nil, nil, term).Value("owner", "Owner", ""); err == nil {
 		t.Fatal("end of input was accepted as an answer")
 	}
 }
 
 func TestValueWithoutTerminalNamesTheFlagAndTheKey(t *testing.T) {
 	term, out := fakeTerminal(false, "typed-on-stdin\n")
-	_, err := NewResolver(nil, nil, term).Value("job-timeout", "Job timeout", "")
+	_, err := newTestResolver(t, nil, nil, term).Value("job-timeout", "Job timeout", "")
 	if err == nil {
 		t.Fatal("a missing answer without a terminal must fail")
 	}
@@ -79,7 +79,7 @@ func TestValueWithoutTerminalNamesTheFlagAndTheKey(t *testing.T) {
 
 func TestValueWithoutTerminalTakesTheDefault(t *testing.T) {
 	term, _ := fakeTerminal(false, "")
-	got, err := NewResolver(nil, nil, term).Value("http-port", "HTTP port", "8081")
+	got, err := newTestResolver(t, nil, nil, term).Value("http-port", "HTTP port", "8081")
 	if err != nil || got != "8081" {
 		t.Fatalf("a default needs no input: %q, %v", got, err)
 	}
@@ -87,7 +87,7 @@ func TestValueWithoutTerminalTakesTheDefault(t *testing.T) {
 
 func TestIntResolution(t *testing.T) {
 	term, _ := fakeTerminal(false, "")
-	r := NewResolver(map[string]string{"http-port": "18081", "mcp-port": "x"}, nil, term)
+	r := newTestResolver(t, map[string]string{"http-port": "18081", "mcp-port": "x"}, nil, term)
 	if got, err := r.Int("http-port", "HTTP port", 8081); err != nil || got != 18081 {
 		t.Fatalf("got %d, %v", got, err)
 	}
@@ -101,7 +101,7 @@ func TestIntResolution(t *testing.T) {
 
 func TestSecretIsNeverTakenFromAFlag(t *testing.T) {
 	term, _ := fakeTerminal(true, "")
-	r := NewResolver(map[string]string{"github-app-key": "-----BEGIN PRIVATE KEY-----"}, nil, term)
+	r := newTestResolver(t, map[string]string{"github-app-key": "-----BEGIN PRIVATE KEY-----"}, nil, term)
 	_, err := r.Secret("github-app-key", "App key")
 	if err == nil || !strings.Contains(err.Error(), "argument") {
 		t.Fatalf("a secret on the command line must be refused: %v", err)
@@ -111,14 +111,14 @@ func TestSecretIsNeverTakenFromAFlag(t *testing.T) {
 func TestSecretSources(t *testing.T) {
 	t.Run("answers file", func(t *testing.T) {
 		term, _ := fakeTerminal(false, "")
-		got, err := NewResolver(nil, map[string]string{"token": "from-file"}, term).Secret("token", "Token")
+		got, err := newTestResolver(t, nil, map[string]string{"token": "from-file"}, term).Secret("token", "Token")
 		if err != nil || string(got) != "from-file" {
 			t.Fatalf("got %q, %v", got, err)
 		}
 	})
 	t.Run("terminal prompt without echo", func(t *testing.T) {
 		term, out := fakeTerminal(true, "")
-		got, err := NewResolver(nil, nil, term).Secret("token", "Token")
+		got, err := newTestResolver(t, nil, nil, term).Secret("token", "Token")
 		if err != nil || string(got) != "typed-secret" {
 			t.Fatalf("got %q, %v", got, err)
 		}
@@ -128,14 +128,14 @@ func TestSecretSources(t *testing.T) {
 	})
 	t.Run("stdin without a terminal", func(t *testing.T) {
 		term, _ := fakeTerminal(false, "line one\nline two\n")
-		got, err := NewResolver(nil, nil, term).Secret("pem", "PEM")
+		got, err := newTestResolver(t, nil, nil, term).Secret("pem", "PEM")
 		if err != nil || string(got) != "line one\nline two" {
 			t.Fatalf("got %q, %v (stdin is read whole, minus its final line ending)", got, err)
 		}
 	})
 	t.Run("empty stdin", func(t *testing.T) {
 		term, _ := fakeTerminal(false, "")
-		_, err := NewResolver(nil, nil, term).Secret("pem", "PEM")
+		_, err := newTestResolver(t, nil, nil, term).Secret("pem", "PEM")
 		if err == nil || !strings.Contains(err.Error(), `"pem"`) {
 			t.Fatalf("an empty secret must fail naming its key: %v", err)
 		}
@@ -187,5 +187,35 @@ func TestLoadAnswers(t *testing.T) {
 	empty, err := LoadAnswers(write("empty.yaml", ""))
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("an empty file holds no answers: %v, %v", empty, err)
+	}
+}
+
+func newTestResolver(t *testing.T, flags, answers map[string]string, term Terminal) *Resolver {
+	t.Helper()
+	r, err := NewResolver(flags, answers, term)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestNewResolverRefusesAnIncompleteTerminal(t *testing.T) {
+	complete, _ := fakeTerminal(true, "")
+	for name, mutate := range map[string]func(*Terminal){
+		"no input":    func(term *Terminal) { term.In = nil },
+		"no output":   func(term *Terminal) { term.Out = nil },
+		"no password": func(term *Terminal) { term.ReadPassword = nil },
+	} {
+		term := complete
+		mutate(&term)
+		if _, err := NewResolver(nil, nil, term); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// Without a terminal nothing is read through ReadPassword, so it may be absent.
+	noTTY, _ := fakeTerminal(false, "")
+	noTTY.ReadPassword = nil
+	if _, err := NewResolver(nil, nil, noTTY); err != nil {
+		t.Errorf("a terminal-less console without ReadPassword was refused: %v", err)
 	}
 }

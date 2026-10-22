@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,5 +57,23 @@ func TestChildEnvDropsContainerHostWhenAConnectionIsSelected(t *testing.T) {
 	}
 	if _, ok := envValue(got, "FOO"); !ok {
 		t.Fatal("another variable was dropped")
+	}
+}
+
+func TestRuntimesRefuseIncompleteDeps(t *testing.T) {
+	complete := newFake("linux").deps()
+	for name, mutate := range map[string]func(*Deps){
+		"no exec":        func(d *Deps) { d.Exec = nil },
+		"no interactive": func(d *Deps) { d.Interactive = nil },
+		"no getenv":      func(d *Deps) { d.Getenv = nil },
+	} {
+		deps := complete
+		mutate(&deps)
+		if _, err := NewPodman(context.Background(), deps, ""); err == nil {
+			t.Errorf("podman, %s: accepted", name)
+		}
+		if _, err := NewDocker(context.Background(), deps, DockerOptions{}); err == nil {
+			t.Errorf("docker, %s: accepted", name)
+		}
 	}
 }

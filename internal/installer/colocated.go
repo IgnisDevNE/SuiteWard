@@ -648,29 +648,84 @@ func (c colocatedInstall) ensureRole(ctx context.Context, needAppURL bool) error
 	return c.rt.Secrets().Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appRole, password)), true)
 }
 
+const (
+	restartUnit      = "podman-restart.service"
+	restartEnableFix = "enable " + restartUnit + " as the rootless user: systemctl --user enable " + restartUnit
+	// restartReloadCommand makes the user's systemd see the link, then prints whether the unit is enabled.
+	restartReloadCommand = "systemctl --user daemon-reload && systemctl --user is-enabled " + restartUnit
+)
+
+// plainUser is a machine user name that can go into a path and into a shell command that runs as root.
+var plainUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+
+// restartLinkCommand links podman-restart.service for user in a Podman machine, as root (the machine's default ssh user). Podman's
+// WSL machine creates the user's systemd directories owned by root, so the user's own `systemctl --user enable` is denied.
+func restartLinkCommand(user string) string {
+	wants := "/home/" + user + "/.config/systemd/user/default.target.wants"
+	return "mkdir -p " + wants + " && ln -sf /usr/lib/systemd/user/" + restartUnit + " " + wants + "/" + restartUnit
+}
+
+// restartFix is what to run by hand to enable podman-restart.service in a Podman machine: the link as root, then the reload and
+// check as the user. A user name that is not plain gets the generic fix, never a command built from it.
+func restartFix(machine, user string) string {
+	if !plainUser.MatchString(user) {
+		return restartEnableFix
+	}
+	return fmt.Sprintf("in the machine, link %s as root: podman machine ssh %s %s; then reload and check as the user (it prints enabled): podman machine ssh --username %s %s %s",
+		restartUnit, machine, quoteArg(restartLinkCommand(user)), user, machine, quoteArg(restartReloadCommand))
+}
+
 // restartAfterReboot enables podman-restart.service of the rootless user, which is what starts a --restart always
 // container after the machine restarts. A failure is reported, not fatal.
 func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 	if _, ok := c.rt.(*Podman); !ok {
 		return
 	}
-	const unit = "podman-restart.service"
 	d := c.env.Deps
 	var err error
-	if machine := c.s.Connection; machine == "" && d.GOOS == "linux" {
-		_, err = d.Exec(ctx, "systemctl", []string{"--user", "enable", unit}, nil)
+	fix := restartEnableFix
+	if c.s.Connection == "" && d.GOOS == "linux" {
+		_, err = d.Exec(ctx, "systemctl", []string{"--user", "enable", restartUnit}, nil)
 	} else {
 		var user string
 		if user, err = c.lookUpMachineUser(ctx); err == nil {
-			_, err = d.Exec(ctx, "podman", []string{"machine", "ssh", "--username", user, machine, "systemctl", "--user", "enable", unit}, nil)
+			err = c.enableInMachine(ctx, user)
+			fix = restartFix(c.s.Connection, user)
 		}
 	}
 	if err != nil {
-		c.say("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: enable it as the rootless user (systemctl --user enable %s).\n", unit, err, unit)
+		c.say("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: %s.\n", restartUnit, err, fix)
 	}
 	if d.GOOS != "linux" {
 		c.say("Note: the Podman machine is not started at logon. After this PC restarts, run `podman machine start`; the stack comes back with it.\n")
 	}
+}
+
+// enableInMachine enables podman-restart.service for user in the Podman machine: nothing when it is enabled already, the user's
+// own enable, and when that is denied the link as root followed by a reload and a check that it took.
+func (c *colocatedInstall) enableInMachine(ctx context.Context, user string) error {
+	d, machine := c.env.Deps, c.s.Connection
+	asUser := func(command string) ([]byte, error) {
+		return d.Exec(ctx, "podman", []string{"machine", "ssh", "--username", user, machine, command}, nil)
+	}
+	// is-enabled exits 1 for a unit that is not enabled: only a clean "enabled" is an answer, the rest goes on to the enable.
+	if out, err := asUser("systemctl --user is-enabled " + restartUnit); err == nil && strings.TrimSpace(string(out)) == "enabled" {
+		return nil
+	}
+	_, err := asUser("systemctl --user enable " + restartUnit)
+	if err == nil {
+		return nil
+	}
+	if !plainUser.MatchString(user) {
+		return fmt.Errorf("%w; the machine user %q is not a plain name, so the link is not made for it", err, user)
+	}
+	if _, linkErr := d.Exec(ctx, "podman", []string{"machine", "ssh", machine, restartLinkCommand(user)}, nil); linkErr != nil {
+		return fmt.Errorf("%w; the link as root failed too: %v", err, linkErr)
+	}
+	if out, checkErr := asUser(restartReloadCommand); checkErr != nil || strings.TrimSpace(string(out)) != "enabled" {
+		return fmt.Errorf("%w; the link as root was made, but the unit is still not enabled after a reload", err)
+	}
+	return nil
 }
 
 // connectionUser is the user of the machine connection's ssh URI: the machine's rootless user.

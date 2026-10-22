@@ -19,6 +19,7 @@ var ErrUsage = errors.New("usage")
 
 // Usage is printed with a usage error; each command lists its flags with --help.
 const Usage = `usage: suiteward install [flags]
+       suiteward install --upgrade [--yes] [--backup-dir DIR] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
        suiteward uninstall [--purge] [--yes] [flags]
        suiteward doctor [--json] [--settings PATH]
@@ -32,6 +33,15 @@ type Env struct {
 	Sleep    func(time.Duration)
 	// ResolveGitHub is the GitHub flow; nil means resolveGitHub. A test replaces it.
 	ResolveGitHub func(ctx context.Context, env githubEnv) (GitHubResult, error)
+	// HTTPGet reads an address of the local service (/status); nil means httpGet. A test replaces it.
+	HTTPGet func(ctx context.Context, address string) ([]byte, error)
+}
+
+func (e Env) httpGet() func(context.Context, string) ([]byte, error) {
+	if e.HTTPGet != nil {
+		return e.HTTPGet
+	}
+	return httpGet
 }
 
 // OSEnv is this machine and this process's console, printing to stdout.
@@ -136,6 +146,9 @@ func newInstallFlagSet() *flag.FlagSet {
 	}
 	fs.Var(&listFlag{}, "test-check", "the test check of a repository, OWNER/NAME=CHECK; repeat it, or give one plain name for a single repository")
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
+	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
+	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading")
+	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: backups beside the settings file)")
 	return fs
 }
 
@@ -212,17 +225,31 @@ func Install(ctx context.Context, args []string, env Env) error {
 		return err
 	}
 
-	tier, err := r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier))
-	if err != nil {
+	upgrade := flags["upgrade"] == "true"
+	var tier string
+	if upgrade { // an upgrade works on what is installed: it never asks which tier
+		// A host installed by hand has no settings file, and the default tier would be a guess: on Linux that is the isolated host.
+		if _, given := r.optional("tier"); !given && !haveSaved && env.Deps.GOOS == "linux" {
+			return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+		}
+		tier = r.preset("tier", string(saved.Tier))
+	} else if tier, err = r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier)); err != nil {
 		return err
 	}
 	switch config.Tier(tier) {
 	case config.TierIsolated:
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
-		return installIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
+		if upgrade {
+			return upgradeIsolated(ctx, isolated, r, env.Deps, env.Term.Out)
+		}
+		return installIsolated(ctx, isolated, r, env)
 	case config.TierCoLocated:
-		return installColocated(ctx, r, env, installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved})
+		target := installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved}
+		if upgrade {
+			return upgradeColocated(ctx, r, env, target)
+		}
+		return installColocated(ctx, r, env, target)
 	}
 	return fmt.Errorf("tier %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
 }

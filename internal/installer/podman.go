@@ -86,6 +86,14 @@ func (p *Podman) Remove(ctx context.Context, container string) error {
 	return nil
 }
 
+// ExportVolume is `podman volume export`, which writes the file itself, world-readable under some umasks.
+func (p *Podman) ExportVolume(ctx context.Context, volume, path string) error {
+	if _, err := p.run(ctx, nil, "volume", "export", volume, "--output", path); err != nil {
+		return fmt.Errorf("export the volume %s: %w", volume, err)
+	}
+	return nil
+}
+
 func (p *Podman) Run(ctx context.Context, spec RunSpec) error {
 	var secretArgs []string
 	for _, name := range spec.Secrets {

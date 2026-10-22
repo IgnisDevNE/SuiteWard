@@ -85,6 +85,9 @@ type Runtime interface {
 	ExecTTY(ctx context.Context, container string, argv []string) error // the real terminal, nothing captured
 	State(ctx context.Context, container string) (ContainerState, error)
 	Inspect(ctx context.Context, container string) ([]byte, error) // the JSON of `inspect --type container`, for the adoption guard
+	// ExportVolume writes a tarball of the volume to the new file path, readable only by its owner where the system allows it. The
+	// engine may write the file from its own process, so a caller on Windows restricts it afterwards (restrictPath).
+	ExportVolume(ctx context.Context, volume, path string) error
 	Secrets() SecretStore
 	// PurgeSecrets removes every secret of the stack: Podman's secrets, or Docker's secret volumes.
 	PurgeSecrets(ctx context.Context) error

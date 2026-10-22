@@ -42,8 +42,11 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
+	purge := flags["purge"] == "true"
 	if config.Tier(r.preset("tier", string(saved.Tier))) == config.TierIsolated {
-		return errors.New("the isolated tier is not uninstalled by this command: remove its units and its service account by hand (docs/install.md)")
+		isolated := saved
+		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
+		return uninstallIsolated(ctx, isolated, r, env.Deps, env.Term.Out, purge)
 	}
 	rt, connection, err := openRuntime(ctx, r, env, saved, false)
 	if err != nil {
@@ -56,7 +59,6 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	if _, _, err := existingStack(ctx, rt, saved, haveSaved); err != nil {
 		return err
 	}
-	purge := flags["purge"] == "true"
 	question := "Remove the containers " + ContainerServe + ", " + ContainerMigrate + " and " + ContainerDB + "? The data stays."
 	if purge {
 		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
@@ -91,9 +93,9 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	return nil
 }
 
-// purgeState removes what the containers leave behind: the volumes, the secrets, the network, the MCP token copy and
+// purgeState removes what the containers leave behind: the volumes, the secrets, the network, one more file (the MCP token copy, or the GitHub env file) and
 // the settings file. The containers are gone by now.
-func purgeState(ctx context.Context, rt Runtime, tokenFile, settingsPath string) error {
+func purgeState(ctx context.Context, rt Runtime, file, settingsPath string) error {
 	for _, volume := range []string{VolumeData, VolumeDBData} {
 		if err := rt.Delete(ctx, KindVolume, volume); err != nil {
 			return err
@@ -105,7 +107,7 @@ func purgeState(ctx context.Context, rt Runtime, tokenFile, settingsPath string)
 	if err := rt.Delete(ctx, KindNetwork, NetworkName); err != nil {
 		return err
 	}
-	for _, path := range []string{tokenFile, settingsPath} {
+	for _, path := range []string{file, settingsPath} {
 		if err := os.Remove(filepath.Clean(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}

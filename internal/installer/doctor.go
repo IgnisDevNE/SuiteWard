@@ -78,7 +78,7 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "refuse 169.254.169.254 for the service account (docs/install.md, step 10.5), then run doctor again"
+	metadataFix    = "refuse 169.254.169.254 for the service account (docs/install.md, section 10), then run doctor again"
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
 	// answers on its own output, so that an exec that fails is not read as "blocked", and first makes the same kind of
 	// connection to the database's own port: when that fails the probe would be "blocked" for any reason.
@@ -676,12 +676,8 @@ func dockerPins(raw map[string][]byte) (string, error) {
 
 // ---- ports and /status ----
 
-// get reads one path of the service's HTTP port: from this host, or from inside the Podman machine where the port is published.
-func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
-	address := "http://127.0.0.1:" + strconv.Itoa(d.s.HTTPPort) + path
-	if d.viaSSH {
-		return d.machineSSH(ctx, "curl -fsS -m 5 "+address)
-	}
+// httpGet reads one address of the local service.
+func httpGet(ctx context.Context, address string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
@@ -697,6 +693,15 @@ func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+// get reads one path of the service's HTTP port: from this host, or from inside the Podman machine where the port is published.
+func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
+	address := "http://127.0.0.1:" + strconv.Itoa(d.s.HTTPPort) + path
+	if d.viaSSH {
+		return d.machineSSH(ctx, "curl -fsS -m 5 "+address)
+	}
+	return httpGet(ctx, address)
 }
 
 func (d *doctor) checkPorts(ctx context.Context) {
@@ -777,7 +782,7 @@ func (d *doctor) checkPorts(ctx context.Context) {
 
 // ---- metadata and the instance ----
 
-// The values the isolated host must apply to the stack (docs/install.md, step 10.14).
+// The values the isolated host must apply to the stack (docs/install.md, section 10).
 const (
 	networkBackend = "netavark"
 	dbMemoryBytes  = 402653184 // 384 MiB, the limit of suiteward-db.container
@@ -795,7 +800,7 @@ func (d *doctor) checkHost(ctx context.Context) {
 		d.fail("network", "read the Podman network backend: "+err.Error(), "check that `podman info` works for this user")
 	case backend != networkBackend:
 		d.fail("network", fmt.Sprintf("the Podman network backend is %q, want %s", backend, networkBackend),
-			"install netavark and check the Podman setup (docs/install.md, step 10.14); the metadata rule and the service network rely on it")
+			"install netavark and check the Podman setup (docs/install.md, section 10); the metadata rule and the service network rely on it")
 	default:
 		d.pass("network", "the network backend is "+networkBackend)
 	}
@@ -813,7 +818,7 @@ func (d *doctor) checkHost(ctx context.Context) {
 		d.fail("memory", "read the memory limit of "+ContainerDB+": "+err.Error(), "start the database container, then run doctor again")
 	case in.HostConfig.Memory != dbMemoryBytes:
 		d.fail("memory", fmt.Sprintf("%s has memory limit %d bytes, want %d", ContainerDB, in.HostConfig.Memory, dbMemoryBytes),
-			"check that suiteward-db.container sets PodmanArgs=--memory=384m and that Podman applies it (docs/install.md, step 10.14)")
+			"check that suiteward-db.container sets PodmanArgs=--memory=384m and that Podman applies it (docs/install.md, section 10)")
 	default:
 		d.pass("memory", fmt.Sprintf("%s is limited to %d bytes", ContainerDB, dbMemoryBytes))
 	}

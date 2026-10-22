@@ -30,7 +30,7 @@ Type=oneshot
 # The unit stays active after migrate exited 0, so suiteward.service (Requires=) can start and restart without migrating again.
 RemainAfterExit=yes
 # No Restart=: a failed migrate (missing role, role not least-privilege, failed migration) fails closed. suiteward.service does not start, and the
-# failure shows in `systemctl --user status` and the journal. Fix the cause, then start suiteward.service again (docs/install.md, step 10.12).
+# failure shows in `systemctl --user status` and the journal. Fix the cause, then start suiteward.service again (docs/install.md, section 10).
 
 [Install]
 WantedBy=default.target

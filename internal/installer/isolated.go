@@ -14,21 +14,24 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
 // The service-account half of the isolated install, run as the account `sudo suiteward install host` prepared and never as
-// root. installIsolated(ctx, s, r, d, out) takes the parsed settings, the Resolver (flags, answers file, prompts), the
-// machine's Deps and the writer for its report. It reads these answers: "image" (sha256:<index digest> or the full
-// reference; optional when an install is adopted), "github-app-key" (the PEM, from the answers file or stdin, never a flag),
-// "github-app-key-file" (a path to the PEM) and, all three or none, "github-app-id", "github-installation-id" and
-// "github-repositories" (comma separated). Every external command goes through Deps.Exec.
+// root. installIsolated(ctx, s, r, env) takes the parsed settings, the Resolver (flags, answers file, prompts), the
+// machine's Env (its Deps, the writer for its report and the GitHub flow). It reads these answers: "image" (sha256:<index
+// digest> or the full reference; optional when this binary carries a release or an install is adopted) and the answers of the
+// GitHub flow, the same as the co-located tier takes (colocated_github.go): "github", "github-app-id" with
+// "github-installation-id", "github-repositories" and the App key ("github-app-key-file", a path or - for stdin, or
+// "github-app-key" in the answers file, never a flag), "github-owner", "test-check" and "manifest-port". Every external
+// command goes through Deps.Exec.
 //
-// The order is fixed: checks and the adoption guard first, so a refusal changes nothing; then every input is resolved and
-// checked; then secrets, the GitHub env file, images, units, the generator dry run, the database, the application role, the
-// service, and last the settings file.
+// The order is fixed: checks and the adoption guard first, so a refusal changes nothing; then the images are pulled and the
+// GitHub flow runs and is checked; then secrets, the GitHub env file, units, the generator dry run, the database, the
+// application role, the service, the settings file, and last setup.
 
 // Health wait of the database, variables so tests do not sleep.
 var (
@@ -41,64 +44,77 @@ const generatorPath = "/usr/lib/systemd/system-generators/podman-system-generato
 
 const appDatabaseRole = "suiteward_app"
 
-func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out io.Writer) error {
+// isolatedHost is the service account's machine as the isolated commands find it: the checks passed and the paths are known.
+type isolatedHost struct {
+	d            Deps
+	rt           Runtime
+	run          func(name string, args ...string) (string, error)
+	configDir    string
+	unitsDir     string
+	settingsPath string
+	envPath      string // the GitHub env file of the account
+}
+
+// openIsolatedHost refuses what the isolated commands refuse before they look at anything else: a system that is not Linux,
+// root or another account, invalid settings, a Podman that is not rootless and a user manager that is not ready.
+func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, error) {
 	if err := d.validate(); err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	if d.GOOS != "linux" {
-		return fmt.Errorf("the isolated tier runs on Linux, this system is %s", d.GOOS)
+		return isolatedHost{}, fmt.Errorf("the isolated tier runs on Linux, this system is %s", d.GOOS)
 	}
-	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
 	run := func(name string, args ...string) (string, error) {
 		b, err := d.Exec(ctx, name, args, nil)
 		return strings.TrimSpace(string(b)), err
 	}
 	home, err := checkAccount(run, d.Getenv("HOME"))
 	if err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	if err := s.Validate(); err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	rt, err := NewPodman(ctx, d, s.Connection)
 	if err != nil {
-		return err
+		return isolatedHost{}, err
 	}
 	if err := checkUserManager(run); err != nil {
+		return isolatedHost{}, err
+	}
+	configDir := filepath.Join(home, ".config", "suiteward")
+	return isolatedHost{
+		d: d, rt: rt, run: run, configDir: configDir, unitsDir: filepath.Join(home, ".config", "containers", "systemd"),
+		settingsPath: filepath.Join(configDir, "settings.yaml"), envPath: filepath.Join(configDir, "github.env"),
+	}, nil
+}
+
+func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
+	d, out := env.Deps, env.Term.Out
+	host, err := openIsolatedHost(ctx, s, d)
+	if err != nil {
 		return err
 	}
+	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
+	rt, configDir, unitsDir, settingsPath := host.rt, host.configDir, host.unitsDir, host.settingsPath
 
 	// The adoption guard and the image, before anything is changed.
-	configDir := filepath.Join(home, ".config", "suiteward")
-	unitsDir := filepath.Join(home, ".config", "containers", "systemd")
-	settingsPath := filepath.Join(configDir, "settings.yaml")
-	neverStarted := func() (bool, error) { return stackNeverStarted(run, settingsPath) }
+	neverStarted := func() (bool, error) { return stackNeverStarted(host.run, settingsPath) }
 	digest, oldEnvFile, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, say)
 	if err != nil {
 		return err
 	}
-
-	// Every input, resolved and checked.
-	gh, haveGH, err := githubInputs(r, s.GitHub)
-	if err != nil {
-		return err
-	}
-	store := rt.Secrets()
-	appKey, err := appKeyIfMissing(ctx, store, r, out)
-	if err != nil {
-		return err
+	// An App the settings do not name, but the env file does (a host installed by hand, or a run that stopped after it wrote the
+	// file), is the App of this install: the flow must not offer to create another.
+	var fromFile GitHub
+	if s.GitHub.AppID == 0 {
+		if fromFile, err = readGitHubEnvFile(filepath.Join(configDir, "github.env")); err != nil {
+			return err
+		}
+		s.GitHub = fromFile
 	}
 
-	// Changes begin here.
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", configDir, err)
-	}
-	if err := ensureSecrets(ctx, store, appKey); err != nil {
-		return err
-	}
-	if err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, haveGH); err != nil {
-		return err
-	}
+	// Every input, resolved and checked: the images first, so a wrong digest fails before the flow creates an App.
 	postgres, err := PostgresImage()
 	if err != nil {
 		return err
@@ -108,7 +124,28 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 			return err
 		}
 	}
-	units, err := RenderUnits(UnitParamsFrom(s, digest))
+	g := &githubInstall{rt: rt, env: env, out: out, s: s}
+	if err := g.githubFlow(ctx, r, configDir); err != nil {
+		return err
+	}
+	if err := g.checkAppKey(ctx); err != nil {
+		return err
+	}
+
+	// Changes begin here. The env file comes before the secrets: when the flow just created the App (its key is stored already), a
+	// failure in between must still leave a file for a re-run to take the App from.
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", configDir, err)
+	}
+	gh := g.s.GitHub // an env file that already holds these values stays as its author wrote it
+	inFile := gh.AppID == fromFile.AppID && gh.InstallationID == fromFile.InstallationID && slices.Equal(gh.Repositories, fromFile.Repositories)
+	if err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !inFile); err != nil {
+		return err
+	}
+	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
+		return err
+	}
+	units, err := RenderUnits(UnitParamsFrom(g.s, digest))
 	if err != nil {
 		return err
 	}
@@ -126,18 +163,44 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, d Deps, out i
 	if err != nil {
 		return err
 	}
-
-	if haveGH {
-		s.GitHub = gh
-	}
-	if err := SaveSettings(settingsPath, s); err != nil {
+	if err := SaveSettings(settingsPath, g.s); err != nil {
 		return err
 	}
 	say("\nSuiteWard %s is running on this account. Settings are saved in %s.\n\n", digest, settingsPath)
-	say("Next, turn off recording of this terminal session (setup prints the TOTP secret), then enroll yourself as the owner:\n\n")
-	say("  podman exec -it suiteward /suiteward setup --owner <login> --test-check '<owner/name>=<check name>'\n\n")
+	if gh.AppID == 0 {
+		say("GitHub is not configured in the settings of this run: if the service should reach GitHub, run the install again with --github yes (or the GitHub values).\n")
+	} else {
+		status := func(ctx context.Context) ([]byte, error) {
+			return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(g.s.HTTPPort)+"/status")
+		}
+		if err := g.enroll(ctx, status); err != nil {
+			return err
+		}
+	}
 	say("Then run `suiteward doctor`.\n")
 	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, wasRunning)
+	return nil
+}
+
+// checkAppKey refuses, before any change, an install that has no App key to store: the service unit mounts that secret, so
+// without it the unit does not start. It prints the key's fingerprint when this run stores a key it was given.
+func (g *githubInstall) checkAppKey(ctx context.Context) error {
+	if g.githubKey != nil {
+		fingerprint, err := appKeyFingerprint(g.githubKey)
+		if err != nil {
+			return err
+		}
+		g.githubKey = append(bytes.TrimSpace(g.githubKey), '\n') // one trailing newline, whatever the file or stdin had
+		g.say("App private key fingerprint: %s\nCompare it with the fingerprint of the key on the App's settings page; a wrong or revoked key looks right to every other check.\n", fingerprint)
+		return nil
+	}
+	have, err := g.rt.Secrets().Exists(ctx, SecretGitHubAppKey)
+	if err != nil {
+		return err
+	}
+	if !have {
+		return errors.New("the service mounts the secret " + SecretGitHubAppKey + " and it does not exist, so the install needs GitHub: pass --github yes to create the GitHub App, or --github-app-id with --github-installation-id, --github-repositories and --github-app-key-file for an App that exists")
+	}
 	return nil
 }
 
@@ -154,28 +217,11 @@ func sayOldEnvFile(out io.Writer, current, old string, wasRunning bool) {
 	_, _ = fmt.Fprintf(out, "\nThe service %s. An administrator may remove the old file: sudo rm %s\n", reads, old)
 }
 
-// appKeyIfMissing reads the App key unless its secret exists, and reports the fingerprint to compare with GitHub's page.
-func appKeyIfMissing(ctx context.Context, store SecretStore, r *Resolver, out io.Writer) ([]byte, error) {
-	have, err := store.Exists(ctx, SecretGitHubAppKey)
-	if err != nil || have {
-		return nil, err
-	}
-	key, fingerprint, err := readIsolatedAppKey(r)
-	if err != nil {
-		return nil, err
-	}
-	_, _ = fmt.Fprintf(out, "App private key fingerprint: %s\nCompare it with the fingerprint of the key on the App's settings page; a wrong or revoked key looks right to every other check.\n", fingerprint)
-	return key, nil
-}
-
 // startStack starts the database, waits for it, creates the application role, starts the service (the unit dependency runs
-// migrate first) and checks the three units (install.md 10.11 to 10.13). It reports whether the service was already running:
+// migrate first) and checks the three units. It reports whether the service was already running:
 // starting a running service does nothing, so it keeps what it read at its last start.
 func startStack(ctx context.Context, rt Runtime, d Deps) (wasRunning bool, err error) {
-	systemctl := func(ctx context.Context, args ...string) (string, error) {
-		b, err := d.Exec(ctx, "systemctl", append([]string{"--user"}, args...), nil)
-		return strings.TrimSpace(string(b)), err
-	}
+	systemctl := userSystemctl(d)
 	before, err := systemctl(ctx, "show", "--property=ActiveState", "--value", "suiteward.service")
 	if err != nil {
 		return false, fmt.Errorf("ask for the state of suiteward.service: %w", err)
@@ -190,17 +236,33 @@ func startStack(ctx context.Context, rt Runtime, d Deps) (wasRunning bool, err e
 	if err := ensureAppRole(ctx, rt); err != nil {
 		return wasRunning, err
 	}
-	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	if _, err := systemctl(startCtx, "start", "suiteward.service"); err != nil {
-		return wasRunning, fmt.Errorf("start the service (read the migration with `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
+	if wasRunning { // a running service keeps what it started with: starting it again does nothing
+		if _, err := systemctl(ctx, "start", "suiteward.service"); err != nil {
+			return true, fmt.Errorf("start the service: %w", err)
+		}
+		return true, checkUnitsActive(ctx, systemctl)
 	}
+	// The migration unit stays active after it ran (RemainAfterExit), so starting the service would not run it again for a release
+	// that changed since: a stopped service gets the migration restarted first.
+	return false, migrateAndStart(ctx, d)
+}
+
+// userSystemctl runs `systemctl --user` and returns its trimmed output.
+func userSystemctl(d Deps) func(ctx context.Context, args ...string) (string, error) {
+	return func(ctx context.Context, args ...string) (string, error) {
+		b, err := d.Exec(ctx, "systemctl", append([]string{"--user"}, args...), nil)
+		return strings.TrimSpace(string(b)), err
+	}
+}
+
+// checkUnitsActive checks the three units after a start.
+func checkUnitsActive(ctx context.Context, systemctl func(ctx context.Context, args ...string) (string, error)) error {
 	for _, unit := range []string{"suiteward-db.service", "suiteward-migrate.service", "suiteward.service"} {
 		if state, err := systemctl(ctx, "show", "--property=ActiveState", "--value", unit); err != nil || state != "active" {
-			return wasRunning, fmt.Errorf("%s is %q after the start, want active: read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
+			return fmt.Errorf("%s is %q after the start, want active: read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
 		}
 	}
-	return wasRunning, nil
+	return nil
 }
 
 // checkAccount refuses a run by root, by another user than the service account, or with a HOME that is not the account's
@@ -250,7 +312,7 @@ func stackNeverStarted(run func(string, ...string) (string, error), settingsPath
 	return entered == "", nil
 }
 
-// checkUserManager checks the account's systemd user manager and linger (install.md 10.1 and 10.2). `show` rather than
+// checkUserManager checks the account's systemd user manager and linger (docs/install.md, section 10). `show` rather than
 // is-system-running: that command exits non-zero for a degraded manager, which the guide accepts, and Exec drops stdout then.
 func checkUserManager(run func(string, ...string) (string, error)) error {
 	state, err := run("systemctl", "--user", "show", "--property=SystemState", "--value")
@@ -277,41 +339,61 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 // The second result is the env file the installed units read when it is not the account's own, so the caller can say when it
 // may go. What is installed replaces what was asked for, and each such replacement is reported.
 func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, string, error) {
-	templates, err := embeddedUnits()
+	st, err := adoptUnitsDir(unitsDir, homeEnvFile, false)
 	if err != nil {
 		return "", "", err
 	}
-	installed := map[string][]byte{}
-	containers := false
+	installedDigest := ""
+	if st.found {
+		reportAdopted(say, *s, st.adopted.Settings)
+		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = st.adopted.Settings.Tier, st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout
+		installedDigest = strings.TrimPrefix(st.adopted.Image, releaseImageRepo+"@")
+	}
+	digest, err := chooseImage(r, installedDigest, neverStarted, say)
+	return digest, st.oldEnv, err
+}
+
+// installedStack is what an account's unit directory holds.
+type installedStack struct {
+	found   bool // at least one container unit is installed
+	adopted Adopted
+	oldEnv  string            // the env file the installed units read when it is not the account's own
+	units   map[string][]byte // the installed unit files by name
+}
+
+// adoptUnitsDir reads the installed units and compares them with the units of this release. A difference it cannot carry is a
+// *DiffError. With refreshDB (an upgrade) a database unit on another PostgreSQL pin is not a difference. When the installed
+// units read an env file that is not the account's own, that file must already be copied to homeEnvFile.
+func adoptUnitsDir(unitsDir, homeEnvFile string, refreshDB bool) (installedStack, error) {
+	templates, err := embeddedUnits()
+	if err != nil {
+		return installedStack{}, err
+	}
+	st := installedStack{units: map[string][]byte{}}
 	for name := range templates {
 		raw, err := os.ReadFile(filepath.Clean(filepath.Join(unitsDir, name)))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return "", "", fmt.Errorf("read the installed unit %s: %w", name, err)
+			return installedStack{}, fmt.Errorf("read the installed unit %s: %w", name, err)
 		}
-		installed[name] = raw
-		containers = containers || strings.HasSuffix(name, ".container")
+		st.units[name] = raw
+		st.found = st.found || strings.HasSuffix(name, ".container")
 	}
-	installedDigest, oldEnv := "", ""
-	if containers {
-		adopted, err := AdoptUnits(installed, nil)
-		if err != nil {
-			return "", "", err
-		}
-		reportAdopted(say, *s, adopted.Settings)
-		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = adopted.Settings.Tier, adopted.Settings.HTTPPort, adopted.Settings.MCPPort, adopted.Settings.JobTimeout
-		installedDigest = strings.TrimPrefix(adopted.Image, releaseImageRepo+"@")
-		if adopted.EnvFile != DefaultEnvFile {
-			oldEnv = adopted.EnvFile
-			if _, err := os.Stat(homeEnvFile); err != nil {
-				return "", "", fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host`, which copies it to %s, then run this again", adopted.EnvFile, homeEnvFile)
-			}
+	if !st.found {
+		return st, nil
+	}
+	if st.adopted, err = adoptUnits(st.units, nil, refreshDB); err != nil {
+		return installedStack{}, err
+	}
+	if st.adopted.EnvFile != DefaultEnvFile {
+		st.oldEnv = st.adopted.EnvFile
+		if _, err := os.Stat(homeEnvFile); err != nil {
+			return installedStack{}, fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host`, which copies it to %s, then run this again", st.adopted.EnvFile, homeEnvFile)
 		}
 	}
-	digest, err := chooseImage(r, installedDigest, neverStarted, say)
-	return digest, oldEnv, err
+	return st, nil
 }
 
 // reportAdopted says which installed values replace the ones that were asked for.
@@ -337,7 +419,10 @@ func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool,
 	asked = strings.TrimPrefix(asked, releaseImageRepo+"@")
 	switch {
 	case asked == "" && installedDigest == "":
-		return "", errors.New("the release image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
+		if embedded, ok := ReleaseImage(); ok {
+			return strings.TrimPrefix(embedded, releaseImageRepo+"@"), nil
+		}
+		return "", errors.New("this binary carries no release image (a development build), so --image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
 	case asked == "":
 		return installedDigest, nil
 	case !imageDigest.MatchString(asked):
@@ -362,73 +447,6 @@ func (r *Resolver) optional(key string) (string, bool) {
 	}
 	v, ok := r.answers[key]
 	return v, ok
-}
-
-// githubInputs reads the three non-secret GitHub values: all of them or none. The settings win when they hold the values.
-func githubInputs(r *Resolver, current GitHub) (GitHub, bool, error) {
-	if current.AppID != 0 {
-		return current, true, nil
-	}
-	id, hasID := r.optional("github-app-id")
-	installation, hasInstallation := r.optional("github-installation-id")
-	repos, hasRepos := r.optional("github-repositories")
-	set := 0
-	for _, has := range []bool{hasID, hasInstallation, hasRepos} {
-		if has {
-			set++
-		}
-	}
-	switch set {
-	case 0:
-		return GitHub{}, false, nil
-	case 3:
-	default:
-		return GitHub{}, false, errors.New("give all three of github-app-id, github-installation-id and github-repositories, or none: the service stops at startup when only some are set")
-	}
-	appID, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64)
-	if err != nil {
-		return GitHub{}, false, fmt.Errorf("github-app-id %q is not a number", id)
-	}
-	installationID, err := strconv.ParseInt(strings.TrimSpace(installation), 10, 64)
-	if err != nil {
-		return GitHub{}, false, fmt.Errorf("github-installation-id %q is not a number", installation)
-	}
-	var list []string
-	for _, repo := range strings.Split(repos, ",") {
-		list = append(list, strings.TrimSpace(repo))
-	}
-	owner, _, _ := strings.Cut(list[0], "/")
-	gh := GitHub{AppID: appID, InstallationID: installationID, Owner: owner, Repositories: list}
-	if err := gh.validate(); err != nil {
-		return GitHub{}, false, err
-	}
-	return gh, true, nil
-}
-
-// readIsolatedAppKey reads the App's PEM from a file path, the answers file, a prompt for the path or stdin, and checks that it is
-// an RSA private key. The fingerprint is the one GitHub shows next to the key. The key is never written to disk by us.
-func readIsolatedAppKey(r *Resolver) (pemKey []byte, fingerprint string, err error) {
-	var raw []byte
-	_, flagged := r.optional("github-app-key")
-	if file, ok := r.optional("github-app-key-file"); ok && file == "-" {
-		raw, err = io.ReadAll(r.in)
-	} else if ok {
-		raw, err = os.ReadFile(filepath.Clean(file))
-	} else if r.term.IsTerminal && !flagged {
-		var file string
-		if file, err = r.Value("github-app-key-file", "Path of the App's private key file (.pem)", ""); err == nil {
-			raw, err = os.ReadFile(filepath.Clean(file))
-		}
-	} else {
-		raw, err = r.Secret("github-app-key", "the GitHub App private key (PEM)")
-	}
-	if err != nil {
-		return nil, "", fmt.Errorf("read the App key: %w", err)
-	}
-	if fingerprint, err = appKeyFingerprint(raw); err != nil {
-		return nil, "", err
-	}
-	return append(bytes.TrimSpace(raw), '\n'), fingerprint, nil
 }
 
 func appKeyFingerprint(raw []byte) (string, error) {
@@ -461,11 +479,10 @@ func appKeyFingerprint(raw []byte) (string, error) {
 	return "SHA256:" + base64.StdEncoding.EncodeToString(sum[:]), nil
 }
 
-// ensureSecrets creates the secrets that are missing (install.md 10.3, 10.7 and 10.8; the application role's one comes later).
+// ensureSecrets creates the secrets that are missing (the application role's one comes later).
 // The database password is never regenerated once it exists: the database keeps it in its volume. Secrets that exist are
-// not shape-checked again: the ones this installer generated are right by construction, and one made by hand (install.md 10.4
-// checks its shape) is the administrator's to have checked. appKey is nil when the
-// secret exists already.
+// not shape-checked again: the ones this installer generated are right by construction, and one made by hand is the administrator's to have checked. appKey is nil when the secret exists
+// already.
 func ensureSecrets(ctx context.Context, store SecretStore, appKey []byte) error {
 	havePassword, err := store.Exists(ctx, SecretDBAuth)
 	if err != nil {
@@ -537,7 +554,7 @@ func writeEnvFile(path string, gh GitHub, have bool) error {
 	return writeFileAtomic(path, content, 0o700)
 }
 
-// dryRun runs the Podman generator's dry run (install.md 10.10) and checks that it listed the service of every unit: Podman
+// dryRun runs the Podman generator's dry run and checks that it listed the service of every unit: Podman
 // skips a unit it cannot parse, and the loss would only show later as "unit not found".
 func dryRun(ctx context.Context, d Deps, units map[string][]byte) error {
 	out, err := d.Exec(ctx, generatorPath, []string{"--user", "--dryrun"}, nil)
@@ -556,16 +573,22 @@ func dryRun(ctx context.Context, d Deps, units map[string][]byte) error {
 		}
 	}
 	for _, file := range sortedKeys(units) {
-		name, kind, _ := strings.Cut(file, ".")
-		service := name + ".service"
-		if kind != "container" {
-			service = name + "-" + kind + ".service"
-		}
+		service := unitService(file)
 		if !listed[service] {
 			return fmt.Errorf("the Podman generator did not list %s for %s: it could not read that unit; run `%s --user --dryrun` and read its error", service, file, generatorPath)
 		}
 	}
 	return nil
+}
+
+// unitService is the service the Podman generator makes of a unit file: suiteward.container is suiteward.service, a volume or a
+// network gets its kind as a suffix.
+func unitService(file string) string {
+	name, kind, _ := strings.Cut(file, ".")
+	if kind != "container" {
+		return name + "-" + kind + ".service"
+	}
+	return name + ".service"
 }
 
 // waitHealthy waits for the database container to report healthy; the guide's loop has no limit, this one has.
@@ -591,7 +614,7 @@ func waitHealthy(ctx context.Context, rt Runtime) error {
 	}
 }
 
-// ensureAppRole creates the application role and its URL secret once (install.md 10.11). The SQL, which holds the password,
+// ensureAppRole creates the application role and its URL secret once. The SQL, which holds the password,
 // goes through stdin only, with the SET lines that keep it out of the database log. A role left by an earlier attempt gets
 // the new password instead.
 func ensureAppRole(ctx context.Context, rt Runtime) error {
@@ -620,4 +643,66 @@ func ensureAppRole(ctx context.Context, rt Runtime) error {
 		return fmt.Errorf("create the role %s: %w", appDatabaseRole, err)
 	}
 	return store.Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appDatabaseRole, password)), false)
+}
+
+// The names the service reads its GitHub values by; the installer writes them to the env file (writeEnvFile).
+const (
+	envAppID          = "SUITEWARD_GITHUB_APP_ID"
+	envInstallationID = "SUITEWARD_GITHUB_INSTALLATION_ID"
+	envRepositories   = "SUITEWARD_GITHUB_REPOSITORIES"
+)
+
+// readGitHubEnvFile reads the GitHub values of an env file: the App of a host installed by hand, or of a run that stopped after
+// it wrote the file. A missing or empty file holds none. Anything else must be exactly the three keys once each, with a positive
+// App id and installation id and 1 to MaxRepositories owner/name of one owner; a file that is not that is an error, which names
+// the file, the line or the key and never a value.
+func readGitHubEnvFile(path string) (GitHub, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return GitHub{}, nil
+	}
+	if err != nil {
+		return GitHub{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	values := map[string]string{}
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		switch {
+		case !ok:
+			return GitHub{}, fmt.Errorf("%s line %d is not KEY=value", path, i+1)
+		case key != envAppID && key != envInstallationID && key != envRepositories:
+			return GitHub{}, fmt.Errorf("%s line %d is not one of %s, %s and %s", path, i+1, envAppID, envInstallationID, envRepositories)
+		}
+		if _, repeated := values[key]; repeated {
+			return GitHub{}, fmt.Errorf("%s line %d repeats %s", path, i+1, key)
+		}
+		values[key] = value
+	}
+	if len(values) == 0 {
+		return GitHub{}, nil
+	}
+	for _, key := range []string{envAppID, envInstallationID, envRepositories} {
+		if _, ok := values[key]; !ok {
+			return GitHub{}, fmt.Errorf("%s has some of the three GitHub values but not %s: the service stops at startup when only some are set; complete the file or remove it", path, key)
+		}
+	}
+	appID, err := strconv.ParseInt(values[envAppID], 10, 64)
+	if err != nil || appID < 1 {
+		return GitHub{}, fmt.Errorf("%s: %s is not a positive number", path, envAppID)
+	}
+	installationID, err := strconv.ParseInt(values[envInstallationID], 10, 64)
+	if err != nil || installationID < 1 {
+		return GitHub{}, fmt.Errorf("%s: %s is not a positive number", path, envInstallationID)
+	}
+	repos := strings.Split(values[envRepositories], ",")
+	owner, _, _ := strings.Cut(repos[0], "/")
+	gh := GitHub{AppID: appID, InstallationID: installationID, Owner: owner, Repositories: repos}
+	if gh.validate() != nil { // its message repeats the values
+		return GitHub{}, fmt.Errorf("%s: %s is not 1 to %d owner/name pairs of one owner, separated by commas without spaces", path, envRepositories, MaxRepositories)
+	}
+	return gh, nil
 }

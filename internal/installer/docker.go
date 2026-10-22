@@ -137,6 +137,34 @@ func (dk *Docker) Run(ctx context.Context, spec RunSpec) error {
 	return nil
 }
 
+// serviceUser owns the files of the artifact volume: the user the service image runs as.
+const serviceUser = "65532:65532"
+
+// ExportVolume reads the volume with a throwaway container, because Docker has no `volume export`. The container is the
+// database's own image (it is here, and it has tar), with no network, a read-only root and the volume mounted read-only, as the
+// service user that owns its files; the tarball comes back on its standard output.
+func (dk *Docker) ExportVolume(ctx context.Context, volume, path string) error {
+	raw, err := dk.Inspect(ctx, ContainerDB)
+	if err != nil {
+		return err
+	}
+	in, err := parseInspect(ContainerDB, raw)
+	if err != nil {
+		return err
+	}
+	if in.Config.Image == "" {
+		return fmt.Errorf("the container %s reports no image", ContainerDB)
+	}
+	// shortcut: the tarball is held in memory until it is written, so the artifact volume must fit in the installer's memory, stream it to the file when volumes outgrow that.
+	tarball, err := dk.run(ctx, nil, "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "all",
+		"--security-opt", "no-new-privileges", "--user", serviceUser, "--volume", volume+":/data:ro",
+		in.Config.Image, "tar", "-cf", "-", "-C", "/data", ".")
+	if err != nil {
+		return fmt.Errorf("export the volume %s: %w", volume, err)
+	}
+	return writePrivateFile(path, tarball)
+}
+
 func componentNames(components []engineComponent) string {
 	names := make([]string, len(components))
 	for i, c := range components {

@@ -3,6 +3,7 @@ package installer
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,6 +85,15 @@ func parseInspect(name string, raw []byte) (inspected, error) {
 // GitHub values and image are carried; any other difference from ColocatedStack is a *DiffError. Podman's secrets are
 // compared; a stack that keeps its secrets in volumes (Docker) is not adopted from here.
 func AdoptContainers(raw map[string][]byte) (Adopted, error) {
+	return adoptContainers(raw, false)
+}
+
+// pinnedPostgres is how an installed database container names a digest-pinned PostgreSQL image.
+var pinnedPostgres = regexp.MustCompile(`^(?:docker\.io/library/)?postgres(?::[^@\s]+)?@sha256:[0-9a-f]{64}$`)
+
+// adoptContainers is AdoptContainers; with refreshDB (an upgrade) a database that runs another digest-pinned PostgreSQL image is
+// not a difference: the upgrade recreates it on the new pin. The image it runs is returned in DBImage.
+func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 	parsed := map[string]inspected{}
 	for _, name := range []string{ContainerDB, ContainerMigrate, ContainerServe} {
 		data, ok := raw[name]
@@ -109,6 +119,10 @@ func AdoptContainers(raw map[string][]byte) (Adopted, error) {
 		}
 		return Adopted{}, &DiffError{diffs}
 	}
+	dbImage := parsed[ContainerDB].Config.Image
+	if refreshDB && pinnedPostgres.MatchString(dbImage) {
+		stack.DB.Image = dbImage
+	}
 	specs := []RunSpec{stack.DB, stack.Migrate}
 	if len(diffs) == 0 { // a service whose known fields could not be read is already reported, and its defaults would only repeat it
 		specs = append(specs, stack.Serve)
@@ -127,7 +141,7 @@ func AdoptContainers(raw map[string][]byte) (Adopted, error) {
 	if len(diffs) > 0 {
 		return Adopted{}, &DiffError{diffs}
 	}
-	return Adopted{Settings: settings, Image: image}, nil
+	return Adopted{Settings: settings, Image: image, DBImage: dbImage}, nil
 }
 
 // sameImage says whether an installed container runs the image the stack expects. Podman records an image created from

@@ -64,7 +64,7 @@ func (dk *Docker) identify(ctx context.Context) (Engine, error) {
 	var server struct {
 		Platform   struct{ Name string }
 		Version    string
-		Components []struct{ Name string }
+		Components []engineComponent
 	}
 	if err := json.Unmarshal(out, &server); err != nil {
 		return Engine{}, fmt.Errorf("read the Docker server version: %w", err)
@@ -72,13 +72,15 @@ func (dk *Docker) identify(ctx context.Context) (Engine, error) {
 	if server.Platform.Name == "" && server.Version == "" {
 		return Engine{}, fmt.Errorf("the Docker engine does not answer: %s reported no server", dk.bin)
 	}
-	podman := strings.Contains(strings.ToLower(server.Platform.Name), "podman")
-	for _, c := range server.Components {
-		podman = podman || strings.Contains(strings.ToLower(c.Name), "podman")
-	}
-	if podman {
-		return Engine{}, fmt.Errorf("%w: the engine behind %s is Podman %s (%s); select Docker's own context or CLI, or install the stack with --runtime podman",
-			ErrNotDocker, dk.bin, server.Version, server.Platform.Name)
+	// Only Docker names its engine "Engine": Podman's compatible API says "Podman Engine" and its own API names no components.
+	isDocker := slices.ContainsFunc(server.Components, func(c engineComponent) bool { return c.Name == "Engine" })
+	if !isDocker {
+		what := "an engine that does not identify itself as Docker"
+		if strings.Contains(strings.ToLower(server.Platform.Name+componentNames(server.Components)), "podman") || (server.Platform.Name == "" && len(server.Components) == 0) {
+			what = "Podman"
+		}
+		return Engine{}, fmt.Errorf("%w: the engine behind %s is %s %s (%s); select Docker's own context or CLI, or install the stack with --runtime podman",
+			ErrNotDocker, dk.bin, what, server.Version, server.Platform.Name)
 	}
 	out, err = dk.run(ctx, nil, "info", "--format", "{{json .SecurityOptions}}")
 	if err != nil {
@@ -134,3 +136,13 @@ func (dk *Docker) Run(ctx context.Context, spec RunSpec) error {
 	}
 	return nil
 }
+
+func componentNames(components []engineComponent) string {
+	names := make([]string, len(components))
+	for i, c := range components {
+		names[i] = c.Name
+	}
+	return " " + strings.Join(names, " ")
+}
+
+type engineComponent struct{ Name string }

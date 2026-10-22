@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -78,22 +79,6 @@ func (c *cli) ExecTTY(ctx context.Context, container string, argv []string) erro
 	return c.d.Interactive(ctx, c.bin, c.args(append([]string{"exec", "-it", container}, argv...)...))
 }
 
-func (c *cli) State(ctx context.Context, container string) (ContainerState, error) {
-	out, err := c.run(ctx, nil, "inspect", "--format", "{{.State.Status}} {{.State.Health.Status}}", container)
-	if err != nil {
-		return ContainerState{}, fmt.Errorf("inspect %s: %w", container, err)
-	}
-	fields := strings.Fields(string(out))
-	if len(fields) == 0 {
-		return ContainerState{}, fmt.Errorf("inspect %s printed no state", container)
-	}
-	state := ContainerState{Status: fields[0]}
-	if len(fields) > 1 {
-		state.Health = fields[1]
-	}
-	return state, nil
-}
-
 // runArgs is the argument list of `run`; secretArgs are the runtime's own way of mounting the container's secrets.
 func runArgs(spec RunSpec, replace bool, secretArgs []string) ([]string, error) {
 	if spec.Name == "" || spec.Image == "" || spec.Network == "" {
@@ -139,4 +124,23 @@ func runArgs(spec RunSpec, replace bool, secretArgs []string) ([]string, error) 
 		a = append(a, "--publish", p)
 	}
 	return append(append(a, spec.Image), spec.Args...), nil
+}
+func (c *cli) State(ctx context.Context, container string) (ContainerState, error) {
+	// {{json .State}} rather than a template over .State.Health: a container without a health check has no Health.
+	out, err := c.run(ctx, nil, "inspect", "--format", "{{json .State}}", container)
+	if err != nil {
+		return ContainerState{}, fmt.Errorf("inspect %s: %w", container, err)
+	}
+	var state struct {
+		Status string
+		Health *struct{ Status string }
+	}
+	if err := json.Unmarshal(out, &state); err != nil {
+		return ContainerState{}, fmt.Errorf("read the state of %s: %w", container, err)
+	}
+	result := ContainerState{Status: state.Status}
+	if state.Health != nil {
+		result.Health = state.Health.Status
+	}
+	return result, nil
 }

@@ -62,20 +62,13 @@ func LoadAnswers(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the answers file: %w", err)
 	}
-	var parsed map[string]any
-	if err := yaml.NewDecoder(bytes.NewReader(raw)).Decode(&parsed); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parse the answers file %s: %w", path, err)
+	// Decoding into strings keeps the text the user wrote: 1.10, 0x10 and a long digit token must not be read as numbers.
+	var answers map[string]string
+	if err := yaml.NewDecoder(bytes.NewReader(raw)).Decode(&answers); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("parse the answers file %s (every value must be a single scalar): %w", path, err)
 	}
-	answers := make(map[string]string, len(parsed))
-	for key, value := range parsed {
-		switch value.(type) {
-		case map[string]any, []any:
-			return nil, fmt.Errorf("answers file %s: %q must be a single value, not a list or a mapping", path, key)
-		case nil:
-			answers[key] = ""
-		default:
-			answers[key] = fmt.Sprint(value)
-		}
+	if answers == nil {
+		answers = map[string]string{}
 	}
 	return answers, nil
 }

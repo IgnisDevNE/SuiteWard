@@ -157,3 +157,14 @@ func nonEmpty(key, label string, secret []byte) ([]byte, error) {
 	}
 	return secret, nil
 }
+
+// ask prints a question and reads one line of the terminal. A flag or the answers file never answers it, so it is for the choices
+// that only the person at the terminal makes. The end of the input is io.EOF.
+func (r *Resolver) ask(question string) (string, error) {
+	r.say("%s", question)
+	line, err := r.in.ReadString('\n')
+	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}

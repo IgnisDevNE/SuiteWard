@@ -97,7 +97,7 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 			return true, nil // values for the GitHub App of the saved settings
 		}
 	}
-	if g.pending != nil && g.s.GitHub.AppID == 0 { // an App an earlier run created and did not finish with; once the settings name an App, the record is not used
+	if recordWins(&g.s.GitHub, g.pending) { // an App an earlier run created and did not finish with, and not the settings' own: its key is the secret
 		return true, nil
 	}
 	if existing {
@@ -203,7 +203,11 @@ func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
 	case errors.Is(err, errPendingKeyMissing) && g.pending != nil:
 		return fmt.Errorf("%w. The record of that App is %s (a new App replaces it). The key file works with the App id too, once the App is installed: run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, g.pendingPath, g.pending.AppID)
 	case errors.Is(err, errNewAppKeyExists):
-		return fmt.Errorf("%w (%s)", err, g.removeKeySecret())
+		note := g.removeKeySecret()
+		if g.pending != nil {
+			note += "; the record is " + g.pendingPath
+		}
+		return fmt.Errorf("%w (%s)", err, note)
 	case errors.Is(err, errResuming) && g.pending != nil:
 		return fmt.Errorf("%w. This run took up the App %s, which an earlier run recorded in %s; its key is the secret %s. Run the installer again to retry. A 401 can also mean a wrong system clock or a key that was replaced on GitHub: check those first. If the App no longer exists (404 above), or to start over, delete the old App on GitHub if it is still there, delete the record file and remove the secret, then run again to create a new App", err, g.pending.Slug, g.pendingPath, secret)
 	case stored && recorded:

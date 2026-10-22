@@ -96,9 +96,11 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	return res, nil
 }
 
-// chooseApp finds the App the flow works with: the one an answer names, else the one the settings name, else the one an earlier
-// run created and recorded (PendingApp), else a new one. created is the page that deletes the App, when one was created by this
-// run or an earlier one.
+// chooseApp finds the App the flow works with: the one an answer names, else a new one when --github new-app asks for it, else
+// the one an earlier run created and recorded (PendingApp) when it is not the App of the settings, else the one the settings name,
+// else a new one. The record wins over the settings because a run that made a new App stored its key and recorded it: that key is
+// the secret now, and the settings' App must not run with it. created is the page that deletes the App, when one was created by
+// this run or an earlier one.
 func chooseApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubResult, created string, err error) {
 	if _, ok := env.R.given("app-id"); ok { // an answer wins over the settings
 		app, res, err = existingApp(ctx, env)
@@ -107,13 +109,7 @@ func chooseApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	if wantsNewApp(env.R) {
 		return replaceApp(ctx, env)
 	}
-	app, res, reused, err := settingsApp(ctx, env)
-	switch {
-	case errors.Is(err, errNewApp):
-		return replaceApp(ctx, env)
-	case err != nil || reused:
-		return app, res, "", err
-	case env.Pending != nil:
+	if recordWins(env.Existing, env.Pending) {
 		app, res, created, err = resumeApp(ctx, env)
 		switch {
 		case errors.Is(err, errNewApp):
@@ -123,7 +119,19 @@ func chooseApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 		}
 		return app, res, created, err
 	}
+	app, res, reused, err := settingsApp(ctx, env)
+	switch {
+	case errors.Is(err, errNewApp):
+		return replaceApp(ctx, env)
+	case err != nil || reused:
+		return app, res, "", err
+	}
 	return createApp(ctx, env)
+}
+
+// recordWins says that the App an earlier run recorded is not the App of the settings.
+func recordWins(existing *GitHub, pending *PendingApp) bool {
+	return pending != nil && (existing == nil || existing.AppID != pending.AppID)
 }
 
 // newAppAnswer is the value of --github that creates a new App although the settings or an earlier run name one.
@@ -132,11 +140,12 @@ const newAppAnswer = "new-app"
 // errNewApp is the choice of a new App over the key file of the App that has no key secret.
 var errNewApp = errors.New("a new App was chosen")
 
-// errNewAppKeyExists means --github new-app found the key secret of the App it replaces: the key of the new App cannot go over it.
+// errNewAppKeyExists means --github new-app found a key secret: the key of the new App cannot go over it.
 var errNewAppKeyExists = errors.New("--github new-app needs the key secret to be free")
 
-// replaceApp creates a new App although one is named, and keeps what names the old one for the end of the flow. It refuses before
-// an App is created when the key secret exists: the new key is never stored over the old one.
+// replaceApp creates a new App although one is named. It names the old App (or Apps) first, so that a run that stops after the new
+// one exists leaves the user with the page that deletes the old one, and again at the end of the flow. It refuses before an App is
+// created when the key secret exists: the new key is never stored over the old one.
 func replaceApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubResult, created string, err error) {
 	if env.KeyExists != nil {
 		have, err := env.KeyExists(ctx)
@@ -144,23 +153,42 @@ func replaceApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHub
 			return app, res, "", fmt.Errorf("look for the App key secret: %w", err)
 		}
 		if have {
-			return app, res, "", fmt.Errorf("%w: the secret %s exists and holds the key of the App that is being replaced; remove it, then run again", errNewAppKeyExists, SecretGitHubAppKey)
+			return app, res, "", fmt.Errorf("%w: %s", errNewAppKeyExists, keyInTheWay(env))
 		}
 	}
+	note := replacedNote(env)
+	if note != "" {
+		ghSay(env.Out, "%s", note)
+	}
 	app, res, created, err = createApp(ctx, env)
-	res.replaced = replacedNote(env)
+	res.replaced = note
 	return app, res, created, err
 }
 
-// replacedNote says that the App the settings (or else the record of an earlier run) named stays on GitHub, and where it is deleted.
-func replacedNote(env githubEnv) string {
+// keyInTheWay says whose key the secret holds, which is the record's when a record names another App than the settings.
+func keyInTheWay(env githubEnv) string {
 	switch {
+	case recordWins(env.Existing, env.Pending):
+		p := env.Pending
+		return fmt.Sprintf("the secret %s holds the key of the App %s that an earlier run created and recorded: run again without --github new-app to take that App up; to replace it instead, remove the secret and the record, and delete the App at %s",
+			SecretGitHubAppKey, p.Slug, appPage(env.WebURL, p.Slug, p.Account, p.AccountType))
 	case env.Existing != nil && env.Existing.AppID != 0:
-		return fmt.Sprintf("The App %d that the settings named stays on GitHub. Delete it at %s.\n", env.Existing.AppID, appListPages(env.WebURL, *env.Existing))
-	case env.Pending != nil:
-		return fmt.Sprintf("The App %s that an earlier run recorded stays on GitHub. Delete it at %s.\n", env.Pending.Slug, appPage(env.WebURL, env.Pending.Slug, env.Pending.Account, env.Pending.AccountType))
+		return fmt.Sprintf("the secret %s holds the key of the App %d of the settings, and the key of a new App cannot be stored over it. Remove it, then run again: the App %d stops working on this instance, and stays on GitHub (delete it at %s)",
+			SecretGitHubAppKey, env.Existing.AppID, env.Existing.AppID, appListPages(env.WebURL, *env.Existing))
 	}
-	return ""
+	return fmt.Sprintf("the secret %s exists, and the key of a new App cannot be stored over it: remove it, then run again", SecretGitHubAppKey)
+}
+
+// replacedNote says that the App the settings named, and the App an earlier run recorded, stay on GitHub, and where each is deleted.
+func replacedNote(env githubEnv) string {
+	var note string
+	if env.Existing != nil && env.Existing.AppID != 0 {
+		note = fmt.Sprintf("The App %d that the settings named stays on GitHub. Delete it at %s.\n", env.Existing.AppID, appListPages(env.WebURL, *env.Existing))
+	}
+	if p := env.Pending; p != nil && (env.Existing == nil || env.Existing.AppID != p.AppID) {
+		note += fmt.Sprintf("The App %s that an earlier run recorded stays on GitHub. Delete it at %s; the record is replaced.\n", p.Slug, appPage(env.WebURL, p.Slug, p.Account, p.AccountType))
+	}
+	return note
 }
 
 // appListPages are the pages that list the Apps of an account: the settings only have the App's id, not its slug or its owner.
@@ -181,11 +209,11 @@ func missingKey(env githubEnv, who, deleteAt string) ([]byte, error) {
 			who, SecretGitHubAppKey, newAppAnswer, deleteAt)
 	}
 	ghSay(env.Out, "The %s has no key in the secret store (%s).\n  1) give the App's private key file\n  2) create a new App (the old one stays on GitHub: delete it at %s)\n", who, SecretGitHubAppKey, deleteAt)
-	choice, err := env.R.Value("key-route", "Choose 1 or 2", "")
+	choice, err := env.R.ask("Choose 1 or 2: ")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read the choice: %w", err)
 	}
-	switch strings.TrimSpace(choice) {
+	switch choice {
 	case "1":
 		return readAppKey(env.R)
 	case "2":
@@ -479,18 +507,19 @@ func resumeApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	} else {
 		given = true
 	}
-	// A key that is given is not this App's until GitHub accepts it: the secret does not exist, so nothing is retried with it.
-	notThisKey := func(err error) error {
+	// A key that is given is stored only when the flow ends: whatever fails before, nothing is stored, and the advice for a stored
+	// key (retry, remove the secret) does not fit.
+	notStored := func(why string, err error) error {
 		if !given {
 			return err
 		}
-		return fmt.Errorf("%w: the key file is not the key of the App %s (give another key file with --github-app-key-file, or create a new App with --github %s): %w", errPendingKeyMissing, p.Slug, newAppAnswer, err)
+		return fmt.Errorf("%w: %s (give the key file again with --github-app-key-file, or create a new App with --github %s): %w", errPendingKeyMissing, why, newAppAnswer, err)
 	}
 	if app, err = appauth.NewApp(p.AppID, key, env.Now); err != nil {
-		return app, res, created, notThisKey(err)
+		return app, res, created, notStored("the key file is not the key of the App "+p.Slug, err)
 	}
 	if _, err = app.Slug(ctx, env.HTTP, env.APIURL); err != nil {
-		return app, res, created, notThisKey(fmt.Errorf("verify the App with GET /app: %w", err))
+		return app, res, created, notStored("the key file is not the key of the App "+p.Slug, fmt.Errorf("verify the App with GET /app: %w", err))
 	}
 	if given {
 		ghSay(env.Out, "Taking up the GitHub App %s that an earlier run created, with the key you gave.\n", p.Slug)
@@ -500,7 +529,7 @@ func resumeApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, p.Slug, p.Account)
 	info, err := waitForInstallation(ctx, env, app, p.Account)
 	if err != nil {
-		return app, res, created, err
+		return app, res, created, notStored("the key you gave was not stored", err)
 	}
 	return app, GitHubResult{AppID: p.AppID, Slug: p.Slug, InstallationID: info.ID, Account: info.Account, AccountType: info.AccountType, PrivateKey: key}, created, nil
 }

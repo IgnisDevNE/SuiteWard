@@ -98,6 +98,13 @@ type fakeGitHub struct {
 	installAccount        string
 	installType           string
 	repos                 []fakeRepo
+	override              map[string]fakeAnswer // "METHOD path" -> the answer given instead of the fake's own
+}
+
+// fakeAnswer replaces what the fake says to one request.
+type fakeAnswer struct {
+	status int
+	body   string
 }
 
 var appPermissions = map[string]string{"metadata": "read", "pull_requests": "write", "contents": "read", "administration": "read", "checks": "write"}
@@ -124,7 +131,13 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		g.mu.Lock()
 		g.requests = append(g.requests, r.Method+" "+r.URL.Path)
 		g.headers[r.Method+" "+r.URL.Path] = r.Header.Clone()
+		answer, overridden := g.override[r.Method+" "+r.URL.Path]
 		g.mu.Unlock()
+		if overridden {
+			w.WriteHeader(answer.status)
+			_, _ = w.Write([]byte(answer.body))
+			return
+		}
 		mux.ServeHTTP(w, r)
 	}))
 	t.Cleanup(g.srv.Close)

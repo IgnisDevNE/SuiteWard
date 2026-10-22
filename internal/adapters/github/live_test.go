@@ -527,31 +527,9 @@ func TestLiveProtectionResults(t *testing.T) {
 				t.Fatalf("Protection: %s", failure(err))
 			}
 
-			// Field by field, as protectionFacts in internal/app/setup.go (unexported).
-			checks := func(in []github.Check) []protection.Check {
-				var out []protection.Check
-				for _, c := range in {
-					out = append(out, protection.Check{Context: c.Context, SourceID: c.SourceID})
-				}
-				return out
-			}
-			var state protection.ClassicState
-			switch read.Classic.State {
-			case github.ClassicAbsent:
-				state = protection.ClassicAbsent
-			case github.ClassicUnreadable:
-				state = protection.ClassicUnreadable
-			case github.ClassicPresent:
-				state = protection.ClassicPresent
-			default:
-				t.Fatalf("unknown classic protection state %d", read.Classic.State)
-			}
-			facts := protection.Facts{
-				Private: repo.Private, RulesForbidden: read.RulesForbidden, FromRuleset: read.FromRuleset,
-				Classic: protection.Classic{State: state, Checks: checks(read.Classic.Checks), Strict: read.Classic.Strict, EnforceAdmins: read.Classic.EnforceAdmins},
-			}
-			for _, rule := range read.Rules {
-				facts.Rules = append(facts.Rules, protection.Rule{RulesetID: rule.RulesetID, Checks: checks(rule.Checks), Strict: rule.Strict})
+			facts, err := read.Facts(repo.Private)
+			if err != nil {
+				t.Fatalf("Facts: %v", err)
 			}
 
 			result := protection.Evaluate(facts, appID, e.testCheck)

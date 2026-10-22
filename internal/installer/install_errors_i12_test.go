@@ -3,6 +3,8 @@ package installer
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -84,4 +86,84 @@ func TestInstallColocatedGitHubNewAppNamesHowToFreeTheKeySecret(t *testing.T) {
 		t.Error("an App was created although its key could not be stored")
 	}
 	h.mustNotMutate()
+}
+
+func TestQuoteArg(t *testing.T) {
+	for arg, want := range map[string]string{
+		"/home/me/s.yaml":    "/home/me/s.yaml",
+		`C:\Users\me\s.yaml`: `C:\Users\me\s.yaml`,
+		"my dir/s.yaml":      "'my dir/s.yaml'",
+		"it's/s.yaml":        `"it's/s.yaml"`,
+		"":                   "''",
+	} {
+		if got := quoteArg(arg); got != want {
+			t.Errorf("quoteArg(%q) = %q, want %q", arg, got, want)
+		}
+	}
+}
+
+func TestResolveGitHubNewAppWithAKeySecretAndNoAppNamed(t *testing.T) {
+	g := newFakeGitHub(t)
+	flags := manifestFlags()
+	flags["github"] = "new-app"
+	env, _ := flowEnv(t, g, flags, strings.NewReader(""), false)
+	env.KeyExists = func(context.Context) (bool, error) { return true, nil }
+	env.ReadKey = func(context.Context) ([]byte, error) { return nil, nil }
+	if _, err := resolve(t, env); err == nil || !strings.Contains(err.Error(), "remove it, then run again") || len(g.requests) != 0 {
+		t.Fatalf("got %v, requests %v", err, g.requests)
+	}
+}
+
+func TestUpgradeColocatedAStartQuestionThatCannotBeReadIsAnError(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	u.downUntilStarted()
+	env := u.env()
+	term, _ := fakeTerminal(true, "")
+	term.In = failingReader{}
+	term.Out = &u.out
+	env.Term = term
+	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage}
+	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "read the answer") || u.startCalls(ContainerDB) != 0 {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestInstallColocatedGitHubNewAppWhileARecordedAppHoldsTheKeyNamesTheRecord(t *testing.T) {
+	h, g, args := colocatedFlow(t)
+	g.neverInstalled(true)
+	if err := h.podman(args...); err == nil {
+		t.Fatal("the first run must fail")
+	}
+	h.theKeySecretIsThere() // the key of the recorded App
+	err := h.podman(append(args, "--github", "new-app")...)
+	if err == nil || !strings.Contains(err.Error(), pendingAppPath(h.settingsPath())) || !strings.Contains(err.Error(), "without --github new-app") {
+		t.Fatalf("got %v, want the record and the way to take that App up", err)
+	}
+	if g.count("POST /app-manifests") != 1 {
+		t.Errorf("%d Apps exist, want the one of the first run", g.count("POST /app-manifests"))
+	}
+}
+
+func TestResolveGitHubAKeyFileThatIsNotAKeyIsNotThatAppsKey(t *testing.T) {
+	g := newFakeGitHub(t)
+	flags := withoutApp(existingFlags(t, nil))
+	flags["app-key-file"] = writeTextFile(t, "this is not a PEM")
+	env, _ := flowEnv(t, g, flags, strings.NewReader(""), false)
+	env.Existing = &GitHub{}
+	env.Pending = &PendingApp{AppID: fakeAppID, Slug: "suiteward-abcd", Account: "acme", AccountType: "Organization"}
+	env.KeyExists = func(context.Context) (bool, error) { return false, nil }
+	env.ReadKey = func(context.Context) ([]byte, error) { return nil, nil }
+	_, err := resolve(t, env)
+	if err == nil || !strings.Contains(err.Error(), "not the key of the App suiteward-abcd") || g.sawRequest("POST /app-manifests") {
+		t.Fatalf("got %v, requests %v", err, g.requests)
+	}
+}
+
+func writeTextFile(t *testing.T, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

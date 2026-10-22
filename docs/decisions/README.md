@@ -1,8 +1,8 @@
 # Architecture decision records
 
-- **Updated:** 2026-10-21 (phase SH in progress)
+- **Updated:** 2026-10-22
 - **Product:** SuiteWard
-- **State:** Accepted decisions. M1.2 to M1.10 are implemented and released (`v0.1.3` is current); the security hardening phase SH amends several records for `v0.2.0`.
+- **State:** Accepted decisions. M1.2 to M1.11 are implemented and released (`v0.2.0` is current); the security hardening phase SH amended several records for it.
 
 ## Accepted records
 

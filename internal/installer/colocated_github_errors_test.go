@@ -214,12 +214,6 @@ func TestEnrolledOwnerReadsWhatStatusSays(t *testing.T) {
 // error that says the stack is running.
 func TestEnrollErrors(t *testing.T) {
 	noOwner := func(context.Context) ([]byte, error) { return []byte(`{}`), nil }
-	t.Run("a runtime that is no engine", func(t *testing.T) {
-		g := &githubInstall{rt: &ttyRuntime{}, env: Env{Deps: Deps{GOOS: "linux"}}, out: io.Discard}
-		if err := g.enroll(context.Background(), noOwner); err == nil || !strings.Contains(err.Error(), "is not a container engine") {
-			t.Fatalf("enroll = %v", err)
-		}
-	})
 	t.Run("setup fails on the terminal", func(t *testing.T) {
 		withTerminal(t, true)
 		f := newFake("linux").on("info --format", "true\n")

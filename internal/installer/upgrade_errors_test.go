@@ -54,10 +54,10 @@ func TestUpgradeColocatedStopsAtTheStepThatFails(t *testing.T) {
 	}
 }
 
-// A service whose status cannot be read has no version to put in the backup, so there is no backup, and nothing is changed.
+// A status that the backup cannot read (the service answered the probe before it) leaves no backup, and nothing is changed.
 func TestUpgradeColocatedWithoutAStatusMakesNoBackup(t *testing.T) {
 	u := newUpgradeHarness(t, nil)
-	u.status = func(context.Context, string) ([]byte, error) { return nil, errInjected }
+	u.status = failAfterFirst(u.status)
 	err := u.upgrade("--image", testImage, "--yes")
 	if !errors.Is(err, errInjected) || !strings.Contains(err.Error(), "read GET /status") || !strings.Contains(err.Error(), "nothing was changed") {
 		t.Fatalf("upgrade = %v", err)
@@ -224,7 +224,7 @@ func TestUpgradeIsolatedRefusesWhatItCannotReadBeforeTheBackup(t *testing.T) {
 	t.Run("a status that cannot be read", func(t *testing.T) {
 		u := newIsoUpgrade(t, nil)
 		env := u.env()
-		env.HTTPGet = func(context.Context, string) ([]byte, error) { return nil, errInjected }
+		env.HTTPGet = failAfterFirst(env.httpGet())
 		fastHealthWait(t)
 		err := Install(context.Background(), []string{"--upgrade", "--tier", "isolated", "--settings", settingsFile(u.home), "--backup-dir", u.backups, "--image", testDigest, "--yes"}, env)
 		if !errors.Is(err, errInjected) || !strings.Contains(err.Error(), "nothing was changed") {
@@ -400,5 +400,16 @@ func TestUninstallIsolatedStopsAtTheStepThatFails(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// failAfterFirst answers the first status read (the probe of a running service) and fails every later one.
+func failAfterFirst(get func(context.Context, string) ([]byte, error)) func(context.Context, string) ([]byte, error) {
+	calls := 0
+	return func(ctx context.Context, url string) ([]byte, error) {
+		if calls++; calls == 1 {
+			return get(ctx, url)
+		}
+		return nil, errInjected
 	}
 }

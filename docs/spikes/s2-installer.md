@@ -71,4 +71,8 @@ Docker Desktop 29.9.2 (`desktop-linux` context), with throwaway `busybox` contai
 | `docker exec -t` | A TTY is allocated (`/dev/pts/0`), so `exec -it` can carry setup's terminal. |
 | `-p 127.0.0.1:18081:8080` | Reachable from Windows on `http://127.0.0.1:18081` (HTTP 200), with no machine ssh. |
 
+**Podman machine restart.** After the Podman machine was stopped and started again (to let Docker Desktop take the pipe), the co-located stack made by `local.ps1` stayed stopped: both containers showed `Exited`, and `/readyz` did not answer until they were started by hand.
+- Rootless Podman honours `--restart always` only while the user's `podman-restart.service` is enabled, and on this machine it is not. So today every reboot of the PC also stops a co-located instance.
+- The installer either enables `podman-restart.service` for the machine's user, or runs the co-located stack as quadlet units inside the machine. `doctor` checks this.
+
 **Consequence for D-INSTALLER:** on Docker, the secrets go into a named volume (`suiteward-secrets`), one file per secret, owned by the uid that reads it (65532 for the service, 999 for the database password), mode 0400. They are written from memory through stdin, so **they never touch the Windows disk**. That replaces the private per-user directory in the plan. Docker stays discouraged, for its rootful daemon and because the volume is readable by anyone who controls that daemon.

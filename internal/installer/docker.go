@@ -155,7 +155,7 @@ func (dk *Docker) ExportVolume(ctx context.Context, volume, path string) error {
 	if in.Config.Image == "" {
 		return fmt.Errorf("the container %s reports no image", ContainerDB)
 	}
-	// shortcut: the tarball is held in memory until it is written, so the artifact volume must fit in the installer's memory; stream it to the file when volumes outgrow that.
+	// shortcut: the tarball is held in memory until it is written, so the artifact volume must fit in the installer's memory, stream it to the file when volumes outgrow that.
 	tarball, err := dk.run(ctx, nil, "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "all",
 		"--security-opt", "no-new-privileges", "--user", serviceUser, "--volume", volume+":/data:ro",
 		in.Config.Image, "tar", "-cf", "-", "-C", "/data", ".")

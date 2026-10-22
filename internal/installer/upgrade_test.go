@@ -560,7 +560,7 @@ func TestUpgradeColocatedBeforeMigrateSaysTheDatabaseIsUnchanged(t *testing.T) {
 	if err == nil {
 		t.Fatal("the database start must fail")
 	}
-	for _, want := range []string{"database is unchanged", u.backup()} {
+	for _, want := range []string{"schema and the data are unchanged", u.backup(), "`suiteward install` with the options", "suiteward install --upgrade"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the advice lacks %q:\n%v", want, err)
 		}
@@ -575,7 +575,7 @@ func TestUpgradeColocatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
 		u := newUpgradeHarness(t, nil)
 		u.f.rules = append([]rule{{match: fail, err: errors.New(name + " failed")}}, u.f.rules...)
 		err := u.upgrade("--image", testImage, "--yes")
-		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "database is unchanged") {
+		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "schema and the data are unchanged") {
 			t.Fatalf("%s: once migrate ran the way back is the backup: %v", name, err)
 		}
 	}

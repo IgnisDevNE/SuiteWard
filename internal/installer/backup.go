@@ -123,7 +123,7 @@ func (b backup) fill(ctx context.Context, dir string) error {
 	if err := b.write(ctx, filepath.Join(dir, backupStatus), status); err != nil {
 		return err
 	}
-	// shortcut: the dump is held in memory until it is written, so it must fit in the installer's memory; stream it to the file when a database outgrows that.
+	// shortcut: the dump is held in memory until it is written, so it must fit in the installer's memory, stream it to the file when a database outgrows that.
 	dump, err := b.rt.Exec(ctx, ContainerDB, []string{"pg_dump", "-U", ownerRole, "-d", "suiteward"}, nil)
 	if err != nil {
 		return fmt.Errorf("pg_dump in %s: %w", ContainerDB, err)
@@ -176,19 +176,24 @@ type (
 func (e stoppedError) Unwrap() error   { return e.error }
 func (e migratingError) Unwrap() error { return e.error }
 
-// withBackup adds where the backup is, and the way back that fits how far the upgrade got, to the error of a step that came
-// after the backup. unitsDir is the account's unit directory on the isolated tier, empty on the co-located one.
+// withBackup adds where the backup is, and the way back or on that fits how far the upgrade got, to the error of a step that came
+// after the backup. unitsDir is the account's unit directory on the isolated tier, empty on the co-located one. Before migrate
+// the schema and the data are unchanged; a rerun of --upgrade does not help from there, because the stack no longer looks like
+// the installed old release (the co-located service is gone, the isolated units name the new release).
 func withBackup(err error, dir, unitsDir string) error {
 	var migrating migratingError
 	if errors.As(err, &migrating) {
 		return fmt.Errorf("%w\nThe backup is in %s; restore it with the previous image to go back, and everything after the backup is lost (docs/backup.md, section 3)", err, dir)
 	}
-	advice := fmt.Sprintf("The database is unchanged: migrate did not run. The backup is in %s.", dir)
+	advice := fmt.Sprintf("Migrate did not run, so the schema and the data are unchanged. The backup is in %s.", dir)
 	var stopped stoppedError
-	if errors.As(err, &stopped) && unitsDir != "" {
-		advice += fmt.Sprintf(" suiteward.service is stopped, and the units this upgrade replaced are in %s. To start the old release again, copy them to %s, run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`; or fix the cause and run the upgrade again.", filepath.Join(dir, backupUnits), unitsDir)
-	} else {
-		advice += " Fix the cause and run the upgrade again."
+	switch {
+	case unitsDir == "":
+		advice += " The service may be down: run `suiteward install` with the options of this run to start the release in the settings again, and `suiteward install --upgrade` to retry."
+	case errors.As(err, &stopped):
+		advice += fmt.Sprintf(" suiteward.service is stopped, and the units this upgrade replaced are in %s. To go back, copy them to %s, run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`. To go on once the cause is fixed, run `suiteward install --tier isolated` (the units already name the new release), after `systemctl --user restart suiteward-db.service` if the database image changed.", filepath.Join(dir, backupUnits), unitsDir)
+	default:
+		advice += " Fix the cause and run `suiteward install --upgrade` again."
 	}
 	return fmt.Errorf("%w\n%s", err, advice)
 }

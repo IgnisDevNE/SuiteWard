@@ -404,3 +404,22 @@ func TestInstallIsolatedRefusesAKeyThatIsNotAnRSAKeyBeforeAnyChange(t *testing.T
 		t.Fatalf("a key that is not a private key must stop the run before any change: %v, %v", err, g.f.lines())
 	}
 }
+
+func TestResolveGitHubAsksForTheKeyFileAtATerminalBecauseAPastedPEMNeedsMoreThanOneLine(t *testing.T) {
+	g := newFakeGitHub(t)
+	flags := existingFlags(t, nil)
+	path := flags["app-key-file"]
+	delete(flags, "app-key-file")
+	env, out := flowEnv(t, g, flags, strings.NewReader(path+"\n"), true) // its password reader fails, so the key cannot come from it
+	res, err := resolve(t, env)
+	if err != nil {
+		t.Fatalf("a terminal run names the key file at a prompt: %v\n%s", err, out.String())
+	}
+	if string(res.PrivateKey) != string(testKeyPEM()) {
+		t.Errorf("the key of the file is not the one the result carries")
+	}
+	if !strings.Contains(out.String(), "private key file") {
+		t.Errorf("the prompt for the path is missing:\n%s", out.String())
+	}
+	assertNoKey(t, out.String())
+}

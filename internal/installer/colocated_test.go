@@ -243,7 +243,7 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.assertOrder(
-		"pull " + testImage, "network create suiteward",
+		"pull "+testImage, "network create suiteward",
 		"volume create suiteward-data", "volume create suiteward-db-data",
 		"secret create suiteward-db-password -", "secret create suiteward-database-owner-url -", "secret create suiteward-mcp-token -",
 		"rm --force --ignore --time 45 suiteward", "rm --force --ignore --time 45 suiteward-migrate",
@@ -961,8 +961,8 @@ func TestInstallDockerBringsTheStackUpWithSecretVolumes(t *testing.T) {
 		}
 	}
 	checks := map[string]string{
-		"--name suiteward-db ":      "--volume suiteward-secrets-suiteward-db:/run/secrets:ro",
-		"--name suiteward-migrate ": "--volume suiteward-secrets-suiteward-migrate:/run/secrets:ro",
+		"--name suiteward-db ":       "--volume suiteward-secrets-suiteward-db:/run/secrets:ro",
+		"--name suiteward-migrate ":  "--volume suiteward-secrets-suiteward-migrate:/run/secrets:ro",
 		"--name suiteward --network": "--volume suiteward-secrets-suiteward:/run/secrets:ro",
 	}
 	for marker, want := range checks {

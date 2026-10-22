@@ -127,7 +127,7 @@ func runArgs(spec RunSpec, replace bool, secretArgs []string) ([]string, error) 
 }
 func (c *cli) State(ctx context.Context, container string) (ContainerState, error) {
 	// {{json .State}} rather than a template over .State.Health: a container without a health check has no Health.
-	out, err := c.run(ctx, nil, "inspect", "--format", "{{json .State}}", container)
+	out, err := c.run(ctx, nil, "inspect", "--type", "container", "--format", "{{json .State}}", container)
 	if err != nil {
 		return ContainerState{}, fmt.Errorf("inspect %s: %w", container, err)
 	}
@@ -145,6 +145,12 @@ func (c *cli) State(ctx context.Context, container string) (ContainerState, erro
 	return result, nil
 }
 
+// Inspect is `inspect --type container`: the service container and the network are both called suiteward, and without the
+// type the answer may be the network's.
 func (c *cli) Inspect(ctx context.Context, container string) ([]byte, error) {
-	return nil, fmt.Errorf("inspect %s: not implemented", container)
+	out, err := c.run(ctx, nil, "inspect", "--type", "container", container)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", container, err)
+	}
+	return out, nil
 }

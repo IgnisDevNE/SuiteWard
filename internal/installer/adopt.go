@@ -24,7 +24,7 @@ type DiffError struct{ Diffs []Diff }
 
 func (e *DiffError) Error() string {
 	var b strings.Builder
-	b.WriteString("the installed stack differs from the release; nothing was changed:")
+	b.WriteString("the installed stack differs from the release; nothing was changed. Undo each edit to keep it as it is, or move it to a setting the installer supports, then run again:")
 	for _, d := range e.Diffs {
 		fmt.Fprintf(&b, "\n  %s %s: want %q, got %q", d.Source, d.Field, d.Want, d.Got)
 	}
@@ -169,10 +169,11 @@ func knownUnitFields(serve []string) (p UnitParams, diffs []Diff, imageKnown boo
 			bad("PublishPort", "127.0.0.1:<port>:8080 or 127.0.0.1:<port>:8090", []string{line})
 		}
 	}
-	if len(httpPorts) == 1 && len(mcpPorts) == 1 {
+	switch {
+	case len(httpPorts) == 1 && len(mcpPorts) == 1:
 		p.HTTPPort, _ = strconv.Atoi(httpPorts[0])
 		p.MCPPort, _ = strconv.Atoi(mcpPorts[0])
-	} else if unmatched == 0 {
+	case unmatched == 0: // lines that matched neither pattern are already reported
 		bad("PublishPort", "one loopback port for 8080 and one for 8090", values("PublishPort="))
 	}
 

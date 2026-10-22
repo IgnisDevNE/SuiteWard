@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -58,6 +59,10 @@ func FlagsSet(fs *flag.FlagSet) map[string]string {
 
 // LoadAnswers reads a flat YAML answers file; every value is a scalar.
 func LoadAnswers(path string) (map[string]string, error) {
+	// The file may hold the App key or passwords, so on systems with POSIX modes it must be private to its owner.
+	if info, err := os.Stat(path); err == nil && runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("the answers file %s is readable by others (mode %o); run chmod 600 on it", path, info.Mode().Perm())
+	}
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("read the answers file: %w", err)

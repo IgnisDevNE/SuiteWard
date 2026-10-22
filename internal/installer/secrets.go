@@ -74,6 +74,13 @@ func (s podmanSecrets) Write(ctx context.Context, name string, value []byte, rep
 	if _, err := lookupSecret(name); err != nil {
 		return err
 	}
+	if !replace {
+		if ok, err := s.Exists(ctx, name); err != nil {
+			return err
+		} else if ok {
+			return fmt.Errorf("%w: %s", ErrSecretExists, name)
+		}
+	}
 	args := []string{"secret", "create"}
 	if replace {
 		args = append(args, "--replace")
@@ -123,7 +130,8 @@ func (s dockerSecrets) volumeRun(ctx context.Context, volume string, readOnly bo
 	if readOnly {
 		mount += ":ro"
 	}
-	args := []string{"run", "--rm", "-i", "--user", "0", "--entrypoint", "sh", "--volume", mount, image, "-c", script}
+	// No network: the one-off container holds a secret in memory and has no reason to reach anything.
+	args := []string{"run", "--rm", "-i", "--network", "none", "--user", "0", "--entrypoint", "sh", "--volume", mount, image, "-c", script}
 	return s.d.run(ctx, stdin, args...)
 }
 

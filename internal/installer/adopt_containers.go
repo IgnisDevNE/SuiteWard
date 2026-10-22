@@ -100,15 +100,20 @@ func AdoptContainers(raw map[string][]byte) (Adopted, error) {
 		parsed[name] = in
 	}
 	settings, diffs := knownContainerFields(parsed[ContainerServe])
-	if len(diffs) > 0 {
-		return Adopted{}, &DiffError{diffs}
-	}
 	image := parsed[ContainerServe].Config.Image
 	stack, err := ColocatedStack(settings, image)
 	if err != nil {
-		return Adopted{}, &DiffError{[]Diff{{Source: ContainerServe, Field: "known fields", Got: err.Error()}}}
+		// The expected stack cannot be built: say what could not be read, or why the carried values are unusable.
+		if len(diffs) == 0 {
+			diffs = []Diff{{Source: ContainerServe, Field: "known fields", Got: err.Error()}}
+		}
+		return Adopted{}, &DiffError{diffs}
 	}
-	for _, spec := range []RunSpec{stack.DB, stack.Migrate, stack.Serve} {
+	specs := []RunSpec{stack.DB, stack.Migrate}
+	if len(diffs) == 0 { // a service whose known fields could not be read is already reported, and its defaults would only repeat it
+		specs = append(specs, stack.Serve)
+	}
+	for _, spec := range specs {
 		in, ok := parsed[spec.Name]
 		if !ok {
 			continue
@@ -202,7 +207,7 @@ func healthLine(cmd string, interval, timeout time.Duration, retries int) string
 
 // expectedFields are the properties of spec that an installed container must have.
 func expectedFields(spec RunSpec) ([]field, error) {
-	f := []field{{"read-only root", "true"}, {"capabilities", "all dropped"}, {"no-new-privileges", "true"}, {"network", spec.Network}}
+	f := []field{{"image", spec.Image}, {"read-only root", "true"}, {"capabilities", "all dropped"}, {"no-new-privileges", "true"}, {"network", spec.Network}}
 	if spec.User != "" {
 		f = append(f, field{"user", spec.User})
 	}
@@ -249,7 +254,7 @@ func expectedFields(spec RunSpec) ([]field, error) {
 func actualFields(in inspected) map[string]string {
 	h := in.HostConfig
 	got := map[string]string{
-		"read-only root": strconv.FormatBool(h.ReadonlyRootfs), "user": in.Config.User,
+		"image": in.Config.Image, "read-only root": strconv.FormatBool(h.ReadonlyRootfs), "user": in.Config.User,
 		"memory": strconv.FormatInt(h.Memory, 10) + " bytes", "restart": h.RestartPolicy.Name,
 		"capabilities": capabilityState(h.CapAdd, h.CapDrop), "stop timeout": "0",
 		"no-new-privileges": strconv.FormatBool(slices.ContainsFunc(h.SecurityOpt, func(o string) bool { return strings.HasPrefix(o, "no-new-privileges") })),

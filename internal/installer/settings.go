@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -201,8 +202,12 @@ func writeFileAtomic(path string, data []byte, dirMode os.FileMode) error {
 		return fmt.Errorf("create a temporary file in %s: %w", dir, err)
 	}
 	_, werr := tmp.Write(data)
+	var serr error
+	if werr == nil {
+		serr = syncFile(tmp) // before the rename, so a crash leaves the old file or the whole new one
+	}
 	cerr := tmp.Close()
-	if err := errors.Join(werr, cerr); err != nil {
+	if err := errors.Join(werr, serr, cerr); err != nil {
 		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("write %s: %w", path, err)
 	}
@@ -210,11 +215,24 @@ func writeFileAtomic(path string, data []byte, dirMode os.FileMode) error {
 		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("flush %s: %w", dir, err)
+	}
 	return nil
 }
 
 // Flushes of writeFileAtomic; tests replace them to see when they happen.
 var (
-	syncFile = func(*os.File) error { return nil }
-	syncDir  = func(string) error { return nil }
+	syncFile = func(f *os.File) error { return f.Sync() }
+	// syncDir makes the rename durable. Windows cannot sync a directory, and there the rename is as durable as it gets.
+	syncDir = func(dir string) error {
+		if runtime.GOOS == "windows" {
+			return nil
+		}
+		d, err := os.Open(filepath.Clean(dir))
+		if err != nil {
+			return err
+		}
+		return errors.Join(d.Sync(), d.Close())
+	}
 )

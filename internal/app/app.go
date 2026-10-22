@@ -27,8 +27,11 @@ const usage = `usage: suiteward serve
        suiteward migrate
        suiteward probe [--delay D] [--no-wait] [--wait ID] [--timeout D]
        suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]
-       suiteward install [flags]
        suiteward check [--json]
+       suiteward install [flags]
+       suiteward install host [flags]
+       suiteward uninstall [--purge] [--yes] [flags]
+       suiteward doctor [--json] [--settings PATH]
 `
 
 // Env is the process environment that the settings are read from, and the
@@ -51,8 +54,9 @@ func OSEnv() Env {
 // prints JSON lines to stdout; setup prints only the TOTP enrollment to stdout
 // and logs JSON to stderr; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "install" { // before the settings are read: the machine that installs has no SUITEWARD_* environment
-		return installer.Run(ctx, args[1:], installer.OSEnv(stdout), stderr)
+	// The commands of the machine that installs run before the settings are read: it has no SUITEWARD_* environment.
+	if len(args) > 0 && (args[0] == "install" || args[0] == "uninstall" || args[0] == "doctor") {
+		return installer.Main(ctx, args, installer.OSEnv(stdout), stderr)
 	}
 	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
 }

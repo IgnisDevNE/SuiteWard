@@ -7,10 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,10 +17,14 @@ import (
 // ErrUsage marks a command line that cannot be parsed.
 var ErrUsage = errors.New("usage")
 
-// Usage is printed with a usage error; `suiteward install --help` lists every flag.
-const Usage = "usage: suiteward install [flags]   (suiteward install --help lists them)\n"
+// Usage is printed with a usage error; each command lists its flags with --help.
+const Usage = `usage: suiteward install [flags]
+       suiteward install host [flags]
+       suiteward uninstall [--purge] [--yes] [flags]
+       suiteward doctor [--json] [--settings PATH]
+`
 
-// Env is what the install command needs from the machine; tests replace it.
+// Env is what the install commands need from the machine; tests replace it.
 type Env struct {
 	Deps     Deps
 	Term     Terminal
@@ -32,16 +32,6 @@ type Env struct {
 	Sleep    func(time.Duration)
 	// ResolveGitHub is the GitHub flow; nil means resolveGitHub. A test replaces it.
 	ResolveGitHub func(ctx context.Context, env githubEnv) (GitHubResult, error)
-}
-
-// Uninstall is `suiteward uninstall [--purge]`.
-func Uninstall(ctx context.Context, args []string, env Env) error {
-	return errors.New("not implemented")
-}
-
-// Main runs one of the commands of the installer (args start with the command name) and returns the process exit code.
-func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
-	return 1
 }
 
 // OSEnv is this machine and this process's console, printing to stdout.
@@ -69,9 +59,26 @@ func (e Env) validate() error {
 	return nil
 }
 
-// Run is `suiteward install`: it returns the process exit code and prints a problem to stderr.
-func Run(ctx context.Context, args []string, env Env, stderr io.Writer) int {
-	err := Install(ctx, args, env)
+// Main runs one command of the installer: args start with the command name (install, install host, uninstall or doctor).
+// It returns the process exit code and prints a problem to stderr.
+func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
+	command, rest := "", []string(nil)
+	if len(args) > 0 {
+		command, rest = args[0], args[1:]
+	}
+	var err error
+	switch {
+	case command == "install" && len(rest) > 0 && rest[0] == "host":
+		err = installHost(ctx, rest[1:], env)
+	case command == "install":
+		err = Install(ctx, rest, env)
+	case command == "uninstall":
+		err = Uninstall(ctx, rest, env)
+	case command == "doctor":
+		return doctorCommand(ctx, rest, env, stderr)
+	default:
+		err = fmt.Errorf("%w: unknown command %q", ErrUsage, command)
+	}
 	switch {
 	case err == nil || errors.Is(err, flag.ErrHelp):
 		return 0
@@ -85,7 +92,13 @@ func Run(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	}
 }
 
-// installFlags are the string flags; every one is also a key of the answers file.
+// listFlag is a flag that may be given more than once; its value is the entries one per line.
+type listFlag []string
+
+func (l *listFlag) String() string     { return strings.Join(*l, "\n") }
+func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
+
+// installFlags are the string flags of install; every one is also a key of the answers file.
 var installFlags = []struct{ name, usage string }{
 	{"answers", "read answers from this YAML file (a flag wins over it)"},
 	{"settings", "the installer settings file (default: the per-user configuration directory)"},
@@ -97,21 +110,32 @@ var installFlags = []struct{ name, usage string }{
 	{"http-port", "loopback port of the HTTP listener (default 8081)"},
 	{"mcp-port", "loopback port of the MCP listener (default 8091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
-	{"github-app-id", "the GitHub App ID, or none"},
-	{"github-installation-id", "the GitHub installation ID"},
-	{"github-owner", "the login that owns the repositories"},
+	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub"},
+	{"github-account", `the account that owns the new App: "personal" or an organization login`},
+	{"manifest-code", "the code from the manifest redirect, when the browser could not reach the listener"},
+	{"manifest-port", "the port of the manifest listener on 127.0.0.1 (default: any free port)"},
+	{"ruleset-imported", "yes once the ruleset of each repository is imported"},
+	{"github-app-id", "the ID of an App that exists, or none to skip GitHub"},
+	{"github-installation-id", "the installation of that App"},
+	{"github-owner", "the GitHub login of the instance owner"},
 	{"github-repositories", "comma-separated owner/name list, at most 20"},
 	{"github-app-key-file", "file with the App's private key (PEM), or - for standard input; read only while the key secret is missing"},
 }
 
-func newFlagSet() *flag.FlagSet {
-	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+func newFlagSet(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	fs.Usage = func() {} // a usage error is reported by Main; --help prints the flags (printHelp)
+	return fs
+}
+
+func newInstallFlagSet() *flag.FlagSet {
+	fs := newFlagSet("install")
 	for _, f := range installFlags {
 		fs.String(f.name, "", f.usage)
 	}
+	fs.Var(&listFlag{}, "test-check", "the test check of a repository, OWNER/NAME=CHECK; repeat it, or give one plain name for a single repository")
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
-	fs.Usage = func() {} // a usage error is reported by Run; --help prints the flags (printHelp)
 	return fs
 }
 
@@ -121,48 +145,71 @@ func printHelp(fs *flag.FlagSet, out io.Writer) {
 	fs.PrintDefaults()
 }
 
+// parse parses args and reports a bad command line as a usage error, and --help as flag.ErrHelp after printing the flags.
+func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, error) {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printHelp(fs, out)
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	if fs.NArg() > 0 {
+		return nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
+	}
+	return FlagsSet(fs), nil
+}
+
+// settingsPathFrom is the settings file of a command and whether it is the shared per-user default.
+func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err error) {
+	if path = flags["settings"]; path != "" {
+		return path, false, nil
+	}
+	path, err = DefaultSettingsPath()
+	return path, true, err
+}
+
+// loadSaved reads the settings of an earlier install; none yet is not an error.
+func loadSaved(path string) (Settings, bool, error) {
+	saved, err := LoadSettings(path)
+	switch {
+	case err == nil:
+		return saved, true, nil
+	case errors.Is(err, ErrNoSettings):
+		return DefaultSettings(), false, nil
+	}
+	return Settings{}, false, err
+}
+
 // Install runs the install command (args without the command name).
 func Install(ctx context.Context, args []string, env Env) error {
 	if err := env.validate(); err != nil {
 		return err
 	}
-	fs := newFlagSet()
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			printHelp(fs, env.Term.Out)
-			return err
-		}
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+	fs := newInstallFlagSet()
+	flags, err := parse(fs, args, env.Term.Out)
+	if err != nil {
+		return err
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
-	}
-	flags := FlagsSet(fs)
 	answers := map[string]string{}
 	if path, ok := flags["answers"]; ok {
-		var err error
 		if answers, err = LoadAnswers(path); err != nil {
 			return err
 		}
 	}
+	aliasGitHubKeys(flags)
+	aliasGitHubKeys(answers)
 	r, err := NewResolver(flags, answers, env.Term)
 	if err != nil {
 		return err
 	}
-	settingsPath := flags["settings"]
-	defaultPath := settingsPath == ""
-	if defaultPath {
-		if settingsPath, err = DefaultSettingsPath(); err != nil {
-			return err
-		}
-	}
-	saved, err := LoadSettings(settingsPath)
-	haveSaved := err == nil
-	if err != nil && !errors.Is(err, ErrNoSettings) {
+	settingsPath, defaultPath, err := settingsPathFrom(flags)
+	if err != nil {
 		return err
 	}
-	if !haveSaved {
-		saved = DefaultSettings()
+	saved, haveSaved, err := loadSaved(settingsPath)
+	if err != nil {
+		return err
 	}
 
 	tier, err := r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier))
@@ -178,6 +225,50 @@ func Install(ctx context.Context, args []string, env Env) error {
 		return installColocated(ctx, r, env, installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved})
 	}
 	return fmt.Errorf("tier %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
+}
+
+// installHost is `suiteward install host`, the administrator half of the isolated install.
+func installHost(ctx context.Context, args []string, env Env) error {
+	if err := env.validate(); err != nil {
+		return err
+	}
+	fs := newFlagSet("install host")
+	fs.String("answers", "", "read answers from this YAML file (a flag wins over it)")
+	fs.Bool("yes", false, "answer yes to installing Podman (dnf)")
+	fs.String("metadata-rule", "", "yes or no: refuse the cloud metadata address for the service account")
+	flags, err := parse(fs, args, env.Term.Out)
+	if err != nil {
+		return err
+	}
+	answers := map[string]string{}
+	if path, ok := flags["answers"]; ok {
+		if answers, err = LoadAnswers(path); err != nil {
+			return err
+		}
+	}
+	r, err := NewResolver(flags, answers, env.Term)
+	if err != nil {
+		return err
+	}
+	return PrepareHost(ctx, r, env.Deps, env.Term.Out)
+}
+
+// doctorCommand is `suiteward doctor [--json] [--settings PATH]`. It reads the settings before any configuration is loaded: the
+// machine that checks the instance has no SUITEWARD_* environment.
+func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer) int {
+	fs := newFlagSet("doctor")
+	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
+	fs.Bool("json", false, "print the results as JSON")
+	flags, err := parse(fs, args, env.Term.Out)
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		return 0
+	case err != nil:
+		// A failed write to stderr cannot be reported anywhere else.
+		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
+		return 2
+	}
+	return Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, flags["json"] == "true")
 }
 
 // preset is an answer that is never asked for: the flag or the answers file, else def.
@@ -204,95 +295,8 @@ func confirmDocker(r *Resolver) error {
 	if err != nil {
 		return err
 	}
-	if !slices.Contains([]string{"y", "yes", "true"}, strings.ToLower(strings.TrimSpace(answer))) {
+	if yes, err := parseYesNo("accept-docker", answer); err != nil || !yes {
 		return errors.New("the use of Docker was not confirmed: pass --accept-docker, or install with --runtime podman")
 	}
 	return nil
-}
-
-var pemKey = regexp.MustCompile(`-----BEGIN (RSA )?PRIVATE KEY-----`)
-
-// githubSettings is the one source of the GitHub values and of the App key: flags, the answers file and prompts. The
-// manifest flow replaces it (task I6). The key function runs only when the key secret does not exist yet.
-func githubSettings(r *Resolver, cur GitHub) (GitHub, func() ([]byte, error), error) {
-	def := "none"
-	if cur.AppID != 0 {
-		def = strconv.FormatInt(cur.AppID, 10)
-	}
-	appID, err := r.Value("github-app-id", "GitHub App ID (none to skip GitHub)", def)
-	if err != nil {
-		return GitHub{}, nil, err
-	}
-	if appID = strings.TrimSpace(appID); appID == "" || strings.EqualFold(appID, "none") {
-		return GitHub{}, nil, nil
-	}
-	var g GitHub
-	if g.AppID, err = parseID("github-app-id", appID); err != nil {
-		return GitHub{}, nil, err
-	}
-	installation := ""
-	if cur.InstallationID != 0 {
-		installation = strconv.FormatInt(cur.InstallationID, 10)
-	}
-	v, err := r.Value("github-installation-id", "GitHub installation ID", installation)
-	if err != nil {
-		return GitHub{}, nil, err
-	}
-	if g.InstallationID, err = parseID("github-installation-id", v); err != nil {
-		return GitHub{}, nil, err
-	}
-	repos, err := r.Value("github-repositories", "GitHub repositories (owner/name, comma-separated)", strings.Join(cur.Repositories, ","))
-	if err != nil {
-		return GitHub{}, nil, err
-	}
-	for _, repo := range strings.Split(repos, ",") {
-		if repo = strings.TrimSpace(repo); repo != "" {
-			g.Repositories = append(g.Repositories, repo)
-		}
-	}
-	ownerDef := cur.Owner
-	if ownerDef == "" && len(g.Repositories) > 0 {
-		ownerDef, _, _ = strings.Cut(g.Repositories[0], "/")
-	}
-	if g.Owner, err = r.Value("github-owner", "GitHub owner login", ownerDef); err != nil {
-		return GitHub{}, nil, err
-	}
-	for repo, check := range cur.TestChecks { // test checks are chosen later; a re-run keeps those of repositories that stay
-		if slices.Contains(g.Repositories, repo) {
-			if g.TestChecks == nil {
-				g.TestChecks = map[string]string{}
-			}
-			g.TestChecks[repo] = check
-		}
-	}
-	return g, func() ([]byte, error) { return readAppKey(r) }, nil
-}
-
-func parseID(key, v string) (int64, error) {
-	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-	if err != nil || n < 1 {
-		return 0, fmt.Errorf("%s %q is not a positive number", key, v)
-	}
-	return n, nil
-}
-
-// readAppKey reads the App's private key from the file named by github-app-key-file, or from stdin for -.
-func readAppKey(r *Resolver) ([]byte, error) {
-	path, err := r.Value("github-app-key-file", "File with the App's private key (PEM, - for standard input)", "")
-	if err != nil {
-		return nil, err
-	}
-	var pem []byte
-	if path == "-" {
-		pem, err = io.ReadAll(r.in)
-	} else {
-		pem, err = os.ReadFile(filepath.Clean(path))
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read the App key from %s: %w", path, err)
-	}
-	if !pemKey.Match(pem) {
-		return nil, fmt.Errorf("%s is not a PEM private key (PKCS#1 or PKCS#8)", path)
-	}
-	return pem, nil
 }

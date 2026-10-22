@@ -995,7 +995,7 @@ func TestInstallEnablesPodmanRestartInTheMachine(t *testing.T) {
 	if err := h.podman("--connection", "podman-machine-default"); err != nil {
 		t.Fatal(err)
 	}
-	got := h.f.find("machine ssh")
+	got := h.f.find("systemctl")
 	want := "machine ssh --username user podman-machine-default systemctl --user enable podman-restart.service"
 	if len(got) != 1 || got[0].line() != want {
 		t.Fatalf("got %v, want %s", got, want)

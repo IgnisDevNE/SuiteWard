@@ -53,8 +53,9 @@ func OSExec(ctx context.Context, name string, args []string, stdin io.Reader) ([
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		// The output is returned with the error: a failing check prints its report on stdout. Every caller reads the error first.
-		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", describe(name, args), err, failureOutput(stdout.Bytes(), stderr.Bytes()))
+		// The output is returned beside the error (a failing check prints its report on stdout) but is not in the error: a
+		// command may print a secret. A caller that wants a tail of it asks for it (stdoutTail). Every caller reads the error first.
+		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", describe(name, args), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }
@@ -70,23 +71,19 @@ func OSInteractive(ctx context.Context, name string, args []string) error {
 	return nil
 }
 
-// failureOutputBytes bounds how much of the standard output an error repeats.
-const failureOutputBytes = 2048
+// stdoutTailBytes bounds how much of a command's standard output a caller repeats in an error.
+const stdoutTailBytes = 2048
 
-// failureOutput is what an error shows of a failed command: the end of its standard output, where a command says why it
-// stopped (migrate logs there), and its standard error.
-func failureOutput(stdout, stderr []byte) string {
-	if len(stdout) > failureOutputBytes {
-		stdout = stdout[len(stdout)-failureOutputBytes:]
+// stdoutTail is the end of a command's standard output, where a command says why it stopped (migrate logs there). Only a
+// caller that knows its command prints nothing secret asks for it.
+func stdoutTail(stdout []byte) string {
+	if len(stdout) > stdoutTailBytes {
+		stdout = stdout[len(stdout)-stdoutTailBytes:]
 		for len(stdout) > 0 && !utf8.RuneStart(stdout[0]) {
 			stdout = stdout[1:]
 		}
 	}
-	out, errText := strings.TrimSpace(string(stdout)), strings.TrimSpace(string(stderr))
-	if out == "" {
-		return errText
-	}
-	return "stdout: " + out + "; stderr: " + errText
+	return strings.TrimSpace(string(stdout))
 }
 
 // describe names a command in an error without repeating a long script argument.

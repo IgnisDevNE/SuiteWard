@@ -34,3 +34,22 @@ func TestUsageNamesInstall(t *testing.T) {
 		t.Fatalf("usage: %q", errOut.String())
 	}
 }
+
+func TestDoctorAndUninstallAreDispatchedBeforeTheSettingsAreLoaded(t *testing.T) {
+	for _, args := range [][]string{{"doctor", "--no-such-flag"}, {"uninstall", "--no-such-flag"}, {"install", "host", "--no-such-flag"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(context.Background(), args, Env{}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "usage") {
+			t.Errorf("Run(%v) = %d, stderr %q; want 2 and a usage message", args, code, errOut.String())
+		}
+	}
+}
+
+func TestUsageNamesEveryCommand(t *testing.T) {
+	var out, errOut bytes.Buffer
+	Run(context.Background(), nil, Env{Lookup: func(string) (string, bool) { return "", false }}, &out, &errOut)
+	for _, want := range []string{"suiteward install [flags]", "suiteward install host", "suiteward uninstall", "suiteward doctor", "suiteward check"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("usage lacks %q: %q", want, errOut.String())
+		}
+	}
+}

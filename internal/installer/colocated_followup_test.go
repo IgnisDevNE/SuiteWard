@@ -32,7 +32,7 @@ func TestInstallMigrateFailureShowsTheTailOfItsOutputOnly(t *testing.T) {
 func TestASecretReadNeverShowsTheValueInItsError(t *testing.T) {
 	const value = "s3cret-value"
 	f := newFake("linux")
-	f.on("secret inspect", value).fail("secret inspect", errors.New("inspect failed: "+value))
+	f.rules = append(f.rules, rule{match: "secret inspect", out: value, err: errors.New("inspect failed: " + value)})
 	rt := newRootlessPodman(t, f, "")
 	out, err := rt.Secrets().Read(context.Background(), SecretMCPAuth)
 	if err == nil || strings.Contains(err.Error(), value) || out != nil {
@@ -232,10 +232,13 @@ func TestInstallReportsItsProgress(t *testing.T) {
 
 func (h *harness) writeFiles() {
 	h.t.Helper()
-	for _, p := range []string{h.settingsPath(), h.tokenPath()} {
-		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-			h.t.Fatal(err)
-		}
+	s := colocatedSettings()
+	s.Connection = "pm"
+	if err := SaveSettings(h.settingsPath(), s); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.WriteFile(h.tokenPath(), []byte("x"), 0o600); err != nil {
+		h.t.Fatal(err)
 	}
 }
 

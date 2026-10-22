@@ -99,8 +99,8 @@ func (p *Podman) Run(ctx context.Context, spec RunSpec) error {
 	if err != nil {
 		return err
 	}
-	if _, err := p.run(ctx, nil, args...); err != nil {
-		return fmt.Errorf("run %s: %w", spec.Name, err)
+	if out, err := p.run(ctx, nil, args...); err != nil {
+		return runError(spec, out, err)
 	}
 	return nil
 }

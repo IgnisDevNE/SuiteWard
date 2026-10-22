@@ -3,7 +3,9 @@ package installer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 )
 
 // Names of the objects of one stack. One stack per machine: the names are fixed (as in local.ps1 and the quadlets).
@@ -113,3 +115,16 @@ const (
 	SecretGitHubAppKey     = secretPrefix + "github-app-key"
 	SecretMCPAuth          = secretPrefix + "mcp-token"
 )
+
+// parseImage reads an --image value into the reference the installer pins: a bare sha256:<64 hex> digest is the release image,
+// anything else must be a reference that ends in @sha256:<64 hex>. A tag alone is never accepted. Every command that takes
+// --image parses it here, so they agree on what it names.
+func parseImage(asked string) (string, error) {
+	if imageDigest.MatchString(asked) {
+		return releaseImageRepo + "@" + asked, nil
+	}
+	if repo, digest, ok := strings.Cut(asked, "@"); !ok || repo == "" || strings.HasPrefix(repo, "-") || !imageDigest.MatchString(digest) {
+		return "", fmt.Errorf("%w: %q is neither sha256:<64 lowercase hex characters> nor a reference ending in @sha256:<64 lowercase hex characters> (the installer never pins a tag)", ErrNotDigestImage, asked)
+	}
+	return asked, nil
+}

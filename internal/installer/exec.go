@@ -28,6 +28,8 @@ type Deps struct {
 	Interactive Interactive
 	GOOS        string
 	Getenv      func(string) string
+	// UserSID is the Windows SID of the current user, which restrictPath grants; only a Windows run asks for it.
+	UserSID func() (string, error)
 }
 
 // validate refuses a Deps with a missing function: a nil one would fail later, at the first container command.
@@ -40,7 +42,7 @@ func (d Deps) validate() error {
 
 // OSDeps runs real commands on this machine.
 func OSDeps() Deps {
-	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv}
+	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv, UserSID: osUserSID}
 }
 
 // OSExec runs name with args. When name is an absolute path its directory is put first on the child's PATH, because

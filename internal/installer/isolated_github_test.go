@@ -27,6 +27,7 @@ type isoGitHub struct {
 	tty     bool              // stdin is a terminal
 	stdin   string
 	flow    func(context.Context, githubEnv) (GitHubResult, error)
+	ctx     context.Context // nil: context.Background()
 	status  func(context.Context, string) ([]byte, error)
 
 	seen   []githubEnv
@@ -102,7 +103,11 @@ func (g *isoGitHub) run() error {
 			return g.status(ctx, address)
 		},
 	}
-	return installIsolated(context.Background(), s, r, env)
+	ctx := g.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return installIsolated(ctx, s, r, env)
 }
 
 // terminalForSetup makes setup think it has a real terminal for the length of the test.
@@ -115,6 +120,7 @@ func terminalForSetup(t *testing.T) {
 
 func TestInstallIsolatedRunsTheGitHubFlowBeforeAnyChange(t *testing.T) {
 	g := newIsoGitHub(t)
+	g.f.noImage = true // the images are pulled
 	g.answers["manifest-port"] = "18765"
 	if err := g.run(); err != nil {
 		t.Fatal(err)
@@ -230,6 +236,7 @@ func TestInstallIsolatedDefaultsToTheReleaseTheBinaryCarries(t *testing.T) {
 
 	ImageDigest = testDigest
 	g := newIsoGitHub(t)
+	g.f.noImage = true
 	g.answers["image"] = ""
 	if err := g.run(); err != nil {
 		t.Fatalf("a release binary needs no --image: %v", err)

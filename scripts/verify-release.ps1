@@ -21,6 +21,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Sums') {
     if ($entry.Count -ne 1) { throw "$Sums must list $name exactly once." }
     if ((Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash -ine $entry[0].hash) { throw "The hash of $File does not match $Sums." }
     Write-Host "Matched: $name is listed in $Sums with its SHA-256."
+    Write-Host "SHA256SUMS sha256: $((Get-FileHash -LiteralPath $Sums -Algorithm SHA256).Hash.ToLowerInvariant())"
     return
 }
 if ($PSCmdlet.ParameterSetName -eq 'Image') { if ($Reference -cnotmatch '^[a-z0-9][a-z0-9._/:-]*@sha256:[a-f0-9]{64}$') { throw 'Pass the image by digest (repository@sha256:...); a tag can move.' } }
@@ -31,6 +32,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Blob') {
     & $Cosign verify-blob --bundle $Bundle --certificate-identity-regexp $identity --certificate-oidc-issuer $issuer $Blob
     if ($LASTEXITCODE -ne 0) { throw "cosign could not verify the signature of $Blob." }
     Write-Host "Verified: $Blob was signed by the SuiteWard release workflow."
+    if ((Split-Path -Leaf $Blob) -ceq 'SHA256SUMS') { Write-Host "SHA256SUMS sha256: $((Get-FileHash -LiteralPath $Blob -Algorithm SHA256).Hash.ToLowerInvariant())" }
     return
 }
 & $Cosign verify --certificate-identity-regexp $identity --certificate-oidc-issuer $issuer $Reference

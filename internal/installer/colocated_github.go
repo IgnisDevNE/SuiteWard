@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +21,9 @@ type githubInstall struct {
 	env Env
 	out io.Writer
 	s   Settings // the GitHub flow changes its GitHub part
+
+	pendingPath string      // where an App this run creates is recorded; empty when no run of the flow is possible
+	pending     *PendingApp // the App an earlier run created and did not finish with
 
 	githubKey   []byte // the App key to store, nil when its secret exists or GitHub is off
 	setupOwner  string // the instance owner, when the GitHub flow ran: the login setup enrolls
@@ -71,7 +76,7 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 		}
 		return true, nil
 	}
-	existing := g.s.GitHub.AppID != 0
+	existing := g.s.GitHub.AppID != 0 || g.pending != nil
 	if v, ok := r.given("github"); ok {
 		yes, err := parseYesNo("github", v)
 		return yes, err
@@ -86,6 +91,9 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 			return true, nil // values for the GitHub App of the saved settings
 		}
 	}
+	if g.pending != nil && g.s.GitHub.AppID == 0 { // an App an earlier run created and did not finish with; once the settings name an App, the record is not used
+		return true, nil
+	}
 	if existing {
 		have, err := g.rt.Secrets().Exists(ctx, SecretGitHubAppKey)
 		return !have, err
@@ -99,8 +107,17 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 // githubFlow runs the GitHub flow when it is wanted and applies its result: the settings, the App key and the owner login
 // that setup enrolls.
 func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir string) error {
+	if pending, found, err := loadPendingApp(g.pendingPath); err != nil {
+		return err
+	} else if found {
+		g.pending = &pending
+	}
 	run, err := g.wantsGitHub(ctx, r)
 	if err != nil || !run {
+		if err == nil && g.pending != nil { // GitHub is off in this run, but the App an earlier run created is still there
+			g.say("Note: GitHub is off in this run, and the App %s that an earlier run created is not used. It still exists on GitHub (%s) and its key is the secret %s (%s); the record is %s. To take it up, run again with --github yes. To throw it away, delete the App, remove the secret and delete the record.\n",
+				g.pending.Slug, appPage("https://github.com", g.pending.Slug, g.pending.Account, g.pending.AccountType), SecretGitHubAppKey, g.removeKeySecret(), g.pendingPath)
+		}
 		return err
 	}
 	port := 0
@@ -110,10 +127,17 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 		}
 	}
 	secrets := g.rt.Secrets()
-	stored := false
+	stored, recorded := false, false
 	existing := g.s.GitHub
 	res, err := g.env.githubFlow()(ctx, githubEnv{
-		R: r, Out: g.out, Tier: g.s.Tier, SettingsDir: settingsDir, ManifestPort: port, Existing: &existing,
+		R: r, Out: g.out, Tier: g.s.Tier, SettingsDir: settingsDir, ManifestPort: port, Existing: &existing, Pending: g.pending,
+		RecordApp: func(_ context.Context, app PendingApp) error {
+			if err := savePendingApp(g.pendingPath, app); err != nil {
+				return err
+			}
+			recorded = true
+			return nil
+		},
 		KeyExists: func(ctx context.Context) (bool, error) { return secrets.Exists(ctx, SecretGitHubAppKey) },
 		ReadKey:   func(ctx context.Context) ([]byte, error) { return secrets.Read(ctx, SecretGitHubAppKey) },
 		StoreKey: func(ctx context.Context, key []byte) error {
@@ -125,7 +149,7 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 		},
 	})
 	if err != nil {
-		return err
+		return g.leftovers(err, stored, recorded)
 	}
 	if res.AppID == 0 || res.InstallationID == 0 || len(res.Repositories) == 0 {
 		return errors.New("the GitHub flow returned no App, installation or repositories")
@@ -147,6 +171,50 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 		}
 	}
 	return nil
+}
+
+// removeKeySecret is how to remove the App key secret with the runtime of this stack.
+func (g *githubInstall) removeKeySecret() string {
+	if _, isDocker := g.rt.(*Docker); isDocker { // Docker keeps one file per consumer in named volumes
+		if spec, _, err := secretFor(SecretGitHubAppKey, ContainerServe); err == nil {
+			return fmt.Sprintf("delete the file %s from the Docker volume %s", spec.file, secretVolume(ContainerServe))
+		}
+	}
+	if cmd, err := engineCommand(g.rt, g.env.Deps.GOOS); err == nil {
+		return cmd + " secret rm " + SecretGitHubAppKey
+	}
+	return "remove it from the secret store of the container runtime"
+}
+
+// leftovers adds to the error of a failed flow what the run left behind and what to do about it: the App, its key secret
+// and the record of it are named, with how to remove each, so that the next run neither fails on the secret nor creates a
+// second App. The flow's own error names the page that deletes the App.
+func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
+	secret := SecretGitHubAppKey + " (" + g.removeKeySecret() + ")"
+	switch {
+	case errors.Is(err, ErrSecretExists):
+		return fmt.Errorf("%w. The secret %s already exists, so the key of the App this run created was not stored: an earlier run left it behind. Delete the App that this run created (the link above) and the one of the earlier run on GitHub, remove the secret %s, then run the installer again", err, SecretGitHubAppKey, secret)
+	case errors.Is(err, errPendingKeyMissing) && g.pending != nil:
+		return fmt.Errorf("%w. The key secret %s is not in the secret store (it was removed or purged). Either delete that App (the link above) and the record %s, then run the installer again; or install the App if it is not installed yet, create a new private key on its settings page and run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, SecretGitHubAppKey, g.pendingPath, g.pending.AppID)
+	case errors.Is(err, errResuming) && g.pending != nil:
+		return fmt.Errorf("%w. This run took up the App %s, which an earlier run recorded in %s; its key is the secret %s. Run the installer again to retry. If the App no longer exists on GitHub (deleted, or answered 401 or 404 above), delete the record file and remove the secret, then run again to create a new App", err, g.pending.Slug, g.pendingPath, secret)
+	case stored && recorded:
+		return fmt.Errorf("%w. The key of the App is in the secret store as %s and the App is recorded in %s: run the installer again to take up that App. To start over instead, delete the App (the link above), remove the secret and delete the record", err, secret, g.pendingPath)
+	case stored:
+		return fmt.Errorf("%w. The key of the App is in the secret store as %s, and no record of the App was made: delete the App (the link above) and remove the secret before you run the installer again", err, secret)
+	}
+	return err
+}
+
+// clearPending deletes the record of an App once the settings, which name an App, are saved. A record that stays is not used again
+// (the settings come first), so a failure is only reported.
+func (g *githubInstall) clearPending() {
+	if g.pendingPath == "" || g.s.GitHub.AppID == 0 { // a run without GitHub keeps the record: the App and its key are still there
+		return
+	}
+	if err := os.Remove(g.pendingPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		g.say("Note: %v. The settings name the App now, so the record is not used again: you may delete it.\n", err)
+	}
 }
 
 // statusTries and statusEvery bound the wait for /status of a service that has just started.

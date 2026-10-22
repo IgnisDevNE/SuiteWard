@@ -472,23 +472,15 @@ func selfCheckVars(t *testing.T, fake *selfCheckGitHubFake) map[string]string {
 
 func TestSelfCheckUsageErrorsExitWithTwoBeforeAnythingIsCalled(t *testing.T) {
 	fake := newSelfCheckGitHub(t)
-	githubVars := []string{"SUITEWARD_GITHUB_APP_ID", "SUITEWARD_GITHUB_APP_KEY", "SUITEWARD_GITHUB_INSTALLATION_ID", "SUITEWARD_GITHUB_REPOSITORIES", "SUITEWARD_GITHUB_API_URL"}
 	for name, test := range map[string]struct {
-		args  []string
-		unset []string
-		want  string
+		args []string
+		want string
 	}{
-		"stray argument":        {args: []string{"stray"}, want: "stray"},
-		"unknown flag":          {args: []string{"--nope"}, want: "nope"},
-		"GitHub settings unset": {args: []string{"--json"}, unset: githubVars, want: "GitHub"},
+		"stray argument": {args: []string{"stray"}, want: "stray"},
+		"unknown flag":   {args: []string{"--nope"}, want: "nope"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			vars := selfCheckVars(t, fake)
-			for _, name := range test.unset {
-				delete(vars, name)
-			}
-
-			code, stdout, stderr := run(append([]string{"check"}, test.args...), testEnv(vars))
+			code, stdout, stderr := run(append([]string{"check"}, test.args...), testEnv(selfCheckVars(t, fake)))
 
 			if code != 2 || stdout != "" || !strings.Contains(stderr, "usage") || !strings.Contains(stderr, test.want) {
 				t.Fatalf("check %q = %d, stdout %q, stderr %q; want 2, nothing on stdout and a usage message naming %q", test.args, code, stdout, stderr, test.want)
@@ -651,5 +643,60 @@ func TestSelfCheckDatabaseGivesUpOnAHostThatNeverAnswers(t *testing.T) {
 		if r.OK || r.Detail == "" || r.Fix == "" || strings.Contains(r.Detail+r.Fix, leakWord) {
 			t.Errorf("%+v; want a failure with a detail and a fix, and no password", r)
 		}
+	}
+}
+
+// githubSettingNames are the settings of the GitHub part of the service: an instance installed without GitHub has none of them.
+var githubSettingNames = []string{"SUITEWARD_GITHUB_APP_ID", "SUITEWARD_GITHUB_APP_KEY", "SUITEWARD_GITHUB_INSTALLATION_ID", "SUITEWARD_GITHUB_REPOSITORIES", "SUITEWARD_GITHUB_API_URL"}
+
+// The install allows "GitHub is not configured": check then runs the database checks and reports each GitHub check as not
+// configured, a warning that does not fail it, instead of refusing to run.
+func TestSelfCheckWithoutGitHubChecksTheDatabaseAndWarnsAboutGitHub(t *testing.T) {
+	fake := newSelfCheckGitHub(t)
+	vars := selfCheckVars(t, fake)
+	for _, name := range githubSettingNames {
+		delete(vars, name)
+	}
+
+	code, stdout, stderr := run([]string{"check", "--json"}, testEnv(vars))
+
+	if code != 1 || stderr != "" { // the database of selfCheckVars cannot be reached, which is what fails
+		t.Fatalf("check = %d, stderr %q; want 1 (the database is down) and no usage error", code, stderr)
+	}
+	var results []selfCheckResult
+	if err := json.Unmarshal([]byte(stdout), &results); err != nil {
+		t.Fatalf("stdout %q is not a JSON array: %v", stdout, err)
+	}
+	found := byName(t, results)
+	for _, name := range []string{"github.app", "github.installation", "github.permissions", "github.repositories"} {
+		if r, listed := found[name]; !listed || !r.OK || !r.Warning || !strings.Contains(r.Detail, "not configured") || r.Fix == "" {
+			t.Errorf("%s = %+v; want a passing warning that says GitHub is not configured and how to set it up", name, r)
+		}
+	}
+	for _, name := range []string{"database.schema", "database.role", "owner.enrolled"} {
+		if r, listed := found[name]; !listed || r.OK {
+			t.Errorf("%s = %+v; want the database check to have run and failed (the database is down)", name, r)
+		}
+	}
+	for name := range found {
+		if strings.HasPrefix(name, "protection.") {
+			t.Errorf("%s is reported without a repository to protect", name)
+		}
+	}
+	if n := len(fake.requests()); n != 0 {
+		t.Errorf("GitHub was called %d times", n)
+	}
+}
+
+func TestWriteSelfCheckPrintsAWarningWithItsFix(t *testing.T) {
+	results := []selfCheckResult{{Name: "github.app", OK: true, Warning: true, Detail: "not configured", Fix: "set GitHub up"}}
+	var out bytes.Buffer
+
+	if err := writeSelfCheck(&out, results, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "WARN github.app: not configured — set GitHub up\n"; out.String() != want {
+		t.Errorf("output = %q; want %q", out.String(), want)
 	}
 }

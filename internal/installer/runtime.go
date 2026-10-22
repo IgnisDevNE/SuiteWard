@@ -81,8 +81,7 @@ type Runtime interface {
 	Delete(ctx context.Context, kind Kind, name string) error // volumes and networks; none that is missing is an error
 	ImageExists(ctx context.Context, image string) bool       // the engine already has it, so a pull is not needed
 	Remove(ctx context.Context, container string) error       // no error when it does not exist
-	Start(ctx context.Context, container string) error // an existing container, as it is
-
+	Start(ctx context.Context, container string) error        // an existing container, as it is
 	Pull(ctx context.Context, image string) error             // only an image pinned by digest
 	Run(ctx context.Context, spec RunSpec) error
 	Exec(ctx context.Context, container string, argv []string, stdin io.Reader) ([]byte, error)

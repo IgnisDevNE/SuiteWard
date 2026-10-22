@@ -53,7 +53,7 @@ A subagent never starts an interactive REPL, a prompt that waits for input, or a
 
 ## Parallel waves
 
-Tasks without shared files and with satisfied dependencies run in parallel in one wave. Shared declarations, module files, migrations, generators, CI, and composition have exactly one owner per wave; a task needing such a file it does not own stops and reports. A later wave starts only after its dependencies are merged into the phase branch, or when it depends only on a frozen contract document.
+At most six subagents run at the same time, reviewers and scouts included (owner, 2026-10-22). Tasks without shared files and with satisfied dependencies run in parallel in one wave. Shared declarations, module files, migrations, generators, CI, and composition have exactly one owner per wave; a task needing such a file it does not own stops and reports. A later wave starts only after its dependencies are merged into the phase branch, or when it depends only on a frozen contract document.
 
 ## Worktrees, databases, and ports
 

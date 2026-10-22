@@ -892,6 +892,9 @@ func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]s
 		if !repositoryName.MatchString(repo) || strings.TrimSpace(check) == "" {
 			return fmt.Errorf("the test check %q of %q is not a repository (owner/name) with a check name", check, repo)
 		}
+		if strings.TrimSpace(check) == protection.ContractCheck {
+			return fmt.Errorf("the test check of %s is %s, SuiteWard's own check, not the project's test check", repo, protection.ContractCheck)
+		}
 		if len(check) > appowner.MaxTestCheckBytes { // the limit setup enforces, so setup does not refuse after the container is entered
 			return fmt.Errorf("the test check of %s is longer than %d bytes", repo, appowner.MaxTestCheckBytes)
 		}

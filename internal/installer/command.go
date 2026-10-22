@@ -230,9 +230,8 @@ func Install(ctx context.Context, args []string, env Env) error {
 	upgrade := flags["upgrade"] == "true"
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
-		// A host installed by hand has no settings file, and the default tier would be a guess: on Linux that is the isolated host.
-		if _, given := r.given("tier"); !given && !haveSaved && env.Deps.GOOS == "linux" {
-			return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+		if err := tierNeeded(r, haveSaved, env.Deps.GOOS); err != nil {
+			return err
 		}
 		tier = r.preset("tier", string(saved.Tier))
 	} else if tier, err = r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier)); err != nil {
@@ -328,4 +327,31 @@ func confirmDocker(r *Resolver) error {
 		return errors.New("the use of Docker was not confirmed: pass --accept-docker, or install with --runtime podman")
 	}
 	return nil
+}
+
+// tierNeeded refuses a command that works on what is installed when it cannot tell the tier: a host installed by hand has no
+// settings file, and the default tier would be a guess (on Linux that is the isolated host).
+func tierNeeded(r *Resolver, haveSaved bool, goos string) error {
+	if _, given := r.given("tier"); !given && !haveSaved && goos == "linux" {
+		return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+	}
+	return nil
+}
+
+// quoteArg is a command-line argument as a person can paste it into a shell: as it is when it is plain, else in single quotes.
+// shortcut: a path with a single quote is put in double quotes, where bash still expands $; no installer path has either.
+func quoteArg(arg string) string {
+	plain := arg != ""
+	for _, c := range arg {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune(`_-+=.,:/\@%`, c)) {
+			plain = false
+		}
+	}
+	switch {
+	case plain:
+		return arg
+	case strings.Contains(arg, "'"):
+		return `"` + arg + `"`
+	}
+	return "'" + arg + "'"
 }

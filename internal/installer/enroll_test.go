@@ -102,7 +102,7 @@ func TestEnrollOfAnEnrolledOwnerWarnsAndNeedsTheTypedWord(t *testing.T) {
 		if len(h.f.tty) != 0 {
 			t.Errorf("%s: setup ran without the confirmation", name)
 		}
-		for _, want := range []string{"bob", "replaces the TOTP secret", "old authenticator entry stops working", `Type "enroll"`} {
+		for _, want := range []string{"bob", "the TOTP secret", "old authenticator entry stops working", `Type "enroll"`} {
 			if !strings.Contains(h.out.String(), want) {
 				t.Errorf("%s: the warning lacks %q:\n%s", name, want, h.out.String())
 			}

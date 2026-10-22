@@ -281,8 +281,8 @@ func enrollCommand(r *Resolver, isolated bool) string {
 	if isolated {
 		command += " --tier isolated"
 	}
-	if path, ok := r.given("settings"); ok {
-		command += " --settings " + path
+	if path, ok := r.flags["settings"]; ok { // the command line of this run, as doctorHint takes it, not the answers file
+		command += " --settings " + quoteArg(path)
 	}
 	return command
 }

@@ -57,11 +57,12 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		_, err := userSystemctl(d)(ctx, "start", "suiteward.service")
 		return err
 	}
-	if err := ensureServiceUp(ctx, r, env, status, start, "systemctl --user start suiteward.service"); err != nil {
+	started, err := ensureServiceUp(ctx, r, env, status, start, "systemctl --user start suiteward.service")
+	if err != nil {
 		return err
 	}
 	parent := backupParent(r, host.configDir)
-	if err := confirmUpgrade(r, plan, parent); err != nil {
+	if err := confirmUpgrade(r, plan, parent, started); err != nil {
 		return err
 	}
 	// The replaced units go into the backup, so a rollback can put them back.

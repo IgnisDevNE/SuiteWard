@@ -52,6 +52,9 @@ func Enroll(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
+	if err := tierNeeded(r, haveSaved, env.Deps.GOOS); err != nil {
+		return err
+	}
 	var target enrollTarget
 	switch tier := r.preset("tier", string(saved.Tier)); config.Tier(tier) {
 	case config.TierIsolated:
@@ -114,8 +117,8 @@ func isolatedEnrollTarget(ctx context.Context, s Settings, env Env) (enrollTarge
 	return enrollTarget{rt: host.rt, github: s.GitHub, status: func(ctx context.Context) ([]byte, error) { return env.httpGet()(ctx, address) }}, nil
 }
 
-// enrollOwner reads /status, asks for the confirmation that replacing the secret of an enrolled owner needs, resolves the owner
-// and the test checks and runs setup with the terminal passed through. Nothing here can answer the confirmation but the typed word.
+// enrollOwner reads /status, resolves the owner, asks for the confirmation that replacing the secret of an enrolled owner needs, resolves
+// the test checks and runs setup with the terminal passed through. Nothing here can answer the confirmation but the typed word.
 func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) error {
 	body, err := t.status(ctx)
 	if err != nil {
@@ -125,16 +128,6 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 	if err != nil {
 		return err
 	}
-	if enrolled != "" {
-		r.say("An owner (%s) is already enrolled. Enrolling again replaces the TOTP secret: the old authenticator entry stops working, and you scan a new one.\nType \"enroll\" to replace it: ", enrolled)
-		line, err := r.in.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return fmt.Errorf("read the confirmation: %w", err)
-		}
-		if strings.TrimSpace(line) != "enroll" {
-			return errors.New("enrolling again was not confirmed: nothing was changed")
-		}
-	}
 	def := enrolled
 	if def == unknownLogin {
 		def = ""
@@ -142,6 +135,19 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 	owner, err := r.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", def)
 	if err != nil {
 		return err
+	}
+	if enrolled != "" {
+		replaces := ""
+		if enrolled != unknownLogin && !strings.EqualFold(enrolled, owner) {
+			replaces = fmt.Sprintf("the owner %s with %s and ", enrolled, owner)
+		}
+		line, err := r.ask(fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe TOTP secret: the old authenticator entry stops working, and you scan a new one.\nType \"enroll\" to replace it: ", enrolled, replaces))
+		if err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("read the confirmation: %w", err)
+		}
+		if line != "enroll" {
+			return errors.New("enrolling again was not confirmed: nothing was changed")
+		}
 	}
 	checks, err := enrollChecks(r, t.github)
 	if err != nil {

@@ -376,6 +376,33 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 	}
 }
 
+// The fix of a disabled podman-restart.service names what works: in a Podman machine the user's own enable can be denied
+// (the unit's directories belong to root), so the link is made as root and the user reloads; on Linux the user enables it.
+func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
+	off := []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}
+	t.Run("in a Podman machine", func(t *testing.T) {
+		f, s := colocated{goos: "windows", over: off}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		wantFail(t, res, "restart", "podman-restart.service", "disabled")
+		for _, want := range []string{
+			"podman machine ssh podman-machine-default 'mkdir -p /home/user/.config/systemd/user/default.target.wants && ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service'",
+			"podman machine ssh --username user podman-machine-default 'systemctl --user daemon-reload && systemctl --user is-enabled podman-restart.service'",
+		} {
+			if !strings.Contains(res["restart"].Fix, want) {
+				t.Errorf("the fix lacks %q:\n%s", want, res["restart"].Fix)
+			}
+		}
+	})
+	t.Run("on Linux", func(t *testing.T) {
+		f, s := colocated{over: off}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		wantFail(t, res, "restart", "podman-restart.service", "disabled")
+		if fix := res["restart"].Fix; !strings.Contains(fix, "systemctl --user enable podman-restart.service") || strings.Contains(fix, "ln -sf") {
+			t.Errorf("the fix on Linux: %s", fix)
+		}
+	})
+}
+
 func TestDoctorDoesNotCheckWhatNeedsAFailedRuntime(t *testing.T) {
 	f, s := colocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}.build(t)
 	_, res, _ := runDoctor(t, f, s)

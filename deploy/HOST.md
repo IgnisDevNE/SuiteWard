@@ -18,14 +18,13 @@ Never paste into chat, a file, a PR, or a log: any password or database URL, a G
 aws ssm start-session --target <instance-id> --region us-east-2
 ```
 
-You land as `ssm-user`. Session Manager copies no files, so download the release files on the host, and verify them against what your PC verified. On your PC, verify `SHA256SUMS` with its signature, then print its SHA-256 ([install guide section 4](../docs/install.md#4-get-and-verify-the-installer)):
+You land as `ssm-user`. Session Manager copies no files, so download the release files on the host, and verify them against what your PC verified. On your PC, verify `SHA256SUMS` with its signature ([install guide section 4](../docs/install.md#4-get-and-verify-the-installer)). The script prints the line `SHA256SUMS sha256: <hex>`:
 
 ```
 pwsh ./scripts/verify-release.ps1 -Blob SHA256SUMS -Bundle SHA256SUMS.sigstore.json
-(Get-FileHash SHA256SUMS -Algorithm SHA256).Hash
 ```
 
-On the host, as `ssm-user`, download the arm64 binary and `SHA256SUMS`, and compare. The first check must print the hash your PC printed (PowerShell prints it in capitals), and the second must print `OK` for the binary:
+On the host, as `ssm-user`, download the arm64 binary and `SHA256SUMS`, and compare. The first check must print the hash your PC printed, and the second must print `OK` for the binary:
 
 ```
 cd "$(mktemp -d)"

@@ -5,7 +5,7 @@ This guide installs SuiteWard with its installer, the `suiteward` binary: one gu
 Two rules apply to every command:
 
 - Pin one release. Replace `<tag>` with the release you install, everywhere it appears (the first release that has the installer is `v0.3.0-alpha.1`). Do not use a moving tag. Where a command names the image index digest of the release, replace `<index>` with it. The release notes name it, on the line `Index digest:`.
-- Replace each value in angle brackets, such as `<owner/name>`, with your own value. Never put a token or a TOTP secret or code into a file, a log, a pull request or a chat. The one secret a file may hold is the App's private key, in a file at mode 600 that you delete afterwards (`--github-app-key-file`, or `github-app-key` in the answers file).
+- Replace each value in angle brackets, such as `<owner/name>`, with your own value. Never put a token or a TOTP secret or code into a file, a log, a pull request or a chat. The only secrets a file may hold are the App's private key (`--github-app-key-file`, or `github-app-key` in the answers file) and a manifest code (`manifest-code` in the answers file), in a file at mode 600 that you delete afterwards.
 
 ## 1. What SuiteWard does and does not do
 
@@ -54,13 +54,13 @@ Download `SHA256SUMS`, `SHA256SUMS.sigstore.json` and the binary of your platfor
 pwsh ./scripts/verify-release.ps1 -Blob <folder>/SHA256SUMS -Bundle <folder>/SHA256SUMS.sigstore.json
 ```
 
-Expect `Verified: … was signed by the SuiteWard release workflow.` Then check that the binary is the one `SHA256SUMS` lists:
+Expect `Verified: … was signed by the SuiteWard release workflow.`, and a line `SHA256SUMS sha256: <hex>`: the SHA-256 of the file you verified. Then check that the binary is the one `SHA256SUMS` lists:
 
 ```
 pwsh ./scripts/verify-release.ps1 -Sums <folder>/SHA256SUMS -File <folder>/suiteward_<tag>_<os>_<arch>
 ```
 
-Expect `Matched: … is listed in … with its SHA-256.` If either command fails, do not run the binary. The script fixes the signing identity (`release.yml` of this repository at a release tag, through GitHub's OIDC issuer) and refuses any other. A signature proves that the file came from the release workflow, not that it is the version you meant: you chose the tag.
+Expect `Matched: … is listed in … with its SHA-256.`, and the same `SHA256SUMS sha256: <hex>` line. If either command fails, do not run the binary. The script fixes the signing identity (`release.yml` of this repository at a release tag, through GitHub's OIDC issuer) and refuses any other. A signature proves that the file came from the release workflow, not that it is the version you meant: you chose the tag.
 
 Rename the binary to `suiteward` (`suiteward.exe` on Windows), keep it somewhere only you can change, and put it on your PATH. This guide writes `suiteward` for it. The binary is the trust root of the install: it creates the secrets and the App, so verify it once and run no other copy. A development build has no embedded digest and needs `--image`.
 
@@ -72,7 +72,7 @@ sha256sum --check --ignore-missing SHA256SUMS
 
 Expect `suiteward_<tag>_linux_<arch>: OK`. `--ignore-missing` is needed because `SHA256SUMS` also lists the binaries of the other platforms, and the file keeps the name it had on the release page. Then copy the binary to a shared place such as `/usr/local/bin/suiteward`: the service account must be able to run it, and a path inside a home directory is not readable by it.
 
-If your remote shell cannot copy files, download the binary and `SHA256SUMS` on the host with `curl` from the release page. Then print the SHA-256 of `SHA256SUMS` on your PC, after you verified its signature (`(Get-FileHash SHA256SUMS -Algorithm SHA256).Hash` in PowerShell), and check that `sha256sum SHA256SUMS` on the host prints the same hash (in lowercase) before you run the check above. [The host runbook](../deploy/HOST.md) shows the commands.
+If your remote shell cannot copy files, download the binary and `SHA256SUMS` on the host with `curl` from the release page. Then compare the `SHA256SUMS sha256: <hex>` line that `verify-release.ps1` printed on your PC with the output of `sha256sum SHA256SUMS` on the host before you run the check above: the two hashes must be the same. [The host runbook](../deploy/HOST.md) shows the commands.
 
 ## 5. Install co-located
 
@@ -100,7 +100,7 @@ A stack that the PowerShell start script of v0.2.0 and earlier made is adopted u
 
 1. **Create the App.** The installer prints an address on 127.0.0.1, `http://127.0.0.1:<port>/`. Open it in the browser of this machine. It sends the App manifest to GitHub. GitHub asks you to confirm: one click creates the App. It belongs to your personal account, or to an organization when you answer `--github-account <login>` (the default is `personal`). The App gets exactly five permissions: Metadata, Contents and Administration read-only, Pull requests and Checks read and write. It has no webhook, it is private (`public: false`), and it is named `suiteward-<random>` unless you rename it. Note the name: if the install cannot finish, you delete that App by hand.
 2. **The code.** GitHub redirects your browser to the listener with a one-time code and a random `state` that the installer checks. The installer converts the code into the App's private key on this machine, and writes the key straight into the secret store, never to disk and never to the terminal. The code passes through your browser, as a downloaded key would: it is valid for one hour, and the installer never prints it.
-3. **If the browser cannot reach the listener,** the address bar of the error page still shows the full redirect address. Paste that address, or only its `code=` value, into the terminal and press Enter. `--manifest-port <port>` fixes the listener's port (default: any free port). `--manifest-code <code>` hands over a code from an earlier attempt, within its hour.
+3. **If the browser cannot reach the listener,** the address bar of the error page still shows the full redirect address. Paste that address, or only its `code=` value, into the terminal and press Enter (the prompt echoes what you paste: the code is valid for one hour and converts once). `--manifest-port <port>` fixes the listener's port (default: any free port). `manifest-code: <code>` in the answers file hands over a code from an earlier attempt, within its hour. It is never a flag, because a flag would show in the process list: the installer refuses `--manifest-code`.
 4. **Install the App.** The installer prints `https://github.com/apps/<slug>/installations/new`. Open it, choose the account and give the App access to the repositories to protect, and no others. The installer polls every 5 seconds for up to 10 minutes. It lists the repositories the App can reach and asks which to protect: numbers or `owner/name`, at most 20, all of one owner.
 5. **The owner.** The GitHub login that enrolls (default: the App's account when it is a user account).
 6. **The test check.** For each repository, the installer offers the check runs on the head of the default branch, and you choose one or type the name your CI publishes. It never offers a check from a ruleset that does not exist yet. When the repository has no check runs yet, type the name: `suiteward doctor` and `/status` report `missing-test-check` until a check with that name exists. `--test-check 'owner/name=CI / test'` answers it, once for each repository, or give one plain name for a single repository.
@@ -122,7 +122,7 @@ The installer also writes a copy of the MCP token for a local agent's client, re
 suiteward doctor
 ```
 
-Expect `ok` on every line and exit code 0. A line that starts with `FAIL` names the problem and its fix (section 12 lists them). `suiteward doctor --json` prints the same as JSON. It reads the settings file the installer wrote, so with a second instance pass `--settings <path>`.
+Expect `ok` on every line and exit code 0. A line that starts with `FAIL` names the problem and its fix (section 12 lists them). A `WARN` line is a pass that needs a look, such as GitHub not being configured: it does not change the exit code. `suiteward doctor --json` prints the same as JSON. It reads the settings file the installer wrote, so with a second instance pass `--settings <path>`.
 
 **Docker, discouraged.** Install with `--runtime docker`, and confirm with `--accept-docker` (or type `yes` at the prompt that prints the warning). On a PC that also runs Podman, the name `docker` can be Podman's shim, and the default Docker endpoint (the `docker_engine` pipe) belongs to whichever engine started first. So the installer never trusts the name: on Windows it runs Docker Desktop's own CLI by its full path (`C:\Program Files\Docker\Docker\resources\bin\docker.exe`) against the `desktop-linux` context, identifies the engine behind it, refuses Podman's, and says which engine it uses. `--connection <context>` selects another Docker context. Docker has no `--replace` and no secret store, so the installer removes a container before it runs it again, and keeps the secrets in one named volume for each container that reads them, mounted read-only, one file for each secret (mode 0400, owned by the uid that reads it), written through standard input. `serve` therefore never sees the owner's URL, and no secret touches the Windows disk. Whoever controls the Docker daemon can still read the volumes. Use a port pair of your own (`--http-port`, `--mcp-port`) when a Podman stack runs on the same PC.
 
@@ -478,7 +478,7 @@ On the isolated host, run it as `suiteward` in the shell of step 10.3. The relea
 
 1. **It adopts what is installed.** A difference it cannot carry over stops the run, with the diff, before any change. The tier comes from the settings file. On Linux with no settings file (a host installed by hand), pass `--tier isolated` as the service account, or `--tier co-located`.
 2. **It shows what changes** (the release, and the PostgreSQL pin when it moves) and asks. When the stack already runs this release, it says `Nothing to upgrade`.
-3. **A backup first,** in a new directory `suiteward-backup-<date>-<time>` under the backup folder, made private (mode 0700 with mode 0600 files, or an owner-only ACL on Windows). It holds `status.json` (the version the files belong to), `suiteward.sql` (a `pg_dump` of the database) and `suiteward-artifacts.tar` (the artifact volume), the same files that [the backup runbook](backup.md) makes by hand, and on the isolated tier a `units` folder with the unit files the upgrade replaces. It holds the TOTP secret, so keep it as a secret. The default folder is `backups` beside the MCP token copy on the co-located tier (so `%LOCALAPPDATA%\SuiteWard\backups` on Windows, not the roaming profile), and `~/.config/suiteward/backups` on the isolated tier. The service must be running: the backup reads its `/status`, so a service that is down cannot be upgraded until it is up. A backup that fails leaves nothing behind and changes nothing.
+3. **A backup first,** in a new directory `suiteward-backup-<date>-<time>` under the backup folder, made private (mode 0700 with mode 0600 files, or an owner-only ACL on Windows, granted to your user's SID). It holds `status.json` (the version the files belong to), `suiteward.sql` (a `pg_dump` of the database) and `suiteward-artifacts.tar` (the artifact volume), the same files that [the backup runbook](backup.md) makes by hand, and on the isolated tier a `units` folder with the unit files the upgrade replaces. It holds the TOTP secret, so keep it as a secret. The default folder is `backups` beside the MCP token copy on the co-located tier (so `%LOCALAPPDATA%\SuiteWard\backups` on Windows, not the roaming profile), and `~/.config/suiteward/backups` on the isolated tier. The service must be running: the backup reads its `/status`, so a service that is down cannot be upgraded until it is up. A backup that fails leaves nothing behind and changes nothing.
 4. **It pulls the new images, and replaces the release.** Co-located, it recreates the containers as an install does: database, role, migrate, then the service. Isolated, it stops the service, writes the new units, checks them with the generator's dry run, reloads systemd, restarts the database when its image changed, restarts the migration unit (which migrates) and starts the service. An `/etc` env file of a hand-made install is moved to the account, and the installer prints the `sudo rm` line for the old one.
 5. Then run `suiteward doctor`. Check that `version` in `/status` is the release you meant.
 
@@ -502,7 +502,7 @@ It asks first (`--yes` skips the question), then removes the stack and keeps the
 - **Co-located:** the three containers (`suiteward`, `suiteward-migrate` and `suiteward-db`). The volumes, the secrets and the settings stay: run `suiteward install` again to start the stack. `--purge` also removes the volumes (the database and the artifacts), the secrets, the network, the MCP token copy and the settings file.
 - **Isolated,** run as `suiteward` in the shell of step 10.3: it stops the services and deletes the six unit files. `--purge` also removes the secrets, the volumes, the network, `~/.config/suiteward/github.env` and the settings file. It never touches `/etc`: when the installed units read `/etc/suiteward/github.env`, it prints the `sudo rm` line for an administrator. With no settings file on Linux, a host installed by hand needs `--tier isolated`.
 
-`--purge` deletes your TOTP enrollment and every contract version, so back up first ([the backup runbook](backup.md)). It keeps the backups made by `--upgrade`. The command leaves a stack that this installer did not make, or whose units or containers were edited, alone. On Docker, it uses the runtime and connection that the install recorded. SuiteWard changes nothing on GitHub: delete the App, and the ruleset rule that requires `SuiteWard / Contract`, yourself. The account `suiteward`, the metadata rule and Podman stay on the host; remove them with the administrator's own tools if you no longer need them.
+`--purge` deletes your TOTP enrollment and every contract version, so back up first ([the backup runbook](backup.md)). It keeps the backups made by `--upgrade`, and removes the record of an unfinished GitHub App (`settings.yaml.pending-app`, see Troubleshooting). The command leaves a stack that this installer did not make, or whose units or containers were edited, alone. On Docker, it uses the runtime and connection that the install recorded. SuiteWard changes nothing on GitHub: delete the App, and the ruleset rule that requires `SuiteWard / Contract`, yourself. The account `suiteward`, the metadata rule and Podman stay on the host; remove them with the administrator's own tools if you no longer need them.
 
 ### Rotating the App key
 
@@ -613,12 +613,12 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 | `--runtime` | `podman` (default, recommended) or `docker` (co-located only). |
 | `--accept-docker` | Confirm that Docker may be used although Podman is recommended. |
 | `--connection` | The Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's). |
-| `--image` | The release image pinned by digest, `ghcr.io/ignisdevne/suiteward@sha256:<64 hex>`; on the isolated tier `sha256:<64 hex>` is enough. Default on both tiers: the installed image, else the release the binary carries. A development build carries none, and needs it. With `--upgrade`: the release to move to. |
+| `--image` | The release image pinned by digest: a bare `sha256:<64 hex>` (the release image `ghcr.io/ignisdevne/suiteward`), or `repo[:tag]@sha256:<64 hex>`, never a tag alone. This holds on every command that takes it. The isolated tier runs `ghcr.io/ignisdevne/suiteward` only; a local image is for co-located. Default on both tiers: the installed image, else the release the binary carries. A development build carries none, and needs it. With `--upgrade`: the release to move to. |
 | `--http-port`, `--mcp-port` | The loopback ports of the two listeners (defaults 8081 and 8091). Co-located only. |
 | `--job-timeout` | A Go duration for `SUITEWARD_JOB_TIMEOUT` (the service only). Co-located only. |
 | `--github` | `yes`: create the GitHub App now. `no`: skip GitHub. |
 | `--github-account` | The account that owns the new App: `personal`, or an organization login. |
-| `--manifest-port`, `--manifest-code` | The port of the manifest listener, and a code from the manifest redirect (section 5.3). |
+| `--manifest-port` | The port of the manifest listener on 127.0.0.1 (section 5.3). The manifest code is not a flag: it is `manifest-code` in the answers file, or pasted at the prompt. |
 | `--github-app-id` | The ID of an App that exists, or `none` to skip GitHub. |
 | `--github-installation-id` | The installation of that App. |
 | `--github-owner` | The GitHub login of the instance owner. |
@@ -638,7 +638,7 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 
 ### The answers file
 
-A flat YAML file in which every key is a flag name and every value is a plain scalar. The installer reads the answer from the flag, else from the file, else it asks at the terminal. When it cannot ask (standard input is not a terminal), it takes the default, or stops and names the missing flag. On Linux and macOS, the file must be readable by you only (`chmod 600`): the installer refuses a file that others can read. Windows has no such check, so keep the file in a folder only you can read. A secret never goes in a flag, where it would show in the process list: give the App's key as `--github-app-key-file`, or as `github-app-key` (the PEM) in the answers file. Example, without any secret:
+A flat YAML file in which every key is a flag name, except `github-app-key` and `manifest-code`, which exist only here because they are secrets, and every value is a plain scalar. The installer reads the answer from the flag, else from the file, else it asks at the terminal. When it cannot ask (standard input is not a terminal), it takes the default, or stops and names the missing flag. On Linux and macOS, the file must be readable by you only (`chmod 600`): the installer refuses a file that others can read. Windows has no such check, so keep the file in a folder only you can read. A secret never goes in a flag, where it would show in the process list: the installer refuses `--manifest-code`, so give a manifest code as `manifest-code` in the answers file, and the App's key as `--github-app-key-file`, or as `github-app-key` (the PEM) in the answers file. Example, without any secret:
 
 ```yaml
 tier: co-located
@@ -653,7 +653,7 @@ test-check: "owner/name=CI / test"
 ruleset-imported: "yes"
 ```
 
-`test-check.owner/name` sets the check of one repository. Never put the TOTP secret or a code in this file. The App's private key may be in it, only as `github-app-key` and only at mode 600: delete the file afterwards.
+`test-check.owner/name` sets the check of one repository. Never put the TOTP secret or a TOTP code in this file. The App's private key (only as `github-app-key`) and a manifest code (only as `manifest-code`) may be in it, only at mode 600: delete the file afterwards.
 
 ### What the installer does, for review
 
@@ -680,7 +680,7 @@ The installer replaces about 11 manual commands on the co-located tier and about
 
 ### What `suiteward doctor` checks
 
-`doctor` only reads. It prints `ok <name>`, or `FAIL <name>: <what is wrong> — <the fix>`, and exits non-zero when anything failed. It runs `suiteward check --json` inside the service container and merges its results.
+`doctor` only reads. It prints `ok <name>`, `WARN <name>: <what needs a look> — <the fix>` or `FAIL <name>: <what is wrong> — <the fix>`, and exits non-zero when anything failed: a warning does not. With `--json`, a warning has `"warning": true`. It runs `suiteward check --json` inside the service container and merges its results. On an instance installed without GitHub, the database checks run, and `github.app`, `github.installation`, `github.permissions`, `github.repositories` and `owner.enrolled` are warnings; run the install with `--github yes` to set GitHub up.
 
 | Name | A FAIL means |
 | --- | --- |
@@ -692,8 +692,8 @@ The installer replaces about 11 manual commands on the co-located tier and about
 | `units`, `linger` (isolated) | A unit is not in its expected state, or the account does not linger. Read the journal, or run `sudo loginctl enable-linger suiteward`. |
 | `pins` | The release images of the units or containers are not one digest, or the database image is not the pinned one. Run `suiteward install --upgrade`, or undo the edit it names. |
 | `ports`, `healthz`, `status` | `/readyz`, `/healthz` or `/status` does not answer on the recorded port, or `/status` reports a failed outbox message or a discarded job. Read the service log. |
-| `network`, `memory` (isolated) | The Podman network backend is not `netavark`, or the database is not limited to 384 MiB. |
-| `metadata` (isolated) | `169.254.169.254` answers from the service network. Run `sudo suiteward install host` and answer yes to the metadata rule. |
+| `network`, `memory` (isolated) | The Podman network backend is not `netavark`, or the database is not limited to 384 MiB. The fix text says what to do: install netavark and set it in `containers.conf`, or check `PodmanArgs=--memory=384m` in `suiteward-db.container`, restart the unit and check that `podman inspect` prints 402653184. |
+| `metadata` (isolated) | `169.254.169.254` answers from the service network. As an administrator, run `sudo suiteward install host --metadata-rule yes`, then doctor again. |
 | `github.app`, `github.installation`, `github.permissions`, `github.repositories` | GitHub refuses the App key, the installation is not the App's, the installation's permissions are not exactly the five, or a repository is not covered or not readable. Check the App ID and the key against the App's settings page. |
 | `protection.<owner/name>` | The repository's protection is not `enforced`. Its fix names the finding (section 7). |
 | `owner.enrolled` | Setup has not run. Run it (section 6). |
@@ -794,6 +794,7 @@ Common problems:
 - **The service stays down after a power loss.** If PostgreSQL's crash recovery takes longer than the migration's wait, the migration fails closed and the service stays down. Wait until the database accepts connections (`podman ps` shows `suiteward-db` healthy), then start the service again: `systemctl --user start suiteward.service` on the isolated host, `suiteward install` on a co-located PC.
 - **`/readyz` answers 503.** The database does not answer, or the schema is not ready. Check that `suiteward-db` is healthy with `podman ps` (on the isolated host, as `suiteward`), and read its logs.
 - **The log says `github commands stopped: the bot account could not be resolved`, with a status of 401.** GitHub refuses the App key that is installed, for example because it was revoked or is not the key you meant. All GitHub calls (reads, checks and comments) stop within about an hour, when the tokens that the service already holds expire. This line is an early signal after a restart, not the first symptom. Follow [Rotating the App key](#rotating-the-app-key), and compare the fingerprints.
+- **An install failed after it created the GitHub App.** The installer records that App in `<settings path>.pending-app`: beside `settings.yaml` (`%APPDATA%\suiteward` on Windows, `~/.config/suiteward` on Linux, including the isolated account's). The record holds the App's id, slug and owner, never the key, which is in the secret store as `suiteward-github-app-key`. Run the installer again with `--github yes`: it takes up that App, with no second App, and waits for the installation. If the App is gone from GitHub, or its key secret is gone, the error names the record, the secret and the command that removes it: delete the App on GitHub, the record and the secret, then run again. A run with `--github no` keeps the record and prints a note on how to take the App up or throw it away. A successful install removes the record, and so does `uninstall --purge`.
 - **The browser cannot reach the manifest listener, or the manifest wait timed out.** Paste the code or the whole address from the error page into the terminal (section 5.3), or run the installer again: GitHub's code lives one hour. On the isolated tier, start the Session Manager port forward that the installer printed first, and pin the port with `--manifest-port` (step 10.4).
 - **GitHub says `Invalid integration ids` when you import the ruleset.** The App must be installed on the repository first. Add the repository to the installation, then import the file again.
 - **Setup exits with code 2.** The `--test-check` list does not match the configured repositories. Give exactly one per repository, with no duplicates.

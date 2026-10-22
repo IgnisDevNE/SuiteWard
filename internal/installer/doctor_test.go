@@ -688,7 +688,7 @@ func TestDoctorIsolatedFailures(t *testing.T) {
 		{"another network backend", isolatedRig{over: []rule{{match: "NetworkBackend", out: "cni\n"}}}, "network", []string{"cni", "netavark"}, "netavark"},
 		{"the network backend cannot be read", isolatedRig{over: []rule{{match: "NetworkBackend", err: errors.New("podman: not found")}}}, "network", []string{"not found"}, ""},
 		{"another memory limit on the database", isolatedRig{over: []rule{{match: "inspect --type container " + ContainerDB, out: `[{"HostConfig":{"Memory":0}}]`}}}, "memory", []string{"402653184", "0"}, ""},
-		{"the metadata address answers", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "reachable\n"}}}, "metadata", []string{"169.254.169.254"}, "section 10"},
+		{"the metadata address answers", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "reachable\n"}}}, "metadata", []string{"169.254.169.254"}, "--metadata-rule yes"},
 		{"the control connection fails", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "control-failed\n"}}}, "metadata", []string{"control"}, ""},
 		{"an answer nobody expected", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "maybe\n"}}}, "metadata", []string{"maybe"}, ""},
 		{"the metadata probe cannot run", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", err: errors.New("container is not running")}}}, "metadata", []string{"not running"}, ""},

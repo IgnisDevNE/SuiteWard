@@ -85,6 +85,17 @@ func (h *hostFake) answer(c call) ([]byte, error) {
 		if line == "upgrade -y podman" && h.dnfFixesCVE {
 			h.changelog = "CVE-2026-57231"
 		}
+	default:
+		return h.answerSystem(c)
+	}
+	return nil, nil
+}
+
+// answerSystem answers the commands that read or probe the machine.
+func (h *hostFake) answerSystem(c call) ([]byte, error) {
+	line := c.line()
+	fail := errors.New(c.name + ": exit status 1")
+	switch {
 	case c.name == "cat" && line == "/etc/subuid":
 		return []byte(h.subuid), nil
 	case c.name == "cat" && line == "/etc/subgid":

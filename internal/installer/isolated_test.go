@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -138,17 +139,6 @@ func (f *isoFake) index(text string, from int) int {
 
 func (f *isoFake) has(text string) bool { return f.index(text, 0) >= 0 }
 
-// secretStdin collects the stdin of every call that carries a secret: secret creation and the role SQL.
-func (f *isoFake) secretValues() []string {
-	var out []string
-	for _, c := range f.calls {
-		if c.stdin != "" && (strings.HasPrefix(c.line(), "secret create") || strings.Contains(c.line(), "psql")) {
-			out = append(out, c.stdin)
-		}
-	}
-	return out
-}
-
 var (
 	testKeyOnce sync.Once
 	testKeyPEM  string
@@ -169,6 +159,15 @@ func appKeyPEM(t *testing.T) string {
 
 // appKeyStored is what the secret store should hold for the key: the PEM with exactly one trailing newline.
 func appKeyStored(t *testing.T) string { return strings.TrimSpace(appKeyPEM(t)) + "\n" }
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
 
 func isolatedSettings() Settings {
 	s := DefaultSettings()
@@ -234,28 +233,7 @@ func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Secrets: the five of the catalog, each created once.
-	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretMCPAuth, SecretGitHubAppKey, SecretDatabaseURL} {
-		if _, ok := f.secrets[name]; !ok {
-			t.Errorf("the secret %s was not created: %v", name, f.lines())
-		}
-	}
-	password := f.secrets[SecretDBAuth]
-	if !regexp.MustCompile(`^[0-9a-f]{48}$`).MatchString(password) {
-		t.Errorf("the database password must be 48 hex characters without a newline: %q", password)
-	}
-	if want := DatabaseURL("suiteward", password); f.secrets[SecretDatabaseOwnerURL] != want {
-		t.Errorf("the owner URL must hold the same password: %q", f.secrets[SecretDatabaseOwnerURL])
-	}
-	if !regexp.MustCompile(`^postgres://suiteward_app:[0-9a-f]{48}@suiteward-db:5432/suiteward\?sslmode=disable$`).MatchString(f.secrets[SecretDatabaseURL]) {
-		t.Errorf("the application URL has the wrong shape: %q", f.secrets[SecretDatabaseURL])
-	}
-	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(f.secrets[SecretMCPAuth]) {
-		t.Errorf("the MCP token must be 64 hex characters: %q", f.secrets[SecretMCPAuth])
-	}
-	if f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
-		t.Errorf("the App key secret does not hold the PEM")
-	}
+	assertSecretShapes(t, f)
 
 	// No secret value in any argument list.
 	f.secretValuesNotInArgs(t)
@@ -295,35 +273,7 @@ func TestInstallIsolatedFreshInstallRunsEveryStepInOrder(t *testing.T) {
 		t.Errorf("the application URL must carry the password of the role")
 	}
 
-	// The rendered units: one digest in both, the isolated tier, the env file under the home of the account.
-	for _, unit := range []string{"suiteward-migrate.container", "suiteward.container"} {
-		raw, err := os.ReadFile(filepath.Join(unitDir(home), unit))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(raw), "\nImage="+releaseImageRepo+"@"+testDigest+"\n") {
-			t.Errorf("%s does not carry the digest", unit)
-		}
-	}
-	serve, _ := os.ReadFile(filepath.Join(unitDir(home), "suiteward.container"))
-	for _, want := range []string{"\nEnvironmentFile=%h/.config/suiteward/github.env\n", "\nEnvironment=SUITEWARD_INSTALLATION_TIER=isolated\n", "\nPublishPort=127.0.0.1:8081:8080\n"} {
-		if !strings.Contains(string(serve), want) {
-			t.Errorf("suiteward.container lacks %q", want)
-		}
-	}
-
-	// The env file exists (the unit needs it to start), private to the account, and the settings are saved.
-	info, err := os.Stat(envFile(home))
-	if err != nil {
-		t.Fatalf("the env file must exist: %v", err)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
-		t.Errorf("the env file must be 0600, got %o", info.Mode().Perm())
-	}
-	saved, err := LoadSettings(settingsFile(home))
-	if err != nil || saved.Tier != config.TierIsolated {
-		t.Errorf("the settings must be saved as isolated: %+v, %v", saved, err)
-	}
+	assertFilesAndSettings(t, home)
 
 	for _, want := range []string{"podman exec -it suiteward /suiteward setup", "SHA256:", "suiteward doctor"} {
 		if !strings.Contains(out, want) {
@@ -486,9 +436,8 @@ func TestInstallIsolatedAdoptionStopsWithTheDiffBeforeAnyChange(t *testing.T) {
 	p.EnvFile = "%h/.config/suiteward/github.env"
 	installedUnits(t, home, p)
 	path := filepath.Join(unitDir(home), "suiteward-db.container")
-	raw, _ := os.ReadFile(path)
-	edited := append(raw, []byte("PodmanArgs=--privileged\n")...)
-	if err := os.WriteFile(path, edited, 0o600); err != nil {
+	edited := slices.Concat(mustRead(t, path), []byte("PodmanArgs=--privileged\n"))
+	if err := os.WriteFile(filepath.Clean(path), edited, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -501,7 +450,7 @@ func TestInstallIsolatedAdoptionStopsWithTheDiffBeforeAnyChange(t *testing.T) {
 	if f.has("secret create") || f.has("pull") || f.has("start") || f.has("daemon-reload") {
 		t.Fatalf("nothing may change after a DiffError: %v", f.lines())
 	}
-	if after, _ := os.ReadFile(path); !bytes.Equal(after, edited) {
+	if !bytes.Equal(mustRead(t, path), edited) {
 		t.Errorf("the edited unit was overwritten")
 	}
 	if _, err := os.Stat(settingsFile(home)); !errors.Is(err, os.ErrNotExist) {
@@ -699,5 +648,63 @@ func TestInstallIsolatedWritesTheGitHubEnvFileAllOrNone(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(envFile(home)); string(got) != "SUITEWARD_GITHUB_APP_ID=9\n" {
 		t.Errorf("an existing env file must stay: %q", got)
+	}
+}
+
+// assertSecretShapes checks the five secrets the fresh install created: names, shapes and the shared password.
+func assertSecretShapes(t *testing.T, f *isoFake) {
+	t.Helper()
+	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretMCPAuth, SecretGitHubAppKey, SecretDatabaseURL} {
+		if _, ok := f.secrets[name]; !ok {
+			t.Errorf("the secret %s was not created: %v", name, f.lines())
+		}
+	}
+	password := f.secrets[SecretDBAuth]
+	if !regexp.MustCompile(`^[0-9a-f]{48}$`).MatchString(password) {
+		t.Errorf("the database password must be 48 hex characters without a newline: %q", password)
+	}
+	if want := DatabaseURL("suiteward", password); f.secrets[SecretDatabaseOwnerURL] != want {
+		t.Errorf("the owner URL must hold the same password: %q", f.secrets[SecretDatabaseOwnerURL])
+	}
+	if !regexp.MustCompile(`^postgres://suiteward_app:[0-9a-f]{48}@suiteward-db:5432/suiteward\?sslmode=disable$`).MatchString(f.secrets[SecretDatabaseURL]) {
+		t.Errorf("the application URL has the wrong shape: %q", f.secrets[SecretDatabaseURL])
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(f.secrets[SecretMCPAuth]) {
+		t.Errorf("the MCP token must be 64 hex characters: %q", f.secrets[SecretMCPAuth])
+	}
+	if f.secrets[SecretGitHubAppKey] != appKeyStored(t) {
+		t.Errorf("the App key secret does not hold the PEM")
+	}
+
+}
+
+// assertFilesAndSettings checks the units, the env file and the settings the fresh install left in the account home.
+func assertFilesAndSettings(t *testing.T, home string) {
+	t.Helper()
+	// The rendered units: one digest in both, the isolated tier, the env file under the home of the account.
+	for _, unit := range []string{"suiteward-migrate.container", "suiteward.container"} {
+		raw := mustRead(t, filepath.Join(unitDir(home), unit))
+		if !strings.Contains(string(raw), "\nImage="+releaseImageRepo+"@"+testDigest+"\n") {
+			t.Errorf("%s does not carry the digest", unit)
+		}
+	}
+	serve, _ := os.ReadFile(filepath.Join(unitDir(home), "suiteward.container"))
+	for _, want := range []string{"\nEnvironmentFile=%h/.config/suiteward/github.env\n", "\nEnvironment=SUITEWARD_INSTALLATION_TIER=isolated\n", "\nPublishPort=127.0.0.1:8081:8080\n"} {
+		if !strings.Contains(string(serve), want) {
+			t.Errorf("suiteward.container lacks %q", want)
+		}
+	}
+
+	// The env file exists (the unit needs it to start), private to the account, and the settings are saved.
+	info, err := os.Stat(envFile(home))
+	if err != nil {
+		t.Fatalf("the env file must exist: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("the env file must be 0600, got %o", info.Mode().Perm())
+	}
+	saved, err := LoadSettings(settingsFile(home))
+	if err != nil || saved.Tier != config.TierIsolated {
+		t.Errorf("the settings must be saved as isolated: %+v, %v", saved, err)
 	}
 }

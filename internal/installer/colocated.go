@@ -93,7 +93,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err

@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +27,7 @@ type githubInstall struct {
 	githubKey   []byte // the App key to store, nil when its secret exists or GitHub is off
 	setupOwner  string // the instance owner, when the GitHub flow ran: the login setup enrolls
 	setupChecks map[string]string
+	enrollHint  string // the command the messages name to enroll the owner (enrollCommand)
 }
 
 func (g githubInstall) say(format string, args ...any) { _, _ = fmt.Fprintf(g.out, format, args...) }
@@ -223,6 +223,9 @@ const (
 	statusEvery = time.Second
 )
 
+// unknownLogin stands for an owner that /status reports without a login.
+const unknownLogin = "unknown login"
+
 // enrolledOwner reads /status of the service, which may still be starting, and returns the login of the enrolled owner, or
 // "" when there is none. An answer it cannot read is an error: it is not "no owner".
 func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.Context) ([]byte, error)) (string, error) {
@@ -239,6 +242,11 @@ func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.C
 	if err != nil {
 		return "", err
 	}
+	return parseEnrolledOwner(body)
+}
+
+// parseEnrolledOwner is the login of the owner /status reports, or "" when it reports none.
+func parseEnrolledOwner(body []byte) (string, error) {
 	var parsed struct {
 		Owner *struct{ Login string } `json:"owner"`
 	}
@@ -249,32 +257,28 @@ func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.C
 	case parsed.Owner == nil:
 		return "", nil
 	case parsed.Owner.Login == "":
-		return "unknown login", nil
+		return unknownLogin, nil
 	}
 	return parsed.Owner.Login, nil
+}
+
+// enrollCommand is the command that enrolls the owner again, as the messages of the installer name it: the tier and the
+// settings file are named when they are not the defaults.
+func enrollCommand(r *Resolver, isolated bool) string {
+	command := "suiteward enroll"
+	if isolated {
+		command += " --tier isolated"
+	}
+	if path, ok := r.given("settings"); ok {
+		command += " --settings " + path
+	}
+	return command
 }
 
 // enroll runs setup on a real terminal, and otherwise prints the command to run on one. It never runs setup over an owner that is
 // enrolled, nor when it cannot tell: setup enrolls again, which replaces the owner's TOTP secret.
 func (g *githubInstall) enroll(ctx context.Context, status func(context.Context) ([]byte, error)) error {
-	cmd, err := engineCommand(g.rt, g.env.Deps.GOOS)
-	if err != nil {
-		return err
-	}
-	repos := make([]string, 0, len(g.setupChecks))
-	for repo := range g.setupChecks {
-		repos = append(repos, repo)
-	}
-	slices.Sort(repos)
-	var checks []string
-	for _, repo := range repos {
-		checks = append(checks, "--test-check '"+repo+"="+g.setupChecks[repo]+"'")
-	}
-	owner := g.setupOwner
-	if owner == "" { // a run that took the App from the env file knows neither the owner nor the checks
-		owner, checks = "<login>", []string{"--test-check '<owner/name>=<check name>'"}
-	}
-	command := fmt.Sprintf("%s exec -it %s /suiteward setup --owner %s %s", cmd, ContainerServe, owner, strings.Join(checks, " "))
+	command := g.enrollHint
 	login, err := g.enrolledOwner(ctx, status)
 	switch {
 	case err != nil:
@@ -282,7 +286,7 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 	case login != "":
 		g.say("Note: an owner (%s) is already enrolled; setup was skipped, so the TOTP secret is unchanged. To re-enroll (for example after losing the authenticator), run on a real terminal with session recording off: %s\n", login, command)
 	case g.setupOwner == "":
-		g.say("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner (replace <login> and the check):\n  %s\n", command)
+		g.say("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner:\n  %s\n", command)
 	case setupTerminal():
 		if err := runSetup(ctx, g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
 			return fmt.Errorf("the stack is running, but enrolling the owner failed: %w", err)

@@ -92,19 +92,21 @@ var installFlags = []struct{ name, usage string }{
 	{"github-app-key-file", "file with the App's private key (PEM), or - for standard input; read only while the key secret is missing"},
 }
 
-func newFlagSet(out io.Writer) *flag.FlagSet {
+func newFlagSet() *flag.FlagSet {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	for _, f := range installFlags {
 		fs.String(f.name, "", f.usage)
 	}
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
-	fs.Usage = func() {
-		_, _ = io.WriteString(out, Usage)
-		fs.SetOutput(out)
-		fs.PrintDefaults()
-	}
+	fs.Usage = func() {} // a usage error is reported by Run; --help prints the flags (printHelp)
 	return fs
+}
+
+func printHelp(fs *flag.FlagSet, out io.Writer) {
+	_, _ = io.WriteString(out, Usage)
+	fs.SetOutput(out)
+	fs.PrintDefaults()
 }
 
 // Install runs the install command (args without the command name).
@@ -112,9 +114,10 @@ func Install(ctx context.Context, args []string, env Env) error {
 	if err := env.validate(); err != nil {
 		return err
 	}
-	fs := newFlagSet(env.Term.Out)
+	fs := newFlagSet()
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			printHelp(fs, env.Term.Out)
 			return err
 		}
 		return fmt.Errorf("%w: %v", ErrUsage, err)

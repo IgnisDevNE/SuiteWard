@@ -219,6 +219,10 @@ func Install(ctx context.Context, args []string, env Env) error {
 	upgrade := flags["upgrade"] == "true"
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
+		// A host installed by hand has no settings file, and the default tier would be a guess: on Linux that is the isolated host.
+		if _, given := r.optional("tier"); !given && !haveSaved && env.Deps.GOOS == "linux" {
+			return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+		}
 		tier = r.preset("tier", string(saved.Tier))
 	} else if tier, err = r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier)); err != nil {
 		return err

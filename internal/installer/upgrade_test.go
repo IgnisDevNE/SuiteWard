@@ -295,7 +295,7 @@ func TestUpgradeAsksBeforeChangingAnything(t *testing.T) {
 
 func TestUpgradeRefusesWhenNothingIsInstalled(t *testing.T) {
 	h := newHarness(t, "linux")
-	err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--upgrade", "--yes", "--runtime", "podman", "--connection", "pm", "--image", testImage}, h.newEnv())
+	err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--upgrade", "--yes", "--tier", "co-located", "--runtime", "podman", "--connection", "pm", "--image", testImage}, h.newEnv())
 	if err == nil || !strings.Contains(err.Error(), "suiteward install") {
 		t.Fatalf("got %v, want a pointer to install", err)
 	}

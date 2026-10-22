@@ -59,9 +59,11 @@ func (p upgradePlan) describe() string {
 	return fmt.Sprintf("Upgrade of this instance:\n  SuiteWard   %s -> %s\n  PostgreSQL  %s\n", digestOf(p.oldImage), digestOf(p.newImage), db)
 }
 
-// backupParent is where the backup directory is made: --backup-dir, else backups beside the settings file.
-func backupParent(r *Resolver, settingsPath string) string {
-	return r.preset("backup-dir", filepath.Join(filepath.Dir(settingsPath), "backups"))
+// backupParent is where the backup directory is made: --backup-dir, else a backups directory in secretDir. The dump holds the
+// TOTP secret, so secretDir is where the instance already keeps a secret (the token copy co-located, the account's own
+// configuration directory isolated), never the settings file's directory, which is the roaming profile on Windows.
+func backupParent(r *Resolver, secretDir string) string {
+	return r.preset("backup-dir", filepath.Join(secretDir, "backups"))
 }
 
 // confirmUpgrade shows the plan and asks, unless --yes was given.
@@ -163,11 +165,11 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if c.secrets, err = c.readSecretState(ctx); err != nil {
 		return err
 	}
-	parent := backupParent(r, t.settingsPath)
+	parent := backupParent(r, filepath.Dir(c.tokenFile))
 	if err := confirmUpgrade(r, plan, parent); err != nil {
 		return err
 	}
-	dir, err := takeBackup(ctx, backup{rt: rt, d: env.Deps, parent: parent, status: c.readStatus, say: c.say, now: time.Now})
+	dir, err := takeBackup(ctx, backup{rt: rt, d: env.Deps, parent: parent, status: c.readStatus, now: time.Now})
 	if err != nil {
 		return err
 	}
@@ -182,14 +184,14 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return withBackup(err, dir)
 	}
 	c.restartAfterReboot(ctx)
-	upgraded(c.say, image, dir, doctor)
+	upgraded(c.say, previous.Image, image, dir, doctor)
 	return nil
 }
 
 // upgraded prints the end of a successful upgrade: where the backup is, how to go back and what to run next.
-func upgraded(say func(string, ...any), image, backupDir, doctor string) {
+func upgraded(say func(string, ...any), previous, image, backupDir, doctor string) {
 	say("Upgraded to %s.\n", digestOf(image))
 	say("The backup is in %s. It holds the TOTP secret: keep it offline and private.\n", backupDir)
-	say("To go back, restore that backup with the previous image (docs/install.md, section 11.6; migrations only go forward).\n")
+	say("To go back, restore that backup with the previous image %s (docs/install.md, section 11.6; migrations only go forward).\n", digestOf(previous))
 	say("Check the instance with `%s`.\n", doctor)
 }

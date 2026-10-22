@@ -72,7 +72,6 @@ type backup struct {
 	parent string
 	status func(ctx context.Context) ([]byte, error) // the body of GET /status
 	extra  func(dir string) error                    // more files for the directory, optional
-	say    func(format string, args ...any)
 	now    func() time.Time
 }
 
@@ -97,11 +96,12 @@ func (b backup) fill(ctx context.Context, dir string) error {
 	if err := restrictPath(ctx, b.d, dir, true); err != nil {
 		return err
 	}
-	// The status says which version these files are of. A service that does not answer is no reason to refuse the backup of its
-	// data, and often the reason for the upgrade.
-	if status, serr := b.status(ctx); serr != nil {
-		b.say("Warning: %s was not written, the service did not answer GET /status (%v). The backup holds the data.\n", backupStatus, serr)
-	} else if err := b.write(ctx, filepath.Join(dir, backupStatus), status); err != nil {
+	// The status says which version these files are of, and a restore is checked against it (docs/backup.md).
+	status, err := b.status(ctx)
+	if err != nil {
+		return fmt.Errorf("read GET /status of the service (its version belongs in the backup): %w", err)
+	}
+	if err := b.write(ctx, filepath.Join(dir, backupStatus), status); err != nil {
 		return err
 	}
 	dump, err := b.rt.Exec(ctx, ContainerDB, []string{"pg_dump", "-U", ownerRole, "-d", "suiteward"}, nil)

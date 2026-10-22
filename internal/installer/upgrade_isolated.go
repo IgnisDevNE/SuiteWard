@@ -50,7 +50,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, o
 		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
 		return nil
 	}
-	parent := backupParent(r, host.settingsPath)
+	parent := backupParent(r, host.configDir)
 	if err := confirmUpgrade(r, plan, parent); err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, o
 	status := func(ctx context.Context) ([]byte, error) {
 		return httpGet(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
 	}
-	dir, err := takeBackup(ctx, backup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, say: say, now: time.Now})
+	dir, err := takeBackup(ctx, backup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, now: time.Now})
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, o
 	if err := SaveSettings(host.settingsPath, s); err != nil {
 		return withBackup(err, dir)
 	}
-	upgraded(say, image, dir, "suiteward doctor")
+	upgraded(say, st.adopted.Image, image, dir, "suiteward doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return nil
 }

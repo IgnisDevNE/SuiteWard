@@ -35,6 +35,7 @@ func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, 
 	if err := deps.validate(); err != nil {
 		d.fail("settings", err.Error(), "this is a bug of the installer: report it")
 	} else {
+		d.deps.Exec = boundExec(deps.Exec)
 		d.run(ctx, settingsPath)
 	}
 	if err := writeDoctor(out, d.results, jsonOut); err != nil {
@@ -78,9 +79,11 @@ const (
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
 	metadataFix    = "refuse 169.254.169.254 for the service account (docs/install.md, step 10.5), then run doctor again"
-	// Connects to the instance metadata address from the database container, which sits on the service network; the probe
-	// answers on its own output so that an exec that fails is not read as "blocked".
-	metadataProbe = `timeout 3 bash -c 'exec 3<>/dev/tcp/169.254.169.254/80' 2>/dev/null && echo reachable || echo blocked`
+	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
+	// answers on its own output, so that an exec that fails is not read as "blocked", and first makes the same kind of
+	// connection to the database's own port: when that fails the probe would be "blocked" for any reason.
+	metadataProbe = `timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/5432' 2>/dev/null || { echo control-failed; exit 0; }; ` +
+		`timeout 3 bash -c 'exec 3<>/dev/tcp/169.254.169.254/80' 2>/dev/null && echo reachable || echo blocked`
 )
 
 // The units of the isolated tier and the state each must be in.
@@ -190,8 +193,11 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	} else {
 		d.checkContainers(ctx)
 		d.checkRestart(ctx)
+		if s.Runtime == RuntimePodman && d.deps.GOOS == "linux" {
+			d.checkLinger(ctx) // rootless Podman restarts the containers at boot only while the user's manager runs
+		}
 	}
-	d.checkPins()
+	d.checkPins(ctx)
 	d.checkPorts(ctx)
 	if isolated {
 		d.checkHost(ctx)
@@ -528,12 +534,16 @@ func (d *doctor) checkUnitsEnabled() {
 
 // ---- pins ----
 
-func (d *doctor) checkPins() {
+func (d *doctor) checkPins(ctx context.Context) {
 	var err error
 	var image string
+	detail := "the release images are one digest and the database image is the pinned one: "
 	switch {
 	case d.s.Tier == config.TierIsolated:
 		image, err = d.unitPins()
+		if err == nil {
+			detail, err = d.runningMatchesUnits(ctx, image)
+		}
 	case !d.needRuntime("pins"):
 		return
 	case d.raw[ContainerDB] == nil || d.raw[ContainerServe] == nil:
@@ -548,7 +558,56 @@ func (d *doctor) checkPins() {
 		d.fail("pins", err.Error(), "install the release again with `suiteward install --upgrade`, or undo the edit it names")
 		return
 	}
-	d.pass("pins", "the release images are one digest and the database image is the pinned one: "+image)
+	d.pass("pins", detail+image)
+}
+
+// imageIdentity is repository and digest of an image reference: the engine may report a pinned reference without its tag.
+func imageIdentity(ref string) string {
+	repo, digest, pinned := strings.Cut(ref, "@")
+	if !pinned {
+		return ref
+	}
+	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
+		repo = repo[:i]
+	}
+	return repo + "@" + digest
+}
+
+// sameImage says whether two references are the same pinned image, tag aside.
+func sameImage(a, b string) bool {
+	return strings.Contains(a, "@") && imageIdentity(a) == imageIdentity(b)
+}
+
+// runningMatchesUnits compares the images the service and the database containers run with the images of the units. The units
+// are what the next restart will run; this says the running containers are those. It returns the detail of a passing check,
+// which ends with the release image.
+func (d *doctor) runningMatchesUnits(ctx context.Context, image string) (string, error) {
+	detail := "the installed units are consistent with the units of this release, and so are the images the containers run: "
+	if d.rt == nil {
+		return "the installed units are consistent with the units of this release; the running containers were not compared because the runtime failed: ", nil
+	}
+	postgres, err := PostgresImage()
+	if err != nil {
+		return "", err
+	}
+	var problems []string
+	for _, c := range []struct{ name, want string }{{ContainerServe, image}, {ContainerDB, postgres}} {
+		raw, err := d.rt.Inspect(ctx, c.name)
+		var in inspected
+		if err == nil {
+			in, err = parseInspect(c.name, raw)
+		}
+		switch {
+		case err != nil:
+			problems = append(problems, err.Error())
+		case !sameImage(in.Config.Image, c.want):
+			problems = append(problems, fmt.Sprintf("%s runs %s but its unit says %s", c.name, in.Config.Image, c.want))
+		}
+	}
+	if len(problems) > 0 {
+		return "", errors.New(strings.Join(problems, "; "))
+	}
+	return detail, nil
 }
 
 func adoptedImage(a Adopted, err error) (string, error) {
@@ -563,7 +622,8 @@ func formatDiffs(diffs []Diff) string {
 	const shown = 4
 	var parts []string
 	for _, diff := range diffs[:min(len(diffs), shown)] {
-		parts = append(parts, fmt.Sprintf("%s %s: want %q, got %q", diff.Source, diff.Field, diff.Want, diff.Got))
+		want, got := diff.printable()
+		parts = append(parts, fmt.Sprintf("%s %s: want %q, got %q", diff.Source, diff.Field, want, got))
 	}
 	if len(diffs) > shown {
 		parts = append(parts, fmt.Sprintf("and %d more", len(diffs)-shown))
@@ -616,13 +676,13 @@ func dockerPins(raw map[string][]byte) (string, error) {
 		return "", err
 	}
 	var problems []string
-	if images[ContainerDB] != postgres {
+	if !sameImage(images[ContainerDB], postgres) {
 		problems = append(problems, fmt.Sprintf("%s runs %s, want the pinned %s", ContainerDB, images[ContainerDB], postgres))
 	}
 	if !digestImage.MatchString(images[ContainerServe]) {
 		problems = append(problems, fmt.Sprintf("%s runs %s, which is not pinned by a digest", ContainerServe, images[ContainerServe]))
 	}
-	if migrate, ok := images[ContainerMigrate]; ok && migrate != images[ContainerServe] {
+	if migrate, ok := images[ContainerMigrate]; ok && !sameImage(migrate, images[ContainerServe]) {
 		problems = append(problems, fmt.Sprintf("%s runs %s but %s runs %s", ContainerMigrate, migrate, ContainerServe, images[ContainerServe]))
 	}
 	if len(problems) > 0 {
@@ -689,6 +749,7 @@ func (d *doctor) checkPorts(ctx context.Context) {
 	body, err = d.get(ctx, "/status")
 	var status struct {
 		Version       string
+		Tier          string
 		SchemaVersion *int
 		Jobs          struct{ Discarded *int }
 		Outbox        struct{ Failed *int }
@@ -708,6 +769,11 @@ func (d *doctor) checkPorts(ctx context.Context) {
 	}
 	if status.SchemaVersion == nil {
 		problems = append(problems, "no schemaVersion")
+	}
+	if status.Tier == "" {
+		problems = append(problems, "no tier")
+	} else if status.Tier != string(d.s.Tier) {
+		problems = append(problems, fmt.Sprintf("tier %s where the settings say %s", status.Tier, d.s.Tier))
 	}
 	if n := status.Jobs.Discarded; n == nil {
 		problems = append(problems, "no jobs.discarded")
@@ -784,6 +850,8 @@ func (d *doctor) checkMetadata(ctx context.Context) {
 		d.fail("metadata", "169.254.169.254 answers from the service network, so the service can read the instance's credentials", metadataFix)
 	case answer == "blocked":
 		d.pass("metadata", "169.254.169.254 is not reachable from the service network")
+	case answer == "control-failed":
+		d.fail("metadata", "the control connection to the database port failed inside "+ContainerDB+", so the metadata probe proves nothing", "check that the database is running and healthy, then run doctor again")
 	default:
 		d.fail("metadata", "the metadata probe printed "+strconv.Quote(answer), "check that the database image has bash and timeout, then run doctor again")
 	}
@@ -820,5 +888,21 @@ func (d *doctor) readFix() string {
 	return fmt.Sprintf("read the results with `%s exec %s /suiteward check`; if the command is unknown, update the service image to a release that has it", d.rt.Name(), ContainerServe)
 }
 
-// queryTimeout bounds one runtime, systemctl or pipe query.
+// queryTimeout bounds one runtime, systemctl or pipe query, so a hung engine or machine is one failure and not a hang.
 var queryTimeout = 20 * time.Second
+
+// instanceTimeout bounds `suiteward check` in the container, which reads GitHub once per repository.
+const instanceTimeout = 2 * time.Minute
+
+// boundExec gives every command a deadline.
+func boundExec(inner Exec) Exec {
+	return func(ctx context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
+		timeout := queryTimeout
+		if slices.Contains(args, "/suiteward") {
+			timeout = max(timeout, instanceTimeout)
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return inner(ctx, name, args, stdin)
+	}
+}

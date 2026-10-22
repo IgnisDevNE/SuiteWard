@@ -62,6 +62,8 @@ try {
     Assert-Rejected { & $verify -Sums $sums -File $binary } 'exactly once'
     Set-Content -LiteralPath $sums -Value "$hash  suiteward_v1.2.3_linux_amd64`n$hash  suiteward_v1.2.3_linux_amd64"
     Assert-Rejected { & $verify -Sums $sums -File $binary } 'exactly once'
+    # Every tag the check accepts with a hyphen (-rc.N, -alpha.N) is a pre-release: it must not need main or move latest-stable.
+    if ((Get-Content -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/release.yml') -Raw) -notmatch '(?m)^\s+if \[\[ "\$TAG" == \*-\* \]\]; then\r?\n\s+echo "prerelease=true"') { throw 'release.yml must treat every hyphenated tag as a pre-release.' }
     $env:FAKE_COSIGN_EXIT = '1'
     Assert-Rejected { & $verify -Blob 'f' -Bundle 'f.sigstore.json' -Cosign $fake } 'could not verify'
     Assert-Rejected { & $verify -Reference $digest -Cosign $fake } 'could not verify'

@@ -416,7 +416,6 @@ func reportAdopted(say func(string, ...any), asked, installed Settings) {
 // has its own command, unless the stack never completed a start: then it is a retry after a failed first run.
 func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool, error), say func(string, ...any)) (string, error) {
 	asked, _ := r.given("image")
-	asked = strings.TrimPrefix(asked, releaseImageRepo+"@")
 	switch {
 	case asked == "" && installedDigest == "":
 		if embedded, ok := ReleaseImage(); ok {
@@ -425,19 +424,26 @@ func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool,
 		return "", errors.New("this binary carries no release image (a development build), so --image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
 	case asked == "":
 		return installedDigest, nil
-	case !imageDigest.MatchString(asked):
-		return "", fmt.Errorf("--image %q is not a digest of the form sha256:<64 lowercase hex characters>: the installer never pins a tag", asked)
-	case installedDigest != "" && asked != installedDigest:
+	}
+	image, err := parseImage(asked)
+	if err != nil {
+		return "", err
+	}
+	digest, ok := strings.CutPrefix(image, releaseImageRepo+"@")
+	if !ok {
+		return "", fmt.Errorf("%w: the isolated tier runs %s only, not %s", ErrNotDigestImage, releaseImageRepo, image)
+	}
+	if installedDigest != "" && digest != installedDigest {
 		never, err := neverStarted()
 		if err != nil {
 			return "", err
 		}
 		if !never {
-			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, installedDigest)
+			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", digest, installedDigest)
 		}
-		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, asked)
+		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, digest)
 	}
-	return asked, nil
+	return digest, nil
 }
 
 func appKeyFingerprint(raw []byte) (string, error) {

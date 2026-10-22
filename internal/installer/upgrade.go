@@ -25,13 +25,7 @@ func upgradeTarget(r *Resolver) (string, error) {
 		}
 		return embedded, nil
 	}
-	if strings.HasPrefix(asked, "sha256:") {
-		asked = releaseImageRepo + "@" + asked
-	}
-	if !digestImage.MatchString(asked) {
-		return "", fmt.Errorf("%w: %s", ErrNotDigestImage, asked)
-	}
-	return asked, nil
+	return parseImage(asked)
 }
 
 // upgradePlan is what an upgrade changes: the release image and the PostgreSQL pin, as installed and as wanted.

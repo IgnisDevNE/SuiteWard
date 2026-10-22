@@ -70,8 +70,14 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	// A different release than the one that runs is an upgrade: it backs up first, so it has its own command.
-	if asked, ok := r.given("image"); ok && previous.Known && previous.Image != "" && !sameImage(asked, previous.Image) {
-		return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", asked, previous.Image)
+	if asked, ok := r.given("image"); ok && previous.Known && previous.Image != "" {
+		want, err := parseImage(asked)
+		if err != nil {
+			return err
+		}
+		if !sameImage(want, previous.Image) {
+			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", want, previous.Image)
+		}
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)
 	if err != nil {
@@ -83,12 +89,13 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if embedded, ok := ReleaseImage(); defaultImage == "" && ok {
 		defaultImage = embedded
 	}
-	image, err := r.Value("image", "Release image (pinned by digest)", defaultImage)
+	asked, err := r.Value("image", "Release image (pinned by digest)", defaultImage)
 	if err != nil {
 		return err
 	}
-	if !digestImage.MatchString(image) {
-		return fmt.Errorf("%w: %s", ErrNotDigestImage, image)
+	image, err := parseImage(asked)
+	if err != nil {
+		return err
 	}
 	s.Image = image
 	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}

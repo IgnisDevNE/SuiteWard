@@ -46,8 +46,13 @@ func enrollHarnessWith(t *testing.T, status string, edit func(*Settings)) *harne
 // enroll runs `suiteward enroll` on a terminal that types stdin.
 func (h *harness) enroll(stdin string, args ...string) (int, string) {
 	h.t.Helper()
-	env := h.newEnv()
 	term, _ := fakeTerminal(true, stdin)
+	return h.enrollOn(term, args...)
+}
+
+func (h *harness) enrollOn(term Terminal, args ...string) (int, string) {
+	h.t.Helper()
+	env := h.newEnv()
 	term.Out = &h.out
 	env.Term = term
 	var stderr bytes.Buffer

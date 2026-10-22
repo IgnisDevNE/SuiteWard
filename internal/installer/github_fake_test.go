@@ -202,15 +202,15 @@ func (g *fakeGitHub) app(w http.ResponseWriter, r *http.Request) {
 func (g *fakeGitHub) installations(w http.ResponseWriter, _ *http.Request) {
 	g.mu.Lock()
 	g.polls++
-	n := g.polls
-	g.mu.Unlock()
-	if n <= g.installAfter {
-		writeJSON(w, http.StatusOK, []any{})
-		return
-	}
+	waiting := g.polls <= g.installAfter
 	account, typ := g.ownerLogin, g.ownerType
 	if g.installAccount != "" {
 		account, typ = g.installAccount, g.installType
+	}
+	g.mu.Unlock()
+	if waiting {
+		writeJSON(w, http.StatusOK, []any{})
+		return
 	}
 	writeJSON(w, http.StatusOK, []any{map[string]any{
 		"id": fakeInstallationID, "account": map[string]any{"login": account, "type": typ},

@@ -105,7 +105,7 @@ func installedDBImage(ctx context.Context, rt Runtime) (string, error) {
 func (c *colocatedInstall) readStatus(ctx context.Context) ([]byte, error) {
 	address := "http://127.0.0.1:" + strconv.Itoa(c.s.HTTPPort) + "/status"
 	if !c.inMachine() {
-		return httpGet(ctx, address)
+		return c.env.httpGet()(ctx, address)
 	}
 	user, err := c.lookUpMachineUser(ctx)
 	if err != nil {

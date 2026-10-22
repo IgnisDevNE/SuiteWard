@@ -33,6 +33,15 @@ type Env struct {
 	Sleep    func(time.Duration)
 	// ResolveGitHub is the GitHub flow; nil means resolveGitHub. A test replaces it.
 	ResolveGitHub func(ctx context.Context, env githubEnv) (GitHubResult, error)
+	// HTTPGet reads an address of the local service (/status); nil means httpGet. A test replaces it.
+	HTTPGet func(ctx context.Context, address string) ([]byte, error)
+}
+
+func (e Env) httpGet() func(context.Context, string) ([]byte, error) {
+	if e.HTTPGet != nil {
+		return e.HTTPGet
+	}
+	return httpGet
 }
 
 // OSEnv is this machine and this process's console, printing to stdout.

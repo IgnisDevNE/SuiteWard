@@ -308,6 +308,26 @@ func TestUninstallPurgeRemovesTheStateToo(t *testing.T) {
 	}
 }
 
+// A backup holds the database, so --purge leaves the backups alone and says where they are, as the isolated purge does.
+func TestUninstallPurgeSaysThatBackupsAreKept(t *testing.T) {
+	h := newHarness(t, "linux")
+	podmanStackExists(h)
+	h.writeFiles()
+	backups := filepath.Join(filepath.Dir(h.tokenPath()), "backups")
+	if err := os.MkdirAll(filepath.Join(backups, "20261022T101500Z"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--purge", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Backups under " + backups + " are kept."; !strings.Contains(h.out.String(), want) {
+		t.Errorf("the purge does not say that the backups are kept (%q):\n%s", want, h.out.String())
+	}
+	if !exists(filepath.Join(backups, "20261022T101500Z")) {
+		t.Error("the purge removed the backups")
+	}
+}
+
 func TestUninstallPurgeOfDockerRemovesTheSecretVolumes(t *testing.T) {
 	h := dockerHarness(t, "windows")
 	s := DefaultSettings()

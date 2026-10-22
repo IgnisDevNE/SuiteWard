@@ -81,7 +81,7 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "refuse 169.254.169.254 for the service account (docs/install.md, section 10), then run doctor again"
+	metadataFix    = "as an administrator run `sudo suiteward install host --metadata-rule yes`, which adds the nft rule that refuses 169.254.169.254 for the service account, then run doctor again"
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
 	// answers on its own output, so that an exec that fails is not read as "blocked", and first makes the same kind of
 	// connection to the database's own port: when that fails the probe would be "blocked" for any reason.
@@ -803,7 +803,7 @@ func (d *doctor) checkHost(ctx context.Context) {
 		d.fail("network", "read the Podman network backend: "+err.Error(), "check that `podman info` works for this user")
 	case backend != networkBackend:
 		d.fail("network", fmt.Sprintf("the Podman network backend is %q, want %s", backend, networkBackend),
-			"install netavark and check the Podman setup (docs/install.md, section 10); the metadata rule and the service network rely on it")
+			"the isolated tier needs Podman's netavark network backend, which the metadata rule and the service network rely on: install it (`sudo dnf install netavark`), set network_backend = \"netavark\" in containers.conf, then run doctor again")
 	default:
 		d.pass("network", "the network backend is "+networkBackend)
 	}
@@ -821,7 +821,7 @@ func (d *doctor) checkHost(ctx context.Context) {
 		d.fail("memory", "read the memory limit of "+ContainerDB+": "+err.Error(), "start the database container, then run doctor again")
 	case in.HostConfig.Memory != dbMemoryBytes:
 		d.fail("memory", fmt.Sprintf("%s has memory limit %d bytes, want %d", ContainerDB, in.HostConfig.Memory, dbMemoryBytes),
-			"check that suiteward-db.container sets PodmanArgs=--memory=384m and that Podman applies it (docs/install.md, section 10)")
+			"the database unit must limit it to 384 MiB (PodmanArgs=--memory=384m in suiteward-db.container): run `suiteward install` as the service account to write the unit again, then `systemctl --user restart suiteward-db.service`")
 	default:
 		d.pass("memory", fmt.Sprintf("%s is limited to %d bytes", ContainerDB, dbMemoryBytes))
 	}

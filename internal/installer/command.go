@@ -147,7 +147,7 @@ func newInstallFlagSet() *flag.FlagSet {
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
 	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
 	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading")
-	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: backups beside the settings file)")
+	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: a backups directory beside the MCP token copy, or in .config/suiteward of the service account on the isolated tier)")
 	return fs
 }
 

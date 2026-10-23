@@ -101,22 +101,30 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err := inst.confirmRemoval(ctx, r, purge, question); err != nil {
 		return err
 	}
-	scr.Step(2)
+	if err := removeStack(ctx, r, rt, purge, tokenFile, settingsPath); err != nil {
+		return err
+	}
+	return holdPage(scr)
+}
+
+// removeStack removes the three containers and, with purge, what they leave behind. The instance has been named and confirmed.
+func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, tokenFile, settingsPath string) error {
+	r.screen.Step(2) // Uninstall set the steps on this screen
 	for _, name := range []string{ContainerServe, ContainerMigrate, ContainerDB} {
-		if err := working(scr, "Stopping "+name, func() error { return rt.Remove(ctx, name) }); err != nil {
+		if err := working(r.screen, "Stopping "+name, func() error { return rt.Remove(ctx, name) }); err != nil {
 			return err
 		}
 	}
 	r.say("Removed the containers %s, %s and %s.\n", ContainerServe, ContainerMigrate, ContainerDB)
 	if !purge {
 		r.say("The volumes, the secrets and the settings are kept: run the install again to start the stack, or use --purge to remove them too.\n")
-		return holdPage(scr)
+		return nil
 	}
 	if err := purgeState(ctx, rt, tokenFile, settingsPath); err != nil {
 		return err
 	}
 	r.say("Removed the volumes, the secrets, the network, %s and %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", tokenFile, settingsPath, backupParent(r, filepath.Dir(tokenFile)))
-	return holdPage(scr)
+	return nil
 }
 
 // tokenFileOf is where the copy of the MCP token is: --token-file, else the default place.

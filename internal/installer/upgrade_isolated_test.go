@@ -460,7 +460,7 @@ func TestUninstallIsolatedPurgeRemovesTheStateToo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(u.backups, "keep"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := u.uninstall("--purge", "--yes"); err != nil {
+	if err := u.uninstall("--purge", "--yes", "--instance", testInstance); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{VolumeData, VolumeDBData} {
@@ -495,7 +495,7 @@ func TestUninstallIsolatedStopsOnAnEditedUnitAndPrintsTheDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := u.units()
-	err := u.uninstall("--purge", "--yes")
+	err := u.uninstall("--purge", "--yes", "--instance", testInstance)
 	var diff *DiffError
 	if !errors.As(err, &diff) || !diffMentions(diff, "EXTRA") {
 		t.Fatalf("got %v, want a *DiffError naming the edit", err)
@@ -515,7 +515,7 @@ func TestUninstallIsolatedAsksFirst(t *testing.T) {
 func TestUninstallIsolatedNeverTouchesEtc(t *testing.T) {
 	const etc = "/etc/suiteward/github.env"
 	u := newIsoUpgrade(t, func(p *UnitParams) { p.EnvFile = etc })
-	if err := u.uninstall("--purge", "--yes"); err != nil {
+	if err := u.uninstall("--purge", "--yes", "--instance", testInstance); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(u.out.String(), "sudo rm "+etc) {
@@ -535,13 +535,14 @@ func TestUninstallIsolatedPurgesWhatIsLeftAfterAnEarlierUninstall(t *testing.T) 
 	}
 	calls := len(u.f.calls)
 	u.f.objects = map[string]bool{VolumeData: true}
-	if err := u.uninstall("--purge", "--yes"); err != nil {
+	if err := u.uninstall("--purge", "--yes", "--instance", testInstance); err != nil {
 		t.Fatalf("the state of an uninstalled stack must still be purgeable: %v", err)
 	}
 	if !slices.ContainsFunc(u.f.lines()[calls:], func(l string) bool { return strings.Contains(l, "volume rm "+VolumeData) }) {
 		t.Errorf("the volume was not removed")
 	}
-	if err := u.uninstall("--yes"); err == nil || !strings.Contains(err.Error(), "nothing is installed") {
+	useDefaultConfigDir(t) // the purge removed the settings: a file that is named and gone is refused, so this run names none
+	if err := Uninstall(context.Background(), []string{"--tier", "isolated", "--yes"}, u.env()); err == nil || !strings.Contains(err.Error(), "nothing is installed") {
 		t.Fatalf("uninstall of nothing without --purge must say so: %v", err)
 	}
 }
@@ -711,7 +712,7 @@ func TestUninstallIsolatedStopsTheServicesAnEarlierUninstallLeftActive(t *testin
 	u.f.active["suiteward-network.service"] = "active"
 	u.f.active["suiteward-db.service"] = "failed" // not inactive either: it is stopped, and named with the state it was found in
 	u.f.objects = map[string]bool{VolumeData: true, VolumeDBData: true, NetworkName: true}
-	if err := u.uninstall("--purge", "--yes"); err != nil {
+	if err := u.uninstall("--purge", "--yes", "--instance", testInstance); err != nil {
 		t.Fatal(err)
 	}
 	stop := u.f.index("systemctl --user stop suiteward-network.service", 0)

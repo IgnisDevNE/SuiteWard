@@ -275,7 +275,7 @@ func TestUninstallColocatedStopsAtTheStepThatFails(t *testing.T) {
 			h.failFirst(tc.fail)
 			args := []string{"--runtime", "podman", "--connection", "pm", "--yes"}
 			if tc.purge {
-				args = append(args, "--purge")
+				args = append(args, "--purge", "--instance", testInstance)
 			}
 			if err := h.uninstall(args...); !errors.Is(err, errInjected) {
 				t.Fatalf("uninstall = %v", err)
@@ -302,7 +302,7 @@ func TestUninstallPurgeStopsOnAFileItCannotRemove(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.tokenPath(), "inside"), 0o700); err != nil { // a directory that is not empty cannot be removed as a file
 		t.Fatal(err)
 	}
-	err := h.uninstall("--runtime", "podman", "--connection", "pm", "--yes", "--purge")
+	err := h.uninstall("--runtime", "podman", "--connection", "pm", "--yes", "--purge", "--instance", testInstance)
 	if err == nil || !strings.Contains(err.Error(), "remove "+h.tokenPath()) {
 		t.Fatalf("uninstall = %v", err)
 	}
@@ -316,9 +316,14 @@ func TestUninstallColocatedRefusesWhatItCannotReadBeforeRemovingAnything(t *test
 		h := newHarness(t, "windows")
 		h.f.on("system connection list", machineConnections)
 		podmanStackExists(h)
-		err := Uninstall(context.Background(), []string{"--settings", h.settingsPath(), "--runtime", "podman", "--connection", "podman-machine-default", "--purge", "--yes"}, h.newEnv())
+		h.writeFiles()
+		h.f.on("curl -fsS -m 5", statusBody) // the service answers inside the Podman machine
+		err := Uninstall(context.Background(), []string{"--settings", h.settingsPath(), "--runtime", "podman", "--connection", "podman-machine-default", "--purge", "--yes", "--instance", testInstance}, h.newEnv())
 		if err == nil || !strings.Contains(err.Error(), "LOCALAPPDATA") {
 			t.Fatalf("uninstall = %v", err)
+		}
+		if got := h.removals(); len(got) != 0 {
+			t.Errorf("the purge removed %v before it found that the token copy has no place", got)
 		}
 	})
 	t.Run("a console that cannot ask", func(t *testing.T) {
@@ -350,6 +355,7 @@ func TestUninstallColocatedRefusesWhatItCannotReadBeforeRemovingAnything(t *test
 	})
 	t.Run("an engine that cannot be reached", func(t *testing.T) {
 		h := newHarness(t, "linux")
+		h.writeFiles()
 		h.failFirst("info --format")
 		if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); !errors.Is(err, errInjected) {
 			t.Fatalf("uninstall = %v", err)
@@ -388,7 +394,7 @@ func TestUninstallIsolatedStopsAtTheStepThatFails(t *testing.T) {
 			tc.setup(u)
 			args := []string{"--yes"}
 			if tc.purge {
-				args = append(args, "--purge")
+				args = append(args, "--purge", "--instance", testInstance)
 			}
 			err := u.uninstall(args...)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {

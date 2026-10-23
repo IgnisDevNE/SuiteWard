@@ -26,7 +26,7 @@ var ErrUsage = errors.New("usage")
 const Usage = `usage: suiteward install [flags]
        suiteward install --upgrade [--yes] [--backup-dir DIR] [--backup-recipient age1pq1...] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
-       suiteward uninstall [--purge] [--yes] [flags]
+       suiteward uninstall [--purge] [--yes] [--instance ID] [flags]
        suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated] [--plain]
        suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated] [--plain]
        suiteward backup [--to DIR] [--settings PATH] [--tier isolated] [--plain]
@@ -160,7 +160,7 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	// Ctrl-C: the command has closed its screen, and read nothing since. Any error with a done context is the interrupt's: a prompt's
 	// error that a caller put in its own words, or the failure of a child that the signal killed, has lost its Canceled but not its cause.
 	// cmd/suiteward cancels the context for SIGTERM as well, so a SIGTERM ends here too, as "interrupted" with 130; that is accepted.
-	case ctx.Err() != nil:
+	case ctx.Err() != nil && !errors.As(err, new(failureShown)): // a Ctrl-C at the page of a failure only closes it, and the exit code stays the command's
 		_, _ = fmt.Fprintf(stderr, "suiteward: interrupted: %v\n", err) // the error keeps what a failed step left behind and how to clean it up
 		return 130
 	default:
@@ -237,7 +237,11 @@ func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, e
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
 	}
-	return FlagsSet(fs), nil
+	flags := FlagsSet(fs)
+	if err := emptySettings(flags); err != nil { // here, before the screen of any command opens: a usage error comes before it
+		return nil, err
+	}
+	return flags, nil
 }
 
 func parseFlags(fs *flag.FlagSet, args []string, out io.Writer) error {
@@ -266,7 +270,20 @@ func parseWithFile(fs *flag.FlagSet, args []string, out io.Writer) (file string,
 	if fs.NArg() > 0 {
 		return "", nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
 	}
-	return file, FlagsSet(fs), nil
+	flags = FlagsSet(fs)
+	if err := emptySettings(flags); err != nil {
+		return "", nil, err
+	}
+	return file, flags, nil
+}
+
+// emptySettings refuses --settings with no path: an unset shell variable gives that, and it must not silently mean the default settings file,
+// which may belong to another instance.
+func emptySettings(flags map[string]string) error {
+	if path, given := flags["settings"]; given && path == "" {
+		return fmt.Errorf("%w: --settings is empty (an unset variable?): give the path of the settings file, or leave the flag out for the default one", ErrUsage)
+	}
+	return nil
 }
 
 // settingsPathFrom is the settings file of a command and whether it is the shared per-user default.
@@ -278,12 +295,15 @@ func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err
 	return path, true, err
 }
 
-// loadSaved reads the settings of an earlier install; none yet is not an error.
-func loadSaved(path string) (Settings, bool, error) {
+// loadSaved reads the settings of an earlier install. None yet is not an error for the default file, but a file the command line
+// names (named) must exist: a mistyped path would otherwise run the command on defaults, which are not an instance.
+func loadSaved(path string, named bool) (Settings, bool, error) {
 	saved, err := LoadSettings(path)
 	switch {
 	case err == nil:
 		return saved, true, nil
+	case errors.Is(err, ErrNoSettings) && named:
+		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `suiteward install` makes a settings file)", path, ErrNoSettings)
 	case errors.Is(err, ErrNoSettings):
 		return DefaultSettings(), false, nil
 	}
@@ -327,12 +347,11 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	saved, haveSaved, err := loadSaved(settingsPath)
+	upgrade := flags["upgrade"] == "true"
+	saved, haveSaved, err := loadSaved(settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
 	if err != nil {
 		return err
 	}
-
-	upgrade := flags["upgrade"] == "true"
 	if _, given := r.given("backup-recipient"); given && !upgrade {
 		return errors.New("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `suiteward backup init`")
 	}

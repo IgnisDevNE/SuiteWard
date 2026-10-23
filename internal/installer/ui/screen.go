@@ -23,6 +23,9 @@
 //     as given.
 //   - Wait: holds the page until Enter, for a command that ends on text that must be read (a Summary would replace it). Close prints
 //     the page as usual. Plain mode returns at once.
+//   - Fail: shows the error of a command that failed under the page it stopped on, with "failed" in the title bar and the step marked, and
+//     waits for Enter. Close does not print the error: the caller prints it, on stderr. Plain mode, an interrupt (a done context) and a
+//     failed wait show nothing more and do not wait.
 //   - Close: leaves the alternate screen, and prints on the normal screen what must not be lost: the Check, Warn and Keep lines of the
 //     pages that are gone, then the current page in the order it was written (only its Check, Warn and Keep lines when a Summary was
 //     shown), then the Summary. So a failure leaves the page it stopped on, and every check and warning of the run, in the scrollback.
@@ -122,7 +125,8 @@ type Screen struct {
 	spinText  string
 	spinFor   time.Duration
 	summary   bool
-	waiting   bool // Wait is reading the Enter that ends it
+	waiting   bool   // Wait is reading the Enter that ends it
+	failure   string // Fail is showing this error under the page, and reading the Enter that ends it
 	rows      []KV
 	warns     []string
 	// history is the Check, Warn and Keep lines of the pages that are gone, as Close prints them: the pages before the current one.
@@ -580,6 +584,30 @@ func (s *Screen) Wait() error {
 	s.waiting = false
 	s.mu.Unlock()
 	return err
+}
+
+// Fail shows the error of a command that failed under the page the command stopped on, with "failed" in the title bar and the current step
+// marked, and waits for Enter so that it can be read before Close leaves the alternate screen. It reports whether it showed the error:
+// plain mode, a suspended or closed screen and a done context (Ctrl-C) show nothing and do not wait. A wait that fails (Ctrl-C at the page,
+// the end of the input) only ends it: the error is the command's own, and the caller prints it after Close, which does not repeat it.
+func (s *Screen) Fail(text string) bool {
+	if s.ctx.Err() != nil {
+		return false
+	}
+	s.mu.Lock()
+	if !s.drawing() {
+		s.mu.Unlock()
+		return false
+	}
+	s.endLine()
+	s.failure = strings.TrimSpace(clean(text))
+	if s.failure == "" {
+		s.failure = "the command failed"
+	}
+	s.draw()
+	s.mu.Unlock()
+	_ = s.waitForEnter() // a failed wait ends it; the error that is shown is the command's
+	return true
 }
 
 // waitForEnter reads the line that ends a wait, without the lock held; the end of the input ends it too.

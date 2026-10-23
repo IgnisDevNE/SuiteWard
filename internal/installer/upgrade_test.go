@@ -575,8 +575,9 @@ func TestUpgradeColocatedKeepsItsBackupBesideTheTokenNotInTheRoamingProfile(t *t
 }
 
 func TestUpgradeAsksForTheTierOfAHostWithoutSettingsOnLinux(t *testing.T) {
+	useDefaultConfigDir(t)
 	h := newHarness(t, "linux")
-	err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--upgrade", "--yes", "--image", testImage}, h.newEnv())
+	err := Install(context.Background(), []string{"--upgrade", "--yes", "--image", testImage}, h.newEnv())
 	if err == nil || !strings.Contains(err.Error(), "--tier") {
 		t.Fatalf("got %v, want a request for --tier", err)
 	}

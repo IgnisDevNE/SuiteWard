@@ -157,8 +157,9 @@ func TestInstallRefusesWhatItCannotReadBeforeChangingAnything(t *testing.T) {
 		h.mustNotMutate()
 	})
 	t.Run("an upgrade of a host that has no settings", func(t *testing.T) {
+		useDefaultConfigDir(t)
 		h := newHarness(t, "linux")
-		err := h.install("--upgrade", "--yes")
+		err := h.installAt("--upgrade", "--yes")
 		if err == nil || !strings.Contains(err.Error(), "no settings file, so the tier cannot be told") {
 			t.Fatalf("install = %v", err)
 		}

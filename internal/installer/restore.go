@@ -16,6 +16,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/archive"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
@@ -79,6 +80,11 @@ func Restore(ctx context.Context, args []string, env Env) (err error) {
 	inst, err := locateInstance(ctx, r, env, flags)
 	if err != nil {
 		return err
+	}
+	if !inst.haveSettings && inst.s.Tier != config.TierIsolated { // a restore replaces the data: not of an instance that defaults picked
+		if err := engineNamed(flags, inst.settingsPath); err != nil {
+			return err
+		}
 	}
 	x := &restoreRun{r: r, env: env, scr: scr, inst: inst, file: file, plaintext: flags["plaintext-dir"], kit: flags["kit"]}
 	defer func() { err = errors.Join(err, x.cleanup()) }() // the unpacked backup holds the TOTP secret
@@ -511,31 +517,10 @@ func (x *restoreRun) chooseSafetyKey() error {
 // confirm is the owner typing the instance id of the backup, or --yes with --instance where nobody can type.
 func (x *restoreRun) confirm() error {
 	id := x.doc.Instance
-	if !x.r.term.IsTerminal {
-		yes, err := parseYesNo("yes", x.r.preset("yes", "false"))
-		if err != nil {
-			return err
-		}
-		given := x.r.preset("instance", "")
-		switch {
-		case !yes || given == "":
-			return fmt.Errorf("confirm the restore with --yes and --instance %s: nothing can ask you to type the instance id here, because the input is not a terminal", id)
-		case given != id:
-			return fmt.Errorf("the restore was not confirmed: --instance %s is not the instance id of the backup (%s): nothing was changed", given, id)
-		}
-		return nil
-	}
-	line, err := x.r.ask(fmt.Sprintf("Type the instance id %s to replace the database and the artifacts of this instance with this backup: ", id))
-	switch {
-	case errors.Is(err, io.EOF):
-		line = ""
-	case err != nil:
-		return fmt.Errorf("read the confirmation: %w", err)
-	}
-	if line != id {
-		return fmt.Errorf("the restore was not confirmed: you did not type the instance id %s: nothing was changed", id)
-	}
-	return nil
+	return x.r.confirmInstance(instanceConfirm{
+		id: id, action: "restore", ofWhat: "of the backup",
+		prompt: fmt.Sprintf("Type the instance id %s to replace the database and the artifacts of this instance with this backup: ", id),
+	})
 }
 
 // ---- the steps that change the instance ----

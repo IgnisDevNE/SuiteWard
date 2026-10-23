@@ -115,7 +115,7 @@ suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--backup-
 | `--yes --instance ID` | Without a terminal: confirm the restore. `--instance` is the instance id of the backup, and a different id refuses. A terminal asks you to type the id. |
 | `--backup-dir DIR` | Where the backup of the state that is replaced goes (default: the backup folder of [section 2](#take-a-backup)). The restore unpacks the backup there too. |
 | `--plaintext-dir DIR` | Restore a directory of an earlier release instead of a file (below). |
-| `--settings`, `--token-file`, `--tier`, `--runtime`, `--connection`, `--plain` | Which instance, as for `suiteward backup`. |
+| `--settings`, `--token-file`, `--tier`, `--runtime`, `--connection`, `--plain` | Which instance, as for `suiteward backup`. A `--settings` file that does not exist stops the restore before it calls the container engine. With no settings file at all, a co-located restore needs `--runtime` and `--connection` (a restore replaces the data, so it never runs on defaults that no settings file named); on the isolated tier, `--tier isolated`. |
 
 The command takes seven steps. The first two change nothing.
 
@@ -246,10 +246,10 @@ Run the commands in the shell of the `suiteward` account, which [the manual back
 
 Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.1](install.md#5-install-co-located)).
 
-1. Purge the stack. This removes the containers, the volumes, the secrets, the MCP token copy and the settings file. The settings file holds the public half of the recovery key, so make a new key with `suiteward backup init` after the reinstall: the old kit still opens the backups made with the old key.
+1. Purge the stack. This removes the containers, the volumes, the secrets, the MCP token copy and the settings file. The settings file holds the public half of the recovery key, so make a new key with `suiteward backup init` after the reinstall: the old kit still opens the backups made with the old key. The purge asks you to type the instance id of the stack (the `instance` of its `/status`), or takes it as `--instance`, so that it never removes an instance you did not mean to; read it before you purge, because the service is gone afterwards.
 
    ```powershell
-   suiteward uninstall --purge --yes
+   suiteward uninstall --purge --yes --instance <instance id>
    ```
 
 2. Install the same version again, by the digest of its signed image index (take it from the release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` on this PC, with cosign 3.x, and pass it to `--image`), with the App you already have: the installer creates both roles, migrates, starts the service, writes the rulesets (they are already imported: answer the wait with Enter, or pass `--ruleset-imported yes`), and runs setup on a real terminal. The reinstall needs the App key file again and writes a new MCP token: update your MCP client with the token in `$env:LOCALAPPDATA\SuiteWard\mcp-token`. Give no GitHub values only if this stack does not use GitHub.

@@ -31,7 +31,7 @@ const usage = `usage: suiteward serve
        suiteward install [flags]
        suiteward install --upgrade [--yes] [--backup-dir DIR] [--backup-recipient age1pq1...] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
-       suiteward uninstall [--purge] [--yes] [flags]
+       suiteward uninstall [--purge] [--yes] [--instance ID] [flags]
        suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated] [--plain]
        suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated] [--plain]
        suiteward backup [--to DIR] [--settings PATH] [--tier isolated] [--plain]

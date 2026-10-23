@@ -168,7 +168,11 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 	if err != nil {
 		return err
 	}
-	return runSetup(ctx, t.rt, owner, checks, env.Term.Out)
+	if err := runSetup(ctx, t.rt, owner, checks, env.Term.Out); err != nil {
+		return err
+	}
+	r.screen.Check("%s is enrolled as the owner.\n", owner) // the page that enroll then holds for Enter
+	return nil
 }
 
 // enrollChecks is the test check of each repository of the instance: from --test-check, else from the saved settings, else asked.

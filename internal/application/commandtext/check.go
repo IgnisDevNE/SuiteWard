@@ -18,7 +18,7 @@ const (
 // Check is what the output of a check run states. Reason is the stable code the check job stored, and State must
 // be the one the code belongs to. Proposal and Revision name the revision the check concerns and are both zero
 // when there is none; approval-missing requires them. Version (V<n>) is the canonical version, zero when there is
-// none.
+// none. Changes, which needs a revision, adds the numbers of the change report, without a path or a link: a check summary is public.
 type Check struct {
 	State              CheckState
 	Reason             string
@@ -110,6 +110,9 @@ func CheckSummary(c Check) (title, summary string) {
 		facts = append(facts, fmt.Sprintf("- Canonical version: V%d", c.Version))
 	}
 	facts = append(facts, tierLine(c.Tier))
+	if c.Changes != nil {
+		facts = append(facts, changeFacts(*c.Changes, false)...)
+	}
 	text := reason.text
 	if c.Reason == "approval-missing" && c.Version == 0 { // no canonical: the head proposes the first contract, it changes none
 		text = "This pull request carries the proposed first contract " + ref + ", awaiting the owner's approval of that exact revision."
@@ -163,6 +166,14 @@ func checkCheckReference(c Check) error {
 	}
 	if c.Reason == "approval-missing" && c.Proposal == 0 {
 		return errors.New("commandtext: approval is missing for no revision")
+	}
+	if c.Changes != nil {
+		if c.Proposal == 0 {
+			return errors.New("commandtext: the changes of no revision")
+		}
+		if err := validateChanges(*c.Changes); err != nil {
+			return err
+		}
 	}
 	if c.Proposal != 0 {
 		if _, err := reference(c.Proposal, c.Revision); err != nil {

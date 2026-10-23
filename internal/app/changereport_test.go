@@ -1,0 +1,304 @@
+package app
+
+import (
+	"context"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io/fs"
+	"strings"
+	"testing"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/report"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+)
+
+// rawManifest writes entries as given, in the canonical encoding of a manifest: the written format that artifact.NewManifest hashes.
+func rawManifest(entries ...artifact.Entry) []byte {
+	raw := []byte("suiteward.manifest.v1\x00")
+	raw = binary.BigEndian.AppendUint64(raw, uint64(len(entries)))
+	for _, e := range entries {
+		sum, _ := hex.DecodeString(strings.TrimPrefix(e.Content.String(), "sha256:"))
+		raw = binary.BigEndian.AppendUint64(raw, uint64(len(e.Path)))
+		raw = append(append(raw, e.Path...), sum...)
+	}
+	return raw
+}
+
+func manifestOf(t *testing.T, paths ...string) artifact.Manifest {
+	t.Helper()
+	var entries []artifact.Entry
+	for _, p := range paths {
+		entries = append(entries, artifact.Entry{Path: p, Content: artifact.Hash([]byte("content of " + p))})
+	}
+	return bootMust(artifact.NewManifest(entries))
+}
+
+func TestTheEncodingOfAManifestIsTheOneItsDigestNames(t *testing.T) {
+	many := make([]string, 50)
+	for i := range many {
+		many[i] = fmt.Sprintf("tests/case_%02d_test.go", 49-i)
+	}
+	for name, m := range map[string]artifact.Manifest{
+		"empty": manifestOf(t), "one file": manifestOf(t, "tests/a_test.go"), "unicode": manifestOf(t, "tests/日本語_test.go", "tests/a b.go"), "fifty files": manifestOf(t, many...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if artifact.Hash(encodeManifest(m)) != m.Digest() {
+				t.Fatalf("the encoding hashes to %s, not to the digest %s", artifact.Hash(encodeManifest(m)), m.Digest())
+			}
+			store := bootMust(filesystem.NewStore(t.TempDir()))
+			if err := storeManifest(t.Context(), store, m); err != nil {
+				t.Fatalf("store: %v", err)
+			}
+			raw, err := store.Read(t.Context(), m.Digest())
+			if err != nil {
+				t.Fatalf("read it back by the digest of the manifest: %v", err)
+			}
+			back, err := parseManifest(raw, m.Digest())
+			if err != nil || back.Digest() != m.Digest() || fmt.Sprint(back.Entries()) != fmt.Sprint(m.Entries()) {
+				t.Fatalf("parse = %v, %v; want the manifest back", back.Entries(), err)
+			}
+		})
+	}
+}
+
+func TestParseManifestRefusesWhatIsNotTheEncodingOfTheManifestNamed(t *testing.T) {
+	a := artifact.Entry{Path: "a.txt", Content: artifact.Hash([]byte("a"))}
+	b := artifact.Entry{Path: "b.txt", Content: artifact.Hash([]byte("b"))}
+	good := rawManifest(a, b)
+	huge := binary.BigEndian.AppendUint64([]byte("suiteward.manifest.v1\x00"), 1<<62)
+	longPath := binary.BigEndian.AppendUint64(binary.BigEndian.AppendUint64([]byte("suiteward.manifest.v1\x00"), 1), 1<<62)
+	for name, raw := range map[string][]byte{
+		"nothing": nil, "another format": []byte("not a manifest"), "another version": append([]byte("suiteward.manifest.v2\x00"), good[22:]...),
+		"truncated": good[:len(good)-1], "cut in the count": good[:25], "trailing bytes": append(append([]byte{}, good...), 0),
+		"a count beyond the bytes": huge, "a path beyond the bytes": longPath,
+		"entries out of order": rawManifest(b, a), "a path that is not valid": rawManifest(artifact.Entry{Path: "../x", Content: a.Content}),
+		"the same path twice": rawManifest(a, a),
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Whatever the bytes are, they are what the key is: only their reading is under test.
+			if m, err := parseManifest(raw, artifact.Hash(raw)); err == nil {
+				t.Fatalf("parse = %v, want an error", m.Entries())
+			}
+		})
+	}
+	if _, err := parseManifest(good, artifact.Hash([]byte("another"))); err == nil {
+		t.Fatal("a manifest was read under the digest of another")
+	}
+	if m, err := parseManifest(good, bootMust(artifact.NewManifest([]artifact.Entry{a, b})).Digest()); err != nil || len(m.Entries()) != 2 {
+		t.Fatalf("parse of the canonical encoding = %v, %v", m.Entries(), err)
+	}
+}
+
+func revisionRef(proposal, revision string) contract.ProposalReference {
+	return contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: defaultSuite,
+		ProposalID: contract.ProposalID(proposal), RevisionID: contract.ProposalRevisionID(revision)}
+}
+
+// reportWorld is a canonical V1 and a pull request whose head is the revision P2-R1: tests/a_test.go changed from "v1" to "v2".
+func reportWorld(t *testing.T) (*cjJobWorld, *changeReports) {
+	t.Helper()
+	w := newCJWorld(t, true)
+	w.protectedPull()
+	return w, newChangeReports(w.suites, w.content)
+}
+
+// manifestDigestOf is the digest of the manifest of a revision, as the proposal binds it.
+func manifestDigestOf(t *testing.T, w *cjJobWorld, ref contract.ProposalReference) artifact.Digest {
+	t.Helper()
+	var digest artifact.Digest
+	err := w.suites.Do(t.Context(), ref.ProjectID, ref.SuiteID, func(ctx context.Context, tx governance.Tx) error {
+		proposal, _, err := tx.Proposal(ctx, ref.ProposalID)
+		for _, revision := range proposal.Revisions() {
+			if revision.Binding().Reference().RevisionID == ref.RevisionID {
+				digest = revision.Binding().ManifestDigest()
+			}
+		}
+		return err
+	})
+	if err != nil || digest.IsZero() {
+		t.Fatalf("manifest digest of %v: %v, %v", ref, digest, err)
+	}
+	return digest
+}
+
+func hunkText(f report.File) string {
+	var lines []string
+	for _, h := range f.Hunks {
+		for _, l := range h.Lines {
+			lines = append(lines, string(rune(l.Kind))+l.Text)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestARevisionReportComparesTheManifestOfTheRevisionWithTheBaseCanonical(t *testing.T) {
+	_, reports := reportWorld(t)
+
+	got, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1"))
+
+	if err != nil {
+		t.Fatalf("revisionReport: %v", err)
+	}
+	if got.Base != "V1" || len(got.Report.Files) != 1 {
+		t.Fatalf("report = %+v, want the base V1 and one file", got)
+	}
+	f := got.Report.Files[0]
+	if f.Path != "tests/a_test.go" || f.Status != report.Modified || !f.CountsKnown || f.LinesAdded != 1 || f.LinesRemoved != 1 || hunkText(f) != "-v1\n+v2" {
+		t.Fatalf("file = %+v, want tests/a_test.go modified, +1/-1, from v1 to v2", f)
+	}
+}
+
+func TestAnOldRevisionIsRebuiltAfterALaterOneArrived(t *testing.T) {
+	w, reports := reportWorld(t)
+	w.tree(cjHead3, bootFiles("v3"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead3})
+	w.mustCheck()
+	if keys := w.revisionKeys(); len(keys) != 2 {
+		t.Fatalf("revision comments %v, want the one of each revision", keys)
+	}
+
+	first, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1"))
+	if err != nil {
+		t.Fatalf("revisionReport of R1: %v", err)
+	}
+	second, err := reports.revisionReport(t.Context(), revisionRef("P2", "R2"))
+	if err != nil {
+		t.Fatalf("revisionReport of R2: %v", err)
+	}
+
+	if len(first.Report.Files) != 1 || len(second.Report.Files) != 1 {
+		t.Fatalf("reports %+v and %+v, want one file each", first, second)
+	}
+	if got := hunkText(first.Report.Files[0]); got != "-v1\n+v2" {
+		t.Errorf("R1 = %q, want the change to v2 that R1 proposed", got)
+	}
+	if got := hunkText(second.Report.Files[0]); got != "-v1\n+v3" {
+		t.Errorf("R2 = %q, want the change to v3", got)
+	}
+}
+
+func TestARevisionReportIsNotFoundForWhatIsNotAChangeProposalRevisionWithAStoredManifest(t *testing.T) {
+	w, reports := reportWorld(t)
+	legacy := manifestDigestOf(t, w, revisionRef("P2", "R1"))
+	for name, tc := range map[string]struct {
+		ref    contract.ProposalReference
+		forget bool
+	}{
+		"an unknown proposal":                      {ref: revisionRef("P9", "R1")},
+		"an unknown revision":                      {ref: revisionRef("P2", "R9")},
+		"the baseline, which has no base":          {ref: revisionRef("P1", "R1")},
+		"a revision whose manifest was not stored": {ref: revisionRef("P2", "R1"), forget: true},
+		"an unknown suite":                         {ref: contract.ProposalReference{ProjectID: owner.ProjectID(bootRepoID), SuiteID: "other", ProposalID: "P2", RevisionID: "R1"}},
+		"an unknown project":                       {ref: contract.ProposalReference{ProjectID: "github-repo:77", SuiteID: defaultSuite, ProposalID: "P2", RevisionID: "R1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.forget {
+				saved := w.content.bytes[legacy.String()]
+				delete(w.content.bytes, legacy.String())
+				t.Cleanup(func() { w.content.bytes[legacy.String()] = saved })
+			}
+			if _, err := reports.revisionReport(t.Context(), tc.ref); !errors.Is(err, governance.ErrNotFound) {
+				t.Fatalf("revisionReport = %v, want governance.ErrNotFound", err)
+			}
+		})
+	}
+}
+
+func TestARevisionReportFailsWhenAFileOfTheRevisionIsMissing(t *testing.T) {
+	w, reports := reportWorld(t)
+	delete(w.content.bytes, artifact.Hash([]byte("v2")).String())
+
+	_, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1"))
+
+	if !errors.Is(err, fs.ErrNotExist) || errors.Is(err, governance.ErrNotFound) {
+		t.Fatalf("revisionReport = %v, want an error that wraps fs.ErrNotExist and is not ErrNotFound: the revision exists, its bytes do not", err)
+	}
+}
+
+func TestARevisionReportReadsNoMoreThanItsBudget(t *testing.T) {
+	_, reports := reportWorld(t)
+	reports.budget = len("v1") + len("v2") - 1
+
+	if _, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1")); !errors.Is(err, errReportTooLarge) {
+		t.Fatalf("revisionReport = %v, want errReportTooLarge", err)
+	}
+	reports.budget = len("v1") + len("v2")
+	if _, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1")); err != nil {
+		t.Fatalf("revisionReport with exactly the bytes of both sides = %v, want a report", err)
+	}
+}
+
+func TestARevisionReportReadsOnlyTheFilesThatDiffer(t *testing.T) {
+	w, _ := reportWorld(t)
+	var read []artifact.Digest
+	reports := newChangeReports(w.suites, readFunc(func(ctx context.Context, d artifact.Digest) ([]byte, error) {
+		read = append(read, d)
+		return w.content.Read(ctx, d)
+	}))
+	manifest := manifestDigestOf(t, w, revisionRef("P2", "R1"))
+
+	if _, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1")); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[artifact.Digest]bool{manifest: true, artifact.Hash([]byte("v1")): true, artifact.Hash([]byte("v2")): true}
+	if len(read) != len(want) {
+		t.Fatalf("read %v, want the manifest and the two sides of the one file that differs", read)
+	}
+	for _, d := range read {
+		if !want[d] {
+			t.Errorf("read %s, which is neither the manifest nor a side of the changed file", d)
+		}
+	}
+}
+
+type readFunc func(context.Context, artifact.Digest) ([]byte, error)
+
+func (f readFunc) Read(ctx context.Context, d artifact.Digest) ([]byte, error) { return f(ctx, d) }
+
+func TestOneReportIsBuiltAtATimeAndAWaitingBuildHonorsItsContext(t *testing.T) {
+	w, _ := reportWorld(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	reports := newChangeReports(w.suites, readFunc(func(ctx context.Context, d artifact.Digest) ([]byte, error) {
+		select {
+		case entered <- struct{}{}:
+			<-release
+		default:
+		}
+		return w.content.Read(ctx, d)
+	}))
+	first := make(chan error, 1)
+	go func() {
+		_, err := reports.revisionReport(context.Background(), revisionRef("P2", "R1"))
+		first <- err
+	}()
+	select { // the first build holds the gate, blocked in its first read
+	case <-entered:
+	case err := <-first:
+		t.Fatalf("the first build ended without reading anything: %v", err)
+	}
+
+	waiting, cancel := context.WithCancel(context.Background())
+	second := make(chan error, 1)
+	go func() {
+		_, err := reports.revisionReport(waiting, revisionRef("P2", "R1"))
+		second <- err
+	}()
+	cancel()
+	if err := <-second; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the waiting build = %v, want context.Canceled", err)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("the first build = %v, want its report", err)
+	}
+	if _, err := reports.revisionReport(context.Background(), revisionRef("P2", "R1")); err != nil {
+		t.Fatalf("a build after the gate was released = %v", err)
+	}
+}

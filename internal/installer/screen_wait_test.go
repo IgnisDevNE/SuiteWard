@@ -2,6 +2,7 @@ package installer
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"path/filepath"
@@ -198,3 +199,56 @@ func TestPlainDoctorOutputIsTheResultLinesAndNothingElse(t *testing.T) {
 		t.Errorf("a plain screen got %q (%v), want %q: no counts, no marks", out.String(), err, want)
 	}
 }
+
+// Ctrl-C ends doctor as it ends the rest of the installer: "interrupted" and 130, whatever the checks found. A Ctrl-C at the final wait
+// does not: the checks are done, and doctor keeps its own code.
+func TestCtrlCDuringDoctorExits130AndCtrlCAtItsWaitKeepsItsCode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ready int // 503: a check fails
+		code  int
+	}{
+		{"checks that pass", 0, 0},
+		{"checks that fail", 503, 1},
+	} {
+		run := func(t *testing.T, ctx context.Context, in io.Reader, screen bool) (code int, stderr string) {
+			t.Helper()
+			f, s := colocated{checkOut: doctorNoGitHub, ready: tc.ready}.build(t)
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			if err := SaveSettings(path, s); err != nil {
+				t.Fatal(err)
+			}
+			env := Env{Deps: f.deps(), Term: Terminal{In: in, Out: &bytes.Buffer{}}}
+			if screen {
+				env.OpenScreen = newTermConsole(&bytes.Buffer{}).open
+			}
+			var errOut bytes.Buffer
+			code = Main(ctx, []string{"doctor", "--settings", path}, env, &errOut)
+			return code, errOut.String()
+		}
+		t.Run(tc.name+", Ctrl-C during the checks", func(t *testing.T) {
+			for _, screen := range []bool{true, false} {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				if code, stderr := run(t, ctx, strings.NewReader(""), screen); code != 130 || !strings.Contains(stderr, "interrupted") || strings.Count(stderr, "\n") != 1 {
+					t.Errorf("full screen %v: exit %d with stderr %q, want 130 and one line saying interrupted", screen, code, stderr)
+				}
+			}
+		})
+		t.Run(tc.name+", Ctrl-C at the final wait", func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			pressed := readFunc(func([]byte) (int, error) { // the wait reads: Ctrl-C comes then
+				cancel()
+				return 0, io.EOF
+			})
+			if code, stderr := run(t, ctx, pressed, true); code != tc.code || stderr != "" {
+				t.Errorf("exit %d with stderr %q, want %d and nothing on stderr: the checks were done", code, stderr, tc.code)
+			}
+		})
+	}
+}
+
+type readFunc func([]byte) (int, error)
+
+func (f readFunc) Read(p []byte) (int, error) { return f(p) }

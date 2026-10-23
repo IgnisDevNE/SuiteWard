@@ -290,3 +290,36 @@ func TestTheSummaryOfAnUpgradeWaitsForTheServiceToAnswer(t *testing.T) {
 		t.Errorf("the summary has no Instance row although the service answered a few tries in:\n%s", c.tail())
 	}
 }
+
+// On a Windows console, Ctrl-C makes the pending read return the end of the input before the signal cancels the context. A terminal's
+// end of input that the context follows a moment later is an interrupt: "interrupted" and exit 130, not "read the answer: EOF" and 1.
+func TestCtrlCAtAPromptOfAWindowsConsoleExits130(t *testing.T) {
+	h := newHarness(t, "linux")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	time.AfterFunc(10*time.Millisecond, cancel)
+	env := h.newEnv()
+	env.Term = Terminal{In: strings.NewReader(""), Out: &h.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}
+	env.OpenScreen = func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error) {
+		return ui.Open(ui.Options{Out: &h.out, In: in, Context: ctx, Version: version, Mode: ui.ModePlain, InputIsTerminal: true})
+	}
+	var stderr bytes.Buffer
+	code := Main(ctx, []string{"install", "--settings", h.settingsPath(), "--token-file", h.tokenPath()}, env, &stderr)
+	if code != 130 || !strings.Contains(stderr.String(), "interrupted") || strings.Count(stderr.String(), "\n") != 1 {
+		t.Errorf("exit %d with stderr %q, want 130 and one line saying interrupted", code, stderr.String())
+	}
+	h.mustNotMutate()
+}
+
+// Whatever error a command ends with after Ctrl-C, the user pressed it: the command that wrapped a prompt's error in its own words is
+// no less interrupted.
+func TestAnyErrorAfterCtrlCExits130(t *testing.T) {
+	h := newHarness(t, "linux")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stderr bytes.Buffer
+	code := Main(ctx, []string{"install", "--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm"}, h.newEnv(), &stderr) // no --image: a plain error
+	if code != 130 || !strings.Contains(stderr.String(), "image") {
+		t.Errorf("exit %d with stderr %q, want 130 and the error that ended the command", code, stderr.String())
+	}
+}

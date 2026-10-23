@@ -82,6 +82,8 @@ type Options struct {
 	// prompt until Enter. The read that was pending is abandoned in its goroutine and may still take a line from the input, so the
 	// process is expected to exit and the input is not read again. Secret cannot be interrupted this way: its reader is the caller's.
 	Context context.Context
+	// InputIsTerminal says that In is a terminal. It does nothing yet.
+	InputIsTerminal bool
 }
 
 // Choice is one numbered answer of Choose.
@@ -701,3 +703,6 @@ func clean(text string) string {
 
 // oneLine is clean for a text that must stay on one row: a newline becomes a space.
 func oneLine(text string) string { return strings.ReplaceAll(clean(text), "\n", " ") }
+
+// interruptGrace is how long a read that ended on a terminal waits for the context. It is unused yet.
+var interruptGrace = 250 * time.Millisecond

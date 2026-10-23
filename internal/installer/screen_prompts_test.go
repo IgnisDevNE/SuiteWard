@@ -77,6 +77,7 @@ func TestResolverQuestionsEndWithTheContextAndReadNothing(t *testing.T) {
 	cancel()
 	questions := map[string]func(r *Resolver) error{
 		"Value":   func(r *Resolver) error { _, err := r.Value("tier", "Tier", "co-located"); return err },
+		"Select":  func(r *Resolver) error { _, err := r.Select("tier", "Tier", tierChoices, "co-located"); return err },
 		"Int":     func(r *Resolver) error { _, err := r.Int("http-port", "HTTP port", 8081); return err },
 		"confirm": func(r *Resolver) error { _, err := r.confirm("yes", "Go on?"); return err },
 		"ask":     func(r *Resolver) error { _, err := r.ask("Type enroll: "); return err },

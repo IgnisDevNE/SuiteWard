@@ -72,18 +72,22 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
 }
 
-// printVersion is `suiteward version`: the build version and the digest of the release image this binary installs by default, which a
-// development build does not carry. It reads no setting.
+// printVersion is `suiteward version`: the build version and the digest of the release image this binary installs by default. A build
+// that does not name its version is a development build. The binary inside the release image is stamped with the version but not with
+// the digest, which only exists once the image is built, so it says the digest is not recorded. It reads no setting.
 func printVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		return usageError(stderr)
 	}
-	digest := "none (development build)"
+	digest := "not recorded in this binary"
+	if Version == "dev" {
+		digest = "none (development build)"
+	}
 	if image, ok := installer.ReleaseImage(); ok {
 		_, digest, _ = strings.Cut(image, "@")
 	}
 	// A failed write to stdout cannot be reported anywhere else.
-	_, _ = fmt.Fprintf(stdout, "suiteward %s\nimage %s\n", Version, digest)
+	_, _ = fmt.Fprintf(stdout, "suiteward %s\nimage: %s\n", Version, digest)
 	return 0
 }
 

@@ -137,6 +137,20 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := refuseUnfinishedInstall(pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
 		return err
 	}
+	s := base
+	s.Tier, s.Runtime, s.Connection, s.Image = config.TierCoLocated, rt.Name(), connection, image
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	// An upgrade keeps the installed ports and job timeout: a value asked for that is invalid, or differs, stops the run before any
+	// change (even a run with nothing to upgrade), so that it is never ignored in silence. A re-run of the install applies it.
+	asked, err := askedSettings(r, s)
+	if err != nil {
+		return err
+	}
+	if err := refuseChangedSettings(asked, s, installCommand(r, false)); err != nil {
+		return err
+	}
 	dbImage, err := installedDBImage(ctx, rt)
 	if err != nil {
 		return err
@@ -151,11 +165,6 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if plan.current() && t.haveSaved {
 		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctor)
 		return nil
-	}
-	s := base
-	s.Tier, s.Runtime, s.Connection, s.Image = config.TierCoLocated, rt.Name(), connection, image
-	if err := s.Validate(); err != nil {
-		return err
 	}
 	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: r.preset("token-file", "")}
 	if c.tokenFile == "" {

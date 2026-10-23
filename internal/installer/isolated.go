@@ -99,10 +99,11 @@ func answerSource(r *Resolver, key string) string {
 	return ""
 }
 
-// chooseIsolatedSettings resolves the ports and the job timeout over base (the flag, the answers file, else base) and validates the
-// result; an invalid value is refused naming the flag or the answers-file key that gave it. It never prompts: an installed stack
-// keeps its own values unless they are given (adoptInstalled), and the install asks only what a person at the terminal must decide.
-func chooseIsolatedSettings(r *Resolver, base Settings) (Settings, error) {
+// askedSettings resolves the ports and the job timeout over base (the flag, the answers file, else base) and validates the
+// result; an invalid value is refused naming the flag or the answers-file key that gave it. It never prompts: the isolated install
+// keeps the values of an installed stack unless they are given (adoptInstalled), an upgrade never asks, and an install asks only
+// what a person at the terminal must decide. Both tiers use it to see what an upgrade is asked for.
+func askedSettings(r *Resolver, base Settings) (Settings, error) {
 	s := base
 	port := func(key string, def int) (int, error) {
 		v := r.preset(key, strconv.Itoa(def))
@@ -137,7 +138,7 @@ func chooseIsolatedSettings(r *Resolver, base Settings) (Settings, error) {
 
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
 	d, out := env.Deps, env.Term.Out
-	s, err := chooseIsolatedSettings(r, s)
+	s, err := askedSettings(r, s)
 	if err != nil {
 		return err
 	}
@@ -200,17 +201,22 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	}
 	gh := g.s.GitHub // an env file that already holds these values stays as its author wrote it
 	inFile := gh.AppID == fromFile.AppID && gh.InstallationID == fromFile.InstallationID && slices.Equal(gh.Repositories, fromFile.Repositories)
-	if err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !inFile); err != nil {
+	envChanged, err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !inFile)
+	if err != nil {
 		return err
 	}
+	keyStored := g.githubKey != nil // a running service has the key secret of its last start mounted
 	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
-	if err := prepareUnits(ctx, host, d, UnitParamsFrom(g.s, digest), false); err != nil {
+	units, err := prepareUnits(ctx, host, d, UnitParamsFrom(g.s, digest), false)
+	if err != nil {
 		return err
 	}
 
-	leftRunning, err := startStack(ctx, rt, d, installed.changedBy(g.s))
+	// A running service reads its unit, its env file and its key secret when it starts: it is restarted when this run changed
+	// one of them, and before setup enrolls the owner, which must not happen on a service that cannot reach GitHub yet.
+	leftRunning, err := startStack(ctx, rt, d, installed.mustRestart(units, envChanged, keyStored))
 	if err != nil {
 		return err
 	}
@@ -508,7 +514,7 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neve
 }
 
 // installedWithGiven is the installed settings with the ports and the job timeout that the run is given over them: on a re-run
-// those win, and everything else that is installed stays. asked holds the resolved values (chooseIsolatedSettings).
+// those win, and everything else that is installed stays. asked holds the resolved values (askedSettings).
 func installedWithGiven(r *Resolver, installed, asked Settings) Settings {
 	s := installed
 	if _, ok := r.given("http-port"); ok {
@@ -536,10 +542,11 @@ func sayChanges(say func(string, ...any), installed, now Settings) {
 	}
 }
 
-// changedBy says whether s publishes other ports, or runs with another job timeout, than the installed units.
-func (st installedStack) changedBy(s Settings) bool {
-	a := st.adopted.Settings
-	return st.found && (s.HTTPPort != a.HTTPPort || s.MCPPort != a.MCPPort || s.JobTimeout != a.JobTimeout)
+// mustRestart says whether a service that runs has to be restarted to read what this run changed: its unit (the ports, the job
+// timeout, the GitHub key lines, the image; the path of the env file is left out, because moving the file does not change its
+// values), the values in its env file (envChanged), or its key secret (keyStored). Without an installed stack nothing runs.
+func (st installedStack) mustRestart(units map[string][]byte, envChanged, keyStored bool) bool {
+	return st.found && (envChanged || keyStored || len(diffUnitLines(serveUnit, units[serveUnit], st.units[serveUnit], "EnvironmentFile=")) > 0)
 }
 
 // ownedPorts are the ports whose listener is the stack's own service: the ones its units publish, while the service is active.
@@ -735,11 +742,12 @@ func ensureSecrets(ctx context.Context, store SecretStore, appKey []byte) error 
 }
 
 // writeEnvFile writes the GitHub env file the service unit loads: the three values, or an empty file because the unit's
-// EnvironmentFile= makes a missing file fail the start. A file that exists is left alone unless there are new values.
-func writeEnvFile(path string, gh GitHub, have bool) error {
+// EnvironmentFile= makes a missing file fail the start. A file that exists is left alone unless there are new values. It
+// reports whether the values the service reads from the file changed: a file that did not exist and is made empty did not.
+func writeEnvFile(path string, gh GitHub, have bool) (changed bool, err error) {
 	existing, err := os.ReadFile(filepath.Clean(path))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("read %s: %w", path, err)
+		return false, fmt.Errorf("read %s: %w", path, err)
 	}
 	exists := err == nil
 	var content []byte
@@ -747,12 +755,12 @@ func writeEnvFile(path string, gh GitHub, have bool) error {
 	case have:
 		content = fmt.Appendf(nil, "SUITEWARD_GITHUB_APP_ID=%d\nSUITEWARD_GITHUB_INSTALLATION_ID=%d\nSUITEWARD_GITHUB_REPOSITORIES=%s\n", gh.AppID, gh.InstallationID, strings.Join(gh.Repositories, ","))
 		if exists && bytes.Equal(existing, content) {
-			return nil
+			return false, nil
 		}
 	case exists:
-		return nil
+		return false, nil
 	}
-	return writeFileAtomic(path, content, 0o700)
+	return !bytes.Equal(existing, content), writeFileAtomic(path, content, 0o700)
 }
 
 // dryRun runs the Podman generator's dry run and checks that it listed the service of every unit: Podman

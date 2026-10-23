@@ -125,7 +125,10 @@ func TestInstructionContent(t *testing.T) {
 	has(t, Unknown(), "installation", "Administration read")
 	has(t, Evaluate(Facts{Classic: Classic{State: ClassicUnreadable}}, app, test), "Administration read")
 	has(t, Evaluate(Facts{}, 0, test), "App id")
-	has(t, Evaluate(ruleFacts(rule(true, contract(app))), app, ""), "suiteward setup")
+	has(t, Evaluate(ruleFacts(rule(true, contract(app))), app, ""), "suiteward enroll")
+	if all := strings.Join(Evaluate(ruleFacts(rule(true, contract(app))), app, "").Instructions, "\n"); strings.Contains(all, "suiteward setup") {
+		t.Errorf("the installer's verb is enroll, but the instruction says setup: %q", all)
+	}
 	has(t, Evaluate(ruleFacts(rule(true, contract(app), Check{Context: test})), app, test), "bypass list")
 	has(t, Evaluate(Facts{}, app, test), ContractCheck)
 }

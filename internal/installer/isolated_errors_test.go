@@ -278,7 +278,7 @@ func TestEnvFilesThatCannotBeReadAreNamed(t *testing.T) {
 	if _, err := readGitHubEnvFile(dir); err == nil || !strings.Contains(err.Error(), "read "+dir) {
 		t.Errorf("readGitHubEnvFile of a directory = %v", err)
 	}
-	if err := writeEnvFile(dir, GitHub{}, false); err == nil || !strings.Contains(err.Error(), "read "+dir) {
+	if _, err := writeEnvFile(dir, GitHub{}, false); err == nil || !strings.Contains(err.Error(), "read "+dir) {
 		t.Errorf("writeEnvFile over a directory = %v", err)
 	}
 }
@@ -478,4 +478,23 @@ func TestInstallIsolatedRefusesAKeyItCannotStore(t *testing.T) {
 			t.Errorf("a secret was created before the key was known to be there: %v", f.lines())
 		}
 	})
+}
+
+// writeEnvFile says whether the values a service reads from the file changed.
+func TestWriteEnvFileSaysWhetherTheValuesChanged(t *testing.T) {
+	gh := GitHub{AppID: 123, InstallationID: 456, Repositories: []string{"octo/one"}}
+	path := filepath.Join(t.TempDir(), "github.env")
+	step := func(name string, gh GitHub, have, wantChanged bool) {
+		t.Helper()
+		changed, err := writeEnvFile(path, gh, have)
+		if err != nil || changed != wantChanged {
+			t.Errorf("%s: changed = %v, %v; want %v", name, changed, err, wantChanged)
+		}
+	}
+	step("a file that did not exist is made empty: no values", GitHub{}, false, false)
+	step("an empty file stays", GitHub{}, false, false)
+	step("values over an empty file", gh, true, true)
+	step("the same values", gh, true, false)
+	step("an existing file is left alone without values", GitHub{}, false, false)
+	step("other values", GitHub{AppID: 124, InstallationID: 456, Repositories: []string{"octo/one"}}, true, true)
 }

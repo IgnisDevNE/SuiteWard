@@ -51,7 +51,7 @@ Use the same `<tag>` twice, and always set `SUITEWARD_VERSION`. The script is th
 The script does this, and nothing else:
 
 - It reads your system and refuses anything but Linux or macOS on amd64 or arm64.
-- It downloads `SHA256SUMS` and the binary, and compares the binary's SHA-256 with the line of `SHA256SUMS`, which must list the file exactly once. Over curl, every request is HTTPS only, redirects included, unless you set `SUITEWARD_RELEASE_BASE` (below).
+- It downloads `SHA256SUMS` and the binary, and compares the binary's SHA-256 with the line of `SHA256SUMS`, which must list the file exactly once. Over curl, every request is HTTPS only, redirects included. (`SUITEWARD_RELEASE_BASE`, below, can add a `file://` base for the script's tests, and redirects stay HTTPS only.) wget has no such flag, so its redirects are not restricted: prefer curl.
 - With cosign 3.x installed, it first verifies the signature of `SHA256SUMS` against the identity that `scripts/verify-release.ps1` fixes: the release workflow of this repository, at a release tag. Without cosign, it says that the signature was **not** verified, prints `SHA256SUMS sha256: <hex>` and the commands that verify the signature on another machine. When the downloader is BusyBox wget (Alpine, some routers), which can skip the check of TLS certificates, it says that too. `SUITEWARD_REQUIRE_COSIGN=1` turns a missing cosign into an error.
 - It puts the file in place in one step (mode 755), says where, and tells you when the directory is not on your PATH. It never uses `sudo`, and it never runs the binary or anything else it downloaded: the next command is yours.
 

@@ -694,12 +694,13 @@ func TestSelfCheckWithoutGitHubChecksTheDatabaseAndWarnsAboutGitHub(t *testing.T
 	}
 }
 
-// The fix is shown by `doctor` on both tiers, and a co-located PC has no host: it names the machine that runs SuiteWard instead.
-func TestNotConfiguredFixNamesTheMachineThatRunsSuiteWardNotTheHost(t *testing.T) {
+// The fix is shown by `doctor` on both tiers. A co-located PC has no host, and on a Podman machine the containers run in a VM
+// while the install runs on the PC, so the fix names no place: the install re-run finds its tier in the saved settings.
+func TestNotConfiguredFixNamesNoPlace(t *testing.T) {
 	r := checkNotConfigured("github.app")
 
-	if !strings.Contains(r.Fix, "again with --github yes") || !strings.Contains(r.Fix, "on the machine that runs SuiteWard") || strings.Contains(r.Fix, "on the host") {
-		t.Errorf("fix = %q; want the install again with --github yes on the machine that runs SuiteWard, and no mention of the host", r.Fix)
+	if !strings.Contains(r.Fix, "again with --github yes") || strings.Contains(r.Fix, "on the host") || strings.Contains(r.Fix, "on the machine") {
+		t.Errorf("fix = %q; want the install again with --github yes, and no place named", r.Fix)
 	}
 }
 

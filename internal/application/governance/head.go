@@ -154,7 +154,7 @@ func recordHead(ctx context.Context, tx Tx, request HeadRequest, version contrac
 	}
 	if revised.Committed {
 		notice := RevisionNotice{Reference: revised.Current, Previous: previous, Canonical: version, Added: classification.Added, Modified: classification.Modified,
-			Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction,
+			Removed: classification.Removed, Manifest: proposed.Manifest(), Reduced: classification.Change == inventory.ScopeReduction,
 			ReducedRules: classification.ReducedRules, ReducedPaths: classification.ReducedPaths}
 		if err := writeRevisionComment(ctx, tx, request, notice); err != nil {
 			return HeadResult{}, err

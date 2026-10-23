@@ -31,7 +31,7 @@ type store interface {
 	Instance(ctx context.Context) (string, error)
 }
 
-// api serves /healthz, /readyz and /status. Only fixed reasons reach a
+// api serves /healthz, /readyz, /status and the change report pages. Only fixed reasons reach a
 // response; the cause of a failure is logged.
 type api struct {
 	store    store
@@ -48,7 +48,10 @@ func newRouter(a *api) http.Handler {
 	r.Get("/healthz", a.healthz)
 	r.Get("/readyz", a.readyz)
 	r.Get("/status", a.status)
-	r.Get("/reports/{owner}/{repo}/{revision}", a.report)
+	r.Route("/reports", func(r chi.Router) {
+		r.Use(reportGuard)
+		r.Get("/{owner}/{repo}/{revision}", a.report)
+	})
 	return r
 }
 

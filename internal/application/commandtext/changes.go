@@ -121,20 +121,30 @@ func validateChanges(c Changes) error {
 	return nil
 }
 
-// changeFacts are the bullets that state the numbers of c. listed says that the comment names the files not shown below them.
-func changeFacts(c Changes, listed bool) []string {
+// Facts are the lines that state the numbers of c: the files, the lines, the files not shown line by line when there are some, and the
+// marker lines seen. listed says that the reader finds the files not shown named right below.
+func (c Changes) Facts(listed bool) []string {
 	facts := []string{
-		fmt.Sprintf("- Files: %d added, %d modified, %d removed", c.Added, c.Modified, c.Removed),
-		fmt.Sprintf("- Lines: +%d/−%d (counted in %d of %d files)", c.LinesAdded, c.LinesRemoved, c.Counted, c.Added+c.Modified+c.Removed),
+		fmt.Sprintf("Files: %d added, %d modified, %d removed", c.Added, c.Modified, c.Removed),
+		fmt.Sprintf("Lines: +%d/−%d (counted in %d of %d files)", c.LinesAdded, c.LinesRemoved, c.Counted, c.Added+c.Modified+c.Removed),
 	}
 	if c.NotShownTotal > 0 {
-		fact := "- Not shown line by line: " + counted(c.NotShownTotal, "file", "files")
+		fact := "Not shown line by line: " + counted(c.NotShownTotal, "file", "files")
 		if listed {
 			fact += " (listed below)"
 		}
 		facts = append(facts, fact)
 	}
-	return append(facts, "- Marker lines seen: "+markerPhrases(c.Markers))
+	return append(facts, "Marker lines seen: "+markerPhrases(c.Markers))
+}
+
+// changeFacts are the bullets that state the numbers of c.
+func changeFacts(c Changes, listed bool) []string {
+	facts := c.Facts(listed)
+	for i, fact := range facts {
+		facts[i] = "- " + fact
+	}
+	return facts
 }
 
 func counted(n int, one, many string) string {

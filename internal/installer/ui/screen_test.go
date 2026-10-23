@@ -229,19 +229,19 @@ func TestAskAndPrompt(t *testing.T) {
 }
 
 func TestSecretIsNeverShownOrKept(t *testing.T) {
-	const secret = "hunter2-not-a-real-secret"
-	read := func() ([]byte, error) { return []byte(secret), nil }
+	const hidden = "typed-but-never-shown"
+	read := func() ([]byte, error) { return []byte(hidden), nil }
 	for name, o := range map[string]Options{"plain": plainOptions(), "full": fullOptions(ColorNone)} {
 		t.Run(name, func(t *testing.T) {
 			s, out := openScreen(t, o, "")
 			got, err := s.Secret("Token", read)
-			if err != nil || string(got) != secret {
+			if err != nil || string(got) != hidden {
 				t.Fatalf("Secret = %q, %v; want the reader's bytes", got, err)
 			}
 			s.Say("later line\n")
 			s.Keep("kept line\n")
 			mustClose(t, s)
-			if strings.Contains(out.String(), secret) {
+			if strings.Contains(out.String(), hidden) {
 				t.Fatalf("the secret reached the terminal output:\n%s", out.String())
 			}
 			if name == "plain" && out.String() != "Token (input is hidden): \nlater line\nkept line\n" {

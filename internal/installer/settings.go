@@ -54,6 +54,9 @@ type Settings struct {
 	JobTimeout string      `yaml:"job_timeout,omitempty"` // a Go duration
 	Image      string      `yaml:"image,omitempty"`       // the release image installed, pinned by digest
 	GitHub     GitHub      `yaml:"github,omitempty"`
+	// BackupRecipient is the public key (age1pq1...) every backup is encrypted to. It is trusted configuration of this file alone: a
+	// repository file, a pull request or an MCP call never names it.
+	BackupRecipient string `yaml:"backup_recipient,omitempty"`
 }
 
 // GitHub holds the non-secret GitHub values; they exist only after the App is created and installed.

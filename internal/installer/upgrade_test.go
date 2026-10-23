@@ -23,7 +23,7 @@ var (
 )
 
 const (
-	statusBody = `{"version":"v0.2.0","schemaVersion":20}`
+	statusBody = `{"version":"v0.2.0","schemaVersion":20,"tier":"co-located","instance":"1a2b3c4d","owner":{"login":"octo","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"},"github":[{"repo":"octo/app","integrity":"passed"}]}`
 	dumpText   = "-- PostgreSQL database dump\nCOPY owner (totp_secret) FROM stdin;\nHUNTER2-TOTP\n"
 )
 
@@ -57,6 +57,7 @@ func newUpgradeHarness(t *testing.T, edit func(s *Settings)) *upgradeHarness {
 	h.status = httpGet // the service of this harness answers on a real port
 	s := colocatedSettings()
 	s.HTTPPort, s.MCPPort, s.Connection, s.Image = port, port+1, "pm", oldImage
+	s.BackupRecipient, _ = testRecoveryKey(t)
 	if edit != nil {
 		edit(&s)
 	}

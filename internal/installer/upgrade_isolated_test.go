@@ -67,6 +67,7 @@ func newIsoUpgrade(t *testing.T, edit func(p *UnitParams)) *isoUpgrade {
 	installedUnits(t, home, p)
 	s := isolatedSettings()
 	s.HTTPPort, s.MCPPort, s.JobTimeout, s.Image = port, port+1, "3m", oldImage
+	s.BackupRecipient, _ = testRecoveryKey(t)
 	if err := SaveSettings(settingsFile(home), s); err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +76,19 @@ func newIsoUpgrade(t *testing.T, edit func(p *UnitParams)) *isoUpgrade {
 	}
 	up.f, up.home, up.backups, up.port = f, home, filepath.Join(home, "backups"), port
 	return up
+}
+
+// withoutRecipient saves the settings of the host again with no backup recipient, as an install before M1.13 left them.
+func (u *isoUpgrade) withoutRecipient() {
+	u.t.Helper()
+	s, err := LoadSettings(settingsFile(u.home))
+	if err != nil {
+		u.t.Fatal(err)
+	}
+	s.BackupRecipient = ""
+	if err := SaveSettings(settingsFile(u.home), s); err != nil {
+		u.t.Fatal(err)
+	}
 }
 
 func (u *isoUpgrade) env() Env {

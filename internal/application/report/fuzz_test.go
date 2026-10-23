@@ -88,64 +88,79 @@ func splitAfter(s string) []string {
 	return lines
 }
 
+// rebuild is the proposal in the making while hunks are applied to the lines of the canonical version.
+type rebuild struct {
+	old                       []string
+	out                       strings.Builder
+	pos, written, plus, minus int
+}
+
 // apply rebuilds the proposal from old and hunks, checking that every context and removed line is the old line it
 // claims and that every hunk header numbers its lines as a unified diff does.
 func apply(old string, hunks []report.Hunk) (rebuilt string, plus, minus int, err error) {
-	oldLines := splitAfter(old)
-	var out strings.Builder
-	pos, written := 0, 0
+	r := &rebuild{old: splitAfter(old)}
 	for i, h := range hunks {
-		start := h.OldStart - 1
-		if h.OldLines == 0 {
-			start = h.OldStart
-		}
-		if start < pos || start > len(oldLines) {
-			return "", 0, 0, fmt.Errorf("hunk %d starts at old line %d with %d lines done", i, h.OldStart, pos)
-		}
-		for ; pos < start; pos++ {
-			out.WriteString(oldLines[pos])
-			written++
-		}
-		wantNew := written + 1
-		if h.NewLines == 0 {
-			wantNew = written
-		}
-		if h.NewStart != wantNew {
-			return "", 0, 0, fmt.Errorf("hunk %d has NewStart %d, want %d", i, h.NewStart, wantNew)
-		}
-		oldCount, newCount := 0, 0
-		for _, l := range h.Lines {
-			text := l.Text
-			if !l.NoNewline {
-				text += "\n"
-			}
-			if l.Kind != report.LineAdded {
-				if pos >= len(oldLines) || oldLines[pos] != text {
-					return "", 0, 0, fmt.Errorf("hunk %d line %q is not old line %d", i, text, pos+1)
-				}
-				pos++
-				oldCount++
-			}
-			if l.Kind != report.LineRemoved {
-				out.WriteString(text)
-				written++
-				newCount++
-			}
-			switch l.Kind {
-			case report.LineAdded:
-				plus++
-			case report.LineRemoved:
-				minus++
-			}
-		}
-		if oldCount != h.OldLines || newCount != h.NewLines {
-			return "", 0, 0, fmt.Errorf("hunk %d counts %d/%d old/new lines, its header says %d/%d", i, oldCount, newCount, h.OldLines, h.NewLines)
+		if err := r.hunk(i, h); err != nil {
+			return "", 0, 0, err
 		}
 	}
-	for ; pos < len(oldLines); pos++ {
-		out.WriteString(oldLines[pos])
+	r.copyTo(len(r.old))
+	return r.out.String(), r.plus, r.minus, nil
+}
+
+// copyTo copies the unchanged old lines up to old line index end.
+func (r *rebuild) copyTo(end int) {
+	for ; r.pos < end; r.pos++ {
+		r.out.WriteString(r.old[r.pos])
+		r.written++
 	}
-	return out.String(), plus, minus, nil
+}
+
+func (r *rebuild) hunk(i int, h report.Hunk) error {
+	start := h.OldStart - 1
+	if h.OldLines == 0 {
+		start = h.OldStart
+	}
+	if start < r.pos || start > len(r.old) {
+		return fmt.Errorf("hunk %d starts at old line %d with %d lines done", i, h.OldStart, r.pos)
+	}
+	r.copyTo(start)
+	wantNew := r.written + 1
+	if h.NewLines == 0 {
+		wantNew = r.written
+	}
+	if h.NewStart != wantNew {
+		return fmt.Errorf("hunk %d has NewStart %d, want %d", i, h.NewStart, wantNew)
+	}
+	oldCount, newCount := 0, 0
+	for _, l := range h.Lines {
+		text := l.Text
+		if !l.NoNewline {
+			text += "\n"
+		}
+		if l.Kind != report.LineAdded {
+			if r.pos >= len(r.old) || r.old[r.pos] != text {
+				return fmt.Errorf("hunk %d line %q is not old line %d", i, text, r.pos+1)
+			}
+			r.pos++
+			oldCount++
+		}
+		if l.Kind != report.LineRemoved {
+			r.out.WriteString(text)
+			r.written++
+			newCount++
+		}
+		switch l.Kind {
+		case report.LineAdded:
+			r.plus++
+		case report.LineRemoved:
+			r.minus++
+		}
+	}
+	if oldCount != h.OldLines || newCount != h.NewLines {
+		return fmt.Errorf("hunk %d counts %d/%d old/new lines, its header says %d/%d", i, oldCount, newCount, h.OldLines, h.NewLines)
+	}
+	return nil
 }
 
 // lcs is the length of the longest common subsequence of a and b.

@@ -323,3 +323,27 @@ func TestAnyErrorAfterCtrlCExits130(t *testing.T) {
 		t.Errorf("exit %d with stderr %q, want 130 and the error that ended the command", code, stderr.String())
 	}
 }
+
+// With GitHub the enrollment waits for /status first. A service that never answers is waited for once: the summary does not wait for it
+// again after the enrollment gave up.
+func TestAServiceThatNeverAnswersIsWaitedForOnceByAnInstallWithGitHub(t *testing.T) {
+	h := newHarness(t, "linux")
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	asked := 0
+	h.status = func(context.Context, string) ([]byte, error) {
+		asked++
+		return nil, errors.New("connection refused")
+	}
+	c := newTermConsole(&bytes.Buffer{})
+	env := h.newEnv()
+	env.OpenScreen = c.open
+	if err := Install(liveContext(t), colocatedArgs(h), env); err != nil {
+		t.Fatal(err)
+	}
+	if asked != statusTries {
+		t.Errorf("/status was asked %d times, want %d: the wait of the enrollment, and none after it", asked, statusTries)
+	}
+	if tail := c.tail(); strings.Contains(tail, "Instance:") || !strings.Contains(tail, "Status: ") {
+		t.Errorf("the summary of a service that does not answer has an Instance row or lacks the rest:\n%s", tail)
+	}
+}

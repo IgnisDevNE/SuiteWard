@@ -147,6 +147,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	c.OutboxPollInterval = number(l, "OUTBOX_POLL_INTERVAL", "5s", time.Second, time.Hour, time.ParseDuration)
 	c.OutboxLease = number(l, "OUTBOX_LEASE", "1m", 5*time.Second, 0, time.ParseDuration)
 	c.Tier = l.tier("INSTALLATION_TIER")
+	c.ReportBaseURL = l.reportBaseURL("REPORT_BASE_URL")
 	c.GitHub = l.github()
 	c.MCP = l.mcp(c.HTTPAddr)
 
@@ -362,6 +363,35 @@ func (l *loader) repositories(name, value string) []string {
 }
 
 // tier reads the declared installation tier: exactly isolated or co-located, default co-located.
+// reportBaseURL reads the origin that the links of the change report name: http://127.0.0.1:<port> or http://localhost:<port>, the HTTP port of
+// the instance as the machine that runs it sees it, and nothing else, so a comment never links an address that another machine can serve. Empty
+// when unset. A trailing slash is dropped and the host is lowercased.
+func (l *loader) reportBaseURL(name string) string {
+	v := l.optional(name, "")
+	if v == "" {
+		return ""
+	}
+	base, ok := loopbackOrigin(v)
+	if !ok {
+		// No cause and no value: url.Parse errors quote the whole URL.
+		l.fail(name, errors.New("must be http://127.0.0.1:<port> or http://localhost:<port>, with a port from 1 to 65535 and no path, query, fragment or user info"))
+	}
+	return base
+}
+
+func loopbackOrigin(v string) (string, bool) {
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme != "http" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", false
+	}
+	host, port := strings.ToLower(u.Hostname()), u.Port()
+	n, err := strconv.Atoi(port)
+	if (host != "127.0.0.1" && host != "localhost") || err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
+		return "", false
+	}
+	return "http://" + host + ":" + port, true
+}
+
 func (l *loader) tier(name string) Tier {
 	switch v := Tier(l.optional(name, string(TierCoLocated))); v {
 	case TierIsolated, TierCoLocated:

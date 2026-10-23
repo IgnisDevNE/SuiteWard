@@ -1,18 +1,22 @@
 package installer
 
 import (
+	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // ErrUsage marks a command line that cannot be parsed.
@@ -20,11 +24,15 @@ var ErrUsage = errors.New("usage")
 
 // Usage is printed with a usage error; each command lists its flags with --help.
 const Usage = `usage: suiteward install [flags]
-       suiteward install --upgrade [--yes] [--backup-dir DIR] [--image sha256:<digest>] [flags]
+       suiteward install --upgrade [--yes] [--backup-dir DIR] [--backup-recipient age1pq1...] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
        suiteward uninstall [--purge] [--yes] [flags]
-       suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]
-       suiteward doctor [--json] [--settings PATH]
+       suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated] [--plain]
+       suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated] [--plain]
+       suiteward backup [--to DIR] [--settings PATH] [--tier isolated] [--plain]
+       suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
+       suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
+       suiteward doctor [--json] [--settings PATH] [--plain]
 `
 
 // Env is what the install commands need from the machine; tests replace it.
@@ -37,6 +45,11 @@ type Env struct {
 	ResolveGitHub func(ctx context.Context, env githubEnv) (GitHubResult, error)
 	// HTTPGet reads an address of the local service (/status); nil means httpGet. A test replaces it.
 	HTTPGet func(ctx context.Context, address string) ([]byte, error)
+	// Version is shown in the title bar of the full screen ("installer <Version>"); empty reads "dev". The caller that knows the build version
+	// (app.Run) sets it.
+	Version string
+	// OpenScreen opens the console of one command (ui.OpenOS on the process's console); nil means a plain one on Term.Out. A test replaces it.
+	OpenScreen func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error)
 }
 
 func (e Env) httpGet() func(context.Context, string) ([]byte, error) {
@@ -50,7 +63,45 @@ func (e Env) httpGet() func(context.Context, string) ([]byte, error) {
 func OSEnv(stdout io.Writer) Env {
 	term := OSTerminal()
 	term.Out = stdout
-	return Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
+	env := Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
+	if stdout == io.Writer(os.Stdout) { // the full screen takes over the process's console, so only the real stdout may ask for it
+		env.OpenScreen = ui.OpenOS
+	}
+	return env
+}
+
+// openConsole opens the Screen of one command and returns the Env that talks through it: its output is the Screen, and its input the
+// buffered reader the Screen reads the answers from, so that the Resolver, the Screen and a read in a goroutine share one buffer. The
+// caller defers endConsole, which also runs before an error is printed to stderr.
+func (e Env) openConsole(ctx context.Context, plain bool) (*ui.Screen, Env, error) {
+	if err := e.Term.validate(); err != nil {
+		return nil, e, err
+	}
+	in, version := bufio.NewReader(e.Term.In), cmp.Or(e.Version, "dev")
+	var scr *ui.Screen
+	var err error
+	if e.OpenScreen != nil {
+		scr, err = e.OpenScreen(ctx, in, version, plain)
+	} else {
+		scr, err = ui.Open(ui.Options{Out: e.Term.Out, In: in, Context: ctx, Version: version, Mode: ui.ModePlain})
+	}
+	if err != nil {
+		return nil, e, fmt.Errorf("open the console: %w", err)
+	}
+	e.Term.In, e.Term.Out = in, scr
+	return scr, e, nil
+}
+
+// wantsPlain says whether --plain, or plain in the answers file, asks for plain lines instead of the full screen; the flag wins.
+func wantsPlain(flags, answers map[string]string) (bool, error) {
+	v, ok := flags["plain"]
+	if !ok {
+		v, ok = answers["plain"]
+	}
+	if !ok {
+		return false, nil
+	}
+	return parseYesNo("plain", v)
 }
 
 func loopbackFree(port int) error {
@@ -71,7 +122,7 @@ func (e Env) validate() error {
 	return nil
 }
 
-// Main runs one command of the installer: args start with the command name (install, install host, uninstall, enroll or doctor).
+// Main runs one command of the installer: args start with the command name (install, install host, uninstall, enroll, backup, backup init, restore or doctor).
 // It returns the process exit code and prints a problem to stderr.
 func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	command, rest := "", []string(nil)
@@ -84,6 +135,12 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		err = installHost(ctx, rest[1:], env)
 	case command == "install":
 		err = Install(ctx, rest, env)
+	case command == "backup" && len(rest) > 0 && rest[0] == "init":
+		err = BackupInit(ctx, rest[1:], env)
+	case command == "backup":
+		err = Backup(ctx, rest, env)
+	case command == "restore":
+		err = Restore(ctx, rest, env)
 	case command == "enroll":
 		err = Enroll(ctx, rest, env)
 	case command == "uninstall":
@@ -100,6 +157,11 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		// A failed write to stderr cannot be reported anywhere else.
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
+	// Ctrl-C: the command has closed its screen, and read nothing since. cmd/suiteward cancels the context for SIGTERM as well, so a
+	// SIGTERM ends here too, as "interrupted" with 130; that is accepted.
+	case ctx.Err() != nil && errors.Is(err, context.Canceled):
+		_, _ = fmt.Fprintf(stderr, "suiteward: interrupted: %v\n", err) // the error keeps what a failed step left behind and how to clean it up
+		return 130
 	default:
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", err)
 		return 1
@@ -151,9 +213,14 @@ func newInstallFlagSet() *flag.FlagSet {
 	fs.Bool("accept-docker", false, "confirm that Docker may be used although Podman is recommended")
 	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
 	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading (it does not start a service that is down: that is asked on its own)")
-	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
+	fs.String("backup-dir", "", "with --upgrade: the directory the backup file is made in (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
+	fs.String("backup-recipient", "", "with --upgrade, where no terminal can be asked: the public key (age1pq1...) the backup is encrypted to, stored in the settings (the answers-file key is backup_recipient)")
+	fs.Bool("plain", false, plainUsage)
 	return fs
 }
+
+// plainUsage is the help of --plain, which every command that draws a screen has.
+const plainUsage = "print plain lines instead of the full-screen window, also on a terminal (what a pipe, a script and NO_COLOR get)"
 
 func printHelp(fs *flag.FlagSet, out io.Writer) {
 	_, _ = io.WriteString(out, Usage)
@@ -163,17 +230,42 @@ func printHelp(fs *flag.FlagSet, out io.Writer) {
 
 // parse parses args and reports a bad command line as a usage error, and --help as flag.ErrHelp after printing the flags.
 func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, error) {
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			printHelp(fs, out)
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: %v", ErrUsage, err)
+	if err := parseFlags(fs, args, out); err != nil {
+		return nil, err
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
 	}
 	return FlagsSet(fs), nil
+}
+
+func parseFlags(fs *flag.FlagSet, args []string, out io.Writer) error {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printHelp(fs, out)
+			return err
+		}
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	return nil
+}
+
+// parseWithFile is parse for a command with at most one argument that is not a flag, a file, which may come before the flags: the flag
+// package stops at the first argument that is not a flag, so the rest is parsed again.
+func parseWithFile(fs *flag.FlagSet, args []string, out io.Writer) (file string, flags map[string]string, err error) {
+	if err := parseFlags(fs, args, out); err != nil {
+		return "", nil, err
+	}
+	if fs.NArg() > 0 {
+		file = fs.Arg(0)
+		if err := parseFlags(fs, fs.Args()[1:], out); err != nil {
+			return "", nil, err
+		}
+	}
+	if fs.NArg() > 0 {
+		return "", nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
+	}
+	return file, FlagsSet(fs), nil
 }
 
 // settingsPathFrom is the settings file of a command and whether it is the shared per-user default.
@@ -198,7 +290,7 @@ func loadSaved(path string) (Settings, bool, error) {
 }
 
 // Install runs the install command (args without the command name).
-func Install(ctx context.Context, args []string, env Env) error {
+func Install(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
 	}
@@ -213,8 +305,19 @@ func Install(ctx context.Context, args []string, env Env) error {
 			return err
 		}
 	}
+	plain, err := wantsPlain(flags, answers)
+	if err != nil {
+		return err
+	}
+	scr, env, err := env.openConsole(ctx, plain)
+	if err != nil {
+		return err
+	}
+	defer endConsole(scr, &err)
 	aliasGitHubKeys(flags)
 	aliasGitHubKeys(answers)
+	aliasBackupKey(flags)
+	aliasBackupKey(answers)
 	r, err := NewResolver(flags, answers, env.Term)
 	if err != nil {
 		return err
@@ -229,6 +332,9 @@ func Install(ctx context.Context, args []string, env Env) error {
 	}
 
 	upgrade := flags["upgrade"] == "true"
+	if _, given := r.given("backup-recipient"); given && !upgrade {
+		return errors.New("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `suiteward backup init`")
+	}
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
 		if err := tierNeeded(r, haveSaved, env.Deps.GOOS); err != nil {
@@ -257,7 +363,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 }
 
 // installHost is `suiteward install host`, the administrator half of the isolated install.
-func installHost(ctx context.Context, args []string, env Env) error {
+func installHost(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
 	}
@@ -265,6 +371,7 @@ func installHost(ctx context.Context, args []string, env Env) error {
 	fs.String("answers", "", "read answers from this YAML file (a flag wins over it)")
 	fs.Bool("yes", false, "answer yes to installing Podman (dnf)")
 	fs.String("metadata-rule", "", "yes or no: refuse the cloud metadata address for the service account")
+	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {
 		return err
@@ -275,6 +382,15 @@ func installHost(ctx context.Context, args []string, env Env) error {
 			return err
 		}
 	}
+	plain, err := wantsPlain(flags, answers)
+	if err != nil {
+		return err
+	}
+	scr, env, err := env.openConsole(ctx, plain)
+	if err != nil {
+		return err
+	}
+	defer endConsole(scr, &err)
 	r, err := NewResolver(flags, answers, env.Term)
 	if err != nil {
 		return err
@@ -288,6 +404,7 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	fs := newFlagSet("doctor")
 	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
 	fs.Bool("json", false, "print the results as JSON")
+	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
@@ -297,7 +414,25 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
 	}
-	return Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, flags["json"] == "true")
+	if flags["json"] == "true" { // JSON is for a program: it is never drawn on a screen that vanishes
+		return Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, true)
+	}
+	plain, err := wantsPlain(flags, nil)
+	var scr *ui.Screen
+	if err == nil {
+		scr, env, err = env.openConsole(ctx, plain)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", err)
+		return 1
+	}
+	var closed error
+	defer endConsole(scr, &closed) // a panic must not leave the terminal on the alternate screen; the exit code below reads the error of Close
+	code := Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, false)
+	if err := scr.Close(); err != nil && code == 0 {
+		return 1 // the report could not be written to the terminal, and nothing else says so
+	}
+	return code
 }
 
 // preset is an answer that is never asked for: the flag or the answers file, else def.

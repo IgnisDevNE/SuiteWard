@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/archive"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // ErrNothingInstalled is the refusal of --upgrade, and of uninstall without --purge, when there is no stack to work on.
@@ -61,10 +63,15 @@ func backupParent(r *Resolver, secretDir string) string {
 	return r.preset("backup-dir", filepath.Join(secretDir, "backups"))
 }
 
-// confirmUpgrade shows the plan and asks, unless --yes was given. serviceStarted says that the upgrade started a service that was down.
-func confirmUpgrade(r *Resolver, plan upgradePlan, parent string, serviceStarted bool) error {
+// confirmUpgrade shows the plan and asks, unless --yes was given. recipient is the key the backup is encrypted to, "" when a terminal
+// is offered a new one. serviceStarted says that the upgrade started a service that was down.
+func confirmUpgrade(r *Resolver, plan upgradePlan, parent, recipient string, serviceStarted bool) error {
 	r.say("%s", plan.describe())
-	r.say("A backup of the database and the artifacts is made first, in a new directory under %s.\n", parent)
+	key := "a new recovery key, which you agreed to make first"
+	if recipient != "" {
+		key = "the recovery key " + archive.Fingerprint(recipient)
+	}
+	r.say("An encrypted backup of the database and the artifacts is made first, as a new file under %s, encrypted to %s.\n", parent, key)
 	ok, err := r.confirm("yes", "Back up and upgrade now?")
 	if err != nil {
 		return err
@@ -116,6 +123,8 @@ func (c *colocatedInstall) readStatus(ctx context.Context) ([]byte, error) {
 // any change), show what changes and ask, back up, pull, then the same bring-up as the install: migrate must exit 0 before the
 // service starts. The volumes, the secrets and the settings the stack has are kept.
 func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
+	scr := r.screen
+	scr.Steps("Plan", "Backup", "Images", "Replace", "Check")
 	image, err := upgradeTarget(r)
 	if err != nil {
 		return err
@@ -166,6 +175,11 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctor)
 		return nil
 	}
+	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
+	agreed, err := settleRecipient(r, env, &s)
+	if err != nil {
+		return err
+	}
 	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: r.preset("token-file", "")}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
@@ -185,34 +199,83 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	parent := backupParent(r, filepath.Dir(c.tokenFile))
-	if err := confirmUpgrade(r, plan, parent, started); err != nil {
+	if err := confirmUpgrade(r, plan, parent, s.BackupRecipient, started); err != nil {
 		return err
 	}
-	dir, err := takeBackup(ctx, backup{rt: rt, d: env.Deps, parent: parent, status: c.readStatus, now: time.Now})
+	scr.Step(2)
+	stored := s
+	stored.Image = previous.Image // what the settings file says until the upgrade is done: a key made now is saved beside it
+	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus, startCommand: startCommand, serviceStarted: started}
+	dir, err := upgradeBackup(ctx, r, env, &inst, parent, nil, agreed)
 	if err != nil {
 		return err
 	}
+	c.s.BackupRecipient = inst.s.BackupRecipient
 	c.say("Backup written to %s.\n", dir)
+	scr.Step(3)
 	if err := c.pullImages(ctx); err != nil {
-		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
+		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
 		return withBackup(err, dir, "")
 	}
+	scr.Step(4)
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
 		return withBackup(err, dir, "")
 	}
+	scr.Step(5)
 	c.restartAfterReboot(ctx)
-	upgraded(c.say, previous.Image, image, dir, doctor)
-	return nil
+	upgraded(scr, previous.Image, image, dir, doctor)
+	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
-// upgraded prints the end of a successful upgrade: where the backup is, how to go back and what to run next.
-func upgraded(say func(string, ...any), previous, image, backupDir, doctor string) {
-	say("Upgraded to %s.\n", digestOf(image))
-	say("The backup is in %s. It holds the TOTP secret: keep it offline and private.\n", backupDir)
-	say("To go back, restore that backup with the previous image %s (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous))
-	say("Check the instance with `%s`.\n", doctor)
+// settleRecipient settles the key the backup of an upgrade is encrypted to, from the settings and what the command was given, before
+// the upgrade starts anything, a service that is down included. Without one, an upgrade that has no terminal is refused, and a terminal
+// is asked whether to make one: a no ends the run here, and a yes (agreed) is acted on once the service answers, because the instance id of
+// /status names the kit. The key is stored with the settings when the upgrade is done.
+func settleRecipient(r *Resolver, env Env, s *Settings) (agreed bool, err error) {
+	if err := askedRecipient(r, s); err != nil {
+		return false, err
+	}
+	if s.BackupRecipient != "" {
+		return false, nil
+	}
+	if !env.Term.IsTerminal {
+		return false, noKeyError(true)
+	}
+	if err := askForKey(r, true); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// upgradeBackup is the Backup step of an upgrade: the key (the settings', or the new one that the terminal agreed to), then the encrypted
+// backup under one spinner. It returns the archive.
+func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, dir string, beside func(archive string) error, agreed bool) (string, error) {
+	recipient, err := recipientOf(ctx, r, env, inst, agreed)
+	if err != nil {
+		return "", err
+	}
+	if err := prepareBackupDir(dir, r.screen.Warn); err != nil {
+		return "", backupFailed(err, inst.serviceStarted)
+	}
+	b := inst.backup(env.Deps, dir, recipient)
+	b.beside = beside
+	var path string
+	err = working(r.screen, "Backing up the database and the artifacts", func() (err error) {
+		path, err = takeBackup(ctx, b)
+		return err
+	})
+	return path, err
+}
+
+// upgraded prints the end of a successful upgrade: where the backup is, how to go back and what to run next. The two lines about the
+// backup are kept, so that they are still there when the screen has gone.
+func upgraded(scr *ui.Screen, previous, image, backupPath, doctor string) {
+	scr.Say("Upgraded to %s.\n", digestOf(image))
+	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to your recovery key: keep its kit off this machine.\n", backupPath)
+	scr.Keep("To go back, install the previous release %s and run `suiteward restore %s` with that kit (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous), quoteArg(backupPath))
+	scr.Say("Check the instance with `%s`.\n", doctor)
 }
 
 // The wait for /status of a service the upgrade started: at most startWaitTries probes, and a deadline on the whole wait, because a
@@ -253,11 +316,13 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, startWait)
 	defer cancel()
+	bar := barOn(r.screen, "Service")
 	var lastErr error
 	for i := range startWaitTries {
 		if _, lastErr = status(waitCtx); lastErr == nil || waitCtx.Err() != nil {
 			break
 		}
+		bar.set(float64(i)/startWaitTries, "waiting for /status")
 		if i < startWaitTries-1 {
 			env.Sleep(statusEvery)
 		}
@@ -265,6 +330,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	if lastErr != nil {
 		return true, fmt.Errorf("the service was started, but /status still does not answer (%w): read its logs; or %s", lastErr, manual)
 	}
+	bar.set(1, "answers")
 	return true, nil
 }
 

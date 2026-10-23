@@ -58,7 +58,7 @@ func ColocatedStack(s Settings, image string) (Stack, error) {
 		Name: ContainerServe, Image: image, Network: NetworkName, Detach: true, Restart: "always", Memory: "256m", StopTimeout: 45,
 		Env: []string{
 			"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
-			"SUITEWARD_INSTALLATION_TIER=" + string(s.Tier),
+			"SUITEWARD_INSTALLATION_TIER=" + string(s.Tier), reportBaseURLEnv + "=" + reportBaseURL(s.HTTPPort),
 		},
 		Secrets: []string{SecretDatabaseURL, SecretMCPAuth},
 		Volumes: []string{VolumeData + ":/data"},

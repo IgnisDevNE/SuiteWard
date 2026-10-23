@@ -112,3 +112,11 @@ func (p *Podman) Run(ctx context.Context, spec RunSpec) error {
 	}
 	return nil
 }
+
+// ImportVolume is `podman volume import`, which reads the file itself.
+func (p *Podman) ImportVolume(ctx context.Context, volume, path string) error {
+	if _, err := p.run(ctx, nil, "volume", "import", volume, path); err != nil {
+		return fmt.Errorf("import the volume %s: %w", volume, err)
+	}
+	return nil
+}

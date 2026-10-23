@@ -254,6 +254,8 @@ func knownUnitFields(serve []string) (p UnitParams, diffs []Diff, imageKnown boo
 	// A unit with neither App key line is a stack without GitHub, a known shape; one line alone is read as "with" so that the
 	// comparison names the other as missing.
 	p.NoGitHub = len(values("Secret="+SecretGitHubAppKey+",")) == 0 && len(values("Environment=SUITEWARD_GITHUB_APP_KEY_FILE=")) == 0
+	// A unit of v0.3.0-alpha.2 has no report base URL line, a known shape; a line that is there must be the port's, or it is a diff.
+	p.NoReportURL = len(values("Environment="+reportBaseURLEnv+"=")) == 0
 	return p, diffs, imageKnown
 }
 

@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // The service-account half of the isolated install, run as the account `sudo suiteward install host` prepared and never as
@@ -137,7 +139,8 @@ func askedSettings(r *Resolver, base Settings) (Settings, error) {
 }
 
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
-	d, out := env.Deps, env.Term.Out
+	d, out, scr := env.Deps, env.Term.Out, r.screen
+	scr.Steps("Checks", "Images", "GitHub", "Units", "Start", "Owner", "Done")
 	s, err := askedSettings(r, s)
 	if err != nil {
 		return err
@@ -151,7 +154,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 
 	// The adoption guard and the image, before anything is changed.
 	neverStarted := func() (bool, error) { return stackNeverStarted(host.run, settingsPath) }
-	digest, installed, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, say)
+	digest, installed, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, scr.Warn) // what it changes is a notice to keep
 	if err != nil {
 		return err
 	}
@@ -171,18 +174,20 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err != nil {
 		return err
 	}
-	if err := checkPortsFree(ctx, d, s, own, say); err != nil {
+	if err := checkPortsFree(ctx, d, s, own, scr.Warn); err != nil {
 		return err
 	}
 
 	// Every input, resolved and checked: the images first, so a wrong digest fails before the flow creates an App.
+	scr.Step(2)
 	postgres, err := PostgresImage()
 	if err != nil {
 		return err
 	}
-	if err := pullMissing(ctx, rt, postgres, releaseImageRepo+"@"+digest); err != nil {
+	if err := pullMissing(ctx, scr, rt, postgres, releaseImageRepo+"@"+digest); err != nil {
 		return err
 	}
+	scr.Step(3)
 	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath), enrollHint: enrollCommand(r, true)}
 	if err := g.githubFlow(ctx, r, configDir); err != nil {
 		return err
@@ -196,6 +201,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 
 	// Changes begin here. The env file comes before the secrets: when the flow just created the App (its key is stored already), a
 	// failure in between must still leave a file for a re-run to take the App from.
+	scr.Step(4)
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", configDir, err)
 	}
@@ -209,24 +215,26 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
-	units, err := prepareUnits(ctx, host, d, UnitParamsFrom(g.s, digest), false)
+	units, err := prepareUnits(ctx, host, d, scr, UnitParamsFrom(g.s, digest), false)
 	if err != nil {
 		return err
 	}
 
 	// A running service reads its unit, its env file and its key secret when it starts: it is restarted when this run changed
 	// one of them, and before setup enrolls the owner, which must not happen on a service that cannot reach GitHub yet.
-	leftRunning, err := startStack(ctx, rt, d, installed.mustRestart(units, envChanged, keyStored))
+	scr.Step(5)
+	leftRunning, err := startStack(ctx, rt, d, scr, installed.mustRestart(units, envChanged, keyStored))
 	if err != nil {
 		return err
 	}
-	if err := waitStable(ctx, env, g.s.HTTPPort); err != nil {
+	if err := waitStable(ctx, env, scr, g.s.HTTPPort); err != nil {
 		return err
 	}
 	if err := SaveSettings(settingsPath, g.s); err != nil {
 		return err
 	}
 	g.clearPending() // the settings name the App now
+	scr.Step(6)
 	say("\nSuiteWard %s is running on this account. Settings are saved in %s.\n\n", digest, settingsPath)
 	if gh.AppID == 0 {
 		say("GitHub is not configured in the settings of this run: if the service should reach GitHub, run the install again with --github yes (or the GitHub values).\n")
@@ -240,7 +248,8 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	}
 	say("Then run `suiteward doctor`.\n")
 	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, leftRunning)
-	return nil
+	scr.Step(7)
+	return showSummary(scr, func() []ui.KV { return isolatedSummary(ctx, env, host, g.s, ui.KV{Key: "Owner", Value: g.owner}) })
 }
 
 // checkEnvFileHoldsNoApp refuses, before any change, a run without an App over an env file that holds one. The service reads the
@@ -270,7 +279,7 @@ func (g *githubInstall) checkAppKey(ctx context.Context, envPath string) error {
 			return err
 		}
 		g.githubKey = append(bytes.TrimSpace(g.githubKey), '\n') // one trailing newline, whatever the file or stdin had
-		g.say("App private key fingerprint: %s\nCompare it with the fingerprint of the key on the App's settings page; a wrong or revoked key looks right to every other check.\n", fingerprint)
+		screenOn(g.out).Keep("App private key fingerprint: %s\nCompare it with the fingerprint of the key on the App's settings page; a wrong or revoked key looks right to every other check.\n", fingerprint)
 		return nil
 	}
 	if g.s.GitHub.AppID == 0 {
@@ -304,7 +313,7 @@ func sayOldEnvFile(out io.Writer, current, old string, leftRunning bool) {
 	if leftRunning {
 		reads = "will read its GitHub settings from " + current + " on its next start (it was already running and was not restarted)"
 	}
-	_, _ = fmt.Fprintf(out, "\nThe service %s. An administrator may remove the old file: sudo rm %s\n", reads, old)
+	screenOn(out).Keep("\nThe service %s. An administrator may remove the old file: sudo rm %s\n", reads, old)
 }
 
 // ensureNetwork restarts the network service of the stack when the database, the migration and the service (serviceActive, which
@@ -338,7 +347,7 @@ func ensureNetwork(ctx context.Context, systemctl func(ctx context.Context, args
 // role, starts the service (the unit dependency runs migrate first) and checks the three units. It reports whether a running
 // service was left as it was: starting a running service does nothing, so it keeps what it read at its last start. With restart
 // (what it reads changed: its unit, its env file or its key secret) a running service is restarted instead, so that it takes them.
-func startStack(ctx context.Context, rt Runtime, d Deps, restart bool) (leftRunning bool, err error) {
+func startStack(ctx context.Context, rt Runtime, d Deps, scr *ui.Screen, restart bool) (leftRunning bool, err error) {
 	systemctl := userSystemctl(d)
 	before, err := systemctl(ctx, "show", "--property=ActiveState", "--value", "suiteward.service")
 	if err != nil {
@@ -352,7 +361,7 @@ func startStack(ctx context.Context, rt Runtime, d Deps, restart bool) (leftRunn
 	if _, err := systemctl(ctx, "start", "suiteward-db.service"); err != nil {
 		return leftRunning, fmt.Errorf("start the database: %w", err)
 	}
-	if err := waitHealthy(ctx, rt); err != nil {
+	if err := waitHealthy(ctx, rt, barOn(scr, "Database")); err != nil {
 		return leftRunning, err
 	}
 	if err := ensureAppRole(ctx, rt); err != nil {
@@ -370,7 +379,7 @@ func startStack(ctx context.Context, rt Runtime, d Deps, restart bool) (leftRunn
 	}
 	// The migration unit stays active after it ran (RemainAfterExit), so starting the service would not run it again for a release
 	// that changed since: a stopped service gets the migration restarted first.
-	return false, migrateAndStart(ctx, d)
+	return false, migrateAndStart(ctx, d, scr)
 }
 
 // userSystemctl runs `systemctl --user` and returns its trimmed output.
@@ -404,7 +413,8 @@ const (
 
 // waitStable returns nil once /readyz of the service on httpPort answered 200 stablePolls times in a row and the restart count
 // of suiteward.service did not grow since before the first poll. Otherwise it names the journal to read.
-func waitStable(ctx context.Context, env Env, httpPort int) error {
+func waitStable(ctx context.Context, env Env, scr *ui.Screen, httpPort int) error {
+	bar := barOn(scr, "Service")
 	address := "http://127.0.0.1:" + strconv.Itoa(httpPort) + "/readyz"
 	systemctl := userSystemctl(env.Deps)
 	restarts := func() (int, error) {
@@ -441,6 +451,7 @@ func waitStable(ctx context.Context, env Env, httpPort int) error {
 		if n > first {
 			return fmt.Errorf("suiteward.service restarted %d times while waiting for it to settle: %s", n-first, journal)
 		}
+		bar.set(float64(answered)/stablePolls, fmt.Sprintf("answered %d of %d times", answered, stablePolls))
 		if answered == stablePolls {
 			return nil
 		}
@@ -831,8 +842,9 @@ func unitService(file string) string {
 }
 
 // waitHealthy waits for the database container to report healthy; the guide's loop has no limit, this one has.
-func waitHealthy(ctx context.Context, rt Runtime) error {
-	deadline := time.Now().Add(dbHealthTimeout)
+func waitHealthy(ctx context.Context, rt Runtime, bar waitBar) error {
+	start := time.Now()
+	deadline := start.Add(dbHealthTimeout)
 	for {
 		state, err := rt.State(ctx, ContainerDB)
 		last := state.Health
@@ -840,11 +852,13 @@ func waitHealthy(ctx context.Context, rt Runtime) error {
 			last = err.Error()
 		}
 		if err == nil && state.Health == "healthy" {
+			bar.set(1, "healthy")
 			return nil
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("the database was not healthy within %s (last: %q): read `journalctl --user -u suiteward-db.service -n 50 --no-pager`", dbHealthTimeout, last)
 		}
+		bar.set(float64(time.Since(start))/float64(dbHealthTimeout), "starting")
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

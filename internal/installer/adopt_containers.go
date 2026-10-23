@@ -123,6 +123,11 @@ func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 	if refreshDB && pinnedPostgres.MatchString(dbImage) {
 		stack.DB.Image = dbImage
 	}
+	// A service of v0.3.0-alpha.2 has no report base URL, a known shape that the next install or upgrade completes; one that has the
+	// variable must have the port's value, or it is a diff.
+	if _, has := envMap(parsed[ContainerServe].Config.Env)[reportBaseURLEnv]; !has {
+		stack.Serve.Env = slices.DeleteFunc(stack.Serve.Env, func(e string) bool { return strings.HasPrefix(e, reportBaseURLEnv+"=") })
+	}
 	specs := []RunSpec{stack.DB, stack.Migrate}
 	if len(diffs) == 0 { // a service whose known fields could not be read is already reported, and its defaults would only repeat it
 		specs = append(specs, stack.Serve)

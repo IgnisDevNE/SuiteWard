@@ -24,8 +24,8 @@ func TestUpgradeColocatedStopsAtTheStepThatFails(t *testing.T) {
 		{"the secrets cannot be read", "secret ls --filter name=" + SecretDBAuth, nil, []string{errInjected.Error()}, false},
 		{"the new image cannot be pulled", "pull " + testImage, nil, []string{errInjected.Error(), "nothing was changed", "the backup is in"}, true},
 		{"the database cannot be started", "run --detach --replace --name suiteward-db ", nil, []string{errInjected.Error(), "Migrate did not run", "The backup is in"}, true},
-		{"migrate fails", "run --rm --replace --name suiteward-migrate", nil, []string{errInjected.Error(), "restore it with the previous image"}, true},
-		{"the service cannot be started", "run --detach --replace --name suiteward --network", nil, []string{errInjected.Error(), "restore it with the previous image"}, true},
+		{"migrate fails", "run --rm --replace --name suiteward-migrate", nil, []string{errInjected.Error(), "suiteward restore "}, true},
+		{"the service cannot be started", "run --detach --replace --name suiteward --network", nil, []string{errInjected.Error(), "suiteward restore "}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,10 +149,10 @@ func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
 			[]string{"daemon-reload", "suiteward.service is stopped"},
 			[]string{"restart suiteward-db.service", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"migrate fails", func(u *isoUpgrade) { u.f.failOn["restart suiteward-migrate.service"] = errInjected }, nil,
-			[]string{"the migration failed, so the service was not started", "restore it with the previous image"},
+			[]string{"the migration failed, so the service was not started", "suiteward restore "},
 			[]string{"start suiteward.service", "--property=ActiveState"}},
 		{"the service does not start", func(u *isoUpgrade) { u.f.failOn["start suiteward.service"] = errInjected }, nil,
-			[]string{"start the service", "restore it with the previous image"},
+			[]string{"start the service", "suiteward restore "},
 			[]string{"--property=ActiveState"}},
 	}
 	for _, tc := range cases {

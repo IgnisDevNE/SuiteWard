@@ -514,6 +514,10 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 		head, err = governance.AssessHead(ctx, j.suites, j.contents, j.content, governance.HeadRequest{Project: owner.ProjectID(p.RepositoryID), Suite: defaultSuite,
 			Carrier: carrierID(p.RepositoryID, pull.Number), Head: contract.SourceRevision(pull.HeadSHA), Tree: &githubTree{tree: tree, files: map[string][]byte{}},
 			Revision: func(n governance.RevisionNotice) (governance.OutboxMessage, bool, error) {
+				// The manifest goes to the store before the revision commits, so that its report can be rebuilt as soon as the comment is delivered.
+				if err := storeManifest(ctx, j.content, n.Manifest); err != nil {
+					return governance.OutboxMessage{}, false, err
+				}
 				message, err := newRevisionMessage(target, n, tier)
 				return message, err == nil, err
 			}})

@@ -113,7 +113,12 @@ func TestDefaultTokenFile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", config)
 	t.Setenv("AppData", config)
 	t.Setenv("HOME", config)
-	if got, err := defaultTokenFile(deps("linux", nil)); err != nil || got != filepath.Join(config, "suiteward", "mcp-token") {
+	// os.UserConfigDir reads the host's own variables: XDG_CONFIG_HOME on Linux, AppData on Windows, HOME/Library on macOS.
+	userConfig, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := defaultTokenFile(deps("linux", nil)); err != nil || got != filepath.Join(userConfig, "suiteward", "mcp-token") || !strings.HasPrefix(got, config) {
 		t.Errorf("linux: %q, %v", got, err)
 	}
 	t.Setenv("XDG_CONFIG_HOME", "")

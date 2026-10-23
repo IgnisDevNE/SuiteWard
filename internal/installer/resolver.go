@@ -15,6 +15,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/term"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // Terminal is the console the prompts talk to; tests replace it.
@@ -39,15 +41,33 @@ func OSTerminal() Terminal {
 type Resolver struct {
 	flags, answers map[string]string
 	term           Terminal
-	in             *bufio.Reader
+	in             *bufio.Reader // shared with the Screen: both read from the one buffer
+	screen         *ui.Screen    // every question goes through it
 }
 
-// NewResolver returns a Resolver over the flags the user set, the answers file's values and a terminal.
-func NewResolver(flags, answers map[string]string, term Terminal) (*Resolver, error) {
-	if term.In == nil || term.Out == nil || (term.IsTerminal && term.ReadPassword == nil) {
-		return nil, errors.New("the console needs an input and an output, and a password reader when it is a terminal")
+// validate refuses a console that cannot read or write.
+func (t Terminal) validate() error {
+	if t.In == nil || t.Out == nil || (t.IsTerminal && t.ReadPassword == nil) {
+		return errors.New("the console needs an input and an output, and a password reader when it is a terminal")
 	}
-	return &Resolver{flags: flags, answers: answers, term: term, in: bufio.NewReader(term.In)}, nil
+	return nil
+}
+
+// NewResolver returns a Resolver over the flags the user set, the answers file's values and a terminal. Its questions go through the
+// Screen that is the terminal's output (Env.openConsole makes it one), or through a plain one on that output.
+func NewResolver(flags, answers map[string]string, term Terminal) (*Resolver, error) {
+	if err := term.validate(); err != nil {
+		return nil, err
+	}
+	in := bufio.NewReader(term.In) // the Screen's own reader when term.In is it: bufio keeps a reader of its default size
+	screen, ok := term.Out.(*ui.Screen)
+	if !ok {
+		var err error
+		if screen, err = ui.Open(ui.Options{Out: term.Out, In: in, Mode: ui.ModePlain}); err != nil {
+			return nil, err
+		}
+	}
+	return &Resolver{flags: flags, answers: answers, term: term, in: in, screen: screen}, nil
 }
 
 // FlagsSet returns the flags of fs that were set on the command line.
@@ -94,23 +114,14 @@ func (r *Resolver) Value(key, label, def string) (string, error) {
 		}
 		return "", fmt.Errorf("%s is required: pass --%s or set %q in the answers file (stdin is not a terminal, so it cannot be asked)", label, key, key)
 	}
-	if def != "" {
-		r.say("%s [%s]: ", label, def)
-	} else {
-		r.say("%s: ", label)
+	line, err := r.screen.Ask(label, def) // an empty answer is the default
+	if err != nil {
+		return "", err
 	}
-	line, err := r.in.ReadString('\n')
-	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
-		return "", fmt.Errorf("read the answer for %s: %w", label, err)
-	}
-	switch line = strings.TrimSpace(line); {
-	case line != "":
-		return line, nil
-	case def != "":
-		return def, nil
-	default:
+	if line == "" {
 		return "", fmt.Errorf("%s is required: pass --%s or set %q in the answers file", label, key, key)
 	}
+	return line, nil
 }
 
 // Int resolves a non-secret integer answer.
@@ -135,9 +146,7 @@ func (r *Resolver) Secret(key, label string) ([]byte, error) {
 		return nonEmpty(key, label, []byte(v))
 	}
 	if r.term.IsTerminal {
-		r.say("%s (input is hidden): ", label)
-		secret, err := r.term.ReadPassword()
-		r.say("\n")
+		secret, err := r.screen.Secret(label, r.term.ReadPassword)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", label, err)
 		}
@@ -160,11 +169,4 @@ func nonEmpty(key, label string, secret []byte) ([]byte, error) {
 
 // ask prints a question and reads one line of the terminal. A flag or the answers file never answers it, so it is for the choices
 // that only the person at the terminal makes. The end of the input is io.EOF.
-func (r *Resolver) ask(question string) (string, error) {
-	r.say("%s", question)
-	line, err := r.in.ReadString('\n')
-	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
-		return "", err
-	}
-	return strings.TrimSpace(line), nil
-}
+func (r *Resolver) ask(question string) (string, error) { return r.screen.Prompt(question) }

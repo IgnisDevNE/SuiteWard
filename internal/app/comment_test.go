@@ -161,6 +161,7 @@ type cmtWorld struct {
 	writer    *fakeCommentWriter
 	owners    *ownertest.Memory
 	pub       *commentPublisher
+	reports   *fakeReports // the report source of pub: no report unless a test gives it one
 	project   contract.ProjectID
 	principal contract.Principal
 	order     contract.CommandOrder
@@ -173,6 +174,7 @@ type cmtWorld struct {
 func newCmtWorld(t *testing.T) *cmtWorld {
 	t.Helper()
 	w := &cmtWorld{t: t, mem: governancetest.NewMemory(), writer: &fakeCommentWriter{}, owners: ownertest.NewMemory(), project: owner.ProjectID(cmtRepoID),
+		reports:   &fakeReports{err: governance.ErrNotFound},
 		principal: cmtMust(contract.NewPrincipal(owner.PrincipalID(cmtOwnerID), contract.Human))}
 	w.seedSuite()
 	err := w.owners.Enroll(t.Context(), owner.Enrollment{Owner: owner.Owner{AccountID: cmtOwnerID, Login: cmtOwner}, Secret: make([]byte, 20),
@@ -190,9 +192,10 @@ func newCmtWorld(t *testing.T) *cmtWorld {
 			w.instCalls.Add(1)
 			return cmtInstance, nil
 		}),
-		owners: w.owners,
-		suites: w.mem,
-		logger: slog.New(slog.NewJSONHandler(&w.logs, nil)),
+		owners:  w.owners,
+		suites:  w.mem,
+		logger:  slog.New(slog.NewJSONHandler(&w.logs, nil)),
+		reports: w.reports,
 	}
 	return w
 }

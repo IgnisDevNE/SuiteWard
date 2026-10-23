@@ -18,6 +18,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/archive"
 )
 
 // Default ports published on the loopback interface (D-INSTALLER).
@@ -54,6 +55,9 @@ type Settings struct {
 	JobTimeout string      `yaml:"job_timeout,omitempty"` // a Go duration
 	Image      string      `yaml:"image,omitempty"`       // the release image installed, pinned by digest
 	GitHub     GitHub      `yaml:"github,omitempty"`
+	// BackupRecipient is the public key (age1pq1...) every backup is encrypted to. It is trusted configuration of this file alone: a
+	// repository file, a pull request or an MCP call never names it.
+	BackupRecipient string `yaml:"backup_recipient,omitempty"`
 }
 
 // GitHub holds the non-secret GitHub values; they exist only after the App is created and installed.
@@ -112,6 +116,11 @@ func (s Settings) Validate() error {
 	if s.JobTimeout != "" {
 		if d, err := time.ParseDuration(s.JobTimeout); err != nil || d <= 0 {
 			add("job_timeout %q is not a positive Go duration", s.JobTimeout)
+		}
+	}
+	if s.BackupRecipient != "" {
+		if _, err := archive.ParseRecipient(s.BackupRecipient); err != nil {
+			add("backup_recipient: %v", err) // the error never repeats the value
 		}
 	}
 	return errors.Join(append(errs, s.GitHub.validate())...)

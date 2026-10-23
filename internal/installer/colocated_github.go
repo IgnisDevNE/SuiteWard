@@ -30,6 +30,7 @@ type githubInstall struct {
 	setupOwner  string // the instance owner, when the GitHub flow ran: the login setup enrolls
 	setupChecks map[string]string
 	enrollHint  string // the command the messages name to enroll the owner (enrollCommand)
+	owner       string // how the summary says the owner stands, as enroll found it
 }
 
 func (g githubInstall) say(format string, args ...any) { _, _ = fmt.Fprintf(g.out, format, args...) }
@@ -126,7 +127,7 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 			if g.s.GitHub.AppID != 0 {
 				return g.offOverRecordError()
 			}
-			g.say("Note: GitHub is off in this run, and the App %s that an earlier run created is not used. It still exists on GitHub (%s) and its key is the secret %s (%s); the record is %s. A re-run without --github no takes it up again (or pass --github yes). To throw it away, delete the App, remove the secret and delete the record.\n",
+			screenOn(g.out).Warn("Note: GitHub is off in this run, and the App %s that an earlier run created is not used. It still exists on GitHub (%s) and its key is the secret %s (%s); the record is %s. A re-run without --github no takes it up again (or pass --github yes). To throw it away, delete the App, remove the secret and delete the record.\n",
 				g.pending.Slug, appPage("https://github.com", g.pending.Slug, g.pending.Account, g.pending.AccountType), SecretGitHubAppKey, g.removeKeySecret(), g.pendingPath)
 		}
 		return err
@@ -230,7 +231,7 @@ func (g *githubInstall) clearPending() {
 		return
 	}
 	if err := os.Remove(g.pendingPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		g.say("Note: %v. The settings name the App now, so the record is not used again: you may delete it.\n", err)
+		screenOn(g.out).Warn("Note: %v. The settings name the App now, so the record is not used again: you may delete it.\n", err)
 	}
 }
 
@@ -244,14 +245,15 @@ const (
 const unknownLogin = "unknown login"
 
 // enrolledOwner reads /status of the service, which may still be starting, and returns the login of the enrolled owner, or
-// "" when there is none. An answer it cannot read is an error: it is not "no owner".
-func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.Context) ([]byte, error)) (string, error) {
+// "" when there is none. An answer it cannot read is an error: it is not "no owner". The wait draws on bar, when it is given one.
+func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.Context) ([]byte, error), bar waitBar) (string, error) {
 	var body []byte
 	var err error
 	for i := range statusTries {
 		if body, err = status(ctx); err == nil || ctx.Err() != nil {
 			break
 		}
+		bar.set(float64(i)/statusTries, "waiting for /status")
 		if i < statusTries-1 {
 			g.env.Sleep(statusEvery)
 		}
@@ -259,6 +261,7 @@ func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.C
 	if err != nil {
 		return "", err
 	}
+	bar.set(1, "answers")
 	return parseEnrolledOwner(body)
 }
 
@@ -295,21 +298,27 @@ func enrollCommand(r *Resolver, isolated bool) string {
 // enroll runs setup on a real terminal, and otherwise prints the command to run on one. It never runs setup over an owner that is
 // enrolled, nor when it cannot tell: setup enrolls again, which replaces the owner's TOTP secret.
 func (g *githubInstall) enroll(ctx context.Context, status func(context.Context) ([]byte, error)) error {
-	command := g.enrollHint
-	login, err := g.enrolledOwner(ctx, status)
+	command, notEnrolled := g.enrollHint, "not enrolled: run `"+g.enrollHint+"`"
+	scr := screenOn(g.out)
+	login, err := g.enrolledOwner(ctx, status, barOn(scr, "Service"))
 	switch {
 	case err != nil:
-		g.say("Setup was not run: /status of the service could not be read (%v), so it is not known whether an owner is enrolled, and setup would replace the TOTP secret of one. Once the service answers, check /status, and if it has no owner, run on a real terminal with session recording off:\n  %s\n", err, command)
+		g.owner = "unknown: /status could not be read"
+		scr.Warn("Setup was not run: /status of the service could not be read (%v), so it is not known whether an owner is enrolled, and setup would replace the TOTP secret of one. Once the service answers, check /status, and if it has no owner, run on a real terminal with session recording off:\n  %s\n", err, command)
 	case login != "":
-		g.say("Note: an owner (%s) is already enrolled; setup was skipped, so the TOTP secret is unchanged. To re-enroll (for example after losing the authenticator), run on a real terminal with session recording off: %s\n", login, command)
+		g.owner = login + " (already enrolled)"
+		scr.Warn("Note: an owner (%s) is already enrolled; setup was skipped, so the TOTP secret is unchanged. To re-enroll (for example after losing the authenticator), run on a real terminal with session recording off: %s\n", login, command)
 	case g.setupOwner == "":
-		g.say("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner:\n  %s\n", command)
+		g.owner = notEnrolled
+		scr.Warn("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner:\n  %s\n", command)
 	case setupTerminal():
 		if err := runSetup(ctx, g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
 			return fmt.Errorf("the stack is running, but enrolling the owner failed: %w", err)
 		}
+		g.owner = g.setupOwner + " (enrolled now)"
 	default:
-		g.say("Next: setup needs a real terminal (it prints the TOTP secret). Turn off any session recording of that terminal, then enroll the owner:\n  %s\n", command)
+		g.owner = notEnrolled
+		scr.Warn("Next: setup needs a real terminal (it prints the TOTP secret). Turn off any session recording of that terminal, then enroll the owner:\n  %s\n", command)
 	}
 	return nil
 }

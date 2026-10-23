@@ -56,9 +56,10 @@ type isoFake struct {
 	migrateDown    bool   // suiteward-migrate.service is inactive until this run starts it
 	migrateStarted bool   // suiteward-migrate.service was started or restarted by this run
 
-	dump    string          // what pg_dump prints in the database container
-	noImage bool            // no image is in the engine yet, so every pull is real
-	objects map[string]bool // volumes and networks that exist, by name
+	dump     string          // what pg_dump prints in the database container
+	imported string          // what `podman volume import` was given
+	noImage  bool            // no image is in the engine yet, so every pull is real
+	objects  map[string]bool // volumes and networks that exist, by name
 
 	listening []int // the TCP ports something listens on, as `ss -ltn` shows them
 	restarts  []int // what NRestarts of suiteward.service answers, one per question; the last one repeats, none means 0
@@ -208,6 +209,13 @@ func (f *isoFake) answerPodman(c call) ([]byte, error) {
 		fields := strings.Fields(line)
 		if len(fields) == 5 && fields[3] == "--output" {
 			return nil, os.WriteFile(fields[4], []byte("TARBYTES"), 0o644) //nolint:gosec // the engine writes it world-readable
+		}
+	case strings.HasPrefix(line, "volume import "):
+		fields := strings.Fields(line)
+		if len(fields) == 4 {
+			raw, err := os.ReadFile(fields[3])
+			f.imported = string(raw)
+			return nil, err
 		}
 	case strings.HasPrefix(line, "exec -i suiteward-db pg_dump"):
 		return []byte(f.dump), nil

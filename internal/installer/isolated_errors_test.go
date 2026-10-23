@@ -80,12 +80,12 @@ func TestWaitHealthyEndsWithTheLastAnswerOrTheContext(t *testing.T) {
 	f := newFake("linux").on("info --format", "true\n")
 	rt := newRootlessPodman(t, f, "")
 	f.on("inspect --type container --format {{json .State}}", `{"Status":"running","Health":{"Status":"starting"}}`)
-	if err := waitHealthy(context.Background(), rt); err == nil || !strings.Contains(err.Error(), `last: "starting"`) {
+	if err := waitHealthy(context.Background(), rt, nil); err == nil || !strings.Contains(err.Error(), `last: "starting"`) {
 		t.Errorf("waitHealthy = %v", err)
 	}
 
 	f.injectFirst("inspect --type container --format {{json .State}}")
-	if err := waitHealthy(context.Background(), rt); err == nil || !strings.Contains(err.Error(), errInjected.Error()) {
+	if err := waitHealthy(context.Background(), rt, nil); err == nil || !strings.Contains(err.Error(), errInjected.Error()) {
 		t.Errorf("waitHealthy with a failing inspect = %v", err)
 	}
 
@@ -94,7 +94,7 @@ func TestWaitHealthyEndsWithTheLastAnswerOrTheContext(t *testing.T) {
 	t.Cleanup(func() { dbHealthTimeout = old })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := waitHealthy(ctx, rt); !errors.Is(err, context.Canceled) {
+	if err := waitHealthy(ctx, rt, nil); !errors.Is(err, context.Canceled) {
 		t.Errorf("waitHealthy with a cancelled context = %v", err)
 	}
 }

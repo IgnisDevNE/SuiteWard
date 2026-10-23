@@ -1,4 +1,4 @@
-param([switch]$Coverage, [switch]$Integration, [switch]$Race)
+param([switch]$Coverage, [switch]$Integration, [switch]$Race, [switch]$SkipLint)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -20,7 +20,10 @@ try {
     if ($unformatted.Count -gt 0) { throw "Run gofmt on: $($unformatted -join ', ')" }
     go vet @buildTags ./...
     if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
-    if (-not $Coverage -and -not $Integration) {
+    if ($SkipLint -and -not $Coverage -and -not $Integration) {
+        # The macOS CI runner: the pinned-tool bootstrap (dev-env.ps1) supports Windows and Linux x64 only, and the Linux and Windows jobs lint the same sources.
+        Write-Host 'Skipping golangci-lint: no pinned build for this platform; the Linux and Windows jobs lint the same sources.'
+    } elseif (-not $Coverage -and -not $Integration) {
         # The pinned, checksum-verified golangci-lint from dev/tools.json; .golangci.yml also lints the integration-tagged files, so the other modes skip this.
         . (Join-Path $PSScriptRoot 'dev-env.ps1')
         $context = Get-DevContext

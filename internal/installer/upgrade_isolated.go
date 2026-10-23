@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // upgradeIsolated is `suiteward install --upgrade` for the isolated tier, as the service account (docs/install.md, section 11): adopt the
@@ -18,7 +18,8 @@ import (
 // and restart the migration, which migrates and restarts the service; last, wait for the service to be stable. The ports and the
 // job timeout stay as installed, and a run that is asked for others stops first.
 func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) error {
-	d, out := env.Deps, env.Term.Out
+	d, out, scr := env.Deps, env.Term.Out, r.screen
+	scr.Steps("Plan", "Backup", "Images", "Replace", "Check")
 	image, err := upgradeTarget(r)
 	if err != nil {
 		return err
@@ -73,6 +74,11 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
 		return nil
 	}
+	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
+	agreed, err := settleRecipient(r, env, &s)
+	if err != nil {
+		return err
+	}
 	status := func(ctx context.Context) ([]byte, error) {
 		return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
 	}
@@ -85,44 +91,42 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return err
 	}
 	parent := backupParent(r, host.configDir)
-	if err := confirmUpgrade(r, plan, parent, started); err != nil {
+	if err := confirmUpgrade(r, plan, parent, s.BackupRecipient, started); err != nil {
 		return err
 	}
-	// The replaced units go into the backup, so a rollback can put them back.
-	keepUnits := func(dir string) error {
-		units := filepath.Join(dir, backupUnits)
-		if err := os.Mkdir(units, 0o700); err != nil {
-			return fmt.Errorf("create %s: %w", units, err)
-		}
-		for _, name := range sortedKeys(st.units) {
-			if err := writePrivateFile(filepath.Join(units, name), st.units[name]); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	dir, err := takeBackup(ctx, backup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, now: time.Now})
+	scr.Step(2)
+	// The replaced units go into the archive, and beside it as plain files (they hold only the names of secrets), so that a rollback can
+	// copy them back.
+	keepUnits := func(path string) error { return keepUnitsBeside(path, st.units) }
+	inst := instance{rt: host.rt, s: s, settingsPath: host.settingsPath, haveSettings: settingsExist(host.settingsPath), image: st.adopted.Image, status: status, units: st.units, startCommand: "systemctl --user start suiteward.service", serviceStarted: started}
+	dir, err := upgradeBackup(ctx, r, env, &inst, parent, keepUnits, agreed)
 	if err != nil {
 		return err
 	}
+	s.BackupRecipient = inst.s.BackupRecipient
 	say("Backup written to %s.\n", dir)
-	if err := pullMissing(ctx, host.rt, postgres, image); err != nil {
-		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
+	scr.Step(3)
+	if err := pullMissing(ctx, scr, host.rt, postgres, image); err != nil {
+		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
-	if err := replaceUnits(ctx, host, d, params, plan.dbChanges()); err != nil {
+	scr.Step(4)
+	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
 		return withBackup(err, dir, host.unitsDir)
 	}
 	// Migrate ran: a release that crash-loops now gets the advice of a failure after the migration, the restore of the backup.
-	if err := waitStable(ctx, env, s.HTTPPort); err != nil {
+	scr.Step(5)
+	if err := waitStable(ctx, env, scr, s.HTTPPort); err != nil {
 		return withBackup(migratingError{err}, dir, host.unitsDir)
 	}
 	s.Image = image
 	if err := SaveSettings(host.settingsPath, s); err != nil {
 		return withBackup(migratingError{err}, dir, host.unitsDir)
 	}
-	upgraded(say, st.adopted.Image, image, dir, "suiteward doctor")
+	upgraded(scr, st.adopted.Image, image, dir, "suiteward doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
-	return nil
+	return showSummary(scr, func() []ui.KV {
+		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Release", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})
+	})
 }
 
 // installCommand is the command that installs again, as the messages of the installer name it: the tier and the settings file
@@ -160,15 +164,16 @@ func refuseChangedSettings(asked, installed Settings, command string) error {
 
 // replaceUnits does the steps after the backup: stop the service, then prepare the new units, then migrate and start. An error
 // says how far it got (stoppedError, migratingError) for the advice of withBackup.
-func replaceUnits(ctx context.Context, host isolatedHost, d Deps, params UnitParams, dbChanges bool) error {
+func replaceUnits(ctx context.Context, host isolatedHost, d Deps, scr *ui.Screen, params UnitParams, dbChanges bool) error {
 	systemctl := userSystemctl(d)
-	if _, err := systemctl(ctx, "stop", "suiteward.service"); err != nil {
+	stop := func() error { _, err := systemctl(ctx, "stop", "suiteward.service"); return err } // the service gets up to 45 s to stop
+	if err := working(scr, "Stopping the service", stop); err != nil {
 		return fmt.Errorf("stop the service: %w", err)
 	}
-	if _, err := prepareUnits(ctx, host, d, params, dbChanges); err != nil {
+	if _, err := prepareUnits(ctx, host, d, scr, params, dbChanges); err != nil {
 		return stoppedError{err}
 	}
-	if err := migrateAndStart(ctx, d); err != nil {
+	if err := migrateAndStart(ctx, d, scr); err != nil {
 		return migratingError{err}
 	}
 	return nil
@@ -176,7 +181,7 @@ func replaceUnits(ctx context.Context, host isolatedHost, d Deps, params UnitPar
 
 // prepareUnits writes the units, checks them, reloads and refreshes the database when its pin changed. It returns the units it
 // wrote.
-func prepareUnits(ctx context.Context, host isolatedHost, d Deps, params UnitParams, dbChanges bool) (map[string][]byte, error) {
+func prepareUnits(ctx context.Context, host isolatedHost, d Deps, scr *ui.Screen, params UnitParams, dbChanges bool) (map[string][]byte, error) {
 	units, err := RenderUnits(params)
 	if err != nil {
 		return nil, err
@@ -195,22 +200,28 @@ func prepareUnits(ctx context.Context, host isolatedHost, d Deps, params UnitPar
 		if _, err := userSystemctl(d)(ctx, "restart", "suiteward-db.service"); err != nil {
 			return nil, fmt.Errorf("restart the database: %w", err)
 		}
-		return units, waitHealthy(ctx, host.rt)
+		return units, waitHealthy(ctx, host.rt, barOn(scr, "Database"))
 	}
 	return units, nil
 }
 
-// migrateAndStart migrates and starts the service.
-func migrateAndStart(ctx context.Context, d Deps) error {
+// migrateAndStart migrates and starts the service, under a spinner on a full screen.
+func migrateAndStart(ctx context.Context, d Deps, scr *ui.Screen) error {
 	systemctl := userSystemctl(d)
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	// The migration unit migrates, and the service requires it; the service was stopped before, so it is started explicitly.
-	if _, err := systemctl(startCtx, "restart", "suiteward-migrate.service"); err != nil {
-		return fmt.Errorf("the migration failed, so the service was not started (read `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
-	}
-	if _, err := systemctl(startCtx, "start", "suiteward.service"); err != nil {
-		return fmt.Errorf("start the service (read `journalctl --user -u suiteward.service -n 50 --no-pager`): %w", err)
+	err := working(scr, "Running the migration and starting the service", func() error {
+		if _, err := systemctl(startCtx, "restart", "suiteward-migrate.service"); err != nil {
+			return fmt.Errorf("the migration failed, so the service was not started (read `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
+		}
+		if _, err := systemctl(startCtx, "start", "suiteward.service"); err != nil {
+			return fmt.Errorf("start the service (read `journalctl --user -u suiteward.service -n 50 --no-pager`): %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	return checkUnitsActive(ctx, systemctl)
 }

@@ -43,6 +43,7 @@ type RevisionNotice struct {
 	Reference                contract.ProposalReference
 	Previous                 *contract.ProposalReference // the revision it supersedes, nil for R1
 	Canonical                contract.SuiteVersionID     // the base version
+	Manifest                 artifact.Manifest           // the manifest of the revision, which a change report is rebuilt from
 	Added, Modified, Removed []string                    // inventory.Classify against the canonical, sorted
 	Reduced                  bool                        // a scope reduction
 	// ReducedRules and ReducedPaths detail the reduction (inventory.Classify), sorted, and are empty unless Reduced.
@@ -153,7 +154,7 @@ func recordHead(ctx context.Context, tx Tx, request HeadRequest, version contrac
 	}
 	if revised.Committed {
 		notice := RevisionNotice{Reference: revised.Current, Previous: previous, Canonical: version, Added: classification.Added, Modified: classification.Modified,
-			Removed: classification.Removed, Reduced: classification.Change == inventory.ScopeReduction,
+			Removed: classification.Removed, Manifest: proposed.Manifest(), Reduced: classification.Change == inventory.ScopeReduction,
 			ReducedRules: classification.ReducedRules, ReducedPaths: classification.ReducedPaths}
 		if err := writeRevisionComment(ctx, tx, request, notice); err != nil {
 			return HeadResult{}, err

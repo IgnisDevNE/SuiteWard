@@ -2,7 +2,7 @@
 # Not part of the CI gate and not a required check.
 # The tag alone does not publish: the `publish` job waits for the owner's approval in the protected `release` environment.
 # A final `vX.Y.Z` must sit on a commit of `main`; a pre-release (-rc.N or -alpha.N) may sit anywhere and never moves `latest-stable`.
-# The `binaries` job runs after `publish` and uploads to the GitHub Release the owner created on the tag first: four binaries with the version, the source and the signed image index digest embedded, SHA256SUMS, and a cosign blob signature (bundle) for each file.
+# The `binaries` job runs after `publish` and uploads to the GitHub Release the owner created on the tag first: five binaries with the version, the source and the signed image index digest embedded, install.sh (the one-line installer, copied from scripts/), SHA256SUMS, and a cosign blob signature (bundle) for each file.
 # CI builds the same Containerfile for both platforms on every change without pushing; here the tag is the version and the tag's source tree is the corresponding source (AGPL section 13).
 # No third-party actions (only actions/checkout and actions/setup-go): the runner's own docker and buildx do the work, and the BuildKit image below is pinned by digest.
 # The pushed index carries a SLSA provenance and an SBOM (BuildKit attestation manifests) and is signed keyless with cosign through GitHub OIDC; the signature is recorded in the public Rekor log (ADR 0008).
@@ -68,6 +68,11 @@ jobs:
         run: |
           flag=$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease) || { echo "::error::Create the published GitHub Release for $TAG first; the binaries are uploaded to it"; exit 1; }
           [ "$flag" = "$PRERELEASE" ] || { echo "::error::The GitHub Release $TAG has prerelease=$flag but the tag needs prerelease=$PRERELEASE"; exit 1; }
+
+      - name: Check that the installer script exists
+        # The binaries job ships scripts/install.sh as a signed asset after the image is public: a tag without it must stop here, before the owner's approval.
+        run: |
+          [ -f scripts/install.sh ] || { echo "::error::scripts/install.sh is missing: the release ships it as the install.sh asset"; exit 1; }
 
   publish:
     name: Build and push the release (owner approval)
@@ -170,7 +175,7 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$RUNNER_TEMP/cosign" "$url"
           echo "$sha256  $RUNNER_TEMP/cosign" | sha256sum --check --strict -
           chmod +x "$RUNNER_TEMP/cosign"
-      - name: Build the four binaries and SHA256SUMS
+      - name: Build the five binaries, add install.sh, and write SHA256SUMS
         env:
           TAG: ${{ github.ref_name }}
           DIGEST: ${{ needs.publish.outputs.digest }}
@@ -178,7 +183,7 @@ jobs:
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Unexpected image digest"; exit 1; }
           mkdir "$RUNNER_TEMP/dist"
           pkg=github.com/IgnisDevNE/SuiteWard/internal
-          for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
+          for target in linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64; do
             os=${target%/*}; arch=${target#*/}
             file="$RUNNER_TEMP/dist/suiteward_${TAG}_${os}_${arch}"
             if [ "$os" = windows ]; then file="$file.exe"; fi
@@ -188,13 +193,14 @@ jobs:
             # -X silently ignores a symbol that no longer exists: the digest must really be in the binary.
             grep -aqF "$DIGEST" "$file" || { echo "::error::The image digest is not embedded in $file"; exit 1; }
           done
-          (cd "$RUNNER_TEMP/dist" && sha256sum suiteward_* > SHA256SUMS)
+          cp scripts/install.sh "$RUNNER_TEMP/dist/install.sh"
+          (cd "$RUNNER_TEMP/dist" && sha256sum suiteward_* install.sh > SHA256SUMS)
       - name: Sign every file and verify the signatures
         env:
           TAG: ${{ github.ref_name }}
         run: |
           cd "$RUNNER_TEMP/dist"
-          for file in suiteward_* SHA256SUMS; do
+          for file in suiteward_* install.sh SHA256SUMS; do
             "$RUNNER_TEMP/cosign" sign-blob --yes --bundle "$file.sigstore.json" "$file"
             pwsh "$GITHUB_WORKSPACE/scripts/verify-release.ps1" -Blob "$file" -Bundle "$file.sigstore.json" -Cosign "$RUNNER_TEMP/cosign"
           done
@@ -206,4 +212,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd "$RUNNER_TEMP/dist"
-          gh release upload "$TAG" suiteward_* SHA256SUMS SHA256SUMS.sigstore.json --clobber
+          gh release upload "$TAG" suiteward_* install.sh install.sh.sigstore.json SHA256SUMS SHA256SUMS.sigstore.json --clobber

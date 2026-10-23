@@ -76,7 +76,7 @@ func TestCommentPublisherRendersTheRevisionComment(t *testing.T) {
 
 	w.mustDeliver(message)
 
-	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: notice.Added, Modified: notice.Modified,
+	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{ChangesUnavailable: true, Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: notice.Added, Modified: notice.Modified,
 		Removed: notice.Removed, AddedTotal: 1, ModifiedTotal: 2, RemovedTotal: 1, Reduced: true, Tier: commandtext.CoLocated}))
 }
 
@@ -336,7 +336,7 @@ func TestRevisionMessageCarriesTheBoundedReductionDetail(t *testing.T) {
 
 	w := newCmtWorld(t)
 	w.mustDeliver(message)
-	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: notice.Added, Modified: notice.Modified,
+	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{ChangesUnavailable: true, Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: notice.Added, Modified: notice.Modified,
 		Removed: notice.Removed, AddedTotal: 1, ModifiedTotal: 2, RemovedTotal: 1, Reduced: true, ReducedRules: payload.ReducedRules, ReducedPaths: payload.ReducedPaths,
 		ReducedPathsTotal: 25, Tier: commandtext.Isolated}))
 }
@@ -369,7 +369,7 @@ func TestCommentPublisherRendersARevisionPayloadOfV010(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: []string{"tests/new_test.go"},
+	w.wantPost(cmtRevisionKey, commandtext.RevisionComment(commandtext.Revision{ChangesUnavailable: true, Proposal: 2, Revision: 2, Previous: "P2-R1", Canonical: 1, Added: []string{"tests/new_test.go"},
 		Modified: []string{"tests/a_test.go"}, Removed: []string{}, AddedTotal: 1, ModifiedTotal: 1, Reduced: true, Tier: commandtext.Isolated}))
 }
 

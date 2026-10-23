@@ -91,6 +91,11 @@ try {
     if (($lint.Events -join ';') -cne 'vet;install golangci-lint;lint run ./...') {
         throw "Default mode must install the pinned golangci-lint after go vet and run it as 'run ./...'. Events: $($lint.Events -join ';')"
     }
+    # macOS has no pinned golangci-lint (the tool bootstrap supports Windows and Linux x64): the build, vet and tests still run, and the skip says why.
+    $lint.Events.Clear()
+    $skipped = & (Join-Path $fixtureScripts 'check-go.ps1') -SkipLint *>&1 | Out-String
+    if (($lint.Events -join ';') -cne 'vet') { throw "-SkipLint must neither install nor run golangci-lint. Events: $($lint.Events -join ';')" }
+    if ($skipped -cnotmatch 'Skipping golangci-lint: ') { throw "-SkipLint must print why golangci-lint was skipped. Output: $skipped" }
     $lint.Events.Clear()
     $lint.ExitCode = 1
     $rejected = $false
@@ -128,7 +133,7 @@ try {
         if ($null -eq $savedDatabase) { Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', $savedDatabase, 'Process') }
     }
-    Write-Output 'Passed 22 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
+    Write-Output 'Passed 24 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $scratch).Path
     if ($resolved -ne [IO.Path]::GetFullPath($scratch) -or -not $resolved.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {

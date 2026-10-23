@@ -78,15 +78,17 @@ func (l *fakeLedger) Current(_ context.Context, repositoryID int64, pull int) (c
 }
 
 type chkWorld struct {
-	runner *fakeChecks
-	ledger *fakeLedger
-	pub    *checkPublisher
-	logs   *bytes.Buffer
+	runner  *fakeChecks
+	ledger  *fakeLedger
+	pub     *checkPublisher
+	reports *fakeReports // the report source of pub: no report unless a test gives it one
+	logs    *bytes.Buffer
 }
 
 func newChkWorld() *chkWorld {
 	w := &chkWorld{runner: &fakeChecks{}, ledger: &fakeLedger{found: true, record: checks.Record{Generation: 3}}, logs: &bytes.Buffer{}}
-	w.pub = &checkPublisher{runs: w.runner, ledger: w.ledger, appID: chkAppID, logger: slog.New(slog.NewTextHandler(w.logs, nil)),
+	w.reports = &fakeReports{err: governance.ErrNotFound}
+	w.pub = &checkPublisher{runs: w.runner, ledger: w.ledger, appID: chkAppID, logger: slog.New(slog.NewTextHandler(w.logs, nil)), reports: w.reports,
 		instance: newLazy(func(context.Context) (string, error) { return cmtInstance, nil })}
 	return w
 }

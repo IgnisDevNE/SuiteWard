@@ -164,7 +164,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		c := make(chan pasted, 1)
 		paste = c
 		go func() { // only one read is ever pending: the Resolver's reader is not safe for two
-			line, err := env.R.in.ReadString('\n')
+			line, err := env.R.screen.Prompt("") // the question is printed by the caller; the answer joins it on the page
 			c <- pasted{line, err}
 		}()
 	}

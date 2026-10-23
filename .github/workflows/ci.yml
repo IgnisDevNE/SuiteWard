@@ -58,7 +58,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025]
+        # macos-15 is arm64: it builds, vets and tests the Go code natively. The pinned tool bootstrap (scripts/dev-env.ps1) supports Windows and Linux x64 only, so the platform-independent lint and sqlc checks stay on the other two.
+        os: [ubuntu-24.04, windows-2025, macos-15]
     env:
       GOTOOLCHAIN: local
       GOPATH: ${{ github.workspace }}/.cache/gopath
@@ -74,14 +75,19 @@ jobs:
           go-version-file: .go-version
           cache: false
       - name: Build, format, analyze, and test
+        if: runner.os != 'macOS'
         run: ./scripts/check-go.ps1
+      - name: Build, format, vet, and test (macOS)
+        if: runner.os == 'macOS'
+        run: ./scripts/check-go.ps1 -SkipLint
       - name: Verify fresh generated PostgreSQL queries
+        if: runner.os != 'macOS'
         run: ./scripts/check-persistence.ps1 -Mode Generated
       - name: Cross-build the installer for the release targets
-        # The release workflow ships these four; building them on every change keeps the Windows and macOS code compiling. Go cross-compiles, so one runner is enough.
+        # The release workflow ships these five; building them on every change keeps the Windows and macOS code compiling. Go cross-compiles, so one runner is enough.
         if: runner.os == 'Linux'
         run: |
-          foreach ($target in 'linux/amd64', 'linux/arm64', 'windows/amd64', 'darwin/arm64') {
+          foreach ($target in 'linux/amd64', 'linux/arm64', 'windows/amd64', 'darwin/amd64', 'darwin/arm64') {
             $goos, $goarch = $target -split '/'
             $env:CGO_ENABLED = '0'; $env:GOOS = $goos; $env:GOARCH = $goarch
             go build -trimpath -o (Join-Path $env:RUNNER_TEMP "suiteward-$goos-$goarch") ./cmd/suiteward
@@ -182,9 +188,56 @@ jobs:
             --build-arg "GO_VERSION=$(cat .go-version)" \
             --file deploy/Containerfile --output type=cacheonly .
 
+  quadlet:
+    name: Quadlet units on AlmaLinux 9
+    needs: inspect
+    if: needs.inspect.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOTOOLCHAIN: local
+      # almalinux:9 as of 2026-10-23, the index digest from `docker buildx imagetools inspect`. The digest pins the base image, not the package: `dnf install podman` takes the current el9 Podman, as the isolated host does, and the job prints its version.
+      ALMA_IMAGE: docker.io/library/almalinux:9@sha256:9819dc675b67b595c2b59e42be7763fca1a8bb217fa5944e04daa22e9a64db16
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Render the units of both installer shapes
+        # The same RenderUnits the installer writes: with GitHub on the default ports, and without GitHub on other ports with a job timeout.
+        run: |
+          mkdir "$RUNNER_TEMP/units"
+          SUITEWARD_QUADLET_OUT="$RUNNER_TEMP/units" go test -count=1 -tags quadlet -run TestRenderUnitsForTheQuadletDryRun ./internal/installer
+      - name: Dry-run the units through the quadlet generator of AlmaLinux 9's Podman
+        # No systemd is needed: the generator reads the unit files and prints the services it would create, and exits non-zero on a unit it refuses.
+        run: |
+          docker run --rm --interactive --volume "$RUNNER_TEMP/units:/units:ro" "$ALMA_IMAGE" bash -euo pipefail -s <<'SCRIPT'
+          dnf -y install podman > /dev/null
+          podman --version
+          services=(suiteward.service suiteward-migrate.service suiteward-db.service suiteward-network.service suiteward-data-volume.service suiteward-db-data-volume.service)
+          for shape in github no-github; do
+            if ! out=$(QUADLET_UNIT_DIRS="/units/$shape" /usr/lib/systemd/system-generators/podman-system-generator --user --dryrun); then
+              echo "::error::The quadlet generator refused the $shape units"
+              exit 1
+            fi
+            for service in "${services[@]}"; do
+              grep -qxF -- "---$service---" <<<"$out" || { echo "::error::The quadlet generator produced no $service for the $shape units"; exit 1; }
+            done
+            echo "$shape: the generator produced all ${#services[@]} services"
+          done
+          SCRIPT
+
   gate:
     name: CI / Gate
-    needs: [inspect, foundation, image, go, coverage]
+    needs: [inspect, foundation, image, go, coverage, quadlet]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

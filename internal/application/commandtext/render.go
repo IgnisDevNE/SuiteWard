@@ -611,6 +611,11 @@ const rollback = "a separately approved rollback (corrective) proposal: a new PR
 // protected scope; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail what it removes and
 // are set only with Reduced. ReducedOmitted says that the detail did not fit the message and was left out: the comment states
 // that, and counts the paths from ReducedPathsTotal; it excludes ReducedRules and ReducedPaths.
+//
+// Changes, when set, replaces the three lists with the numbers of the change report and names the files to look at;
+// without it the comment lists the paths. ChangesUnavailable says that the files could not be read to count them, so the
+// comment lists the paths and says so; it excludes Changes. ReportURL, set only with Changes, is the link to the full
+// report on a loopback address of the instance, for the reference of this revision.
 type Revision struct {
 	Proposal, Revision                      int
 	Previous                                string
@@ -622,10 +627,14 @@ type Revision struct {
 	ReducedPathsTotal                       int
 	ReducedOmitted                          bool
 	Tier                                    Tier
+	Changes                                 *Changes
+	ChangesUnavailable                      bool
+	ReportURL                               string
 }
 
 // RevisionComment renders the comment of a new change-proposal revision: the protected files added, modified
-// and removed against the canonical, the approve command for this exact revision and the revision it supersedes.
+// and removed against the canonical (as numbers when Changes is set), the approve command for this exact revision and the
+// revision it supersedes.
 // It never says that tests ran. The paths come from the repository, so they are shown only inside code, bounded
 // and with control characters escaped, like the bootstrap summary.
 func RevisionComment(r Revision) string {
@@ -635,8 +644,8 @@ func RevisionComment(r Revision) string {
 		"**SuiteWard contract change " + ref + "**",
 		fmt.Sprintf("This pull request changes the protected files against the canonical contract V%d. SuiteWard proposes the change as %s for the owner's approval.", r.Canonical, ref),
 		"- Base canonical version: V" + strconv.Itoa(r.Canonical) + "\n" + tierLine(r.Tier),
-		listing("Protected files added", r.Added, r.AddedTotal), listing("Protected files modified", r.Modified, r.ModifiedTotal), listing("Protected files removed", r.Removed, r.RemovedTotal),
 	}
+	parts = append(parts, changesSection(r)...)
 	if r.Reduced {
 		parts = append(parts, reductionParts(r)...)
 	}
@@ -672,6 +681,9 @@ func validateRevision(r Revision) error {
 		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
 	}
 	if _, err := reference(r.Proposal, r.Revision); err != nil {
+		return err
+	}
+	if err := validateReport(r); err != nil {
 		return err
 	}
 	if r.Previous == "" {

@@ -115,7 +115,7 @@ func TestCommentPublisherOnPostgreSQLPostsEachMessageOnce(t *testing.T) {
 	budget := cmtMust(rest.NewBudget(0.5, time.Now))
 	client := cmtMust(rest.NewClient(func(ctx context.Context) (string, string, error) { return "token", "installation", nil }, server.Client(), server.URL, budget))
 	publisher := &commentPublisher{writer: cmtMust(github.NewWriter(client)), bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil }),
-		instance: newLazy(store.Instance), owners: store, suites: store}
+		instance: newLazy(store.Instance), owners: store, suites: store, reports: &fakeReports{err: governance.ErrNotFound}}
 	relay := cmtMust(river.NewRelay(river.RelayConfig{Store: store, Publishers: map[string]river.Publisher{githubCommentKind: publisher.publish}, MaxAttempts: 3, Lease: time.Minute,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}))
 	for range 2 {

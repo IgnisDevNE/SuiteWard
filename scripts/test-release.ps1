@@ -40,6 +40,20 @@ try {
     foreach ($tag in 'v1.2.3', 'v10.20.30', 'v1.2.3-rc.1', 'v1.2.3-rc.12', 'v1.2.3-alpha.1', 'v0.3.0-alpha.12', 'v1.2.3-alpha', 'v1.2.3-alpha.', 'v1.2.3-alpha.1x', 'v1.2.3-ALPHA.1', 'v1.2.3-alpha.1-rc.1', 'v1.2', 'v1.2.3.4', 'v1.2.3-rc', 'v1.2.3-rc.', 'v1.2.3-beta.1', 'v1.2.3-rc.1x', 'v1.2.3/x', 'vx.y.z', '1.2.3', 'main') {
         if (($tag -cmatch $tagCheck) -ne ("$workflow@refs/tags/$tag" -cmatch $regexp)) { throw "release.yml and verify-release.ps1 disagree about the tag $tag." }
     }
+    # The release ships the five installer targets and CI cross-builds the same list; install.sh (the one-line installer) is hashed, signed and uploaded beside the binaries.
+    $releaseText = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/release.yml') -Raw).Replace("`r", '')
+    $targets = 'linux/amd64', 'linux/arm64', 'windows/amd64', 'darwin/amd64', 'darwin/arm64'
+    $releaseTargets = @(([regex]::Match($releaseText, 'for target in (?<t>[a-z0-9/ ]+); do').Groups['t'].Value) -split ' ')
+    if (($releaseTargets -join ',') -cne ($targets -join ',')) { throw "release.yml builds [$($releaseTargets -join ' ')], expected [$($targets -join ' ')]." }
+    $ciTargetList = [regex]::Match((Get-Content -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/ci.yml') -Raw), 'foreach \(\$target in (?<t>[^)]+)\)').Groups['t'].Value
+    $ciTargets = @([regex]::Matches($ciTargetList, "'([a-z0-9/]+)'") | ForEach-Object { $_.Groups[1].Value })
+    if (($ciTargets -join ',') -cne ($targets -join ',')) { throw "ci.yml cross-builds [$($ciTargets -join ' ')], release.yml ships [$($targets -join ' ')]." }
+    foreach ($required in 'grep -aqF "$DIGEST" "$file"', 'cp scripts/install.sh "$RUNNER_TEMP/dist/install.sh"', 'sha256sum suiteward_* install.sh > SHA256SUMS', 'for file in suiteward_* install.sh SHA256SUMS; do', 'gh release upload "$TAG" suiteward_* install.sh install.sh.sigstore.json SHA256SUMS SHA256SUMS.sigstore.json --clobber') {
+        if (-not $releaseText.Contains($required)) { throw "release.yml lacks: $required" }
+    }
+    # A missing script stops the run in verify, before the owner's approval and the image push, not after an image without installer assets is public.
+    $verifyJob = [regex]::Match($releaseText, '(?ms)^  verify:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
+    if (-not $verifyJob.Contains('[ -f scripts/install.sh ]')) { throw 'The verify job must fail when scripts/install.sh is missing.' }
     # Blob mode: the same identity and issuer, the bundle and the file passed through, a failing cosign refused.
     Remove-Item -LiteralPath $log
     & $verify -Blob 'suiteward_v1.2.3_linux_amd64' -Bundle 'suiteward_v1.2.3_linux_amd64.sigstore.json' -Cosign $fake *>$null

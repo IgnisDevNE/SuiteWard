@@ -694,6 +694,16 @@ func TestSelfCheckWithoutGitHubChecksTheDatabaseAndWarnsAboutGitHub(t *testing.T
 	}
 }
 
+// The fix is shown by `doctor` on both tiers. A co-located PC has no host, and on a Podman machine the containers run in a VM
+// while the install runs on the PC, so the fix names no place: the install re-run finds its tier in the saved settings.
+func TestNotConfiguredFixNamesNoPlace(t *testing.T) {
+	r := checkNotConfigured("github.app")
+
+	if !strings.Contains(r.Fix, "again with --github yes") || strings.Contains(r.Fix, "on the host") || strings.Contains(r.Fix, "on the machine") {
+		t.Errorf("fix = %q; want the install again with --github yes, and no place named", r.Fix)
+	}
+}
+
 func TestWriteSelfCheckPrintsAWarningWithItsFix(t *testing.T) {
 	results := []selfCheckResult{{Name: "github.app", OK: true, Warning: true, Detail: "not configured", Fix: "set GitHub up"}}
 	var out bytes.Buffer

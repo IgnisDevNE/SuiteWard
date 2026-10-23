@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/url"
 	"slices"
 	"strconv"
@@ -82,13 +83,17 @@ func (c *changeReports) revisionReport(ctx context.Context, ref contract.Proposa
 	if err != nil {
 		return revisionReport{}, fmt.Errorf("the manifest %s: %w", digest, err)
 	}
-	changes, err := c.fileChanges(ctx, base, proposed)
+	changes, unread, err := c.fileChanges(ctx, base, proposed)
 	if err != nil {
 		return revisionReport{}, err
 	}
 	built, err := report.Build(changes)
 	if err != nil {
 		return revisionReport{}, fmt.Errorf("build the report: %w", err)
+	}
+	for _, u := range unread { // each has a file in the report, which has no bytes of it: it counts for nothing and says its sizes and why it was not compared
+		f := &built.Files[slices.IndexFunc(built.Files, func(f report.File) bool { return f.Path == u.path })]
+		f.OldSize, f.NewSize, f.Limit, f.CountsKnown, f.LinesAdded, f.LinesRemoved = u.oldSize, u.newSize, report.LimitSize, false, 0, 0
 	}
 	return revisionReport{Base: version, Report: built}, nil
 }
@@ -122,50 +127,80 @@ func (c *changeReports) bindingOf(ctx context.Context, ref contract.ProposalRefe
 	return version, base, digest, err
 }
 
-// fileChanges lists the files that differ between two manifests with the bytes of both sides, reading nothing else, and no more than the budget.
-func (c *changeReports) fileChanges(ctx context.Context, base, proposed artifact.Manifest) ([]report.FileChange, error) {
+// reportFileBytes is the largest side that the report core compares (its maxFileBytes): a file with a bigger side is not compared, so the report needs
+// nothing of it but its sizes.
+const reportFileBytes = 1 << 20
+
+// unreadFile is a file with a side over reportFileBytes, whose sides were sized and not read.
+type unreadFile struct {
+	path             string
+	oldSize, newSize int
+}
+
+// fileChanges lists the files that differ between two manifests with the bytes of both sides. It sizes each side before it reads it, and reads
+// nothing else: it refuses a revision whose files, with those it has read, would pass the budget before it reads them, and it does not read a file with a
+// side over reportFileBytes. Such a file is listed without bytes, for the report core to count and mark by its path, and in unread, for revisionReport
+// to give it its sizes and say it is too large.
+func (c *changeReports) fileChanges(ctx context.Context, base, proposed artifact.Manifest) (changes []report.FileChange, unread []unreadFile, err error) {
 	read := 0
-	load := func(d artifact.Digest) ([]byte, error) {
-		data, err := c.contents.Read(ctx, d)
-		if err != nil {
-			return nil, fmt.Errorf("read the file %s: %w", d, err)
-		}
-		if read += len(data); read > c.budget {
-			return nil, errReportTooLarge
-		}
-		return data, nil
-	}
-	var changes []report.FileChange
 	before, after := base.Entries(), proposed.Entries() // in path order
 	for len(before) > 0 || len(after) > 0 {
-		var change report.FileChange
-		var err error
+		var old, now *artifact.Entry
+		change := report.FileChange{Status: report.Modified}
 		switch {
 		case len(after) == 0 || len(before) > 0 && before[0].Path < after[0].Path:
-			change = report.FileChange{Path: before[0].Path, Status: report.Removed}
-			change.Old, err = load(before[0].Content)
-			before = before[1:]
+			old, change.Path, change.Status, before = &before[0], before[0].Path, report.Removed, before[1:]
 		case len(before) == 0 || after[0].Path < before[0].Path:
-			change = report.FileChange{Path: after[0].Path, Status: report.Added}
-			change.New, err = load(after[0].Content)
-			after = after[1:]
+			now, change.Path, change.Status, after = &after[0], after[0].Path, report.Added, after[1:]
 		default:
-			old, now := before[0], after[0]
-			before, after = before[1:], after[1:]
+			old, now, change.Path, before, after = &before[0], &after[0], after[0].Path, before[1:], after[1:]
 			if old.Content == now.Content {
 				continue
 			}
-			change = report.FileChange{Path: now.Path, Status: report.Modified}
-			if change.Old, err = load(old.Content); err == nil {
-				change.New, err = load(now.Content)
+		}
+		oldSize, newSize := 0, 0
+		if oldSize, err = c.sizeOf(ctx, old); err != nil {
+			return nil, nil, err
+		}
+		if newSize, err = c.sizeOf(ctx, now); err != nil {
+			return nil, nil, err
+		}
+		if max(oldSize, newSize) > reportFileBytes {
+			unread = append(unread, unreadFile{path: change.Path, oldSize: oldSize, newSize: newSize})
+			changes = append(changes, change)
+			continue
+		}
+		if read += oldSize + newSize; read > c.budget {
+			return nil, nil, errReportTooLarge
+		}
+		if old != nil {
+			if change.Old, err = c.contents.Read(ctx, old.Content); err != nil {
+				return nil, nil, fmt.Errorf("read the file %s: %w", old.Content, err)
 			}
 		}
-		if err != nil {
-			return nil, err
+		if now != nil {
+			if change.New, err = c.contents.Read(ctx, now.Content); err != nil {
+				return nil, nil, fmt.Errorf("read the file %s: %w", now.Content, err)
+			}
 		}
 		changes = append(changes, change)
 	}
-	return changes, nil
+	return changes, unread, nil
+}
+
+// sizeOf is the size of the file of entry without reading it, 0 for a side that a file does not have (nil).
+func (c *changeReports) sizeOf(ctx context.Context, entry *artifact.Entry) (int, error) {
+	if entry == nil {
+		return 0, nil
+	}
+	size, err := c.contents.Size(ctx, entry.Content)
+	if err != nil {
+		return 0, fmt.Errorf("size the file %s: %w", entry.Content, err)
+	}
+	if size > math.MaxInt {
+		return 0, errReportTooLarge
+	}
+	return int(size), nil
 }
 
 // revisionReference is the reference of revision R<revision> of proposal P<proposal> in the default Suite of a repository.

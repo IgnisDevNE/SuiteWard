@@ -3,6 +3,7 @@ package installer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -372,6 +373,28 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 		if line = port.ReplaceAllString(line, "port N"); !strings.Contains(port.ReplaceAllString(tail, "port N"), line) {
 			t.Errorf("the line %q of the plain output is not in the full-screen scrollback", line)
 		}
+	}
+	// The counts end the page and the scrollback; a warning is not an ok and not a failure.
+	var oks, warnings, failures int
+	for _, line := range strings.Split(strings.TrimSpace(piped.String()), "\n") {
+		switch {
+		case strings.HasPrefix(line, "ok "):
+			oks++
+		case strings.HasPrefix(line, "WARN "):
+			warnings++
+		default:
+			failures++
+		}
+	}
+	counts := fmt.Sprintf("%d ok, %d warnings, %d failures", oks, warnings, failures)
+	if !strings.HasSuffix(strings.TrimSpace(tail), counts) {
+		t.Errorf("the scrollback does not end with %q:\n%s", counts, tail)
+	}
+	if frames := c.out.String(); !strings.Contains(frames[:strings.LastIndex(frames, leaveAlt)], counts) {
+		t.Errorf("the counts %q were never on the screen", counts)
+	}
+	if strings.Contains(piped.String(), "ok, ") {
+		t.Errorf("a plain run prints no counts:\n%s", piped.String())
 	}
 
 	c = newTermConsole(&bytes.Buffer{})

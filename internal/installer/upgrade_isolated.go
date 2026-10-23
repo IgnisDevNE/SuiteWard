@@ -52,11 +52,11 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = st.adopted.Settings.Tier, st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout
 	// An upgrade keeps the installed ports and job timeout: a value asked for that is invalid, or differs, stops the run before any
 	// change, so that it is never ignored in silence.
-	asked, err := chooseIsolatedSettings(r, s)
+	asked, err := askedSettings(r, s)
 	if err != nil {
 		return err
 	}
-	if err := refuseChangedSettings(asked, s); err != nil {
+	if err := refuseChangedSettings(asked, s, installCommand(r, true)); err != nil {
 		return err
 	}
 	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
@@ -125,9 +125,22 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	return nil
 }
 
+// installCommand is the command that installs again, as the messages of the installer name it: the tier and the settings file
+// are named when they are not the defaults (see enrollCommand).
+func installCommand(r *Resolver, isolated bool) string {
+	command := "suiteward install"
+	if isolated {
+		command += " --tier isolated"
+	}
+	if path, ok := r.flags["settings"]; ok { // the command line of this run, not the answers file
+		command += " --settings " + quoteArg(path)
+	}
+	return command
+}
+
 // refuseChangedSettings refuses an upgrade that is asked for other ports or another job timeout than the installed ones: the
-// upgrade keeps them, and the re-run of the install, which takes the values it is given, is how to change them.
-func refuseChangedSettings(asked, installed Settings) error {
+// upgrade keeps them, and the re-run of the install (command), which takes the values it is given, is how to change them.
+func refuseChangedSettings(asked, installed Settings, command string) error {
 	var flags []string
 	if asked.HTTPPort != installed.HTTPPort {
 		flags = append(flags, "--http-port "+strconv.Itoa(asked.HTTPPort))
@@ -141,8 +154,8 @@ func refuseChangedSettings(asked, installed Settings) error {
 	if len(flags) == 0 {
 		return nil
 	}
-	return fmt.Errorf("an upgrade keeps the installed ports and job timeout (HTTP port %d, MCP port %d, job timeout %q) and this run asks for others (%s): nothing was changed. Change them first with a re-run of the install as the service account, `suiteward install --tier isolated %s`, then upgrade without those flags",
-		installed.HTTPPort, installed.MCPPort, installed.JobTimeout, strings.Join(flags, " "), strings.Join(flags, " "))
+	return fmt.Errorf("an upgrade keeps the installed ports and job timeout (HTTP port %d, MCP port %d, job timeout %q) and this run asks for others (%s): nothing was changed. Change them first with a re-run of the install, `%s %s`, then upgrade without those flags",
+		installed.HTTPPort, installed.MCPPort, installed.JobTimeout, strings.Join(flags, " "), command, strings.Join(flags, " "))
 }
 
 // replaceUnits does the steps after the backup: stop the service, then prepare the new units, then migrate and start. An error

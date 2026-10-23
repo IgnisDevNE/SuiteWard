@@ -99,10 +99,11 @@ func answerSource(r *Resolver, key string) string {
 	return ""
 }
 
-// chooseIsolatedSettings resolves the ports and the job timeout over base (the flag, the answers file, else base) and validates the
-// result; an invalid value is refused naming the flag or the answers-file key that gave it. It never prompts: an installed stack
-// keeps its own values unless they are given (adoptInstalled), and the install asks only what a person at the terminal must decide.
-func chooseIsolatedSettings(r *Resolver, base Settings) (Settings, error) {
+// askedSettings resolves the ports and the job timeout over base (the flag, the answers file, else base) and validates the
+// result; an invalid value is refused naming the flag or the answers-file key that gave it. It never prompts: the isolated install
+// keeps the values of an installed stack unless they are given (adoptInstalled), an upgrade never asks, and an install asks only
+// what a person at the terminal must decide. Both tiers use it to see what an upgrade is asked for.
+func askedSettings(r *Resolver, base Settings) (Settings, error) {
 	s := base
 	port := func(key string, def int) (int, error) {
 		v := r.preset(key, strconv.Itoa(def))
@@ -137,7 +138,7 @@ func chooseIsolatedSettings(r *Resolver, base Settings) (Settings, error) {
 
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
 	d, out := env.Deps, env.Term.Out
-	s, err := chooseIsolatedSettings(r, s)
+	s, err := askedSettings(r, s)
 	if err != nil {
 		return err
 	}
@@ -513,7 +514,7 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neve
 }
 
 // installedWithGiven is the installed settings with the ports and the job timeout that the run is given over them: on a re-run
-// those win, and everything else that is installed stays. asked holds the resolved values (chooseIsolatedSettings).
+// those win, and everything else that is installed stays. asked holds the resolved values (askedSettings).
 func installedWithGiven(r *Resolver, installed, asked Settings) Settings {
 	s := installed
 	if _, ok := r.given("http-port"); ok {

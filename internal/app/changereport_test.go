@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -19,18 +17,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// rawManifest writes entries as given, in the canonical encoding of a manifest: the written format that artifact.NewManifest hashes.
-func rawManifest(entries ...artifact.Entry) []byte {
-	raw := []byte("suiteward.manifest.v1\x00")
-	raw = binary.BigEndian.AppendUint64(raw, uint64(len(entries)))
-	for _, e := range entries {
-		sum, _ := hex.DecodeString(strings.TrimPrefix(e.Content.String(), "sha256:"))
-		raw = binary.BigEndian.AppendUint64(raw, uint64(len(e.Path)))
-		raw = append(append(raw, e.Path...), sum...)
-	}
-	return raw
-}
-
 func manifestOf(t *testing.T, paths ...string) artifact.Manifest {
 	t.Helper()
 	var entries []artifact.Entry
@@ -40,7 +26,8 @@ func manifestOf(t *testing.T, paths ...string) artifact.Manifest {
 	return bootMust(artifact.NewManifest(entries))
 }
 
-func TestTheEncodingOfAManifestIsTheOneItsDigestNames(t *testing.T) {
+// The manifest of a revision is kept in the content store under its own digest, which the store checks the bytes against, and read back by it.
+func TestAManifestIsKeptInTheContentStoreUnderItsOwnDigest(t *testing.T) {
 	many := make([]string, 50)
 	for i := range many {
 		many[i] = fmt.Sprintf("tests/case_%02d_test.go", 49-i)
@@ -49,9 +36,6 @@ func TestTheEncodingOfAManifestIsTheOneItsDigestNames(t *testing.T) {
 		"empty": manifestOf(t), "one file": manifestOf(t, "tests/a_test.go"), "unicode": manifestOf(t, "tests/日本語_test.go", "tests/a b.go"), "fifty files": manifestOf(t, many...),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if artifact.Hash(encodeManifest(m)) != m.Digest() {
-				t.Fatalf("the encoding hashes to %s, not to the digest %s", artifact.Hash(encodeManifest(m)), m.Digest())
-			}
 			store := bootMust(filesystem.NewStore(t.TempDir()))
 			if err := storeManifest(t.Context(), store, m); err != nil {
 				t.Fatalf("store: %v", err)
@@ -60,39 +44,11 @@ func TestTheEncodingOfAManifestIsTheOneItsDigestNames(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read it back by the digest of the manifest: %v", err)
 			}
-			back, err := parseManifest(raw, m.Digest())
+			back, err := artifact.ParseManifest(raw)
 			if err != nil || back.Digest() != m.Digest() || fmt.Sprint(back.Entries()) != fmt.Sprint(m.Entries()) {
 				t.Fatalf("parse = %v, %v; want the manifest back", back.Entries(), err)
 			}
 		})
-	}
-}
-
-func TestParseManifestRefusesWhatIsNotTheEncodingOfTheManifestNamed(t *testing.T) {
-	a := artifact.Entry{Path: "a.txt", Content: artifact.Hash([]byte("a"))}
-	b := artifact.Entry{Path: "b.txt", Content: artifact.Hash([]byte("b"))}
-	good := rawManifest(a, b)
-	huge := binary.BigEndian.AppendUint64([]byte("suiteward.manifest.v1\x00"), 1<<62)
-	longPath := binary.BigEndian.AppendUint64(binary.BigEndian.AppendUint64([]byte("suiteward.manifest.v1\x00"), 1), 1<<62)
-	for name, raw := range map[string][]byte{
-		"nothing": nil, "another format": []byte("not a manifest"), "another version": append([]byte("suiteward.manifest.v2\x00"), good[22:]...),
-		"truncated": good[:len(good)-1], "cut in the count": good[:25], "trailing bytes": append(append([]byte{}, good...), 0),
-		"a count beyond the bytes": huge, "a path beyond the bytes": longPath,
-		"entries out of order": rawManifest(b, a), "a path that is not valid": rawManifest(artifact.Entry{Path: "../x", Content: a.Content}),
-		"the same path twice": rawManifest(a, a),
-	} {
-		t.Run(name, func(t *testing.T) {
-			// Whatever the bytes are, they are what the key is: only their reading is under test.
-			if m, err := parseManifest(raw, artifact.Hash(raw)); err == nil {
-				t.Fatalf("parse = %v, want an error", m.Entries())
-			}
-		})
-	}
-	if _, err := parseManifest(good, artifact.Hash([]byte("another"))); err == nil {
-		t.Fatal("a manifest was read under the digest of another")
-	}
-	if m, err := parseManifest(good, bootMust(artifact.NewManifest([]artifact.Entry{a, b})).Digest()); err != nil || len(m.Entries()) != 2 {
-		t.Fatalf("parse of the canonical encoding = %v, %v", m.Entries(), err)
 	}
 }
 
@@ -360,7 +316,19 @@ func TestARevisionReportRefusesAManifestThatIsNotTheOneItsDigestNames(t *testing
 
 	_, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1"))
 
-	if !errors.Is(err, errBadManifest) || errors.Is(err, governance.ErrNotFound) {
-		t.Fatalf("revisionReport = %v, want errBadManifest: the revision exists, its manifest is damaged", err)
+	if !errors.Is(err, artifact.ErrInvalidEncoding) || errors.Is(err, governance.ErrNotFound) {
+		t.Fatalf("revisionReport = %v, want an invalid encoding: the revision exists, its manifest is damaged", err)
+	}
+}
+
+func TestARevisionReportRefusesTheManifestOfAnotherRevision(t *testing.T) {
+	w, reports := reportWorld(t)
+	digest := manifestDigestOf(t, w, revisionRef("P2", "R1"))
+	w.content.bytes[digest.String()] = manifestOf(t, "tests/other_test.go").Encoding()
+
+	_, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1"))
+
+	if !errors.Is(err, artifact.ErrInvalidEncoding) {
+		t.Fatalf("revisionReport = %v, want an invalid encoding: the bytes are the manifest of another revision", err)
 	}
 }

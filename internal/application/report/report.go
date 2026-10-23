@@ -40,8 +40,8 @@ const (
 
 // FileChange is one protected file that differs between the canonical version and the proposal. Old is the canonical
 // content and New the proposal's. The side a status does not have (Old of an added file, New of a removed one) is
-// empty or absent: the two are the same here. Path is slash-separated, as a git path is; an empty path or one with a
-// backslash is rejected.
+// empty or absent: the two are the same here. Path is slash-separated, as a git path is (a backslash is part of a
+// name, which git on Linux allows); an empty path is rejected.
 type FileChange struct {
 	Path     string
 	Status   Status
@@ -157,8 +157,8 @@ var ErrInvalidChange = errors.New("invalid file change")
 
 func (c FileChange) validate() error {
 	switch {
-	case c.Path == "" || strings.Contains(c.Path, `\`):
-		return fmt.Errorf("%w: %q is not a slash-separated path", ErrInvalidChange, c.Path)
+	case c.Path == "":
+		return fmt.Errorf("%w: a change has no path", ErrInvalidChange)
 	case c.Status != Added && c.Status != Modified && c.Status != Removed:
 		return fmt.Errorf("%w: %q has the status %q", ErrInvalidChange, c.Path, c.Status)
 	case c.Status == Added && len(c.Old) > 0:

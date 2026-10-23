@@ -694,6 +694,15 @@ func TestSelfCheckWithoutGitHubChecksTheDatabaseAndWarnsAboutGitHub(t *testing.T
 	}
 }
 
+// The fix is shown by `doctor` on both tiers, and a co-located PC has no host: it names the machine that runs SuiteWard instead.
+func TestNotConfiguredFixNamesTheMachineThatRunsSuiteWardNotTheHost(t *testing.T) {
+	r := checkNotConfigured("github.app")
+
+	if !strings.Contains(r.Fix, "again with --github yes") || !strings.Contains(r.Fix, "on the machine that runs SuiteWard") || strings.Contains(r.Fix, "on the host") {
+		t.Errorf("fix = %q; want the install again with --github yes on the machine that runs SuiteWard, and no mention of the host", r.Fix)
+	}
+}
+
 func TestWriteSelfCheckPrintsAWarningWithItsFix(t *testing.T) {
 	results := []selfCheckResult{{Name: "github.app", OK: true, Warning: true, Detail: "not configured", Fix: "set GitHub up"}}
 	var out bytes.Buffer

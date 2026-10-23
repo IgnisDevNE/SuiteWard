@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/iotest"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // A command that opens the full screen ends on a page that waits for Enter, and only then closes it: what it printed last is the
@@ -173,5 +175,26 @@ func TestDoctorOnAFullScreenKeepsItsExitCodeWhenTheWaitEnds(t *testing.T) {
 				t.Error("the screen was not closed")
 			}
 		})
+	}
+}
+
+func TestPlainDoctorOutputIsTheResultLinesAndNothingElse(t *testing.T) {
+	results := []doctorResult{
+		{Name: "settings", OK: true},
+		{Name: "github.app", OK: true, Warning: true, Detail: "not configured", Fix: "set GitHub up"},
+		{Name: "ports", Detail: "in use", Fix: "free it"},
+	}
+	const want = "ok settings\nWARN github.app: not configured — set GitHub up\nFAIL ports: in use — free it\n"
+	var piped bytes.Buffer
+	if err := writeDoctor(&piped, results, false); err != nil || piped.String() != want {
+		t.Errorf("a pipe got %q (%v), want %q", piped.String(), err, want)
+	}
+	var out bytes.Buffer
+	scr, err := ui.Open(ui.Options{Out: &out, In: strings.NewReader(""), Mode: ui.ModePlain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDoctor(scr, results, false); err != nil || out.String() != want {
+		t.Errorf("a plain screen got %q (%v), want %q: no counts, no marks", out.String(), err, want)
 	}
 }

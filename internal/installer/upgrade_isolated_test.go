@@ -390,7 +390,7 @@ func TestUpgradeIsolatedRefusesAnotherAccount(t *testing.T) {
 // ---- uninstall ----
 
 var isolatedUnitFiles = []string{
-	"suiteward-data.volume", "suiteward-db-data.volume", "suiteward-db.container", "suiteward-migrate.container", "suiteward-network.network", "suiteward.container",
+	"suiteward-data.volume", "suiteward-db-data.volume", "suiteward-db.container", "suiteward-migrate.container", "suiteward.network", "suiteward.container",
 }
 
 func TestUninstallIsolatedRemovesTheUnitsAndKeepsTheState(t *testing.T) {
@@ -403,12 +403,21 @@ func TestUninstallIsolatedRemovesTheUnitsAndKeepsTheState(t *testing.T) {
 	if stop < 0 || reload < 0 {
 		t.Fatalf("the units were not stopped and reloaded:\n%s", strings.Join(u.f.lines(), "\n"))
 	}
-	for _, unit := range []string{"suiteward.service", "suiteward-migrate.service", "suiteward-db.service"} {
+	// Every generated service is stopped: a network or volume service left active is not run again by the next install, so after a
+	// purge the database would start without its network.
+	for _, unit := range generatedUnits {
 		if !u.f.has("systemctl --user stop " + unit) {
 			t.Errorf("%s was not stopped", unit)
 		}
 	}
+	templates, err := embeddedUnits()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range isolatedUnitFiles {
+		if _, ok := templates[name]; !ok {
+			t.Errorf("%s is not a unit of the release: the list in this test is wrong", name)
+		}
 		if exists(filepath.Join(unitDir(u.home), name)) {
 			t.Errorf("%s was not deleted", name)
 		}

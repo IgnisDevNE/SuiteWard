@@ -701,7 +701,7 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 | Flag | Meaning |
 | --- | --- |
 | `--answers PATH` | Read answers from a YAML file. A flag wins over the file. |
-| `--settings PATH` | The installer settings file (default: `suiteward/settings.yaml` in your per-user configuration directory). A file that you name must exist, except for a plain `install`, which writes it (see "Uninstalling"). |
+| `--settings PATH` | The installer settings file (default: `suiteward/settings.yaml` in your per-user configuration directory). A file that you name must exist, except for a plain `install`, which writes it (see "Uninstalling"). An empty value (an unset shell variable) is a usage error, never the default file. |
 | `--token-file PATH` | Where the copy of the MCP token for a client goes (co-located). |
 | `--tier` | `co-located` (default) or `isolated`. The isolated install passes it, and `--upgrade` on Linux with no settings file needs it. |
 | `--runtime` | `podman` (default, recommended) or `docker` (co-located only). |
@@ -728,7 +728,7 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 
 `sudo suiteward install host`: `--answers PATH`, `--yes` (answer yes to installing Podman with `dnf`), `--metadata-rule yes|no` and `--plain`.
 
-`suiteward uninstall`: `--purge`, `--yes`, `--instance ID` (with `--purge`: the instance id, which `--yes` needs and a terminal asks you to type), `--settings`, `--token-file`, `--tier`, `--runtime`, `--connection` and `--plain`, as above. On the isolated tier, give `--tier isolated` when there is no settings file; on the co-located tier, give `--runtime` and `--connection` then.
+`suiteward uninstall`: `--purge`, `--yes`, `--instance ID` (only with `--purge`, or it is a usage error: the instance id, which `--yes` needs and a terminal asks you to type), `--settings`, `--token-file`, `--tier`, `--runtime`, `--connection` and `--plain`, as above. On the isolated tier, give `--tier isolated` when there is no settings file; on the co-located tier, give `--runtime` and `--connection` then.
 
 `suiteward enroll`: `--owner LOGIN`, `--test-check OWNER/NAME=CHECK` (repeat it), `--settings PATH`, `--tier` (give `--tier isolated` as the service account) and `--plain`. It needs a real terminal and a running service, and asks you to type `enroll` before it replaces the TOTP secret of an enrolled owner (section 6, "Enroll again").
 

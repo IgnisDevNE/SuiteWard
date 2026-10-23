@@ -34,6 +34,9 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	if _, given := flags["instance"]; given && flags["purge"] != "true" {
+		return fmt.Errorf("%w: --instance is for --purge: it names the instance whose data a purge deletes", ErrUsage)
+	}
 	plain, err := wantsPlain(flags, nil)
 	if err != nil {
 		return err

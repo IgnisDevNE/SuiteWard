@@ -19,7 +19,7 @@ A backup is one file, `suiteward-backup-<date>-<time>.tar.age` (the time is UTC)
 | `units/` | On the isolated tier, the unit files as installed, as a record. |
 | `manifest.json` | Written last: the release, the image digest, the instance id, the tier, the time, and the size and SHA-256 of every other member. |
 
-A restore checks every member against the manifest before it changes anything. It refuses a member that is missing, extra, reordered or altered, a name that is not on its short list of members, and a file that is cut short. That catches damage. It does not say who wrote the backup ([section 3](#3-restore)).
+A restore checks every member against the manifest before it changes anything. It refuses a member that is missing, extra, reordered or altered, a name that is not on its short list of members, a hash in the manifest that is not 64 lowercase hexadecimal characters, and a file that is cut short. That catches damage. It does not say who wrote the backup ([section 3](#3-restore)).
 
 A restore writes back the database and the artifact volume, and nothing else. The settings and the units in the archive are a record: the restore never writes them. A backup does not hold what the installation keeps around that data:
 
@@ -96,7 +96,7 @@ A backup that fails removes the spool and the partial file, and says that nothin
 
 **What a restore loses.** A restore returns the instance to the backup's moment. The approvals, proposals and promotions made after the backup are gone, while the default branch on GitHub may have moved on, so the restored canonical can be behind it. There is no reset command. A canonical that is behind the default branch is fixed by a corrective pull request: open one from the current default branch with any small change outside the protected files, approve the revision its check names, and merge it, and the canonical equals the default branch again (see [ADR 0018](decisions/0018-corrective-pr-rollback-and-audit-history.md)). Back up before any planned change.
 
-**Restore only a backup that you made and kept.** age encrypts to a public key, and the public key is in the settings file: anyone who has it can write an archive that decrypts with your kit, and its hashes then agree with its own manifest. A restore makes the backup authoritative: the owner, the TOTP enrollment and the canonical contracts all come from it. SuiteWard does not check who wrote the backup. The restore refuses a backup whose release, image digest, instance or tier is not well formed, and it cleans control and format characters from what it prints from `status.json`. What those fields say (which instance, which owner, which repositories) is still the backup's own claim, not proof.
+**Restore only a backup that you made and kept.** age encrypts to a public key, and the public key is in the settings file: anyone who has it can write an archive that decrypts with your kit, and its hashes then agree with its own manifest. A restore makes the backup authoritative: the owner, the TOTP enrollment and the canonical contracts all come from it. SuiteWard does not check who wrote the backup. The restore refuses a backup whose manifest has a release or a tier that is not a plain name, an image digest that is not `sha256:` and 64 hexadecimal characters, or an instance that is not 8 hexadecimal characters (or `unknown`, for a backup that could not name it), and it never prints the refused value. It drops the control and format characters (bidirectional overrides among them) from what it prints from `status.json`, and turns line breaks and tabs into spaces, so that a line of the text cannot be a line of the output. What those fields say (which instance, which owner, which repositories) is still the backup's own claim, not proof.
 
 **Stop the other instance.** Two instances that use the same GitHub App would publish and promote for the same repositories. The restore warns you; stop the other one before you go on. Nothing in this release checks it.
 
@@ -145,10 +145,11 @@ To get the service back, co-located, run `suiteward install` with the options of
 
 ### A plaintext directory of an earlier release
 
-`suiteward restore --plaintext-dir DIR` restores a directory that holds `suiteward.sql`, `suiteward-artifacts.tar` and `status.json`: the directory that `install --upgrade` of `v0.3.0-alpha.1` and `v0.3.0-alpha.2` made, or one made by hand ([Appendix A](#isolated-host-bash-as-suiteward)). It needs no kit. It warns that nothing is encrypted and nothing verifies who made the files or that they are untouched, and every rule above holds. Three limits:
+`suiteward restore --plaintext-dir DIR` restores a directory that holds `suiteward.sql`, `suiteward-artifacts.tar` and `status.json`: the directory that `install --upgrade` of `v0.3.0-alpha.1` and `v0.3.0-alpha.2` made, or one made by hand ([Appendix A](#isolated-host-bash-as-suiteward)). It needs no kit. It warns that nothing is encrypted and nothing verifies who made the files or that they are untouched, and every rule above holds. Four limits:
 
 - The state that is replaced is backed up encrypted, and a plaintext directory has no kit whose key could be used. The instance must have its own recovery key already: run `suiteward backup init` first.
 - Its `status.json` must name the instance with 8 hexadecimal characters, as `/status` has since `v0.2.0-rc.1`. A backup from `v0.1.x` does not, and the command refuses it: restore it [by hand](#isolated-restore).
+- Its `status.json` must not say `unavailable`. That record, `{"unavailable": true, ...}`, is made only by an encrypted backup of this release, for a service that did not answer, so a directory that says it is not a backup that this command restores, and the command refuses it.
 - It needs the release that made it, like any backup.
 
 ### Going back after an upgrade

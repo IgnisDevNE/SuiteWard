@@ -320,7 +320,7 @@ func TestUninstallPurgeSaysThatBackupsAreKept(t *testing.T) {
 	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--purge", "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Backups under " + backups + " are kept."; !strings.Contains(h.out.String(), want) {
+	if want := "Backups under " + backups + " (or the --backup-dir an upgrade was given) are kept."; !strings.Contains(h.out.String(), want) {
 		t.Errorf("the purge does not say that the backups are kept (%q):\n%s", want, h.out.String())
 	}
 	if !exists(filepath.Join(backups, "20261022T101500Z")) {

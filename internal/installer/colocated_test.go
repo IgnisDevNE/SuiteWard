@@ -1024,7 +1024,7 @@ func TestInstallEnablesPodmanRestartInTheMachine(t *testing.T) {
 }
 
 // The Podman machine of WSL makes ~/.config/systemd/user/default.target.wants owned by root, so the user's own
-// `systemctl --user enable` is denied. The link is then made as root, the machine's default ssh user.
+// `systemctl --user enable` is denied. The link is then made as the machine's default ssh user (root on a Windows WSL machine).
 const (
 	restartAsked  = "podman-machine-default systemctl --user is-enabled" // the check before anything is changed
 	restartEnable = "systemctl --user enable podman-restart.service"
@@ -1089,6 +1089,9 @@ func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 			if tc.note && !strings.Contains(out, restartLink) {
 				t.Errorf("the note does not name the command that works (%s):\n%s", restartLink, out)
 			}
+			if tc.note && !strings.Contains(out, "as the machine's default ssh user (root on a Windows WSL machine)") {
+				t.Errorf("the note does not say which user makes the link:\n%s", out)
+			}
 			for _, c := range h.f.find("ln -sf") {
 				if strings.Contains(c.line(), "--username") || !strings.Contains(c.line(), "mkdir -p /home/user/.config/systemd/user/default.target.wants") {
 					t.Errorf("the link is not made as the default ssh user, with its directory: %s", c.line())
@@ -1103,7 +1106,7 @@ func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 	}
 }
 
-// The user name is put in a shell command that runs as root, so only a plain name is.
+// The user name is put in a path and in a shell command that runs as the default ssh user, so only a plain name is.
 func TestInstallDoesNotLinkRestartForAMachineUserThatIsNotAPlainName(t *testing.T) {
 	h := newHarness(t, "windows")
 	h.f.env["USERNAME"] = "tester"
@@ -1276,7 +1279,7 @@ func TestInstallDockerDoesNotAdoptAndRerunsFromItsSettings(t *testing.T) {
 		t.Error("a re-run does not migrate again")
 	}
 	if len(again.f.find("stop --time 45 suiteward")) == 0 {
-		t.Error("the running service was not stopped before it was replaced")
+		t.Error("the stopped service container was not removed before it was replaced")
 	}
 }
 

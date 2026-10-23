@@ -377,7 +377,7 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 }
 
 // The fix of a disabled podman-restart.service names what works: in a Podman machine the user's own enable can be denied
-// (the unit's directories belong to root), so the link is made as root and the user reloads; on Linux the user enables it.
+// (the unit's directories belong to root), so the link is made as the default ssh user (root on a Windows WSL machine) and the user reloads; on Linux the user enables it.
 func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
 	off := []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}
 	t.Run("in a Podman machine", func(t *testing.T) {
@@ -387,6 +387,7 @@ func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
 		for _, want := range []string{
 			"podman machine ssh podman-machine-default 'mkdir -p /home/user/.config/systemd/user/default.target.wants && ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service'",
 			"podman machine ssh --username user podman-machine-default 'systemctl --user daemon-reload && systemctl --user is-enabled podman-restart.service'",
+			"as the machine's default ssh user (root on a Windows WSL machine)",
 		} {
 			if !strings.Contains(res["restart"].Fix, want) {
 				t.Errorf("the fix lacks %q:\n%s", want, res["restart"].Fix)

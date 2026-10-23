@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -24,6 +25,12 @@ func dockerRerun(t *testing.T, dbState, serveState string) *harness {
 	if err := first.docker(); err != nil {
 		t.Fatal(err)
 	}
+	return dockerRerunOf(t, first, dbState, serveState)
+}
+
+// dockerRerunOf is dockerRerun over the stack that the harness first has installed.
+func dockerRerunOf(t *testing.T, first *harness, dbState, serveState string) *harness {
+	t.Helper()
 	again := dockerHarness(t, "windows")
 	again.dir = first.dir
 	again.have(KindContainer, ContainerDB, ContainerServe)
@@ -156,4 +163,60 @@ func TestInstallDockerRerunRecreatesTheServiceWhenItsSecretsChange(t *testing.T)
 			t.Errorf("the service must be run again and the database must not:\n%s", strings.Join(h.f.lines(), "\n"))
 		}
 	})
+}
+
+// ensureRole writes a new application URL when the role is missing, so the service that holds the old one is run again.
+func TestInstallDockerRerunRecreatesTheServiceWhenTheApplicationRoleIsMissing(t *testing.T) {
+	h := dockerRerun(t, stateHealthy, stateRunning)
+	h.roleExists = false
+	if err := dockerInstall(t, h); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(sqlOf(h), "\n"), "CREATE ROLE") {
+		t.Fatal("the role was not created, so the test does not exercise the missing role")
+	}
+	if !ranServe(h) || ran(h, ContainerDB) {
+		t.Errorf("the service must be run again and the database must not:\n%s", strings.Join(h.f.lines(), "\n"))
+	}
+}
+
+// A re-run that brings the key of the GitHub App stores it, and the service reads it only when it starts, although its
+// definition is the one of the first run.
+func TestInstallDockerRerunRecreatesTheServiceWhenItStoresANewAppKey(t *testing.T) {
+	first := dockerHarness(t, "windows")
+	first.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	if err := first.docker(githubFlags...); err != nil {
+		t.Fatal(err)
+	}
+	h := dockerRerunOf(t, first, stateHealthy, stateRunning) // the key secret is not among the files it has
+	h.github = first.github
+	if err := dockerInstall(t, h); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.githubSeen) != 1 || len(h.secretWrites(SecretGitHubAppKey)) != 1 {
+		t.Fatalf("the re-run did not store the App key it was given: the flow ran %d times", len(h.githubSeen))
+	}
+	if !ranServe(h) || ran(h, ContainerDB) {
+		t.Errorf("the service must be run again and the database must not:\n%s", strings.Join(h.f.lines(), "\n"))
+	}
+}
+
+// A failed migrate says what happened to the service: a kept one was left as it was, a removed one was not started.
+func TestInstallDockerRerunMigrateFailureSaysWhatHappenedToTheService(t *testing.T) {
+	for _, tc := range []struct{ name, serve, want, notWant string }{
+		{"a service that was kept", stateRunning, "the running service was left as it was", "was not started"},
+		{"a service that was removed", stateExited, "the service was not started", "left as it was"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := dockerRerun(t, stateHealthy, tc.serve)
+			h.f.rules = append([]rule{{match: "--name suiteward-migrate ", err: errInjected}}, h.f.rules...)
+			err := dockerInstall(t, h)
+			if !errors.Is(err, errInjected) {
+				t.Fatalf("install = %v, want the migrate failure", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.notWant) {
+				t.Errorf("the error says %q, want %q and not %q", err, tc.want, tc.notWant)
+			}
+		})
+	}
 }

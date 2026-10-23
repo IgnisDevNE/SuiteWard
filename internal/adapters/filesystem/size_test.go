@@ -23,8 +23,8 @@ func TestSizeIsTheLengthOfTheStoredObjectAndReadsNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 		store.io.openFile = func(*os.Root, string, int, fs.FileMode) (artifactFile, error) {
-			t.Fatal("Size opened the object")
-			return nil, nil
+			t.Error("Size opened the object")
+			return nil, fs.ErrInvalid
 		}
 		size, err := store.Size(context.Background(), digest)
 		if err != nil || size != int64(len(content)) {

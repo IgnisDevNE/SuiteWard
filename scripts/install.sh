@@ -10,7 +10,7 @@
 #
 # SUITEWARD_VERSION         a release tag such as v0.3.0-alpha.2 (default: the latest release, which GitHub never makes a pre-release)
 # SUITEWARD_INSTALL_DIR     where `suiteward` goes (default: $HOME/.local/bin)
-# SUITEWARD_REQUIRE_COSIGN  1: stop when cosign is not installed
+# SUITEWARD_REQUIRE_COSIGN  0 (default) or 1: 1 stops when cosign is not installed; any other value is an error
 # SUITEWARD_RELEASE_BASE    only for scripts/install_test.sh: replaces the release download URL, and latest.json under it replaces the GitHub API answer
 #
 # POSIX sh. Everything is in main, called on the last line: a download that stops half way runs nothing.
@@ -51,6 +51,7 @@ main() {
 	trap cleanup EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
+	trap 'exit 129' HUP
 	umask 077
 
 	os=$(uname -s)
@@ -70,6 +71,11 @@ main() {
 	if [ -n "$tag" ] && ! valid_tag "$tag"; then
 		die "SUITEWARD_VERSION must look like v1.2.3, v1.2.3-rc.1 or v1.2.3-alpha.1, not '$tag'"
 	fi
+
+	case ${SUITEWARD_REQUIRE_COSIGN:-} in
+	'' | 0 | 1) ;;
+	*) die "SUITEWARD_REQUIRE_COSIGN must be 0 or 1 (or unset), not '$SUITEWARD_REQUIRE_COSIGN'" ;;
+	esac
 
 	if command -v curl > /dev/null 2>&1; then downloader=curl
 	elif command -v wget > /dev/null 2>&1; then downloader=wget
@@ -92,6 +98,10 @@ main() {
 		[ -n "${HOME:-}" ] || die "HOME is not set: set SUITEWARD_INSTALL_DIR to the directory for suiteward"
 		dir=$HOME/.local/bin
 	fi
+	# mv would put the binary inside a directory of that name instead of replacing anything.
+	if [ -d "$dir/suiteward" ]; then
+		die "$dir/suiteward is a directory: remove it, or set SUITEWARD_INSTALL_DIR to another directory"
+	fi
 	(umask 022 && mkdir -p "$dir") 2> /dev/null || true
 	staged=$(mktemp "$dir/.suiteward.XXXXXX" 2> /dev/null) || {
 		staged=
@@ -106,7 +116,7 @@ Run it again with SUITEWARD_INSTALL_DIR set to a directory you can write, then c
 	if [ -n "${SUITEWARD_RELEASE_BASE:-}" ]; then
 		base=${SUITEWARD_RELEASE_BASE%/}
 		latest_url=$base/latest.json
-		say "Using SUITEWARD_RELEASE_BASE=$base (for tests only)"
+		warn "Using SUITEWARD_RELEASE_BASE=$base (for tests only)"
 	fi
 	pick="set SUITEWARD_VERSION to a release that has it, for example: curl -fsSL https://github.com/$repo/releases/download/<tag>/install.sh | SUITEWARD_VERSION=<tag> sh (the releases are listed at https://github.com/$repo/releases)"
 
@@ -129,6 +139,10 @@ Run it again with SUITEWARD_INSTALL_DIR set to a directory you can write, then c
 	else
 		sums_hash=$($hasher "$tmp/SHA256SUMS" | awk '{ print $1 }')
 		warn "SHA256SUMS was NOT verified by signature: cosign is not installed. The binary is checked only against the SHA256SUMS of this same download."
+		# BusyBox wget (Alpine, routers) can skip the check of TLS certificates, and then only the signature would have authenticated the download.
+		if [ "$downloader" = wget ] && wget --help 2>&1 < /dev/null | grep -qi busybox; then
+			warn "The downloader is BusyBox wget, so TLS certificates may not have been verified: install curl or cosign, or check the signature as below."
+		fi
 		warn "To verify the signature on a machine with cosign 3.x, download $url/SHA256SUMS and $url/SHA256SUMS.sigstore.json there and run, from the release source of $tag:"
 		warn "  pwsh ./scripts/verify-release.ps1 -Blob SHA256SUMS -Bundle SHA256SUMS.sigstore.json"
 		warn "or, without the source:"
@@ -143,10 +157,10 @@ Run it again with SUITEWARD_INSTALL_DIR set to a directory you can write, then c
 		END { if (count == 1 && length(sum) == 64 && sum !~ /[^0-9A-Fa-f]/) print tolower(sum) }' "$tmp/SHA256SUMS")
 	[ -n "$expected" ] || die "SHA256SUMS of $tag does not list $asset exactly once with a SHA-256: the release has no binary for $os/$arch; $pick"
 	fetch "$url/$asset" "$tmp/$asset" || die "could not download $asset from $url: the release has no binary for $os/$arch; $pick"
-	actual=$($hasher "$tmp/$asset" | awk '{ print $1 }')
-	[ "$actual" = "$expected" ] || die "the SHA-256 of $asset ($actual) does not match SHA256SUMS ($expected); nothing was installed"
-
+	# The staged copy is the file that mv puts in place, so it is the one that is hashed.
 	cp "$tmp/$asset" "$staged"
+	actual=$($hasher "$staged" | awk '{ print $1 }')
+	[ "$actual" = "$expected" ] || die "the SHA-256 of $asset ($actual) does not match SHA256SUMS ($expected); nothing was installed"
 	chmod 755 "$staged"
 	mv -f "$staged" "$dir/suiteward"
 	staged=

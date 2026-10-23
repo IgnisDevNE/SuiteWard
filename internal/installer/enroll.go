@@ -22,7 +22,7 @@ type enrollTarget struct {
 
 // Enroll is `suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]`, the
 // deliberate way to enroll the owner again, for example after losing the authenticator. It finds the instance as install and
-// uninstall do and runs setup, which replaces the TOTP secret: with an owner enrolled, it asks for a typed confirmation first.
+// uninstall do (on the co-located tier the settings file must exist) and runs setup, which replaces the TOTP secret: with an owner enrolled, it asks for a typed confirmation first.
 func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
@@ -89,6 +89,10 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 
 // colocatedEnrollTarget finds the stack as uninstall and upgrade do: the guards of the install apply.
 func colocatedEnrollTarget(ctx context.Context, r *Resolver, env Env, t installTarget) (enrollTarget, error) {
+	if !t.haveSaved { // enrolling again replaces the TOTP secret: not of an instance that defaults picked
+		return enrollTarget{}, fmt.Errorf("there is no settings file at %s, so nothing says which instance this is, and enrolling again replaces its TOTP secret: "+
+			"run `suiteward install --upgrade`, which converts the stack and saves the settings file, or pass --settings with the file of the instance; nothing was changed", t.settingsPath)
+	}
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, false)
 	if err != nil {
 		return enrollTarget{}, err

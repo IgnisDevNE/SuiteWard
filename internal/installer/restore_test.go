@@ -473,6 +473,10 @@ func TestRestoreOfABackupWhoseStatusWasUnavailableWarnsAndComparesTheImage(t *te
 			t.Errorf("the preview lacks %q:\n%s", want, u.out.String())
 		}
 	}
+	// An instance that the backup could not name is not another instance than this one.
+	if strings.Contains(u.out.String(), "another instance") {
+		t.Errorf("the preview says that an instance that is not known is another one:\n%s", u.out.String())
+	}
 	u.assertOrder("rm --force --ignore --time 45 suiteward", " -q -v ON_ERROR_STOP=1", "volume import suiteward-data", "--name suiteward --network")
 
 	// Another image is refused, by name, before anything changes.

@@ -381,7 +381,6 @@ func TestBuildRejectsInvalidChanges(t *testing.T) {
 		{"a removed file with a proposal side", []report.FileChange{{Path: "a", Status: report.Removed, Old: []byte("x"), New: []byte("y")}}},
 		{"a repeated path", []report.FileChange{added("a", "x"), removed("b", "x"), added("a", "y")}},
 		{"an empty path", []report.FileChange{added("", "x")}},
-		{"a path with a backslash", []report.FileChange{added("dir\\a.txt", "x")}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -390,5 +389,17 @@ func TestBuildRejectsInvalidChanges(t *testing.T) {
 				t.Fatalf("got %v, want ErrInvalidChange", err)
 			}
 		})
+	}
+}
+
+// Git on Linux allows a backslash in a file name, so a repository can hold one: it is a file name, not a separator, and it
+// must not cost the owner the whole report.
+func TestBuildAcceptsABackslashInAGitPath(t *testing.T) {
+	r, err := report.Build([]report.FileChange{added(`tests/a\b.py`, "x\n")})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(r.Files) != 1 || r.Files[0].Path != `tests/a\b.py` {
+		t.Fatalf("files = %+v", r.Files)
 	}
 }

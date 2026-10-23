@@ -83,7 +83,7 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	}
 	scr.Step(2)
 	for _, name := range []string{ContainerServe, ContainerMigrate, ContainerDB} {
-		if err := rt.Remove(ctx, name); err != nil {
+		if err := working(scr, "Stopping "+name, func() error { return rt.Remove(ctx, name) }); err != nil {
 			return err
 		}
 	}

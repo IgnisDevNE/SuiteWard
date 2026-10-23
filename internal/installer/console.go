@@ -14,6 +14,20 @@ import (
 // The console of one command. Every command opens one Screen (Env.openConsole) and makes it the Terminal's output, so everything that
 // prints to that writer, the say helpers included, goes through it. The spinner, the bars and the summary exist only in full screen:
 // a plain run prints what it printed before the Screen existed.
+//
+// The steps of each flow, in the order of its code (a step starts a clean page, so what must outlive it is a Warn, a Keep line or a
+// summary row):
+//
+//	install, co-located   Environment (runtime, ports, image), Checks (ports, secrets, images), GitHub, Start (the stack comes up),
+//	                      Owner (setup), Done (summary)
+//	install, isolated     Checks (host, adoption, ports), Images, GitHub, Units (env file, secrets, units), Start (database, service,
+//	                      the wait for it), Owner (setup), Done (summary)
+//	install --upgrade     Plan (what changes, the question), Backup, Images, Replace (the stack comes up on the new release), Check
+//	                      (the service settles, summary)
+//	uninstall             Confirm, Remove
+//	install host          Podman, Account, Metadata, Next (the configuration directory and the command for the service account)
+//	enroll                Instance (finding the stack), Owner (status, confirmation, setup)
+//	doctor                Doctor (the checks as Check and Warn lines)
 
 // endConsole closes the Screen. A failed write cannot be reported anywhere else, as for the say helpers.
 func endConsole(scr *ui.Screen) { _ = scr.Close() }
@@ -31,8 +45,8 @@ func screenOn(out io.Writer) *ui.Screen {
 	return s
 }
 
-// spinTick is how often the spinner of a running command moves.
-const spinTick = 200 * time.Millisecond
+// spinTick is how often the spinner of a running command moves; a variable so that a test does not wait for it.
+var spinTick = 200 * time.Millisecond
 
 // working is spinning for a command that can fail.
 func working(scr *ui.Screen, label string, fn func() error) (err error) {

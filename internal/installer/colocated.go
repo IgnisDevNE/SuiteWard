@@ -485,8 +485,9 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 	if !c.keepServe {
 		remove = []string{ContainerServe, ContainerMigrate}
 	}
+	scr := screenOn(c.out)
 	for _, name := range remove {
-		if err := c.rt.Remove(ctx, name); err != nil {
+		if err := working(scr, "Stopping "+name, func() error { return c.rt.Remove(ctx, name) }); err != nil { // the service gets up to 45 s to stop
 			return err
 		}
 	}
@@ -502,7 +503,6 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 	if err := c.ensureRole(ctx, c.secrets.needAppURL); err != nil {
 		return err
 	}
-	scr := screenOn(c.out)
 	if err := working(scr, "Running the migration", func() error { return c.rt.Run(ctx, c.stack.Migrate) }); err != nil {
 		service := "so the service was not started"
 		if c.keepServe {

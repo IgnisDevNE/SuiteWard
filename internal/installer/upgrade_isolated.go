@@ -174,7 +174,8 @@ func refuseChangedSettings(asked, installed Settings, command string) error {
 // says how far it got (stoppedError, migratingError) for the advice of withBackup.
 func replaceUnits(ctx context.Context, host isolatedHost, d Deps, scr *ui.Screen, params UnitParams, dbChanges bool) error {
 	systemctl := userSystemctl(d)
-	if _, err := systemctl(ctx, "stop", "suiteward.service"); err != nil {
+	stop := func() error { _, err := systemctl(ctx, "stop", "suiteward.service"); return err } // the service gets up to 45 s to stop
+	if err := working(scr, "Stopping the service", stop); err != nil {
 		return fmt.Errorf("stop the service: %w", err)
 	}
 	if _, err := prepareUnits(ctx, host, d, scr, params, dbChanges); err != nil {

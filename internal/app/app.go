@@ -56,7 +56,7 @@ func OSEnv() Env {
 // and logs JSON to stderr; usage and problems go to stderr.
 func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
 	// The commands of the machine that installs run before the settings are read: it has no SUITEWARD_* environment.
-	if len(args) > 0 && (args[0] == "install" || args[0] == "uninstall" || args[0] == "enroll" || args[0] == "doctor") {
+	if len(args) > 0 && (args[0] == "install" || args[0] == "uninstall" || args[0] == "enroll" || args[0] == "backup" || args[0] == "restore" || args[0] == "doctor") {
 		return installer.Main(ctx, args, installerEnv(stdout), stderr)
 	}
 	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
@@ -176,5 +176,9 @@ func reportf(stderr io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(stderr, "suiteward: "+format, args...)
 }
 
-// installerEnv is the machine and the console of the installer's commands.
-func installerEnv(stdout io.Writer) installer.Env { return installer.OSEnv(stdout) }
+// installerEnv is the machine and the console of the installer's commands, which show the build version in the title bar of the full screen.
+func installerEnv(stdout io.Writer) installer.Env {
+	env := installer.OSEnv(stdout)
+	env.Version = Version
+	return env
+}

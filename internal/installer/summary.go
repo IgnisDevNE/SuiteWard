@@ -58,11 +58,14 @@ func (c *colocatedInstall) statusRow(ctx context.Context) string {
 	return statusURL(c.s.HTTPPort)
 }
 
-// commonSummary is what an install and an upgrade of the co-located tier both show.
+// commonSummary is what an install and an upgrade of the co-located tier both show. The service has been started a moment ago, and
+// without GitHub nothing has waited for it since, so the version is waited for as the owner's enrollment waits for /status.
 func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows) {
 	rows.add("Tier", string(c.s.Tier))
 	rows.add("Runtime", engineLine(c.rt.Engine()))
-	rows.add("Instance", instanceVersion(ctx, c.readStatus))
+	rows.add("Instance", instanceVersion(ctx, func(ctx context.Context) ([]byte, error) {
+		return waitForStatus(ctx, c.env.Sleep, c.readStatus, barOn(screenOn(c.out), "Service"))
+	}))
 	rows.addGitHub(c.s.GitHub)
 }
 

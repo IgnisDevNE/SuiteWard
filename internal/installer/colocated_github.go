@@ -247,6 +247,16 @@ const unknownLogin = "unknown login"
 // enrolledOwner reads /status of the service, which may still be starting, and returns the login of the enrolled owner, or
 // "" when there is none. An answer it cannot read is an error: it is not "no owner". The wait draws on bar, when it is given one.
 func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.Context) ([]byte, error), bar waitBar) (string, error) {
+	body, err := waitForStatus(ctx, g.env.Sleep, status, bar)
+	if err != nil {
+		return "", err
+	}
+	return parseEnrolledOwner(body)
+}
+
+// waitForStatus reads /status of a service that may still be starting, up to statusTries times, statusEvery apart, and returns the first
+// answer, or the last error. A done context ends it at once. The wait draws on bar, when it is given one.
+func waitForStatus(ctx context.Context, sleep func(time.Duration), status func(context.Context) ([]byte, error), bar waitBar) ([]byte, error) {
 	var body []byte
 	var err error
 	for i := range statusTries {
@@ -255,14 +265,14 @@ func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.C
 		}
 		bar.set(float64(i)/statusTries, "waiting for /status")
 		if i < statusTries-1 {
-			g.env.Sleep(statusEvery)
+			sleep(statusEvery)
 		}
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	bar.set(1, "answers")
-	return parseEnrolledOwner(body)
+	return body, nil
 }
 
 // parseEnrolledOwner is the login of the owner /status reports, or "" when it reports none.

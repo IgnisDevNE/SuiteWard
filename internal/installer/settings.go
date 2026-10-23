@@ -172,7 +172,8 @@ func (g GitHub) validate() error {
 	return errors.Join(errs...)
 }
 
-// LoadSettings reads path over the defaults and validates it. A missing file is ErrNoSettings.
+// LoadSettings reads path over the defaults and validates it. A missing file is ErrNoSettings. The ports have no default here: a stack
+// that exists is known by the ports in this file, and a default would put it on another one at the next re-run.
 func LoadSettings(path string) (Settings, error) {
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if errors.Is(err, os.ErrNotExist) {
@@ -182,12 +183,24 @@ func LoadSettings(path string) (Settings, error) {
 		return Settings{}, fmt.Errorf("read settings: %w", err)
 	}
 	s := DefaultSettings()
+	s.HTTPPort, s.MCPPort = 0, 0
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&s); err != nil && !errors.Is(err, io.EOF) {
 		return Settings{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if err := s.Validate(); err != nil {
+	var errs []error
+	for _, p := range []struct {
+		key  string
+		port *int
+		stub int
+	}{{"http_port", &s.HTTPPort, DefaultHTTPPort}, {"mcp_port", &s.MCPPort, DefaultMCPPort}} {
+		if *p.port == 0 {
+			errs = append(errs, fmt.Errorf("%s is not set (the installer always writes it)", p.key))
+			*p.port = p.stub // Validate then reports the other problems only, which come first
+		}
+	}
+	if err := errors.Join(append([]error{s.Validate()}, errs...)...); err != nil {
 		return Settings{}, fmt.Errorf("invalid settings in %s: %w", path, err)
 	}
 	return s, nil

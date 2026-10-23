@@ -496,7 +496,11 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 		return err
 	}
 	if err := c.rt.Run(ctx, c.stack.Migrate); err != nil {
-		return migratingError{fmt.Errorf("suiteward migrate failed, so the service was not started: %w", err)}
+		service := "so the service was not started"
+		if c.keepServe {
+			service = "the running service was left as it was"
+		}
+		return migratingError{fmt.Errorf("suiteward migrate failed, %s: %w", service, err)}
 	}
 	c.say("suiteward migrate finished: the schema is up to date.\n")
 	if err := save(); err != nil {
@@ -559,7 +563,9 @@ func (c colocatedInstall) reportStarted() {
 // planKeep decides which containers a re-run leaves alone: the ones that run as the install that made them defined them.
 // shortcut: Docker only. Its stack is known by the settings file of that install, so the settings and the image are what the
 // containers were made from; a Podman re-run still replaces both containers (its stack is adopted from them instead), extend
-// this when a Podman re-run should keep them too. An upgrade never calls it: it replaces on purpose, after a backup.
+// this when a Podman re-run should keep them too. Two effects are known: a plain re-run does not move the database to a newer
+// PostgreSQL pin (`install --upgrade` does), and a change of the container definition that comes with a newer binary but the
+// same image is not detected (run `uninstall`, then `install`). An upgrade never calls it: it replaces on purpose, after a backup.
 func (c *colocatedInstall) planKeep(ctx context.Context) error {
 	s := c.secrets
 	// A settings file from before the image was saved cannot tell what the service was made from.
@@ -584,6 +590,10 @@ func (c *colocatedInstall) planKeep(ctx context.Context) error {
 	// The service reads its secrets when it starts, so one that this run makes or rewrites needs a new service.
 	if !reflect.DeepEqual(was.Serve, c.stack.Serve) || !s.haveToken || s.needAppURL || c.githubKey != nil {
 		return nil
+	}
+	// ensureRole rewrites the application URL when the role is missing.
+	if role, err := appRoleExists(ctx, c.rt); err != nil || !role {
+		return err
 	}
 	serve, err := c.rt.State(ctx, ContainerServe)
 	if err != nil {
@@ -730,23 +740,24 @@ const (
 	restartReloadCommand = "systemctl --user daemon-reload && systemctl --user is-enabled " + restartUnit
 )
 
-// plainUser is a machine user name that can go into a path and into a shell command that runs as root.
+// plainUser is a machine user name that can go into a path and into a shell command that runs as the machine's default ssh user.
 var plainUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 
-// restartLinkCommand links podman-restart.service for user in a Podman machine, as root (the machine's default ssh user). Podman's
-// WSL machine creates the user's systemd directories owned by root, so the user's own `systemctl --user enable` is denied.
+// restartLinkCommand links podman-restart.service for user in a Podman machine. It runs as the machine's default ssh user, which
+// is root on a Windows WSL machine: Podman's WSL machine creates the user's systemd directories owned by root, so the user's own
+// `systemctl --user enable` is denied there.
 func restartLinkCommand(user string) string {
 	wants := "/home/" + user + "/.config/systemd/user/default.target.wants"
 	return "mkdir -p " + wants + " && ln -sf /usr/lib/systemd/user/" + restartUnit + " " + wants + "/" + restartUnit
 }
 
-// restartFix is what to run by hand to enable podman-restart.service in a Podman machine: the link as root, then the reload and
-// check as the user. A user name that is not plain gets the generic fix, never a command built from it.
+// restartFix is what to run by hand to enable podman-restart.service in a Podman machine: the link as the machine's default ssh
+// user, then the reload and check as the user. A user name that is not plain gets the generic fix, never a command built from it.
 func restartFix(machine, user string) string {
 	if !plainUser.MatchString(user) {
 		return restartEnableFix
 	}
-	return fmt.Sprintf("in the machine, link %s as root: podman machine ssh %s %s; then reload and check as the user (it prints enabled): podman machine ssh --username %s %s %s",
+	return fmt.Sprintf("in the machine, link %s as the machine's default ssh user (root on a Windows WSL machine): podman machine ssh %s %s; then reload and check as the user (it prints enabled): podman machine ssh --username %s %s %s",
 		restartUnit, machine, quoteArg(restartLinkCommand(user)), user, machine, quoteArg(restartReloadCommand))
 }
 
@@ -777,7 +788,7 @@ func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 }
 
 // enableInMachine enables podman-restart.service for user in the Podman machine: nothing when it is enabled already, the user's
-// own enable, and when that is denied the link as root followed by a reload and a check that it took.
+// own enable, and when that is denied the link as the default ssh user followed by a reload and a check that it took.
 func (c *colocatedInstall) enableInMachine(ctx context.Context, user string) error {
 	d, machine := c.env.Deps, c.s.Connection
 	asUser := func(command string) ([]byte, error) {
@@ -795,10 +806,10 @@ func (c *colocatedInstall) enableInMachine(ctx context.Context, user string) err
 		return fmt.Errorf("%w; the machine user %q is not a plain name, so the link is not made for it", err, user)
 	}
 	if _, linkErr := d.Exec(ctx, "podman", []string{"machine", "ssh", machine, restartLinkCommand(user)}, nil); linkErr != nil {
-		return fmt.Errorf("%w; the link as root failed too: %v", err, linkErr)
+		return fmt.Errorf("%w; the link as the default ssh user failed too: %v", err, linkErr)
 	}
 	if out, checkErr := asUser(restartReloadCommand); checkErr != nil || strings.TrimSpace(string(out)) != "enabled" {
-		return fmt.Errorf("%w; the link as root was made, but the unit is still not enabled after a reload", err)
+		return fmt.Errorf("%w; the link as the default ssh user was made, but the unit is still not enabled after a reload", err)
 	}
 	return nil
 }

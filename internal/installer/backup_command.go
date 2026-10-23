@@ -62,21 +62,21 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	}
 	dir := r.preset("to", inst.parent)
 	if err := prepareBackupDir(dir, scr.Warn); err != nil {
-		return backupFailed(err)
+		return backupFailed(err, false)
 	}
 	run, err := inst.backup(env.Deps, dir, recipient).start(ctx)
 	if err != nil {
-		return backupFailed(err)
+		return backupFailed(err, false)
 	}
 	for i, stage := range run.stages() {
 		scr.Step(i + 1)
 		if err := working(scr, stage.label, func() error { return stage.run(ctx) }); err != nil {
-			return backupFailed(run.abort(err))
+			return backupFailed(run.abort(err), false)
 		}
 	}
 	path, err := run.finish()
 	if err != nil {
-		return backupFailed(run.abort(err))
+		return backupFailed(run.abort(err), false)
 	}
 	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to the recovery key %s: keep the kit off this machine.\n", path, archive.Fingerprint(inst.s.BackupRecipient))
 	scr.Keep("To restore it, run `suiteward restore %s` with that kit.\n", quoteArg(path))
@@ -101,7 +101,7 @@ func backupSummary(path string, doc statusDoc, recipient string) []ui.KV {
 func (i instance) backup(d Deps, dir string, recipient *age.HybridRecipient) backup {
 	return backup{
 		rt: i.rt, d: d, dir: dir, recipient: recipient, status: i.status, image: i.image, tier: i.s.Tier,
-		settings: i.settingsPath, units: i.units, now: time.Now,
+		settings: i.settingsPath, units: i.units, serviceStarted: i.serviceStarted, now: time.Now,
 	}
 }
 

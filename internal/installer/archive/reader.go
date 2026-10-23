@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"filippo.io/age"
@@ -182,6 +183,11 @@ func readManifest(r io.Reader) (*Manifest, error) {
 	if m.Format != formatVersion {
 		return nil, invalid("format %d is not supported, this release reads format %d", m.Format, formatVersion)
 	}
+	for _, member := range m.Members {
+		if !hexHash.MatchString(member.SHA256) {
+			return nil, invalid("the manifest's sha256 of member %q is not 64 lowercase hexadecimal characters (the value is not shown)", member.Name)
+		}
+	}
 	return &m, nil
 }
 
@@ -199,7 +205,7 @@ func compare(got, want []Member) error {
 		case got[i].Size != want[i].Size:
 			return invalid("member %q has size %d but the manifest records %d", got[i].Name, got[i].Size, want[i].Size)
 		case got[i].SHA256 != want[i].SHA256:
-			return invalid("member %q has sha256 %s but the manifest records %s", got[i].Name, got[i].SHA256, want[i].SHA256)
+			return invalid("member %q has sha256 %q but the manifest records %q", got[i].Name, got[i].SHA256, want[i].SHA256)
 		}
 	}
 	return nil
@@ -242,3 +248,7 @@ func (x *extraction) cleanup() error {
 	}
 	return errors.Join(errs...)
 }
+
+// hexHash is a SHA-256 as the writer records it. The manifest is text of whoever wrote the archive, so a hash that is anything else is
+// refused when it is decoded, before a comparison can print it.
+var hexHash = regexp.MustCompile(`^[0-9a-f]{64}$`)

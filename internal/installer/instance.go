@@ -159,11 +159,12 @@ var plainName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
 
 // printable makes text that came from outside, an archive or a service, safe to print on one line, also in plain output, which reaches the
 // terminal as it is: it drops the control characters (what the full screen drops) and the format characters (bidirectional overrides
-// among them), and turns a line break and a tab into a space, so that a line of the text can never be a line of the output.
+// among them), and turns a line break, a tab and the separators of a line and of a paragraph (U+2028, U+2029) into a space, so that a line
+// of the text can never be a line of the output.
 func printable(text string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
-		case r == '\n' || r == '\t':
+		case r == '\n' || r == '\t' || r == ' ' || r == ' ':
 			return ' '
 		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
 			return -1

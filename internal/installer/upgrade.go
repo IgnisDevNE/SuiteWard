@@ -214,7 +214,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	c.say("Backup written to %s.\n", dir)
 	scr.Step(3)
 	if err := c.pullImages(ctx); err != nil {
-		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
+		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
 		return withBackup(err, dir, "")
@@ -257,7 +257,7 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 		return "", err
 	}
 	if err := prepareBackupDir(dir, r.screen.Warn); err != nil {
-		return "", backupFailed(err)
+		return "", backupFailed(err, inst.serviceStarted)
 	}
 	b := inst.backup(env.Deps, dir, recipient)
 	b.beside = beside

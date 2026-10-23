@@ -107,7 +107,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	say("Backup written to %s.\n", dir)
 	scr.Step(3)
 	if err := pullMissing(ctx, scr, host.rt, postgres, image); err != nil {
-		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
+		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	scr.Step(4)
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {

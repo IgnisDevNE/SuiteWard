@@ -1,0 +1,24 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ◆ SuiteWard installer v1.2.3                                     step 1 of 6 │
+├──────────────────┬───────────────────────────────────────────────────────────┤
+│ ● Welcome        │ Welcome to SuiteWard.                                     │
+│ ○ Checks         │ This sets up the service on this PC.                      │
+│ ○ Database       │                                                           │
+│ ○ Service        │ How should SuiteWard run?                                 │
+│ ○ GitHub         │ 1) co-located   alongside the agent, on this PC (default) │
+│ ○ Finish         │ 2) isolated     on a separate host                        │
+│                  │ Choose [1]:                                               │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+├──────────────────┴───────────────────────────────────────────────────────────┤
+│ Enter to confirm · Ctrl-C to quit                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯

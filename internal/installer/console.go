@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -34,15 +35,28 @@ import (
 //	doctor                Doctor (the checks as Check and Warn lines)
 
 // A command that succeeds ends on a page that waits for Enter: showSummary for the install, the upgrade, backup, backup init and restore,
-// holdPage for the others. A command that fails ends on its error, which is printed after the screen is closed.
+// holdPage for the others. A command that fails ends on its error: endConsole shows it on the screen, which waits for Enter, and Main prints
+// it after the screen is closed, as it always did. An interrupt, a usage error and plain output show nothing and wait for nothing.
 
-// endConsole closes the Screen when a command ends and joins what the terminal failed to take to the command's own error (err points
-// at its result), as doctor does with its exit code: the command may have succeeded, and what it printed was lost.
+// endConsole ends the console of a command, for every command that opens one: a command that failed has its error shown on the screen,
+// which waits for Enter (Screen.Fail: not in plain mode, and not for an interrupt or a usage error), then the Screen is closed, and what
+// the terminal failed to take is joined to the command's own error (err points at its result), as doctor does with its exit code: the
+// command may have succeeded, and what it printed was lost. Doctor's failed checks are results and not an error: its page is its own.
 func endConsole(scr *ui.Screen, err *error) {
+	if *err != nil && !errors.Is(*err, ErrUsage) && !errors.Is(*err, flag.ErrHelp) && scr.Fail(secretInURL.ReplaceAllString((*err).Error(), "://***@")) {
+		*err = failureShown{*err}
+	}
 	if closeErr := scr.Close(); closeErr != nil {
 		*err = errors.Join(*err, closeErr)
 	}
 }
+
+// failureShown is the error of a command whose failure the screen showed and waited on. A Ctrl-C at that wait closes the page and is not an
+// interrupt of the work: Main keeps the command's own exit code for it.
+type failureShown struct{ err error }
+
+func (e failureShown) Error() string { return e.err.Error() }
+func (e failureShown) Unwrap() error { return e.err }
 
 // screenOn is the Screen that out is, or a plain one that writes to out: a caller that has no terminal (a test, a library call) still
 // talks to the one Screen API.

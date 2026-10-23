@@ -160,7 +160,7 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	// Ctrl-C: the command has closed its screen, and read nothing since. Any error with a done context is the interrupt's: a prompt's
 	// error that a caller put in its own words, or the failure of a child that the signal killed, has lost its Canceled but not its cause.
 	// cmd/suiteward cancels the context for SIGTERM as well, so a SIGTERM ends here too, as "interrupted" with 130; that is accepted.
-	case ctx.Err() != nil:
+	case ctx.Err() != nil && !errors.As(err, new(failureShown)): // a Ctrl-C at the page of a failure only closes it, and the exit code stays the command's
 		_, _ = fmt.Fprintf(stderr, "suiteward: interrupted: %v\n", err) // the error keeps what a failed step left behind and how to clean it up
 		return 130
 	default:

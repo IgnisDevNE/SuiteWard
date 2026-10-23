@@ -3,6 +3,7 @@ package installer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -212,7 +213,7 @@ func TestEveryCommandShowsItsFailureOnTheScreen(t *testing.T) {
 		wantFailed bool
 	}{
 		{"install", []string{"install", "--runtime", "podman", "--connection", "pm"}, "linux", false, true}, // no image
-		{"install, isolated", []string{"install", "--tier", "isolated"}, "linux", false, true},          // not the service account
+		{"install, isolated", []string{"install", "--tier", "isolated"}, "linux", false, true},              // not the service account
 		{"install --upgrade", []string{"install", "--upgrade", "--yes", "--image", testImage}, "linux", true, true},
 		{"install host", []string{"install", "host", "--yes"}, "windows", false, true}, // not AlmaLinux
 		{"uninstall", []string{"uninstall", "--yes"}, "linux", true, true},
@@ -257,5 +258,22 @@ func TestEveryCommandShowsItsFailureOnTheScreen(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The error is drawn as text, with the credentials of a URL hidden, as the doctor hides them.
+func TestTheErrorOnTheScreenHidesTheCredentialsOfAURL(t *testing.T) {
+	c := newTermConsole(&bytes.Buffer{})
+	scr, err := c.open(liveContext(t), strings.NewReader("\n"), "dev", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("connect to postgres://suiteward:hunter2@suiteward-db:5432/suiteward: connection refused")
+	endConsole(scr, &failure)
+	if strings.Contains(c.out.String(), "hunter2") {
+		t.Errorf("the password reached the screen:\n%q", c.out.String())
+	}
+	if _, content, _ := finalFrame(t, c.out.String()); !strings.Contains(squash(content), squash("connection refused")) {
+		t.Errorf("the error is not on the screen:\n%s", content)
 	}
 }

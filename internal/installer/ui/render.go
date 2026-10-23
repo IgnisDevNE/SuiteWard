@@ -123,14 +123,15 @@ func (s *Screen) draw() {
 // frame lays out the whole terminal: exactly s.h rows of exactly s.w columns. The caller holds the lock.
 func (s *Screen) frame() frame {
 	bodyH, inner := s.h-frameRows, s.w-2
-	steps := !s.summary
+	summary := s.summary && s.failure == "" // a failure is shown on the page it stopped on, even after a summary
+	steps := !summary
 	textW := inner - 2
 	if steps {
 		textW = inner - stepsWidth - 1 - 2
 	}
 	var content []row
 	cursor := -1
-	if s.summary {
+	if summary {
 		content = s.summaryRows(textW)
 	} else {
 		content, cursor = s.contentRows(textW)
@@ -139,7 +140,7 @@ func (s *Screen) frame() frame {
 	content, cursor = content[cut:], cursor-cut
 	hint := "Ctrl-C to quit"
 	switch {
-	case s.summary, s.waiting:
+	case summary, s.waiting, s.failure != "":
 		hint = "Enter to finish"
 	case s.secret: // the hidden read cannot be interrupted
 		hint = "Enter to confirm"
@@ -165,7 +166,7 @@ func (s *Screen) frame() frame {
 	rows = append(rows, s.rule("├", "┴", inner, steps), vert+" "+hb.row().pad(inner-2)+" "+vert, s.border("╰", "─", "╯", inner))
 
 	f := frame{rows: rows}
-	if cursor >= 0 && !s.summary {
+	if cursor >= 0 && !summary {
 		f.cursor, f.curRow, f.curCol = true, 4+cursor, stepsWidth+4+content[cursor].w
 	}
 	return f
@@ -188,6 +189,8 @@ func (s *Screen) rule(left, junction string, inner int, steps bool) string {
 func (s *Screen) titleRow(inner int) string {
 	right, rightTone := "", toneDefault
 	switch {
+	case s.failure != "":
+		right, rightTone = "failed", toneAmber
 	case s.summary:
 		right, rightTone = "done", toneGreen
 	case len(s.steps) > 0:
@@ -217,6 +220,8 @@ func (s *Screen) stepCell(i int) row {
 	switch n := i + 1; {
 	case n < s.cur:
 		glyph, t = "✓", toneGreen
+	case n == s.cur && s.failure != "":
+		glyph, t, bold = warnGlyph, toneAmber, true // the step the command failed in
 	case n == s.cur:
 		glyph, t, bold = "●", toneGreen, true
 	}
@@ -244,6 +249,12 @@ func (s *Screen) contentRows(width int) (rows []row, cursor int) {
 	}
 	if s.spinning {
 		rows = append(rows, s.spinRow(width))
+	}
+	if s.failure != "" { // the error, under the page it stopped on, in the style of a warning; no line is pending, so no cursor
+		if len(rows) > 0 {
+			rows = append(rows, row{})
+		}
+		rows, cursor = append(rows, s.markedRows(warnGlyph, toneAmber, s.failure, width)...), -1
 	}
 	return rows, cursor
 }

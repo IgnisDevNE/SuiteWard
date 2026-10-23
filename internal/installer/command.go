@@ -237,7 +237,11 @@ func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, e
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
 	}
-	return FlagsSet(fs), nil
+	flags := FlagsSet(fs)
+	if err := emptySettings(flags); err != nil { // here, before the screen of any command opens: a usage error comes before it
+		return nil, err
+	}
+	return flags, nil
 }
 
 func parseFlags(fs *flag.FlagSet, args []string, out io.Writer) error {
@@ -266,7 +270,11 @@ func parseWithFile(fs *flag.FlagSet, args []string, out io.Writer) (file string,
 	if fs.NArg() > 0 {
 		return "", nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
 	}
-	return file, FlagsSet(fs), nil
+	flags = FlagsSet(fs)
+	if err := emptySettings(flags); err != nil {
+		return "", nil, err
+	}
+	return file, flags, nil
 }
 
 // emptySettings refuses --settings with no path: an unset shell variable gives that, and it must not silently mean the default settings file,
@@ -280,9 +288,6 @@ func emptySettings(flags map[string]string) error {
 
 // settingsPathFrom is the settings file of a command and whether it is the shared per-user default.
 func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err error) {
-	if err := emptySettings(flags); err != nil {
-		return "", false, err
-	}
 	if path = flags["settings"]; path != "" {
 		return path, false, nil
 	}
@@ -421,9 +426,6 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	fs.Bool("json", false, "print the results as JSON")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
-	if err == nil {
-		err = emptySettings(flags)
-	}
 	switch {
 	case errors.Is(err, flag.ErrHelp):
 		return 0

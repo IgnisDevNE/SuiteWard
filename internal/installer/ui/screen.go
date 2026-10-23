@@ -247,10 +247,19 @@ func (s *Screen) Keep(format string, args ...any) {
 	if !strings.HasSuffix(text, "\n") {
 		text += "\n"
 	}
+	s.endLine() // a pending line is not part of the Keep line: it stays a line of the page
 	s.keeping = true
 	s.emit(text)
 	s.keeping = false
 	s.keep = append(s.keep, keepLines(text)...)
+}
+
+// endLine commits the pending line, if there is one, as a line of its own, and forgets a pending carriage return.
+func (s *Screen) endLine() {
+	if s.partial != "" {
+		s.add(item{kind: itemText, text: s.partial})
+	}
+	s.partial, s.pendingCR = "", false
 }
 
 // keepLines is text as the lines Close prints.

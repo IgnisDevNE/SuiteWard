@@ -39,6 +39,7 @@ type api struct {
 	tier     string // the configured installation tier
 	owners   ownerReader
 	github   *githubStatus // nil when the GitHub settings are not set
+	reports  reportSource  // rebuilds the change report of a revision for the report page
 	stopping atomic.Bool   // set when shutdown begins: readiness turns 503 first
 }
 
@@ -47,6 +48,7 @@ func newRouter(a *api) http.Handler {
 	r.Get("/healthz", a.healthz)
 	r.Get("/readyz", a.readyz)
 	r.Get("/status", a.status)
+	r.Get("/reports/{owner}/{repo}/{revision}", a.report)
 	return r
 }
 

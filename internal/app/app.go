@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,6 +39,7 @@ const usage = `usage: suiteward serve
        suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward doctor [--json] [--settings PATH] [--plain]
+       suiteward version
 `
 
 // Env is the process environment that the settings are read from, and the
@@ -64,7 +66,25 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 	if len(args) > 0 && (args[0] == "install" || args[0] == "uninstall" || args[0] == "enroll" || args[0] == "backup" || args[0] == "restore" || args[0] == "doctor") {
 		return installer.Main(ctx, args, installerEnv(stdout), stderr)
 	}
+	if len(args) > 0 && (args[0] == "version" || args[0] == "--version" || args[0] == "-version") {
+		return printVersion(args[1:], stdout, stderr)
+	}
 	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
+}
+
+// printVersion is `suiteward version`: the build version and the digest of the release image this binary installs by default, which a
+// development build does not carry. It reads no setting.
+func printVersion(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 0 {
+		return usageError(stderr)
+	}
+	digest := "none (development build)"
+	if image, ok := installer.ReleaseImage(); ok {
+		_, digest, _ = strings.Cut(image, "@")
+	}
+	// A failed write to stdout cannot be reported anywhere else.
+	_, _ = fmt.Fprintf(stdout, "suiteward %s\nimage %s\n", Version, digest)
+	return 0
 }
 
 // commandFlags are the parsed flags of the commands that have any.

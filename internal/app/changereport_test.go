@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/report"
@@ -300,5 +301,66 @@ func TestOneReportIsBuiltAtATimeAndAWaitingBuildHonorsItsContext(t *testing.T) {
 	}
 	if _, err := reports.revisionReport(context.Background(), revisionRef("P2", "R1")); err != nil {
 		t.Fatalf("a build after the gate was released = %v", err)
+	}
+}
+
+// The manifest is stored before the revision commits: a store that refuses it leaves no revision, no comment and no check of it behind, and the next run records them.
+func TestARevisionIsNotRecordedWhenItsManifestCannotBeStored(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.tree(cjHead2, bootFiles("v2"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	errDisk := errors.New("the disk is full")
+	w.content.putErr = errDisk
+
+	if err := w.runChecks(); !errors.Is(err, errDisk) {
+		t.Fatalf("checks run = %v, want the failure to store the manifest", err)
+	}
+	if keys := w.revisionKeys(); len(keys) != 0 {
+		t.Fatalf("revision comments %v after a manifest that could not be stored, want none", keys)
+	}
+	if record, found := w.record(5); found && record.Reason == "approval-missing" {
+		t.Fatalf("check %+v after a manifest that could not be stored, want no revision to approve", record.Result)
+	}
+
+	w.content.putErr = nil
+	w.mustCheck()
+	w.want(5, checks.InProgress, "approval-missing", 1)
+	if _, err := newChangeReports(w.suites, w.content).revisionReport(t.Context(), revisionRef("P2", "R1")); err != nil {
+		t.Fatalf("revisionReport after the retry: %v", err)
+	}
+}
+
+func TestARevisionReportCountsEveryKindOfChange(t *testing.T) {
+	w := newCJWorld(t, true)
+	files := bootFiles("v1")
+	delete(files, "tests/a_test.go")
+	files["tests/b_test.go"] = "package b\n"
+	w.tree(cjHead2, files)
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	w.mustCheck()
+
+	got, err := newChangeReports(w.suites, w.content).revisionReport(t.Context(), revisionRef("P2", "R1"))
+
+	if err != nil {
+		t.Fatalf("revisionReport: %v", err)
+	}
+	var summary []string
+	for _, f := range got.Report.Files {
+		summary = append(summary, fmt.Sprintf("%s %s +%d/-%d", f.Status, f.Path, f.LinesAdded, f.LinesRemoved))
+	}
+	if want := "removed tests/a_test.go +0/-1, added tests/b_test.go +1/-0"; strings.Join(summary, ", ") != want {
+		t.Fatalf("report %q, want %q", strings.Join(summary, ", "), want)
+	}
+}
+
+func TestARevisionReportRefusesAManifestThatIsNotTheOneItsDigestNames(t *testing.T) {
+	w, reports := reportWorld(t)
+	digest := manifestDigestOf(t, w, revisionRef("P2", "R1"))
+	w.content.bytes[digest.String()] = []byte("not a manifest")
+
+	_, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1"))
+
+	if !errors.Is(err, errBadManifest) || errors.Is(err, governance.ErrNotFound) {
+		t.Fatalf("revisionReport = %v, want errBadManifest: the revision exists, its manifest is damaged", err)
 	}
 }

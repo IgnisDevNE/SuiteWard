@@ -364,3 +364,11 @@ func TestVisibleShowsWhatHidesItself(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckSummaryPanicsOnChangesThatCannotBeStated(t *testing.T) {
+	c := check(commandtext.CheckSuccess, "ready")
+	changes := validChanges()
+	changes.Counted = changes.Added + changes.Modified + changes.Removed + 1
+	c.Changes = &changes
+	mustPanic(t, func() { commandtext.CheckSummary(c) })
+}

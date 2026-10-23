@@ -120,8 +120,9 @@ func TestTheReportPageExplainsEveryReasonAFileHasNoDiff(t *testing.T) {
 			{Path: "e.txt", Status: report.Modified, Limit: report.LimitBudget},
 			{Path: "f.txt", Status: report.Modified, CountsKnown: true, LinesAdded: 3, LinesRemoved: 4, Truncated: true},
 			{Path: "g.txt", Status: report.Modified, CountsKnown: true, LinesAdded: 1, LinesRemoved: 1, MarkersTruncated: true},
+			{Path: "h.bin", Status: report.Removed, OldSize: 9, Limit: report.LimitBinary},
 		},
-		Totals:    report.Totals{Files: map[report.Status]int{report.Modified: 6, report.Added: 1}, LinesAdded: 4, LinesRemoved: 5, Markers: map[report.MarkerKind]int{}},
+		Totals:    report.Totals{Files: map[report.Status]int{report.Modified: 6, report.Added: 1, report.Removed: 1}, LinesAdded: 4, LinesRemoved: 5, Markers: map[report.MarkerKind]int{}},
 		Truncated: true,
 	}
 	a, _ := reportAPI(t, &fakeReports{report: revisionReport{Base: "V3", Report: built}})
@@ -129,12 +130,12 @@ func TestTheReportPageExplainsEveryReasonAFileHasNoDiff(t *testing.T) {
 	body := html.UnescapeString(getReport(a, "127.0.0.1:8080", reportPath).Body.String()) // what a browser shows
 
 	for _, w := range []string{
-		"Binary file, 2 bytes before and 3 bytes after.", "Binary file, 7 bytes.", "Too large to compare line by line: 2000000 bytes before and 2000001 bytes after.",
+		"Binary file, 2 bytes before and 3 bytes after.", "Binary file, 7 bytes.", "Binary file, 9 bytes.", "Too large to compare line by line: 2000000 bytes before and 2000001 bytes after.",
 		"Too different to compare line by line", "Not compared: the comparison work of this report ran out before this file.",
 		"The diff of this file was left out to keep the report within its size budget; the line counts are exact.",
 		"Some marker lines of this file are not listed; the totals above count them all.",
 		"Some details of this report were left out to keep it within its size budget.",
-		"Lines: +4/−5 (counted in 2 of 7 files)", "Not shown line by line: 6 files",
+		"Lines: +4/−5 (counted in 2 of 8 files)", "Not shown line by line: 7 files",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("the page lacks %q:\n%s", w, body)
@@ -366,5 +367,17 @@ func TestTheReportPageOfAnOldRevisionIsRebuiltAfterALaterOneArrived(t *testing.T
 	}
 	if gone := getReport(a, "127.0.0.1:8080", "/reports/acme/widgets/P2-R3"); gone.Code != http.StatusNotFound {
 		t.Errorf("P2-R3 = %d, want 404: there is no such revision", gone.Code)
+	}
+}
+
+func TestTheReportRouteIsUnavailableWhenTheOwnerCannotBeRead(t *testing.T) {
+	const leak = "dial tcp db.internal:5432: password=hunter2"
+	a, logs := reportAPI(t, &fakeReports{report: revisionReport{Base: "V1", Report: smallReport(t)}})
+	a.owners = failingOwners{errors.New(leak)}
+
+	response := getReport(a, "127.0.0.1:8080", reportPath)
+
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "hunter2") || !strings.Contains(logs.String(), "report failed") {
+		t.Fatalf("GET = %d %q, want 503 with no cause, and the cause in the log %q", response.Code, response.Body.String(), logs.String())
 	}
 }

@@ -148,9 +148,13 @@ func (f *fakeBootReader) Tree(_ context.Context, name, sha string) (inventory.Tr
 type fakeBootContent struct {
 	stored map[string]bool
 	bytes  map[string][]byte
+	putErr error // every Put fails with it
 }
 
 func (c *fakeBootContent) Put(_ context.Context, digest artifact.Digest, content io.Reader) error {
+	if c.putErr != nil {
+		return c.putErr
+	}
 	data, err := io.ReadAll(content)
 	if err != nil {
 		return err

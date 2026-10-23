@@ -75,6 +75,8 @@ type Config struct {
 	OutboxPollInterval   time.Duration
 	OutboxLease          time.Duration
 	Tier                 Tier
+	// ReportBaseURL is the loopback origin of the instance (http://127.0.0.1:<port> or http://localhost:<port>) that the change report links name; empty for no link.
+	ReportBaseURL string
 	// GitHub is nil when the synchronization settings are not configured.
 	GitHub *GitHub
 	// MCP is nil when MCP_TOKEN is unset: no local MCP listener.

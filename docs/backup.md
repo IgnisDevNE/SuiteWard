@@ -54,7 +54,7 @@ It needs the installer's settings file and a service that answers `/status`: the
 2. **Kit.** It writes the **recovery kit**, `suiteward-recovery-kit-<instance>.txt` in the current directory, or the file that `--kit PATH` names. The kit is a text file that only your user can read (mode 0600, or an owner-only ACL on Windows). It holds the private key, the line that starts with `AGE-SECRET-KEY-PQ-1`, with comments that name the instance, the public key and its fingerprint. It never overwrites a file: name another with `--kit`, or move the old one away. It warns that the kit is the only way to read a backup, and asks you to copy it off this machine, for example into a password manager, and to delete this copy. On a terminal you then type `stored`; without a terminal, say it with `--yes`. A kit that was not confirmed is removed, and nothing is changed.
 3. **Settings.** It stores only the public key, as `backup_recipient: age1pq1...` in the settings file (about 2000 characters). The private key never reaches the settings, a log or an error.
 
-It prints the fingerprint of the key (`SHA256:...`), which is also in the kit, so that you can tell kits apart. The key is the trusted configuration of the instance: a pull request, an agent or a file in a repository cannot change who a backup is encrypted to. Only whoever can write the settings file, runs `suiteward backup init --replace` on the machine, or (while no key is set) gives `--backup-recipient` to an upgrade can.
+It prints the fingerprint of the key (`SHA256:...`), which is also in the kit, so that you can tell kits apart. The key is the trusted configuration of the instance. Through SuiteWard, a pull request, a `.suiteward.yml` or an MCP call cannot change who a backup is encrypted to. Whatever runs as your user can still write the settings file, run `suiteward backup init --replace`, or (while no key is set) give `--backup-recipient` to an upgrade: on the co-located tier that includes the coding agent, and on the isolated tier whoever runs as the service account.
 
 `--replace` makes a new key although one is set. The backups made with the old key still need the old kit, so keep it too: the command says so. Replacing the key does not re-encrypt an old backup.
 
@@ -71,7 +71,7 @@ The service keeps running. The command takes four steps, in this order:
 3. **Artifacts.** It exports the artifact volume. The engine writes that tarball to a path, so it waits in a private directory, `.suiteward-spool-<random>` (mode 0700, or an owner-only ACL on Windows), beside the backups until it is in the archive. The dump is taken before the volume, so the volume holds every artifact the dump names: an artifact is written before the row that names it, and is never deleted. The volume can hold newer artifacts that the dump does not name yet.
 4. **Encrypt.** It streams the members into `suiteward-backup-<date>-<time>.tar.age`, with `manifest.json` last. The file is created readable by your user only, before any data is in it, and it never replaces an existing file.
 
-The key is the one in the settings. With none, a terminal is offered to make one, as `backup init` does (`--yes` does not answer that question); anything else refuses and names `suiteward backup init`. `--backup-recipient` belongs to `install --upgrade`, not to this command.
+The key is the one in the settings. With none, a terminal is offered to make one, as `backup init` does; anything else refuses and names `suiteward backup init`. `--backup-recipient` belongs to `install --upgrade`, not to this command.
 
 A backup that fails removes the spool and the partial file, and says that nothing was changed. At the end it prints where the backup is, the fingerprint of its key, and the `suiteward restore` command for it. The spool is removed when the backup ends. If a backup or a restore is killed, its private directory stays, with plaintext in it: the next `backup`, `restore` or upgrade removes every `.suiteward-spool-*` and `.suiteward-restore-*` directory in the backup folder and says so. A symbolic link or a file with such a name is not a directory and stays. Two runs at once in one backup folder remove each other's private directory, and the one that loses fails and leaves nothing: run one at a time.
 
@@ -155,7 +155,7 @@ To get the service back, co-located, run `suiteward install` with the options of
 
 An upgrade that migrated cannot be undone by a restore alone: the backup is of the previous release, and migrations only go forward. The way back is to run the previous release on the instance, and then to restore the backup that the upgrade made. Both steps exist, but the whole way back has not been rehearsed end to end, on either tier or on Docker (an upgrade that also moved the PostgreSQL pin may need more): rehearse it ([section 5](#5-rehearse)) before you rely on it.
 
-- **Co-located (Podman):** remove the stack and its data volumes, install the previous release, and restore. The restore then replaces the empty data.
+- **Co-located (Podman):** remove the stack and its data volumes, install the previous release, and restore. The restore then replaces the empty data. Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.1](install.md#5-install-co-located)), and pass `--connection <name>` to the `suiteward` commands when the install used one.
 
   ```powershell
   suiteward uninstall --yes
@@ -165,7 +165,18 @@ An upgrade that migrated cannot be undone by a restore alone: the backup is of t
   ```
 
   The first command keeps the secrets and the settings, and the install uses them, so it creates the volumes again, starts the database from the kept password and creates the role again. It does not run the GitHub flow, because the settings hold the App and its key secret exists, and it does not run setup: the restore brings the enrollment back. The digest of the previous release is in the upgrade's closing message, and in the restore's refusal. On Docker, remove the two volumes with `docker volume rm`.
-- **Isolated:** copy the unit files of `suiteward-backup-<date>-<time>.units` back to `~/.config/containers/systemd/`, run `systemctl --user daemon-reload`, stop the service with `systemctl --user stop suiteward.service`, and run `suiteward restore <backup.tar.age> --kit <kit>`. Stop the service first: the reload does not restart it, so it would still answer `/status` as the new release, and the restore refuses a backup of another release than the one that answers. With the service stopped, the restore compares the image of the unit files with the backup's. It then stops both units and starts them again.
+- **Isolated** (as `suiteward`, in the shell of [step 10.3 of the install guide](install.md#10-running-on-a-separate-host-operators)): the upgrade kept the unit files that it replaced in `suiteward-backup-<date>-<time>.units`, beside the archive in the backup folder (`~/.config/suiteward/backups` by default). Put them back, reload systemd, stop the service, and restore:
+
+  ```bash
+  cp ~/.config/suiteward/backups/suiteward-backup-<date>-<time>.units/* ~/.config/containers/systemd/
+  systemctl --user daemon-reload
+  systemctl --user stop suiteward.service
+  suiteward restore ~/.config/suiteward/backups/suiteward-backup-<date>-<time>.tar.age --kit <kit>
+  ```
+
+  Stop the service before the restore: the reload does not restart it, so it would still answer `/status` as the new release, and the restore refuses a backup of another release than the one that answers. With the service stopped, the restore compares the image of the unit files with the backup's. It then stops both units and starts them again.
+
+  The directory holds `suiteward-db.container` too, with the PostgreSQL pin of the old release. When that `Image=` line is the same as the one in the file you replaced, which the plan of the upgrade showed as `PostgreSQL  unchanged` (`v0.2.0` and the alphas pin the same image), nothing else is needed. When the upgrade moved the pin, the database container still runs the new image after the copy: restart it with `systemctl --user restart suiteward-db.service` and wait until it is healthy before the restore. If the pin moved to another major version of PostgreSQL, the old image cannot open a data directory that the new one used, and this way back does not apply.
 
 ## 4. Re-bootstrap from the protected default branch
 

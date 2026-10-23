@@ -688,7 +688,7 @@ If R.4 or R.6 shows a different fingerprint, or R.7 shows no advance or a `lastE
 
 ## 12. The installer: flags, answers file and what it does
 
-Every command prints its flags with `--help`. The exit code is 0 on success, 1 on a failure, and 2 on a usage error. `install`, `install host`, `uninstall`, `enroll`, `backup init`, `backup` and `restore` exit with 130 when you interrupt them (Ctrl-C, or SIGTERM): the message says what the step left behind and how to clean it up. A restore that you interrupt during its load leaves the database as it was, because the load is one transaction that is committed only at the end ([the backup runbook](backup.md#3-restore)).
+Every command prints its flags with `--help`. The exit code is 0 on success, 1 on a failure, and 2 on a usage error. `install`, `install host`, `uninstall`, `enroll`, `backup init`, `backup` and `restore` exit with 130 when you interrupt them (Ctrl-C, or SIGTERM): the message says what the step left behind and how to clean it up. The exception is a restore that you interrupt during the load of the dump: it exits 1, because the error of the interrupted `psql` replaces the cancellation, and the database stays as it was, because the load is one transaction that is committed only at the end ([the backup runbook](backup.md#3-restore)). In its other steps an interrupted restore exits 130, and its message says where it stopped.
 
 ### Commands and flags
 
@@ -854,7 +854,7 @@ Where you set them:
 | `SUITEWARD_GITHUB_REPOSITORIES` | none | `owner/name` entries, comma-separated, 1 to 20, no duplicates. |
 | `SUITEWARD_GITHUB_API_URL` | `https://api.github.com` | The GitHub API address. Keep the default for github.com. It must be `https`, except that `http` is accepted for a loopback host (for a local test server). |
 | `SUITEWARD_INSTALLATION_TIER` | `co-located` | `isolated` or `co-located`. Set the tier you installed. SuiteWard never claims more than you set. The isolated units set `isolated`. |
-| `SUITEWARD_REPORT_BASE_URL` | none | The loopback origin of the instance, `http://127.0.0.1:<port>` or `http://localhost:<port>`, with the port of `SUITEWARD_HTTP_ADDR` as the machine that runs it sees it (no path, query or user info; a trailing slash is dropped). The change report link of a revision comment starts with it. Anything else stops the service at startup, and the value is not echoed. Without it, a revision comment has no link. The installer sets it on both tiers from `--http-port`. |
+| `SUITEWARD_REPORT_BASE_URL` | none | The loopback origin of the instance, `http://127.0.0.1:<port>` or `http://localhost:<port>`, with the port that the HTTP listener is published on at the machine that runs the instance (`--http-port`, 8081 by default), not the port inside the container that `SUITEWARD_HTTP_ADDR` names (no path, query or user info; a trailing slash is dropped). The change report link of a revision comment starts with it. Anything else stops the service at startup, and the value is not echoed. Without it, a revision comment has no link. The installer sets it on both tiers from `--http-port`. |
 | `SUITEWARD_MCP_ADDR` | `127.0.0.1:8090`. The image sets `0.0.0.0:8090` | Address of the MCP listener. It starts only when `SUITEWARD_MCP_TOKEN` is set. |
 | `SUITEWARD_MCP_TOKEN` (secret) | none | The MCP bearer token, at least 32 bytes. Use the `_FILE` form. |
 | `SUITEWARD_MCP_ALLOWED_ORIGINS` | empty | Browser origins allowed to call MCP, comma-separated. Clients that are not browsers send no origin. |

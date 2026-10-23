@@ -198,3 +198,36 @@ func TestCommandsReportAFailedTerminalWithTheirOwnError(t *testing.T) {
 		}
 	})
 }
+
+// The Docker discouragement is one warning: amber on the screen and kept for Close, each point on a line of its own, and no line broken
+// in the middle of a sentence (the frame wraps the text itself).
+func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(t *testing.T) {
+	c := newTermConsole(&bytes.Buffer{})
+	scr, err := c.open(liveContext(t), strings.NewReader(""), "dev", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newTestResolver(t, map[string]string{"accept-docker": "yes"}, nil, Terminal{In: strings.NewReader(""), Out: scr})
+	if err := confirmDocker(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := scr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	want := "! Docker is allowed on this PC, but Podman is strongly recommended.\n" +
+		"    - Docker's daemon runs as root (a rootful daemon): the containers are not isolated from whoever controls that daemon the way rootless Podman's are.\n" +
+		"    - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.\n"
+	if got := c.tail(); got != want {
+		t.Errorf("the scrollback holds\n%s\nwant\n%s", got, want)
+	}
+
+	// Plain output is the text of the warning as it is, with no mark.
+	term, out := fakeTerminal(false, "")
+	term.Out = out
+	if err := confirmDocker(newTestResolver(t, map[string]string{"accept-docker": "yes"}, nil, term)); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != dockerWarning {
+		t.Errorf("a plain run printed\n%q\nwant the warning as it is\n%q", out.String(), dockerWarning)
+	}
+}

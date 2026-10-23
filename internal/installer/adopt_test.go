@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -109,7 +110,7 @@ func TestAdoptUnitsStopsOnAnythingUnknown(t *testing.T) {
 			}
 		}, "Image"},
 		"a port outside the loopback": {func(u map[string][]byte) {
-			u["suiteward.container"] = bytes.Replace(u["suiteward.container"], []byte("127.0.0.1:8081:8080"), []byte("0.0.0.0:8081:8080"), 1)
+			u["suiteward.container"] = bytes.Replace(u["suiteward.container"], fmt.Appendf(nil, "127.0.0.1:%d:8080", DefaultHTTPPort), fmt.Appendf(nil, "0.0.0.0:%d:8080", DefaultHTTPPort), 1)
 		}, "0.0.0.0"},
 		"an unusable job timeout": {func(u map[string][]byte) {
 			u["suiteward.container"] = bytes.Replace(u["suiteward.container"], []byte("[Service]"), []byte("Environment=SUITEWARD_JOB_TIMEOUT=soon\n\n[Service]"), 1)

@@ -45,7 +45,7 @@ func TestInstallColocatedOnAFullScreenWalksTheStepsAndEndsWithASummary(t *testin
 	if !c.closed() {
 		t.Error("the screen was not closed")
 	}
-	for _, want := range []string{h.tokenPath(), "http://127.0.0.1:8081/status", "v0.2.0"} {
+	for _, want := range []string{h.tokenPath(), "http://127.0.0.1:47081/status", "v0.2.0"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the summary lacks %q", want)
 		}
@@ -252,7 +252,7 @@ func TestInstallIsolatedOnAFullScreenWalksTheStepsAndEndsWithASummary(t *testing
 		t.Fatal(err)
 	}
 	c.steps(t, "Checks", "Images", "GitHub", "Units", "Start", "Owner", "Done")
-	for _, want := range []string{"http://127.0.0.1:8081/status", settingsFile(f.home)} {
+	for _, want := range []string{"http://127.0.0.1:47081/status", settingsFile(f.home)} {
 		if !strings.Contains(c.tail(), want) {
 			t.Errorf("%q is not in the scrollback after Close:\n%s", want, c.tail())
 		}

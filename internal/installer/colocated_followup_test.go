@@ -203,7 +203,7 @@ func TestInstallSaysHowToReadStatusInsideThePodmanMachine(t *testing.T) {
 	if err := h.podman("--connection", "podman-machine-default"); err != nil {
 		t.Fatal(err)
 	}
-	want := `podman machine ssh --username user podman-machine-default "curl -s http://127.0.0.1:8081/status"`
+	want := `podman machine ssh --username user podman-machine-default "curl -s http://127.0.0.1:47081/status"`
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, h.out.String())
 	}

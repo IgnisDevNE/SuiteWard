@@ -589,7 +589,7 @@ func TestInstallIsolatedAdoptsAnInstallAndCarriesItsFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an adopted install needs no --image: %v", err)
 	}
-	if !strings.Contains(out, "9081") || !strings.Contains(out, "8081") {
+	if !strings.Contains(out, "9081") || !strings.Contains(out, "47081") {
 		t.Errorf("an adopted port that replaces the requested one must be reported, with both values:\n%s", out)
 	}
 	serve, _ := os.ReadFile(filepath.Join(unitDir(home), "suiteward.container"))
@@ -856,7 +856,7 @@ func assertFilesAndSettings(t *testing.T, home string) {
 		}
 	}
 	serve, _ := os.ReadFile(filepath.Join(unitDir(home), "suiteward.container"))
-	for _, want := range []string{"\nEnvironmentFile=%h/.config/suiteward/github.env\n", "\nEnvironment=SUITEWARD_INSTALLATION_TIER=isolated\n", "\nPublishPort=127.0.0.1:8081:8080\n"} {
+	for _, want := range []string{"\nEnvironmentFile=%h/.config/suiteward/github.env\n", "\nEnvironment=SUITEWARD_INSTALLATION_TIER=isolated\n", "\nPublishPort=127.0.0.1:47081:8080\n"} {
 		if !strings.Contains(string(serve), want) {
 			t.Errorf("suiteward.container lacks %q", want)
 		}
@@ -958,7 +958,7 @@ func TestInstallIsolatedRefusesInvalidPortsAndJobTimeoutBeforeAnyChange(t *testi
 	for name, args := range map[string][]string{
 		"port out of range": {"--http-port", "70000"},
 		"port not a number": {"--mcp-port", "abc"},
-		"the same port":     {"--http-port", "8091"}, // the default MCP port
+		"the same port":     {"--http-port", "47091"}, // the default MCP port
 		"job timeout":       {"--job-timeout", "soon"},
 	} {
 		f := newIsoFake(t.TempDir())
@@ -1119,7 +1119,7 @@ func TestInstallIsolatedRefusesAPortSomethingElseListensOn(t *testing.T) {
 	for name, tc := range map[string]struct {
 		port int
 		flag string
-	}{"http": {8081, "--http-port"}, "mcp": {8091, "--mcp-port"}} {
+	}{"http": {47081, "--http-port"}, "mcp": {47091, "--mcp-port"}} {
 		f := newIsoFake(t.TempDir())
 		f.noImage, f.listening = true, []int{tc.port}
 		_, err := runIsolated(t, f, nil, "")

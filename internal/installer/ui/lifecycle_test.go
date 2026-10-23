@@ -248,3 +248,21 @@ func TestVersionIsOneSafeLine(t *testing.T) {
 		t.Fatalf("the version must be cleaned onto one line:\n%s", rows)
 	}
 }
+
+func TestKeepAfterAPendingLineLeavesTheLineUnkept(t *testing.T) {
+	tests := []struct{ name, say, want string }{
+		{"a pending line", "Pulling image ", "Pulling image \nToken file: x\n"},
+		{"a pending carriage return", "progress\r", "progress\nToken file: x\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, out := openScreen(t, fullOptions(ColorNone), "")
+			s.Say("%s", tt.say)
+			s.Keep("Token file: %s\n", "x")
+			mustClose(t, s)
+			if got := afterLastLeave(out.String()); got != tt.want {
+				t.Fatalf("the normal screen received %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

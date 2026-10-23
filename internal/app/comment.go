@@ -434,6 +434,9 @@ type commentPublisher struct {
 	owners   ownerSource
 	suites   governance.UnitOfWork
 	logger   *slog.Logger
+	reports  reportSource // rebuilds the change report of a revision for its comment
+	// reportBase is the loopback origin of the report links (SUITEWARD_REPORT_BASE_URL); empty for a comment without a link.
+	reportBase string
 }
 
 func keyError(kind, key, what string) error { return fmt.Errorf("%s %s: %s", kind, key, what) }

@@ -167,6 +167,7 @@ type checkPublisher struct {
 	instance *lazy[string] // commands.Store.Instance, read once
 	appID    int64         // the App that posts, whose runs the readback lists
 	logger   *slog.Logger
+	reports  reportSource // rebuilds the change report of a revision for the numbers of the summary
 }
 
 // publish delivers one github_check message: it drops a message whose generation is no longer the pull request's

@@ -101,7 +101,7 @@ func newPRFlow(t *testing.T) *prFlow {
 	f.checks = &checksJob{repos: []string{bootRepo}, reader: f.reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(),
 		commands: store, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: f.logger, now: func() time.Time { return f.clock }}
 	publisher := &commentPublisher{writer: bootMust(github.NewWriter(client)), bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil }), instance: newLazy(store.Instance),
-		owners: store, suites: store}
+		owners: store, suites: store, reports: newChangeReports(store, artifacts)}
 	f.relay = bootMust(river.NewRelay(river.RelayConfig{Store: store, Publishers: map[string]river.Publisher{githubCommentKind: publisher.publish}, MaxAttempts: 3, Lease: time.Minute, Logger: f.logger}))
 	f.instance = bootMust(store.Instance(t.Context()))
 	return f

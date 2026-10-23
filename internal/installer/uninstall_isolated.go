@@ -39,6 +39,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps,
 	if !ok {
 		return errors.New("nothing was removed")
 	}
+	r.screen.Step(2) // Uninstall set the steps on this screen
 	// Also with no unit files (a purge after an earlier uninstall): a service that uninstall left active has no file, and the next
 	// install would not run it again.
 	stopped, err := stopAndRemoveUnits(ctx, host, d)

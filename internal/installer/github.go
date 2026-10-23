@@ -832,7 +832,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		}
 		ghSay(env.Out, "\nRuleset for %s: %s\n", r.name, path)
 		if r.private {
-			ghSay(env.Out, "Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
+			screenOn(env.Out).Warn("Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
 		}
 		ghSay(env.Out, "Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", env.WebURL, r.name)
 	}
@@ -850,31 +850,33 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
 	results := make(map[string]protection.Result, len(repos))
-	ghSay(env.Out, "\nProtection as GitHub reports it now:\n")
+	// The protection the user must act on is kept: the page of this step is gone before the install ends.
+	scr := screenOn(env.Out)
+	scr.Keep("\nProtection as GitHub reports it now:\n")
 	for _, r := range repos {
 		result := protection.Unknown()
 		read, err := reader.Protection(ctx, r.name, r.branch)
 		if err != nil {
-			ghSay(env.Out, "  %s: could not read the protection (%v)\n", r.name, err)
+			scr.Keep("  %s: could not read the protection (%v)\n", r.name, err)
 		} else if facts, err := read.Facts(r.private); err != nil {
-			ghSay(env.Out, "  %s: the protection answer is not usable (%v)\n", r.name, err)
+			scr.Keep("  %s: the protection answer is not usable (%v)\n", r.name, err)
 		} else {
 			result = protection.Evaluate(facts, res.AppID, res.TestChecks[r.name])
 		}
 		results[r.name] = result
-		ghSay(env.Out, "  %s: %s\n", r.name, result.Kind)
+		scr.Keep("  %s: %s\n", r.name, result.Kind)
 		if len(result.Findings) > 0 {
 			codes := make([]string, len(result.Findings))
 			for i, c := range result.Findings {
 				codes[i] = string(c)
 			}
-			ghSay(env.Out, "    findings: %s\n", strings.Join(codes, ", "))
+			scr.Keep("    findings: %s\n", strings.Join(codes, ", "))
 		}
 		for _, line := range result.Instructions {
-			ghSay(env.Out, "    - %s\n", line)
+			scr.Keep("    - %s\n", line)
 		}
 	}
-	ghSay(env.Out, "Run the checks again at any time with suiteward doctor.\n")
+	scr.Keep("Run the checks again at any time with suiteward doctor.\n")
 	return results, nil
 }
 
@@ -910,9 +912,20 @@ func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]s
 	for _, repo := range repos {
 		argv = append(argv, "--test-check", repo+"="+checks[repo])
 	}
+	// The child needs the real terminal, and what it prints is not the screen's to keep or to draw again: the screen is left, and the
+	// warning is the first thing the user reads there.
+	scr := screenOn(out)
+	scr.Suspend()
+	defer scr.Resume()
 	ghSay(out, "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n")
-	if err := rt.ExecTTY(ctx, ContainerServe, argv); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
+	execErr := rt.ExecTTY(ctx, ContainerServe, argv)
+	if scr.FullScreen() { // the screen comes back when this returns, so the secret stays on the terminal until the user has copied it
+		if _, err := scr.Prompt("\nPress Enter to return to the installer: "); err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("wait for Enter after setup: %w", err)
+		}
+	}
+	if execErr != nil {
+		return fmt.Errorf("setup failed: %w", execErr)
 	}
 	return nil
 }

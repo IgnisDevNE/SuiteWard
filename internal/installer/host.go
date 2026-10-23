@@ -47,6 +47,8 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 		return fmt.Errorf("install host prepares an AlmaLinux host; this system is %s", d.GOOS)
 	}
 	h := &host{r: r, d: d, out: out}
+	scr := r.screen
+	scr.Steps("Podman", "Account", "Metadata", "Next")
 	uid, err := h.run(ctx, "id", "-u")
 	if err != nil {
 		return fmt.Errorf("find out who is running the installer: %w", err)
@@ -54,7 +56,8 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 	if uid != "0" {
 		return errors.New("install host changes the system and must run as root: run it with sudo, then run the service-account step as the service account")
 	}
-	for _, step := range []func(context.Context) error{h.podman, h.account, h.metadata, h.configDir} {
+	for i, step := range []func(context.Context) error{h.podman, h.account, h.metadata, h.configDir} { // the last one and next are step 4
+		scr.Step(i + 1)
 		if err := step(ctx); err != nil {
 			return err
 		}
@@ -63,6 +66,10 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 }
 
 func (h *host) say(format string, args ...any) { _, _ = fmt.Fprintf(h.out, format, args...) }
+
+// check reports a step that went well and warn a line that the reader should notice, on the Screen that h.out is.
+func (h *host) check(format string, args ...any) { screenOn(h.out).Check(format, args...) }
+func (h *host) warn(format string, args ...any)  { screenOn(h.out).Warn(format, args...) }
 
 // run runs a command and returns its trimmed output.
 func (h *host) run(ctx context.Context, name string, args ...string) (string, error) {
@@ -126,7 +133,7 @@ func (h *host) podman(ctx context.Context) error {
 			return fmt.Errorf("the podman package has no fix for %s, so SuiteWard must not run on this host: update Podman and run this again", podmanCVE)
 		}
 	}
-	h.say("Podman %s, with the fix for %s.\n", podmanVersionText.FindString(out), podmanCVE)
+	h.check("Podman %s, with the fix for %s.\n", podmanVersionText.FindString(out), podmanCVE)
 	return nil
 }
 
@@ -147,7 +154,7 @@ func (h *host) account(ctx context.Context) error {
 		if _, err := h.run(ctx, "useradd", "--create-home", "--shell", "/usr/sbin/nologin", ServiceAccount); err != nil {
 			return fmt.Errorf("create the account %s: %w", ServiceAccount, err)
 		}
-		h.say("Created the account %s with no login shell.\n", ServiceAccount)
+		h.check("Created the account %s with no login shell.\n", ServiceAccount)
 	}
 	var add []string
 	for _, f := range []struct{ file, flag string }{{"/etc/subuid", "--add-subuids"}, {"/etc/subgid", "--add-subgids"}} {
@@ -167,7 +174,7 @@ func (h *host) account(ctx context.Context) error {
 		if _, err := h.run(ctx, "usermod", append(add, ServiceAccount)...); err != nil {
 			return fmt.Errorf("add the subordinate id ranges: %w", err)
 		}
-		h.say("Added the subordinate id ranges %s.\n", strings.Join(add, " "))
+		h.check("Added the subordinate id ranges %s.\n", strings.Join(add, " "))
 	}
 	if _, err := h.run(ctx, "loginctl", "enable-linger", ServiceAccount); err != nil {
 		return fmt.Errorf("enable linger for %s: %w", ServiceAccount, err)
@@ -210,7 +217,7 @@ func (h *host) metadata(ctx context.Context) error {
 		code, err := h.run(ctx, "curl", "-s", "-m", "3", "-X", "PUT", "-H", "X-aws-ec2-metadata-token-ttl-seconds: 60",
 			"-o", "/dev/null", "-w", "%{http_code}", "http://"+metadataAddress+"/latest/api/token")
 		if answered := err == nil && code != "000"; !answered {
-			h.say("Nothing answers at %s, so no metadata rule is needed.\n", metadataAddress)
+			h.check("Nothing answers at %s, so no metadata rule is needed.\n", metadataAddress)
 			return nil
 		}
 		ok, err := h.r.confirm("metadata-rule", "A metadata service answers at "+metadataAddress+" and hands out the instance's credentials. Add the nft rule that refuses it for the "+ServiceAccount+" account (--metadata-rule yes|no)")
@@ -218,7 +225,7 @@ func (h *host) metadata(ctx context.Context) error {
 			return err
 		}
 		if !ok {
-			h.say("No metadata rule installed: containers of %s can reach %s. Doctor reports this.\n", ServiceAccount, metadataAddress)
+			h.warn("No metadata rule installed: containers of %s can reach %s. Doctor reports this.\n", ServiceAccount, metadataAddress)
 			return nil
 		}
 	}
@@ -286,7 +293,7 @@ WantedBy=multi-user.target
 	if !strings.Contains(table, "reject") || !strings.Contains(table, metadataAddress) {
 		return fmt.Errorf("the table suiteward_imds has no reject rule for %s: the service must not run on this host until it does", metadataAddress)
 	}
-	h.say("Refusing %s for the account %s (the rule loads at every boot).\n", metadataAddress, ServiceAccount)
+	h.check("Refusing %s for the account %s (the rule loads at every boot).\n", metadataAddress, ServiceAccount)
 	return nil
 }
 
@@ -337,7 +344,7 @@ func (h *host) configDir(ctx context.Context) error {
 	}
 	// The source stays: a running hand-installed service reads it and could not restart until the service step re-renders
 	// its units. The service step says when it may be removed.
-	h.say("Copied %s to %s, owned by %s. The old file stays until the service step has moved the units to the new one.\n", etcEnvFile, dest, ServiceAccount)
+	h.check("Copied %s to %s, owned by %s. The old file stays until the service step has moved the units to the new one.\n", etcEnvFile, dest, ServiceAccount)
 	return nil
 }
 
@@ -383,12 +390,11 @@ func (r *Resolver) confirm(key, question string) (bool, error) {
 	if !r.term.IsTerminal {
 		return false, fmt.Errorf("%s (pass --%s, or set %q in the answers file: stdin is not a terminal, so it cannot be asked)", question, key, key)
 	}
-	r.say("%s [y/N]: ", question)
-	line, err := r.in.ReadString('\n')
-	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
+	line, err := r.screen.Prompt(question + " [y/N]: ")
+	if err != nil {
 		return false, fmt.Errorf("read the answer for %s: %w", key, err)
 	}
-	if strings.TrimSpace(line) == "" {
+	if line == "" {
 		return false, nil
 	}
 	return parseYesNo(key, line)

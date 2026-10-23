@@ -196,7 +196,7 @@ func TestEnrolledOwnerReadsWhatStatusSays(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			g := &githubInstall{}
-			got, err := g.enrolledOwner(context.Background(), answer(tc.body))
+			got, err := g.enrolledOwner(context.Background(), answer(tc.body), nil)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("enrolledOwner = %q, %v", got, err)

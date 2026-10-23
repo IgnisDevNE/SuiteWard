@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -345,8 +346,9 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	}
 	c.steps(t, "Doctor")
 	tail := c.tail()
-	for _, want := range []string{"ok settings", "FAIL ports: ", "WARN github.app: not configured: GitHub is off in this instance — set GitHub up"} {
-		if !strings.Contains(tail, want) {
+	// A passing check is its name beside a check mark, a failed or doubtful one is the line doctor prints.
+	for _, want := range []string{"\nsettings\n", "\nFAIL ports: ", "\nWARN github.app: not configured: GitHub is off in this instance — set GitHub up\n"} {
+		if !strings.Contains("\n"+tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
 	}
@@ -360,8 +362,12 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	var piped bytes.Buffer
 	env = Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &piped}}
 	_ = Main(context.Background(), []string{"doctor", "--settings", path}, env, &stderr)
+	port := regexp.MustCompile(`port \d+`) // the stack of each build listens on a port of its own
 	for _, line := range strings.Split(strings.TrimSpace(piped.String()), "\n") {
-		if !strings.HasPrefix(line, "ok ") && !strings.Contains(tail, line) {
+		if name, ok := strings.CutPrefix(line, "ok "); ok {
+			line = name
+		}
+		if line = port.ReplaceAllString(line, "port N"); !strings.Contains(port.ReplaceAllString(tail, "port N"), line) {
 			t.Errorf("the line %q of the plain output is not in the full-screen scrollback", line)
 		}
 	}

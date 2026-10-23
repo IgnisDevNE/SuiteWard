@@ -1,0 +1,97 @@
+package installer
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
+)
+
+// The console of one command. Every command opens one Screen (Env.openConsole) and makes it the Terminal's output, so everything that
+// prints to that writer, the say helpers included, goes through it. The spinner, the bars and the summary exist only in full screen:
+// a plain run prints what it printed before the Screen existed.
+
+// endConsole closes the Screen. A failed write cannot be reported anywhere else, as for the say helpers.
+func endConsole(scr *ui.Screen) { _ = scr.Close() }
+
+// screenOn is the Screen that out is, or a plain one that writes to out: a caller that has no terminal (a test, a library call) still
+// talks to the one Screen API.
+func screenOn(out io.Writer) *ui.Screen {
+	if s, ok := out.(*ui.Screen); ok {
+		return s
+	}
+	s, err := ui.Open(ui.Options{Out: out, In: strings.NewReader(""), Mode: ui.ModePlain})
+	if err != nil {
+		panic(fmt.Sprintf("installer: a plain screen cannot be opened on %T: %v", out, err)) // only a missing writer fails, and nothing prints to one
+	}
+	return s
+}
+
+// spinTick is how often the spinner of a running command moves.
+const spinTick = 200 * time.Millisecond
+
+// working is spinning for a command that can fail.
+func working(scr *ui.Screen, label string, fn func() error) (err error) {
+	spinning(scr, label, func() { err = fn() })
+	return err
+}
+
+// spinning runs fn under the spinner of label, which a ticking goroutine moves until fn returns. Plain output has no spinner.
+func spinning(scr *ui.Screen, label string, fn func()) {
+	if !scr.FullScreen() {
+		fn()
+		return
+	}
+	start, done, stopped := time.Now(), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		tick := time.NewTicker(spinTick)
+		defer tick.Stop()
+		for {
+			scr.Spin(label, time.Since(start))
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	defer func() {
+		close(done)
+		<-stopped // no tick draws once the spinner is gone
+		scr.EndSpin()
+	}()
+	fn()
+}
+
+// waitBar draws the progress bar of a wait. Plain output has no bar, and a wait that is given none (nil) draws none.
+type waitBar func(fraction float64, status string)
+
+func barOn(scr *ui.Screen, label string) waitBar {
+	if !scr.FullScreen() {
+		return nil
+	}
+	return func(fraction float64, status string) { scr.Progress(label, fraction, status) }
+}
+
+func (b waitBar) set(fraction float64, status string) {
+	if b != nil {
+		b(fraction, status)
+	}
+}
+
+// showSummary shows the summary screen of a finished install or upgrade, and waits for Enter. A plain run has printed its closing lines
+// already, and does not even build the rows (they may ask the service for its status). Ctrl-C there only skips the wait: the work is done.
+func showSummary(scr *ui.Screen, rows func() []ui.KV) error {
+	if !scr.FullScreen() {
+		return nil
+	}
+	if err := scr.Summary(rows(), nil); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}

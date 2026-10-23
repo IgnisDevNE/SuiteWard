@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // ErrNothingInstalled is the refusal of --upgrade, and of uninstall without --purge, when there is no stack to work on.
@@ -116,6 +117,8 @@ func (c *colocatedInstall) readStatus(ctx context.Context) ([]byte, error) {
 // any change), show what changes and ask, back up, pull, then the same bring-up as the install: migrate must exit 0 before the
 // service starts. The volumes, the secrets and the settings the stack has are kept.
 func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
+	scr := r.screen
+	scr.Steps("Plan", "Backup", "Images", "Replace", "Check")
 	image, err := upgradeTarget(r)
 	if err != nil {
 		return err
@@ -188,31 +191,40 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := confirmUpgrade(r, plan, parent, started); err != nil {
 		return err
 	}
-	dir, err := takeBackup(ctx, backup{rt: rt, d: env.Deps, parent: parent, status: c.readStatus, now: time.Now})
+	scr.Step(2)
+	var dir string
+	err = working(scr, "Backing up the database and the artifacts", func() (err error) {
+		dir, err = takeBackup(ctx, backup{rt: rt, d: env.Deps, parent: parent, status: c.readStatus, now: time.Now})
+		return err
+	})
 	if err != nil {
 		return err
 	}
 	c.say("Backup written to %s.\n", dir)
+	scr.Step(3)
 	if err := c.pullImages(ctx); err != nil {
 		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
 		return withBackup(err, dir, "")
 	}
+	scr.Step(4)
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
 		return withBackup(err, dir, "")
 	}
+	scr.Step(5)
 	c.restartAfterReboot(ctx)
-	upgraded(c.say, previous.Image, image, dir, doctor)
-	return nil
+	upgraded(scr, previous.Image, image, dir, doctor)
+	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
-// upgraded prints the end of a successful upgrade: where the backup is, how to go back and what to run next.
-func upgraded(say func(string, ...any), previous, image, backupDir, doctor string) {
-	say("Upgraded to %s.\n", digestOf(image))
-	say("The backup is in %s. It holds the TOTP secret: keep it offline and private.\n", backupDir)
-	say("To go back, restore that backup with the previous image %s (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous))
-	say("Check the instance with `%s`.\n", doctor)
+// upgraded prints the end of a successful upgrade: where the backup is, how to go back and what to run next. The two lines about the
+// backup are kept, so that they are still there when the screen has gone.
+func upgraded(scr *ui.Screen, previous, image, backupDir, doctor string) {
+	scr.Say("Upgraded to %s.\n", digestOf(image))
+	scr.Keep("The backup is in %s. It holds the TOTP secret: keep it offline and private.\n", backupDir)
+	scr.Keep("To go back, restore that backup with the previous image %s (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous))
+	scr.Say("Check the instance with `%s`.\n", doctor)
 }
 
 // The wait for /status of a service the upgrade started: at most startWaitTries probes, and a deadline on the whole wait, because a
@@ -253,11 +265,13 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, startWait)
 	defer cancel()
+	bar := barOn(r.screen, "Service")
 	var lastErr error
 	for i := range startWaitTries {
 		if _, lastErr = status(waitCtx); lastErr == nil || waitCtx.Err() != nil {
 			break
 		}
+		bar.set(float64(i)/startWaitTries, "waiting for /status")
 		if i < startWaitTries-1 {
 			env.Sleep(statusEvery)
 		}
@@ -265,6 +279,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	if lastErr != nil {
 		return true, fmt.Errorf("the service was started, but /status still does not answer (%w): read its logs; or %s", lastErr, manual)
 	}
+	bar.set(1, "answers")
 	return true, nil
 }
 

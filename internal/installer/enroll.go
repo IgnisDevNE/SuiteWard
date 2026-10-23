@@ -32,6 +32,7 @@ func Enroll(ctx context.Context, args []string, env Env) error {
 	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
 	fs.String("tier", "", "co-located (this PC) or isolated (default: the saved settings')")
 	fs.Var(&listFlag{}, "test-check", "the test check of a repository, OWNER/NAME=CHECK; repeat it (default: the saved one, else asked)")
+	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {
 		return err
@@ -40,6 +41,16 @@ func Enroll(ctx context.Context, args []string, env Env) error {
 	if !setupTerminal() {
 		return errors.New("enroll needs a terminal: setup prints the TOTP secret")
 	}
+	plain, err := wantsPlain(flags, nil)
+	if err != nil {
+		return err
+	}
+	scr, env, err := env.openConsole(ctx, plain)
+	if err != nil {
+		return err
+	}
+	defer endConsole(scr)
+	scr.Steps("Instance", "Owner")
 	r, err := NewResolver(flags, nil, env.Term)
 	if err != nil {
 		return err
@@ -69,6 +80,7 @@ func Enroll(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
+	scr.Step(2)
 	return enrollOwner(ctx, r, env, target)
 }
 

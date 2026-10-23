@@ -1,12 +1,15 @@
 package installer
 
 import (
+	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,7 +59,45 @@ func (e Env) httpGet() func(context.Context, string) ([]byte, error) {
 func OSEnv(stdout io.Writer) Env {
 	term := OSTerminal()
 	term.Out = stdout
-	return Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
+	env := Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
+	if stdout == io.Writer(os.Stdout) { // the full screen takes over the process's console, so only the real stdout may ask for it
+		env.OpenScreen = ui.OpenOS
+	}
+	return env
+}
+
+// openConsole opens the Screen of one command and returns the Env that talks through it: its output is the Screen, and its input the
+// buffered reader the Screen reads the answers from, so that the Resolver, the Screen and a read in a goroutine share one buffer. The
+// caller defers endConsole, which also runs before an error is printed to stderr.
+func (e Env) openConsole(ctx context.Context, plain bool) (*ui.Screen, Env, error) {
+	if err := e.Term.validate(); err != nil {
+		return nil, e, err
+	}
+	in, version := bufio.NewReader(e.Term.In), cmp.Or(e.Version, "dev")
+	var scr *ui.Screen
+	var err error
+	if e.OpenScreen != nil {
+		scr, err = e.OpenScreen(ctx, in, version, plain)
+	} else {
+		scr, err = ui.Open(ui.Options{Out: e.Term.Out, In: in, Context: ctx, Version: version, Mode: ui.ModePlain})
+	}
+	if err != nil {
+		return nil, e, fmt.Errorf("open the console: %w", err)
+	}
+	e.Term.In, e.Term.Out = in, scr
+	return scr, e, nil
+}
+
+// wantsPlain says whether --plain, or plain in the answers file, asks for plain lines instead of the full screen; the flag wins.
+func wantsPlain(flags, answers map[string]string) (bool, error) {
+	v, ok := flags["plain"]
+	if !ok {
+		v, ok = answers["plain"]
+	}
+	if !ok {
+		return false, nil
+	}
+	return parseYesNo("plain", v)
 }
 
 func loopbackFree(port int) error {
@@ -106,6 +147,9 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		// A failed write to stderr cannot be reported anywhere else.
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
+	case ctx.Err() != nil && errors.Is(err, context.Canceled): // Ctrl-C: the command has closed its screen, and read nothing since
+		_, _ = fmt.Fprintf(stderr, "suiteward: interrupted: %v\n", err) // the error keeps what a failed step left behind and how to clean it up
+		return 130
 	default:
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", err)
 		return 1
@@ -158,8 +202,12 @@ func newInstallFlagSet() *flag.FlagSet {
 	fs.Bool("upgrade", false, "upgrade the installed stack to the release this binary carries (or --image), after a backup")
 	fs.Bool("yes", false, "with --upgrade: do not ask before backing up and upgrading (it does not start a service that is down: that is asked on its own)")
 	fs.String("backup-dir", "", "with --upgrade: the directory the backup directory is made in (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
+	fs.Bool("plain", false, plainUsage)
 	return fs
 }
+
+// plainUsage is the help of --plain, which every command that draws a screen has.
+const plainUsage = "print plain lines instead of the full-screen window, also on a terminal (what a pipe, a script and NO_COLOR get)"
 
 func printHelp(fs *flag.FlagSet, out io.Writer) {
 	_, _ = io.WriteString(out, Usage)
@@ -219,6 +267,15 @@ func Install(ctx context.Context, args []string, env Env) error {
 			return err
 		}
 	}
+	plain, err := wantsPlain(flags, answers)
+	if err != nil {
+		return err
+	}
+	scr, env, err := env.openConsole(ctx, plain)
+	if err != nil {
+		return err
+	}
+	defer endConsole(scr)
 	aliasGitHubKeys(flags)
 	aliasGitHubKeys(answers)
 	r, err := NewResolver(flags, answers, env.Term)
@@ -271,6 +328,7 @@ func installHost(ctx context.Context, args []string, env Env) error {
 	fs.String("answers", "", "read answers from this YAML file (a flag wins over it)")
 	fs.Bool("yes", false, "answer yes to installing Podman (dnf)")
 	fs.String("metadata-rule", "", "yes or no: refuse the cloud metadata address for the service account")
+	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {
 		return err
@@ -281,6 +339,15 @@ func installHost(ctx context.Context, args []string, env Env) error {
 			return err
 		}
 	}
+	plain, err := wantsPlain(flags, answers)
+	if err != nil {
+		return err
+	}
+	scr, env, err := env.openConsole(ctx, plain)
+	if err != nil {
+		return err
+	}
+	defer endConsole(scr)
 	r, err := NewResolver(flags, answers, env.Term)
 	if err != nil {
 		return err
@@ -294,6 +361,7 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	fs := newFlagSet("doctor")
 	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
 	fs.Bool("json", false, "print the results as JSON")
+	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
@@ -303,7 +371,24 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
 	}
-	return Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, flags["json"] == "true")
+	if flags["json"] == "true" { // JSON is for a program: it is never drawn on a screen that vanishes
+		return Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, true)
+	}
+	plain, err := wantsPlain(flags, nil)
+	var scr *ui.Screen
+	if err == nil {
+		scr, env, err = env.openConsole(ctx, plain)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", err)
+		return 1
+	}
+	defer endConsole(scr) // a panic must not leave the terminal on the alternate screen
+	code := Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, false)
+	if err := scr.Close(); err != nil && code == 0 {
+		return 1 // the report could not be written to the terminal, and nothing else says so
+	}
+	return code
 }
 
 // preset is an answer that is never asked for: the flag or the answers file, else def.

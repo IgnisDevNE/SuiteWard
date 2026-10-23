@@ -26,10 +26,21 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	}
 	fs.Bool("purge", false, "also remove the volumes (the database!), the secrets, the network, the MCP token copy and the settings file")
 	fs.Bool("yes", false, "do not ask before removing")
+	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {
 		return err
 	}
+	plain, err := wantsPlain(flags, nil)
+	if err != nil {
+		return err
+	}
+	scr, env, err := env.openConsole(ctx, plain)
+	if err != nil {
+		return err
+	}
+	defer endConsole(scr)
+	scr.Steps("Confirm", "Remove")
 	r, err := NewResolver(flags, nil, env.Term)
 	if err != nil {
 		return err
@@ -70,6 +81,7 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	if !ok {
 		return errors.New("nothing was removed")
 	}
+	scr.Step(2)
 	for _, name := range []string{ContainerServe, ContainerMigrate, ContainerDB} {
 		if err := rt.Remove(ctx, name); err != nil {
 			return err

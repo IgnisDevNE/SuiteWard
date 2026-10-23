@@ -42,7 +42,8 @@ The MVP, released as `v0.2.0`, is a self-hosted, tamper-evident, human-approved 
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
-| Alpha (`v0.3.0-alpha.1`) | The first distributable version, a pre-release handed to individual testers after four live validation runs (Docker Desktop co-located, A3 converted, a fresh isolated instance, the AlmaLinux host upgraded) and the owner's authorization. Everything after the alpha is post-MVP. | M1.12 |
+| Alpha (`v0.3.0-alpha.2`) | The first distributable version, a pre-release handed to individual testers. `v0.3.0-alpha.1` passed its validation runs with eight findings; `v0.3.0-alpha.2` fixes them and a ninth ([M1.12](phases/M1.12.md#v030-alpha2), merged 2026-10-23 as #53). Everything after the alpha is post-MVP. | M1.12 |
+| [M1.13](phases/M1.13.md) | macOS, a one-line install, full-screen installer steps, an HTML change report linked from the revision comment, and encrypted backups with a guided restore. | Alpha |
 
 S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
 

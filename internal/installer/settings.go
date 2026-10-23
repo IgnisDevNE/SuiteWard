@@ -21,11 +21,12 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/archive"
 )
 
-// Default ports published on the loopback interface (D-INSTALLER). They are off the crowded 8080-8099 range; a stack that exists keeps the
-// ports it publishes (its settings file, containers or units), whatever the defaults are.
+// Default ports published on the loopback interface (D-INSTALLER). They are off the crowded 8080-8099 range and below the ephemeral ranges
+// of Linux (32768-60999) and Windows (49152 and up), where an outgoing connection can hold a port. A stack that exists keeps the ports it
+// publishes (its settings file, containers or units), whatever the defaults are.
 const (
-	DefaultHTTPPort = 47081
-	DefaultMCPPort  = 47091
+	DefaultHTTPPort = 27081
+	DefaultMCPPort  = 27091
 	// MaxRepositories is the most repositories one instance serves.
 	MaxRepositories = 20
 )

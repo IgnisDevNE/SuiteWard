@@ -14,9 +14,9 @@ Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>
 ContainerName=suiteward
 Network=suiteward.network
 # The container listens on all its interfaces; the host side is loopback only.
-PublishPort=127.0.0.1:47081:8080
+PublishPort=127.0.0.1:27081:8080
 # The MCP listener (image default SUITEWARD_MCP_ADDR=0.0.0.0:8090); it still needs its bearer token.
-PublishPort=127.0.0.1:47091:8090
+PublishPort=127.0.0.1:27091:8090
 # The application role URL (never the owner URL), the GitHub App key and the MCP token are podman secrets mounted as files; they are never environment variables.
 Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400
 Environment=SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url

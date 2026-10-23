@@ -8,7 +8,7 @@
 # Exit 0 only if every step passed; a failing step prints "FAIL <step>: <reason>" and exits 1.
 set -u
 
-BASE=${SMOKE_BASE:-http://127.0.0.1:47081}
+BASE=${SMOKE_BASE:-http://127.0.0.1:27081}
 CTR=${SMOKE_CONTAINER:-suiteward}
 READY_TIMEOUT=${SMOKE_READY_TIMEOUT:-120}
 # Optional: the version /status must report, for example sha-<commit> of the image that was just deployed.
@@ -20,7 +20,7 @@ EXPECT_TIER=${SMOKE_TIER:-}
 GITHUB=${SMOKE_GITHUB:-1}
 GITHUB_TIMEOUT=${SMOKE_GITHUB_TIMEOUT:-120}
 # The MCP listener's published port. The mcp step sends no token and never reads one.
-MCP_BASE=${SMOKE_MCP_BASE:-http://127.0.0.1:47091}
+MCP_BASE=${SMOKE_MCP_BASE:-http://127.0.0.1:27091}
 
 [ $# -eq 0 ] || { echo "usage: smoke.sh" >&2; exit 2; }
 

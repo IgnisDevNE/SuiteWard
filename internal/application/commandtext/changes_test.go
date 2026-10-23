@@ -52,7 +52,7 @@ const smallChangeComment = "**SuiteWard contract change P7-R3**\n\n" +
 	"- Files: 1 added, 1 modified, 0 removed\n- Lines: +5/−1 (counted in 2 of 2 files)\n- Marker lines seen: 1 removed assertion line, 1 added skip line\n\n" +
 	"Changed files, most changed lines first:\n\n```\n+2/−1  modified  tests/a_test.go\n+3/−0  added     tests/new_test.go\n```\n\n" +
 	"[Full change report](" + reportURL + ")\n\n" +
-	"This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port.\n\n" +
+	"This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port. Ctrl+click (Cmd+click on a Mac, or middle-click) the link to open it in a new tab.\n\n" +
 	"This comment is a record, not an approval. SuiteWard compares the protected files only; it does not run tests. To approve this exact revision, comment:\n\n" +
 	"```\n/suiteward approve P7-R3 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
 	"This supersedes `P7-R2`.\n"
@@ -131,7 +131,7 @@ func TestRevisionCommentWithoutAReportURLHasNoLink(t *testing.T) {
 	r := revisionWith(t, commandtext.Isolated, smallChange()...)
 	r.ReportURL = ""
 	body := revisionText(t, r)
-	if strings.Contains(body, "http") || strings.Contains(body, "port forward") || strings.Contains(body, "Full change report") {
+	if strings.Contains(body, "http") || strings.Contains(body, "port forward") || strings.Contains(body, "new tab") || strings.Contains(body, "Full change report") {
 		t.Errorf("body has a link without a URL:\n%s", body)
 	}
 	if !strings.Contains(body, "- Lines: +5/−1 (counted in 2 of 2 files)\n") {

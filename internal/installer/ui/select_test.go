@@ -200,14 +200,36 @@ func TestSelectThatLosesItsInputPutsTheConsoleBack(t *testing.T) {
 	keys.balanced(t, 1)
 }
 
-// With ISIG, or the console's processed input, kept, Ctrl-C is a signal and never a character; a console that delivers it as one is
-// reported as an error, since there is no signal for the context to follow.
+// With ISIG, or the console's processed input, kept, Ctrl-C is a signal and never a character; a console that delivers it as one, and
+// raises no signal, is reported as an error, since there is nothing for the context to follow.
 func TestSelectReportsACtrlCThatArrivesAsACharacter(t *testing.T) {
+	old := interruptGrace
+	interruptGrace = 20 * time.Millisecond
+	t.Cleanup(func() { interruptGrace = old })
 	keys := &fakeKeys{}
 	s, _ := openKeyScreen(t, "\x03", keys)
 	_, err := s.Select(selectLabel, testChoices, 0)
-	if err == nil || !strings.Contains(err.Error(), "Ctrl-C") {
+	if err == nil || !strings.Contains(err.Error(), "Ctrl-C") || errors.Is(err, context.Canceled) {
 		t.Fatalf("Select = %v, want an error that says Ctrl-C ended it", err)
+	}
+	keys.balanced(t, 1)
+}
+
+// A host may put the character in the input a moment before it raises the signal, as a Windows console aborts a read before it does:
+// the signal that follows is the interrupt, and the command ends as one.
+func TestSelectEndsAsAnInterruptWhenTheSignalFollowsACtrlCCharacter(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	time.AfterFunc(20*time.Millisecond, cancel)
+	keys := &fakeKeys{}
+	o := fullOptions(ColorNone)
+	o.Out, o.In, o.Context, o.KeyInput = io.Discard, strings.NewReader("\x03"), ctx, keys.toggle
+	s, err := Open(o)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := s.Select(selectLabel, testChoices, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Select = %v, want the context's error: the signal came right after the character", err)
 	}
 	keys.balanced(t, 1)
 }

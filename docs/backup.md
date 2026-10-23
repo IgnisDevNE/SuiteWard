@@ -96,7 +96,7 @@ A backup that fails removes the spool and the partial file, and says that nothin
 
 **What a restore loses.** A restore returns the instance to the backup's moment. The approvals, proposals and promotions made after the backup are gone, while the default branch on GitHub may have moved on, so the restored canonical can be behind it. There is no reset command. A canonical that is behind the default branch is fixed by a corrective pull request: open one from the current default branch with any small change outside the protected files, approve the revision its check names, and merge it, and the canonical equals the default branch again (see [ADR 0018](decisions/0018-corrective-pr-rollback-and-audit-history.md)). Back up before any planned change.
 
-**Restore only a backup that you made and kept.** age encrypts to a public key, and the public key is in the settings file: anyone who has it can write an archive that decrypts with your kit, and its hashes then agree with its own manifest. A restore makes the backup authoritative: the owner, the TOTP enrollment and the canonical contracts all come from it. SuiteWard does not check who wrote the backup. The restore prints what the backup says about itself (the instance, the owner, the repositories) as the backup states it, so treat that as a claim, not as proof.
+**Restore only a backup that you made and kept.** age encrypts to a public key, and the public key is in the settings file: anyone who has it can write an archive that decrypts with your kit, and its hashes then agree with its own manifest. A restore makes the backup authoritative: the owner, the TOTP enrollment and the canonical contracts all come from it. SuiteWard does not check who wrote the backup. The restore refuses a backup whose release, image digest, instance or tier is not well formed, and it cleans control and format characters from what it prints from `status.json`. What those fields say (which instance, which owner, which repositories) is still the backup's own claim, not proof.
 
 **Stop the other instance.** Two instances that use the same GitHub App would publish and promote for the same repositories. The restore warns you; stop the other one before you go on. Nothing in this release checks it.
 
@@ -160,11 +160,11 @@ An upgrade that migrated cannot be undone by a restore alone: the backup is of t
   ```powershell
   suiteward uninstall --yes
   podman volume rm suiteward-data suiteward-db-data
-  suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<previous index> --github no
+  suiteward install --image ghcr.io/ignisdevne/suiteward@sha256:<previous index>
   suiteward restore <backup.tar.age> --kit <kit>
   ```
 
-  The first command keeps the secrets and the settings, and the install uses them, so it creates the volumes again, starts the database from the kept password and creates the role again. The digest of the previous release is in the upgrade's closing message, and in the restore's refusal. On Docker, remove the two volumes with `docker volume rm`.
+  The first command keeps the secrets and the settings, and the install uses them, so it creates the volumes again, starts the database from the kept password and creates the role again. It does not run the GitHub flow, because the settings hold the App and its key secret exists, and it does not run setup: the restore brings the enrollment back. The digest of the previous release is in the upgrade's closing message, and in the restore's refusal. On Docker, remove the two volumes with `docker volume rm`.
 - **Isolated:** copy the unit files of `suiteward-backup-<date>-<time>.units` back to `~/.config/containers/systemd/`, run `systemctl --user daemon-reload`, and run `suiteward restore <backup.tar.age> --kit <kit>`. The restore stops both units and starts them again.
 
 ## 4. Re-bootstrap from the protected default branch

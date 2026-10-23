@@ -1,7 +1,7 @@
 # ADR 0020: Guided reconstruction through a local CLI
 
 - **Date:** 2026-09-26
-- **Status:** Accepted, deferred to post-MVP (phase R1, 2026-10-05). Original status: Accepted design direction; not yet implemented. Detailed prompts, flags, and runtime packaging remain open.
+- **Status:** Accepted. Deferred to post-MVP by phase R1 (2026-10-05); phase M1.13 (2026-10-23) delivered a first `suiteward restore`, which differs from this ADR in the ways that the last amendment lists. Original status: Accepted design direction.
 - **Product:** SuiteWard
 - **Scope:** Local guided restore, reconstruction of instance configuration, and controlled resumption of GitHub integration.
 - **Related:** [Hosting](0001-self-hosted-github-synchronization.md), [authorization](0012-mvp-authorization-policy.md), [protection onboarding](0016-integrated-protection-onboarding.md), [confirmed repair](0017-protection-change-detection-and-confirmed-repair.md), and [encrypted backups](0019-encrypted-backups-and-instance-recovery-key.md).
@@ -91,3 +91,24 @@ Guided reconstruction through a local `suiteward restore` command is accepted. T
 ## Amendment (2026-10-05, phase R1): deferred to post-MVP
 
 `suiteward restore` is deferred; the decision stays accepted. The MVP recovery path is the runbook described in the amendment to [ADR 0019](0019-encrypted-backups-and-instance-recovery-key.md): restore the `pg_dump` and artifact tarball, or re-bootstrap from the protected main branch.
+
+## Amendment (2026-10-23, phase M1.13): a first `suiteward restore`
+
+Phase M1.13 delivered `suiteward restore <backup.tar.age>` in the installer. The decision stays accepted. The runbook is [backup.md](../backup.md), and the owner's decisions are in [D-M1.13](../plan/decisions.md#d-m113-macos-the-one-line-install-installer-screens-the-change-report-and-encrypted-backups). The command differs from this ADR in several ways, and one of them is a decision that the owner has not taken ([D-RESTORE-INPLACE](../plan/decisions.md#open)).
+
+**What it delivered.**
+- **A local command that does not need the service.** It works on the installed instance, with the database container running and healthy and the application role in place. It needs no GitHub connection.
+- **The kit is loaded locally** from a file, or pasted hidden, or piped in, and never as an argument, a log line or an error.
+- **Verify, then preview, then confirm.** It verifies the whole backup (the manifest and every hash, twice, plus the checks of the dump, the artifacts and the release) before it changes anything. It shows what the backup holds beside what runs, warns, and asks the operator to type the instance id of the backup (without a terminal, `--yes --instance <id>`).
+- **A way back.** The state that it replaces is always backed up first, encrypted, whether or not the service answers, and the command prints how to return to it.
+- **An atomic load.** The dump is loaded in one transaction that commits only after its last line, so a failed or interrupted load leaves the database as it was. A failure after the stop says where the restore stopped, what the instance is in, and how to go on.
+- **Credentials are not restored.** The App key, the database passwords and the MCP token stay as the installation has them, as this ADR asks. The owner's TOTP enrollment is the backup's.
+- **Older plaintext backups** (`--plaintext-dir`, the directories that `install --upgrade` of the alpha releases made) restore after a warning, under the same rules.
+
+**What it delivered differently.**
+- **It replaces the instance's data in place.** This ADR says that the MVP needs no in-place destructive replacement mode, and that a restore must never silently replace a functioning canonical contract. The command empties the database and the artifact volume of the instance it runs on and loads the whole backup, for every repository of the instance. It does so after a typed confirmation and a safety backup, not silently, and it has no separate recovery target and no per-project import. Whether that is accepted, or the recovery mode of this ADR is built, is an open decision for the owner (D-RESTORE-INPLACE).
+- **There is no recovery mode.** The service starts at the end of the restore. Nothing holds publication, promotion or the replay of queued work until GitHub has been reconciled, and the comparison after the start checks the release, the schema, the owner and the integrity checks, not the protection of the repositories or the expected App. The operator is warned to stop any other instance that uses the same GitHub App, and nothing enforces it: the exclusion mechanism stays open.
+- **The operator names the file.** There is no discovery from the current directory or from a repository, no list of local and remote copies, and no resumable progress: an interrupted restore is run again from its start, and the safety backup and the transaction keep the state defined.
+- **The owner is not verified again.** The enrollment comes back with the backup, so whoever holds the host, a backup and its kit restores the owner's second factor. Encryption does not say who wrote a backup, so only a backup that the operator made and kept is safe to restore ([ADR 0019](0019-encrypted-backups-and-instance-recovery-key.md), [threat model](../security/threat-model.md)).
+
+**What stays deferred.** The recovery mode with reconciliation and an authorized resumption; per-project recovery and isolation from other projects; discovery and the choice among copies, which needs the remote storage of [ADR 0021](0021-release-backups-and-health-reconciliation.md) (blocked: it needs Contents write, which the App keeps out); resumable progress; the check of protection and of the App's identity before the restore reports an active state; the exclusion of an old and a replacement instance; and the case of a lost owner identity.

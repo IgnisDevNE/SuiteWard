@@ -156,13 +156,13 @@ Set `SUITEWARD_VERSION` to the same tag: the script is the same file in every re
   - `v0.2.0` (2026-10-22) is the current release and runs on both tiers. It adds a least-privilege database role, `suiteward migrate`, signed releases with provenance and an SBOM, and an AlmaLinux 9 isolated host.
   - The security assessment is done, and the hardening phase ([SH](docs/plan/phases/SH.md)) is merged and released.
   - The installer (phase M1.12) ships as the pre-release `v0.3.0-alpha.1`. `v0.3.0-alpha.2`, published on 2026-10-23 as a pre-release too ([#53](https://github.com/IgnisDevNE/SuiteWard/pull/53)), fixes the findings of its validation. Neither carries `install.sh`: the one-line install needs a release built after phase M1.13.
-  - Phase [M1.13](docs/plan/phases/M1.13.md) adds macOS, the one-line install and the full-screen installer; its change report and encrypted backups are not finished yet.
+  - Phase [M1.13](docs/plan/phases/M1.13.md) is built on its phase branch and is not merged or released. It adds macOS, the one-line install, the full-screen installer, revision comments that state the numbers of the change and link a report page on loopback, and encrypted backups with a guided restore (`suiteward backup init`, `backup` and `restore`). Its live validation and its known limits are on the [phase page](docs/plan/phases/M1.13.md#outcome).
 - **Security:** see [SECURITY.md](SECURITY.md), the [threat model](docs/security/threat-model.md), and [`scripts/verify-release.ps1`](scripts/verify-release.ps1), which verifies a release's signature and provenance.
 - **After the MVP:**
   - canonical test execution (M2);
   - a managed service;
-  - encrypted backups and guided restore;
-  - a change report for protected files;
+  - the rest of the backup work (remote storage, scheduled backups, and a restore with a recovery mode);
+  - the rest of the change report (a link to each file's diff, and a report on the check's Details page);
   - reading runner settings inside configuration files.
 
   The roadmap is in the [delivery plan](docs/plan/README.md).

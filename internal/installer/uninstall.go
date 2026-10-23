@@ -88,6 +88,12 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if purge {
 		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
 	}
+	tokenFile := ""
+	if purge { // before anything is removed: a place that cannot be found refuses the purge, it does not stop it half way
+		if tokenFile, err = tokenFileOf(r, env.Deps); err != nil {
+			return err
+		}
+	}
 	inst := instance{rt: rt, settingsPath: settingsPath, haveSettings: haveSaved, status: service.readStatus}
 	if err := inst.confirmRemoval(ctx, r, purge, question); err != nil {
 		return err
@@ -103,17 +109,19 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 		r.say("The volumes, the secrets and the settings are kept: run the install again to start the stack, or use --purge to remove them too.\n")
 		return holdPage(scr)
 	}
-	tokenFile := r.preset("token-file", "")
-	if tokenFile == "" {
-		if tokenFile, err = defaultTokenFile(env.Deps); err != nil {
-			return err
-		}
-	}
 	if err := purgeState(ctx, rt, tokenFile, settingsPath); err != nil {
 		return err
 	}
 	r.say("Removed the volumes, the secrets, the network, %s and %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", tokenFile, settingsPath, backupParent(r, filepath.Dir(tokenFile)))
 	return holdPage(scr)
+}
+
+// tokenFileOf is where the copy of the MCP token is: --token-file, else the default place.
+func tokenFileOf(r *Resolver, d Deps) (string, error) {
+	if file := r.preset("token-file", ""); file != "" {
+		return file, nil
+	}
+	return defaultTokenFile(d)
 }
 
 // engineNamed refuses a run that has no settings file and does not say which engine it works on: the runtime and the Podman connection

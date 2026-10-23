@@ -194,7 +194,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	scr.Step(2)
 	var dir string
 	err = working(scr, "Backing up the database and the artifacts", func() (err error) {
-		dir, err = takeBackup(ctx, backup{rt: rt, d: env.Deps, parent: parent, status: c.readStatus, now: time.Now})
+		dir, err = takePlainBackup(ctx, plainBackup{rt: rt, d: env.Deps, parent: parent, status: c.readStatus, now: time.Now})
 		return err
 	})
 	if err != nil {

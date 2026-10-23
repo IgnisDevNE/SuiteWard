@@ -1,6 +1,8 @@
 package installer
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -46,5 +48,28 @@ func noIdentityIn(t *testing.T, what, text string) {
 	_, identity := testRecoveryKey(t)
 	if strings.Contains(text, identity) || strings.Contains(text, "AGE-SECRET-KEY") {
 		t.Errorf("the private recovery key reached %s", what)
+	}
+}
+
+// assertNoPlaintext fails when any file under dir holds one of the texts: a backup is encrypted at rest, and its spool leaves nothing.
+func assertNoPlaintext(t *testing.T, dir string, texts ...string) {
+	t.Helper()
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		raw, err := os.ReadFile(filepath.Clean(path))
+		if err != nil {
+			return err
+		}
+		for _, text := range texts {
+			if strings.Contains(string(raw), text) {
+				t.Errorf("%s holds %q in plaintext", path, text)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

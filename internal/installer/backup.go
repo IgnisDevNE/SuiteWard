@@ -80,12 +80,12 @@ func writePrivateFile(path string, data []byte) error {
 	return nil
 }
 
-// backup takes the backup of an instance that keeps running (docs/backup.md without its first step): the status of the service,
+// plainBackup takes the plaintext backup of an instance that keeps running (docs/backup.md without its first step): the status of the service,
 // then the database dump, then the artifact volume. The dump comes first, so the volume holds every artifact the dump refers to,
 // because an artifact is written before its row and never deleted. A directory that only this user can read is made under parent
 // and named with the time; a backup that fails leaves nothing behind. The dump and the tarball hold the TOTP secret and are
 // never printed.
-type backup struct {
+type plainBackup struct {
 	rt     Runtime
 	d      Deps
 	parent string
@@ -113,7 +113,7 @@ func ensureParent(parent string) error {
 }
 
 // take returns the directory the backup is in.
-func (b backup) take(ctx context.Context) (string, error) {
+func (b plainBackup) take(ctx context.Context) (string, error) {
 	if err := ensureParent(b.parent); err != nil {
 		return "", err
 	}
@@ -129,7 +129,7 @@ func (b backup) take(ctx context.Context) (string, error) {
 }
 
 // fill writes the files of the backup into dir.
-func (b backup) fill(ctx context.Context, dir string) error {
+func (b plainBackup) fill(ctx context.Context, dir string) error {
 	if err := restrictPath(ctx, b.d, dir, true); err != nil {
 		return err
 	}
@@ -168,15 +168,15 @@ func (b backup) fill(ctx context.Context, dir string) error {
 	return nil
 }
 
-func (b backup) write(ctx context.Context, path string, data []byte) error {
+func (b plainBackup) write(ctx context.Context, path string, data []byte) error {
 	if err := writePrivateFile(path, data); err != nil {
 		return err
 	}
 	return restrictPath(ctx, b.d, path, false)
 }
 
-// takeBackup is backup.take, with the error named as a backup failure that changed nothing.
-func takeBackup(ctx context.Context, b backup) (string, error) {
+// takePlainBackup is plainBackup.take, with the error named as a backup failure that changed nothing.
+func takePlainBackup(ctx context.Context, b plainBackup) (string, error) {
 	dir, err := b.take(ctx)
 	if err != nil {
 		return "", fmt.Errorf("the backup failed, so nothing was changed: %w", err)

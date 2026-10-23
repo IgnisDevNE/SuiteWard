@@ -37,7 +37,7 @@ func TestUpgradeIsolatedReadsStatusThroughTheEnvSeam(t *testing.T) {
 	env := u.env()
 	env.HTTPGet = func(_ context.Context, address string) ([]byte, error) {
 		asked = append(asked, address)
-		return []byte(`{"version":"v9.9.9","schemaVersion":20}`), nil
+		return []byte(`{"version":"v9.9.9","schemaVersion":20,"instance":"1a2b3c4d"}`), nil
 	}
 	args := []string{"--upgrade", "--tier", "isolated", "--settings", settingsFile(u.home), "--backup-dir", u.backups, "--image", testDigest, "--yes"}
 	if err := Install(context.Background(), args, env); err != nil {
@@ -51,9 +51,8 @@ func TestUpgradeIsolatedReadsStatusThroughTheEnvSeam(t *testing.T) {
 	if len(asked) != 2 || !strings.HasSuffix(asked[0], "/status") || asked[0] != asked[1] { // the probe before the offer, then the backup
 		t.Fatalf("the seam was asked %v, want /status twice: the probe, then the backup", asked)
 	}
-	files, _ := filepath.Glob(filepath.Join(u.backups, "*", backupStatus))
-	if len(files) != 1 || !strings.Contains(readFile(t, files[0]), "v9.9.9") {
-		t.Errorf("the backup's status.json does not hold the seam's answer: %v", files)
+	if _, members := openBackup(t, oneArchive(t, u.backups)); !strings.Contains(members[backupStatus], "v9.9.9") {
+		t.Errorf("the backup's status.json does not hold the seam's answer: %v", members[backupStatus])
 	}
 }
 

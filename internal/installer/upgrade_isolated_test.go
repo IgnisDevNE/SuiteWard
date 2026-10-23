@@ -205,19 +205,24 @@ func TestUpgradeIsolatedKeepsABackupAndTheOldUnits(t *testing.T) {
 	if err := u.upgrade("--image", testDigest, "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	dirs, err := filepath.Glob(filepath.Join(u.backups, "*"))
-	if err != nil || len(dirs) != 1 {
-		t.Fatalf("backup directories: %v, %v", dirs, err)
-	}
-	dir := dirs[0]
+	path := oneArchive(t, u.backups)
+	manifest, members := openBackup(t, path)
 	for file, want := range map[string]string{"suiteward.sql": dumpText, "suiteward-artifacts.tar": "TARBYTES", "status.json": statusBody, "units/suiteward.container": before} {
-		if got := readFile(t, filepath.Join(dir, file)); got != want {
+		if got := members[file]; got != want {
 			t.Errorf("%s holds %q", file, got)
 		}
 	}
-	if info, err := os.Stat(filepath.Join(dir, "suiteward.sql")); err != nil || (info.Mode().Perm() != 0o600 && !isWindows()) {
-		t.Errorf("the dump has mode %v, %v", info.Mode().Perm(), err)
+	if manifest.Tier != "isolated" || manifest.ImageDigest != oldDigest {
+		t.Errorf("the manifest names %+v", manifest.Info)
 	}
+	// The units hold no secret, only the names of secrets, so the copy that a rollback needs is a plain directory beside the archive.
+	if got := readFile(t, filepath.Join(unitsKeptBeside(path), "suiteward.container")); got != before {
+		t.Errorf("the replaced unit beside the archive holds %q", got)
+	}
+	if info, err := os.Stat(path); err != nil || (info.Mode().Perm() != 0o600 && !isWindows()) {
+		t.Errorf("the archive has mode %v, %v", info.Mode().Perm(), err)
+	}
+	assertNoPlaintext(t, u.backups, "HUNTER2-TOTP", "TARBYTES")
 }
 
 func isWindows() bool { return runtime.GOOS == "windows" }
@@ -548,12 +553,9 @@ func TestUpgradeIsolatedBeforeMigrateSaysTheDatabaseIsUnchangedAndNamesTheOldUni
 	if err == nil {
 		t.Fatal("the dry run must fail")
 	}
-	dirs, _ := filepath.Glob(filepath.Join(u.backups, "*"))
-	if len(dirs) != 1 {
-		t.Fatalf("backups: %v", dirs)
-	}
+	path := oneArchive(t, u.backups)
 	for _, want := range []string{
-		"schema and the data are unchanged", dirs[0], filepath.Join(dirs[0], backupUnits), "suiteward.service is stopped",
+		"schema and the data are unchanged", path, unitsKeptBeside(path), "suiteward.service is stopped",
 		// To go back: the old units, then the reload and the start. To go on: the units name the new release, and the migration unit
 		// stays active from the old one, so it is restarted, not just the service started.
 		"copy them to " + unitDir(u.home) + ", run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`",
@@ -658,7 +660,7 @@ func TestUpgradeIsolatedFailsWhenTheServiceIsNotStableAndKeepsTheBackupAdvice(t 
 			t.Fatalf("the upgrade must fail naming %q and %q, got %v", want, journal, err)
 		}
 		// Migrate ran by now: the advice is the restore of the backup, which withBackup gives.
-		if !strings.Contains(err.Error(), "The backup is in "+u.backups) || !strings.Contains(err.Error(), "restore it") {
+		if !strings.Contains(err.Error(), "The backup is in "+u.backups) || !strings.Contains(err.Error(), "suiteward restore "+oneArchive(t, u.backups)) {
 			t.Errorf("the error lacks the backup advice: %v", err)
 		}
 		if strings.Contains(u.out.String(), "Upgraded") || strings.Contains(u.out.String(), "is running") {

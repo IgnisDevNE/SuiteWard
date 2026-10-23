@@ -106,7 +106,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	scr.Step(2)
 	var dir string
 	err = working(scr, "Backing up the database and the artifacts", func() (err error) {
-		dir, err = takeBackup(ctx, backup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, now: time.Now})
+		dir, err = takePlainBackup(ctx, plainBackup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, now: time.Now})
 		return err
 	})
 	if err != nil {

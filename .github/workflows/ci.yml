@@ -213,7 +213,9 @@ jobs:
           cache: false
       - name: Render the units of both installer shapes
         # The same RenderUnits the installer writes: with GitHub on the default ports, and without GitHub on other ports with a job timeout.
-        run: SUITEWARD_QUADLET_OUT="$RUNNER_TEMP/units" go test -count=1 -tags quadlet -run TestRenderUnitsForTheQuadletDryRun ./internal/installer
+        run: |
+          mkdir "$RUNNER_TEMP/units"
+          SUITEWARD_QUADLET_OUT="$RUNNER_TEMP/units" go test -count=1 -tags quadlet -run TestRenderUnitsForTheQuadletDryRun ./internal/installer
       - name: Dry-run the units through the quadlet generator of AlmaLinux 9's Podman
         # No systemd is needed: the generator reads the unit files and prints the services it would create, and exits non-zero on a unit it refuses.
         run: |

@@ -52,6 +52,9 @@ func BackupInit(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := inst.needSettings(); err != nil {
+		return err
+	}
 	k := &keyInit{r: r, env: env, inst: &inst, kit: flags["kit"], replace: flags["replace"] == "true", yes: flags["yes"] == "true"}
 	if err := k.keys(ctx); err != nil {
 		return err
@@ -86,9 +89,6 @@ type keyInit struct {
 
 // keys finds out which instance the key is for and makes the pair.
 func (k *keyInit) keys(ctx context.Context) error {
-	if !k.inst.haveSettings {
-		return fmt.Errorf("there are no settings at %s to keep the recovery key in: install first, or run `suiteward install --upgrade`, which saves them", k.inst.settingsPath)
-	}
 	if old := k.inst.s.BackupRecipient; old != "" {
 		if !k.replace {
 			return fmt.Errorf("a recovery key is set already (%s): the backups made with it need its kit. To replace it with a new key, run `suiteward backup init --replace`", archive.Fingerprint(old))
@@ -150,12 +150,15 @@ func (k *keyInit) confirmStored() error {
 	return nil
 }
 
-// store puts the public half in the settings, which is all the instance keeps.
+// store puts the public half in the settings, which is all the instance keeps. An upgrade that converts a stack with no settings
+// file keeps it in memory: the upgrade saves the settings when it is done.
 func (k *keyInit) store() error {
 	s := k.inst.s
 	s.BackupRecipient = k.recipient
-	if err := SaveSettings(k.inst.settingsPath, s); err != nil {
-		return errors.Join(fmt.Errorf("store the recovery key in the settings: %w", err), os.Remove(k.kit))
+	if k.inst.haveSettings {
+		if err := SaveSettings(k.inst.settingsPath, s); err != nil {
+			return errors.Join(fmt.Errorf("store the recovery key in the settings: %w", err), os.Remove(k.kit))
+		}
 	}
 	k.inst.s = s
 	return nil
@@ -179,4 +182,19 @@ func (k *keyInit) summary() []ui.KV {
 		{Key: "Recovery kit", Value: k.kit},
 		{Key: "Settings", Value: k.inst.settingsPath},
 	}
+}
+
+// run is the three steps in a row, for a command that makes the key in the middle of its own work.
+func (k *keyInit) run(ctx context.Context) error {
+	if err := k.keys(ctx); err != nil {
+		return err
+	}
+	if err := k.writeKit(ctx); err != nil {
+		return err
+	}
+	if err := k.store(); err != nil {
+		return err
+	}
+	k.kept()
+	return nil
 }

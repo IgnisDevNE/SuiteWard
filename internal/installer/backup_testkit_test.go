@@ -58,12 +58,9 @@ func assertNoPlaintext(t *testing.T, dir string, texts ...string) {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		raw, err := os.ReadFile(filepath.Clean(path))
-		if err != nil {
-			return err
-		}
+		raw := readFile(t, path)
 		for _, text := range texts {
-			if strings.Contains(string(raw), text) {
+			if strings.Contains(raw, text) {
 				t.Errorf("%s holds %q in plaintext", path, text)
 			}
 		}

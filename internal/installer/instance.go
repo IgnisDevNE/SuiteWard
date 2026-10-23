@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -168,4 +169,19 @@ func (i instance) readStatus(ctx context.Context) ([]byte, statusDoc, error) {
 		return nil, statusDoc{}, err
 	}
 	return body, doc, nil
+}
+
+// needSettings refuses a command that keeps something in the settings file when there is none: install first, or the upgrade that
+// converts the stack saves them.
+func (i instance) needSettings() error {
+	if !i.haveSettings {
+		return fmt.Errorf("there are no settings at %s to keep the recovery key in: install first, or run `suiteward install --upgrade`, which saves them", i.settingsPath)
+	}
+	return nil
+}
+
+// settingsExist says whether the settings file is there.
+func settingsExist(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

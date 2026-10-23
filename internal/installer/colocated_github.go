@@ -313,6 +313,8 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 	scr := screenOn(g.out)
 	login, err := g.enrolledOwner(ctx, status, barOn(scr, "Service"))
 	switch {
+	case err != nil && ctx.Err() != nil: // Ctrl-C ended the wait: nothing is known of the service, and the install is over
+		return fmt.Errorf("the stack is running, but the install was interrupted before the owner was enrolled: run `%s` to enroll: %w", command, err)
 	case err != nil:
 		g.owner, g.statusDead = "unknown: /status could not be read", true
 		scr.Warn("Setup was not run: /status of the service could not be read (%v), so it is not known whether an owner is enrolled, and setup would replace the TOTP secret of one. Once the service answers, check /status, and if it has no owner, run on a real terminal with session recording off:\n  %s\n", err, command)

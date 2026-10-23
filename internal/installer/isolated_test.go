@@ -51,6 +51,8 @@ type isoFake struct {
 	everActive     bool   // suiteward.service was active once before this run
 	serviceRunning bool   // suiteward.service is active when the run begins
 	started        bool   // suiteward.service was started by this run
+	dbDown         bool   // suiteward-db.service is inactive until this run starts it
+	dbStarted      bool   // suiteward-db.service was started by this run
 
 	dump    string          // what pg_dump prints in the database container
 	noImage bool            // no image is in the engine yet, so every pull is real
@@ -122,7 +124,7 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 		if state, ok := f.active[unit]; ok {
 			return []byte(state + "\n"), nil
 		}
-		if unit == "suiteward.service" && !f.serviceRunning && !f.started {
+		if f.inactiveUnit(unit) {
 			return []byte("inactive\n"), nil
 		}
 		return []byte("active\n"), nil
@@ -138,10 +140,18 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 	return f.answerChecks(c)
 }
 
+// inactiveUnit says whether the fake reports a unit as inactive: the service until it runs, the database until this run starts
+// it when dbDown.
+func (f *isoFake) inactiveUnit(unit string) bool {
+	return (unit == "suiteward.service" && !f.serviceRunning && !f.started) || (unit == "suiteward-db.service" && f.dbDown && !f.dbStarted)
+}
+
 // answerChecks answers what the install asks to know whether the service can start and stays up: the listeners of the
-// machine (ss -ltn) and the restart count of the service.
+// machine (ss -ltn) and the restart count of the service. It also records that the database was started.
 func (f *isoFake) answerChecks(c call) ([]byte, error) {
 	switch line := c.line(); {
+	case c.name == "systemctl" && line == "--user start suiteward-db.service":
+		f.dbStarted = true
 	case c.name == "ss" && line == "-ltn":
 		out := "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
 		for _, port := range f.listening {
@@ -1369,5 +1379,38 @@ func TestInstallIsolatedNamesTheEnvFileWhenItsAppHasNoKey(t *testing.T) {
 	}
 	if g.f.has("secret create") || g.f.has("start") || g.f.has("daemon-reload") {
 		t.Errorf("nothing may change: %v", g.f.lines())
+	}
+}
+
+// The network service of the stack is a oneshot that stays active: after a purge removed the Podman network, a database started
+// while that service is still "active" exits 125 (network not found), because systemd never runs `podman network create` again.
+// With the database down nothing that needs the network runs, so the install restarts the network service first, which
+// creates it again (--ignore: the network may exist). A database that runs keeps the network it has.
+func TestInstallIsolatedRestartsTheNetworkServiceBeforeItStartsAStoppedDatabase(t *testing.T) {
+	f := newIsoFake(t.TempDir())
+	f.dbDown = true
+	if _, err := runIsolated(t, f, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	reload := f.index("systemctl --user daemon-reload", 0)
+	network := f.index("systemctl --user restart suiteward-network.service", reload)
+	start := f.index("systemctl --user start suiteward-db.service", reload)
+	if reload < 0 || network < 0 || start < 0 || network > start {
+		t.Fatalf("the network service must be restarted after the reload and before the database starts:\n%s", strings.Join(f.lines(), "\n"))
+	}
+}
+
+func TestInstallIsolatedLeavesTheNetworkServiceAloneWhenTheDatabaseRuns(t *testing.T) {
+	home := t.TempDir()
+	installedStackUnits(t, home)
+	writeAccountEnvFile(t, home, flowAppEnvFile)
+	f := newIsoFake(home)
+	f.secrets[SecretGitHubAppKey] = "existing"
+	f.serviceRunning, f.everActive, f.listening = true, true, []int{18081, 18091} // the whole stack runs
+	if _, err := runIsolated(t, f, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.has("suiteward-network.service") {
+		t.Errorf("the network service of a stack that runs was restarted:\n%s", strings.Join(f.lines(), "\n"))
 	}
 }

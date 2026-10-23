@@ -48,6 +48,8 @@ func TestInstallIsolatedStopsAtTheFirstFailingCommand(t *testing.T) {
 		{name: "the Podman generator", match: generatorPath, want: "the Podman generator rejects the units", notAfter: "daemon-reload"},
 		{name: "the daemon reload", match: "daemon-reload", want: "systemctl --user daemon-reload", notAfter: "start suiteward-db.service"},
 		{name: "the state of the service", match: "show --property=ActiveState --value suiteward.service", want: "ask for the state of suiteward.service", notAfter: "start suiteward-db.service"},
+		{name: "the state of the database", match: "show --property=ActiveState --value suiteward-db.service", want: "ask for the state of suiteward-db.service", notAfter: "start suiteward-db.service"},
+		{name: "the restart of the network", match: "restart suiteward-network.service", want: "restart the network", notAfter: "start suiteward-db.service", setup: func(f *isoFake) { f.dbDown = true }},
 		{name: "the start of the database", match: "start suiteward-db.service", want: "start the database", notAfter: "psql"},
 		{name: "the look for the role", match: "exec -i suiteward-db psql", want: "look for the role", notAfter: "start suiteward.service"},
 		{name: "the start of a running service", match: "--user start suiteward.service", want: "start the service", setup: func(f *isoFake) { f.serviceRunning = true }},

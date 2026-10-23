@@ -91,6 +91,9 @@ func (r *Reader) scan(open func(name string) (io.WriteCloser, error)) (Manifest,
 		if manifest != nil {
 			return Manifest{}, invalid("member %q comes after the manifest", hdr.Name)
 		}
+		if sparse(hdr) {
+			return Manifest{}, invalid("member %q is a GNU sparse file, whose size is what the archive claims and not what it holds", hdr.Name)
+		}
 		if hdr.Typeflag == tar.TypeReg && hdr.Name == manifestName {
 			if manifest, err = readManifest(s.tr); err != nil {
 				return Manifest{}, err
@@ -112,6 +115,18 @@ func (r *Reader) scan(open func(name string) (io.WriteCloser, error)) (Manifest,
 		return Manifest{}, err
 	}
 	return *manifest, nil
+}
+
+// sparse reports whether hdr carries a PAX record of the GNU.sparse family. Go's tar reader presents such a file as a regular file
+// of the logical size the header claims, which a few kilobytes of archive can set to gigabytes of zeros to write and to hash.
+// PAX as such is not refused: the writer uses a size record for a member of 8 GiB or more.
+func sparse(hdr *tar.Header) bool {
+	for key := range hdr.PAXRecords {
+		if strings.HasPrefix(key, "GNU.sparse.") {
+			return true
+		}
+	}
+	return false
 }
 
 type scanner struct {
@@ -209,6 +224,7 @@ func (x *extraction) create(name string) (io.WriteCloser, error) {
 		x.created = append(x.created, units)
 	}
 	path := filepath.Join(x.dir, filepath.FromSlash(name))
+	// Join already cleans the path, but gosec (G304) only accepts a path that went through Clean itself.
 	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", name, err)

@@ -11,6 +11,9 @@ import (
 	"filippo.io/age"
 )
 
+// byteOrderMark starts a text file that a Windows tool saved as UTF-8, and would stick to its first line.
+const byteOrderMark = string(rune(0xFEFF))
+
 // NewKey makes the key pair of an instance, of age's hybrid post-quantum type (ML-KEM-768 and X25519): the recipient (age1pq1...)
 // goes into the instance's settings, the identity (AGE-SECRET-KEY-PQ-1...) only into the recovery kit that the owner keeps off
 // the machine. Never print or log the identity.
@@ -26,7 +29,7 @@ func NewKey() (recipient, identity string, err error) {
 // ParseRecipient reads the recipient string of the settings, which must be a post-quantum recipient: a classic age1... key is
 // refused. The error never repeats the input, which may be a private key.
 func ParseRecipient(s string) (*age.HybridRecipient, error) {
-	rec, err := age.ParseHybridRecipient(strings.TrimSpace(s))
+	rec, err := age.ParseHybridRecipient(strings.TrimSpace(strings.TrimPrefix(s, byteOrderMark)))
 	if err != nil {
 		return nil, errors.New("the recovery recipient is not a post-quantum age public key (age1pq1...): backups use post-quantum keys, so a classic age1... key is refused")
 	}
@@ -38,7 +41,7 @@ func ParseRecipient(s string) (*age.HybridRecipient, error) {
 // any of the input.
 func ParseIdentity(kit string) (*age.HybridIdentity, error) {
 	var lines []string
-	for _, line := range strings.Split(kit, "\n") {
+	for _, line := range strings.Split(strings.TrimPrefix(kit, byteOrderMark), "\n") {
 		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
 			lines = append(lines, line)
 		}

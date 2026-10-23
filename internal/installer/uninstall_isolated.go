@@ -48,7 +48,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps,
 	case st.found:
 		_, _ = fmt.Fprintf(out, "Stopped the services and removed the units from %s.\n", host.unitsDir)
 	case len(stopped) > 0:
-		_, _ = fmt.Fprintf(out, "Stopped %s, which an earlier uninstall left running without its unit file.\n", strings.Join(stopped, ", "))
+		_, _ = fmt.Fprintf(out, "Stopped %s: an earlier uninstall left them without their unit files.\n", strings.Join(stopped, ", "))
 	}
 	if purge {
 		if err := purgeState(ctx, host.rt, host.envPath, host.settingsPath); err != nil {
@@ -67,7 +67,8 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps,
 // stopAndRemoveUnits stops every service the six units generate that is not inactive, deletes the unit files that are there and
 // reloads systemd when it did something. It asks systemd, not the directory: a service that an earlier uninstall left active
 // stays active (and is not run again by the next install) after its unit file is gone. systemd stops the services that need
-// another one first, so the order of the stops does not matter. It returns the services it stopped.
+// another one first, so the order of the stops does not matter. It returns the services it stopped, each with the state it was
+// found in (active, activating, failed ...), for the message.
 func stopAndRemoveUnits(ctx context.Context, host isolatedHost, d Deps) (stopped []string, err error) {
 	templates, err := embeddedUnits()
 	if err != nil {
@@ -86,7 +87,7 @@ func stopAndRemoveUnits(ctx context.Context, host isolatedHost, d Deps) (stopped
 		if _, err := systemctl(ctx, "stop", unit); err != nil {
 			return stopped, fmt.Errorf("stop %s: %w", unit, err)
 		}
-		stopped = append(stopped, unit)
+		stopped = append(stopped, unit+" ("+state+")")
 	}
 	removed := false
 	for _, file := range sortedKeys(templates) {

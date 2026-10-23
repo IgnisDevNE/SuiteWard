@@ -3,12 +3,14 @@ package installer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,7 +46,7 @@ type backup struct {
 	settings       string                     // the settings file; its bytes are a member when it exists
 	units          map[string][]byte          // isolated tier: the unit files as installed, which are members too
 	beside         func(archive string) error // more to write beside the archive, optional
-	tolerateStatus bool
+	tolerateStatus bool                       // a status that cannot be read is recorded as unavailable instead of failing the backup: the state a restore replaces is backed up whatever the service does
 	now            func() time.Time
 }
 
@@ -112,18 +114,42 @@ func (r *backupRun) stages() []backupStage {
 	}
 }
 
-// readStatus records which version the backup is of: a restore is checked against it.
+// unknownValue stands in the manifest for what a backup that has no status cannot say: the release and, when the database does not
+// say either, the instance.
+const unknownValue = "unknown"
+
+// readStatus records which version the backup is of: a restore is checked against it. A backup that tolerates a status it cannot read
+// records {"unavailable": true, "reason": ...} instead, with the instance the database names (its table of the instance is read
+// through the dump's own connection) or "unknown", and no release: it is known by its image digest only.
 func (r *backupRun) readStatus(ctx context.Context) error {
-	body, err := r.status(ctx)
-	if err != nil {
-		return fmt.Errorf("read GET /status of the service (its version and instance id belong in the backup): %w", err)
+	body, cause := r.status(ctx)
+	var doc statusDoc
+	if cause == nil {
+		doc, cause = parseStatus(body)
 	}
-	doc, err := parseStatus(body)
-	if err != nil {
-		return err
+	if cause == nil {
+		r.statusBody, r.doc = body, doc
+		return nil
 	}
-	r.statusBody, r.doc = body, doc
+	if !r.tolerateStatus {
+		return fmt.Errorf("read GET /status of the service (its version and instance id belong in the backup): %w", cause)
+	}
+	record, err := json.Marshal(map[string]any{"unavailable": true, "reason": cause.Error()})
+	if err != nil {
+		return fmt.Errorf("record that the status is unavailable: %w", err)
+	}
+	r.statusBody, r.doc = record, statusDoc{Unavailable: true, Version: unknownValue, Instance: r.instanceFromDatabase(ctx)}
 	return nil
+}
+
+// instanceFromDatabase is the id /status would have shown, read from the table that holds it, or "unknown": a database that is
+// reachable but names no instance in the shape of one is not a reason to fail a backup.
+func (r *backupRun) instanceFromDatabase(ctx context.Context) string {
+	out, err := ownerPSQL(ctx, r.rt, "SELECT substr(instance_id, 1, 8) FROM suiteward_instance", false)
+	if err != nil || !instanceID.MatchString(out) {
+		return unknownValue
+	}
+	return out
 }
 
 func (r *backupRun) dumpDatabase(ctx context.Context) error {
@@ -283,5 +309,42 @@ func keepUnitsBeside(archivePath string, units map[string][]byte) error {
 	return nil
 }
 
-// removeLeftovers removes the private directories that a backup or a restore that was killed left in dir.
-func removeLeftovers(_ string, _ func(format string, args ...any)) error { return nil }
+// leftoverPrefixes are the names of the private directories that a backup (its spool) and a restore (the backup it unpacks) make.
+var leftoverPrefixes = []string{".suiteward-spool-", ".suiteward-restore-"}
+
+// removeLeftovers removes the private directories that a backup or a restore that was killed left in dir, and says which: what is in them
+// is plaintext. A symbolic link and a file of such a name are not directories and stay. It is for the commands to call before they make a
+// directory of their own, because a backup that runs beside another one's directory must not remove it.
+// shortcut: two runs at once in one backups directory remove each other's private directory; there is no lock, and the run that loses
+// fails and leaves nothing, so add one when the installer runs unattended.
+func removeLeftovers(dir string, say func(format string, args ...any)) error {
+	entries, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("look at %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !slices.ContainsFunc(leftoverPrefixes, func(prefix string) bool { return strings.HasPrefix(e.Name(), prefix) }) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove %s, which an earlier backup or restore left: %w", path, err)
+		}
+		if say != nil { // the caller may have nowhere to say it
+			say("Removed %s, which an earlier backup or restore left when it was killed: it held a plaintext copy of the data.\n", path)
+		}
+	}
+	return nil
+}
+
+// prepareBackupDir makes the directory of the backups and clears the leftovers of a backup or a restore that was killed. A command calls
+// it before it makes a private directory of its own; the symbolic link is refused before anything in the directory is looked at.
+func prepareBackupDir(dir string, say func(format string, args ...any)) error {
+	if err := ensureParent(dir); err != nil {
+		return err
+	}
+	return removeLeftovers(dir, say)
+}

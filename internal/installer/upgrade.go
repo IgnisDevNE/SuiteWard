@@ -67,7 +67,7 @@ func backupParent(r *Resolver, secretDir string) string {
 // is offered a new one. serviceStarted says that the upgrade started a service that was down.
 func confirmUpgrade(r *Resolver, plan upgradePlan, parent, recipient string, serviceStarted bool) error {
 	r.say("%s", plan.describe())
-	key := "a new recovery key, which you are asked to make first"
+	key := "a new recovery key, which you agreed to make first"
 	if recipient != "" {
 		key = "the recovery key " + archive.Fingerprint(recipient)
 	}
@@ -175,8 +175,9 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctor)
 		return nil
 	}
-	// The key comes before anything changes, a service that is down included: it is not started for an upgrade that cannot be backed up.
-	if err := settleRecipient(r, env, &s); err != nil {
+	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
+	agreed, err := settleRecipient(r, env, &s)
+	if err != nil {
 		return err
 	}
 	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: r.preset("token-file", "")}
@@ -205,7 +206,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	stored := s
 	stored.Image = previous.Image // what the settings file says until the upgrade is done: a key made now is saved beside it
 	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus, startCommand: startCommand}
-	dir, err := upgradeBackup(ctx, r, env, &inst, parent, nil)
+	dir, err := upgradeBackup(ctx, r, env, &inst, parent, nil, agreed)
 	if err != nil {
 		return err
 	}
@@ -228,21 +229,35 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
-// settleRecipient settles the key the backup of an upgrade is encrypted to, from the settings and what the command was given, and refuses
-// an upgrade that has none and no terminal to be offered a new one on. The key is stored with the settings when the upgrade is done.
-func settleRecipient(r *Resolver, env Env, s *Settings) error {
+// settleRecipient settles the key the backup of an upgrade is encrypted to, from the settings and what the command was given, before
+// the upgrade starts anything, a service that is down included. Without one, an upgrade that has no terminal is refused, and a terminal
+// is asked whether to make one: a no ends the run here, and a yes (agreed) is acted on once the service answers, because the instance id of
+// /status names the kit. The key is stored with the settings when the upgrade is done.
+func settleRecipient(r *Resolver, env Env, s *Settings) (agreed bool, err error) {
 	if err := askedRecipient(r, s); err != nil {
-		return err
+		return false, err
 	}
-	return needsRecipient(env, *s)
+	if s.BackupRecipient != "" {
+		return false, nil
+	}
+	if !env.Term.IsTerminal {
+		return false, errNoRecipient
+	}
+	if err := askForKey(r); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// upgradeBackup is the Backup step of an upgrade: the key (the settings', or a new one that a terminal is offered), then the encrypted
+// upgradeBackup is the Backup step of an upgrade: the key (the settings', or the new one that the terminal agreed to), then the encrypted
 // backup under one spinner. It returns the archive.
-func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, dir string, beside func(archive string) error) (string, error) {
-	recipient, err := recipientOf(ctx, r, env, inst)
+func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, dir string, beside func(archive string) error, agreed bool) (string, error) {
+	recipient, err := recipientOf(ctx, r, env, inst, agreed)
 	if err != nil {
 		return "", err
+	}
+	if err := prepareBackupDir(dir, r.screen.Warn); err != nil {
+		return "", backupFailed(err)
 	}
 	b := inst.backup(env.Deps, dir, recipient)
 	b.beside = beside

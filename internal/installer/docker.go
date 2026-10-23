@@ -177,8 +177,19 @@ func (dk *Docker) ExportVolume(ctx context.Context, volume, path string) error {
 	return writePrivateFile(path, tarball)
 }
 
-// ImportVolume writes the volume with a throwaway container, because Docker has no `volume import`: the same confined container with
-// the volume mounted writable and the tarball on its standard input, which is the file, streamed.
+// importFlags are the flags of the throwaway container that writes a volume. A volume that Docker has just created is owned by root,
+// and the helper image has nothing at /data to copy an ownership from, so the service user could not write it. The container runs as
+// root, with no network, a read-only root and no new privileges, and with only the three capabilities that let tar do what a root tar does:
+// restore the owner and the group that the tarball records (the service user's), change the mode and the times of files that user
+// owns, and enter the directories it made.
+var importFlags = []string{
+	"run", "--rm", "--interactive", "--network", "none", "--read-only", "--cap-drop", "all",
+	"--cap-add", "CHOWN", "--cap-add", "FOWNER", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--user", "0",
+}
+
+// ImportVolume writes the volume with a throwaway container, because Docker has no `volume import`: the container of importFlags with
+// the volume mounted writable and the tarball on its standard input, which is the file, streamed. The owners are numeric, so that a name
+// in the tarball cannot map to another user of the helper image.
 func (dk *Docker) ImportVolume(ctx context.Context, volume, path string) error {
 	image, err := dk.helperImage(ctx)
 	if err != nil {
@@ -189,7 +200,7 @@ func (dk *Docker) ImportVolume(ctx context.Context, volume, path string) error {
 		return fmt.Errorf("read the tarball %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-	args := append(slices.Clone(confined), "--interactive", "--volume", volume+":/data", image, "tar", "-xf", "-", "-C", "/data")
+	args := append(slices.Clone(importFlags), "--volume", volume+":/data", image, "tar", "--numeric-owner", "-xf", "-", "-C", "/data")
 	if _, err := dk.run(ctx, f, args...); err != nil {
 		return fmt.Errorf("import the volume %s: %w", volume, err)
 	}

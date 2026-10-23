@@ -143,10 +143,22 @@ type statusDoc struct {
 		Repo      string `json:"repo"`
 		Integrity string `json:"integrity"`
 	} `json:"github"`
+	// A backup taken while the service did not answer records {"unavailable": true, "reason": ...} where the status would be.
+	Unavailable bool   `json:"unavailable"`
+	Reason      string `json:"reason"`
 }
 
 // instanceID is the id /status shows: the first 8 hex characters of the instance id, safe in a file name.
 var instanceID = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+// parseBackedUpStatus is parseStatus for the status of a backup, which may be the record that there was none.
+func parseBackedUpStatus(body []byte) (statusDoc, error) {
+	var d statusDoc
+	if err := json.Unmarshal(body, &d); err == nil && d.Unavailable {
+		return d, nil
+	}
+	return parseStatus(body)
+}
 
 func parseStatus(body []byte) (statusDoc, error) {
 	var d statusDoc

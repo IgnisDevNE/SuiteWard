@@ -2,6 +2,7 @@ package installer
 
 import (
 	"archive/tar"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -19,9 +20,14 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
-// emptySchema is what the load starts with: the application keeps every table in the public schema, so emptying it empties the
-// database (docs/backup.md, section 3). It is part of the one transaction of the load.
-const emptySchema = "DROP SCHEMA public CASCADE;\nCREATE SCHEMA public;\n"
+// The load is one stream with its own transaction around it: BEGIN, the empty schema (the application keeps every table in the public
+// schema, so emptying it empties the database, docs/backup.md section 3), the dump, and COMMIT as the very last statement. It is not
+// psql's --single-transaction, which commits whatever the stream turns out to be: a stream that is cut short (Ctrl-C ends the command,
+// the input ends, a COPY is truncated) must end inside a transaction that was never committed, which the server rolls back.
+const (
+	loadBegin  = "BEGIN;\nDROP SCHEMA public CASCADE;\nCREATE SCHEMA public;\n"
+	loadCommit = "\nCOMMIT;\n" // after a newline: a dump may end without one
+)
 
 // The stage a restore is in, which decides what its error says about the data.
 type restoreStage int
@@ -97,7 +103,7 @@ type restoreRun struct {
 	current  *statusDoc          // GET /status of the instance that runs; nil when it does not answer
 	after    statusDoc           // GET /status of the restored instance
 
-	safetyKey *age.HybridRecipient // the key the state that is replaced is backed up to; nil when there is nothing to back up
+	safetyKey *age.HybridRecipient // the key the state that is replaced is backed up to
 	safety    string               // that backup
 	stage     restoreStage
 }
@@ -143,6 +149,13 @@ func (x *restoreRun) source() string {
 
 func (x *restoreRun) verify(ctx context.Context) error {
 	if err := x.preflight(ctx); err != nil {
+		return err
+	}
+	// The directory of the backup of the state that is replaced is where a restore unpacks too, and where one that was killed left its own.
+	if err := ensureParent(x.inst.parent); err != nil {
+		return err
+	}
+	if err := removeLeftovers(x.inst.parent, x.scr.Warn); err != nil {
 		return err
 	}
 	var err error
@@ -193,9 +206,6 @@ func (x *restoreRun) unpack(ctx context.Context) error {
 	x.identity = identity
 	verified, err := x.readArchive(func(r *archive.Reader) (archive.Manifest, error) { return r.ReadManifest() })
 	if err != nil {
-		return err
-	}
-	if err := ensureParent(x.inst.parent); err != nil {
 		return err
 	}
 	if x.work, err = os.MkdirTemp(x.inst.parent, ".suiteward-restore-"); err != nil {
@@ -285,8 +295,11 @@ func (x *restoreRun) checkFiles() error {
 	if err != nil {
 		return fmt.Errorf("read the status of the backup: %w", err)
 	}
-	if x.doc, err = parseStatus(raw); err != nil {
+	if x.doc, err = parseBackedUpStatus(raw); err != nil {
 		return fmt.Errorf("the status of the backup: %w", err)
+	}
+	if x.doc.Unavailable { // taken while the service did not answer: what the manifest says is all there is
+		x.doc.Version, x.doc.Instance = x.info.SuitewardVersion, x.info.Instance
 	}
 	if x.plaintext != "" { // nothing records when a directory was made but its files
 		info, err := os.Stat(statusPath)
@@ -307,6 +320,10 @@ func (x *restoreRun) checkRelease(ctx context.Context) error {
 		}
 	}
 	switch {
+	case x.doc.Unavailable: // no version was recorded: the image is the release
+		if x.info.ImageDigest == "" || digestOf(x.inst.image) != x.info.ImageDigest {
+			return x.otherRelease("the release " + digestOf(x.inst.image))
+		}
 	case x.current != nil && x.current.Version != x.info.SuitewardVersion:
 		return x.otherRelease(x.current.Version)
 	case x.current == nil && x.info.ImageDigest == "":
@@ -322,7 +339,11 @@ func (x *restoreRun) otherRelease(running string) error {
 	if x.info.ImageDigest != "" {
 		install = " (`suiteward install --image " + releaseImageRepo + "@" + x.info.ImageDigest + "`)"
 	}
-	return fmt.Errorf("this backup was made by SuiteWard %s and this instance runs %s: a restore needs the same release, because migrations only go forward. Install the release of the backup first%s, then run the restore again (docs/backup.md, section 3)", x.info.SuitewardVersion, running, install)
+	madeBy := "SuiteWard " + x.info.SuitewardVersion
+	if x.doc.Unavailable {
+		madeBy = "the release of the image " + x.info.ImageDigest
+	}
+	return fmt.Errorf("this backup was made by %s and this instance runs %s: a restore needs the same release, because migrations only go forward. Install the release of the backup first%s, then run the restore again (docs/backup.md, section 3)", madeBy, running, install)
 }
 
 // dumpTail is how much of the end of a dump is searched for the line that ends it.
@@ -391,15 +412,19 @@ func (x *restoreRun) showBackup() {
 	if x.info.ImageDigest != "" {
 		release += " (" + x.info.ImageDigest + ")"
 	}
-	owner := cmpOr(x.doc.owner(), "none enrolled")
-	repos := cmpOr(strings.Join(x.doc.repositories(), ", "), "none")
+	owner := cmp.Or(x.doc.owner(), "none enrolled")
+	repos := cmp.Or(strings.Join(x.doc.repositories(), ", "), "none")
+	schema := strconv.Itoa(x.doc.SchemaVersion)
+	if x.doc.Unavailable {
+		owner, repos, schema = "not recorded", "not recorded", "not recorded"
+	}
 	x.kv("Made", x.info.CreatedAt.UTC().Format(time.RFC3339))
 	x.kv("Release", release)
 	x.kv("Instance", x.doc.Instance)
-	x.kv("Tier", cmpOr(x.info.Tier, "not recorded"))
+	x.kv("Tier", cmp.Or(x.info.Tier, "not recorded"))
 	x.kv("Owner", owner)
 	x.kv("Repositories", repos)
-	x.kv("Schema", strconv.Itoa(x.doc.SchemaVersion))
+	x.kv("Schema", schema)
 }
 
 func (x *restoreRun) showInstance() {
@@ -410,16 +435,8 @@ func (x *restoreRun) showInstance() {
 	x.scr.Say("This instance runs:\n")
 	x.kv("Release", x.current.Version)
 	x.kv("Instance", x.current.Instance)
-	x.kv("Owner", cmpOr(x.current.owner(), "none enrolled"))
+	x.kv("Owner", cmp.Or(x.current.owner(), "none enrolled"))
 	x.kv("Schema", strconv.Itoa(x.current.SchemaVersion))
-}
-
-// cmpOr is the first of two strings that is not empty.
-func cmpOr(value, otherwise string) string {
-	if value == "" {
-		return otherwise
-	}
-	return value
 }
 
 func (x *restoreRun) warn() {
@@ -427,6 +444,9 @@ func (x *restoreRun) warn() {
 	x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
 	if x.plaintext != "" {
 		x.scr.Warn("This backup is a plaintext directory: it is not encrypted, and nothing verifies who made it or that it is untouched. Whoever could read %s could read the TOTP secret in it.\n", x.plaintext)
+	}
+	if x.doc.Unavailable {
+		x.scr.Warn("The status of this backup is not recorded (%s): it is the state of an instance that did not answer when the backup was taken, so its release is known by its image alone and nothing but that the service answers can be compared after the restore.\n", x.doc.Reason)
 	}
 	if x.current != nil && x.current.Instance != x.doc.Instance {
 		x.scr.Warn("This backup is of another instance (%s) than the one that runs here (%s): after the restore this instance is the backup's, and the authenticator entry of the backup is the one that works.\n", x.doc.Instance, x.current.Instance)
@@ -436,13 +456,10 @@ func (x *restoreRun) warn() {
 	}
 }
 
-// chooseSafetyKey decides how the state that is replaced is backed up, before the confirmation: a refusal then changes nothing. The key
-// is the settings' own, else the one of the kit that opens this backup. A backup of an instance that does not answer cannot be taken.
+// chooseSafetyKey decides how the state that is replaced is backed up, before the confirmation: a refusal then changes nothing. The state
+// is always backed up, whether or not the service answers, because the database is healthy (the restore checks) and its dump and the
+// volume can be taken. The key is the settings' own, else the one of the kit that opens this backup.
 func (x *restoreRun) chooseSafetyKey() error {
-	if x.current == nil {
-		x.scr.Warn("This instance does not answer /status, so the state it has is not backed up before it is replaced.\n")
-		return nil
-	}
 	var recipient string
 	switch {
 	case x.inst.s.BackupRecipient != "":
@@ -458,6 +475,9 @@ func (x *restoreRun) chooseSafetyKey() error {
 	}
 	x.safetyKey = key
 	x.scr.Say("The state of this instance is backed up first, encrypted to the recovery key %s.\n", archive.Fingerprint(recipient))
+	if x.current == nil {
+		x.scr.Warn("This instance does not answer /status, so that backup records its status as unavailable, with the reason.\n")
+	}
 	return nil
 }
 
@@ -491,10 +511,8 @@ func (x *restoreRun) confirm() error {
 // ---- the steps that change the instance ----
 
 func (x *restoreRun) takeSafetyBackup(ctx context.Context) error {
-	if x.safetyKey == nil {
-		return nil
-	}
 	b := x.inst.backup(x.env.Deps, x.inst.parent, x.safetyKey)
+	b.tolerateStatus = true // an instance that does not answer is backed up too, with its status recorded as unavailable
 	var path string
 	err := working(x.scr, "Backing up the state that is replaced", func() (err error) {
 		path, err = takeBackup(ctx, b)
@@ -516,7 +534,7 @@ func (x *restoreRun) stop(ctx context.Context) error {
 	return nil
 }
 
-// load empties the schema and loads the dump in one transaction, then replaces the artifacts.
+// load empties the schema and loads the dump in one transaction that the stream frames (see loadBegin), then replaces the artifacts.
 func (x *restoreRun) load(ctx context.Context) error {
 	x.stage = stageLoad
 	dump, err := os.Open(filepath.Clean(filepath.Join(x.files, backupDump)))
@@ -524,7 +542,7 @@ func (x *restoreRun) load(ctx context.Context) error {
 		return fmt.Errorf("read the dump: %w", err)
 	}
 	defer func() { _ = dump.Close() }()
-	sql := io.MultiReader(strings.NewReader(emptySchema), dump)
+	sql := io.MultiReader(strings.NewReader(loadBegin), dump, strings.NewReader(loadCommit))
 	if err := working(x.scr, "Loading the database", func() error { return loadDump(ctx, x.inst.rt, sql) }); err != nil {
 		return err
 	}
@@ -537,12 +555,12 @@ func (x *restoreRun) load(ctx context.Context) error {
 	})
 }
 
-// loadDump runs psql with the schema emptied and the dump on standard input. Its message is never shown: psql repeats the rows it
-// fails on, and those rows hold the TOTP secret.
+// loadDump runs psql on the stream of the load. ON_ERROR_STOP ends it at the first failed statement, inside the open transaction. Its
+// message is never shown: psql repeats the rows it fails on, and those rows hold the TOTP secret.
 func loadDump(ctx context.Context, rt Runtime, sql io.Reader) error {
-	argv := []string{"psql", "-X", "-q", "-1", "-v", "ON_ERROR_STOP=1", "-U", ownerRole, "-d", "suiteward", "-f", "-"}
+	argv := []string{"psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", ownerRole, "-d", "suiteward", "-f", "-"}
 	if _, err := rt.Exec(ctx, ContainerDB, argv, sql); err != nil {
-		return fmt.Errorf("psql in %s could not load the dump (its message is not shown: psql repeats the rows it fails on, and they hold the TOTP secret; read the log of the database container)", ContainerDB)
+		return fmt.Errorf("psql in %s could not load the dump (its message is not shown: psql repeats the rows it fails on, and they hold the TOTP secret; the log of the database container may quote rows too, the TOTP secret included, so read it as something secret)", ContainerDB)
 	}
 	return nil
 }
@@ -595,19 +613,25 @@ func (x *restoreRun) compare(context.Context) error {
 	if len(problems) > 0 {
 		return fmt.Errorf("the restored instance does not match the backup: %s", strings.Join(problems, "; "))
 	}
-	x.scr.Check("The service reports the release %s, the schema %d and the owner %s of the backup.\n", x.after.Version, x.after.SchemaVersion, cmpOr(x.after.owner(), "none"))
+	if x.doc.Unavailable {
+		x.scr.Check("The service answers /status as release %s. The backup records no status, so nothing else could be compared.\n", x.after.Version)
+		return nil
+	}
+	x.scr.Check("The service reports the release %s, the schema %d and the owner %s of the backup.\n", x.after.Version, x.after.SchemaVersion, cmp.Or(x.after.owner(), "none"))
 	return nil
 }
 
 func compareStatus(backup, after statusDoc) (problems, notes []string) {
-	if after.Version != backup.Version {
-		problems = append(problems, fmt.Sprintf("the service runs %s, the backup is of %s", after.Version, backup.Version))
-	}
-	if after.SchemaVersion != backup.SchemaVersion {
-		problems = append(problems, fmt.Sprintf("the schema is %d, the backup's is %d", after.SchemaVersion, backup.SchemaVersion))
-	}
-	if after.owner() != backup.owner() {
-		problems = append(problems, fmt.Sprintf("the owner is %q, the backup's is %q", after.owner(), backup.owner()))
+	if !backup.Unavailable { // a backup that records no status has nothing to be compared with but the integrity
+		if after.Version != backup.Version {
+			problems = append(problems, fmt.Sprintf("the service runs %s, the backup is of %s", after.Version, backup.Version))
+		}
+		if after.SchemaVersion != backup.SchemaVersion {
+			problems = append(problems, fmt.Sprintf("the schema is %d, the backup's is %d", after.SchemaVersion, backup.SchemaVersion))
+		}
+		if after.owner() != backup.owner() {
+			problems = append(problems, fmt.Sprintf("the owner is %q, the backup's is %q", after.owner(), backup.owner()))
+		}
 	}
 	for _, g := range after.GitHub {
 		switch g.Integrity {
@@ -625,7 +649,7 @@ func compareStatus(backup, after statusDoc) (problems, notes []string) {
 func (x *restoreRun) failed(err error) error {
 	state := map[restoreStage]string{
 		stageStop:      "the service may be stopped, and nothing else was changed",
-		stageLoad:      "the database was not changed (the load is one transaction), and neither were the artifacts",
+		stageLoad:      "the database was not changed (the load is one transaction that is committed only after the last line of the dump, and the server rolls it back when a statement fails or the stream is cut short), and neither were the artifacts",
 		stageArtifacts: "the database was replaced with the backup's, and the artifacts were not, or only in part",
 		stageStart:     "the database and the artifacts are the backup's, but the service did not come up",
 		stageCheck:     "the database and the artifacts are the backup's, and the service runs, but it does not match",

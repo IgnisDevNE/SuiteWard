@@ -56,11 +56,15 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	if _, _, err := inst.readStatus(ctx); err != nil {
 		return err
 	}
-	recipient, err := recipientOf(ctx, r, env, &inst)
+	recipient, err := recipientOf(ctx, r, env, &inst, false)
 	if err != nil {
 		return err
 	}
-	run, err := inst.backup(env.Deps, r.preset("to", inst.parent), recipient).start(ctx)
+	dir := r.preset("to", inst.parent)
+	if err := prepareBackupDir(dir, scr.Warn); err != nil {
+		return backupFailed(err)
+	}
+	run, err := inst.backup(env.Deps, dir, recipient).start(ctx)
 	if err != nil {
 		return backupFailed(err)
 	}
@@ -102,18 +106,24 @@ func (i instance) backup(d Deps, dir string, recipient *age.HybridRecipient) bac
 }
 
 // recipientOf is the key a backup is encrypted to: the one in the settings. Without one a terminal is offered a new key, as
-// `suiteward backup init` makes it; anything else refuses and names the command.
-func recipientOf(ctx context.Context, r *Resolver, env Env, inst *instance) (*age.HybridRecipient, error) {
+// `suiteward backup init` makes it; anything else refuses and names the command. agreed says that the question was asked already, as an
+// upgrade asks it before it starts anything: the key is made now, and not asked for again.
+func recipientOf(ctx context.Context, r *Resolver, env Env, inst *instance, agreed bool) (*age.HybridRecipient, error) {
 	if inst.s.BackupRecipient == "" {
-		if err := offerKey(ctx, r, env, inst); err != nil {
+		if !agreed {
+			if err := askForKey(r); err != nil {
+				return nil, err
+			}
+		}
+		if err := (&keyInit{r: r, env: env, inst: inst}).run(ctx); err != nil {
 			return nil, err
 		}
 	}
 	return archive.ParseRecipient(inst.s.BackupRecipient)
 }
 
-// offerKey asks a terminal whether to make the key now. A no, an input that ends and the lack of a terminal are the refusal.
-func offerKey(ctx context.Context, r *Resolver, env Env, inst *instance) error {
+// askForKey asks a terminal whether to make the key. A no, an input that ends and the lack of a terminal are the refusal.
+func askForKey(r *Resolver) error {
 	if !r.term.IsTerminal {
 		return errNoRecipient
 	}
@@ -129,7 +139,7 @@ func offerKey(ctx context.Context, r *Resolver, env Env, inst *instance) error {
 			return errNoRecipient
 		}
 	}
-	return (&keyInit{r: r, env: env, inst: inst}).run(ctx)
+	return nil
 }
 
 // askedRecipient applies --backup-recipient, or the answers-file key backup_recipient, to the settings of an upgrade: where nobody can
@@ -149,14 +159,6 @@ func askedRecipient(r *Resolver, s *Settings) error {
 			archive.Fingerprint(s.BackupRecipient), archive.Fingerprint(recipient.String()))
 	}
 	s.BackupRecipient = recipient.String()
-	return nil
-}
-
-// needsRecipient refuses an upgrade that has no key and no terminal to be offered one on, before it changes anything.
-func needsRecipient(env Env, s Settings) error {
-	if s.BackupRecipient == "" && !env.Term.IsTerminal {
-		return errNoRecipient
-	}
 	return nil
 }
 

@@ -74,8 +74,9 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
 		return nil
 	}
-	// The key comes before anything changes, a service that is down included: it is not started for an upgrade that cannot be backed up.
-	if err := settleRecipient(r, env, &s); err != nil {
+	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
+	agreed, err := settleRecipient(r, env, &s)
+	if err != nil {
 		return err
 	}
 	status := func(ctx context.Context) ([]byte, error) {
@@ -98,7 +99,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	// copy them back.
 	keepUnits := func(path string) error { return keepUnitsBeside(path, st.units) }
 	inst := instance{rt: host.rt, s: s, settingsPath: host.settingsPath, haveSettings: settingsExist(host.settingsPath), image: st.adopted.Image, status: status, units: st.units, startCommand: "systemctl --user start suiteward.service"}
-	dir, err := upgradeBackup(ctx, r, env, &inst, parent, keepUnits)
+	dir, err := upgradeBackup(ctx, r, env, &inst, parent, keepUnits, agreed)
 	if err != nil {
 		return err
 	}

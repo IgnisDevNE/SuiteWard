@@ -335,3 +335,22 @@ func TestRestoreWithNoSettingsFileNeedsTheEngineNamed(t *testing.T) {
 		t.Errorf("the engine was asked to change something: %v", got)
 	}
 }
+
+// enroll replaces the TOTP secret of an enrolled owner: with no settings file on the co-located tier it does not run on whatever instance the
+// defaults find, and it points to the upgrade that converts the stack and saves the settings.
+func TestEnrollWithNoSettingsFileRefusesOnTheCoLocatedTier(t *testing.T) {
+	useDefaultConfigDir(t)
+	path, err := DefaultSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := enrollHarness(t, statusEnrolled) // an owner is enrolled; the settings of the instance are not at the default path
+	term, _ := fakeTerminal(true, "enroll\n")
+	code, stderr := h.enrollWith(term, "--owner", "alice", "--tier", "co-located")
+	if code != 1 || !strings.Contains(stderr, path) || !strings.Contains(stderr, "suiteward install --upgrade") {
+		t.Fatalf("exit %d, stderr %q: want 1, the default settings path and the upgrade that makes the settings", code, stderr)
+	}
+	if len(h.f.calls) != 0 || len(h.f.tty) != 0 {
+		t.Errorf("the runtime was called before the refusal: %v, setup %v", h.f.lines(), h.f.tty)
+	}
+}

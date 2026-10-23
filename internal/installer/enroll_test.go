@@ -206,11 +206,14 @@ func TestEnrollNeedsAGitHubApp(t *testing.T) {
 
 func TestEnrollNeedsAnInstalledStack(t *testing.T) {
 	withTerminal(t, true)
-	useDefaultConfigDir(t)
-	h := newHarness(t, "linux") // no containers, no settings
+	h := newHarness(t, "linux") // settings, but no containers
+	s := localPS1Settings()
+	s.Connection = "pm"
+	if err := SaveSettings(h.settingsPath(), s); err != nil {
+		t.Fatal(err)
+	}
 	h.status = statusIs(statusNoOwner)
-	term, _ := fakeTerminal(true, "")
-	code, stderr := h.enrollWith(term, "--owner", "alice", "--tier", "co-located")
+	code, stderr := h.enroll("", "--owner", "alice", "--tier", "co-located")
 	if code != 1 || !strings.Contains(stderr, "nothing is installed") || len(h.f.tty) != 0 {
 		t.Fatalf("exit %d, stderr %q, setup %v", code, stderr, h.f.tty)
 	}

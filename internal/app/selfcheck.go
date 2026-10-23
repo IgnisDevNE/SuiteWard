@@ -65,7 +65,7 @@ func checkFailed(name, detail, fix string) selfCheckResult {
 }
 
 // notConfiguredFix is how an instance installed without GitHub gets it.
-const notConfiguredFix = "run `suiteward install` on the host again with --github yes (or the GitHub values), then enroll the owner"
+const notConfiguredFix = "run `suiteward install` again with --github yes (or the GitHub values) on the machine that runs SuiteWard, then enroll the owner"
 
 // checkNotConfigured is the result of a GitHub check of an instance installed without GitHub: it passes, as a warning.
 func checkNotConfigured(name string) selfCheckResult {

@@ -261,9 +261,12 @@ type instanceConfirm struct {
 	yesAlone bool   // --yes with the right --instance confirms on a terminal too: a purge may run from a script, a restore always has the id typed
 }
 
+// yes says whether --yes was given.
+func (r *Resolver) yes() (bool, error) { return parseYesNo("yes", r.preset("yes", "false")) }
+
 // confirmInstance is the owner typing the instance id, or --yes with --instance where nobody can type.
 func (r *Resolver) confirmInstance(c instanceConfirm) error {
-	yes, err := parseYesNo("yes", r.preset("yes", "false"))
+	yes, err := r.yes()
 	if err != nil {
 		return err
 	}

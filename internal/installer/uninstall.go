@@ -151,6 +151,9 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 	r.say("This is the instance %s on %s. Its settings file: %s.\n", shown, engineLine(i.rt.Engine()), settings)
 	if purge {
 		r.say("%s\n", question)
+		if err := i.refuseUnnamed(ctx, r, id); err != nil {
+			return err
+		}
 		return r.confirmInstance(instanceConfirm{
 			id: id, action: "purge", ofWhat: "of the instance to remove", yesAlone: true,
 			prompt: fmt.Sprintf("Type the instance id %s to remove it: ", id),
@@ -164,6 +167,30 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 		return errors.New("nothing was removed")
 	}
 	return nil
+}
+
+// refuseUnnamed refuses a purge by --yes of an instance that nothing names (its id is "unknown"), with no settings file, while its database volume is
+// there: no id was checked against the data it deletes. The id typed on a terminal, or the settings file of the instance, is the way on.
+func (i instance) refuseUnnamed(ctx context.Context, r *Resolver, id string) error {
+	if id != unknownValue || i.haveSettings {
+		return nil
+	}
+	yes, err := r.yes()
+	if err != nil {
+		return err
+	}
+	if !yes {
+		return nil
+	}
+	there, err := i.rt.Exists(ctx, KindVolume, VolumeDBData)
+	if err != nil {
+		return err
+	}
+	if !there {
+		return nil
+	}
+	return fmt.Errorf("the instance id is %s (neither /status nor the database names it) and the database volume %s is still there: --yes would delete that data with no id checked against it. "+
+		"Type the id on a terminal (the word %s), or pass --settings with the settings file of the instance; nothing was removed", unknownValue, VolumeDBData, unknownValue)
 }
 
 // purgeState removes what the containers leave behind: the volumes, the secrets, the network, one more file (the MCP token copy, or the GitHub env file) and

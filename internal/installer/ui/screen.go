@@ -31,6 +31,7 @@ package ui
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -52,13 +53,14 @@ const (
 
 // Options is what Open needs.
 type Options struct {
-	Out            io.Writer    // the terminal; the screen draws nothing until it is opened
-	In             io.Reader    // answers are read from it; pass the bufio.Reader the Resolver uses so that they share one buffer
-	Version        string       // shown in the title bar: "installer <Version>"
-	Mode           Mode         // Env.Mode()
-	Color          ColorLevel   // Env.Color()
-	Width, Height  int          // the terminal's size; full screen needs at least 60x20
-	RestoreConsole func() error // optional: undoes what the OS needed for escape sequences; called by Close
+	Out            io.Writer       // the terminal; the screen draws nothing until it is opened
+	In             io.Reader       // answers are read from it; pass the bufio.Reader the Resolver uses so that they share one buffer
+	Version        string          // shown in the title bar: "installer <Version>"
+	Mode           Mode            // Env.Mode()
+	Color          ColorLevel      // Env.Color()
+	Width, Height  int             // the terminal's size; full screen needs at least 60x20
+	RestoreConsole func() error    // optional: undoes what the OS needed for escape sequences; called by Close
+	Context        context.Context // stub for the test-first commit: not used yet
 }
 
 // Choice is one numbered answer of Choose.

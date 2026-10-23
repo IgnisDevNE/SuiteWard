@@ -320,13 +320,17 @@ func TestSuspendLeavesTheAlternateScreenUntilResume(t *testing.T) {
 	s.Suspend()
 	out.Reset()
 	s.Say("while away\n")
-	if out.Len() != 0 {
-		t.Fatalf("a suspended screen drew %q", out.String())
+	if got := out.String(); got != "while away\n" {
+		t.Fatalf("a suspended screen must write straight to the terminal and draw nothing, wrote %q", got)
 	}
+	out.Reset()
 	s.Resume()
 	got := out.String()
-	if !strings.HasPrefix(got, enterAlt) || !strings.Contains(got, "while away") || !strings.Contains(got, "◆ SuiteWard installer") {
+	if !strings.HasPrefix(got, enterAlt) || !strings.Contains(got, "◆ SuiteWard installer") {
 		t.Fatalf("Resume must enter the alternate screen and redraw, wrote %q", got)
+	}
+	if strings.Contains(got, "while away") {
+		t.Fatalf("what was written while suspended belongs to the normal screen and must not be redrawn, wrote %q", got)
 	}
 	out.Reset()
 	s.Resume()

@@ -24,7 +24,7 @@ fails=0
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 sha256_of() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{ print $1 }'; }
 wrap() { real=$(command -v "$1") || return 0; printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$bin/$1"; chmod +x "$bin/$1"; }
-for tool in mktemp mkdir rm mv cp chmod awk sed grep tr cat sha256sum shasum curl; do wrap "$tool"; done
+for tool in mktemp mkdir rm mv cp chmod awk sed grep tr cat sleep sha256sum shasum curl; do wrap "$tool"; done
 cat > "$bin/uname" <<'EOF'
 #!/bin/sh
 case $1 in -s) echo "${FAKE_UNAME_S:-Linux}" ;; -m) echo "${FAKE_UNAME_M:-x86_64}" ;; *) exit 2 ;; esac
@@ -47,6 +47,7 @@ cat > "$tmp/wget" <<'EOF'
 out= url=
 while [ $# -gt 0 ]; do case $1 in -O) out=$2; shift ;; -q) ;; -*) exit 2 ;; *) url=$1 ;; esac; shift; done
 echo "$url" >> "$FAKE_LOGS/wget"
+[ -z "${FAKE_WGET_SLOW:-}" ] || sleep 2
 cp "${url#file://}" "$out" 2>/dev/null || exit 8
 EOF
 chmod +x "$bin/uname" "$bin/sudo" "$tmp/cosign" "$tmp/wget"
@@ -65,16 +66,20 @@ mkrelease() {
 	echo bundle > "$release/$1/SHA256SUMS.sigstore.json"
 }
 
-# run [VAR=value ...]: run the installer for v1.2.3 on linux/amd64 under the hermetic PATH with a closed stdin (pipe=1: the script itself on stdin, as in
+# with_env [VAR=value ...] COMMAND...: COMMAND under the hermetic PATH and the fake home, temporary, install and release directories. It execs, so the
+# caller runs it in parentheses; a background one is then the installer's own process, the one a signal must reach.
+with_env() { exec env PATH="$bin" HOME="$tmp/home" TMPDIR="$tmp/t" FAKE_LOGS="$logs" SUITEWARD_RELEASE_BASE="$base" SUITEWARD_INSTALL_DIR="$dest" SUITEWARD_VERSION=v1.2.3 "$@"; }
+
+# run [VAR=value ...]: run the installer for v1.2.3 on linux/amd64 under the hermetic PATH with a closed stdin (pipe=FILE: that file on stdin, as in
 # curl | sh). It sets rc and out (stdout and stderr), and fails when a temporary directory is left behind.
 run_keep() {
 	rm -f "$logs/cosign" "$logs/wget"
 	rm -rf "$tmp/t"
 	mkdir "$tmp/t"
 	if [ -n "${pipe:-}" ]; then
-		env PATH="$bin" HOME="$tmp/home" TMPDIR="$tmp/t" FAKE_LOGS="$logs" SUITEWARD_RELEASE_BASE="$base" SUITEWARD_INSTALL_DIR="$dest" SUITEWARD_VERSION=v1.2.3 "$@" "$shell" < "$installer" > "$tmp/out" 2>&1
+		( with_env "$@" "$shell" ) < "$pipe" > "$tmp/out" 2>&1
 	else
-		env PATH="$bin" HOME="$tmp/home" TMPDIR="$tmp/t" FAKE_LOGS="$logs" SUITEWARD_RELEASE_BASE="$base" SUITEWARD_INSTALL_DIR="$dest" SUITEWARD_VERSION=v1.2.3 "$@" "$shell" "$installer" < /dev/null > "$tmp/out" 2>&1
+		( with_env "$@" "$shell" "$installer" ) < /dev/null > "$tmp/out" 2>&1
 	fi
 	rc=$?
 	out=$(cat "$tmp/out")
@@ -104,6 +109,12 @@ name="the pinned identity"
 name="syntax"
 "$shell" -n "$installer" || fail "$name: install.sh does not parse with $shell"
 ! grep -qw eval "$installer" || fail "$name: install.sh must never evaluate downloaded content"
+# The release copies this file verbatim, so it holds nothing to stamp, and above the call of main it only defines: without that last line it prints and does nothing.
+name="definitions only above the call of main"
+[ "$(tail -n 1 "$installer")" = 'main "$@"' ] || fail "$name: the last line of install.sh is not the call of main"
+sed '$d' "$installer" > "$tmp/nomain.sh"
+nomain=$( ( with_env "$shell" ) < "$tmp/nomain.sh" 2>&1 ) || fail "$name: the script without its last line fails: $nomain"
+[ -z "$nomain" ] || fail "$name: the script without its last line prints: $nomain"
 
 mkrelease v1.2.3
 sums=$(sha256_of "$release/v1.2.3/SHA256SUMS")
@@ -134,10 +145,21 @@ lacks "NOT verified"
 [ "$(cosign_arg --certificate-oidc-issuer)" = "$issuer" ] || fail "$name: the issuer was not the pinned one: $(cat "$logs/cosign")"
 [ "$(tail -n 1 "$logs/cosign")" = SHA256SUMS ] || fail "$name: cosign must verify SHA256SUMS: $(cat "$logs/cosign")"
 
-name="success through the curl pipe (cosign reads stdin)"
-pipe=1 run
+# The curl pipe: the script is on stdin, followed by 70 KB that a child reading stdin would swallow (the shell has read the script itself by then) and by a
+# line that proves the shell still had them after main returned.
+name="success through the curl pipe"
+{
+	cat "$installer"
+	i=0
+	while [ "$i" -lt 1000 ]; do echo "# padding that is far bigger than any read buffer of the shell......................"; i=$((i + 1)); done
+	echo 'echo after > "$FAKE_LOGS/after"'
+} > "$tmp/piped.sh"
+rm -f "$logs/after"
+pipe="$tmp/piped.sh" run
 want_ok; installed "v1.2.3 linux_amd64"
 has "Verified: SHA256SUMS"
+[ -e "$logs/after" ] || fail "$name: a child process read the rest of the script from stdin"
+pipe=
 
 name="a cosign failure stops the install"
 run FAKE_COSIGN_EXIT=1
@@ -175,7 +197,8 @@ has "does not match SHA256SUMS"
 
 name="a binary that SHA256SUMS lists twice"
 mkrelease v1.2.6
-grep "suiteward_v1.2.6_linux_amd64$" "$release/v1.2.6/SHA256SUMS" >> "$release/v1.2.6/SHA256SUMS"
+grep "suiteward_v1.2.6_linux_amd64$" "$release/v1.2.6/SHA256SUMS" > "$tmp/sums"
+cat "$tmp/sums" >> "$release/v1.2.6/SHA256SUMS"
 run SUITEWARD_VERSION=v1.2.6
 want_refused
 has "exactly once"
@@ -298,6 +321,22 @@ add wget
 run
 want_ok; installed "v1.2.3 linux_amd64"
 grep -q "/v1.2.3/suiteward_v1.2.3_linux_amd64$" "$logs/wget" || fail "$name: wget did not download the binary: $(cat "$logs/wget")"
+
+# A TERM that arrives during a download runs the trap once the download returns: nothing is left behind, and the exit status says it was a TERM.
+name="a TERM during a download"
+rm -rf "$dest" "$tmp/home" "$tmp/t"
+mkdir "$dest" "$tmp/t"
+rm -f "$logs/wget"
+( with_env FAKE_WGET_SLOW=1 "$shell" "$installer" ) < /dev/null > "$tmp/out" 2>&1 &
+pid=$!
+tries=0
+while [ ! -e "$logs/wget" ] && [ "$tries" -lt 100 ]; do sleep 0.1; tries=$((tries + 1)); done
+kill -TERM "$pid"
+wait "$pid"
+rc=$?
+[ "$rc" -eq 143 ] || fail "$name: exit $rc, wanted 143: $(cat "$tmp/out")"
+[ -z "$(ls -A "$dest")" ] && [ -z "$(ls -A "$tmp/t")" ] || fail "$name: it left a file behind: $(ls -A "$dest" "$tmp/t")"
+
 name="neither curl nor wget"
 drop wget
 run
@@ -366,7 +405,7 @@ while [ "$cut" -lt "$lines" ]; do
 	rm -rf "$dest" "$tmp/t"
 	mkdir "$dest" "$tmp/t"
 	sed -n "1,${cut}p" "$installer" > "$tmp/cut.sh"
-	env PATH="$bin" HOME="$tmp/home" TMPDIR="$tmp/t" FAKE_LOGS="$logs" SUITEWARD_RELEASE_BASE="$base" SUITEWARD_INSTALL_DIR="$dest" SUITEWARD_VERSION=v1.2.3 "$shell" < "$tmp/cut.sh" > "$tmp/out" 2>&1
+	( with_env "$shell" ) < "$tmp/cut.sh" > "$tmp/out" 2>&1
 	[ -z "$(ls -A "$dest")" ] && [ -z "$(ls -A "$tmp/t")" ] || fail "$name: it installed or left a file: $(ls -A "$dest" "$tmp/t")"
 	cut=$((cut + 7))
 done

@@ -1,0 +1,32 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ◆ SuiteWard installer v1.2.3                                     step 3 of 5 │
+├──────────────────┬───────────────────────────────────────────────────────────┤
+│ ✓ Welcome        │ Restore preview                                           │
+│ ✓ Backup         │                                                           │
+│ ● Restore        │ Restoring replaces the database and the artifacts of this │
+│ ○ Verify         │ instance with the backup's.                               │
+│ ○ Finish         │                                                           │
+│                  │   Instance  da0aff25                                      │
+│                  │   Backup    suiteward-backup-20261022.tar.age             │
+│                  │   Tier      co-located                                    │
+│                  │                                                           │
+│                  │ ! The default branch on GitHub may be ahead of the        │
+│                  │   restored canonical.                                     │
+│                  │                                                           │
+│                  │ ╭───────────────────────────────────────────────────────╮ │
+│                  │ │ The recovery kit suiteward-recovery-kit-da0aff25.txt  │ │
+│                  │ │ opens every backup. Copy it off this machine now and  │ │
+│                  │ │ delete this copy.                                     │ │
+│                  │ ╰───────────────────────────────────────────────────────╯ │
+│                  │                                                           │
+│                  │ ───────────────────────────────────────────────────────── │
+│                  │ Type the instance id to confirm:                          │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+├──────────────────┴───────────────────────────────────────────────────────────┤
+│ Enter to confirm · Ctrl-C to quit                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯

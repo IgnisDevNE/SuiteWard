@@ -1,0 +1,24 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ◆ SuiteWard installer v1.2.3                                     step 3 of 4 │
+├──────────────────┬───────────────────────────────────────────────────────────┤
+│ ✓ Welcome        │ Repositories                                              │
+│ ✓ GitHub         │                                                           │
+│ ● Protection     │ The App can reach 40 repositories.                        │
+│ ○ Finish         │                                                           │
+│                  │ ───────────────────────────────────────────────────────── │
+│                  │ Repositories to protect                                   │
+│                  │   ↑ 8 more above                                          │
+│                  │   [ ] acme/repo09                                         │
+│                  │   [ ] acme/repo10                                         │
+│                  │   [ ] acme/repo11                                         │
+│                  │   [ ] acme/repo12                                         │
+│                  │ > [x] acme/repo13                                         │
+│                  │   [ ] acme/repo14                                         │
+│                  │   [ ] acme/repo15                                         │
+│                  │   [ ] acme/repo16                                         │
+│                  │   [ ] acme/repo17                                         │
+│                  │   ↓ 23 more below                                         │
+│                  │                                                           │
+├──────────────────┴───────────────────────────────────────────────────────────┤
+│ ↑/↓ move · Space toggle · Enter confirm · Ctrl-C quit                        │
+╰──────────────────────────────────────────────────────────────────────────────╯

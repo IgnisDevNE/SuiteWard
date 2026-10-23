@@ -122,6 +122,9 @@ func CheckSummary(c Check) (title, summary string) {
 		parts = append(parts, listingAndMore("Runner files that this head adds or changes outside the protected scope", c.Paths, c.PathsTotal))
 	}
 	parts = append(parts, strings.Join(facts, "\n"))
+	if c.Changes != nil {
+		parts = append(parts, "Marker lines are lines to look at, not a verdict.")
+	}
 	if c.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}

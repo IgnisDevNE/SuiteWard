@@ -127,8 +127,12 @@ func validateChanges(c Changes) error {
 // Facts are the lines that state the numbers of c: the files, the lines, the files not shown line by line when there are some, and the
 // marker lines seen. listed says that the reader finds the files not shown named right below.
 func (c Changes) Facts(listed bool) []string {
+	removed := "removed"
+	if c.Reduced { // a removed file left the protected files, and may still exist
+		removed += " from the protected files"
+	}
 	facts := []string{
-		fmt.Sprintf("Files: %d added, %d modified, %d removed", c.Added, c.Modified, c.Removed),
+		fmt.Sprintf("Files: %d added, %d modified, %d %s", c.Added, c.Modified, c.Removed, removed),
 		fmt.Sprintf("Lines: +%d/−%d (counted in %d of %d files)", c.LinesAdded, c.LinesRemoved, c.Counted, c.Added+c.Modified+c.Removed),
 	}
 	if c.NotShownTotal > 0 {
@@ -138,7 +142,7 @@ func (c Changes) Facts(listed bool) []string {
 		}
 		facts = append(facts, fact)
 	}
-	return append(facts, "Marker lines seen: "+markerPhrases(c.Markers))
+	return append(facts, "Marker lines seen: "+markerPhrases(c.Markers, c.Reduced))
 }
 
 // changeFacts are the bullets that state the numbers of c.
@@ -157,8 +161,13 @@ func counted(n int, one, many string) string {
 	return strconv.Itoa(n) + " " + many
 }
 
-// markerPhrases lists the marker lines of m in a fixed order, or says that there are none.
-func markerPhrases(m Markers) string {
+// markerPhrases lists the marker lines of m in a fixed order, or says that there are none. On a reduction a test file removed left the protected
+// files, and does not say deleted.
+func markerPhrases(m Markers, reduced bool) string {
+	testFile, testFiles := "removed test file", "removed test files"
+	if reduced {
+		testFile, testFiles = "test file removed from the protected files", "test files removed from the protected files"
+	}
 	var phrases []string
 	for _, p := range []struct {
 		n         int
@@ -168,7 +177,7 @@ func markerPhrases(m Markers) string {
 		{m.AddedSkips, "added skip line", "added skip lines"},
 		{m.Focused, "added focus line", "added focus lines"},
 		{m.DeletedTests, "removed test declaration", "removed test declarations"},
-		{m.TestFilesRemoved, "removed test file", "removed test files"},
+		{m.TestFilesRemoved, testFile, testFiles},
 	} {
 		if p.n > 0 {
 			phrases = append(phrases, counted(p.n, p.one, p.many))
@@ -187,6 +196,7 @@ var reportLinkPattern = regexp.MustCompile(`^http://(?:127\.0\.0\.1|localhost):[
 // report, or the listings of paths when there are no numbers.
 func changesSection(r Revision) []string {
 	if r.Changes == nil {
+		// The listings of a revision without numbers read as they did in M1.8, byte for byte, a reduction included.
 		parts := []string{listing("Protected files added", r.Added, r.AddedTotal), listing("Protected files modified", r.Modified, r.ModifiedTotal), listing("Protected files removed", r.Removed, r.RemovedTotal)}
 		if r.ChangesUnavailable {
 			parts = append(parts, "SuiteWard could not read the files of this revision to count the lines that changed, so the numbers are unknown.")
@@ -194,6 +204,7 @@ func changesSection(r Revision) []string {
 		return parts
 	}
 	c := *r.Changes
+	c.Reduced = r.Reduced
 	parts := []string{
 		"**What changed in the protected files.** SuiteWard counts the changed lines and points out some of them as marker lines; it does not judge them.",
 		strings.Join(changeFacts(c, true), "\n"),

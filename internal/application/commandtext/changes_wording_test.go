@@ -71,16 +71,3 @@ func TestCheckSummaryThatShowsMarkerLinesSaysThatTheyAreNotAVerdict(t *testing.T
 		t.Errorf("a summary that shows no marker lines has the note:\n%s", plain)
 	}
 }
-
-// The listings of paths, which a revision without numbers keeps, say it too.
-func TestRevisionCommentOfAReductionWithoutNumbersListsTheFilesRemovedFromTheProtectedFiles(t *testing.T) {
-	r := revision(commandtext.Isolated)
-	r.Reduced, r.ReducedRules, r.ReducedPaths, r.ReducedPathsTotal = true, []string{"exclude /tests/old.go"}, []string{"tests/old.go"}, 1
-	r.ChangesUnavailable = true
-
-	body := revisionText(t, r)
-
-	if !strings.Contains(body, "Files removed from the protected files:\n\n```\ntests/old.go\n```") || strings.Contains(body, "Protected files removed") {
-		t.Errorf("body does not list the removed files as removed from the protected files:\n%s", body)
-	}
-}

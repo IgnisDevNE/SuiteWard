@@ -362,7 +362,6 @@ func (l *loader) repositories(name, value string) []string {
 	return items
 }
 
-// tier reads the declared installation tier: exactly isolated or co-located, default co-located.
 // reportBaseURL reads the origin that the links of the change report name: http://127.0.0.1:<port> or http://localhost:<port>, the HTTP port of
 // the instance as the machine that runs it sees it, and nothing else, so a comment never links an address that another machine can serve. Empty
 // when unset. A trailing slash is dropped and the host is lowercased.
@@ -379,6 +378,7 @@ func (l *loader) reportBaseURL(name string) string {
 	return base
 }
 
+// loopbackOrigin is the normalized origin of v, and false when v is anything but http://127.0.0.1:<port> or http://localhost:<port> with an optional trailing slash.
 func loopbackOrigin(v string) (string, bool) {
 	u, err := url.Parse(v)
 	if err != nil || u.Scheme != "http" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
@@ -392,6 +392,7 @@ func loopbackOrigin(v string) (string, bool) {
 	return "http://" + host + ":" + port, true
 }
 
+// tier reads the declared installation tier: exactly isolated or co-located, default co-located.
 func (l *loader) tier(name string) Tier {
 	switch v := Tier(l.optional(name, string(TierCoLocated))); v {
 	case TierIsolated, TierCoLocated:

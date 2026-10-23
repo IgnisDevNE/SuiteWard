@@ -135,6 +135,7 @@ func TestRenderUnitsGolden(t *testing.T) {
 		"Secret=suiteward-mcp-token,type=mount,target=/run/secrets/mcp-token,uid=65532,mode=0400",
 		"Environment=SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
 		"EnvironmentFile=%h/.config/suiteward/github.env", "Environment=SUITEWARD_INSTALLATION_TIER=isolated",
+		"Environment=SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:8081",
 		"Volume=suiteward-data.volume:/data", "ReadOnly=true", "DropCapability=ALL", "NoNewPrivileges=true",
 		"PodmanArgs=--memory=256m --stop-timeout=45",
 		"[Service]", "Restart=always", "RestartSec=5", "[Install]", "WantedBy=default.target",

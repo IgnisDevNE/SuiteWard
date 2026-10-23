@@ -453,13 +453,12 @@ func (r *Resolver) preset(key, def string) string {
 
 const dockerWarning = `Docker is allowed on this PC, but Podman is strongly recommended.
   - Docker's daemon runs as root (a rootful daemon): the containers are not isolated from whoever controls that daemon the way rootless Podman's are.
-  - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes
-    that anyone who controls the Docker daemon can read.
+  - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.
 `
 
-// confirmDocker prints the warning and requires an explicit yes.
+// confirmDocker prints the warning and requires an explicit yes. The warning is one Warn: the full screen wraps its lines and keeps it.
 func confirmDocker(r *Resolver) error {
-	r.say("%s", dockerWarning)
+	r.screen.Warn("%s", dockerWarning)
 	answer, err := r.Value("accept-docker", "Type yes to use Docker anyway", "no")
 	if err != nil {
 		return err

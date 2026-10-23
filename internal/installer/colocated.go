@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -392,20 +391,7 @@ func (c *colocatedInstall) machineListening(ctx context.Context) (map[int]bool, 
 	if err != nil {
 		return nil, fmt.Errorf("ss in the machine: %w", err)
 	}
-	listening := map[int]bool{}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 4 || fields[0] != "LISTEN" {
-			continue
-		}
-		local := fields[3] // Local Address:Port
-		if i := strings.LastIndex(local, ":"); i >= 0 {
-			if port, err := strconv.Atoi(local[i+1:]); err == nil {
-				listening[port] = true
-			}
-		}
-	}
-	return listening, nil
+	return listeningPorts(out), nil
 }
 
 // readSecretState reads which database secrets exist and refuses a state the install cannot repair.

@@ -10,9 +10,8 @@ import (
 	"strings"
 )
 
-// listeningPorts reads the output of `ss -ltn` as the set of local TCP ports something listens on, whatever the address.
-// shortcut: colocatedInstall.machineListening parses the same output on its own; another change owns colocated.go, so the two
-// merge once both can be edited together.
+// listeningPorts reads the output of `ss -ltn` as the set of local TCP ports something listens on, whatever the address. Both
+// tiers use it: the isolated install on its own machine, the co-located install inside the Podman machine.
 func listeningPorts(out []byte) map[int]bool {
 	listening := map[int]bool{}
 	for _, line := range strings.Split(string(out), "\n") {

@@ -430,8 +430,13 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	var closed error
 	defer endConsole(scr, &closed) // a panic must not leave the terminal on the alternate screen; the exit code below reads the error of Close
 	code := Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, false)
-	waitErr := holdPage(scr) // the results stay on the screen until Enter
+	interrupted := ctx.Err() != nil // Ctrl-C ended the checks; one at the final wait comes after them and keeps their code
+	waitErr := holdPage(scr)        // the results stay on the screen until Enter
 	closeErr := scr.Close()
+	if interrupted {
+		_, _ = fmt.Fprintln(stderr, "suiteward: interrupted") // the screen is closed: the line would vanish with it otherwise
+		return 130
+	}
 	if waitErr != nil {
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", waitErr) // a failed write to stderr cannot be reported anywhere else
 	}

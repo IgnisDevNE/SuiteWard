@@ -157,9 +157,10 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		// A failed write to stderr cannot be reported anywhere else.
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
-	// Ctrl-C: the command has closed its screen, and read nothing since. cmd/suiteward cancels the context for SIGTERM as well, so a
-	// SIGTERM ends here too, as "interrupted" with 130; that is accepted.
-	case ctx.Err() != nil && errors.Is(err, context.Canceled):
+	// Ctrl-C: the command has closed its screen, and read nothing since. Any error with a done context is the interrupt's: a prompt's
+	// error that a caller put in its own words, or the failure of a child that the signal killed, has lost its Canceled but not its cause.
+	// cmd/suiteward cancels the context for SIGTERM as well, so a SIGTERM ends here too, as "interrupted" with 130; that is accepted.
+	case ctx.Err() != nil:
 		_, _ = fmt.Fprintf(stderr, "suiteward: interrupted: %v\n", err) // the error keeps what a failed step left behind and how to clean it up
 		return 130
 	default:
@@ -429,8 +430,18 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	var closed error
 	defer endConsole(scr, &closed) // a panic must not leave the terminal on the alternate screen; the exit code below reads the error of Close
 	code := Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, false)
-	if err := scr.Close(); err != nil && code == 0 {
-		return 1 // the report could not be written to the terminal, and nothing else says so
+	interrupted := ctx.Err() != nil // Ctrl-C ended the checks; one at the final wait comes after them and keeps their code
+	waitErr := holdPage(scr)        // the results stay on the screen until Enter
+	closeErr := scr.Close()
+	if interrupted {
+		_, _ = fmt.Fprintln(stderr, "suiteward: interrupted") // the screen is closed: the line would vanish with it otherwise
+		return 130
+	}
+	if waitErr != nil {
+		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", waitErr) // a failed write to stderr cannot be reported anywhere else
+	}
+	if code == 0 && (waitErr != nil || closeErr != nil) {
+		return 1 // the report could not be held or written to the terminal, and nothing else says so
 	}
 	return code
 }
@@ -448,13 +459,12 @@ func (r *Resolver) preset(key, def string) string {
 
 const dockerWarning = `Docker is allowed on this PC, but Podman is strongly recommended.
   - Docker's daemon runs as root (a rootful daemon): the containers are not isolated from whoever controls that daemon the way rootless Podman's are.
-  - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes
-    that anyone who controls the Docker daemon can read.
+  - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.
 `
 
-// confirmDocker prints the warning and requires an explicit yes.
+// confirmDocker prints the warning and requires an explicit yes. The warning is one Warn: the full screen wraps its lines and keeps it.
 func confirmDocker(r *Resolver) error {
-	r.say("%s", dockerWarning)
+	r.screen.Warn("%s", dockerWarning)
 	answer, err := r.Value("accept-docker", "Type yes to use Docker anyway", "no")
 	if err != nil {
 		return err

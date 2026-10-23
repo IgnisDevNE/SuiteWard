@@ -31,6 +31,7 @@ type githubInstall struct {
 	setupChecks map[string]string
 	enrollHint  string // the command the messages name to enroll the owner (enrollCommand)
 	owner       string // how the summary says the owner stands, as enroll found it
+	statusDead  bool   // enroll waited for /status and could not read it: the summary does not wait for it again
 }
 
 func (g githubInstall) say(format string, args ...any) { _, _ = fmt.Fprintf(g.out, format, args...) }
@@ -247,6 +248,16 @@ const unknownLogin = "unknown login"
 // enrolledOwner reads /status of the service, which may still be starting, and returns the login of the enrolled owner, or
 // "" when there is none. An answer it cannot read is an error: it is not "no owner". The wait draws on bar, when it is given one.
 func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.Context) ([]byte, error), bar waitBar) (string, error) {
+	body, err := waitForStatus(ctx, g.env.Sleep, status, bar)
+	if err != nil {
+		return "", err
+	}
+	return parseEnrolledOwner(body)
+}
+
+// waitForStatus reads /status of a service that may still be starting, up to statusTries times, statusEvery apart, and returns the first
+// answer, or the last error. A done context ends it at once. The wait draws on bar, when it is given one.
+func waitForStatus(ctx context.Context, sleep func(time.Duration), status func(context.Context) ([]byte, error), bar waitBar) ([]byte, error) {
 	var body []byte
 	var err error
 	for i := range statusTries {
@@ -255,14 +266,14 @@ func (g *githubInstall) enrolledOwner(ctx context.Context, status func(context.C
 		}
 		bar.set(float64(i)/statusTries, "waiting for /status")
 		if i < statusTries-1 {
-			g.env.Sleep(statusEvery)
+			sleep(statusEvery)
 		}
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	bar.set(1, "answers")
-	return parseEnrolledOwner(body)
+	return body, nil
 }
 
 // parseEnrolledOwner is the login of the owner /status reports, or "" when it reports none.
@@ -302,8 +313,10 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 	scr := screenOn(g.out)
 	login, err := g.enrolledOwner(ctx, status, barOn(scr, "Service"))
 	switch {
+	case err != nil && ctx.Err() != nil: // Ctrl-C ended the wait: nothing is known of the service, and the install is over
+		return fmt.Errorf("the stack is running, but the install was interrupted before the owner was enrolled: run `%s` to enroll: %w", command, err)
 	case err != nil:
-		g.owner = "unknown: /status could not be read"
+		g.owner, g.statusDead = "unknown: /status could not be read", true
 		scr.Warn("Setup was not run: /status of the service could not be read (%v), so it is not known whether an owner is enrolled, and setup would replace the TOTP secret of one. Once the service answers, check /status, and if it has no owner, run on a real terminal with session recording off:\n  %s\n", err, command)
 	case login != "":
 		g.owner = login + " (already enrolled)"

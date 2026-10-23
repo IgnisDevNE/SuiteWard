@@ -3,6 +3,7 @@ package installer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -327,6 +328,13 @@ func TestEnrollOnAFullScreenRunsSetupOnTheRealTerminal(t *testing.T) {
 	if strings.Contains(c.tail(), "CHILD-OUTPUT") {
 		t.Error("the child's output was printed again by Close")
 	}
+	// The page it holds says what happened: the check is drawn on the screen that came back after setup, and kept for the scrollback.
+	if at := strings.LastIndex(out, "alice is enrolled as the owner."); at < strings.LastIndex(out, enterAlt) {
+		t.Errorf("the finished enrollment was not on the screen that the command waited on")
+	}
+	if !strings.Contains(c.tail(), "✓ alice is enrolled as the owner.\n") {
+		t.Errorf("the scrollback does not say that the owner is enrolled:\n%s", c.tail())
+	}
 }
 
 const doctorNoGitHub = `[{"name":"github.app","ok":true,"warning":true,"detail":"not configured: GitHub is off in this instance","fix":"set GitHub up"},` +
@@ -346,8 +354,8 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	}
 	c.steps(t, "Doctor")
 	tail := c.tail()
-	// A passing check is its name beside a check mark, a failed or doubtful one is the line doctor prints.
-	for _, want := range []string{"\nsettings\n", "\nFAIL ports: ", "\nWARN github.app: not configured: GitHub is off in this instance — set GitHub up\n"} {
+	// A passing check is its name beside a check mark, a failed or doubtful one is the line doctor prints beside the warning mark.
+	for _, want := range []string{"\n✓ settings\n", "\n! FAIL ports: ", "\n! WARN github.app: not configured: GitHub is off in this instance — set GitHub up\n"} {
 		if !strings.Contains("\n"+tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
@@ -365,11 +373,35 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	port := regexp.MustCompile(`port \d+`) // the stack of each build listens on a port of its own
 	for _, line := range strings.Split(strings.TrimSpace(piped.String()), "\n") {
 		if name, ok := strings.CutPrefix(line, "ok "); ok {
-			line = name
+			line = "✓ " + name
+		} else {
+			line = "! " + line
 		}
 		if line = port.ReplaceAllString(line, "port N"); !strings.Contains(port.ReplaceAllString(tail, "port N"), line) {
 			t.Errorf("the line %q of the plain output is not in the full-screen scrollback", line)
 		}
+	}
+	// The counts end the page and the scrollback; a warning is not an ok and not a failure.
+	var oks, warnings, failures int
+	for _, line := range strings.Split(strings.TrimSpace(piped.String()), "\n") {
+		switch {
+		case strings.HasPrefix(line, "ok "):
+			oks++
+		case strings.HasPrefix(line, "WARN "):
+			warnings++
+		default:
+			failures++
+		}
+	}
+	counts := fmt.Sprintf("%d ok, %d warnings, %d failures", oks, warnings, failures)
+	if !strings.HasSuffix(strings.TrimSpace(tail), counts) {
+		t.Errorf("the scrollback does not end with %q:\n%s", counts, tail)
+	}
+	if frames := c.out.String(); !strings.Contains(frames[:strings.LastIndex(frames, leaveAlt)], counts) {
+		t.Errorf("the counts %q were never on the screen", counts)
+	}
+	if strings.Contains(piped.String(), "ok, ") {
+		t.Errorf("a plain run prints no counts:\n%s", piped.String())
 	}
 
 	c = newTermConsole(&bytes.Buffer{})

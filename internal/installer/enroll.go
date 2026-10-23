@@ -81,7 +81,10 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	scr.Step(2)
-	return enrollOwner(ctx, r, env, target)
+	if err := enrollOwner(ctx, r, env, target); err != nil {
+		return err
+	}
+	return holdPage(scr) // setup left the screen and it is back: its page is the last thing to read
 }
 
 // colocatedEnrollTarget finds the stack as uninstall and upgrade do: the guards of the install apply.
@@ -165,7 +168,11 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 	if err != nil {
 		return err
 	}
-	return runSetup(ctx, t.rt, owner, checks, env.Term.Out)
+	if err := runSetup(ctx, t.rt, owner, checks, env.Term.Out); err != nil {
+		return err
+	}
+	r.screen.Check("%s is enrolled as the owner.\n", owner) // the page that enroll then holds for Enter
+	return nil
 }
 
 // enrollChecks is the test check of each repository of the instance: from --test-check, else from the saved settings, else asked.

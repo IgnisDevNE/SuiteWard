@@ -29,8 +29,9 @@ import (
 // It reads the settings at settingsPath (the default location when empty), checks the engine, the containers or units, the
 // pins, the ports and /status of the instance those settings describe, runs `suiteward check --json` in the service
 // container and merges its results. It prints `ok <name>`, `WARN <name>: <detail> — <fix>` (a pass that needs a look) or `FAIL <name>: <detail> — <fix>` per result (the same style as
-// `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. The
-// exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
+// `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. On a
+// full screen the results are lines of the screen, ended by the counts ("N ok, N warnings, N failures"), and the caller holds the page
+// until Enter (doctorCommand). The exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
 func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, jsonOut bool) int {
 	d := &doctor{deps: deps, raw: map[string][]byte{}, units: map[string]map[string]string{}}
 	if err := deps.validate(); err != nil {
@@ -66,17 +67,22 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(results)
 	}
-	if scr, ok := w.(*ui.Screen); ok && scr.FullScreen() { // the checks are lines of the screen, and Close keeps the ones to read twice
+	if scr, ok := w.(*ui.Screen); ok && scr.FullScreen() { // the checks are lines of the screen, and Close keeps every one of them
+		var passed, warned, failed int // a warning is a pass that needs a look: it is counted apart
 		for _, r := range results {
 			switch {
 			case r.OK && r.Warning:
+				warned++
 				scr.Warn("WARN %s: %s — %s\n", r.Name, r.Detail, r.Fix)
 			case r.OK:
+				passed++
 				scr.Check("%s", r.Name)
 			default:
+				failed++
 				scr.Warn("FAIL %s: %s — %s\n", r.Name, r.Detail, r.Fix)
 			}
 		}
+		scr.Say("\n%d ok, %d warnings, %d failures\n", passed, warned, failed)
 		return nil
 	}
 	var b strings.Builder

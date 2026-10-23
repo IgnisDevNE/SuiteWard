@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -197,4 +199,223 @@ func TestCommandsReportAFailedTerminalWithTheirOwnError(t *testing.T) {
 			t.Errorf("enroll: exit %d, stderr %q", code, stderr.String())
 		}
 	})
+}
+
+// The Docker discouragement is one warning: amber on the screen and kept for Close, each point on a line of its own, and no line broken
+// in the middle of a sentence (the frame wraps the text itself).
+func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(t *testing.T) {
+	c := newTermConsole(&bytes.Buffer{})
+	scr, err := c.open(liveContext(t), strings.NewReader(""), "dev", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newTestResolver(t, map[string]string{"accept-docker": "yes"}, nil, Terminal{In: strings.NewReader(""), Out: scr})
+	if err := confirmDocker(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := scr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	want := "! Docker is allowed on this PC, but Podman is strongly recommended.\n" +
+		"    - Docker's daemon runs as root (a rootful daemon): the containers are not isolated from whoever controls that daemon the way rootless Podman's are.\n" +
+		"    - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.\n"
+	if got := c.tail(); got != want {
+		t.Errorf("the scrollback holds\n%s\nwant\n%s", got, want)
+	}
+
+	// Plain output is the text of the warning as it is, with no mark.
+	term, out := fakeTerminal(false, "")
+	term.Out = out
+	if err := confirmDocker(newTestResolver(t, map[string]string{"accept-docker": "yes"}, nil, term)); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != dockerWarning {
+		t.Errorf("a plain run printed\n%q\nwant the warning as it is\n%q", out.String(), dockerWarning)
+	}
+}
+
+// A service that has just started does not answer at once. Without GitHub nothing waits for it before the summary, which then left its
+// Instance row out of an instance that was up a moment later.
+func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing.T) {
+	run := func(t *testing.T, refusals int) (tail string, asked int) {
+		t.Helper()
+		h := newHarness(t, "linux")
+		h.status = func(context.Context, string) ([]byte, error) {
+			if asked++; asked <= refusals {
+				return nil, errors.New("connection refused")
+			}
+			return []byte(`{"version":"v0.2.0"}`), nil
+		}
+		c := newTermConsole(&bytes.Buffer{})
+		env := h.newEnv()
+		env.OpenScreen = c.open
+		args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--image", testImage, "--github-app-id", "none"}
+		if err := Install(liveContext(t), args, env); err != nil {
+			t.Fatal(err)
+		}
+		return c.tail(), asked
+	}
+
+	if tail, _ := run(t, 3); !strings.Contains(tail, "Instance: v0.2.0\n") {
+		t.Errorf("the summary has no Instance row although the service answered a few seconds in:\n%s", tail)
+	}
+	// A service that never answers is waited for as long as the install waits for it with GitHub, and the summary still comes.
+	tail, asked := run(t, 1000)
+	if strings.Contains(tail, "Instance:") || !strings.Contains(tail, "Status: ") {
+		t.Errorf("the summary of a service that does not answer has an Instance row or lacks the rest:\n%s", tail)
+	}
+	if asked != statusTries {
+		t.Errorf("/status was asked %d times, want %d", asked, statusTries)
+	}
+}
+
+func TestTheSummaryOfAnUpgradeWaitsForTheServiceToAnswer(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	afterStart := 0 // the reads once the new service was started: the first ones are the summary's
+	u.status = func(ctx context.Context, address string) ([]byte, error) {
+		if slices.ContainsFunc(u.f.calls, func(c call) bool { return strings.Contains(c.line(), "--name suiteward --network") }) {
+			if afterStart++; afterStart <= 3 {
+				return nil, errors.New("connection refused")
+			}
+		}
+		return httpGet(ctx, address)
+	}
+	c := newTermConsole(&u.out)
+	env := u.env()
+	env.OpenScreen = c.open
+	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
+	if err := Install(liveContext(t), args, env); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.tail(), "Instance: v0.2.0\n") {
+		t.Errorf("the summary has no Instance row although the service answered a few tries in:\n%s", c.tail())
+	}
+}
+
+// On a Windows console, Ctrl-C makes the pending read return the end of the input before the signal cancels the context. A terminal's
+// end of input that the context follows a moment later is an interrupt: "interrupted" and exit 130, not "read the answer: EOF" and 1.
+func TestCtrlCAtAPromptOfAWindowsConsoleExits130(t *testing.T) {
+	h := newHarness(t, "linux")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	time.AfterFunc(10*time.Millisecond, cancel)
+	env := h.newEnv()
+	env.Term = Terminal{In: strings.NewReader(""), Out: &h.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}
+	env.OpenScreen = func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error) {
+		return ui.Open(ui.Options{Out: &h.out, In: in, Context: ctx, Version: version, Mode: ui.ModePlain, InputIsTerminal: true})
+	}
+	var stderr bytes.Buffer
+	code := Main(ctx, []string{"install", "--settings", h.settingsPath(), "--token-file", h.tokenPath()}, env, &stderr)
+	if code != 130 || !strings.Contains(stderr.String(), "interrupted") || strings.Count(stderr.String(), "\n") != 1 {
+		t.Errorf("exit %d with stderr %q, want 130 and one line saying interrupted", code, stderr.String())
+	}
+	h.mustNotMutate()
+}
+
+// Whatever error a command ends with after Ctrl-C, the user pressed it: the command that wrapped a prompt's error in its own words is
+// no less interrupted.
+func TestAnyErrorAfterCtrlCExits130(t *testing.T) {
+	h := newHarness(t, "linux")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stderr bytes.Buffer
+	code := Main(ctx, []string{"install", "--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm"}, h.newEnv(), &stderr) // no --image: a plain error
+	if code != 130 || !strings.Contains(stderr.String(), "image") {
+		t.Errorf("exit %d with stderr %q, want 130 and the error that ended the command", code, stderr.String())
+	}
+}
+
+// With GitHub the enrollment waits for /status first. A service that never answers is waited for once: the summary does not wait for it
+// again after the enrollment gave up.
+func TestAServiceThatNeverAnswersIsWaitedForOnceByAnInstallWithGitHub(t *testing.T) {
+	h := newHarness(t, "linux")
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	asked := 0
+	h.status = func(context.Context, string) ([]byte, error) {
+		asked++
+		return nil, errors.New("connection refused")
+	}
+	c := newTermConsole(&bytes.Buffer{})
+	env := h.newEnv()
+	env.OpenScreen = c.open
+	if err := Install(liveContext(t), colocatedArgs(h), env); err != nil {
+		t.Fatal(err)
+	}
+	if asked != statusTries {
+		t.Errorf("/status was asked %d times, want %d: the wait of the enrollment, and none after it", asked, statusTries)
+	}
+	if tail := c.tail(); strings.Contains(tail, "Instance:") || !strings.Contains(tail, "Status: ") {
+		t.Errorf("the summary of a service that does not answer has an Instance row or lacks the rest:\n%s", tail)
+	}
+}
+
+// Ctrl-C while the enrollment waits for /status ends the install: the wait gives up because the context is done, and that is not a
+// service that never answered. The install went on to a summary and exit 0 before.
+func TestCtrlCDuringTheEnrollmentWaitEndsAnInstallWithGitHubAsInterrupted(t *testing.T) {
+	for _, screen := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain", true: "full screen"}[screen], func(t *testing.T) {
+			h := newHarness(t, "linux")
+			h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			h.status = func(ctx context.Context, _ string) ([]byte, error) {
+				cancel() // Ctrl-C while the service starts
+				return nil, ctx.Err()
+			}
+			env := h.newEnv()
+			if screen {
+				env.OpenScreen = newTermConsole(&bytes.Buffer{}).open
+			}
+			var stderr bytes.Buffer
+			code := Main(ctx, append([]string{"install"}, colocatedArgs(h)...), env, &stderr)
+			if code != 130 || !strings.Contains(stderr.String(), "interrupted") || strings.Count(stderr.String(), "\n") != 1 {
+				t.Errorf("exit %d with stderr %q, want 130 and one line saying interrupted", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "suiteward enroll") {
+				t.Errorf("the message does not say how to enroll the owner, which the interrupt left undone: %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestCtrlCDuringTheEnrollmentWaitEndsAnIsolatedInstallAsInterrupted(t *testing.T) {
+	g := newIsoGitHub(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	g.ctx = ctx
+	g.status = func(ctx context.Context, address string) ([]byte, error) {
+		if strings.HasSuffix(address, "/status") {
+			cancel()
+			return nil, ctx.Err()
+		}
+		return []byte(`{"version":"v0.2.0"}`), nil
+	}
+	if err := g.run(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("the install ended with %v, want an error that wraps context.Canceled: Ctrl-C during the wait for /status", err)
+	}
+}
+
+// doctor --json is for a program: it never draws, never waits, and keeps the code of its checks, also after Ctrl-C.
+func TestDoctorJSONAfterCtrlCKeepsTheCodeOfItsChecks(t *testing.T) {
+	f, s := colocated{checkOut: doctorNoGitHub}.build(t)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, stderr bytes.Buffer
+	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &out}}
+	code := Main(ctx, []string{"doctor", "--json", "--settings", path}, env, &stderr)
+	var results []doctorResult
+	if err := json.Unmarshal(out.Bytes(), &results); err != nil {
+		t.Fatalf("the output is not the JSON of the results: %v\n%s", err, out.String())
+	}
+	want := 0
+	if slices.ContainsFunc(results, func(r doctorResult) bool { return !r.OK }) {
+		want = 1
+	}
+	if code != want || stderr.Len() != 0 {
+		t.Errorf("exit %d with stderr %q, want %d (the code of the checks) and nothing on stderr", code, stderr.String(), want)
+	}
 }

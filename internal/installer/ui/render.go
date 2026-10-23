@@ -28,6 +28,12 @@ const (
 	itemBar
 )
 
+// The glyphs in front of a Check and a Warn line: the frame draws them, and Close prints the same ones.
+const (
+	checkGlyph = "✓"
+	warnGlyph  = "!"
+)
+
 // item is one thing on the page of a step.
 type item struct {
 	kind   itemKind
@@ -38,14 +44,21 @@ type item struct {
 	def    bool   // the default choice
 	frac   float64
 	status string // a bar's status; empty shows the percentage
-	kept   bool   // a Keep or Warn line: Close prints it with the keep block, not with the page
+	kept   bool   // a Keep line: it outlives its page
 }
 
-// plainLines is the item as text, as Close prints the page.
+// durable says that Close prints the item whatever page the run ends on: a Check, a Warn or a Keep line.
+func (it item) durable() bool { return it.kept || it.kind == itemCheck || it.kind == itemWarn }
+
+// plainLines is the item as text, as Close prints it: a Check and a Warn line with the glyph the frame draws.
 func (it item) plainLines() []string {
 	switch it.kind {
-	case itemText, itemCheck, itemWarn:
+	case itemText:
 		return strings.Split(it.text, "\n")
+	case itemCheck:
+		return markedLines(checkGlyph, it.text)
+	case itemWarn:
+		return markedLines(warnGlyph, it.text)
 	case itemChoice:
 		return []string{choiceLine(it.num, it.pad, it.text, it.desc, it.def)}
 	case itemBar:
@@ -126,7 +139,7 @@ func (s *Screen) frame() frame {
 	content, cursor = content[cut:], cursor-cut
 	hint := "Ctrl-C to quit"
 	switch {
-	case s.summary:
+	case s.summary, s.waiting:
 		hint = "Enter to finish"
 	case s.secret: // the hidden read cannot be interrupted
 		hint = "Enter to confirm"
@@ -240,9 +253,9 @@ func (s *Screen) itemRows(it item, width, labelW int) []row {
 	case itemText:
 		return s.textRows(it.text, width)
 	case itemCheck:
-		return s.markedRows("✓", toneGreen, it.text, width)
+		return s.markedRows(checkGlyph, toneGreen, it.text, width)
 	case itemWarn:
-		return s.markedRows("!", toneAmber, it.text, width)
+		return s.markedRows(warnGlyph, toneAmber, it.text, width)
 	case itemChoice:
 		return []row{s.choiceRow(it, width)}
 	case itemBar:
@@ -276,6 +289,18 @@ func (s *Screen) markedRows(glyph string, t tone, text string, width int) []row 
 		rows = append(rows, b.row())
 	}
 	return rows
+}
+
+// markedLines is markedRows as text: the glyph in front of the first line, the other lines indented under the text.
+func markedLines(glyph, text string) []string {
+	lines := strings.Split(text, "\n")
+	lines[0] = glyph + " " + lines[0]
+	for i := 1; i < len(lines); i++ {
+		if lines[i] != "" {
+			lines[i] = "  " + lines[i]
+		}
+	}
+	return lines
 }
 
 // choiceRow is "1) name   description"; the default is green and says so.
@@ -344,7 +369,7 @@ func (s *Screen) summaryRows(width int) []row {
 		rows = append(rows, row{})
 	}
 	for _, w := range s.warns {
-		rows = append(rows, s.markedRows("!", toneAmber, w, width)...)
+		rows = append(rows, s.markedRows(warnGlyph, toneAmber, w, width)...)
 	}
 	return rows
 }

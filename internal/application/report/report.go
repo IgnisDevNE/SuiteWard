@@ -20,11 +20,12 @@ const (
 	maxFileBytes    = 1 << 20     // a side over it is too large to compare
 	maxFileLines    = 20_000      // likewise
 	maxEditDistance = 1000        // lines to delete plus lines to insert; past it a pair of files is too different
-	maxDiffWork     = 300_000_000 // steps of every comparison of one report together, about a second
+	maxDiffWork     = 300_000_000 // steps (a diagonal tried, a line compared) of every comparison of one report together
 	contextLines    = 3
 	maxLineBytes    = 500
 	maxMarkerBytes  = 200
-	maxHunkBytes    = 4 << 20 // text of the hunks of one report
+	maxHunkBytes    = 4 << 20 // what the hunks of one report cost: every line costs its text and lineOverhead
+	lineOverhead    = 32      // a stored Line without its text; it makes a report of empty lines cost what it holds
 	maxMarkers      = 1000    // markers listed in one report; the counts of Totals stay exact
 )
 
@@ -97,7 +98,7 @@ type Marker struct {
 // only when CountsKnown: a binary file, and a modified file too large or too different to compare within the
 // bounds (TooLarge), have unknown counts, never zero. An added or removed file over the size bound has Hunks
 // omitted but its counts are exact, since counting lines is cheap. Truncated says the Hunks were left out to keep the
-// report within its text budget; the counts stay exact.
+// report within its size budget, in which a line costs its text and 32 bytes; the counts stay exact.
 type File struct {
 	Path                        string
 	Status                      Status
@@ -237,13 +238,13 @@ func intern(ids map[string]int, lines []string) []int {
 	return out
 }
 
-// keepHunks gives f the hunks of script unless their text would pass what the report has room for.
+// keepHunks gives f the hunks of script unless they would cost more than the report has room for.
 func (b *builder) keepHunks(f *File, script []entry) {
 	hunks := hunksOf(script)
 	size := 0
 	for _, h := range hunks {
 		for _, l := range h.Lines {
-			size += len(l.Text)
+			size += len(l.Text) + lineOverhead
 		}
 	}
 	if size > b.hunkRoom {
@@ -264,7 +265,7 @@ func (b *builder) markLines(f *File, script []entry) {
 		}
 		for _, kind := range rules.kinds(e.kind, e.text) {
 			text, _ := cutAt(strings.TrimSpace(e.text), maxMarkerBytes)
-			b.mark(f, Marker{Kind: kind, Path: f.Path, Line: line, Text: text})
+			b.mark(f, Marker{Kind: kind, Path: f.Path, Line: line, Text: strings.Clone(text)})
 		}
 	}
 }

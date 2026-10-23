@@ -193,7 +193,8 @@ func hunkOf(es []entry) Hunk {
 	for i, e := range es {
 		text, terminated := strings.CutSuffix(e.text, "\n")
 		text, cut := cutAt(text, maxLineBytes)
-		h.Lines[i] = Line{Kind: e.kind, Text: text, NoNewline: !terminated, Cut: cut}
+		// A clone, so that a kept line does not hold the whole file it was cut from.
+		h.Lines[i] = Line{Kind: e.kind, Text: strings.Clone(text), NoNewline: !terminated, Cut: cut}
 		if e.kind != LineAdded {
 			h.OldLines++
 		}

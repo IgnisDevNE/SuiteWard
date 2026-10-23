@@ -275,12 +275,12 @@ func TestBuildHunkTextBudget(t *testing.T) {
 	}
 }
 
-// Empty lines have no text, but a report of millions of them is as large to hold and to render as any other.
+// Empty lines have no text, but a report full of them is as large to hold and to render as any other.
 func TestBuildHunkBudgetCountsLinesWithoutText(t *testing.T) {
 	t.Parallel()
 	empty := strings.Repeat("\n", 20_000)
 	var changes []report.FileChange
-	for i := range 150 {
+	for i := range 12 {
 		changes = append(changes, added(fmt.Sprintf("f%03d.txt", i), empty))
 	}
 	changes = append(changes, added("zz.txt", "small\n"))
@@ -294,7 +294,7 @@ func TestBuildHunkBudgetCountsLinesWithoutText(t *testing.T) {
 			kept += len(h.Lines)
 		}
 	}
-	if kept > (4<<20)/2 {
+	if kept > (4<<20)/32 {
 		t.Fatalf("the report keeps %d lines of no text", kept)
 	}
 	if last := r.Files[len(r.Files)-1]; last.Path != "zz.txt" || last.Truncated || len(last.Hunks) != 1 {

@@ -377,7 +377,7 @@ func TestUninstallIsolatedStopsAtTheStepThatFails(t *testing.T) {
 				u.t.Fatal(err)
 			}
 		}, false, "read the installed unit"},
-		{"the state of a unit", func(u *isoUpgrade) { u.f.failOn["show --property=LoadState --value suiteward.service"] = errInjected }, false, "ask for the state of suiteward.service"},
+		{"the state of a unit", func(u *isoUpgrade) { u.f.failOn["show --property=ActiveState --value suiteward.service"] = errInjected }, false, "ask for the state of suiteward.service"},
 		{"the stop of a unit", func(u *isoUpgrade) { u.f.failOn["stop suiteward-migrate.service"] = errInjected }, false, "stop suiteward-migrate.service"},
 		{"the daemon reload", func(u *isoUpgrade) { u.f.failOn["daemon-reload"] = errInjected }, false, "daemon-reload"},
 		{"a secret of a purge", func(u *isoUpgrade) { u.f.failOn["secret rm"] = errInjected }, true, "remove the secret"},

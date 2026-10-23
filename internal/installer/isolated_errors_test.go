@@ -48,6 +48,9 @@ func TestInstallIsolatedStopsAtTheFirstFailingCommand(t *testing.T) {
 		{name: "the Podman generator", match: generatorPath, want: "the Podman generator rejects the units", notAfter: "daemon-reload"},
 		{name: "the daemon reload", match: "daemon-reload", want: "systemctl --user daemon-reload", notAfter: "start suiteward-db.service"},
 		{name: "the state of the service", match: "show --property=ActiveState --value suiteward.service", want: "ask for the state of suiteward.service", notAfter: "start suiteward-db.service"},
+		{name: "the state of the database", match: "show --property=ActiveState --value suiteward-db.service", want: "ask for the state of suiteward-db.service", notAfter: "start suiteward-db.service"},
+		{name: "the state of the migration", match: "show --property=ActiveState --value suiteward-migrate.service", want: "ask for the state of suiteward-migrate.service", notAfter: "start suiteward-db.service", setup: func(f *isoFake) { f.dbDown = true }},
+		{name: "the restart of the network", match: "restart suiteward-network.service", want: "restart the network", notAfter: "start suiteward-db.service", setup: func(f *isoFake) { f.dbDown, f.migrateDown = true, true }},
 		{name: "the start of the database", match: "start suiteward-db.service", want: "start the database", notAfter: "psql"},
 		{name: "the look for the role", match: "exec -i suiteward-db psql", want: "look for the role", notAfter: "start suiteward.service"},
 		{name: "the start of a running service", match: "--user start suiteward.service", want: "start the service", setup: func(f *isoFake) { f.serviceRunning = true }},
@@ -278,7 +281,7 @@ func TestEnvFilesThatCannotBeReadAreNamed(t *testing.T) {
 	if _, err := readGitHubEnvFile(dir); err == nil || !strings.Contains(err.Error(), "read "+dir) {
 		t.Errorf("readGitHubEnvFile of a directory = %v", err)
 	}
-	if err := writeEnvFile(dir, GitHub{}, false); err == nil || !strings.Contains(err.Error(), "read "+dir) {
+	if _, err := writeEnvFile(dir, GitHub{}, false); err == nil || !strings.Contains(err.Error(), "read "+dir) {
 		t.Errorf("writeEnvFile over a directory = %v", err)
 	}
 }
@@ -478,4 +481,23 @@ func TestInstallIsolatedRefusesAKeyItCannotStore(t *testing.T) {
 			t.Errorf("a secret was created before the key was known to be there: %v", f.lines())
 		}
 	})
+}
+
+// writeEnvFile says whether the values a service reads from the file changed.
+func TestWriteEnvFileSaysWhetherTheValuesChanged(t *testing.T) {
+	gh := GitHub{AppID: 123, InstallationID: 456, Repositories: []string{"octo/one"}}
+	path := filepath.Join(t.TempDir(), "github.env")
+	step := func(name string, gh GitHub, have, wantChanged bool) {
+		t.Helper()
+		changed, err := writeEnvFile(path, gh, have)
+		if err != nil || changed != wantChanged {
+			t.Errorf("%s: changed = %v, %v; want %v", name, changed, err, wantChanged)
+		}
+	}
+	step("a file that did not exist is made empty: no values", GitHub{}, false, false)
+	step("an empty file stays", GitHub{}, false, false)
+	step("values over an empty file", gh, true, true)
+	step("the same values", gh, true, false)
+	step("an existing file is left alone without values", GitHub{}, false, false)
+	step("other values", GitHub{AppID: 124, InstallationID: 456, Repositories: []string{"octo/one"}}, true, true)
 }

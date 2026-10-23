@@ -1011,12 +1011,127 @@ func TestInstallEnablesPodmanRestartInTheMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := h.f.find("systemctl")
-	want := "machine ssh --username user podman-machine-default systemctl --user enable podman-restart.service"
-	if len(got) != 1 || got[0].line() != want {
-		t.Fatalf("got %v, want %s", got, want)
+	want := []string{
+		"machine ssh --username user podman-machine-default systemctl --user is-enabled podman-restart.service",
+		"machine ssh --username user podman-machine-default systemctl --user enable podman-restart.service",
+	}
+	if len(got) != len(want) || got[0].line() != want[0] || got[1].line() != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 	if !strings.Contains(h.out.String(), "podman machine start") {
 		t.Errorf("the machine-at-logon gap is not noted:\n%s", h.out.String())
+	}
+}
+
+// The Podman machine of WSL makes ~/.config/systemd/user/default.target.wants owned by root, so the user's own
+// `systemctl --user enable` is denied. The link is then made as the machine's default ssh user (root on a Windows WSL machine).
+const (
+	restartAsked  = "podman-machine-default systemctl --user is-enabled" // the check before anything is changed
+	restartEnable = "systemctl --user enable podman-restart.service"
+	restartLink   = "ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service"
+	restartReload = "daemon-reload" // the reload that is followed by the check that the link took
+)
+
+// restartCalls names the calls that look after podman-restart.service in the machine, in order.
+func restartCalls(h *harness) []string {
+	var out []string
+	for _, c := range h.f.calls {
+		line := c.line()
+		switch {
+		case !strings.Contains(line, "machine ssh"):
+		case strings.Contains(line, "ln -sf"):
+			out = append(out, "link")
+		case strings.Contains(line, restartReload):
+			out = append(out, "reload")
+		case strings.Contains(line, "is-enabled"):
+			out = append(out, "is-enabled")
+		case strings.Contains(line, restartEnable):
+			out = append(out, "enable")
+		}
+	}
+	return out
+}
+
+func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
+	notEnabled := errors.New("exit status 1") // is-enabled exits 1 for a unit that is not enabled
+	denied := errors.New("Failed to enable unit: Access denied")
+	cases := []struct {
+		name  string
+		rules []rule
+		calls []string
+		note  bool
+	}{
+		{"it is enabled already", []rule{{match: restartAsked, out: "enabled\n"}}, []string{"is-enabled"}, false},
+		{"the user can enable it", []rule{{match: restartAsked, out: "disabled\n", err: notEnabled}}, []string{"is-enabled", "enable"}, false},
+		{"the root link takes", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartReload, out: "enabled\n"}},
+			[]string{"is-enabled", "enable", "link", "reload"}, false},
+		{"the root link fails", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: "ln -sf", err: errors.New("read-only file system")}},
+			[]string{"is-enabled", "enable", "link"}, true},
+		{"the link does not enable it", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartReload, out: "disabled\n", err: notEnabled}},
+			[]string{"is-enabled", "enable", "link", "reload"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "windows")
+			h.f.env["USERNAME"] = "tester"
+			h.f.on("system connection list", machineConnections)
+			h.f.rules = append(append([]rule(nil), tc.rules...), h.f.rules...)
+			if err := h.podman("--connection", "podman-machine-default"); err != nil {
+				t.Fatalf("a restart that cannot be enabled stopped the install: %v", err)
+			}
+			if got := restartCalls(h); !slices.Equal(got, tc.calls) {
+				t.Fatalf("calls %v, want %v", got, tc.calls)
+			}
+			out := h.out.String()
+			if noted := strings.Contains(out, "podman-restart.service could not be enabled"); noted != tc.note {
+				t.Errorf("note printed: %v, want %v\n%s", noted, tc.note, out)
+			}
+			if tc.note && !strings.Contains(out, restartLink) {
+				t.Errorf("the note does not name the command that works (%s):\n%s", restartLink, out)
+			}
+			if tc.note && !strings.Contains(out, "as the machine's default ssh user (root on a Windows WSL machine)") {
+				t.Errorf("the note does not say which user makes the link:\n%s", out)
+			}
+			assertRestartCommandsRunAsTheirUsers(t, h)
+		})
+	}
+}
+
+// The link runs as the machine's default ssh user (no --username) and creates its directory; the reload runs as the user.
+func assertRestartCommandsRunAsTheirUsers(t *testing.T, h *harness) {
+	t.Helper()
+	for _, c := range h.f.find("ln -sf") {
+		if strings.Contains(c.line(), "--username") || !strings.Contains(c.line(), "mkdir -p /home/user/.config/systemd/user/default.target.wants") {
+			t.Errorf("the link is not made as the default ssh user, with its directory: %s", c.line())
+		}
+	}
+	for _, c := range h.f.find(restartReload) {
+		if !strings.Contains(c.line(), "--username user podman-machine-default") {
+			t.Errorf("the reload is not run as the user: %s", c.line())
+		}
+	}
+}
+
+// The user name is put in a path and in a shell command that runs as the default ssh user, so only a plain name is.
+func TestInstallDoesNotLinkRestartForAMachineUserThatIsNotAPlainName(t *testing.T) {
+	h := newHarness(t, "windows")
+	h.f.env["USERNAME"] = "tester"
+	h.f.on("system connection list", `[{"Name":"podman-machine-default","URI":"ssh://x;reboot@127.0.0.1:1/run/user/1000/podman/podman.sock","IsMachine":true}]`)
+	h.f.fail(restartEnable, errors.New("Failed to enable unit: Access denied"))
+	if err := h.podman("--connection", "podman-machine-default"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.f.find("ln -sf")) != 0 {
+		t.Errorf("a root command was built from the user name: %v", h.f.lines())
+	}
+	var note string
+	for _, line := range strings.Split(h.out.String(), "\n") {
+		if strings.Contains(line, "podman-restart.service could not be enabled") {
+			note = line
+		}
+	}
+	if !strings.Contains(note, "x;reboot") {
+		t.Errorf("the note does not say that the user name is the reason: %q", note)
 	}
 }
 
@@ -1049,6 +1164,9 @@ func TestInstallEnablesPodmanRestartDirectlyOnLinux(t *testing.T) {
 	}
 	if len(h.f.find("machine ssh")) != 0 {
 		t.Error("a machine was addressed on Linux")
+	}
+	if len(h.f.find("is-enabled")) != 0 {
+		t.Error("local Linux asks before it enables")
 	}
 }
 
@@ -1147,6 +1265,7 @@ func TestInstallDockerDoesNotAdoptAndRerunsFromItsSettings(t *testing.T) {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
+	again.f.on("--format {{json .State}} suiteward", stateExited) // a service that runs as installed is left alone (colocated_rerun_test.go)
 	again.roleExists = true
 	if err := os.WriteFile(again.tokenPath(), []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1166,7 +1285,7 @@ func TestInstallDockerDoesNotAdoptAndRerunsFromItsSettings(t *testing.T) {
 		t.Error("a re-run does not migrate again")
 	}
 	if len(again.f.find("stop --time 45 suiteward")) == 0 {
-		t.Error("the running service was not stopped before it was replaced")
+		t.Error("the stopped service container was not removed before it was replaced")
 	}
 }
 
@@ -1302,6 +1421,7 @@ func TestInstallRemembersTheImageSoADockerRerunNeedsNoFlag(t *testing.T) {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
+	again.f.on("--format {{json .State}} suiteward", stateExited) // a service that runs as installed is left alone (colocated_rerun_test.go)
 	again.roleExists = true
 	if err := again.install("--runtime", "docker", "--accept-docker"); err != nil {
 		t.Fatalf("a re-run without --image: %v", err)

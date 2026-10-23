@@ -436,9 +436,12 @@ func (d *doctor) checkRestart(ctx context.Context) {
 		}
 	}
 	if len(problems) > 0 {
-		fix := "set the restart policy with `suiteward install`, which recreates the containers as the release defines them"
+		fix := "remove the containers with `suiteward uninstall` (the data stays), then run `suiteward install`, which creates them with the restart policy the release defines (an install leaves a running, healthy container as it is)"
 		if d.s.Runtime == RuntimePodman {
-			fix = "run `systemctl --user enable podman-restart.service` as the rootless user (in a Podman machine: `podman machine ssh --username user <machine> systemctl --user enable podman-restart.service`)"
+			fix = restartEnableFix
+			if d.viaSSH {
+				fix = restartFix(d.machine.Name, d.machine.User)
+			}
 		}
 		d.fail("restart", strings.Join(problems, "; "), fix)
 		return

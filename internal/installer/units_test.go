@@ -335,3 +335,39 @@ func TestWriteUnitsRefusesAPathOutsideTheDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderUnitsWithoutGitHubDropsTheKeyLinesAndNothingElse(t *testing.T) {
+	with, err := RenderUnits(isolatedParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := isolatedParams()
+	p.NoGitHub = true
+	without, err := RenderUnits(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := slices.DeleteFunc(configLines(with["suiteward.container"]), func(l string) bool { return l == keySecretLine || l == keyEnvLine })
+	if got := configLines(without["suiteward.container"]); !slices.Equal(got, want) || len(want) != len(configLines(with["suiteward.container"]))-2 {
+		t.Errorf("the service unit must lose exactly the two key lines:\n got %q\nwant %q", got, want)
+	}
+	for name, raw := range with {
+		if name != "suiteward.container" && !bytes.Equal(without[name], raw) {
+			t.Errorf("%s changed with NoGitHub", name)
+		}
+	}
+	if bytes.Contains(without["suiteward.container"], []byte("\n\n\n")) {
+		t.Errorf("a dropped line must not leave a hole:\n%s", without["suiteward.container"])
+	}
+}
+
+func TestUnitParamsFromSettingsNamesWhetherGitHubIsConfigured(t *testing.T) {
+	s := isolatedSettings()
+	if !UnitParamsFrom(s, testDigest).NoGitHub {
+		t.Error("settings without an App must render a unit without the key lines")
+	}
+	s.GitHub = GitHub{AppID: 1, InstallationID: 2, Owner: "octo", Repositories: []string{"octo/one"}}
+	if UnitParamsFrom(s, testDigest).NoGitHub {
+		t.Error("settings with an App must render the key lines")
+	}
+}

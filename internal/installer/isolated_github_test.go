@@ -183,21 +183,21 @@ func TestInstallIsolatedStoresAKeyTheFlowCreatedRightAway(t *testing.T) {
 	(&fakeEngine{calls: g.f.calls}).assertNoSecret(t, appKeyPEM(t))
 }
 
-func TestInstallIsolatedWithoutGitHubStopsBeforeAnyChangeBecauseTheServiceMountsTheKey(t *testing.T) {
-	for name, answers := range map[string]map[string]string{
-		"none":   {"github-app-id": "none"},
-		"no":     {"github-app-id": "", "github": "no"},
-		"absent": {"github-app-id": "", "github-installation-id": "", "github-repositories": "", "github-owner": ""},
-	} {
-		g := newIsoGitHub(t)
-		maps.Copy(g.answers, answers)
-		err := g.run()
-		if err == nil || !strings.Contains(err.Error(), "GitHub") {
-			t.Fatalf("%s: the unit mounts the App key secret, so an install without GitHub and without that secret must say so: %v", name, err)
-		}
-		if g.f.has("secret create") || g.f.has("start") || g.f.has("daemon-reload") || exists(unitDir(g.home)) || exists(envFile(g.home)) {
-			t.Fatalf("%s: nothing may change: %v", name, g.f.lines())
-		}
+// An App whose key secret is missing is still refused before any change: the unit of an App mounts that secret.
+func TestInstallIsolatedWithAnAppButNoKeyStopsBeforeAnyChange(t *testing.T) {
+	g := newIsoGitHub(t)
+	inner := g.flow
+	g.flow = func(ctx context.Context, e githubEnv) (GitHubResult, error) {
+		res, err := inner(ctx, e)
+		res.PrivateKey = nil // an App that exists, whose key was neither given nor stored
+		return res, err
+	}
+	err := g.run()
+	if err == nil || !strings.Contains(err.Error(), SecretGitHubAppKey) || !strings.Contains(err.Error(), "--github-app-id none") {
+		t.Fatalf("the unit mounts the App key secret, so an App without that secret must say so, and name the way out: %v", err)
+	}
+	if g.f.has("secret create") || g.f.has("start") || g.f.has("daemon-reload") || exists(unitDir(g.home)) || exists(envFile(g.home)) {
+		t.Fatalf("nothing may change: %v", g.f.lines())
 	}
 }
 
@@ -269,7 +269,8 @@ func TestInstallIsolatedRunsSetupOnATerminalAndNeverCapturesIt(t *testing.T) {
 	if !strings.Contains(g.out.String(), "session recording") && !strings.Contains(g.out.String(), "recording") {
 		t.Errorf("the warning about terminal recording is missing:\n%s", g.out.String())
 	}
-	if len(g.asked) != 1 || !strings.HasSuffix(g.asked[0], ":8081/status") {
+	// The stability wait before it reads /readyz as well; the guard reads /status only once.
+	if status := slices.DeleteFunc(slices.Clone(g.asked), func(a string) bool { return strings.HasSuffix(a, "/readyz") }); len(status) != 1 || !strings.HasSuffix(status[0], ":8081/status") {
 		t.Errorf("the guard must read /status of the service on its HTTP port first: %v", g.asked)
 	}
 	(&fakeEngine{calls: g.f.calls, tty: g.f.tty}).assertNoSecret(t, appKeyPEM(t))
@@ -319,7 +320,12 @@ func TestInstallIsolatedSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 func TestInstallIsolatedSkipsSetupWhenStatusCannotBeRead(t *testing.T) {
 	terminalForSetup(t)
 	g := newIsoGitHub(t)
-	g.status = func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") }
+	g.status = func(_ context.Context, address string) ([]byte, error) {
+		if strings.HasSuffix(address, "/readyz") { // the service is up and stable; only /status cannot be read
+			return []byte("ok"), nil
+		}
+		return nil, errors.New("dial tcp: connection refused")
+	}
 	if err := g.run(); err != nil {
 		t.Fatalf("the stack is up; only setup is skipped: %v", err)
 	}

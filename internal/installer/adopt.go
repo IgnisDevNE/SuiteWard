@@ -61,6 +61,7 @@ type Adopted struct {
 	Image    string   // the release image that is installed
 	EnvFile  string   // units only: the EnvironmentFile path found, which the isolated installer moves
 	DBImage  string   // the PostgreSQL image the installed database runs, when it could be read
+	NoGitHub bool     // units only: the installed service unit has no App key lines, so its stack runs without GitHub
 }
 
 // parseMemory reads a --memory value (k, m or g suffix, or plain bytes) as bytes.
@@ -110,8 +111,8 @@ var (
 )
 
 // AdoptUnits compares the installed unit files with the units of a named release (reference; nil means the embedded ones of
-// this binary). The ports, tier, job timeout, image digest and env-file path are known fields and are carried into the
-// settings; any other difference, in any unit, is returned in a *DiffError.
+// this binary). The ports, tier, job timeout, image digest, env-file path and whether the service unit has the App key lines
+// are known fields and are carried into the settings; any other difference, in any unit, is returned in a *DiffError.
 func AdoptUnits(installed, reference map[string][]byte) (Adopted, error) {
 	return adoptUnits(installed, reference, false)
 }
@@ -162,6 +163,7 @@ func adoptUnits(installed, reference map[string][]byte, refreshDB bool) (Adopted
 		Image:    releaseImageRepo + "@" + params.Digest,
 		EnvFile:  params.EnvFile,
 		DBImage:  dbImage,
+		NoGitHub: params.NoGitHub,
 	}, nil
 }
 
@@ -249,6 +251,9 @@ func knownUnitFields(serve []string) (p UnitParams, diffs []Diff, imageKnown boo
 	} else {
 		bad("env file", "one EnvironmentFile= line", v)
 	}
+	// A unit with neither App key line is a stack without GitHub, a known shape; one line alone is read as "with" so that the
+	// comparison names the other as missing.
+	p.NoGitHub = len(values("Secret="+SecretGitHubAppKey+",")) == 0 && len(values("Environment=SUITEWARD_GITHUB_APP_KEY_FILE=")) == 0
 	return p, diffs, imageKnown
 }
 

@@ -376,6 +376,48 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 	}
 }
 
+// The fix of a disabled podman-restart.service names what works: in a Podman machine the user's own enable can be denied
+// (the unit's directories belong to root), so the link is made as the default ssh user (root on a Windows WSL machine) and the user reloads; on Linux the user enables it.
+func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
+	off := []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}
+	t.Run("in a Podman machine", func(t *testing.T) {
+		f, s := colocated{goos: "windows", over: off}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		wantFail(t, res, "restart", "podman-restart.service", "disabled")
+		for _, want := range []string{
+			"podman machine ssh podman-machine-default 'mkdir -p /home/user/.config/systemd/user/default.target.wants && ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service'",
+			"podman machine ssh --username user podman-machine-default 'systemctl --user daemon-reload && systemctl --user is-enabled podman-restart.service'",
+			"as the machine's default ssh user (root on a Windows WSL machine)",
+		} {
+			if !strings.Contains(res["restart"].Fix, want) {
+				t.Errorf("the fix lacks %q:\n%s", want, res["restart"].Fix)
+			}
+		}
+	})
+	// A re-run leaves a running, healthy Docker container alone, so `suiteward install` alone would not change its policy: the
+	// containers are removed first (the data stays), and then the install creates them as the release defines them.
+	t.Run("a Docker container whose restart policy is not always", func(t *testing.T) {
+		f, s := colocated{engine: RuntimeDocker, edit: func(name string, obj map[string]any) {
+			if name == ContainerDB {
+				obj["HostConfig"].(map[string]any)["RestartPolicy"] = map[string]any{"Name": "no"}
+			}
+		}}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		wantFail(t, res, "restart", ContainerDB, `restart policy "no"`)
+		if fix := res["restart"].Fix; !strings.Contains(fix, "suiteward uninstall") || !strings.Contains(fix, "suiteward install") {
+			t.Errorf("the fix does not remove the containers before it installs again: %s", fix)
+		}
+	})
+	t.Run("on Linux", func(t *testing.T) {
+		f, s := colocated{over: off}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		wantFail(t, res, "restart", "podman-restart.service", "disabled")
+		if fix := res["restart"].Fix; !strings.Contains(fix, "systemctl --user enable podman-restart.service") || strings.Contains(fix, "ln -sf") {
+			t.Errorf("the fix on Linux: %s", fix)
+		}
+	})
+}
+
 func TestDoctorDoesNotCheckWhatNeedsAFailedRuntime(t *testing.T) {
 	f, s := colocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}.build(t)
 	_, res, _ := runDoctor(t, f, s)

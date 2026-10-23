@@ -76,8 +76,15 @@ func TestSelfCheckDatabaseReportsAnOwnerWhoIsNotEnrolledYet(t *testing.T) {
 	if !schema.OK || !role.OK || projects != nil {
 		t.Errorf("schema %+v, role %+v, projects %+v; want the first two to pass before setup", schema, role, projects)
 	}
-	if enrolled.OK || !strings.Contains(enrolled.Detail, "no owner") || !strings.Contains(enrolled.Fix, "suiteward setup") {
-		t.Errorf("owner.enrolled = %+v; want a failure that says to run setup", enrolled)
+	if enrolled.OK || !strings.Contains(enrolled.Detail, "no owner") || !strings.Contains(enrolled.Fix, "suiteward enroll") || strings.Contains(enrolled.Fix, "suiteward setup") {
+		t.Errorf("owner.enrolled = %+v; want a failure that names suiteward enroll, the installer's verb", enrolled)
+	}
+	// Where to run it: enroll reads the settings of the install, so it runs where `suiteward install` ran, as the account of an
+	// isolated host, on a terminal that nothing records.
+	for _, want := range []string{"where you ran `suiteward install`", "as `suiteward` on an isolated host", "real terminal with session recording off"} {
+		if !strings.Contains(enrolled.Fix, want) {
+			t.Errorf("owner.enrolled fix = %q; want it to say %q", enrolled.Fix, want)
+		}
 	}
 }
 

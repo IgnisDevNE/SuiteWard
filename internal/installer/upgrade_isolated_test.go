@@ -14,13 +14,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-// isoUpgrade is an isolated host that runs an older release, with a service that answers /status.
+// isoUpgrade is an isolated host that runs an older release, with a service that answers /status and /readyz.
 type isoUpgrade struct {
 	t       *testing.T
 	f       *isoFake
@@ -28,16 +29,24 @@ type isoUpgrade struct {
 	backups string
 	port    int
 	out     bytes.Buffer
+	ready   atomic.Int32 // the HTTP status /readyz answers with
+	polls   atomic.Int32 // how many times /readyz was read
 }
 
 func newIsoUpgrade(t *testing.T, edit func(p *UnitParams)) *isoUpgrade {
 	t.Helper()
+	up := &isoUpgrade{t: t}
+	up.ready.Store(http.StatusOK)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/status" {
+		switch r.URL.Path {
+		case "/status":
+			_, _ = io.WriteString(w, statusBody)
+		case "/readyz":
+			up.polls.Add(1)
+			w.WriteHeader(int(up.ready.Load()))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		_, _ = io.WriteString(w, statusBody)
 	}))
 	t.Cleanup(srv.Close)
 	u, err := url.Parse(srv.URL)
@@ -64,7 +73,8 @@ func newIsoUpgrade(t *testing.T, edit func(p *UnitParams)) *isoUpgrade {
 	if err := os.WriteFile(envFile(home), []byte("SUITEWARD_GITHUB_APP_ID=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return &isoUpgrade{t: t, f: f, home: home, backups: filepath.Join(home, "backups"), port: port}
+	up.f, up.home, up.backups, up.port = f, home, filepath.Join(home, "backups"), port
+	return up
 }
 
 func (u *isoUpgrade) env() Env {
@@ -380,7 +390,7 @@ func TestUpgradeIsolatedRefusesAnotherAccount(t *testing.T) {
 // ---- uninstall ----
 
 var isolatedUnitFiles = []string{
-	"suiteward-data.volume", "suiteward-db-data.volume", "suiteward-db.container", "suiteward-migrate.container", "suiteward-network.network", "suiteward.container",
+	"suiteward-data.volume", "suiteward-db-data.volume", "suiteward-db.container", "suiteward-migrate.container", "suiteward.network", "suiteward.container",
 }
 
 func TestUninstallIsolatedRemovesTheUnitsAndKeepsTheState(t *testing.T) {
@@ -393,12 +403,21 @@ func TestUninstallIsolatedRemovesTheUnitsAndKeepsTheState(t *testing.T) {
 	if stop < 0 || reload < 0 {
 		t.Fatalf("the units were not stopped and reloaded:\n%s", strings.Join(u.f.lines(), "\n"))
 	}
-	for _, unit := range []string{"suiteward.service", "suiteward-migrate.service", "suiteward-db.service"} {
+	// Every generated service is stopped: a network or volume service left active is not run again by the next install, so after a
+	// purge the database would start without its network.
+	for _, unit := range generatedUnits {
 		if !u.f.has("systemctl --user stop " + unit) {
 			t.Errorf("%s was not stopped", unit)
 		}
 	}
+	templates, err := embeddedUnits()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range isolatedUnitFiles {
+		if _, ok := templates[name]; !ok {
+			t.Errorf("%s is not a unit of the release: the list in this test is wrong", name)
+		}
 		if exists(filepath.Join(unitDir(u.home), name)) {
 			t.Errorf("%s was not deleted", name)
 		}
@@ -554,6 +573,150 @@ func TestUpgradeIsolatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
 		err := u.upgrade("--image", testDigest, "--yes")
 		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "schema and the data are unchanged") {
 			t.Fatalf("%s: once migrate has run the way back is the backup: %v", name, err)
+		}
+	}
+}
+
+func TestUpgradeIsolatedKeepsTheGitHubKeyLinesOrTheirAbsence(t *testing.T) {
+	for name, withLines := range map[string]bool{"units of an install with GitHub": true, "units of an install without GitHub": false} {
+		// The settings name no App (a host installed by hand, or without GitHub): what the units have is what stays.
+		u := newIsoUpgrade(t, nil)
+		if !withLines {
+			path := filepath.Join(unitDir(u.home), "suiteward.container")
+			if err := os.WriteFile(path, withoutLines(t, readFileOrFail(t, path), githubKeyUnitLines...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := u.upgrade("--image", testDigest, "--yes"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		serve := u.unit("suiteward.container")
+		for _, line := range githubKeyUnitLines {
+			if strings.Contains(serve, line) != withLines {
+				t.Errorf("%s: the line %q must be there: %v\n%s", name, line, withLines, serve)
+			}
+		}
+		if !strings.Contains(serve, "@"+testDigest) {
+			t.Errorf("%s: the units were not upgraded:\n%s", name, serve)
+		}
+	}
+}
+
+func TestUpgradeIsolatedRefusesPortsAndTimeoutThatDifferFromTheInstalledOnes(t *testing.T) {
+	// An upgrade keeps the installed ports and job timeout, so a run that asks for others stops before any change instead of
+	// exiting 0 and ignoring them; the re-run of the install is the way to change them.
+	u := newIsoUpgrade(t, nil)
+	before := u.units()
+	other := strconv.Itoa(otherPort(u.port))
+	err := u.upgrade("--image", testDigest, "--yes", "--http-port", other, "--job-timeout", "9m")
+	if err == nil {
+		t.Fatal("an upgrade that is asked for other ports must not go on and ignore them")
+	}
+	for _, want := range []string{"suiteward install --tier isolated", "--http-port " + other, "--job-timeout 9m"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--mcp-port") {
+		t.Errorf("the MCP port was not asked for: %v", err)
+	}
+	u.untouched(before)
+
+	// The values that are installed are no difference, and an invalid one is refused as it is on an install.
+	u = newIsoUpgrade(t, nil)
+	if err := u.upgrade("--image", testDigest, "--yes", "--http-port", strconv.Itoa(u.port), "--mcp-port", strconv.Itoa(u.port+1), "--job-timeout", "3m"); err != nil {
+		t.Fatalf("asking for what is installed is not a change: %v", err)
+	}
+	u = newIsoUpgrade(t, nil)
+	before = u.units()
+	if err := u.upgrade("--image", testDigest, "--yes", "--http-port", "70000"); err == nil {
+		t.Fatal("an invalid port must be refused")
+	}
+	u.untouched(before)
+}
+
+func TestUpgradeIsolatedFailsWhenTheServiceIsNotStableAndKeepsTheBackupAdvice(t *testing.T) {
+	journal := "journalctl --user -u suiteward.service"
+	notStable := func(t *testing.T, u *isoUpgrade, want string) {
+		t.Helper()
+		err := u.upgrade("--image", testDigest, "--yes")
+		if err == nil || !strings.Contains(err.Error(), journal) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("the upgrade must fail naming %q and %q, got %v", want, journal, err)
+		}
+		// Migrate ran by now: the advice is the restore of the backup, which withBackup gives.
+		if !strings.Contains(err.Error(), "The backup is in "+u.backups) || !strings.Contains(err.Error(), "restore it") {
+			t.Errorf("the error lacks the backup advice: %v", err)
+		}
+		if strings.Contains(u.out.String(), "Upgraded") || strings.Contains(u.out.String(), "is running") {
+			t.Errorf("an upgrade that crash-loops must not report success:\n%s", u.out.String())
+		}
+		if saved, err := LoadSettings(settingsFile(u.home)); err != nil || saved.Image != oldImage {
+			t.Errorf("the settings must keep the old release while the new one is not stable: %+v, %v", saved, err)
+		}
+	}
+
+	t.Run("readyz never answers", func(t *testing.T) {
+		u := newIsoUpgrade(t, nil)
+		u.ready.Store(http.StatusServiceUnavailable)
+		notStable(t, u, "/readyz")
+	})
+	t.Run("the service restarts while it is polled", func(t *testing.T) {
+		u := newIsoUpgrade(t, nil)
+		u.f.restarts = []int{0, 1}
+		notStable(t, u, "restart")
+	})
+	t.Run("a stable service ends the upgrade", func(t *testing.T) {
+		u := newIsoUpgrade(t, nil)
+		if err := u.upgrade("--image", testDigest, "--yes"); err != nil {
+			t.Fatal(err)
+		}
+		if u.polls.Load() != stablePolls {
+			t.Errorf("/readyz was read %d times, want %d", u.polls.Load(), stablePolls)
+		}
+	})
+}
+
+// A service that an earlier uninstall left active, whose unit file is gone, is not run again by the next install: a purge that
+// finds no unit files still stops every generated service that is not inactive, and only those.
+func TestUninstallIsolatedStopsTheServicesAnEarlierUninstallLeftActive(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	templates, err := embeddedUnits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range templates { // the units are gone, as an earlier uninstall left them
+		if err := os.Remove(filepath.Join(unitDir(u.home), name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, unit := range generatedUnits {
+		u.f.active[unit] = "inactive"
+	}
+	u.f.active["suiteward-network.service"] = "active"
+	u.f.active["suiteward-db.service"] = "failed" // not inactive either: it is stopped, and named with the state it was found in
+	u.f.objects = map[string]bool{VolumeData: true, VolumeDBData: true, NetworkName: true}
+	if err := u.uninstall("--purge", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	stop := u.f.index("systemctl --user stop suiteward-network.service", 0)
+	if stop < 0 || !u.f.has("systemctl --user stop suiteward-db.service") {
+		t.Fatalf("the services that were left active or failed were not stopped:\n%s", strings.Join(u.f.lines(), "\n"))
+	}
+	if remove := u.f.index("network rm", 0); remove < stop {
+		t.Errorf("the network was removed (call %d) before its service was stopped (call %d)", remove, stop)
+	}
+	if reload := u.f.index("systemctl --user daemon-reload", stop); reload < 0 {
+		t.Errorf("systemd was not reloaded after the stop: it still holds the unit that is gone")
+	}
+	for _, unit := range generatedUnits {
+		if unit != "suiteward-network.service" && unit != "suiteward-db.service" && u.f.has("systemctl --user stop "+unit) {
+			t.Errorf("%s was inactive and was stopped", unit)
+		}
+	}
+	// The output names each service with the state it was found in, so that it never says "active" of one that had failed.
+	for _, want := range []string{"suiteward-network.service (active)", "suiteward-db.service (failed)"} {
+		if !strings.Contains(u.out.String(), want) {
+			t.Errorf("the output does not say %q:\n%s", want, u.out.String())
 		}
 	}
 }

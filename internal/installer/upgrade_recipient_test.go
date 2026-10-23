@@ -262,3 +262,45 @@ func TestUpgradeRemovesWhatAKilledBackupOrRestoreLeftBeforeItsOwnBackup(t *testi
 		}
 	}
 }
+
+// A kit that was not confirmed ends the upgrade, and what the upgrade changed before that is a service that was down and that it started:
+// the error says so, and says "nothing was changed" only when nothing was.
+func TestUpgradeColocatedAKitThatIsNotConfirmedSaysWhatWasStarted(t *testing.T) {
+	u := newUpgradeHarness(t, noRecipient)
+	u.downUntilStarted()
+	t.Chdir(t.TempDir())
+	err := u.upgradeAt(true, "y\n\nyes\n", "--yes") // the key: yes, the start: yes, the word: not "stored"
+	if err == nil {
+		t.Fatal("the upgrade went on although the kit was not confirmed")
+	}
+	for _, want := range []string{"stored", "service", "started", "nothing else was changed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "removed: nothing was changed") {
+		t.Errorf("the error says nothing was changed, although the service was started: %v", err)
+	}
+	if u.startCalls(ContainerServe) != 1 {
+		t.Errorf("the service was started %d times", u.startCalls(ContainerServe))
+	}
+
+	// A service that was up was not started: nothing was changed.
+	u = newUpgradeHarness(t, noRecipient)
+	t.Chdir(t.TempDir())
+	err = u.upgradeAt(true, "y\nyes\n", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "nothing was changed") || strings.Contains(err.Error(), "started") {
+		t.Fatalf("got %v, want that nothing was changed", err)
+	}
+}
+
+func TestUpgradeIsolatedAKitThatIsNotConfirmedSaysWhatWasStarted(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	u.withoutRecipient()
+	u.f.serviceRunning = false
+	t.Chdir(t.TempDir())
+	err := u.upgradeAt(true, "y\n\nyes\n", u.downUntilStarted(), "--yes")
+	if err == nil || !strings.Contains(err.Error(), "started") || !strings.Contains(err.Error(), "nothing else was changed") {
+		t.Fatalf("got %v, want that the service was started and nothing else was changed", err)
+	}
+}

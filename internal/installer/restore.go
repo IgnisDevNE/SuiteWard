@@ -208,6 +208,9 @@ func (x *restoreRun) unpack(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := validateInfo(verified.Info); err != nil { // before anything is unpacked: the manifest is text of whoever wrote the archive
+		return err
+	}
 	if x.work, err = os.MkdirTemp(x.inst.parent, ".suiteward-restore-"); err != nil {
 		return fmt.Errorf("create a private directory in %s: %w", x.inst.parent, err)
 	}
@@ -223,6 +226,27 @@ func (x *restoreRun) unpack(ctx context.Context) error {
 	}
 	x.info, x.files = verified.Info, x.work
 	return nil
+}
+
+// validateInfo refuses a manifest whose fields are not what the installer writes: anyone who holds the public recipient can write an archive
+// that decrypts, and a restore prints these fields and builds a command from one. The digest may be empty (a backup of a stack whose
+// image was not known); the version and the tier are plain names; the instance is the 8-hex id of /status, or "unknown" for a backup
+// that could not name it. The refusal names the field and never repeats the value, which may be anything.
+func validateInfo(i archive.Info) error {
+	var field string
+	switch {
+	case i.ImageDigest != "" && !imageDigest.MatchString(i.ImageDigest):
+		field = "image digest"
+	case i.Instance != unknownValue && !instanceID.MatchString(i.Instance):
+		field = "instance"
+	case !plainName.MatchString(i.SuitewardVersion):
+		field = "version"
+	case i.Tier != "" && !plainName.MatchString(i.Tier):
+		field = "tier"
+	default:
+		return nil
+	}
+	return fmt.Errorf("%w: the %s in the manifest of the backup is not what it should be (the value is not shown)", archive.ErrInvalid, field)
 }
 
 // readArchive opens the file again, because a Reader reads its stream once.
@@ -297,6 +321,9 @@ func (x *restoreRun) checkFiles() error {
 	}
 	if x.doc, err = parseBackedUpStatus(raw); err != nil {
 		return fmt.Errorf("the status of the backup: %w", err)
+	}
+	if x.doc.Unavailable && x.plaintext != "" { // only an archive of this release records that: a directory that says so is not a backup
+		return errors.New("the status of this directory says it was unavailable, which only an encrypted backup of this release records: it is not a backup this command restores")
 	}
 	if x.doc.Unavailable { // taken while the service did not answer: what the manifest says is all there is
 		x.doc.Version, x.doc.Instance = x.info.SuitewardVersion, x.info.Instance
@@ -485,7 +512,10 @@ func (x *restoreRun) chooseSafetyKey() error {
 func (x *restoreRun) confirm() error {
 	id := x.doc.Instance
 	if !x.r.term.IsTerminal {
-		yes, _ := parseYesNo("yes", x.r.preset("yes", "false"))
+		yes, err := parseYesNo("yes", x.r.preset("yes", "false"))
+		if err != nil {
+			return err
+		}
 		given := x.r.preset("instance", "")
 		switch {
 		case !yes || given == "":

@@ -47,11 +47,16 @@ type backup struct {
 	units          map[string][]byte          // isolated tier: the unit files as installed, which are members too
 	beside         func(archive string) error // more to write beside the archive, optional
 	tolerateStatus bool                       // a status that cannot be read is recorded as unavailable instead of failing the backup: the state a restore replaces is backed up whatever the service does
+	serviceStarted bool                       // the run that takes the backup started the service, which was down: what its errors say of what it changed must say so
 	now            func() time.Time
 }
 
-// backupFailed names the error of a backup as one that changed nothing: the instance only ran.
-func backupFailed(err error) error {
+// backupFailed names the error of a backup as one that changed nothing: the instance only ran. started says that the run that takes the
+// backup started the service, which was down: that much was changed.
+func backupFailed(err error, started bool) error {
+	if started {
+		return fmt.Errorf("the backup failed. The service that this run started is running, and nothing else was changed: %w", err)
+	}
 	return fmt.Errorf("the backup failed, so nothing was changed: %w", err)
 }
 
@@ -59,16 +64,16 @@ func backupFailed(err error) error {
 func takeBackup(ctx context.Context, b backup) (string, error) {
 	run, err := b.start(ctx)
 	if err != nil {
-		return "", backupFailed(err)
+		return "", backupFailed(err, b.serviceStarted)
 	}
 	for _, stage := range run.stages() {
 		if err := stage.run(ctx); err != nil {
-			return "", backupFailed(run.abort(err))
+			return "", backupFailed(run.abort(err), b.serviceStarted)
 		}
 	}
 	path, err := run.finish()
 	if err != nil {
-		return "", backupFailed(run.abort(err))
+		return "", backupFailed(run.abort(err), b.serviceStarted)
 	}
 	return path, nil
 }

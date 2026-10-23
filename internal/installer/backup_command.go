@@ -15,9 +15,15 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
-// errNoRecipient is the refusal of a command that has no key to encrypt a backup to, where nobody can be asked.
-var errNoRecipient = errors.New("no recovery key is set, so a backup cannot be encrypted (and one is never written in plaintext): run `suiteward backup init` first, " +
-	"or give the public key (age1pq1...) with --backup-recipient or the answers-file key backup_recipient")
+// noKeyError is the refusal of a command that has no key to encrypt a backup to, where nobody can be asked or the answer was no. It names
+// what applies to the command that prints it: `suiteward backup` has no --backup-recipient and no answers file, an upgrade has both.
+func noKeyError(upgrade bool) error {
+	const refusal = "no recovery key is set, so a backup cannot be encrypted (and one is never written in plaintext): run `suiteward backup init` first"
+	if upgrade {
+		return errors.New(refusal + ", or give the public key (age1pq1...) with --backup-recipient or the answers-file key backup_recipient")
+	}
+	return errors.New(refusal)
+}
 
 // Backup is `suiteward backup [--to DIR] [flags]`: an encrypted backup of the installed instance, which keeps running.
 func Backup(ctx context.Context, args []string, env Env) (err error) {
@@ -62,21 +68,21 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	}
 	dir := r.preset("to", inst.parent)
 	if err := prepareBackupDir(dir, scr.Warn); err != nil {
-		return backupFailed(err)
+		return backupFailed(err, false)
 	}
 	run, err := inst.backup(env.Deps, dir, recipient).start(ctx)
 	if err != nil {
-		return backupFailed(err)
+		return backupFailed(err, false)
 	}
 	for i, stage := range run.stages() {
 		scr.Step(i + 1)
 		if err := working(scr, stage.label, func() error { return stage.run(ctx) }); err != nil {
-			return backupFailed(run.abort(err))
+			return backupFailed(run.abort(err), false)
 		}
 	}
 	path, err := run.finish()
 	if err != nil {
-		return backupFailed(run.abort(err))
+		return backupFailed(run.abort(err), false)
 	}
 	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to the recovery key %s: keep the kit off this machine.\n", path, archive.Fingerprint(inst.s.BackupRecipient))
 	scr.Keep("To restore it, run `suiteward restore %s` with that kit.\n", quoteArg(path))
@@ -101,7 +107,7 @@ func backupSummary(path string, doc statusDoc, recipient string) []ui.KV {
 func (i instance) backup(d Deps, dir string, recipient *age.HybridRecipient) backup {
 	return backup{
 		rt: i.rt, d: d, dir: dir, recipient: recipient, status: i.status, image: i.image, tier: i.s.Tier,
-		settings: i.settingsPath, units: i.units, now: time.Now,
+		settings: i.settingsPath, units: i.units, serviceStarted: i.serviceStarted, now: time.Now,
 	}
 }
 
@@ -111,7 +117,7 @@ func (i instance) backup(d Deps, dir string, recipient *age.HybridRecipient) bac
 func recipientOf(ctx context.Context, r *Resolver, env Env, inst *instance, agreed bool) (*age.HybridRecipient, error) {
 	if inst.s.BackupRecipient == "" {
 		if !agreed {
-			if err := askForKey(r); err != nil {
+			if err := askForKey(r, false); err != nil {
 				return nil, err
 			}
 		}
@@ -122,21 +128,21 @@ func recipientOf(ctx context.Context, r *Resolver, env Env, inst *instance, agre
 	return archive.ParseRecipient(inst.s.BackupRecipient)
 }
 
-// askForKey asks a terminal whether to make the key. A no, an input that ends and the lack of a terminal are the refusal.
-func askForKey(r *Resolver) error {
+// askForKey asks a terminal whether to make the key. A no, an input that ends and the lack of a terminal are the refusal of noKeyError(upgrade).
+func askForKey(r *Resolver, upgrade bool) error {
 	if !r.term.IsTerminal {
-		return errNoRecipient
+		return noKeyError(upgrade)
 	}
 	answer, err := r.ask("No recovery key is set, so a backup cannot be encrypted. Make one now, as `suiteward backup init` does? [Y/n]: ") // never answered by --yes
 	switch {
 	case errors.Is(err, io.EOF): // the input ended: no answer is not a yes
-		return errNoRecipient
+		return noKeyError(upgrade)
 	case err != nil:
 		return fmt.Errorf("read the answer: %w", err)
 	}
 	if answer != "" {
 		if yes, err := parseYesNo("key", answer); err != nil || !yes {
-			return errNoRecipient
+			return noKeyError(upgrade)
 		}
 	}
 	return nil

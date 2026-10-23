@@ -393,6 +393,20 @@ func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
 			}
 		}
 	})
+	// A re-run leaves a running, healthy Docker container alone, so `suiteward install` alone would not change its policy: the
+	// containers are removed first (the data stays), and then the install creates them as the release defines them.
+	t.Run("a Docker container whose restart policy is not always", func(t *testing.T) {
+		f, s := colocated{engine: RuntimeDocker, edit: func(name string, obj map[string]any) {
+			if name == ContainerDB {
+				obj["HostConfig"].(map[string]any)["RestartPolicy"] = map[string]any{"Name": "no"}
+			}
+		}}.build(t)
+		_, res, _ := runDoctor(t, f, s)
+		wantFail(t, res, "restart", ContainerDB, `restart policy "no"`)
+		if fix := res["restart"].Fix; !strings.Contains(fix, "suiteward uninstall") || !strings.Contains(fix, "suiteward install") {
+			t.Errorf("the fix does not remove the containers before it installs again: %s", fix)
+		}
+	})
 	t.Run("on Linux", func(t *testing.T) {
 		f, s := colocated{over: off}.build(t)
 		_, res, _ := runDoctor(t, f, s)

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // uninstallIsolated is `suiteward uninstall [--purge]` as the service account: stop the units and delete the six unit files, and
@@ -38,11 +39,16 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps,
 	if !ok {
 		return errors.New("nothing was removed")
 	}
-	if st.found {
-		if err := stopAndRemoveUnits(ctx, host, d); err != nil {
-			return err
-		}
+	// Also with no unit files (a purge after an earlier uninstall): a service that uninstall left active has no file, and the next
+	// install would not run it again.
+	stopped, err := stopAndRemoveUnits(ctx, host, d)
+	switch {
+	case err != nil:
+		return err
+	case st.found:
 		_, _ = fmt.Fprintf(out, "Stopped the services and removed the units from %s.\n", host.unitsDir)
+	case len(stopped) > 0:
+		_, _ = fmt.Fprintf(out, "Stopped %s: an earlier uninstall left them without their unit files.\n", strings.Join(stopped, ", "))
 	}
 	if purge {
 		if err := purgeState(ctx, host.rt, host.envPath, host.settingsPath); err != nil {
@@ -58,34 +64,46 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps,
 	return nil
 }
 
-// stopAndRemoveUnits stops the services (the one that needs the others first), deletes the six unit files and reloads systemd.
-func stopAndRemoveUnits(ctx context.Context, host isolatedHost, d Deps) error {
+// stopAndRemoveUnits stops every service the six units generate that is not inactive, deletes the unit files that are there and
+// reloads systemd when it did something. It asks systemd, not the directory: a service that an earlier uninstall left active
+// stays active (and is not run again by the next install) after its unit file is gone. systemd stops the services that need
+// another one first, so the order of the stops does not matter. It returns the services it stopped, each with the state it was
+// found in (active, activating, failed ...), for the message.
+func stopAndRemoveUnits(ctx context.Context, host isolatedHost, d Deps) (stopped []string, err error) {
 	templates, err := embeddedUnits()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	systemctl := userSystemctl(d)
-	// Stop only what systemd has loaded: a unit file that was never reloaded has no service to stop.
-	for _, file := range []string{"suiteward.container", "suiteward-migrate.container", "suiteward-db.container", "suiteward-data.volume", "suiteward-db-data.volume", "suiteward.network"} {
+	for _, file := range sortedKeys(templates) {
 		unit := unitService(file)
-		loaded, err := systemctl(ctx, "show", "--property=LoadState", "--value", unit)
+		state, err := systemctl(ctx, "show", "--property=ActiveState", "--value", unit)
 		if err != nil {
-			return fmt.Errorf("ask for the state of %s: %w", unit, err)
+			return stopped, fmt.Errorf("ask for the state of %s: %w", unit, err)
 		}
-		if loaded != "loaded" {
+		if state == "inactive" { // also a unit that is not loaded: there is nothing to stop
 			continue
 		}
 		if _, err := systemctl(ctx, "stop", unit); err != nil {
-			return fmt.Errorf("stop %s: %w", unit, err)
+			return stopped, fmt.Errorf("stop %s: %w", unit, err)
+		}
+		stopped = append(stopped, unit+" ("+state+")")
+	}
+	removed := false
+	for _, file := range sortedKeys(templates) {
+		err := os.Remove(filepath.Join(host.unitsDir, file))
+		switch {
+		case err == nil:
+			removed = true
+		case !errors.Is(err, fs.ErrNotExist):
+			return stopped, fmt.Errorf("remove the unit %s: %w", file, err)
 		}
 	}
-	for _, file := range sortedKeys(templates) {
-		if err := os.Remove(filepath.Join(host.unitsDir, file)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove the unit %s: %w", file, err)
-		}
+	if !removed && len(stopped) == 0 {
+		return nil, nil
 	}
 	if _, err := d.Exec(ctx, DaemonReload[0], DaemonReload[1:], nil); err != nil {
-		return fmt.Errorf("systemctl --user daemon-reload: %w", err)
+		return stopped, fmt.Errorf("systemctl --user daemon-reload: %w", err)
 	}
-	return nil
+	return stopped, nil
 }

@@ -675,3 +675,48 @@ func TestUpgradeIsolatedFailsWhenTheServiceIsNotStableAndKeepsTheBackupAdvice(t 
 		}
 	})
 }
+
+// A service that an earlier uninstall left active, whose unit file is gone, is not run again by the next install: a purge that
+// finds no unit files still stops every generated service that is not inactive, and only those.
+func TestUninstallIsolatedStopsTheServicesAnEarlierUninstallLeftActive(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	templates, err := embeddedUnits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range templates { // the units are gone, as an earlier uninstall left them
+		if err := os.Remove(filepath.Join(unitDir(u.home), name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, unit := range generatedUnits {
+		u.f.active[unit] = "inactive"
+	}
+	u.f.active["suiteward-network.service"] = "active"
+	u.f.active["suiteward-db.service"] = "failed" // not inactive either: it is stopped, and named with the state it was found in
+	u.f.objects = map[string]bool{VolumeData: true, VolumeDBData: true, NetworkName: true}
+	if err := u.uninstall("--purge", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	stop := u.f.index("systemctl --user stop suiteward-network.service", 0)
+	if stop < 0 || !u.f.has("systemctl --user stop suiteward-db.service") {
+		t.Fatalf("the services that were left active or failed were not stopped:\n%s", strings.Join(u.f.lines(), "\n"))
+	}
+	if remove := u.f.index("network rm", 0); remove < stop {
+		t.Errorf("the network was removed (call %d) before its service was stopped (call %d)", remove, stop)
+	}
+	if reload := u.f.index("systemctl --user daemon-reload", stop); reload < 0 {
+		t.Errorf("systemd was not reloaded after the stop: it still holds the unit that is gone")
+	}
+	for _, unit := range generatedUnits {
+		if unit != "suiteward-network.service" && unit != "suiteward-db.service" && u.f.has("systemctl --user stop "+unit) {
+			t.Errorf("%s was inactive and was stopped", unit)
+		}
+	}
+	// The output names each service with the state it was found in, so that it never says "active" of one that had failed.
+	for _, want := range []string{"suiteward-network.service (active)", "suiteward-db.service (failed)"} {
+		if !strings.Contains(u.out.String(), want) {
+			t.Errorf("the output does not say %q:\n%s", want, u.out.String())
+		}
+	}
+}

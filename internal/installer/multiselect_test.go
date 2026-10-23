@@ -115,10 +115,11 @@ func TestAMultipleChoiceIsPickedWithTheKeysOnAFullScreen(t *testing.T) {
 // A question that cannot be answered is a bug of the caller, and nothing is asked.
 func TestAnImpossibleMultipleChoiceIsAnErrorAndAsksNothing(t *testing.T) {
 	for name, mutate := range map[string]func(*ui.Multi){
-		"a default off the list":     func(m *ui.Multi) { m.Defaults = []int{3} },
-		"no choices":                 func(m *ui.Multi) { m.Choices = nil; m.Defaults = nil },
-		"a minimum above max":        func(m *ui.Multi) { m.Min, m.Max = 3, 2 },
-		"more defaults than the max": func(m *ui.Multi) { m.Max = 2 },
+		"a default off the list":      func(m *ui.Multi) { m.Defaults = []int{3} },
+		"no choices":                  func(m *ui.Multi) { m.Choices = nil; m.Defaults = nil },
+		"a minimum above max":         func(m *ui.Multi) { m.Min, m.Max = 3, 2 },
+		"more defaults than the max":  func(m *ui.Multi) { m.Max = 2 },
+		"fewer defaults than the min": func(m *ui.Multi) { m.Min, m.Defaults = 3, []int{0} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			for _, plain := range []bool{false, true} {

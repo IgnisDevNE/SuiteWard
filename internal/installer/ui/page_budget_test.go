@@ -208,3 +208,110 @@ func TestAQuestionLongerThanTheWindowStillShowsItsLastRows(t *testing.T) {
 		t.Errorf("the prompt is not the last row of a full body (%d rows):\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 }
+
+// restorePage is a page of the length of the restore preview: a paragraph, fields, a warning of two rows and a critical box of one row of
+// text, with a question below. In the default window its body is 18 rows, and the page is three rows longer than that with seven fields.
+func restorePage(s *Screen, fields int) {
+	var rows []KV
+	for i := 1; i <= fields; i++ {
+		rows = append(rows, KV{fmt.Sprintf("Field %d", i), fmt.Sprintf("value %d", i)})
+	}
+	s.Page("Restore preview", Para("Restoring replaces the database of this instance."), Fields(rows...))
+	s.Warn("The default branch on GitHub may be ahead of the restored canonical.")
+	s.Critical("Keep the kit off this machine.")
+}
+
+// A page that is a few rows too long loses its blank rows, and none of its words: the blank row above the rule stays, and the others go
+// before a row of text does.
+func TestBlankRowsGoBeforeText(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		fields, blank int
+	}{
+		{"three rows too long", 7, 2},
+		{"four rows too long, the blank above the rule is all that is left", 8, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, frames := openChunks(t, windowOptions(80, 24), "x\n")
+			restorePage(s, tc.fields)
+			if _, err := s.Ask("Type the instance id to confirm", ""); err != nil {
+				t.Fatal(err)
+			}
+			lines := contentLines((*frames)[0])
+			text := strings.Join(lines, "\n")
+			if len(lines) != 18 || strings.Contains(text, trimRow) {
+				t.Fatalf("%d rows, and a row that says the page was trimmed (%v), want 18 rows and none:\n%s", len(lines), strings.Contains(text, trimRow), text)
+			}
+			for _, want := range []string{"Restoring replaces the database of this instance.", fmt.Sprintf("Field %d  value %d", tc.fields, tc.fields), "! The default branch on GitHub may be ahead of the", "restored canonical.", "Keep the kit off this machine."} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the page lost %q:\n%s", want, text)
+				}
+			}
+			blank := 0
+			for _, l := range lines {
+				if l == "" {
+					blank++
+				}
+			}
+			if blank != tc.blank || lines[len(lines)-3] != "" || lines[len(lines)-2] != ruleRow(80) {
+				t.Errorf("%d blank rows (want %d, one of them right above the rule):\n%s", blank, tc.blank, text)
+			}
+		})
+	}
+}
+
+// When the blank rows are not enough, the explanation goes first, from the end, and a warning stays whole next to the critical box.
+func TestAWarningOutlivesTheExplanationItIsTrimmedWith(t *testing.T) {
+	s, _, frames := openChunks(t, windowOptions(60, 20), "x\n")
+	s.Page("Restore preview", Para("First paragraph begins here. "+strings.Repeat("alpha beta gamma delta. ", 12)+"First ends."))
+	s.Warn("Docker is also installed; Podman is used.")
+	if _, err := s.Ask("Type the instance id to confirm", ""); err != nil {
+		t.Fatal(err)
+	}
+	lines := contentLines((*frames)[0])
+	text := strings.Join(lines, "\n")
+	warn, marker := -1, -1
+	for i, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "! Docker is also installed;"):
+			warn = i
+		case l == trimRow:
+			marker = i
+		}
+	}
+	if warn < 0 || !strings.Contains(squash(text), squash("Docker is also installed; Podman is used.")) || marker < 0 || marker > warn {
+		t.Errorf("the warning must be whole, below the row that says the explanation was trimmed:\n%s", text)
+	}
+	if lines[0] != "Restore preview" || lines[len(lines)-1] != "Type the instance id to confirm:" {
+		t.Errorf("the title or the question was cut:\n%s", text)
+	}
+}
+
+// When the explanation is gone and the page still does not fit, whole warnings go, from the end, behind the row that says so: the title,
+// the critical box and the question stay, and no warning is shown in part.
+func TestWarningsGoWholeWhenTheExplanationIsGone(t *testing.T) {
+	s, _, frames := openChunks(t, windowOptions(60, 20), "x\n")
+	s.Page("Restore preview", Para("Short explanation."))
+	for _, name := range []string{"A", "B", "C"} {
+		s.Warn("Warn %s starts here and goes on for a good while, so that it takes three rows. %s ends.", name, name)
+	}
+	s.Critical("Keep the kit off this machine.")
+	if _, err := s.Ask("Type stored to go on", ""); err != nil {
+		t.Fatal(err)
+	}
+	lines := contentLines((*frames)[0])
+	text := strings.Join(lines, "\n")
+	squashed := squash(text)
+	for _, name := range []string{"A", "B", "C"} {
+		starts, ends := strings.Contains(squashed, squash("Warn "+name+" starts here")), strings.Contains(squashed, squash(name+" ends."))
+		if starts != ends {
+			t.Errorf("warning %s is shown in part:\n%s", name, text)
+		}
+	}
+	if !strings.Contains(squashed, squash("Warn A starts here")) || strings.Contains(squashed, squash("Warn C starts here")) || !strings.Contains(text, trimRow) {
+		t.Errorf("want the first warnings whole, the last one gone and the row that says so:\n%s", text)
+	}
+	if lines[0] != "Restore preview" || lines[len(lines)-1] != "Type stored to go on:" || !strings.Contains(text, "Keep the kit off this machine.") {
+		t.Errorf("the title, the box or the question was cut:\n%s", text)
+	}
+}

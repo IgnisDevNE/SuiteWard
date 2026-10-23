@@ -33,6 +33,9 @@ import (
 //	                      dump, the artifacts), Start (the migration, the service), Compare (/status with the backup's)
 //	doctor                Doctor (the checks as Check and Warn lines)
 
+// A command that succeeds ends on a page that waits for Enter: showSummary for the install, the upgrade, backup, backup init and restore,
+// holdPage for the others. A command that fails ends on its error, which is printed after the screen is closed.
+
 // endConsole closes the Screen when a command ends and joins what the terminal failed to take to the command's own error (err points
 // at its result), as doctor does with its exit code: the command may have succeeded, and what it printed was lost.
 func endConsole(scr *ui.Screen, err *error) {
@@ -114,6 +117,16 @@ func showSummary(scr *ui.Screen, rows func() []ui.KV) error {
 		return nil
 	}
 	if err := scr.Summary(rows(), nil); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
+// holdPage keeps the last page of a command on the screen until Enter, so that what it printed can be read before the screen closes: a
+// command that ends on text and not on a summary (uninstall, install host, enroll, doctor, an upgrade with nothing to do) ends with it.
+// A plain run has nothing to hold. As with showSummary, Ctrl-C only skips the wait: the work is done.
+func holdPage(scr *ui.Screen) error {
+	if err := scr.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil

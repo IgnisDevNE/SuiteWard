@@ -429,8 +429,13 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	var closed error
 	defer endConsole(scr, &closed) // a panic must not leave the terminal on the alternate screen; the exit code below reads the error of Close
 	code := Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, false)
-	if err := scr.Close(); err != nil && code == 0 {
-		return 1 // the report could not be written to the terminal, and nothing else says so
+	waitErr := holdPage(scr) // the results stay on the screen until Enter
+	closeErr := scr.Close()
+	if waitErr != nil {
+		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", waitErr) // a failed write to stderr cannot be reported anywhere else
+	}
+	if code == 0 && (waitErr != nil || closeErr != nil) {
+		return 1 // the report could not be held or written to the terminal, and nothing else says so
 	}
 	return code
 }

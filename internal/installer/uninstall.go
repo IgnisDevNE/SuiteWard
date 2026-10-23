@@ -57,7 +57,10 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if config.Tier(r.preset("tier", string(saved.Tier))) == config.TierIsolated {
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
-		return uninstallIsolated(ctx, isolated, r, env.Deps, env.Term.Out, purge)
+		if err := uninstallIsolated(ctx, isolated, r, env.Deps, env.Term.Out, purge); err != nil {
+			return err
+		}
+		return holdPage(scr)
 	}
 	rt, connection, err := openRuntime(ctx, r, env, saved, false)
 	if err != nil {
@@ -90,7 +93,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	r.say("Removed the containers %s, %s and %s.\n", ContainerServe, ContainerMigrate, ContainerDB)
 	if !purge {
 		r.say("The volumes, the secrets and the settings are kept: run the install again to start the stack, or use --purge to remove them too.\n")
-		return nil
+		return holdPage(scr)
 	}
 	tokenFile := r.preset("token-file", "")
 	if tokenFile == "" {
@@ -102,7 +105,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	r.say("Removed the volumes, the secrets, the network, %s and %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", tokenFile, settingsPath, backupParent(r, filepath.Dir(tokenFile)))
-	return nil
+	return holdPage(scr)
 }
 
 // purgeState removes what the containers leave behind: the volumes, the secrets, the network, one more file (the MCP token copy, or the GitHub env file) and

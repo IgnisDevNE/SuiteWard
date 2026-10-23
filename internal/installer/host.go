@@ -62,7 +62,10 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 			return err
 		}
 	}
-	return h.next(ctx)
+	if err := h.next(ctx); err != nil {
+		return err
+	}
+	return holdPage(scr) // the command to run next is the output: it stays on the screen until it is read
 }
 
 func (h *host) say(format string, args ...any) { _, _ = fmt.Fprintf(h.out, format, args...) }

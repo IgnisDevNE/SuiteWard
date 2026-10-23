@@ -173,7 +173,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
 		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctor)
-		return nil
+		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
 	agreed, err := settleRecipient(r, env, &s)

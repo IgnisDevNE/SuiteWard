@@ -81,7 +81,10 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	scr.Step(2)
-	return enrollOwner(ctx, r, env, target)
+	if err := enrollOwner(ctx, r, env, target); err != nil {
+		return err
+	}
+	return holdPage(scr) // setup left the screen and it is back: its page is the last thing to read
 }
 
 // colocatedEnrollTarget finds the stack as uninstall and upgrade do: the guards of the install apply.

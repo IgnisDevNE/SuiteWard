@@ -35,9 +35,9 @@ func testInfo() Info {
 	}
 }
 
-func newKeyPair(t *testing.T) (*age.X25519Recipient, *age.X25519Identity) {
+func newKeyPair(t *testing.T) (*age.HybridRecipient, *age.HybridIdentity) {
 	t.Helper()
-	id, err := age.GenerateX25519Identity()
+	id, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func allBlobs() []blob {
 	}
 }
 
-func writeArchive(t *testing.T, rec *age.X25519Recipient, info Info, blobs []blob) []byte {
+func writeArchive(t *testing.T, rec *age.HybridRecipient, info Info, blobs []blob) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	w, err := NewWriter(&buf, rec, info)
@@ -186,7 +186,7 @@ type wireManifest struct {
 }
 
 // plainTar decrypts with age itself and reads the tar by hand, so the writer is checked against the format, not against the reader.
-func plainTar(t *testing.T, data []byte, id *age.X25519Identity) (names []string, manifest wireManifest) {
+func plainTar(t *testing.T, data []byte, id *age.HybridIdentity) (names []string, manifest wireManifest) {
 	t.Helper()
 	plain, err := age.Decrypt(bytes.NewReader(data), id)
 	if err != nil {
@@ -359,17 +359,22 @@ func TestWriterReportsAFailingReaderAndAFailingDestination(t *testing.T) {
 	}
 
 	// A destination that fails at once, one that fails when the first full chunk goes out, and one that fails when Close flushes the last.
+	// The age header holds the key encapsulation, so its size is measured: the destination takes exactly the header.
+	var header bytes.Buffer
+	if _, err := NewWriter(&header, rec, testInfo()); err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
 	if _, err := NewWriter(&failAfter{left: 0, err: boom}, rec, testInfo()); !errors.Is(err, boom) {
 		t.Errorf("a destination that fails at once = %v, want its error", err)
 	}
-	w, err = NewWriter(&failAfter{left: 1000, err: boom}, rec, testInfo())
+	w, err = NewWriter(&failAfter{left: header.Len(), err: boom}, rec, testInfo())
 	if err != nil {
 		t.Fatalf("NewWriter: %v", err)
 	}
 	if err := w.Add("suiteward-artifacts.tar", int64(len(bigBody)), strings.NewReader(bigBody)); !errors.Is(err, boom) {
 		t.Errorf("Add to a destination that fails = %v, want its error", err)
 	}
-	w, err = NewWriter(&failAfter{left: 1000, err: boom}, rec, testInfo())
+	w, err = NewWriter(&failAfter{left: header.Len(), err: boom}, rec, testInfo())
 	if err != nil {
 		t.Fatalf("NewWriter: %v", err)
 	}
@@ -416,6 +421,25 @@ func TestOpenWithAnotherIdentityNamesTheRecoveryKit(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "AGE-SECRET-KEY") || strings.Contains(err.Error(), other.String()) {
 		t.Error("the error holds a private key")
+	}
+}
+
+func TestAnArchiveMadeForAClassicKeyIsNotOpenedByAPostQuantumIdentity(t *testing.T) {
+	classic, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	enc, err := age.Encrypt(&buf, classic.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, id := newKeyPair(t)
+	if _, err := Open(&buf, id); !errors.Is(err, ErrWrongKey) {
+		t.Errorf("Open = %v, want ErrWrongKey", err)
 	}
 }
 
@@ -477,13 +501,13 @@ func sound() []rawEntry {
 // withManifest lists exactly the entries before it, like a correct writer would.
 func withManifest(data ...rawEntry) []rawEntry { return append(data, manifestOf(1, data)) }
 
-func rawArchive(t *testing.T, rec *age.X25519Recipient, entries []rawEntry) []byte {
+func rawArchive(t *testing.T, rec *age.HybridRecipient, entries []rawEntry) []byte {
 	t.Helper()
 	return paddedArchive(t, rec, entries, 0)
 }
 
 // paddedArchive follows the tar with padding zero bytes inside the encryption, as tools that write whole records do.
-func paddedArchive(t *testing.T, rec *age.X25519Recipient, entries []rawEntry, padding int) []byte {
+func paddedArchive(t *testing.T, rec *age.HybridRecipient, entries []rawEntry, padding int) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	enc, err := age.Encrypt(&buf, rec)

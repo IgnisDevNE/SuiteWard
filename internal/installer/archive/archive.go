@@ -88,7 +88,7 @@ type Writer struct {
 // NewWriter starts an archive on dst, encrypted to recipient. The caller opens dst (a file only this user can read) and removes
 // it when the archive fails: a failed Writer leaves a truncated file that no reader accepts, but it still holds part of a
 // database.
-func NewWriter(dst io.Writer, recipient *age.X25519Recipient, info Info) (*Writer, error) {
+func NewWriter(dst io.Writer, recipient *age.HybridRecipient, info Info) (*Writer, error) {
 	if recipient == nil {
 		return nil, errors.New("archive: no recipient to encrypt the backup to")
 	}

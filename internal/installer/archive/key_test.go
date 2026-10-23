@@ -9,13 +9,13 @@ import (
 	"filippo.io/age"
 )
 
-func TestNewKeyReturnsAMatchingPairInTheAgeTextForms(t *testing.T) {
+func TestNewKeyReturnsAMatchingPostQuantumPairInTheAgeTextForms(t *testing.T) {
 	recipient, identity, err := NewKey()
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}
-	if !strings.HasPrefix(recipient, "age1") || !strings.HasPrefix(identity, "AGE-SECRET-KEY-1") {
-		t.Fatalf("not age keys: %q, and an identity of %d characters", recipient, len(identity))
+	if !strings.HasPrefix(recipient, "age1pq1") || !strings.HasPrefix(identity, "AGE-SECRET-KEY-PQ-1") {
+		t.Fatalf("not post-quantum age keys: a recipient of %d characters starting %.8q, and an identity of %d characters", len(recipient), recipient, len(identity))
 	}
 	rec, err := ParseRecipient(recipient)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestRecoveryKitParsesBackToTheIdentityAndExplainsItself(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kit := RecoveryKit(identity, recipient, "acme\nAGE-SECRET-KEY-1INJECTED")
+	kit := RecoveryKit(identity, recipient, "acme\nAGE-SECRET-KEY-PQ-1INJECTED")
 
 	id, err := ParseIdentity(kit)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestRecoveryKitParsesBackToTheIdentityAndExplainsItself(t *testing.T) {
 	if id.String() != identity {
 		t.Error("the kit parses to another identity")
 	}
-	for _, want := range []string{recipient, Fingerprint(recipient), `"acme\nAGE-SECRET-KEY-1INJECTED"`, "off this machine", "no backup can be restored"} {
+	for _, want := range []string{recipient, Fingerprint(recipient), `"acme\nAGE-SECRET-KEY-PQ-1INJECTED"`, "off this machine", "no backup can be restored"} {
 		if !strings.Contains(kit, want) {
 			t.Errorf("the kit does not say %q:\n%s", want, kit)
 		}
@@ -69,7 +69,7 @@ func TestRecoveryKitParsesBackToTheIdentityAndExplainsItself(t *testing.T) {
 }
 
 func TestParseIdentityTakesAKitFileAndRefusesAnythingElse(t *testing.T) {
-	id, err := age.GenerateX25519Identity()
+	id, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestParseIdentityTakesAKitFileAndRefusesAnythingElse(t *testing.T) {
 		}
 	}
 
-	other, err := age.GenerateX25519Identity()
+	other, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	garbage := "AGE-SECRET-KEY-1" + strings.Repeat("Q", 20)
+	garbage := "AGE-SECRET-KEY-PQ-1" + strings.Repeat("Q", 20)
 	for name, kit := range map[string]string{
 		"nothing":              "",
 		"only comments":        "# one\n# two\n",
@@ -116,8 +116,30 @@ func TestParseIdentityTakesAKitFileAndRefusesAnythingElse(t *testing.T) {
 	}
 }
 
+func TestAClassicKeyIsRefusedBecauseBackupsUsePostQuantumKeys(t *testing.T) {
+	classic, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, public := classic.String(), classic.Recipient().String()
+	if !strings.HasPrefix(secret, "AGE-SECRET-KEY-1") || !strings.HasPrefix(public, "age1") || strings.HasPrefix(public, "age1pq1") {
+		t.Fatalf("the control is not a classic key pair: %.8q", public)
+	}
+
+	if _, err := ParseRecipient(public); err == nil || !strings.Contains(err.Error(), "post-quantum") {
+		t.Errorf("ParseRecipient of a classic recipient = %v, want a refusal that says backups use post-quantum keys", err)
+	}
+	_, err = ParseIdentity("# a kit made by age-keygen\n" + secret + "\n")
+	if err == nil || !strings.Contains(err.Error(), "post-quantum") {
+		t.Fatalf("ParseIdentity of a classic identity = %v, want a refusal that says backups use post-quantum keys", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Error("the refusal repeats the private key")
+	}
+}
+
 func TestParseRecipientRefusesWhatIsNotARecipient(t *testing.T) {
-	id, err := age.GenerateX25519Identity()
+	id, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}

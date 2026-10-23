@@ -24,7 +24,7 @@ type Reader struct {
 
 // Open decrypts r with identity. A wrong identity is ErrWrongKey; bytes that are not an age file are ErrInvalid. Nothing of the
 // archive has been verified yet: ReadManifest or Extract does it.
-func Open(r io.Reader, identity *age.X25519Identity) (*Reader, error) {
+func Open(r io.Reader, identity *age.HybridIdentity) (*Reader, error) {
 	if identity == nil {
 		return nil, errors.New("archive: no identity to open the backup with")
 	}

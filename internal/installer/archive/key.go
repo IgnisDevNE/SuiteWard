@@ -23,17 +23,13 @@ func NewKey() (recipient, identity string, err error) {
 }
 
 // ParseRecipient reads the recipient string of the settings. The error never repeats the input: it may be a private key.
-func ParseRecipient(s string) (*age.X25519Recipient, error) {
-	rec, err := age.ParseX25519Recipient(strings.TrimSpace(s))
-	if err != nil {
-		return nil, errors.New("the recovery recipient is not an age public key (age1...)")
-	}
-	return rec, nil
+func ParseRecipient(s string) (*age.HybridRecipient, error) {
+	return nil, errors.New("not implemented")
 }
 
 // ParseIdentity reads the contents of a recovery kit file: comment lines (#) and blank lines are ignored, and exactly one
 // identity must remain. The errors never repeat any of the input.
-func ParseIdentity(kit string) (*age.X25519Identity, error) {
+func ParseIdentity(kit string) (*age.HybridIdentity, error) {
 	var lines []string
 	for _, line := range strings.Split(kit, "\n") {
 		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
@@ -43,11 +39,7 @@ func ParseIdentity(kit string) (*age.X25519Identity, error) {
 	if len(lines) != 1 {
 		return nil, fmt.Errorf("the recovery kit must hold exactly one identity line (AGE-SECRET-KEY-1...), it holds %d", len(lines))
 	}
-	id, err := age.ParseX25519Identity(lines[0])
-	if err != nil {
-		return nil, errors.New("the identity line of the recovery kit is not an age secret key")
-	}
-	return id, nil
+	return nil, errors.New("not implemented")
 }
 
 // RecoveryKit is the text of the file the owner keeps off the machine. Every line but the identity is a comment, so the file

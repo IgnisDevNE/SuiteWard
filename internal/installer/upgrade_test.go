@@ -581,15 +581,24 @@ func TestUpgradeColocatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
 	}
 }
 
+// otherPort is a valid port that differs from p, which the harness takes from the free ports and may be near the top of the range.
+func otherPort(p int) int {
+	if p+100 <= 65535 {
+		return p + 100
+	}
+	return p - 100
+}
+
 func TestUpgradeColocatedRefusesPortsAndTimeoutThatDifferFromTheInstalledOnes(t *testing.T) {
 	// An upgrade keeps the installed ports and job timeout, so a run that asks for others stops before any change instead of
 	// exiting 0 and ignoring them; on this tier a re-run of the install applies them.
 	u := newUpgradeHarness(t, func(s *Settings) { s.JobTimeout = "3m" })
-	err := u.upgrade("--image", testImage, "--yes", "--http-port", strconv.Itoa(u.port+100), "--job-timeout", "9m")
+	other := strconv.Itoa(otherPort(u.port))
+	err := u.upgrade("--image", testImage, "--yes", "--http-port", other, "--job-timeout", "9m")
 	if err == nil {
 		t.Fatal("an upgrade that is asked for other ports must not go on and ignore them")
 	}
-	for _, want := range []string{"suiteward install", "--http-port " + strconv.Itoa(u.port+100), "--job-timeout 9m"} {
+	for _, want := range []string{"suiteward install", "--http-port " + other, "--job-timeout 9m"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error lacks %q: %v", want, err)
 		}

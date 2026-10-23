@@ -598,11 +598,12 @@ func TestUpgradeIsolatedRefusesPortsAndTimeoutThatDifferFromTheInstalledOnes(t *
 	// exiting 0 and ignoring them; the re-run of the install is the way to change them.
 	u := newIsoUpgrade(t, nil)
 	before := u.units()
-	err := u.upgrade("--image", testDigest, "--yes", "--http-port", strconv.Itoa(u.port+100), "--job-timeout", "9m")
+	other := strconv.Itoa(otherPort(u.port))
+	err := u.upgrade("--image", testDigest, "--yes", "--http-port", other, "--job-timeout", "9m")
 	if err == nil {
 		t.Fatal("an upgrade that is asked for other ports must not go on and ignore them")
 	}
-	for _, want := range []string{"suiteward install --tier isolated", "--http-port " + strconv.Itoa(u.port+100), "--job-timeout 9m"} {
+	for _, want := range []string{"suiteward install --tier isolated", "--http-port " + other, "--job-timeout 9m"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error lacks %q: %v", want, err)
 		}

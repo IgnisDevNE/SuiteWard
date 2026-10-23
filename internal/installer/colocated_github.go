@@ -31,6 +31,7 @@ type githubInstall struct {
 	setupChecks map[string]string
 	enrollHint  string // the command the messages name to enroll the owner (enrollCommand)
 	owner       string // how the summary says the owner stands, as enroll found it
+	statusDead  bool   // enroll waited for /status and could not read it: the summary does not wait for it again
 }
 
 func (g githubInstall) say(format string, args ...any) { _, _ = fmt.Fprintf(g.out, format, args...) }
@@ -313,7 +314,7 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 	login, err := g.enrolledOwner(ctx, status, barOn(scr, "Service"))
 	switch {
 	case err != nil:
-		g.owner = "unknown: /status could not be read"
+		g.owner, g.statusDead = "unknown: /status could not be read", true
 		scr.Warn("Setup was not run: /status of the service could not be read (%v), so it is not known whether an owner is enrolled, and setup would replace the TOTP secret of one. Once the service answers, check /status, and if it has no owner, run on a real terminal with session recording off:\n  %s\n", err, command)
 	case login != "":
 		g.owner = login + " (already enrolled)"

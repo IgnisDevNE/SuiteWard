@@ -59,13 +59,16 @@ func (c *colocatedInstall) statusRow(ctx context.Context) string {
 }
 
 // commonSummary is what an install and an upgrade of the co-located tier both show. The service has been started a moment ago, and
-// without GitHub nothing has waited for it since, so the version is waited for as the owner's enrollment waits for /status.
+// without GitHub (and in an upgrade) nothing has waited for it since, so the version is waited for as the owner's enrollment waits for
+// /status; after an enrollment that gave up there is no version to wait for, and the Owner row says so.
 func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows) {
 	rows.add("Tier", string(c.s.Tier))
 	rows.add("Runtime", engineLine(c.rt.Engine()))
-	rows.add("Instance", instanceVersion(ctx, func(ctx context.Context) ([]byte, error) {
-		return waitForStatus(ctx, c.env.Sleep, c.readStatus, barOn(screenOn(c.out), "Service"))
-	}))
+	if !c.statusDead {
+		rows.add("Instance", instanceVersion(ctx, func(ctx context.Context) ([]byte, error) {
+			return waitForStatus(ctx, c.env.Sleep, c.readStatus, barOn(screenOn(c.out), "Service"))
+		}))
+	}
 	rows.addGitHub(c.s.GitHub)
 }
 

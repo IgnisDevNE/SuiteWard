@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // ErrUsage marks a command line that cannot be parsed.
@@ -37,6 +38,11 @@ type Env struct {
 	ResolveGitHub func(ctx context.Context, env githubEnv) (GitHubResult, error)
 	// HTTPGet reads an address of the local service (/status); nil means httpGet. A test replaces it.
 	HTTPGet func(ctx context.Context, address string) ([]byte, error)
+	// Version is shown in the title bar of the full screen ("installer <Version>"); empty reads "dev". The caller that knows the build version
+	// (app.Run) sets it.
+	Version string
+	// OpenScreen opens the console of one command (ui.OpenOS on the process's console); nil means a plain one on Term.Out. A test replaces it.
+	OpenScreen func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error)
 }
 
 func (e Env) httpGet() func(context.Context, string) ([]byte, error) {

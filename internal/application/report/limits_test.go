@@ -20,7 +20,7 @@ func TestBuildSaysWhichFilesTheSharedWorkBudgetStopped(t *testing.T) {
 	t.Parallel()
 	old, proposed := expensive()
 	var changes []report.FileChange
-	for i := range 40 {
+	for i := range 20 {
 		changes = append(changes, mod(fmt.Sprintf("e%02d.txt", i), old, proposed))
 	}
 	changes = append(changes,
@@ -35,7 +35,7 @@ func TestBuildSaysWhichFilesTheSharedWorkBudgetStopped(t *testing.T) {
 		t.Fatalf("the first file is compared: got Limit=%q, +%d -%d", first.Limit, first.LinesAdded, first.LinesRemoved)
 	}
 	stopped := false
-	for _, f := range r.Files[:40] {
+	for _, f := range r.Files[:20] {
 		switch f.Limit {
 		case "":
 			if stopped {
@@ -51,9 +51,9 @@ func TestBuildSaysWhichFilesTheSharedWorkBudgetStopped(t *testing.T) {
 		}
 	}
 	if !stopped {
-		t.Fatal("forty expensive files must run the budget out")
+		t.Fatal("twenty expensive files must run the budget out")
 	}
-	pair, cheap := r.Files[40], r.Files[41]
+	pair, cheap := r.Files[20], r.Files[21]
 	if pair.Limit != report.LimitBudget {
 		t.Errorf("zz.py: Limit = %q, want %q", pair.Limit, report.LimitBudget)
 	}

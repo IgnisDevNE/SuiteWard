@@ -17,10 +17,10 @@ import (
 // The bounds that keep a report, and the work to build it, small whatever the files are. The files are untrusted: a
 // proposal can hold hundreds of protected files built to be slow to compare.
 const (
-	maxFileBytes    = 1 << 20     // a side over it is too large to compare
-	maxFileLines    = 20_000      // likewise
-	maxEditDistance = 1000        // lines to delete plus lines to insert; past it a pair of files is too different
-	maxDiffWork     = 300_000_000 // steps (a diagonal tried, a line compared) of every comparison of one report together
+	maxFileBytes    = 1 << 20   // a side over it is too large to compare
+	maxFileLines    = 20_000    // likewise
+	maxEditDistance = 1000      // lines to delete plus lines to insert; past it a pair of files is too different
+	maxDiffWork     = 5_000_000 // steps (a diagonal tried, a line compared) of every comparison of one report together
 	contextLines    = 3
 	maxLineBytes    = 500
 	maxMarkerBytes  = 200
@@ -40,7 +40,8 @@ const (
 
 // FileChange is one protected file that differs between the canonical version and the proposal. Old is the canonical
 // content and New the proposal's. The side a status does not have (Old of an added file, New of a removed one) is
-// empty or absent: the two are the same here.
+// empty or absent: the two are the same here. Path is slash-separated, as a git path is; an empty path or one with a
+// backslash is rejected.
 type FileChange struct {
 	Path     string
 	Status   Status
@@ -86,7 +87,10 @@ const (
 
 // Marker is a deterministic observation about one changed line, keyed by the file's extension: it says what was
 // seen, never that it is wrong. Line is the old side's line number for a removal and the new side's for an addition;
-// it is 0, with no Text, for MarkTestFileRemoved. Text is the trimmed line, cut to 200 bytes.
+// it is 0, with no Text, for MarkTestFileRemoved. Text is the trimmed line, cut to 200 bytes. A line that the other
+// side has too, as many times and compared without the space around it, only moved or was reindented and gets no
+// marker. A file's markers come in this order: MarkTestFileRemoved, the removals by old line, the additions by new
+// line.
 type Marker struct {
 	Kind MarkerKind
 	Path string
@@ -98,17 +102,25 @@ type Marker struct {
 type Limit string
 
 const (
-	LimitBinary       Limit = "binary"
-	LimitSize         Limit = "too-large"
+	// LimitBinary: a NUL byte in a side. There are no lines, hunks or markers (but MarkTestFileRemoved).
+	LimitBinary Limit = "binary"
+	// LimitSize: a side over 1 MiB or 20,000 lines. There are no hunks or line markers; an added or removed file still
+	// has exact counts.
+	LimitSize Limit = "too-large"
+	// LimitEditDistance: the two sides differ by more than 1000 lines. The file has no hunks and its counts are unknown.
 	LimitEditDistance Limit = "edit-distance"
-	LimitBudget       Limit = "budget"
+	// LimitBudget: the work shared by the files of the report ran out before this one. Same as LimitEditDistance, and
+	// Report.Truncated is set.
+	LimitBudget Limit = "budget"
 )
 
 // File is the report of one FileChange. OldSize and NewSize are byte lengths. LinesAdded and LinesRemoved are exact
-// only when CountsKnown: a binary file, and a modified file too large or too different to compare within the
-// bounds, have unknown counts, never zero. An added or removed file over the size bound has Hunks
-// omitted but its counts are exact, since counting lines is cheap. Truncated says the Hunks were left out to keep the
-// report within its size budget, in which a line costs its text and 32 bytes; the counts stay exact.
+// only when CountsKnown: a file with a Limit has unknown counts, never zero, except an added or removed file over
+// the size bound, which has exact counts since counting lines is cheap. A modified file stopped by LimitEditDistance
+// or LimitBudget still has its markers, taken from the lines that one side has and the other lacks; the size bound and
+// a binary file are the only limits that leave a file without line markers. Truncated says the Hunks were left out to
+// keep the report within its size budget, in which a line costs its text and 32 bytes; the counts stay exact.
+// MarkersTruncated says the report's limit on listed markers dropped some of this file's.
 type File struct {
 	Path                     string
 	Status                   Status
@@ -122,16 +134,18 @@ type File struct {
 	Markers                  []Marker
 }
 
-// Totals sum a report. LinesAdded and LinesRemoved cover the files with CountsKnown only. Markers counts every
-// marker found, including the ones the Report left out of the lists of its files.
+// Totals sum a report. LinesAdded and LinesRemoved cover the files with CountsKnown only, so a caller that prints
+// them must also say how many files have a Limit. Markers counts every marker found, including the ones the Report left
+// out of the lists of its files.
 type Totals struct {
 	Files                    map[Status]int
 	LinesAdded, LinesRemoved int
 	Markers                  map[MarkerKind]int
 }
 
-// Report is the change report: Files in path order. Truncated says a file's hunks or some markers were left out to
-// keep the report bounded; the totals stay exact.
+// Report is the change report: Files in path order. Truncated says that a budget shared by the files left something
+// out: some hunks (File.Truncated), some markers (File.MarkersTruncated), or the comparison of some files
+// (LimitBudget). The totals of markers stay exact, the counts of lines only for the files that have them.
 type Report struct {
 	Files     []File
 	Totals    Totals
@@ -143,6 +157,8 @@ var ErrInvalidChange = errors.New("invalid file change")
 
 func (c FileChange) validate() error {
 	switch {
+	case c.Path == "" || strings.Contains(c.Path, `\`):
+		return fmt.Errorf("%w: %q is not a slash-separated path", ErrInvalidChange, c.Path)
 	case c.Status != Added && c.Status != Modified && c.Status != Removed:
 		return fmt.Errorf("%w: %q has the status %q", ErrInvalidChange, c.Path, c.Status)
 	case c.Status == Added && len(c.Old) > 0:
@@ -186,23 +202,17 @@ type builder struct {
 }
 
 func (b *builder) add(c FileChange) {
-	f := File{Path: c.Path, Status: c.Status, OldSize: len(c.Old), NewSize: len(c.New)}
+	f := File{Path: c.Path, Status: c.Status, OldSize: len(c.Old), NewSize: len(c.New), Limit: sideLimit(c)}
 	b.totals.Files[c.Status]++
 	if c.Status == Removed && isTestPath(c.Path) {
 		b.mark(&f, Marker{Kind: MarkTestFileRemoved, Path: c.Path})
 	}
-	if script, ok := b.compare(&f, c); ok {
-		f.CountsKnown = true
-		for _, e := range script {
-			switch e.kind {
-			case LineAdded:
-				f.LinesAdded++
-			case LineRemoved:
-				f.LinesRemoved++
-			}
-		}
-		b.markLines(&f, script)
-		b.keepHunks(&f, script)
+	switch {
+	case f.Limit == "":
+		b.compare(&f, c)
+	case f.Limit == LimitSize && c.Status != Modified:
+		// Counting lines is cheap, so an added or removed file over the size bound still has exact counts.
+		f.LinesAdded, f.LinesRemoved, f.CountsKnown = lineCount(c.New), lineCount(c.Old), true
 	}
 	if f.CountsKnown {
 		b.totals.LinesAdded += f.LinesAdded
@@ -211,28 +221,46 @@ func (b *builder) add(c FileChange) {
 	b.files = append(b.files, f)
 }
 
-// compare aligns the two sides of c, or says why it cannot on f: a binary file has no lines, and a file too large or
-// too different has too many to compare. An added or removed file that is too large still has an exact count.
-func (b *builder) compare(f *File, c FileChange) ([]entry, bool) {
+// sideLimit says why c cannot be read line by line at all: a binary file has no lines, and a side over the size bound
+// has too many.
+func sideLimit(c FileChange) Limit {
 	switch {
 	case bytes.IndexByte(c.Old, 0) >= 0 || bytes.IndexByte(c.New, 0) >= 0:
-		f.Limit = LimitBinary
-		return nil, false
+		return LimitBinary
 	case tooLarge(c.Old) || tooLarge(c.New):
-		f.Limit = LimitSize
-		if c.Status != Modified {
-			f.LinesAdded, f.LinesRemoved, f.CountsKnown = lineCount(c.New), lineCount(c.Old), true
-		}
-		return nil, false
+		return LimitSize
 	}
+	return ""
+}
+
+// compare reads the two sides of c line by line. Its diff gives the counts, the hunks and the markers of the changed
+// lines. When the diff passes a bound, f says which and the markers come from the lines that one side has and the
+// other lacks, so that they survive every bound but the size of a side.
+func (b *builder) compare(f *File, c FileChange) {
 	before, after := splitLines(string(c.Old)), splitLines(string(c.New))
 	ids := map[string]int{}
 	del, ins, ok := diff(intern(ids, before), intern(ids, after), &b.workRoom)
 	if !ok {
 		f.Limit = LimitEditDistance
-		return nil, false
+		if b.workRoom < 0 {
+			f.Limit, b.truncated = LimitBudget, true
+		}
+		b.markLines(f, numberAll(before), numberAll(after))
+		return
 	}
-	return script(before, after, del, ins), true
+	edits := script(before, after, del, ins)
+	var removed, added []numbered
+	for _, e := range edits {
+		switch e.kind {
+		case LineRemoved:
+			removed = append(removed, numbered{e.oldBefore + 1, e.text})
+		case LineAdded:
+			added = append(added, numbered{e.newBefore + 1, e.text})
+		}
+	}
+	f.LinesRemoved, f.LinesAdded, f.CountsKnown = len(removed), len(added), true
+	b.markLines(f, removed, added)
+	b.keepHunks(f, edits)
 }
 
 // intern numbers the lines of one side by their content, terminator included, so that comparing two lines is
@@ -250,34 +278,68 @@ func intern(ids map[string]int, lines []string) []int {
 	return out
 }
 
-// keepHunks gives f the hunks of script unless they would cost more than the report has room for.
-func (b *builder) keepHunks(f *File, script []entry) {
-	hunks := hunksOf(script)
-	size := 0
-	for _, h := range hunks {
-		for _, l := range h.Lines {
-			size += len(l.Text) + lineOverhead
-		}
-	}
-	if size > b.hunkRoom {
+// keepHunks gives f the hunks of edits unless they would cost more than the report has room for.
+func (b *builder) keepHunks(f *File, edits []entry) {
+	spans := spansOf(edits)
+	cost := hunkCost(edits, spans)
+	if cost > b.hunkRoom {
 		f.Truncated, b.truncated = true, true
 		return
 	}
-	b.hunkRoom -= size
-	f.Hunks = hunks
+	b.hunkRoom -= cost
+	f.Hunks = hunksOf(edits, spans)
 }
 
-// markLines marks the changed lines of script.
-func (b *builder) markLines(f *File, script []entry) {
+// numbered is a line of one side with its number there, from 1.
+type numbered struct {
+	no   int
+	text string
+}
+
+func numberAll(lines []string) []numbered {
+	out := make([]numbered, len(lines))
+	for i, l := range lines {
+		out[i] = numbered{i + 1, l}
+	}
+	return out
+}
+
+// markLines marks the lines that the changes removed and added: first the removals by their old line, then the
+// additions by their new line. A line that the other side has too, as many times and compared without the space
+// around it, only moved, was reindented or changed its line ending: it is no marker.
+func (b *builder) markLines(f *File, removed, added []numbered) {
 	rules := rulesFor(f.Path)
-	for _, e := range script {
-		line := e.oldBefore + 1
-		if e.kind == LineAdded {
-			line = e.newBefore + 1
+	b.markSide(f, rules, LineRemoved, removed, added)
+	b.markSide(f, rules, LineAdded, added, removed)
+}
+
+func (b *builder) markSide(f *File, rules rules, k LineKind, side, other []numbered) {
+	type candidate struct {
+		numbered
+		kinds []MarkerKind
+	}
+	var candidates []candidate
+	for _, l := range side {
+		if kinds := rules.kinds(k, l.text); len(kinds) > 0 {
+			candidates = append(candidates, candidate{l, kinds})
 		}
-		for _, kind := range rules.kinds(e.kind, e.text) {
-			text, _ := cutAt(strings.TrimSpace(e.text), maxMarkerBytes)
-			b.mark(f, Marker{Kind: kind, Path: f.Path, Line: line, Text: strings.Clone(text)})
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	counts := map[string]int{}
+	for _, l := range other {
+		counts[strings.TrimSpace(l.text)]++
+	}
+	for _, cd := range candidates {
+		trimmed := strings.TrimSpace(cd.text)
+		if counts[trimmed] > 0 {
+			counts[trimmed]--
+			continue
+		}
+		text, _ := cutAt(trimmed, maxMarkerBytes)
+		for _, kind := range cd.kinds {
+			b.mark(f, Marker{Kind: kind, Path: f.Path, Line: cd.no, Text: strings.Clone(text)})
 		}
 	}
 }
@@ -286,7 +348,7 @@ func (b *builder) markLines(f *File, script []entry) {
 func (b *builder) mark(f *File, m Marker) {
 	b.totals.Markers[m.Kind]++
 	if b.markerRoom == 0 {
-		b.truncated = true
+		f.MarkersTruncated, b.truncated = true, true
 		return
 	}
 	b.markerRoom--

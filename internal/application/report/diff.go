@@ -165,10 +165,12 @@ func script(a, b []string, del, ins []bool) []entry {
 	return out
 }
 
-// hunksOf groups the changes of script with three lines of context on each side; changes with at most six lines
-// between them share a hunk.
-func hunksOf(script []entry) []Hunk {
-	type span struct{ from, to int }
+// span is the range of entries of one hunk, both ends included.
+type span struct{ from, to int }
+
+// spansOf groups the changes of script with three lines of context on each side; changes with at most six lines
+// between them share a span.
+func spansOf(script []entry) []span {
 	var spans []span
 	for i, e := range script {
 		if e.kind == LineContext {
@@ -181,6 +183,29 @@ func hunksOf(script []entry) []Hunk {
 			spans = append(spans, span{from, to})
 		}
 	}
+	return spans
+}
+
+// stored is a line as a hunk keeps it: without its terminator and cut to the stored line limit.
+func stored(e entry) (text string, terminated, cut bool) {
+	text, terminated = strings.CutSuffix(e.text, "\n")
+	text, cut = cutAt(text, maxLineBytes)
+	return text, terminated, cut
+}
+
+// hunkCost is what the hunks of spans cost against the size budget of a report, known before any line is built.
+func hunkCost(script []entry, spans []span) int {
+	cost := 0
+	for _, s := range spans {
+		for _, e := range script[s.from : s.to+1] {
+			text, _, _ := stored(e)
+			cost += len(text) + lineOverhead
+		}
+	}
+	return cost
+}
+
+func hunksOf(script []entry, spans []span) []Hunk {
 	var hunks []Hunk
 	for _, s := range spans {
 		hunks = append(hunks, hunkOf(script[s.from:s.to+1]))
@@ -191,8 +216,7 @@ func hunksOf(script []entry) []Hunk {
 func hunkOf(es []entry) Hunk {
 	h := Hunk{OldStart: es[0].oldBefore, NewStart: es[0].newBefore, Lines: make([]Line, len(es))}
 	for i, e := range es {
-		text, terminated := strings.CutSuffix(e.text, "\n")
-		text, cut := cutAt(text, maxLineBytes)
+		text, terminated, cut := stored(e)
 		// A clone, so that a kept line does not hold the whole file it was cut from.
 		h.Lines[i] = Line{Kind: e.kind, Text: strings.Clone(text), NoNewline: !terminated, Cut: cut}
 		if e.kind != LineAdded {

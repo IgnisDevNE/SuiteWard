@@ -205,12 +205,14 @@ func TestMultiSelectAsksByTypingWhenKeyInputIsNotAvailable(t *testing.T) {
 				"1) acme/api     (default)",
 				"2) acme/web    the website",
 				"3) acme/docs",
-				"Pick (numbers or names, comma-separated, at most 2) [1]:",
-				"2,ACME/docs",
 			} {
 				if !strings.Contains(rows, want) {
 					t.Errorf("the page lacks %q:\n%s", want, rows)
 				}
+			}
+			// The answer sits on the line of the question: it wraps with it, and only the frame's border and padding come between them.
+			if want := squash("Pick (numbers or names, comma-separated, at most 2) [1]: 2,ACME/docs"); !strings.Contains(squash(content(snapshot(s))), want) {
+				t.Errorf("the answer is not on the line of the question:\n%s", content(snapshot(s)))
 			}
 			keys.balanced(t, 0)
 			mustClose(t, s)
@@ -327,14 +329,16 @@ func TestMultiSelectRefusesAQuestionThatCannotBeAnswered(t *testing.T) {
 	keys := &fakeKeys{}
 	s, _, _ := openMultiKeys(t, keys, "\r")
 	for name, q := range map[string]Multi{
-		"no choices":               {Label: "L"},
-		"a default off the list":   repoQuestion(0, 0, 3),
-		"a negative default":       repoQuestion(0, 0, -1),
-		"a default twice":          repoQuestion(0, 0, 1, 1),
-		"a negative minimum":       repoQuestion(-1, 0),
-		"a minimum above the max":  repoQuestion(3, 2),
-		"a minimum above the rows": repoQuestion(4, 0),
-		"a negative maximum":       repoQuestion(0, -1),
+		"no choices":                  {Label: "L"},
+		"a default off the list":      repoQuestion(0, 0, 3),
+		"a negative default":          repoQuestion(0, 0, -1),
+		"a default twice":             repoQuestion(0, 0, 1, 1),
+		"a negative minimum":          repoQuestion(-1, 0),
+		"a minimum above the max":     repoQuestion(3, 2),
+		"a minimum above the rows":    repoQuestion(4, 0),
+		"a negative maximum":          repoQuestion(0, -1),
+		"more defaults than the max":  repoQuestion(0, 2, 0, 1, 2),
+		"fewer defaults than the min": repoQuestion(2, 0, 0),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := q.Validate(); err == nil {
@@ -345,8 +349,14 @@ func TestMultiSelectRefusesAQuestionThatCannotBeAnswered(t *testing.T) {
 			}
 		})
 	}
-	if err := repoQuestion(1, 2, 0, 1).Validate(); err != nil {
-		t.Errorf("Validate refused a question that can be answered: %v", err)
+	for name, q := range map[string]Multi{
+		"defaults within the bounds":     repoQuestion(1, 2, 0, 1),
+		"no defaults, so the user picks": repoQuestion(1, 2),
+		"no upper bound":                 repoQuestion(1, 0, 0, 1, 2),
+	} {
+		if err := q.Validate(); err != nil {
+			t.Errorf("Validate refused a question that can be answered (%s): %v", name, err)
+		}
 	}
 	keys.balanced(t, 0)
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
-// M1.14 N1: the defaults moved from 8081 (HTTP) and 8091 (MCP), which other tools on a development machine use, to 47081 and 47091. A stack that
+// M1.14 N1: the defaults moved from 8081 (HTTP) and 8091 (MCP), which other tools on a development machine use, to 27081 and 27091. A stack that
 // exists never moves: its ports are in its settings file, its containers or its units, and what is read there wins over the default. The tests
 // after the first two install on the old numbers, so a default that leaked into an existing install would show. They pass before the defaults
 // move as well (the installed ports always came from the stack); they are what keeps the move from reaching a stack that exists.
@@ -21,8 +21,8 @@ const (
 )
 
 func TestDefaultPortsAreOffTheCrowdedOnes(t *testing.T) {
-	if got := DefaultSettings(); got.HTTPPort != 47081 || got.MCPPort != 47091 {
-		t.Fatalf("the default ports are %d and %d, want 47081 and 47091", got.HTTPPort, got.MCPPort)
+	if got := DefaultSettings(); got.HTTPPort != 27081 || got.MCPPort != 27091 {
+		t.Fatalf("the default ports are %d and %d, want 27081 and 27091", got.HTTPPort, got.MCPPort)
 	}
 }
 
@@ -32,12 +32,12 @@ func TestInstallPodmanPublishesTheDefaultPortsOfAFreshInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	serve := h.f.find("--name suiteward --network")[0].line()
-	for _, want := range []string{"--publish 127.0.0.1:47081:8080", "--publish 127.0.0.1:47091:8090"} {
+	for _, want := range []string{"--publish 127.0.0.1:27081:8080", "--publish 127.0.0.1:27091:8090"} {
 		if !strings.Contains(serve, want) {
 			t.Errorf("serve lacks %q: %s", want, serve)
 		}
 	}
-	if s := h.settings(); s.HTTPPort != 47081 || s.MCPPort != 47091 {
+	if s := h.settings(); s.HTTPPort != 27081 || s.MCPPort != 27091 {
 		t.Errorf("saved settings: %+v", s)
 	}
 }

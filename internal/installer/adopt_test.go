@@ -523,3 +523,52 @@ func TestAdoptUnitsRelaxesExactlyOneDatabaseImageLineOnAnUpgrade(t *testing.T) {
 
 // errAfter keeps the error of a call that also returns a value.
 func errAfter[T any](_ T, err error) error { return err }
+
+// The two lines of the service unit that mount the App key and name it; a GitHub-off install of v0.3.0-alpha.2 has neither.
+var githubKeyUnitLines = []string{
+	"Secret=suiteward-github-app-key,type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400",
+	"Environment=SUITEWARD_GITHUB_APP_KEY_FILE=/run/secrets/github-app-key",
+}
+
+// withoutLines is unit without the given lines; it fails the test when a line is not there.
+func withoutLines(t *testing.T, unit []byte, lines ...string) []byte {
+	t.Helper()
+	for _, line := range lines {
+		if !bytes.Contains(unit, []byte(line+"\n")) {
+			t.Fatalf("the unit has no line %q", line)
+		}
+		unit = bytes.Replace(unit, []byte(line+"\n"), nil, 1)
+	}
+	return unit
+}
+
+func TestAdoptUnitsAcceptsAServiceUnitWithoutTheGitHubKeyLines(t *testing.T) {
+	installed := renderedUnits(t, nil)
+	installed["suiteward.container"] = withoutLines(t, installed["suiteward.container"], githubKeyUnitLines...)
+	got, err := AdoptUnits(installed, nil)
+	if err != nil {
+		t.Fatalf("a service unit of a stack that runs without GitHub is a known shape: %v", err)
+	}
+	if !got.NoGitHub {
+		t.Error("the adoption must report a stack without GitHub")
+	}
+
+	// The units of v0.3.0-alpha.1 always had the lines.
+	got, err = AdoptUnits(renderedUnits(t, nil), nil)
+	if err != nil {
+		t.Fatalf("units with the lines are still known: %v", err)
+	}
+	if got.NoGitHub {
+		t.Error("units with the lines belong to a stack with GitHub")
+	}
+}
+
+func TestAdoptUnitsStopsOnAServiceUnitWithOnlyOneOfTheGitHubKeyLines(t *testing.T) {
+	for _, line := range githubKeyUnitLines {
+		installed := renderedUnits(t, nil)
+		installed["suiteward.container"] = withoutLines(t, installed["suiteward.container"], line)
+		if diff := asDiffError(t, func() error { _, err := AdoptUnits(installed, nil); return err }()); !diffMentions(diff, "github-app-key") {
+			t.Errorf("the diff must name the key line that is missing: %+v", diff.Diffs)
+		}
+	}
+}

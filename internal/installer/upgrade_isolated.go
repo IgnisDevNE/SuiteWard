@@ -15,7 +15,8 @@ import (
 // upgradeIsolated is `suiteward install --upgrade` for the isolated tier, as the service account (docs/install.md, section 11): adopt the
 // installed units (a difference stops the run before any change), show what changes and ask, back up, pull, stop the service,
 // render the units again with the new digest (and the database unit with the new pin), restart the database when its pin changed,
-// and restart the migration, which migrates and restarts the service.
+// and restart the migration, which migrates and restarts the service; last, wait for the service to be stable. The ports and the
+// job timeout stay as installed, and a run that is asked for others stops first.
 func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) error {
 	d, out := env.Deps, env.Term.Out
 	image, err := upgradeTarget(r)
@@ -49,11 +50,24 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return err
 	}
 	s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = st.adopted.Settings.Tier, st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout
+	// An upgrade keeps the installed ports and job timeout: a value asked for that is invalid, or differs, stops the run before any
+	// change, so that it is never ignored in silence.
+	asked, err := chooseIsolatedSettings(r, s)
+	if err != nil {
+		return err
+	}
+	if err := refuseChangedSettings(asked, s); err != nil {
+		return err
+	}
+	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
 	postgres, err := PostgresImage()
 	if err != nil {
 		return err
 	}
-	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
+	// The service unit keeps the shape it has: the settings need not name an App (a host installed by hand), and the units do not
+	// change whether the service has GitHub.
+	params := UnitParamsFrom(s, digest)
+	params.NoGitHub = st.adopted.NoGitHub
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
 		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
@@ -95,8 +109,12 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err := pullMissing(ctx, host.rt, postgres, image); err != nil {
 		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
 	}
-	if err := replaceUnits(ctx, host, d, s, digest, plan.dbChanges()); err != nil {
+	if err := replaceUnits(ctx, host, d, params, plan.dbChanges()); err != nil {
 		return withBackup(err, dir, host.unitsDir)
+	}
+	// Migrate ran: a release that crash-loops now gets the advice of a failure after the migration, the restore of the backup.
+	if err := waitStable(ctx, env, s.HTTPPort); err != nil {
+		return withBackup(migratingError{err}, dir, host.unitsDir)
 	}
 	s.Image = image
 	if err := SaveSettings(host.settingsPath, s); err != nil {
@@ -107,14 +125,34 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	return nil
 }
 
+// refuseChangedSettings refuses an upgrade that is asked for other ports or another job timeout than the installed ones: the
+// upgrade keeps them, and the re-run of the install, which takes the values it is given, is how to change them.
+func refuseChangedSettings(asked, installed Settings) error {
+	var flags []string
+	if asked.HTTPPort != installed.HTTPPort {
+		flags = append(flags, "--http-port "+strconv.Itoa(asked.HTTPPort))
+	}
+	if asked.MCPPort != installed.MCPPort {
+		flags = append(flags, "--mcp-port "+strconv.Itoa(asked.MCPPort))
+	}
+	if asked.JobTimeout != installed.JobTimeout {
+		flags = append(flags, "--job-timeout "+quoteArg(asked.JobTimeout))
+	}
+	if len(flags) == 0 {
+		return nil
+	}
+	return fmt.Errorf("an upgrade keeps the installed ports and job timeout (HTTP port %d, MCP port %d, job timeout %q) and this run asks for others (%s): nothing was changed. Change them first with a re-run of the install as the service account, `suiteward install --tier isolated %s`, then upgrade without those flags",
+		installed.HTTPPort, installed.MCPPort, installed.JobTimeout, strings.Join(flags, " "), strings.Join(flags, " "))
+}
+
 // replaceUnits does the steps after the backup: stop the service, then prepare the new units, then migrate and start. An error
 // says how far it got (stoppedError, migratingError) for the advice of withBackup.
-func replaceUnits(ctx context.Context, host isolatedHost, d Deps, s Settings, digest string, dbChanges bool) error {
+func replaceUnits(ctx context.Context, host isolatedHost, d Deps, params UnitParams, dbChanges bool) error {
 	systemctl := userSystemctl(d)
 	if _, err := systemctl(ctx, "stop", "suiteward.service"); err != nil {
 		return fmt.Errorf("stop the service: %w", err)
 	}
-	if err := prepareUnits(ctx, host, d, s, digest, dbChanges); err != nil {
+	if err := prepareUnits(ctx, host, d, params, dbChanges); err != nil {
 		return stoppedError{err}
 	}
 	if err := migrateAndStart(ctx, d); err != nil {
@@ -124,8 +162,8 @@ func replaceUnits(ctx context.Context, host isolatedHost, d Deps, s Settings, di
 }
 
 // prepareUnits writes the units, checks them, reloads and refreshes the database when its pin changed.
-func prepareUnits(ctx context.Context, host isolatedHost, d Deps, s Settings, digest string, dbChanges bool) error {
-	units, err := RenderUnits(UnitParamsFrom(s, digest))
+func prepareUnits(ctx context.Context, host isolatedHost, d Deps, params UnitParams, dbChanges bool) error {
+	units, err := RenderUnits(params)
 	if err != nil {
 		return err
 	}

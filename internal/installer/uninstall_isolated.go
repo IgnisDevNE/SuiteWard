@@ -66,7 +66,7 @@ func stopAndRemoveUnits(ctx context.Context, host isolatedHost, d Deps) error {
 	}
 	systemctl := userSystemctl(d)
 	// Stop only what systemd has loaded: a unit file that was never reloaded has no service to stop.
-	for _, file := range []string{"suiteward.container", "suiteward-migrate.container", "suiteward-db.container", "suiteward-data.volume", "suiteward-db-data.volume", "suiteward-network.network"} {
+	for _, file := range []string{"suiteward.container", "suiteward-migrate.container", "suiteward-db.container", "suiteward-data.volume", "suiteward-db-data.volume", "suiteward.network"} {
 		unit := unitService(file)
 		loaded, err := systemctl(ctx, "show", "--property=LoadState", "--value", unit)
 		if err != nil {

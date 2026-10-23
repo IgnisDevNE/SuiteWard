@@ -660,7 +660,7 @@ func TestUpgradeIsolatedFailsWhenTheServiceIsNotStableAndKeepsTheBackupAdvice(t 
 			t.Fatalf("the upgrade must fail naming %q and %q, got %v", want, journal, err)
 		}
 		// Migrate ran by now: the advice is the restore of the backup, which withBackup gives.
-		if !strings.Contains(err.Error(), "The backup is in "+u.backups) || !strings.Contains(err.Error(), "suiteward restore "+oneArchive(t, u.backups)) {
+		if !strings.Contains(err.Error(), "The backup is in "+u.backups) || !strings.Contains(err.Error(), "suiteward restore "+quoteArg(oneArchive(t, u.backups))) {
 			t.Errorf("the error lacks the backup advice: %v", err)
 		}
 		if strings.Contains(u.out.String(), "Upgraded") || strings.Contains(u.out.String(), "is running") {

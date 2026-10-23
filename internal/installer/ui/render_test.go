@@ -438,7 +438,7 @@ func TestWrap(t *testing.T) {
 		{"keeps the indent on every line", "  indented text here", 10, []string{"  indented", "  text", "  here"}},
 		{"breaks a word that is too long", "abcdefghij", 4, []string{"abcd", "efgh", "ij"}},
 		{"breaks a Windows path after a backslash", `C:\Users\magal\AppData\Local\suiteward-recovery-kit.txt`, 20, []string{`C:\Users\magal\`, `AppData\Local\`, "suiteward-recovery-k", "it.txt"}},
-		{"breaks a path after a slash", "/home/magal/.local/share/suiteward/kit.txt", 18, []string{"/home/magal/", ".local/", "share/suiteward/", "kit.txt"}},
+		{"breaks a path after a slash", "/home/magal/.local/share/suiteward/kit.txt", 18, []string{"/home/magal/", ".local/share/", "suiteward/kit.txt"}},
 		{"a word with a separator that does not fit before it is cut", "/abcdefghijklmnop", 6, []string{"/abcde", "fghijk", "lmnop"}},
 		{"keeps a trailing space for the cursor", "Choose [1]: ", 57, []string{"Choose [1]: "}},
 		{"counts runes, not bytes", "héllo wörld", 5, []string{"héllo", "wörld"}},

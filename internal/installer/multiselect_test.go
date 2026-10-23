@@ -43,7 +43,7 @@ func TestAMultipleChoiceIsAnsweredByTheFlagTheAnswersFileOrTheDefaults(t *testin
 			"Repositories to protect (numbers or owner/name, comma-separated, at most 20) is required: pass --repositories"},
 		{"a flag that names no choice", map[string]string{"repositories": "acme/elsewhere"}, nil, true, nil, nil, `"acme/elsewhere" is not one of the choices`},
 		{"a flag with too few", map[string]string{"repositories": " , "}, nil, true, nil, nil, "0 chosen"},
-		{"a flag with too many", map[string]string{"repositories": "1,2,3"}, nil, true, func(m *ui.Multi) { m.Max = 2 }, nil, "3 chosen: pick between 1 and 2"},
+		{"a flag with too many", map[string]string{"repositories": "1,2,3"}, nil, true, func(m *ui.Multi) { m.Max, m.Defaults = 2, nil }, nil, "3 chosen: pick between 1 and 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &keyConsole{out: &bytes.Buffer{}}
@@ -115,9 +115,10 @@ func TestAMultipleChoiceIsPickedWithTheKeysOnAFullScreen(t *testing.T) {
 // A question that cannot be answered is a bug of the caller, and nothing is asked.
 func TestAnImpossibleMultipleChoiceIsAnErrorAndAsksNothing(t *testing.T) {
 	for name, mutate := range map[string]func(*ui.Multi){
-		"a default off the list": func(m *ui.Multi) { m.Defaults = []int{3} },
-		"no choices":             func(m *ui.Multi) { m.Choices = nil; m.Defaults = nil },
-		"a minimum above max":    func(m *ui.Multi) { m.Min, m.Max = 3, 2 },
+		"a default off the list":     func(m *ui.Multi) { m.Defaults = []int{3} },
+		"no choices":                 func(m *ui.Multi) { m.Choices = nil; m.Defaults = nil },
+		"a minimum above max":        func(m *ui.Multi) { m.Min, m.Max = 3, 2 },
+		"more defaults than the max": func(m *ui.Multi) { m.Max = 2 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			for _, plain := range []bool{false, true} {

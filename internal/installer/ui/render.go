@@ -88,8 +88,9 @@ func (it item) plainLines() []string {
 
 // row is one line of the content or the step column: its text with the color sequences in place, and its width in columns.
 type row struct {
-	s string
-	w int
+	s   string
+	w   int
+	pin bool // a row of a critical box: a page that is trimmed to fit does not trim it
 }
 
 func (r row) pad(width int) string { return r.s + strings.Repeat(" ", max(0, width-r.w)) }
@@ -105,7 +106,7 @@ func (b *rowBuilder) put(t tone, bold bool, text string) {
 	b.w += utf8.RuneCountInString(text)
 }
 
-func (b *rowBuilder) row() row { return row{b.sb.String(), b.w} }
+func (b *rowBuilder) row() row { return row{s: b.sb.String(), w: b.w} }
 
 func (s *Screen) rb() *rowBuilder { return &rowBuilder{lv: s.color} }
 
@@ -143,15 +144,13 @@ func (s *Screen) frame() frame {
 	if steps {
 		textW = inner - stepsWidth - 1 - 2
 	}
-	var content []row
-	cursor := -1
+	page := pageRows{cursor: -1, tail: -1}
 	if summary {
-		content = s.summaryRows(textW)
+		page.rows = s.summaryRows(textW)
 	} else {
-		content, cursor = s.contentRows(textW)
+		page = s.contentRows(textW)
 	}
-	cut := max(0, len(content)-bodyH) // shortcut: no scrollback, the last rows that fit are shown
-	content, cursor = content[cut:], cursor-cut
+	content, cursor := s.fitBody(page, bodyH, textW)
 	hint := "Ctrl-C to quit"
 	switch {
 	case summary, s.waiting, s.failure != "":
@@ -250,36 +249,103 @@ func (s *Screen) stepCell(i int) row {
 	return b.row()
 }
 
+// pageRows is the rows of a page, and what a page that is taller than the body must not lose.
+type pageRows struct {
+	rows   []row
+	cursor int // the row that holds the cursor, -1 with no pending line
+	head   int // the rows of the title of a Page, which stay at the top; 0 for a page that Page did not open
+	// tail is the first row of what the page waits on, which stays at the bottom: the rule above a question, the error of a command that
+	// failed, or the end of a page that waits for Enter. -1 for a page that waits on nothing, which shows its last rows.
+	tail int
+}
+
 // contentRows is the page of the current step. The pending line (and with it the cursor) comes after the lines, and the spinner,
-// which is a live line, after that. cursor is the index of the row that holds the cursor, -1 with no pending line.
-func (s *Screen) contentRows(width int) (rows []row, cursor int) {
+// which is a live line, after that.
+func (s *Screen) contentRows(width int) pageRows {
 	labelW := 0
 	for _, it := range s.items {
 		if it.kind == itemBar {
 			labelW = min(maxLabelWidth, max(labelW, utf8.RuneCountInString(it.text)))
 		}
 	}
-	for _, it := range s.items {
-		rows = append(rows, s.itemRows(it, width, labelW)...)
+	p := pageRows{cursor: -1, tail: -1}
+	for i, it := range s.items {
+		if it.kind == itemRule && p.tail < 0 {
+			p.tail = len(p.rows)
+		}
+		rows := s.itemRows(it, width, labelW)
+		if i == 0 && it.kind == itemTitle {
+			p.head = len(rows)
+		}
+		p.rows = append(p.rows, rows...)
 	}
 	if s.multi != nil {
-		rows = append(rows, s.multiRows(len(rows), width)...)
+		p.rows = append(p.rows, s.multiRows(len(p.rows), width)...)
 	}
-	cursor = -1
 	if s.partial != "" {
-		rows = append(rows, s.textRows(s.partial, width)...)
-		cursor = len(rows) - 1
+		p.rows = append(p.rows, s.textRows(s.partial, width)...)
+		p.cursor = len(p.rows) - 1
 	}
 	if s.spinning {
-		rows = append(rows, s.spinRow(width))
+		p.rows = append(p.rows, s.spinRow(width))
 	}
 	if s.failure != "" { // the error, under the page it stopped on, in the style of a warning; no line is pending, so no cursor
-		if len(rows) > 0 {
-			rows = append(rows, row{})
+		if p.tail < 0 {
+			p.tail = len(p.rows)
 		}
-		rows, cursor = append(rows, s.markedRows(warnGlyph, toneAmber, toneDefault, s.failure, width)...), -1
+		if len(p.rows) > 0 {
+			p.rows = append(p.rows, row{})
+		}
+		p.rows, p.cursor = append(p.rows, s.markedRows(warnGlyph, toneAmber, toneDefault, s.failure, width)...), -1
 	}
-	return rows, cursor
+	if p.tail < 0 && s.waiting {
+		p.tail = len(p.rows)
+	}
+	return p
+}
+
+// trimmedRow is the row that says a page was trimmed to fit.
+func (s *Screen) trimmedRow(width int) row {
+	b := s.rb()
+	b.put(toneMuted, false, fit("… enlarge the window to read the rest", width))
+	return b.row()
+}
+
+// fitBody is the rows of a page that show in a body of bodyH rows, and the row of the cursor. A page that is taller shows its last rows,
+// as a terminal would (shortcut: no scrollback), except a page that Page opened and that waits on something: it keeps its title at the top
+// and what it waits on at the bottom, and trims the explanation between them from the end, behind one row that says so. The rows of a
+// critical box are not trimmed. When the title, the question and the boxes do not fit together, the last rows show.
+func (s *Screen) fitBody(p pageRows, bodyH, width int) ([]row, int) {
+	n := len(p.rows)
+	if n <= bodyH {
+		return p.rows, p.cursor
+	}
+	if p.head > 0 && p.tail >= p.head {
+		gone, first, drop := make([]bool, n), n, n-bodyH+1 // the row that says so takes one of the rows
+		for i := p.tail - 1; i >= p.head && drop > 0; i-- {
+			if !p.rows[i].pin {
+				gone[i], first, drop = true, i, drop-1
+			}
+		}
+		if drop == 0 {
+			rows, cursor := make([]row, 0, bodyH), -1
+			for i, r := range p.rows {
+				if i == first {
+					rows = append(rows, s.trimmedRow(width))
+				}
+				if gone[i] {
+					continue
+				}
+				if i == p.cursor {
+					cursor = len(rows)
+				}
+				rows = append(rows, r)
+			}
+			return rows, cursor
+		}
+	}
+	cut := n - bodyH
+	return p.rows[cut:], p.cursor - cut
 }
 
 func (s *Screen) itemRows(it item, width, labelW int) []row {
@@ -336,7 +402,11 @@ func (s *Screen) criticalRows(text string, width int) []row {
 		b.put(toneRed, false, "│")
 		rows = append(rows, b.row())
 	}
-	return append(rows, edge("╰", "╯"))
+	rows = append(rows, edge("╰", "╯"))
+	for i := range rows {
+		rows[i].pin = true
+	}
+	return rows
 }
 
 // fieldRows is a label/value row: the label muted in a column of keyW, the value wrapped under itself. A block of fields is indented.
@@ -475,7 +545,7 @@ func wrapLines(text string, width int) []string {
 }
 
 // wrap breaks one line of text at spaces into lines of at most width runes. The indent of the text stays on every line, a word that is
-// longer than a line is cut, and a trailing space stays (the cursor of a prompt goes after it).
+// longer than a line is cut (after a path separator when one fits, see breakAt), and a trailing space stays (the cursor of a prompt goes after it).
 func wrap(text string, width int) []string {
 	width = max(1, width)
 	rest := strings.TrimLeft(text, " ")
@@ -493,7 +563,8 @@ func wrap(text string, width int) []string {
 			if len(cur) > 0 {
 				lines, cur = append(lines, pad+string(cur)), nil
 			}
-			lines, w = append(lines, pad+string(w[:room])), w[room:]
+			cut := breakAt(w, room)
+			lines, w = append(lines, pad+string(w[:cut])), w[cut:]
 		}
 		if len(cur) > 0 && len(cur)+1+len(w) > room {
 			lines, cur = append(lines, pad+string(cur)), nil
@@ -521,4 +592,16 @@ func fit(text string, width int) string {
 		return text
 	}
 	return string(r[:width-1]) + "…"
+}
+
+// breakAt is where a word that is longer than room is cut: after the last "\" or "/" that fits, so that a path breaks between names
+// (a separator at the very start does not count, it would leave a line of one character), and at room, in the middle of the word, when
+// there is none. The row holds room runes at most.
+func breakAt(w []rune, room int) int {
+	for i := room - 1; i > 0; i-- {
+		if w[i] == '\\' || w[i] == '/' {
+			return i + 1
+		}
+	}
+	return room
 }

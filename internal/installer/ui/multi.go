@@ -24,8 +24,8 @@ type Multi struct {
 	Hint string
 }
 
-// Validate refuses a question that cannot be answered, which is a bug of the caller: no choices, a default that is not a choice or is
-// listed twice, and bounds that no number of picks can meet.
+// Validate refuses a question that cannot be answered, which is a bug of the caller: no choices, a default that is not a choice or is listed
+// twice, bounds that no number of picks can meet, and defaults that the bounds refuse (no defaults at all is fine: the user picks).
 func (m Multi) Validate() error {
 	n := len(m.Choices)
 	switch {
@@ -42,6 +42,9 @@ func (m Multi) Validate() error {
 		if d < 0 || d >= n || slices.Contains(m.Defaults[:i], d) {
 			return fmt.Errorf("the multiple choice %q has the default %d, which is not one of its %d choices or is listed twice", m.Label, d, n)
 		}
+	}
+	if k := len(m.Defaults); k > 0 && m.countError(k) != nil {
+		return fmt.Errorf("the multiple choice %q starts with %d rows picked, but it takes %s: its defaults must meet its bounds", m.Label, k, m.rangeText())
 	}
 	return nil
 }

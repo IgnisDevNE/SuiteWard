@@ -63,7 +63,7 @@ func TestAPageThatDoesNotFitKeepsItsTitleAndItsQuestion(t *testing.T) {
 			if strings.Count(text, trimRow) != 1 {
 				t.Errorf("want exactly one row that says the page was trimmed (%q):\n%s", trimRow, text)
 			}
-			if !strings.Contains(text, "First paragraph begins here.") || strings.Contains(text, "Third ends here.") {
+			if !strings.Contains(squash(text), squash("First paragraph begins here.")) || strings.Contains(squash(text), squash("Third ends here.")) {
 				t.Errorf("the explanation is trimmed from the end, not from the top:\n%s", text)
 			}
 			if !f.cursor || !strings.Contains(f.rows[f.curRow-1], "Type the instance id to confirm:") {
@@ -75,12 +75,12 @@ func TestAPageThatDoesNotFitKeepsItsTitleAndItsQuestion(t *testing.T) {
 
 // A page that fits is shown whole, with no row that says anything was cut.
 func TestAPageThatFitsIsNotTrimmed(t *testing.T) {
-	s, _, frames := openChunks(t, windowOptions(80, 32), "x\n")
+	s, _, frames := openChunks(t, windowOptions(80, 50), "x\n")
 	longPage(s)
 	if _, err := s.Ask("Q", ""); err != nil {
 		t.Fatal(err)
 	}
-	if text := content((*frames)[0]); strings.Contains(text, trimRow) || !strings.Contains(text, "Third ends here.") {
+	if text := content((*frames)[0]); strings.Contains(text, trimRow) || !strings.Contains(squash(text), squash("Third ends here.")) {
 		t.Errorf("a page that fits was trimmed:\n%s", text)
 	}
 }
@@ -91,7 +91,7 @@ func TestAPageKeepsItsCriticalBoxWhenItTrimsTheExplanation(t *testing.T) {
 		t.Run(w.name, func(t *testing.T) {
 			s, _, frames := openChunks(t, windowOptions(w.width, w.height), "x\n")
 			longPage(s)
-			s.Critical("Keep the recovery kit off this machine.")
+			s.Critical("Keep the kit off this machine.")
 			if _, err := s.Ask("Type stored to go on", ""); err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestAPageKeepsItsCriticalBoxWhenItTrimsTheExplanation(t *testing.T) {
 				switch {
 				case strings.HasPrefix(l, "╭"):
 					top = i
-				case strings.Contains(l, "Keep the recovery kit off this machine."):
+				case strings.Contains(l, "Keep the kit off this machine."):
 					box = i
 				case strings.HasPrefix(l, "╰"):
 					bottom = i

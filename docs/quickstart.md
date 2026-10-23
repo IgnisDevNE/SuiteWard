@@ -22,10 +22,10 @@ On Windows, or to verify by hand on any system: from the release page, download 
 
 ```powershell
 pwsh ./scripts/verify-release.ps1 -Blob <folder>/SHA256SUMS -Bundle <folder>/SHA256SUMS.sigstore.json
-pwsh ./scripts/verify-release.ps1 -Sums <folder>/SHA256SUMS -File <folder>/suiteward_<tag>_windows_amd64.exe
+pwsh ./scripts/verify-release.ps1 -Sums <folder>/SHA256SUMS -File <folder>/suiteward_<tag>_<os>_<arch>
 ```
 
-Rename the binary to `suiteward.exe` (`suiteward` on Linux and macOS) and put it on your PATH.
+Use the file of your platform: `suiteward_<tag>_windows_amd64.exe`, or one of the `linux` and `darwin` files. Rename it to `suiteward.exe` on Windows, or to `suiteward` on Linux and macOS, where you also run `chmod +x suiteward`, and put it on your PATH. A browser download on macOS needs `xattr -d com.apple.quarantine <file>` first.
 
 **2. Install** ([section 5](install.md#5-install-co-located)):
 

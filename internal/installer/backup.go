@@ -217,3 +217,26 @@ func withBackup(err error, dir, unitsDir string) error {
 	}
 	return fmt.Errorf("%w\n%s", err, advice)
 }
+
+// writeRestrictedFile creates path, which must not exist, restricts it to this user and only then writes data to it, so that data
+// that must stay private is never in a file that others can read. A file it could not finish is removed.
+func writeRestrictedFile(ctx context.Context, d Deps, path string, data []byte) error {
+	path = filepath.Clean(path)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return errors.Join(fmt.Errorf("create %s: %w", path, err), os.Remove(path))
+	}
+	err = restrictPath(ctx, d, path, false)
+	if err == nil {
+		if err = os.WriteFile(path, data, 0o600); err != nil {
+			err = fmt.Errorf("write %s: %w", path, err)
+		}
+	}
+	if err != nil {
+		return errors.Join(err, os.Remove(path))
+	}
+	return nil
+}

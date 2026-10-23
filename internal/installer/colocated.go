@@ -295,6 +295,7 @@ func existingStackFor(ctx context.Context, rt Runtime, saved Settings, haveSaved
 	}
 	base = adopted.Settings
 	base.GitHub.TestChecks = saved.GitHub.TestChecks
+	base.BackupRecipient = saved.BackupRecipient // the containers know nothing of it
 	return base, stackInstalled{Settings: adopted.Settings, Known: true, Image: adopted.Image}, nil
 }
 

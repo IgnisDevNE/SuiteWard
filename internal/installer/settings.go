@@ -18,6 +18,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/archive"
 )
 
 // Default ports published on the loopback interface (D-INSTALLER).
@@ -115,6 +116,11 @@ func (s Settings) Validate() error {
 	if s.JobTimeout != "" {
 		if d, err := time.ParseDuration(s.JobTimeout); err != nil || d <= 0 {
 			add("job_timeout %q is not a positive Go duration", s.JobTimeout)
+		}
+	}
+	if s.BackupRecipient != "" {
+		if _, err := archive.ParseRecipient(s.BackupRecipient); err != nil {
+			add("backup_recipient: %v", err) // the error never repeats the value
 		}
 	}
 	return errors.Join(append(errs, s.GitHub.validate())...)

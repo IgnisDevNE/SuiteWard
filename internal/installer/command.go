@@ -28,6 +28,7 @@ const Usage = `usage: suiteward install [flags]
        suiteward install host [flags]
        suiteward uninstall [--purge] [--yes] [flags]
        suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]
+       suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated]
        suiteward doctor [--json] [--settings PATH]
 `
 
@@ -118,7 +119,7 @@ func (e Env) validate() error {
 	return nil
 }
 
-// Main runs one command of the installer: args start with the command name (install, install host, uninstall, enroll or doctor).
+// Main runs one command of the installer: args start with the command name (install, install host, uninstall, enroll, backup init or doctor).
 // It returns the process exit code and prints a problem to stderr.
 func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	command, rest := "", []string(nil)
@@ -131,6 +132,8 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		err = installHost(ctx, rest[1:], env)
 	case command == "install":
 		err = Install(ctx, rest, env)
+	case command == "backup" && len(rest) > 0 && rest[0] == "init":
+		err = BackupInit(ctx, rest[1:], env)
 	case command == "enroll":
 		err = Enroll(ctx, rest, env)
 	case command == "uninstall":

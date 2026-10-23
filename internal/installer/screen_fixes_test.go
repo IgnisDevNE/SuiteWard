@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -229,5 +230,63 @@ func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(
 	}
 	if out.String() != dockerWarning {
 		t.Errorf("a plain run printed\n%q\nwant the warning as it is\n%q", out.String(), dockerWarning)
+	}
+}
+
+// A service that has just started does not answer at once. Without GitHub nothing waits for it before the summary, which then left its
+// Instance row out of an instance that was up a moment later.
+func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing.T) {
+	run := func(t *testing.T, refusals int) (tail string, asked int) {
+		t.Helper()
+		h := newHarness(t, "linux")
+		h.status = func(context.Context, string) ([]byte, error) {
+			if asked++; asked <= refusals {
+				return nil, errors.New("connection refused")
+			}
+			return []byte(`{"version":"v0.2.0"}`), nil
+		}
+		c := newTermConsole(&bytes.Buffer{})
+		env := h.newEnv()
+		env.OpenScreen = c.open
+		args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--image", testImage, "--github-app-id", "none"}
+		if err := Install(liveContext(t), args, env); err != nil {
+			t.Fatal(err)
+		}
+		return c.tail(), asked
+	}
+
+	if tail, _ := run(t, 3); !strings.Contains(tail, "Instance: v0.2.0\n") {
+		t.Errorf("the summary has no Instance row although the service answered a few seconds in:\n%s", tail)
+	}
+	// A service that never answers is waited for as long as the install waits for it with GitHub, and the summary still comes.
+	tail, asked := run(t, 1000)
+	if strings.Contains(tail, "Instance:") || !strings.Contains(tail, "Status: ") {
+		t.Errorf("the summary of a service that does not answer has an Instance row or lacks the rest:\n%s", tail)
+	}
+	if asked != statusTries {
+		t.Errorf("/status was asked %d times, want %d", asked, statusTries)
+	}
+}
+
+func TestTheSummaryOfAnUpgradeWaitsForTheServiceToAnswer(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	afterStart := 0 // the reads once the new service was started: the first ones are the summary's
+	u.status = func(ctx context.Context, address string) ([]byte, error) {
+		if slices.ContainsFunc(u.f.calls, func(c call) bool { return strings.Contains(c.line(), "--name suiteward --network") }) {
+			if afterStart++; afterStart <= 3 {
+				return nil, errors.New("connection refused")
+			}
+		}
+		return httpGet(ctx, address)
+	}
+	c := newTermConsole(&u.out)
+	env := u.env()
+	env.OpenScreen = c.open
+	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
+	if err := Install(liveContext(t), args, env); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.tail(), "Instance: v0.2.0\n") {
+		t.Errorf("the summary has no Instance row although the service answered a few tries in:\n%s", c.tail())
 	}
 }

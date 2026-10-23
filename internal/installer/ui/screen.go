@@ -548,13 +548,14 @@ func (s *Screen) Select(label string, choices []Choice, def int) (idx int, err e
 			return cur, nil
 		case k == keyCtrlC:
 			s.closeSelect(0, "")
-			return 0, fmt.Errorf("read the choice for %s: %w", label, errCtrlC)
+			return 0, fmt.Errorf("read the choice for %s: %w", label, s.afterTerminalError(errCtrlC))
 		}
 	}
 }
 
-// errCtrlC is the end of a Select by a Ctrl-C that arrived as a character. A terminal that keeps its signals raises one for the context to
-// follow instead, so this is only a terminal that cannot: the command fails, and does not report an interrupt.
+// errCtrlC is the end of a Select by a Ctrl-C that arrived as a character and that no signal followed (see afterTerminalError). A
+// terminal that keeps its signals raises one for the context to follow instead, so this is only a terminal that cannot: the command
+// fails, and does not report an interrupt.
 var errCtrlC = errors.New("interrupted by Ctrl-C, which reached the program as a key and not as a signal")
 
 // openSelect draws the question and the list with the default highlighted.

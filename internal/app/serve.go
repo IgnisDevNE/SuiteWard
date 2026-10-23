@@ -102,7 +102,8 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		Handlers: handlers,
 	}
 	tier := string(cfg.Tier)
-	a := &api{store: store, owners: store, logger: logger, tier: tier}
+	reports := newChangeReports(store, artifacts) // one source for the report page, the revision comment and the check summary: one build at a time
+	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports}
 	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
@@ -119,8 +120,8 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		riverConfig.Bootstrap = bootstrap.run
 		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, contents: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
 		riverConfig.Commands = commandJob.run
-		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store, logger: logger}
-		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger}
+		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store, logger: logger, reports: reports, reportBase: cfg.ReportBaseURL}
+		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger, reports: reports}
 		checkProblems := &bootstrapProblems{}
 		checkJob := &checksJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
 			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now}

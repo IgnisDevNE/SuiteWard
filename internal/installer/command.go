@@ -361,7 +361,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 			return err
 		}
 		tier = r.preset("tier", string(saved.Tier))
-	} else if tier, err = r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier)); err != nil {
+	} else if tier, err = r.Select("tier", "Installation tier", tierChoices, string(saved.Tier)); err != nil {
 		return err
 	}
 	switch config.Tier(tier) {
@@ -517,4 +517,10 @@ func quoteArg(arg string) string {
 		return `"` + arg + `"`
 	}
 	return "'" + arg + "'"
+}
+
+// tierChoices are the answers of the tier question.
+var tierChoices = []ui.Choice{
+	{Name: string(config.TierCoLocated), Desc: "on this PC, next to the agent"},
+	{Name: string(config.TierIsolated), Desc: "a separate user, VM or host"},
 }

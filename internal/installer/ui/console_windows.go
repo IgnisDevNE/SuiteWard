@@ -27,3 +27,6 @@ func enableVT(f *os.File) (func() error, error) {
 		return nil
 	}, nil
 }
+
+// enableKeys puts the console input behind f in per-key mode. It does nothing yet.
+func enableKeys(*os.File) (func() error, error) { return func() error { return nil }, nil }

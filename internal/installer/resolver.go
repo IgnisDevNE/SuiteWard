@@ -170,3 +170,8 @@ func nonEmpty(key, label string, secret []byte) ([]byte, error) {
 // ask prints a question and reads one line of the terminal. A flag or the answers file never answers it, so it is for the choices
 // that only the person at the terminal makes. The end of the input is io.EOF.
 func (r *Resolver) ask(question string) (string, error) { return r.screen.Prompt(question) }
+
+// Select resolves a choice among a few answers, in the order of Value. It asks like Value for now.
+func (r *Resolver) Select(key, label string, choices []ui.Choice, def string) (string, error) {
+	return r.Value(key, label, def)
+}

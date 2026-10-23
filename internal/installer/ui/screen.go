@@ -89,6 +89,10 @@ type Options struct {
 	// the signal cancels Context, so a read that ends in an error waits a moment (interruptGrace) for the context and returns its
 	// error, which is what lets the command report an interrupt. The end of an input that is not a terminal is the end of the input.
 	InputIsTerminal bool
+	// KeyInput puts the terminal's input in per-key mode for one Select: a key press is read when it is made, nothing is echoed, and an
+	// arrow arrives as an escape sequence. Ctrl-C must stay a signal that cancels Context, not a character. restore puts the previous
+	// mode back and is called once, when the Select ends, whatever the way. Optional; nil, or an error, makes Select ask by number.
+	KeyInput func() (restore func() error, err error)
 }
 
 // Choice is one numbered answer of Choose.
@@ -753,3 +757,6 @@ func clean(text string) string {
 
 // oneLine is clean for a text that must stay on one row: a newline becomes a space.
 func oneLine(text string) string { return strings.ReplaceAll(clean(text), "\n", " ") }
+
+// Select asks like Choose, with the arrow keys. It does nothing yet.
+func (s *Screen) Select(label string, choices []Choice, def int) (int, error) { return 0, nil }

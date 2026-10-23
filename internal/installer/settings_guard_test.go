@@ -451,3 +451,20 @@ func TestAnEmptySettingsFlagIsAUsageError(t *testing.T) {
 		})
 	}
 }
+
+// An instance that is called "unknown" says why: what the database answered (a SELECT carries no secret), so that the person who is asked to
+// type the word can tell a stopped database from a stack that holds no instance.
+func TestUninstallSaysWhyTheInstanceIdIsUnknown(t *testing.T) {
+	h := purgeHarness(t)
+	h.status = func(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
+	h.f.fail("psql", errors.New("the database container is not running"))
+	if err := h.uninstallOn(false, "", "--purge", "--yes", "--instance", unknownValue); err != nil {
+		t.Fatal(err)
+	}
+	said := slices.ContainsFunc(strings.Split(h.out.String(), "\n"), func(line string) bool {
+		return strings.Contains(line, "neither /status nor the database names it") && strings.Contains(line, "the database container is not running")
+	})
+	if !said {
+		t.Errorf("no line says why the instance id is unknown:\n%s", h.out.String())
+	}
+}

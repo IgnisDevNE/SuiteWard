@@ -622,6 +622,9 @@ type Revision struct {
 	ReducedPathsTotal                       int
 	ReducedOmitted                          bool
 	Tier                                    Tier
+	Changes                                 *Changes
+	ChangesUnavailable                      bool
+	ReportURL                               string
 }
 
 // RevisionComment renders the comment of a new change-proposal revision: the protected files added, modified

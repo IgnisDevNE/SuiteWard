@@ -28,6 +28,7 @@ type Check struct {
 	// Paths are at most 20 of the PathsTotal runner files of a runner-uncovered check, each already cut by the caller; the other reasons have none.
 	Paths      []string
 	PathsTotal int
+	Changes    *Changes
 }
 
 // checkReason is the output of one reason code: its state, a title, what happened and the next action. The text

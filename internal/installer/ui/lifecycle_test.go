@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -105,16 +106,21 @@ func TestCloseAfterACancelledChoiceKeepsTheQuestion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
+	in := &signalReader{r: pr, reading: make(chan struct{})}
 	var out bytes.Buffer
 	o := fullOptions(ColorNone)
-	o.Out, o.In, o.Version, o.Context = &out, pr, testVersion, ctx
+	o.Out, o.In, o.Version, o.Context = &out, in, testVersion, ctx
 	s, err := Open(o)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	done := make(chan error, 1)
 	go func() { _, err := s.Choose("How should SuiteWard run?", testChoices, 0); done <- err }()
-	waitFor(t, func() bool { return snapshot(s).cursor }, "the choice prompt to open")
+	select {
+	case <-in.reading: // the prompt is on the page and the screen waits for the terminal
+	case <-time.After(2 * time.Second):
+		t.Fatal("the choice never asked for input")
+	}
 	cancel()
 	select {
 	case err := <-done:
@@ -131,14 +137,16 @@ func TestCloseAfterACancelledChoiceKeepsTheQuestion(t *testing.T) {
 	}
 }
 
-func waitFor(t *testing.T, cond func() bool, what string) {
-	t.Helper()
-	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-		if cond() {
-			return
-		}
-	}
-	t.Fatalf("timed out waiting for %s", what)
+// signalReader closes reading when the screen first reads: the prompt has been drawn by then.
+type signalReader struct {
+	r       io.Reader
+	once    sync.Once
+	reading chan struct{}
+}
+
+func (s *signalReader) Read(p []byte) (int, error) {
+	s.once.Do(func() { close(s.reading) })
+	return s.r.Read(p)
 }
 
 func TestPromptsEndWhenTheContextIsCancelled(t *testing.T) {

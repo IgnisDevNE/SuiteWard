@@ -119,3 +119,12 @@ func normalize(text string, replace ...string) string {
 	}
 	return text
 }
+
+// liveContext is a context that can be cancelled but is not: production gets one from signal.NotifyContext, so a prompt reads the
+// input in a goroutine and selects on it, which a Background context never makes it do.
+func liveContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
+}

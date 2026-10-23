@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -95,5 +96,16 @@ func TestShowSummaryEndsWithTheContextWithoutAnError(t *testing.T) {
 	}
 	if !strings.Contains(out.String()[strings.LastIndex(out.String(), leaveAlt):], "Status: http://127.0.0.1:8081/status") {
 		t.Error("the summary is not in the scrollback after Close")
+	}
+}
+
+// The full screen takes over the process's console, so only a command that prints to the real stdout may ask for it: a test that
+// hands the commands a buffer must never switch the developer's terminal to the alternate screen.
+func TestOSEnvOpensTheRealConsoleOnlyForTheRealStdout(t *testing.T) {
+	if OSEnv(os.Stdout).OpenScreen == nil {
+		t.Error("the command line cannot open the full screen")
+	}
+	if OSEnv(&bytes.Buffer{}).OpenScreen != nil {
+		t.Error("a buffer got the process's console")
 	}
 }

@@ -35,7 +35,7 @@ func TestInstallColocatedOnAFullScreenWalksTheStepsAndEndsWithASummary(t *testin
 		c.out.WriteString(child)
 		return inner(ctx, name, args)
 	}
-	if err := Install(context.Background(), colocatedArgs(h), env); err != nil {
+	if err := Install(liveContext(t), colocatedArgs(h), env); err != nil {
 		t.Fatal(err)
 	}
 	out := c.out.String()
@@ -81,7 +81,7 @@ func TestInstallColocatedOnAFullScreenShowsTheWaitsAndTheLongCommands(t *testing
 	c := newTermConsole(&bytes.Buffer{})
 	env := h.newEnv()
 	env.OpenScreen = c.open
-	if err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--image", testImage, "--github-app-id", "none"}, env); err != nil {
+	if err := Install(liveContext(t), []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--image", testImage, "--github-app-id", "none"}, env); err != nil {
 		t.Fatal(err)
 	}
 	out := c.out.String()
@@ -103,7 +103,7 @@ func TestPlainFlagKeepsATerminalFromDrawing(t *testing.T) {
 		if terminal {
 			env.OpenScreen = c.open
 		}
-		if err := Install(context.Background(), colocatedArgs(h, extra...), env); err != nil {
+		if err := Install(liveContext(t), colocatedArgs(h, extra...), env); err != nil {
 			t.Fatal(err)
 		}
 		return normalize(h.out.String(), h.dir, "DIR"), c
@@ -185,7 +185,7 @@ func TestInstallColocatedReportsAnErrorAfterClosingTheScreen(t *testing.T) {
 	var stderr bytes.Buffer
 	probe := &writerFunc{w: &stderr}
 	probe.before = func() { probe.screenClosed = c.closed() }
-	code := Main(context.Background(), []string{"install", "--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm"}, env, probe) // no --image, and a development build carries none
+	code := Main(liveContext(t), []string{"install", "--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm"}, env, probe) // no --image, and a development build carries none
 	if code != 1 || !strings.Contains(stderr.String(), "image") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
@@ -200,7 +200,7 @@ func TestUpgradeColocatedOnAFullScreenKeepsTheBackupPath(t *testing.T) {
 	env := u.env()
 	env.OpenScreen = c.open
 	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
-	if err := Install(context.Background(), args, env); err != nil {
+	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
 	c.steps(t, "Plan", "Backup", "Images", "Replace", "Check")
@@ -224,7 +224,7 @@ func TestUpgradeIsolatedOnAFullScreenKeepsTheBackupPath(t *testing.T) {
 	env := u.env()
 	env.OpenScreen = c.open
 	args := []string{"--upgrade", "--tier", "isolated", "--settings", settingsFile(u.home), "--backup-dir", u.backups, "--image", testDigest, "--yes"}
-	if err := Install(context.Background(), args, env); err != nil {
+	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
 	c.steps(t, "Plan", "Backup", "Images", "Replace", "Check")
@@ -247,7 +247,7 @@ func TestInstallIsolatedOnAFullScreenWalksTheStepsAndEndsWithASummary(t *testing
 		OpenScreen: c.open,
 	}
 	args := []string{"--tier", "isolated", "--settings", settingsFile(f.home), "--image", testDigest, "--github-app-id", "none"}
-	if err := Install(context.Background(), args, env); err != nil {
+	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
 	c.steps(t, "Checks", "Images", "GitHub", "Units", "Start", "Owner", "Done")
@@ -272,7 +272,7 @@ func TestUninstallOnAFullScreenShowsTheSteps(t *testing.T) {
 	env := h.newEnv()
 	env.OpenScreen = c.open
 	args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--yes"}
-	if err := Uninstall(context.Background(), args, env); err != nil {
+	if err := Uninstall(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
 	c.steps(t, "Confirm", "Remove")
@@ -284,7 +284,7 @@ func TestUninstallOnAFullScreenShowsTheSteps(t *testing.T) {
 	c = newTermConsole(&u.out)
 	env = u.env()
 	env.OpenScreen = c.open
-	if err := Uninstall(context.Background(), []string{"--tier", "isolated", "--settings", settingsFile(u.home), "--yes"}, env); err != nil {
+	if err := Uninstall(liveContext(t), []string{"--tier", "isolated", "--settings", settingsFile(u.home), "--yes"}, env); err != nil {
 		t.Fatal(err)
 	}
 	c.steps(t, "Confirm", "Remove")
@@ -294,7 +294,7 @@ func TestInstallHostOnAFullScreenShowsTheSteps(t *testing.T) {
 	h := newHostFake()
 	c := newTermConsole(&bytes.Buffer{})
 	env := Env{Deps: h.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: c.open}
-	if err := installHost(context.Background(), []string{"--yes", "--metadata-rule", "no"}, env); err != nil {
+	if err := installHost(liveContext(t), []string{"--yes", "--metadata-rule", "no"}, env); err != nil {
 		t.Fatal(err)
 	}
 	c.steps(t, "Podman", "Account", "Metadata", "Next")
@@ -315,7 +315,7 @@ func TestEnrollOnAFullScreenRunsSetupOnTheRealTerminal(t *testing.T) {
 		return inner(ctx, name, args)
 	}
 	var stderr bytes.Buffer
-	if code := Main(context.Background(), []string{"enroll", "--settings", h.settingsPath(), "--owner", "alice"}, env, &stderr); code != 0 {
+	if code := Main(liveContext(t), []string{"enroll", "--settings", h.settingsPath(), "--owner", "alice"}, env, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	c.steps(t, "Instance", "Owner")
@@ -341,7 +341,7 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	c := newTermConsole(&bytes.Buffer{})
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, OpenScreen: c.open}
 	var stderr bytes.Buffer
-	if code := Main(context.Background(), []string{"doctor", "--settings", path}, env, &stderr); code != 1 {
+	if code := Main(liveContext(t), []string{"doctor", "--settings", path}, env, &stderr); code != 1 {
 		t.Errorf("exit %d, want 1: a failed check is a failed doctor", code)
 	}
 	c.steps(t, "Doctor")
@@ -361,7 +361,7 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	}
 	var piped bytes.Buffer
 	env = Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &piped}}
-	_ = Main(context.Background(), []string{"doctor", "--settings", path}, env, &stderr)
+	_ = Main(liveContext(t), []string{"doctor", "--settings", path}, env, &stderr)
 	port := regexp.MustCompile(`port \d+`) // the stack of each build listens on a port of its own
 	for _, line := range strings.Split(strings.TrimSpace(piped.String()), "\n") {
 		if name, ok := strings.CutPrefix(line, "ok "); ok {
@@ -378,7 +378,7 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	env = Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, OpenScreen: c.open}
-	if code := Main(context.Background(), []string{"doctor", "--json", "--settings", path}, env, &stderr); code != 0 {
+	if code := Main(liveContext(t), []string{"doctor", "--json", "--settings", path}, env, &stderr); code != 0 {
 		t.Errorf("doctor --json exit %d", code)
 	}
 	if len(c.opened) != 0 || strings.Contains(c.out.String(), esc) {
@@ -400,7 +400,7 @@ func TestPlainRunsPrintWhatTheyPrintedBefore(t *testing.T) {
 		if terminal {
 			args = append(args, "--plain")
 		}
-		if err := Install(context.Background(), args, env); err != nil {
+		if err := Install(liveContext(t), args, env); err != nil {
 			t.Fatal(err)
 		}
 		return normalize(u.out.String(), u.dir, "DIR", strconv.Itoa(u.port), "PORT", filepath.Base(u.backup()), "BACKUP")

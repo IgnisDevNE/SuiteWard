@@ -32,6 +32,9 @@ type Changes struct {
 	NotShownTotal            int
 	Markers                  Markers
 	Truncated                bool
+	// Reduced says that the revision reduces the protected scope, so that a removed file left the protected files and may still exist.
+	// RevisionComment sets it from Revision.Reduced; ChangesOf does not know it.
+	Reduced bool
 }
 
 // ChangedFile is a counted file with its lines. Status is added, modified or removed.

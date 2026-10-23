@@ -88,16 +88,27 @@ func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, er
 	}, nil
 }
 
+// answerSource says where the answer of key came from: its flag or its key of the answers file; empty when it was not given.
+func answerSource(r *Resolver, key string) string {
+	if _, ok := r.flags[key]; ok {
+		return "--" + key
+	}
+	if _, ok := r.answers[key]; ok {
+		return `"` + key + `" in the answers file`
+	}
+	return ""
+}
+
 // chooseIsolatedSettings resolves the ports and the job timeout over base (the flag, the answers file, else base) and validates the
-// result. It never prompts: the values of an installed stack replace these anyway (adoptInstalled), and the install asks only
-// what a person at the terminal must decide.
+// result; an invalid value is refused naming the flag or the answers-file key that gave it. It never prompts: an installed stack
+// keeps its own values unless they are given (adoptInstalled), and the install asks only what a person at the terminal must decide.
 func chooseIsolatedSettings(r *Resolver, base Settings) (Settings, error) {
 	s := base
 	port := func(key string, def int) (int, error) {
 		v := r.preset(key, strconv.Itoa(def))
 		n, err := strconv.Atoi(strings.TrimSpace(v))
 		if err != nil {
-			return 0, fmt.Errorf("--%s %q is not a number", key, v)
+			return 0, fmt.Errorf("%s %q is not a number", answerSource(r, key), v) // the default of a key that was not given is one
 		}
 		return n, nil
 	}
@@ -109,7 +120,19 @@ func chooseIsolatedSettings(r *Resolver, base Settings) (Settings, error) {
 		return Settings{}, err
 	}
 	s.JobTimeout = r.preset("job-timeout", base.JobTimeout)
-	return s, s.Validate()
+	if err := s.Validate(); err != nil {
+		var from []string
+		for _, key := range []string{"http-port", "mcp-port", "job-timeout"} {
+			if source := answerSource(r, key); source != "" {
+				from = append(from, source)
+			}
+		}
+		if len(from) > 0 {
+			err = fmt.Errorf("%w (asked for with %s)", err, strings.Join(from, ", "))
+		}
+		return Settings{}, err
+	}
+	return s, nil
 }
 
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
@@ -141,11 +164,14 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		}
 		s.GitHub = fromFile
 	}
-	// The ports of an installed stack are its own service's, which may be running; any other are free or the install stops.
-	if !installed.found {
-		if err := checkPortsFree(ctx, d, s, say); err != nil {
-			return err
-		}
+	// Every port this run publishes is free, or the install stops; the listener on a port of the installed units is the service of
+	// the stack itself while it runs.
+	own, err := ownedPorts(ctx, d, installed)
+	if err != nil {
+		return err
+	}
+	if err := checkPortsFree(ctx, d, s, own, say); err != nil {
+		return err
 	}
 
 	// Every input, resolved and checked: the images first, so a wrong digest fails before the flow creates an App.
@@ -163,7 +189,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := g.checkEnvFileHoldsNoApp(host.envPath); err != nil {
 		return err
 	}
-	if err := g.checkAppKey(ctx); err != nil {
+	if err := g.checkAppKey(ctx, host.envPath); err != nil {
 		return err
 	}
 
@@ -184,7 +210,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return err
 	}
 
-	wasRunning, err := startStack(ctx, rt, d)
+	leftRunning, err := startStack(ctx, rt, d, installed.changedBy(g.s))
 	if err != nil {
 		return err
 	}
@@ -207,7 +233,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		}
 	}
 	say("Then run `suiteward doctor`.\n")
-	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, wasRunning)
+	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, leftRunning)
 	return nil
 }
 
@@ -229,8 +255,9 @@ func (g *githubInstall) checkEnvFileHoldsNoApp(envPath string) error {
 
 // checkAppKey refuses, before any change, an install with an App and no App key to store: the service unit of an App mounts that
 // secret, so without it the unit does not start. Without an App there is no key to check. It prints the key's fingerprint when
-// this run stores a key it was given.
-func (g *githubInstall) checkAppKey(ctx context.Context) error {
+// this run stores a key it was given. The way out names the env file when it holds an App: the service reads that file, and
+// --github-app-id none alone is refused while it does.
+func (g *githubInstall) checkAppKey(ctx context.Context, envPath string) error {
 	if g.githubKey != nil {
 		fingerprint, err := appKeyFingerprint(g.githubKey)
 		if err != nil {
@@ -248,48 +275,62 @@ func (g *githubInstall) checkAppKey(ctx context.Context) error {
 		return err
 	}
 	if !have {
-		return errors.New("the service mounts the secret " + SecretGitHubAppKey + " for the App " + strconv.FormatInt(g.s.GitHub.AppID, 10) + " and it does not exist: pass --github-app-key-file with the App's private key, or --github-app-id none to run without GitHub")
+		withoutGitHub := "pass --github-app-id none to run without GitHub"
+		held, err := readGitHubEnvFile(envPath)
+		if err != nil {
+			return err
+		}
+		if held.AppID != 0 {
+			withoutGitHub = "remove the three SUITEWARD_GITHUB_ lines from " + envPath + " (the service reads that file) and pass --github-app-id none to run without GitHub"
+		}
+		return fmt.Errorf("the service mounts the secret %s for the App %d and it does not exist: pass --github-app-key-file with the App's private key, or %s", SecretGitHubAppKey, g.s.GitHub.AppID, withoutGitHub)
 	}
 	return nil
 }
 
 // sayOldEnvFile tells the administrator when the old /etc env file may go: only once the service runs on the new one.
 // A service that was already running is not restarted, so it reads the new file only at its next start.
-func sayOldEnvFile(out io.Writer, current, old string, wasRunning bool) {
+func sayOldEnvFile(out io.Writer, current, old string, leftRunning bool) {
 	if old == "" {
 		return
 	}
 	reads := "now reads its GitHub settings from " + current
-	if wasRunning {
+	if leftRunning {
 		reads = "will read its GitHub settings from " + current + " on its next start (it was already running and was not restarted)"
 	}
 	_, _ = fmt.Fprintf(out, "\nThe service %s. An administrator may remove the old file: sudo rm %s\n", reads, old)
 }
 
 // startStack starts the database, waits for it, creates the application role, starts the service (the unit dependency runs
-// migrate first) and checks the three units. It reports whether the service was already running:
-// starting a running service does nothing, so it keeps what it read at its last start.
-func startStack(ctx context.Context, rt Runtime, d Deps) (wasRunning bool, err error) {
+// migrate first) and checks the three units. It reports whether a running service was left as it was: starting a running
+// service does nothing, so it keeps what it read at its last start. With restart (the ports or the job timeout of its units
+// changed) a running service is restarted instead, so that it takes the new units.
+func startStack(ctx context.Context, rt Runtime, d Deps, restart bool) (leftRunning bool, err error) {
 	systemctl := userSystemctl(d)
 	before, err := systemctl(ctx, "show", "--property=ActiveState", "--value", "suiteward.service")
 	if err != nil {
 		return false, fmt.Errorf("ask for the state of suiteward.service: %w", err)
 	}
-	wasRunning = before == "active"
+	running := before == "active"
+	leftRunning = running && !restart
 	if _, err := systemctl(ctx, "start", "suiteward-db.service"); err != nil {
-		return wasRunning, fmt.Errorf("start the database: %w", err)
+		return leftRunning, fmt.Errorf("start the database: %w", err)
 	}
 	if err := waitHealthy(ctx, rt); err != nil {
-		return wasRunning, err
+		return leftRunning, err
 	}
 	if err := ensureAppRole(ctx, rt); err != nil {
-		return wasRunning, err
+		return leftRunning, err
 	}
-	if wasRunning { // a running service keeps what it started with: starting it again does nothing
-		if _, err := systemctl(ctx, "start", "suiteward.service"); err != nil {
-			return true, fmt.Errorf("start the service: %w", err)
+	if running { // a running service keeps what it started with: starting it again does nothing
+		verb := "start"
+		if restart {
+			verb = "restart"
 		}
-		return true, checkUnitsActive(ctx, systemctl)
+		if _, err := systemctl(ctx, verb, "suiteward.service"); err != nil {
+			return leftRunning, fmt.Errorf("%s the service: %w", verb, err)
+		}
+		return leftRunning, checkUnitsActive(ctx, systemctl)
 	}
 	// The migration unit stays active after it ran (RemainAfterExit), so starting the service would not run it again for a release
 	// that changed since: a stopped service gets the migration restarted first.
@@ -317,8 +358,10 @@ func checkUnitsActive(ctx context.Context, systemctl func(ctx context.Context, a
 // The wait for a service that has just started to prove itself: stablePolls answers of /readyz in a row with no restart of the
 // unit meanwhile, at most stableTries polls stableEvery apart (the injected Env.Sleep, so tests do not sleep). A unit that
 // Restart=always keeps restarting is "active" at the moment a check looks, so the units' state alone proves nothing.
+// The polls span more than the RestartSec=5 of the unit, so a service that dies right after it answers has failed a poll or
+// restarted before the wait ends; one that lives longer than that is not caught.
 const (
-	stablePolls = 3
+	stablePolls = 4
 	stableTries = 45
 	stableEvery = 2 * time.Second
 )
@@ -360,7 +403,7 @@ func waitStable(ctx context.Context, env Env, httpPort int) error {
 			return err
 		}
 		if n > first {
-			return fmt.Errorf("suiteward.service restarted %d times while the install waited for it to settle: %s", n-first, journal)
+			return fmt.Errorf("suiteward.service restarted %d times while waiting for it to settle: %s", n-first, journal)
 		}
 		if answered == stablePolls {
 			return nil
@@ -445,7 +488,8 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 // carry stops the run with the diff. Without installed units the digest comes from the "image" answer.
 // The second result is what the unit directory holds: whether anything is installed, and the env file the installed units read
 // when it is not the account's own, so the caller can say when it may go. What is installed replaces what was asked for, and
-// each such replacement is reported.
+// each such replacement is reported; except that a port or the job timeout the run is given (a flag or the answers file) wins
+// over the installed one, and the change is said.
 func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, installedStack, error) {
 	st, err := adoptUnitsDir(unitsDir, homeEnvFile, false)
 	if err != nil {
@@ -453,12 +497,64 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neve
 	}
 	installedDigest := ""
 	if st.found {
-		reportAdopted(say, *s, st.adopted.Settings)
-		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = st.adopted.Settings.Tier, st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout
+		kept := installedWithGiven(r, st.adopted.Settings, *s)
+		reportAdopted(say, *s, kept)
+		sayChanges(say, st.adopted.Settings, kept)
+		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = kept.Tier, kept.HTTPPort, kept.MCPPort, kept.JobTimeout
 		installedDigest = strings.TrimPrefix(st.adopted.Image, releaseImageRepo+"@")
 	}
 	digest, err := chooseImage(r, installedDigest, neverStarted, say)
 	return digest, st, err
+}
+
+// installedWithGiven is the installed settings with the ports and the job timeout that the run is given over them: on a re-run
+// those win, and everything else that is installed stays. asked holds the resolved values (chooseIsolatedSettings).
+func installedWithGiven(r *Resolver, installed, asked Settings) Settings {
+	s := installed
+	if _, ok := r.given("http-port"); ok {
+		s.HTTPPort = asked.HTTPPort
+	}
+	if _, ok := r.given("mcp-port"); ok {
+		s.MCPPort = asked.MCPPort
+	}
+	if _, ok := r.given("job-timeout"); ok {
+		s.JobTimeout = asked.JobTimeout
+	}
+	return s
+}
+
+// sayChanges says which installed port or job timeout this run changes.
+func sayChanges(say func(string, ...any), installed, now Settings) {
+	if now.HTTPPort != installed.HTTPPort {
+		say("Changing the HTTP port of the installed stack from %d to %d, as asked.\n", installed.HTTPPort, now.HTTPPort)
+	}
+	if now.MCPPort != installed.MCPPort {
+		say("Changing the MCP port of the installed stack from %d to %d, as asked.\n", installed.MCPPort, now.MCPPort)
+	}
+	if now.JobTimeout != installed.JobTimeout {
+		say("Changing the job timeout of the installed stack from %q to %q, as asked.\n", installed.JobTimeout, now.JobTimeout)
+	}
+}
+
+// changedBy says whether s publishes other ports, or runs with another job timeout, than the installed units.
+func (st installedStack) changedBy(s Settings) bool {
+	a := st.adopted.Settings
+	return st.found && (s.HTTPPort != a.HTTPPort || s.MCPPort != a.MCPPort || s.JobTimeout != a.JobTimeout)
+}
+
+// ownedPorts are the ports whose listener is the stack's own service: the ones its units publish, while the service is active.
+func ownedPorts(ctx context.Context, d Deps, st installedStack) ([]int, error) {
+	if !st.found {
+		return nil, nil
+	}
+	state, err := userSystemctl(d)(ctx, "show", "--property=ActiveState", "--value", "suiteward.service")
+	if err != nil {
+		return nil, fmt.Errorf("ask for the state of suiteward.service: %w", err)
+	}
+	if state != "active" {
+		return nil, nil
+	}
+	return []int{st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort}, nil
 }
 
 // installedStack is what an account's unit directory holds.

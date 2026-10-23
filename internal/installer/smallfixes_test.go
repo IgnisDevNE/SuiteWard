@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -42,6 +43,11 @@ func TestUpgradeIsolatedReadsStatusThroughTheEnvSeam(t *testing.T) {
 	if err := Install(context.Background(), args, env); err != nil {
 		t.Fatal(err)
 	}
+	// The wait for a stable service after the upgrade reads /readyz through the seam as well.
+	if readyz := slices.DeleteFunc(slices.Clone(asked), func(a string) bool { return !strings.HasSuffix(a, "/readyz") }); len(readyz) != stablePolls {
+		t.Fatalf("the seam was asked %v, want /readyz %d times", asked, stablePolls)
+	}
+	asked = slices.DeleteFunc(asked, func(a string) bool { return strings.HasSuffix(a, "/readyz") })
 	if len(asked) != 2 || !strings.HasSuffix(asked[0], "/status") || asked[0] != asked[1] { // the probe before the offer, then the backup
 		t.Fatalf("the seam was asked %v, want /status twice: the probe, then the backup", asked)
 	}

@@ -1149,79 +1149,83 @@ func TestInstallIsolatedChecksEveryPortButTheOnesOfTheRunningStack(t *testing.T)
 	}
 }
 
-func TestInstallIsolatedRerunTakesTheGivenPortsAndJobTimeoutOverTheInstalledOnes(t *testing.T) {
-	given := map[string]string{"http-port": "18082", "job-timeout": "9m"}
-	check := func(t *testing.T, home, out string) {
-		t.Helper()
-		serve := string(readFileOrFail(t, filepath.Join(unitDir(home), "suiteward.container")))
-		for _, want := range []string{"\nPublishPort=127.0.0.1:18082:8080\n", "\nPublishPort=127.0.0.1:18091:8090\n", "\nEnvironment=SUITEWARD_JOB_TIMEOUT=9m\n"} {
-			if !strings.Contains(serve, want) {
-				t.Errorf("the unit lacks %q (the MCP port was not given, so it stays):\n%s", want, serve)
-			}
-		}
-		if saved, err := LoadSettings(settingsFile(home)); err != nil || saved.HTTPPort != 18082 || saved.MCPPort != 18091 || saved.JobTimeout != "9m" {
-			t.Errorf("the settings keep %+v, %v", saved, err)
-		}
-		for _, want := range []string{"18081", "18082", `"3m"`, `"9m"`, "Changing"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("the output must say what changes (%q):\n%s", want, out)
-			}
-		}
-		if strings.Contains(out, "Changing the MCP port") {
-			t.Errorf("the MCP port does not change:\n%s", out)
+// assertRerunTookTheGivenValues checks a re-run over installedStackUnits that was given http-port 18082 and job-timeout 9m: the
+// units and the settings carry them, the MCP port stays, and the output says what changed.
+func assertRerunTookTheGivenValues(t *testing.T, home, out string) {
+	t.Helper()
+	serve := string(readFileOrFail(t, filepath.Join(unitDir(home), "suiteward.container")))
+	for _, want := range []string{"\nPublishPort=127.0.0.1:18082:8080\n", "\nPublishPort=127.0.0.1:18091:8090\n", "\nEnvironment=SUITEWARD_JOB_TIMEOUT=9m\n"} {
+		if !strings.Contains(serve, want) {
+			t.Errorf("the unit lacks %q (the MCP port was not given, so it stays):\n%s", want, serve)
 		}
 	}
+	if saved, err := LoadSettings(settingsFile(home)); err != nil || saved.HTTPPort != 18082 || saved.MCPPort != 18091 || saved.JobTimeout != "9m" {
+		t.Errorf("the settings keep %+v, %v", saved, err)
+	}
+	for _, want := range []string{"18081", "18082", `"3m"`, `"9m"`, "Changing"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output must say what changes (%q):\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Changing the MCP port") {
+		t.Errorf("the MCP port does not change:\n%s", out)
+	}
+}
 
-	t.Run("a stack that never started", func(t *testing.T) {
-		home := t.TempDir()
-		installedStackUnits(t, home)
-		g := isoGitHubOn(t, newIsoFake(home))
-		g.answers = given
-		if err := g.run(); err != nil {
-			t.Fatal(err)
+var rerunGiven = map[string]string{"http-port": "18082", "job-timeout": "9m"}
+
+func TestInstallIsolatedRerunTakesTheGivenPortsAndJobTimeoutOverTheInstalledOnes(t *testing.T) {
+	// A stack whose first start failed: it never ran, so the service is started, not restarted.
+	home := t.TempDir()
+	installedStackUnits(t, home)
+	g := isoGitHubOn(t, newIsoFake(home))
+	g.answers = rerunGiven
+	if err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	assertRerunTookTheGivenValues(t, home, g.out.String())
+	if g.f.has("restart suiteward.service") {
+		t.Errorf("a service that was not running is started, not restarted: %v", g.f.lines())
+	}
+}
+
+func TestInstallIsolatedRerunRestartsARunningServiceToTakeTheGivenValues(t *testing.T) {
+	home := t.TempDir()
+	installedStackUnits(t, home)
+	f := newIsoFake(home)
+	f.serviceRunning, f.everActive, f.listening = true, true, []int{18081, 18091}
+	g := isoGitHubOn(t, f)
+	g.answers = rerunGiven
+	if err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	assertRerunTookTheGivenValues(t, home, g.out.String())
+	if !f.has("systemctl --user restart suiteward.service") {
+		t.Errorf("a running service reads its units only at its next start: %v", f.lines())
+	}
+	if !slices.Contains(g.asked, "http://127.0.0.1:18082/readyz") {
+		t.Errorf("/readyz is read on the new port: %v", g.asked)
+	}
+}
+
+func TestInstallIsolatedRerunWithNothingGivenKeepsWhatIsInstalledAndLeavesARunningServiceAlone(t *testing.T) {
+	home := t.TempDir()
+	installedStackUnits(t, home)
+	f := newIsoFake(home)
+	f.serviceRunning, f.everActive, f.listening = true, true, []int{18081, 18091}
+	out, err := runIsolated(t, f, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve := string(readFileOrFail(t, filepath.Join(unitDir(home), "suiteward.container")))
+	for _, want := range []string{"\nPublishPort=127.0.0.1:18081:8080\n", "\nPublishPort=127.0.0.1:18091:8090\n", "\nEnvironment=SUITEWARD_JOB_TIMEOUT=3m\n"} {
+		if !strings.Contains(serve, want) {
+			t.Errorf("the installed value %q must stay:\n%s", want, serve)
 		}
-		check(t, home, g.out.String())
-		if g.f.has("restart suiteward.service") {
-			t.Errorf("a service that was not running is started, not restarted: %v", g.f.lines())
-		}
-	})
-	t.Run("a running service is restarted to take them", func(t *testing.T) {
-		home := t.TempDir()
-		installedStackUnits(t, home)
-		f := newIsoFake(home)
-		f.serviceRunning, f.everActive, f.listening = true, true, []int{18081, 18091}
-		g := isoGitHubOn(t, f)
-		g.answers = given
-		if err := g.run(); err != nil {
-			t.Fatal(err)
-		}
-		check(t, home, g.out.String())
-		if !f.has("systemctl --user restart suiteward.service") {
-			t.Errorf("a running service reads its units only at its next start: %v", f.lines())
-		}
-		if !slices.Contains(g.asked, "http://127.0.0.1:18082/readyz") {
-			t.Errorf("/readyz is read on the new port: %v", g.asked)
-		}
-	})
-	t.Run("nothing given keeps what is installed and leaves a running service alone", func(t *testing.T) {
-		home := t.TempDir()
-		installedStackUnits(t, home)
-		f := newIsoFake(home)
-		f.serviceRunning, f.everActive, f.listening = true, true, []int{18081, 18091}
-		out, err := runIsolated(t, f, nil, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		serve := string(readFileOrFail(t, filepath.Join(unitDir(home), "suiteward.container")))
-		for _, want := range []string{"\nPublishPort=127.0.0.1:18081:8080\n", "\nPublishPort=127.0.0.1:18091:8090\n", "\nEnvironment=SUITEWARD_JOB_TIMEOUT=3m\n"} {
-			if !strings.Contains(serve, want) {
-				t.Errorf("the installed value %q must stay:\n%s", want, serve)
-			}
-		}
-		if f.has("restart suiteward.service") || strings.Contains(out, "Changing") {
-			t.Errorf("nothing changes, so nothing restarts:\n%s\n%v", out, f.lines())
-		}
-	})
+	}
+	if f.has("restart suiteward.service") || strings.Contains(out, "Changing") {
+		t.Errorf("nothing changes, so nothing restarts:\n%s\n%v", out, f.lines())
+	}
 }
 
 func TestInstallIsolatedCarriesOnWhenSSIsNotInstalled(t *testing.T) {

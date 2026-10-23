@@ -3,7 +3,9 @@ package installer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -35,7 +37,7 @@ LISTEN  0       4096    garbage
 func TestCheckPortsFreeNamesThePortAndTheFlag(t *testing.T) {
 	s := isolatedSettings()
 	s.HTTPPort, s.MCPPort = 18081, 18091
-	run := func(out string, err error) (string, error) {
+	run := func(own []int, out string, err error) (string, error) {
 		var said strings.Builder
 		d := Deps{Exec: func(_ context.Context, name string, args []string, _ io.Reader) ([]byte, error) {
 			if name != "ss" || strings.Join(args, " ") != "-ltn" {
@@ -43,21 +45,52 @@ func TestCheckPortsFreeNamesThePortAndTheFlag(t *testing.T) {
 			}
 			return []byte(out), err
 		}}
-		checkErr := checkPortsFree(context.Background(), d, s, func(format string, a ...any) { said.WriteString(format) })
+		checkErr := checkPortsFree(context.Background(), d, s, own, func(format string, a ...any) { said.WriteString(format) })
 		return said.String(), checkErr
 	}
 
-	if _, err := run("LISTEN 0 4096 127.0.0.1:8081 0.0.0.0:*\n", nil); err != nil {
+	if _, err := run(nil, "LISTEN 0 4096 127.0.0.1:8081 0.0.0.0:*\n", nil); err != nil {
 		t.Errorf("ports the instance does not use are no conflict: %v", err)
 	}
 	for port, flag := range map[string]string{"18081": "--http-port", "18091": "--mcp-port"} {
-		_, err := run("LISTEN 0 4096 0.0.0.0:"+port+" 0.0.0.0:*\n", nil)
+		_, err := run(nil, "LISTEN 0 4096 0.0.0.0:"+port+" 0.0.0.0:*\n", nil)
 		if err == nil || !strings.Contains(err.Error(), port) || !strings.Contains(err.Error(), flag) {
 			t.Errorf("port %s: want an error naming it and %s, got %v", port, flag, err)
 		}
+		if _, err := run([]int{18081, 18091}, "LISTEN 0 4096 0.0.0.0:"+port+" 0.0.0.0:*\n", nil); err != nil {
+			t.Errorf("port %s is the stack's own, so it is no conflict: %v", port, err)
+		}
 	}
-	said, err := run("", errors.New("ss: not found"))
-	if err != nil || !strings.Contains(said, "could not be checked") {
-		t.Errorf("a check that cannot run is a note, not a refusal: %q, %v", said, err)
+}
+
+func TestCheckPortsFreeTellsAMissingSSAndReturnsEveryOtherFailure(t *testing.T) {
+	s := isolatedSettings()
+	said := ""
+	check := func(ctx context.Context, err error) error {
+		d := Deps{Exec: func(context.Context, string, []string, io.Reader) ([]byte, error) { return nil, err }}
+		return checkPortsFree(ctx, d, s, nil, func(format string, a ...any) { said += format })
 	}
+
+	if err := check(context.Background(), fmt.Errorf("ss -ltn: %w: ", exec.ErrNotFound)); err != nil || !strings.Contains(said, "could not be checked") {
+		t.Errorf("a host without ss is a note, not a refusal: %q, %v", said, err)
+	}
+	failed := errors.New("ss -ltn: exit status 1: Cannot open netlink socket")
+	for name, tc := range map[string]struct {
+		ctx context.Context
+		err error
+	}{
+		"a non-zero exit":       {context.Background(), failed},
+		"a cancelled context":   {cancelled(), context.Canceled},
+		"a deadline that ended": {context.Background(), context.DeadlineExceeded},
+	} {
+		if err := check(tc.ctx, tc.err); !errors.Is(err, tc.err) {
+			t.Errorf("%s: want the error returned, got %v", name, err)
+		}
+	}
+}
+
+func cancelled() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
 }

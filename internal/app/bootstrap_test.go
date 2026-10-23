@@ -167,6 +167,14 @@ func (c *fakeBootContent) Put(_ context.Context, digest artifact.Digest, content
 	return nil
 }
 
+// Size answers like the artifact store: the length of the bytes under digest, or fs.ErrNotExist.
+func (c *fakeBootContent) Size(_ context.Context, digest artifact.Digest) (int64, error) {
+	if data, found := c.bytes[digest.String()]; found {
+		return int64(len(data)), nil
+	}
+	return 0, fmt.Errorf("inspect artifact object: %w", fs.ErrNotExist)
+}
+
 // Read answers like the artifact store: the bytes under digest, or fs.ErrNotExist.
 func (c *fakeBootContent) Read(_ context.Context, digest artifact.Digest) ([]byte, error) {
 	if data, found := c.bytes[digest.String()]; found {

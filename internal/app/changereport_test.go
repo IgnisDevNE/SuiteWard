@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
@@ -193,11 +194,8 @@ func TestARevisionReportReadsNoMoreThanItsBudget(t *testing.T) {
 
 func TestARevisionReportReadsOnlyTheFilesThatDiffer(t *testing.T) {
 	w, _ := reportWorld(t)
-	var read []artifact.Digest
-	reports := newChangeReports(w.suites, readFunc(func(ctx context.Context, d artifact.Digest) ([]byte, error) {
-		read = append(read, d)
-		return w.content.Read(ctx, d)
-	}))
+	content := &watchedContent{content: w.content}
+	reports := newChangeReports(w.suites, content)
 	manifest := manifestDigestOf(t, w, revisionRef("P2", "R1"))
 
 	if _, err := reports.revisionReport(t.Context(), revisionRef("P2", "R1")); err != nil {
@@ -205,31 +203,52 @@ func TestARevisionReportReadsOnlyTheFilesThatDiffer(t *testing.T) {
 	}
 
 	want := map[artifact.Digest]bool{manifest: true, artifact.Hash([]byte("v1")): true, artifact.Hash([]byte("v2")): true}
-	if len(read) != len(want) {
-		t.Fatalf("read %v, want the manifest and the two sides of the one file that differs", read)
+	if len(content.read) != len(want) {
+		t.Fatalf("read %v, want the manifest and the two sides of the one file that differs", content.read)
 	}
-	for _, d := range read {
+	for _, d := range content.read {
 		if !want[d] {
 			t.Errorf("read %s, which is neither the manifest nor a side of the changed file", d)
 		}
 	}
 }
 
-type readFunc func(context.Context, artifact.Digest) ([]byte, error)
+// watchedContent is the content of a world that tells which objects it was asked to read and to size, and lets a test hold a read.
+type watchedContent struct {
+	content *fakeBootContent
+	onRead  func()
+	mu      sync.Mutex
+	read    []artifact.Digest
+	sized   []artifact.Digest
+}
 
-func (f readFunc) Read(ctx context.Context, d artifact.Digest) ([]byte, error) { return f(ctx, d) }
+func (c *watchedContent) Read(ctx context.Context, d artifact.Digest) ([]byte, error) {
+	c.mu.Lock()
+	c.read = append(c.read, d)
+	c.mu.Unlock()
+	if c.onRead != nil {
+		c.onRead()
+	}
+	return c.content.Read(ctx, d)
+}
+
+func (c *watchedContent) Size(ctx context.Context, d artifact.Digest) (int64, error) {
+	c.mu.Lock()
+	c.sized = append(c.sized, d)
+	c.mu.Unlock()
+	return c.content.Size(ctx, d)
+}
 
 func TestOneReportIsBuiltAtATimeAndAWaitingBuildHonorsItsContext(t *testing.T) {
 	w, _ := reportWorld(t)
 	entered, release := make(chan struct{}), make(chan struct{})
-	reports := newChangeReports(w.suites, readFunc(func(ctx context.Context, d artifact.Digest) ([]byte, error) {
+	reports := newChangeReports(w.suites, &watchedContent{content: w.content, onRead: func() {
 		select {
 		case entered <- struct{}{}:
 			<-release
 		default:
 		}
-		return w.content.Read(ctx, d)
-	}))
+	}})
 	first := make(chan error, 1)
 	go func() {
 		_, err := reports.revisionReport(context.Background(), revisionRef("P2", "R1"))

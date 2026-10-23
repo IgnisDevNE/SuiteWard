@@ -33,12 +33,18 @@ var errReportTooLarge = errors.New("the revision changes too many bytes to build
 // a time in the process, because a build holds the bytes of the files that differ.
 type changeReports struct {
 	suites   governance.UnitOfWork
-	contents governance.ContentReader
+	contents reportContent
 	budget   int // the bytes one build may read, maxReportBytes
 	gate     chan struct{}
 }
 
-func newChangeReports(suites governance.UnitOfWork, contents governance.ContentReader) *changeReports {
+// reportContent is the part of the content store a report is built from: the bytes of an object, and its size without reading it.
+type reportContent interface {
+	governance.ContentReader
+	Size(ctx context.Context, digest artifact.Digest) (int64, error)
+}
+
+func newChangeReports(suites governance.UnitOfWork, contents reportContent) *changeReports {
 	return &changeReports{suites: suites, contents: contents, budget: maxReportBytes, gate: make(chan struct{}, 1)}
 }
 

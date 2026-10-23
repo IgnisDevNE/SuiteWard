@@ -99,7 +99,7 @@ var instructions = map[Code]string{
 }
 
 const (
-	setupInstruction = "No test check is configured for this project yet: run suiteward enroll with --test-check for this repository, then require that check on the default branch."
+	setupInstruction = "No test check is configured for this project yet: run suiteward enroll (it asks for the check), then require that check on the default branch."
 	appIDInstruction = "The GitHub App id is not configured: set it, then wait for the next protection check."
 	unavailable      = "This repository is private and GitHub did not return its branch rules: GitHub Free does not enforce rules on private repositories, so upgrade the plan or make the repository public; or the App lacks the read permission, so grant it Administration read."
 	unreadable       = "SuiteWard could not read the branch protection: check that the App's installation covers this repository and grants Administration read."

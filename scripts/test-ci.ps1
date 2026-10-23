@@ -22,13 +22,14 @@ Assert-Throws { Get-RepositoryMode -HeadFiles @('go.mod') -BaseFiles @() } 'modu
 $checks++
 
 function New-Results {
-    param([string]$HasGo, [string]$GoResult, [string]$CoverageResult)
+    param([string]$HasGo, [string]$GoResult, [string]$CoverageResult, [string]$QuadletResult = $CoverageResult)
     return [pscustomobject]@{
         inspect = [pscustomobject]@{ result = 'success'; outputs = [pscustomobject]@{ go = $HasGo } }
         foundation = [pscustomobject]@{ result = 'success' }
         image = [pscustomobject]@{ result = 'success' }
         go = [pscustomobject]@{ result = $GoResult }
         coverage = [pscustomobject]@{ result = $CoverageResult }
+        quadlet = [pscustomobject]@{ result = $QuadletResult }
     }
 }
 
@@ -60,6 +61,17 @@ foreach ($badResult in @('skipped', 'failure', 'cancelled')) {
 $missingImage = New-Results 'false' 'skipped' 'skipped'
 $missingImage.PSObject.Properties.Remove('image')
 Assert-Throws { Assert-CiGate $missingImage } 'missing image job'
+$checks++
+# The AlmaLinux quadlet dry run is part of the Go classification: required with Go source, skipped without it.
+foreach ($badResult in @('skipped', 'failure', 'cancelled')) {
+    Assert-Throws { Assert-CiGate (New-Results 'true' 'success' 'success' $badResult) } "quadlet job $badResult"
+    $checks++
+}
+Assert-Throws { Assert-CiGate (New-Results 'false' 'skipped' 'skipped' 'success') } 'quadlet job ran without Go source'
+$checks++
+$missingQuadlet = New-Results 'true' 'success' 'success'
+$missingQuadlet.PSObject.Properties.Remove('quadlet')
+Assert-Throws { Assert-CiGate $missingQuadlet } 'missing quadlet job'
 $checks++
 
 # Inspect the scalar status declarations used by this repository. This is a
@@ -127,8 +139,14 @@ foreach($required in @('services:', 'postgres:', 'postgres:18.6-trixie@sha256:74
     $checks++
 }
 $goJob=[regex]::Match($workflow,'(?ms)^  go:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
-if(-not $goJob.Contains('./scripts/check-persistence.ps1 -Mode Generated')){throw 'CI must verify fresh sqlc output on both native Go runners.'}
+if(-not $goJob.Contains('./scripts/check-persistence.ps1 -Mode Generated')){throw 'CI must verify fresh sqlc output on the Linux and Windows Go runners.'}
 $checks++
+# macOS runs the Go build, vet and tests; the pinned tool bootstrap (dev-env.ps1) supports Windows and Linux x64 only, so the platform-independent lint and sqlc checks stay on those runners.
+if($goJob -notmatch '(?m)^        os: \[ubuntu-24\.04, windows-2025, macos-15\]\s*$'){throw 'The Go job matrix must be ubuntu-24.04, windows-2025 and macos-15.'}
+if($goJob -notmatch '(?ms)^      - name: [^\n]*\n        if: runner\.os != ''macOS''\n        run: \./scripts/check-go\.ps1\s*$'){throw 'The default check-go.ps1 step (with golangci-lint) must skip macOS.'}
+if($goJob -notmatch '(?ms)^      - name: [^\n]*\n        if: runner\.os == ''macOS''\n        run: \./scripts/check-go\.ps1 -SkipLint\s*$'){throw 'macOS must run check-go.ps1 -SkipLint.'}
+if($goJob -notmatch '(?ms)^      - name: Verify fresh generated PostgreSQL queries\n        if: runner\.os != ''macOS''\n'){throw 'The sqlc regeneration check must skip macOS.'}
+$checks+=4
 # Lint runs once, inside the default-mode Go job (both OSes), from the pinned checksum-verified tool; no unpinned install or third-party action.
 if($goJob -notmatch '(?m)^\s+run: \./scripts/check-go\.ps1\s*$'){throw 'The Go job must run check-go.ps1 in default mode, which includes golangci-lint.'}
 $checkGoSource=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-go.ps1')).Replace("`r",'')
@@ -143,8 +161,23 @@ $checks++
 # Branch protection requires the exact context name; the gate must aggregate every verification job.
 $gateJob=[regex]::Match($workflow,'(?ms)^  gate:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
 if(-not $gateJob.Contains('name: CI / Gate')){throw 'The gate job must keep the required context name CI / Gate.'}
-if(-not $gateJob.Contains('needs: [inspect, foundation, image, go, coverage]') -or -not $gateJob.Contains('if: always()')){throw 'The gate must always run and require inspect, foundation, image, go, and coverage.'}
+if(-not $gateJob.Contains('needs: [inspect, foundation, image, go, coverage, quadlet]') -or -not $gateJob.Contains('if: always()')){throw 'The gate must always run and require inspect, foundation, image, go, coverage, and quadlet.'}
 $checks++
+# The quadlet job renders the units of both installer shapes and dry-runs them through the quadlet generator of the isolated host's OS (AlmaLinux 9).
+$quadletJob=[regex]::Match($workflow,'(?ms)^  quadlet:\n(?<body>.*?)(?=^  [a-z]+:|\z)').Groups['body'].Value
+if(-not $quadletJob){throw 'The CI workflow has no quadlet job.'}
+foreach($required in @('needs: inspect', "if: needs.inspect.outputs.go == 'true'", 'runs-on: ubuntu-24.04', 'timeout-minutes:', 'shell: bash', '-tags quadlet', 'SUITEWARD_QUADLET_OUT', 'dnf -y install podman', 'podman --version', 'QUADLET_UNIT_DIRS', '/usr/lib/systemd/system-generators/podman-system-generator --user --dryrun', 'for shape in github no-github')){
+    if(-not $quadletJob.Contains($required)){throw "The quadlet job lacks: $required"}
+    $checks++
+}
+# Every unit the installer renders must come out of the generator as a service.
+foreach($service in @('suiteward.service', 'suiteward-migrate.service', 'suiteward-db.service', 'suiteward-network.service', 'suiteward-data-volume.service', 'suiteward-db-data-volume.service')){
+    if(-not $quadletJob.Contains($service)){throw "The quadlet job does not require the generated $service"}
+    $checks++
+}
+if($quadletJob -notmatch 'ALMA_IMAGE: docker\.io/library/almalinux:9@sha256:[a-f0-9]{64}'){throw 'The quadlet job must pin AlmaLinux 9 by digest.'}
+if($quadletJob -notmatch '(?m)^    permissions:\n      contents: read\n' -or $quadletJob -match 'secrets\.|id-token|: write'){throw 'The quadlet job needs no secret and only contents: read.'}
+$checks+=2
 # GitHub's pwsh step wrapper exits with $LASTEXITCODE; script tests deliberately run failing native children,
 # so a successful foundation run must leave a zero exit code behind.
 $foundationSource=(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'check-foundation.ps1')).Replace("`r",'')

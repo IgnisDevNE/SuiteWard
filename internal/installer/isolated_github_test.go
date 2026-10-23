@@ -320,7 +320,12 @@ func TestInstallIsolatedSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 func TestInstallIsolatedSkipsSetupWhenStatusCannotBeRead(t *testing.T) {
 	terminalForSetup(t)
 	g := newIsoGitHub(t)
-	g.status = func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") }
+	g.status = func(_ context.Context, address string) ([]byte, error) {
+		if strings.HasSuffix(address, "/readyz") { // the service is up and stable; only /status cannot be read
+			return []byte("ok"), nil
+		}
+		return nil, errors.New("dial tcp: connection refused")
+	}
 	if err := g.run(); err != nil {
 		t.Fatalf("the stack is up; only setup is skipped: %v", err)
 	}

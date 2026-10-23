@@ -34,12 +34,21 @@ type UnitParams struct {
 	MCPPort    int
 	JobTimeout string // optional, a Go duration; serve only
 	EnvFile    string // EnvironmentFile of the service, DefaultEnvFile when empty
+	// NoGitHub leaves the App key secret and its environment variable out of the service unit: without an App there is no key to
+	// mount, and the service stops at startup when it is given the key but not the App. The zero value keeps both lines.
+	NoGitHub bool
 }
 
-// UnitParamsFrom takes the ports, tier and job timeout from the settings.
+// UnitParamsFrom takes the ports, tier, job timeout and whether GitHub is configured from the settings.
 func UnitParamsFrom(s Settings, digest string) UnitParams {
-	return UnitParams{Digest: digest, Tier: s.Tier, HTTPPort: s.HTTPPort, MCPPort: s.MCPPort, JobTimeout: s.JobTimeout}
+	return UnitParams{Digest: digest, Tier: s.Tier, HTTPPort: s.HTTPPort, MCPPort: s.MCPPort, JobTimeout: s.JobTimeout, NoGitHub: s.GitHub.AppID == 0}
 }
+
+// The two lines of the service unit that mount the GitHub App key and name its file; NoGitHub drops them.
+const (
+	keySecretLine = "Secret=" + SecretGitHubAppKey + ",type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400"
+	keyEnvLine    = "Environment=SUITEWARD_GITHUB_APP_KEY_FILE=/run/secrets/github-app-key"
+)
 
 func (p UnitParams) validate() error {
 	if !imageDigest.MatchString(p.Digest) {
@@ -71,7 +80,8 @@ func embeddedUnits() (map[string][]byte, error) {
 }
 
 // RenderUnits fills the embedded quadlet units: both release Image= lines with one digest, the tier, the published ports,
-// the job timeout and the GitHub env file. The PostgreSQL pin stays as written. It returns the unit files by name.
+// the job timeout and the GitHub env file; with NoGitHub the service unit loses the App key lines. The PostgreSQL pin stays
+// as written. It returns the unit files by name.
 func RenderUnits(p UnitParams) (map[string][]byte, error) {
 	templates, err := embeddedUnits()
 	if err != nil {
@@ -80,8 +90,11 @@ func RenderUnits(p UnitParams) (map[string][]byte, error) {
 	return render(templates, p)
 }
 
-// lineEdit replaces one whole line of a unit.
-type lineEdit struct{ old, new string }
+// lineEdit replaces one whole line of a unit, or removes it.
+type lineEdit struct {
+	old, new string
+	drop     bool
+}
 
 // render fills templates; every anchor line it replaces must be there exactly once, so a drifted template fails loudly
 // instead of rendering a half-filled unit.
@@ -93,21 +106,22 @@ func render(templates map[string][]byte, p UnitParams) (map[string][]byte, error
 	if envFile == "" {
 		envFile = DefaultEnvFile
 	}
-	release := lineEdit{"Image=" + releaseImageRepo + "@sha256:<digest>", "Image=" + releaseImageRepo + "@" + p.Digest}
+	release := lineEdit{old: "Image=" + releaseImageRepo + "@sha256:<digest>", new: "Image=" + releaseImageRepo + "@" + p.Digest}
 	tier := "Environment=SUITEWARD_INSTALLATION_TIER=" + string(p.Tier)
 	if p.JobTimeout != "" {
 		tier += "\nEnvironment=SUITEWARD_JOB_TIMEOUT=" + p.JobTimeout
 	}
-	edits := map[string][]lineEdit{
-		"suiteward-migrate.container": {release},
-		"suiteward.container": {
-			release,
-			{"PublishPort=127.0.0.1:8081:8080", "PublishPort=127.0.0.1:" + strconv.Itoa(p.HTTPPort) + ":8080"},
-			{"PublishPort=127.0.0.1:8091:8090", "PublishPort=127.0.0.1:" + strconv.Itoa(p.MCPPort) + ":8090"},
-			{"EnvironmentFile=/etc/suiteward/github.env", "EnvironmentFile=" + envFile},
-			{"Environment=SUITEWARD_INSTALLATION_TIER=isolated", tier},
-		},
+	serve := []lineEdit{
+		release,
+		{old: "PublishPort=127.0.0.1:8081:8080", new: "PublishPort=127.0.0.1:" + strconv.Itoa(p.HTTPPort) + ":8080"},
+		{old: "PublishPort=127.0.0.1:8091:8090", new: "PublishPort=127.0.0.1:" + strconv.Itoa(p.MCPPort) + ":8090"},
+		{old: "EnvironmentFile=/etc/suiteward/github.env", new: "EnvironmentFile=" + envFile},
+		{old: "Environment=SUITEWARD_INSTALLATION_TIER=isolated", new: tier},
 	}
+	if p.NoGitHub {
+		serve = append(serve, lineEdit{old: keySecretLine, drop: true}, lineEdit{old: keyEnvLine, drop: true})
+	}
+	edits := map[string][]lineEdit{"suiteward-migrate.container": {release}, "suiteward.container": serve}
 	out := make(map[string][]byte, len(templates))
 	for name, raw := range templates {
 		out[name] = raw
@@ -120,7 +134,7 @@ func render(templates map[string][]byte, p UnitParams) (map[string][]byte, error
 		text := string(raw)
 		for _, e := range list {
 			var err error
-			if text, err = replaceLine(text, e.old, e.new); err != nil {
+			if text, err = replaceLine(text, e); err != nil {
 				return nil, fmt.Errorf("%s: %w", name, err)
 			}
 		}
@@ -129,23 +143,27 @@ func render(templates map[string][]byte, p UnitParams) (map[string][]byte, error
 	return out, nil
 }
 
-// replaceLine replaces the one line of text that is exactly old.
-func replaceLine(text, old, replacement string) (string, error) {
+// replaceLine applies an edit to the one line of text that is exactly e.old.
+func replaceLine(text string, e lineEdit) (string, error) {
 	lines := strings.Split(text, "\n")
 	found := -1
 	for i, line := range lines {
-		if line != old {
+		if line != e.old {
 			continue
 		}
 		if found >= 0 {
-			return "", fmt.Errorf("the line %q appears twice in the template", old)
+			return "", fmt.Errorf("the line %q appears twice in the template", e.old)
 		}
 		found = i
 	}
 	if found < 0 {
-		return "", fmt.Errorf("the template has no line %q (the embedded units and the installer drifted apart)", old)
+		return "", fmt.Errorf("the template has no line %q (the embedded units and the installer drifted apart)", e.old)
 	}
-	lines[found] = replacement
+	if e.drop {
+		lines = slices.Delete(lines, found, found+1)
+	} else {
+		lines[found] = e.new
+	}
 	return strings.Join(lines, "\n"), nil
 }
 

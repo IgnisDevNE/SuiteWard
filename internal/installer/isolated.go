@@ -26,12 +26,13 @@ import (
 // digest> or the full reference; optional when this binary carries a release or an install is adopted) and the answers of the
 // GitHub flow, the same as the co-located tier takes (colocated_github.go): "github", "github-app-id" with
 // "github-installation-id", "github-repositories" and the App key ("github-app-key-file", a path or - for stdin, or
-// "github-app-key" in the answers file, never a flag), "github-owner", "test-check" and "manifest-port". Every external
-// command goes through Deps.Exec.
+// "github-app-key" in the answers file, never a flag), "github-owner", "test-check" and "manifest-port"; and "http-port",
+// "mcp-port" and "job-timeout", which an installed stack replaces (and the run reports it). Every external command goes
+// through Deps.Exec.
 //
-// The order is fixed: checks and the adoption guard first, so a refusal changes nothing; then the images are pulled and the
-// GitHub flow runs and is checked; then secrets, the GitHub env file, units, the generator dry run, the database, the
-// application role, the service, the settings file, and last setup.
+// The order is fixed: checks, the ports and the adoption guard first, so a refusal changes nothing; then the images are pulled
+// and the GitHub flow runs and is checked; then secrets, the GitHub env file, units, the generator dry run, the database, the
+// application role, the service, the wait for it to be stable, the settings file, and last setup.
 
 // Health wait of the database, variables so tests do not sleep.
 var (
@@ -87,8 +88,36 @@ func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, er
 	}, nil
 }
 
+// chooseIsolatedSettings resolves the ports and the job timeout over base (the flag, the answers file, else base) and validates the
+// result. It never prompts: the values of an installed stack replace these anyway (adoptInstalled), and the install asks only
+// what a person at the terminal must decide.
+func chooseIsolatedSettings(r *Resolver, base Settings) (Settings, error) {
+	s := base
+	port := func(key string, def int) (int, error) {
+		v := r.preset(key, strconv.Itoa(def))
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, fmt.Errorf("--%s %q is not a number", key, v)
+		}
+		return n, nil
+	}
+	var err error
+	if s.HTTPPort, err = port("http-port", base.HTTPPort); err != nil {
+		return Settings{}, err
+	}
+	if s.MCPPort, err = port("mcp-port", base.MCPPort); err != nil {
+		return Settings{}, err
+	}
+	s.JobTimeout = r.preset("job-timeout", base.JobTimeout)
+	return s, s.Validate()
+}
+
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
 	d, out := env.Deps, env.Term.Out
+	s, err := chooseIsolatedSettings(r, s)
+	if err != nil {
+		return err
+	}
 	host, err := openIsolatedHost(ctx, s, d)
 	if err != nil {
 		return err
@@ -98,10 +127,11 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 
 	// The adoption guard and the image, before anything is changed.
 	neverStarted := func() (bool, error) { return stackNeverStarted(host.run, settingsPath) }
-	digest, oldEnvFile, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, say)
+	digest, installed, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, say)
 	if err != nil {
 		return err
 	}
+	oldEnvFile := installed.oldEnv
 	// An App the settings do not name, but the env file does (a host installed by hand, or a run that stopped after it wrote the
 	// file), is the App of this install: the flow must not offer to create another.
 	var fromFile GitHub
@@ -110,6 +140,12 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 			return err
 		}
 		s.GitHub = fromFile
+	}
+	// The ports of an installed stack are its own service's, which may be running; any other are free or the install stops.
+	if !installed.found {
+		if err := checkPortsFree(ctx, d, s, say); err != nil {
+			return err
+		}
 	}
 
 	// Every input, resolved and checked: the images first, so a wrong digest fails before the flow creates an App.
@@ -122,6 +158,9 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	}
 	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath), enrollHint: enrollCommand(r, true)}
 	if err := g.githubFlow(ctx, r, configDir); err != nil {
+		return err
+	}
+	if err := g.checkEnvFileHoldsNoApp(host.envPath); err != nil {
 		return err
 	}
 	if err := g.checkAppKey(ctx); err != nil {
@@ -141,22 +180,15 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
-	units, err := RenderUnits(UnitParamsFrom(g.s, digest))
-	if err != nil {
+	if err := prepareUnits(ctx, host, d, UnitParamsFrom(g.s, digest), false); err != nil {
 		return err
-	}
-	if _, err := WriteUnits(unitsDir, units); err != nil {
-		return err
-	}
-	if err := dryRun(ctx, d, units); err != nil {
-		return err
-	}
-	if _, err := d.Exec(ctx, DaemonReload[0], DaemonReload[1:], nil); err != nil {
-		return fmt.Errorf("systemctl --user daemon-reload: %w", err)
 	}
 
 	wasRunning, err := startStack(ctx, rt, d)
 	if err != nil {
+		return err
+	}
+	if err := waitStable(ctx, env, g.s.HTTPPort); err != nil {
 		return err
 	}
 	if err := SaveSettings(settingsPath, g.s); err != nil {
@@ -179,8 +211,25 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	return nil
 }
 
-// checkAppKey refuses, before any change, an install that has no App key to store: the service unit mounts that secret, so
-// without it the unit does not start. It prints the key's fingerprint when this run stores a key it was given.
+// checkEnvFileHoldsNoApp refuses, before any change, a run without an App over an env file that holds one. The service reads the
+// file whatever the run says, and without the App key lines it would stop at startup.
+func (g *githubInstall) checkEnvFileHoldsNoApp(envPath string) error {
+	if g.s.GitHub.AppID != 0 {
+		return nil
+	}
+	held, err := readGitHubEnvFile(envPath)
+	if err != nil {
+		return err
+	}
+	if held.AppID != 0 {
+		return fmt.Errorf("GitHub is off in this run, but %s still holds the App %d and the service reads that file: remove its three SUITEWARD_GITHUB_ lines (or the file) first, or run again without --github-app-id none", envPath, held.AppID)
+	}
+	return nil
+}
+
+// checkAppKey refuses, before any change, an install with an App and no App key to store: the service unit of an App mounts that
+// secret, so without it the unit does not start. Without an App there is no key to check. It prints the key's fingerprint when
+// this run stores a key it was given.
 func (g *githubInstall) checkAppKey(ctx context.Context) error {
 	if g.githubKey != nil {
 		fingerprint, err := appKeyFingerprint(g.githubKey)
@@ -191,12 +240,15 @@ func (g *githubInstall) checkAppKey(ctx context.Context) error {
 		g.say("App private key fingerprint: %s\nCompare it with the fingerprint of the key on the App's settings page; a wrong or revoked key looks right to every other check.\n", fingerprint)
 		return nil
 	}
+	if g.s.GitHub.AppID == 0 {
+		return nil
+	}
 	have, err := g.rt.Secrets().Exists(ctx, SecretGitHubAppKey)
 	if err != nil {
 		return err
 	}
 	if !have {
-		return errors.New("the service mounts the secret " + SecretGitHubAppKey + " and it does not exist, so the install needs GitHub: pass --github yes to create the GitHub App, or --github-app-id with --github-installation-id, --github-repositories and --github-app-key-file for an App that exists")
+		return errors.New("the service mounts the secret " + SecretGitHubAppKey + " for the App " + strconv.FormatInt(g.s.GitHub.AppID, 10) + " and it does not exist: pass --github-app-key-file with the App's private key, or --github-app-id none to run without GitHub")
 	}
 	return nil
 }
@@ -260,6 +312,64 @@ func checkUnitsActive(ctx context.Context, systemctl func(ctx context.Context, a
 		}
 	}
 	return nil
+}
+
+// The wait for a service that has just started to prove itself: stablePolls answers of /readyz in a row with no restart of the
+// unit meanwhile, at most stableTries polls stableEvery apart (the injected Env.Sleep, so tests do not sleep). A unit that
+// Restart=always keeps restarting is "active" at the moment a check looks, so the units' state alone proves nothing.
+const (
+	stablePolls = 3
+	stableTries = 45
+	stableEvery = 2 * time.Second
+)
+
+// waitStable returns nil once /readyz of the service on httpPort answered 200 stablePolls times in a row and the restart count
+// of suiteward.service did not grow since before the first poll. Otherwise it names the journal to read.
+func waitStable(ctx context.Context, env Env, httpPort int) error {
+	address := "http://127.0.0.1:" + strconv.Itoa(httpPort) + "/readyz"
+	systemctl := userSystemctl(env.Deps)
+	restarts := func() (int, error) {
+		text, err := systemctl(ctx, "show", "--property=NRestarts", "--value", "suiteward.service")
+		if err != nil {
+			return 0, fmt.Errorf("ask for the restarts of suiteward.service: %w", err)
+		}
+		n, err := strconv.Atoi(text)
+		if err != nil {
+			return 0, fmt.Errorf("the restart count of suiteward.service (%q) is not a number", text)
+		}
+		return n, nil
+	}
+	const journal = "read `journalctl --user -u suiteward.service -n 50 --no-pager`"
+	first, err := restarts()
+	if err != nil {
+		return err
+	}
+	answered := 0
+	var lastErr error
+	for i := range stableTries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := env.httpGet()(ctx, address); err == nil {
+			answered++
+		} else {
+			answered, lastErr = 0, err
+		}
+		n, err := restarts()
+		if err != nil {
+			return err
+		}
+		if n > first {
+			return fmt.Errorf("suiteward.service restarted %d times while the install waited for it to settle: %s", n-first, journal)
+		}
+		if answered == stablePolls {
+			return nil
+		}
+		if i < stableTries-1 {
+			env.Sleep(stableEvery)
+		}
+	}
+	return fmt.Errorf("%s did not answer 200 %d times in a row within %d polls (last answer: %v): %s", address, stablePolls, stableTries, lastErr, journal)
 }
 
 // checkAccount refuses a run by root, by another user than the service account, or with a HOME that is not the account's
@@ -333,12 +443,13 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 // adoptInstalled compares units installed earlier (by hand from the install guide, or by this installer) with the units of
 // this release, carries their tier, ports and job timeout into s and returns the image digest to pin. A difference it cannot
 // carry stops the run with the diff. Without installed units the digest comes from the "image" answer.
-// The second result is the env file the installed units read when it is not the account's own, so the caller can say when it
-// may go. What is installed replaces what was asked for, and each such replacement is reported.
-func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, string, error) {
+// The second result is what the unit directory holds: whether anything is installed, and the env file the installed units read
+// when it is not the account's own, so the caller can say when it may go. What is installed replaces what was asked for, and
+// each such replacement is reported.
+func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, installedStack, error) {
 	st, err := adoptUnitsDir(unitsDir, homeEnvFile, false)
 	if err != nil {
-		return "", "", err
+		return "", installedStack{}, err
 	}
 	installedDigest := ""
 	if st.found {
@@ -347,7 +458,7 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neve
 		installedDigest = strings.TrimPrefix(st.adopted.Image, releaseImageRepo+"@")
 	}
 	digest, err := chooseImage(r, installedDigest, neverStarted, say)
-	return digest, st.oldEnv, err
+	return digest, st, err
 }
 
 // installedStack is what an account's unit directory holds.

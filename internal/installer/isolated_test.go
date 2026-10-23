@@ -9,11 +9,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -111,19 +111,6 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 		return []byte("\n"), nil
 	case c.name == "systemctl" && line == "--user start suiteward.service":
 		f.started = true
-	case c.name == "ss" && line == "-ltn":
-		out := "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
-		for _, port := range f.listening {
-			out += "LISTEN 0      4096       127.0.0.1:" + strconv.Itoa(port) + "      0.0.0.0:*\n"
-		}
-		return []byte(out), nil
-	case c.name == "systemctl" && line == "--user show --property=NRestarts --value suiteward.service":
-		n := 0
-		if len(f.restarts) > 0 {
-			n = f.restarts[min(f.asked, len(f.restarts)-1)]
-		}
-		f.asked++
-		return []byte(strconv.Itoa(n) + "\n"), nil
 	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=SystemState"):
 		return []byte(f.systemState + "\n"), nil
 	case c.name == "systemctl" && strings.HasPrefix(line, "--user show --property=ActiveState --value "):
@@ -143,6 +130,27 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 		return f.answerGenerator(), nil
 	case c.name == "podman":
 		return f.answerPodman(c)
+	}
+	return f.answerChecks(c)
+}
+
+// answerChecks answers what the install asks to know whether the service can start and stays up: the listeners of the
+// machine (ss -ltn) and the restart count of the service.
+func (f *isoFake) answerChecks(c call) ([]byte, error) {
+	switch line := c.line(); {
+	case c.name == "ss" && line == "-ltn":
+		out := "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+		for _, port := range f.listening {
+			out += "LISTEN 0      4096       127.0.0.1:" + strconv.Itoa(port) + "      0.0.0.0:*\n"
+		}
+		return []byte(out), nil
+	case c.name == "systemctl" && line == "--user show --property=NRestarts --value suiteward.service":
+		n := 0
+		if len(f.restarts) > 0 {
+			n = f.restarts[min(f.asked, len(f.restarts)-1)]
+		}
+		f.asked++
+		return []byte(strconv.Itoa(n) + "\n"), nil
 	}
 	return nil, nil
 }

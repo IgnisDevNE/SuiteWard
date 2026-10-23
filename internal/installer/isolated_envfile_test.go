@@ -163,7 +163,12 @@ func TestInstallIsolatedRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testi
 			[]string{"no owner is enrolled", placeholderCommand},
 		},
 		"unreadable": {
-			func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") },
+			func(_ context.Context, address string) ([]byte, error) {
+				if strings.HasSuffix(address, "/readyz") { // the service is up and stable; only /status cannot be read
+					return []byte("ok"), nil
+				}
+				return nil, errors.New("dial tcp: connection refused")
+			},
 			[]string{"connection refused", placeholderCommand},
 		},
 	} {

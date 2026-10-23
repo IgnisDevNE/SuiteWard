@@ -545,13 +545,21 @@ func withoutLines(t *testing.T, unit []byte, lines ...string) []byte {
 func TestAdoptUnitsAcceptsAServiceUnitWithoutTheGitHubKeyLines(t *testing.T) {
 	installed := renderedUnits(t, nil)
 	installed["suiteward.container"] = withoutLines(t, installed["suiteward.container"], githubKeyUnitLines...)
-	if _, err := AdoptUnits(installed, nil); err != nil {
+	got, err := AdoptUnits(installed, nil)
+	if err != nil {
 		t.Fatalf("a service unit of a stack that runs without GitHub is a known shape: %v", err)
+	}
+	if !got.NoGitHub {
+		t.Error("the adoption must report a stack without GitHub")
 	}
 
 	// The units of v0.3.0-alpha.1 always had the lines.
-	if _, err := AdoptUnits(renderedUnits(t, nil), nil); err != nil {
+	got, err = AdoptUnits(renderedUnits(t, nil), nil)
+	if err != nil {
 		t.Fatalf("units with the lines are still known: %v", err)
+	}
+	if got.NoGitHub {
+		t.Error("units with the lines belong to a stack with GitHub")
 	}
 }
 

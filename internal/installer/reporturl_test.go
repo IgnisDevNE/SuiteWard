@@ -13,7 +13,9 @@ import (
 // The service learns its own address from SUITEWARD_REPORT_BASE_URL (http://127.0.0.1:<HTTP port>): both tiers render it, a stack that
 // predates it is adopted as it is and gains it, and a changed HTTP port changes it.
 
-func reportURL(port int) string { return "SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:" + strconv.Itoa(port) }
+func reportURL(port int) string {
+	return "SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:" + strconv.Itoa(port)
+}
 
 // withoutReportURL is the inspect output of a service container of v0.3.0-alpha.2, which has no such variable.
 func withoutReportURL(name string, obj map[string]any) {

@@ -16,18 +16,41 @@ func expensive() (old, proposed string) {
 	return strings.Repeat("y\n", 250) + run + strings.Repeat("y\n", 250), strings.Repeat("z\n", 250) + run + strings.Repeat("z\n", 250)
 }
 
+// A proposal that rewrites a dozen protected files as far as the edit distance bound allows, about half a million
+// steps each, is compared in full: the budget a report shares is for hostile proposals, not for this one.
+func TestBuildComparesAHeavyProposalInFull(t *testing.T) {
+	t.Parallel()
+	old, proposed := expensive()
+	var changes []report.FileChange
+	for i := range 12 {
+		changes = append(changes, mod(fmt.Sprintf("e%02d.txt", i), old, proposed))
+	}
+	r := build(t, changes...)
+	if r.Truncated {
+		t.Error("the report must not say a budget ran out")
+	}
+	for _, f := range r.Files {
+		if f.Limit != "" || !f.CountsKnown {
+			t.Errorf("%s: got Limit=%q, counts known=%v; want it compared", f.Path, f.Limit, f.CountsKnown)
+		}
+	}
+}
+
 func TestBuildSaysWhichFilesTheSharedWorkBudgetStopped(t *testing.T) {
 	t.Parallel()
 	old, proposed := expensive()
 	var changes []report.FileChange
-	for i := range 20 {
+	for i := range 8 {
 		changes = append(changes, mod(fmt.Sprintf("e%02d.txt", i), old, proposed))
 	}
 	changes = append(changes,
 		mod("zz.py", "assert x\nA\nB\n", "B\nA\nC\n"), // changes at both ends: it needs the comparison
 		mod("zzz.py", "assert x\nkeep\n", "keep\n"),   // one side is empty once what is common is trimmed: it needs none
 	)
-	r := build(t, changes...)
+	r, err := report.BuildWithWork(changes, 2_000_000) // about four of the expensive files
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
 	if !r.Truncated {
 		t.Fatal("the report must say the work budget ran out")
 	}
@@ -35,7 +58,7 @@ func TestBuildSaysWhichFilesTheSharedWorkBudgetStopped(t *testing.T) {
 		t.Fatalf("the first file is compared: got Limit=%q, +%d -%d", first.Limit, first.LinesAdded, first.LinesRemoved)
 	}
 	stopped := false
-	for _, f := range r.Files[:20] {
+	for _, f := range r.Files[:8] {
 		switch f.Limit {
 		case "":
 			if stopped {
@@ -51,9 +74,9 @@ func TestBuildSaysWhichFilesTheSharedWorkBudgetStopped(t *testing.T) {
 		}
 	}
 	if !stopped {
-		t.Fatal("twenty expensive files must run the budget out")
+		t.Fatal("eight expensive files must run the budget out")
 	}
-	pair, cheap := r.Files[20], r.Files[21]
+	pair, cheap := r.Files[8], r.Files[9]
 	if pair.Limit != report.LimitBudget {
 		t.Errorf("zz.py: Limit = %q, want %q", pair.Limit, report.LimitBudget)
 	}

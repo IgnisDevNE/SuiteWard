@@ -171,14 +171,17 @@ func (c FileChange) validate() error {
 
 // Build computes the report of changes, in path order whatever the order of changes. Files are compared one after
 // the other in that order and share the budgets, so the same changes always give the same report.
-func Build(changes []FileChange) (Report, error) {
+func Build(changes []FileChange) (Report, error) { return build(changes, maxDiffWork) }
+
+// build is Build with the work budget a test can shrink.
+func build(changes []FileChange, work int) (Report, error) {
 	sorted := slices.Clone(changes)
 	slices.SortStableFunc(sorted, func(a, b FileChange) int { return strings.Compare(a.Path, b.Path) })
 	b := &builder{
 		files:      make([]File, 0, len(sorted)),
 		totals:     Totals{Files: map[Status]int{}, Markers: map[MarkerKind]int{}},
 		hunkRoom:   maxHunkBytes,
-		workRoom:   maxDiffWork,
+		workRoom:   work,
 		markerRoom: maxMarkers,
 	}
 	for i, c := range sorted {

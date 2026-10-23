@@ -202,3 +202,8 @@ func orList(choices []ui.Choice) string {
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
+
+// MultiSelect resolves a multiple choice as Select resolves a single one.
+func (r *Resolver) MultiSelect(key string, m ui.Multi) ([]string, error) {
+	return nil, errors.New("not built")
+}

@@ -11,7 +11,8 @@
 # SUITEWARD_VERSION         a release tag such as v0.3.0-alpha.2 (default: the latest release, which GitHub never makes a pre-release)
 # SUITEWARD_INSTALL_DIR     where `suiteward` goes (default: $HOME/.local/bin)
 # SUITEWARD_REQUIRE_COSIGN  0 (default) or 1: 1 stops when cosign is not installed; any other value is an error
-# SUITEWARD_RELEASE_BASE    only for scripts/install_test.sh: replaces the release download URL, and latest.json under it replaces the GitHub API answer
+# SUITEWARD_RELEASE_BASE    only for scripts/install_test.sh: replaces the release download URL, and latest.json under it replaces the GitHub API answer;
+#                           it must start with https:// or file://, and with wget with https:// (a base is a trust decision: it replaces GitHub)
 #
 # POSIX sh. Everything is in main, called on the last line: a download that stops half way runs nothing.
 set -eu
@@ -36,12 +37,13 @@ valid_tag() {
 	case $1 in '' | *[!A-Za-z0-9.-]*) return 1 ;; esac
 	printf '%s\n' "$1" | grep -Eq "$tag_pattern"
 }
-# fetch URL FILE. stdin is closed: it can be the script itself. Over curl, the default URLs may only be https, redirects included.
+# fetch URL FILE. stdin is closed: it can be the script itself. Over curl, a redirect may only go to https, and the URLs may only be https, or file
+# when SUITEWARD_RELEASE_BASE is a file:// base (main refuses any other base). wget has no such flags, so main lets it take an https:// base only.
 fetch() {
 	if [ "$downloader" = wget ]; then
 		wget -q -O "$2" "$1" < /dev/null
 	elif [ -n "${SUITEWARD_RELEASE_BASE:-}" ]; then
-		curl -fsSL -o "$2" "$1" < /dev/null
+		curl -fsSL --proto '=https,file' --proto-redir '=https' -o "$2" "$1" < /dev/null
 	else
 		curl -fsSL --proto '=https' --proto-redir '=https' -o "$2" "$1" < /dev/null
 	fi
@@ -81,6 +83,12 @@ main() {
 	elif command -v wget > /dev/null 2>&1; then downloader=wget
 	else die "curl or wget is required to download the release"
 	fi
+	# The base replaces GitHub as the origin of everything this script trusts, so it never turns the https rule off: no http://, no other scheme.
+	case ${SUITEWARD_RELEASE_BASE:-} in
+	'' | https://*) ;;
+	file://*) [ "$downloader" != wget ] || die "SUITEWARD_RELEASE_BASE must start with https:// when the downloader is wget, not '$SUITEWARD_RELEASE_BASE'" ;;
+	*) die "SUITEWARD_RELEASE_BASE must start with https:// or file://, not '$SUITEWARD_RELEASE_BASE' (it exists for scripts/install_test.sh only)" ;;
+	esac
 	if command -v sha256sum > /dev/null 2>&1; then hasher=sha256sum
 	elif command -v shasum > /dev/null 2>&1; then hasher='shasum -a 256'
 	else die "sha256sum or shasum is required to check the download"

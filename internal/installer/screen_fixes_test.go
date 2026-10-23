@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -345,5 +346,76 @@ func TestAServiceThatNeverAnswersIsWaitedForOnceByAnInstallWithGitHub(t *testing
 	}
 	if tail := c.tail(); strings.Contains(tail, "Instance:") || !strings.Contains(tail, "Status: ") {
 		t.Errorf("the summary of a service that does not answer has an Instance row or lacks the rest:\n%s", tail)
+	}
+}
+
+// Ctrl-C while the enrollment waits for /status ends the install: the wait gives up because the context is done, and that is not a
+// service that never answered. The install went on to a summary and exit 0 before.
+func TestCtrlCDuringTheEnrollmentWaitEndsAnInstallWithGitHubAsInterrupted(t *testing.T) {
+	for _, screen := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain", true: "full screen"}[screen], func(t *testing.T) {
+			h := newHarness(t, "linux")
+			h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			h.status = func(ctx context.Context, _ string) ([]byte, error) {
+				cancel() // Ctrl-C while the service starts
+				return nil, ctx.Err()
+			}
+			env := h.newEnv()
+			if screen {
+				env.OpenScreen = newTermConsole(&bytes.Buffer{}).open
+			}
+			var stderr bytes.Buffer
+			code := Main(ctx, append([]string{"install"}, colocatedArgs(h)...), env, &stderr)
+			if code != 130 || !strings.Contains(stderr.String(), "interrupted") || strings.Count(stderr.String(), "\n") != 1 {
+				t.Errorf("exit %d with stderr %q, want 130 and one line saying interrupted", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "suiteward enroll") {
+				t.Errorf("the message does not say how to enroll the owner, which the interrupt left undone: %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestCtrlCDuringTheEnrollmentWaitEndsAnIsolatedInstallAsInterrupted(t *testing.T) {
+	g := newIsoGitHub(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	g.ctx = ctx
+	g.status = func(ctx context.Context, address string) ([]byte, error) {
+		if strings.HasSuffix(address, "/status") {
+			cancel()
+			return nil, ctx.Err()
+		}
+		return []byte(`{"version":"v0.2.0"}`), nil
+	}
+	if err := g.run(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("the install ended with %v, want an error that wraps context.Canceled: Ctrl-C during the wait for /status", err)
+	}
+}
+
+// doctor --json is for a program: it never draws, never waits, and keeps the code of its checks, also after Ctrl-C.
+func TestDoctorJSONAfterCtrlCKeepsTheCodeOfItsChecks(t *testing.T) {
+	f, s := colocated{checkOut: doctorNoGitHub}.build(t)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, stderr bytes.Buffer
+	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &out}}
+	code := Main(ctx, []string{"doctor", "--json", "--settings", path}, env, &stderr)
+	var results []doctorResult
+	if err := json.Unmarshal(out.Bytes(), &results); err != nil {
+		t.Fatalf("the output is not the JSON of the results: %v\n%s", err, out.String())
+	}
+	want := 0
+	if slices.ContainsFunc(results, func(r doctorResult) bool { return !r.OK }) {
+		want = 1
+	}
+	if code != want || stderr.Len() != 0 {
+		t.Errorf("exit %d with stderr %q, want %d (the code of the checks) and nothing on stderr", code, stderr.String(), want)
 	}
 }

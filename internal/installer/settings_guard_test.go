@@ -405,3 +405,49 @@ func TestUninstallPurgeOfAnInstanceNothingNamesNeedsATerminalOrItsSettingsWhileI
 		}
 	})
 }
+
+// --instance confirms a purge. Without --purge it would be accepted and mean nothing, so it is refused, as --backup-recipient is outside --upgrade.
+func TestUninstallInstanceWithoutPurgeIsAUsageError(t *testing.T) {
+	for _, args := range [][]string{{"--instance", testInstance}, {"--yes", "--instance", testInstance}} {
+		h := purgeHarness(t)
+		var stderr bytes.Buffer
+		argv := append([]string{"uninstall", "--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm"}, args...)
+		if code := Main(context.Background(), argv, h.newEnv(), &stderr); code != 2 || !strings.Contains(stderr.String(), "--instance is for --purge") {
+			t.Errorf("%v: exit %d, stderr %q: want 2 and the reason", args, code, stderr.String())
+		}
+		h.intact()
+	}
+}
+
+// An empty --settings is what an unset shell variable gives: it never silently means the default settings file, which may be another instance's.
+func TestAnEmptySettingsFlagIsAUsageError(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"install", []string{"install", "--runtime", "podman", "--connection", "pm", "--image", testImage}},
+		{"install --upgrade", []string{"install", "--upgrade", "--yes", "--image", testImage}},
+		{"uninstall", []string{"uninstall", "--yes", "--runtime", "podman", "--connection", "pm"}},
+		{"uninstall --purge", []string{"uninstall", "--purge", "--yes", "--instance", testInstance}},
+		{"enroll", []string{"enroll", "--owner", "alice"}},
+		{"backup init", []string{"backup", "init", "--yes"}},
+		{"backup", []string{"backup"}},
+		{"restore", []string{"restore", "backup.tar.age", "--yes", "--instance", testInstance}},
+		{"doctor", []string{"doctor"}},
+		{"doctor --json", []string{"doctor", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withTerminal(t, true) // enroll refuses a console that is not a terminal before it reads anything
+			useDefaultConfigDir(t)
+			h := purgeHarness(t)
+			var stderr bytes.Buffer
+			if code := Main(context.Background(), append(slices.Clone(tc.args), "--settings", ""), h.newEnv(), &stderr); code != 2 || !strings.Contains(stderr.String(), "--settings") {
+				t.Fatalf("exit %d, stderr %q: want 2 and the flag named", code, stderr.String())
+			}
+			if len(h.f.calls) != 0 {
+				t.Errorf("the runtime was called before the refusal: %v", h.f.lines())
+			}
+			h.intact()
+		})
+	}
+}

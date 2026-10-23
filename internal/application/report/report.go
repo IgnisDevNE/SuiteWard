@@ -17,10 +17,10 @@ import (
 // The bounds that keep a report, and the work to build it, small whatever the files are. The files are untrusted: a
 // proposal can hold hundreds of protected files built to be slow to compare.
 const (
-	maxFileBytes    = 1 << 20   // a side over it is too large to compare
-	maxFileLines    = 20_000    // likewise
-	maxEditDistance = 1000      // lines to delete plus lines to insert; past it a pair of files is too different
-	maxDiffWork     = 5_000_000 // steps (a diagonal tried, a line compared) of every comparison of one report together
+	maxFileBytes    = 1 << 20     // a side over it is too large to compare
+	maxFileLines    = 20_000      // likewise
+	maxEditDistance = 1000        // lines to delete plus lines to insert; past it a pair of files is too different
+	maxDiffWork     = 300_000_000 // steps (a diagonal tried, a line compared) of all the comparisons of one report: about 580 pairs at the edit distance bound, which took 1.6 s to build
 	contextLines    = 3
 	maxLineBytes    = 500
 	maxMarkerBytes  = 200

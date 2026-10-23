@@ -53,6 +53,8 @@ type isoFake struct {
 	started        bool   // suiteward.service was started by this run
 	dbDown         bool   // suiteward-db.service is inactive until this run starts it
 	dbStarted      bool   // suiteward-db.service was started by this run
+	migrateDown    bool   // suiteward-migrate.service is inactive until this run starts it
+	migrateStarted bool   // suiteward-migrate.service was started or restarted by this run
 
 	dump    string          // what pg_dump prints in the database container
 	noImage bool            // no image is in the engine yet, so every pull is real
@@ -140,10 +142,12 @@ func (f *isoFake) answer(c call) ([]byte, error) {
 	return f.answerChecks(c)
 }
 
-// inactiveUnit says whether the fake reports a unit as inactive: the service until it runs, the database until this run starts
-// it when dbDown.
+// inactiveUnit says whether the fake reports a unit as inactive: the service until it runs, the database and the migration until
+// this run starts them when dbDown or migrateDown.
 func (f *isoFake) inactiveUnit(unit string) bool {
-	return (unit == "suiteward.service" && !f.serviceRunning && !f.started) || (unit == "suiteward-db.service" && f.dbDown && !f.dbStarted)
+	return (unit == "suiteward.service" && !f.serviceRunning && !f.started) ||
+		(unit == "suiteward-db.service" && f.dbDown && !f.dbStarted) ||
+		(unit == "suiteward-migrate.service" && f.migrateDown && !f.migrateStarted)
 }
 
 // answerChecks answers what the install asks to know whether the service can start and stays up: the listeners of the
@@ -152,6 +156,8 @@ func (f *isoFake) answerChecks(c call) ([]byte, error) {
 	switch line := c.line(); {
 	case c.name == "systemctl" && line == "--user start suiteward-db.service":
 		f.dbStarted = true
+	case c.name == "systemctl" && (line == "--user restart suiteward-migrate.service" || line == "--user start suiteward-migrate.service"):
+		f.migrateStarted = true // the migration runs and stays active
 	case c.name == "ss" && line == "-ltn":
 		out := "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
 		for _, port := range f.listening {
@@ -1384,11 +1390,11 @@ func TestInstallIsolatedNamesTheEnvFileWhenItsAppHasNoKey(t *testing.T) {
 
 // The network service of the stack is a oneshot that stays active: after a purge removed the Podman network, a database started
 // while that service is still "active" exits 125 (network not found), because systemd never runs `podman network create` again.
-// With the database down nothing that needs the network runs, so the install restarts the network service first, which
-// creates it again (--ignore: the network may exist). A database that runs keeps the network it has.
-func TestInstallIsolatedRestartsTheNetworkServiceBeforeItStartsAStoppedDatabase(t *testing.T) {
+// With the database, the migration and the service all down nothing that needs the network runs, so the install restarts the
+// network service first, which creates it again (--ignore: the network may exist).
+func TestInstallIsolatedRestartsTheNetworkServiceBeforeItStartsAStoppedStack(t *testing.T) {
 	f := newIsoFake(t.TempDir())
-	f.dbDown = true
+	f.dbDown, f.migrateDown = true, true // and the service has not run
 	if _, err := runIsolated(t, f, nil, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1397,6 +1403,32 @@ func TestInstallIsolatedRestartsTheNetworkServiceBeforeItStartsAStoppedDatabase(
 	start := f.index("systemctl --user start suiteward-db.service", reload)
 	if reload < 0 || network < 0 || start < 0 || network > start {
 		t.Fatalf("the network service must be restarted after the reload and before the database starts:\n%s", strings.Join(f.lines(), "\n"))
+	}
+}
+
+// Every container Requires= the network service, so restarting it restarts what runs: a database that crashed while the migration
+// or the service run is no reason to touch it.
+func TestInstallIsolatedRestartsTheNetworkServiceOnlyWhenNothingOfTheStackRuns(t *testing.T) {
+	for name, tc := range map[string]struct {
+		dbDown, migrateDown, serviceRuns bool
+		restarts                         bool
+	}{
+		"the database, the migration and the service are down": {true, true, false, true},
+		"the database is down and the service runs":            {true, false, true, false},
+		"the database is down and the migration runs":          {true, false, false, false},
+		"the database runs":                                    {false, true, false, false},
+		"all of them run":                                      {false, false, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newIsoFake(t.TempDir())
+			f.dbDown, f.migrateDown, f.serviceRunning, f.everActive = tc.dbDown, tc.migrateDown, tc.serviceRuns, tc.serviceRuns
+			if _, err := runIsolated(t, f, nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			if restarted := f.has("restart suiteward-network.service"); restarted != tc.restarts {
+				t.Errorf("network service restarted = %v, want %v:\n%s", restarted, tc.restarts, strings.Join(f.lines(), "\n"))
+			}
+		})
 	}
 }
 

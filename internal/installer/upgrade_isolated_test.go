@@ -693,13 +693,14 @@ func TestUninstallIsolatedStopsTheServicesAnEarlierUninstallLeftActive(t *testin
 		u.f.active[unit] = "inactive"
 	}
 	u.f.active["suiteward-network.service"] = "active"
+	u.f.active["suiteward-db.service"] = "failed" // not inactive either: it is stopped, and named with the state it was found in
 	u.f.objects = map[string]bool{VolumeData: true, VolumeDBData: true, NetworkName: true}
 	if err := u.uninstall("--purge", "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	stop := u.f.index("systemctl --user stop suiteward-network.service", 0)
-	if stop < 0 {
-		t.Fatalf("the network service that was left active was not stopped:\n%s", strings.Join(u.f.lines(), "\n"))
+	if stop < 0 || !u.f.has("systemctl --user stop suiteward-db.service") {
+		t.Fatalf("the services that were left active or failed were not stopped:\n%s", strings.Join(u.f.lines(), "\n"))
 	}
 	if remove := u.f.index("network rm", 0); remove < stop {
 		t.Errorf("the network was removed (call %d) before its service was stopped (call %d)", remove, stop)
@@ -708,11 +709,14 @@ func TestUninstallIsolatedStopsTheServicesAnEarlierUninstallLeftActive(t *testin
 		t.Errorf("systemd was not reloaded after the stop: it still holds the unit that is gone")
 	}
 	for _, unit := range generatedUnits {
-		if unit != "suiteward-network.service" && u.f.has("systemctl --user stop "+unit) {
+		if unit != "suiteward-network.service" && unit != "suiteward-db.service" && u.f.has("systemctl --user stop "+unit) {
 			t.Errorf("%s was inactive and was stopped", unit)
 		}
 	}
-	if !strings.Contains(u.out.String(), "suiteward-network.service") {
-		t.Errorf("the output does not say what was stopped:\n%s", u.out.String())
+	// The output names each service with the state it was found in, so that it never says "active" of one that had failed.
+	for _, want := range []string{"suiteward-network.service (active)", "suiteward-db.service (failed)"} {
+		if !strings.Contains(u.out.String(), want) {
+			t.Errorf("the output does not say %q:\n%s", want, u.out.String())
+		}
 	}
 }

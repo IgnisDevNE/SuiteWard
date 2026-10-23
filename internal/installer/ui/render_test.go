@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -64,18 +65,29 @@ type stage struct {
 	f    frame
 }
 
-// runStages drives one fixed install through the full-screen renderer at 80x24 and captures the frame of four moments:
-// the welcome choice with its prompt open, the checks with a spinner, the progress bars, and the summary.
-func runStages(t *testing.T, color ColorLevel) []stage {
+// runSequence drives one fixed install through a screen of the given options and returns the frame of four moments (the welcome
+// choice with its prompt open, the checks with a spinner, the progress bars, and the summary) and everything written to the terminal.
+// A plain screen has no frames, so it returns none.
+func runSequence(t *testing.T, o Options) ([]stage, string) {
 	t.Helper()
 	var (
 		s      *Screen
+		out    bytes.Buffer
 		stages []stage
 	)
-	capture := func(name string) { stages = append(stages, stage{name, snapshot(s)}) }
+	capture := func(name string) {
+		if s.FullScreen() {
+			stages = append(stages, stage{name, snapshot(s)})
+		}
+	}
 	in := &probe{r: strings.NewReader("\n\n")}
-	in.hook = func(n int) { capture([]string{"welcome", "summary"}[n]) }
-	s, err := Open(Options{Out: io.Discard, In: in, Version: testVersion, Mode: ModeFull, Color: color, Width: 80, Height: 24})
+	in.hook = func(n int) {
+		if names := []string{"welcome", "summary"}; n < len(names) {
+			capture(names[n])
+		}
+	}
+	o.Out, o.In, o.Version = &out, in, testVersion
+	s, err := Open(o)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -88,7 +100,7 @@ func runStages(t *testing.T, color ColorLevel) []stage {
 	}
 	s.Step(2)
 	s.Check("Podman 5.8, rootless")
-	s.Check("Ports 8080 and 5432 are free")
+	s.Check("Ports 8080 and 5432 are free\n")
 	s.Warn("Docker is also installed; Podman is used.")
 	s.Spin("Waiting for GitHub", 21*time.Second)
 	capture("checks")
@@ -113,7 +125,50 @@ func runStages(t *testing.T, color ColorLevel) []stage {
 		t.Fatalf("Summary: %v", err)
 	}
 	mustClose(t, s)
+	return stages, out.String()
+}
+
+func runStages(t *testing.T, color ColorLevel) []stage {
+	t.Helper()
+	stages, _ := runSequence(t, fullOptions(color))
 	return stages
+}
+
+// The same install in plain mode: no escape sequence anywhere, the Say text exactly as written, the steps silent, and one line per
+// check, bar and spinner.
+func TestPlainModeRunsTheSameSequenceAsPlainText(t *testing.T) {
+	stages, out := runSequence(t, plainOptions())
+	if len(stages) != 0 {
+		t.Fatalf("a plain screen has no frames, got %d", len(stages))
+	}
+	want := "Welcome to SuiteWard.\n" +
+		"This sets up the service on this PC.\n" +
+		"\n" +
+		"How should SuiteWard run?\n" +
+		"1) co-located   alongside the agent, on this PC (default)\n" +
+		"2) isolated     on a separate host\n" +
+		"Choose [1]: " +
+		"Podman 5.8, rootless\n" +
+		"Ports 8080 and 5432 are free\n" +
+		"Docker is also installed; Podman is used.\n" +
+		"Waiting for GitHub...\n" +
+		"Starting the stack.\n" +
+		"\n" +
+		"Database: ready\n" +
+		"Service: pulling image\n" +
+		"Total: 60%\n" +
+		"App: suiteward-q (id 123456)\n" +
+		"Repos: IgnisDevNE/SuiteWardQ\n" +
+		"Owner: octocat (TOTP enrolled)\n" +
+		"Status URL: http://127.0.0.1:8080/status\n" +
+		"Doctor: 12 ok, 1 warning, 0 failed\n" +
+		"The Podman machine is not started at logon; run `podman machine start` after a restart.\n"
+	if out != want {
+		t.Fatalf("plain output differs.\ngot:\n%s\nwant:\n%s", out, want)
+	}
+	if strings.Contains(out, esc) {
+		t.Fatal("plain output holds an escape sequence")
+	}
 }
 
 func TestGoldenFrames(t *testing.T) {

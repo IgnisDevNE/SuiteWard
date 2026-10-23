@@ -580,3 +580,38 @@ func TestUpgradeColocatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeColocatedRefusesPortsAndTimeoutThatDifferFromTheInstalledOnes(t *testing.T) {
+	// An upgrade keeps the installed ports and job timeout, so a run that asks for others stops before any change instead of
+	// exiting 0 and ignoring them; on this tier a re-run of the install applies them.
+	u := newUpgradeHarness(t, func(s *Settings) { s.JobTimeout = "3m" })
+	err := u.upgrade("--image", testImage, "--yes", "--http-port", strconv.Itoa(u.port+100), "--job-timeout", "9m")
+	if err == nil {
+		t.Fatal("an upgrade that is asked for other ports must not go on and ignore them")
+	}
+	for _, want := range []string{"suiteward install", "--http-port " + strconv.Itoa(u.port+100), "--job-timeout 9m"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error lacks %q: %v", want, err)
+		}
+	}
+	for _, not := range []string{"--mcp-port", "--tier isolated"} {
+		if strings.Contains(err.Error(), not) {
+			t.Errorf("the error must not say %q: %v", not, err)
+		}
+	}
+	if len(u.f.find("pg_dump")) != 0 {
+		t.Error("a backup was taken before the refusal")
+	}
+	u.noChanges()
+
+	// The values that are installed are no difference, and an invalid one is refused as it is on an install.
+	u = newUpgradeHarness(t, func(s *Settings) { s.JobTimeout = "3m" })
+	if err := u.upgrade("--image", testImage, "--yes", "--http-port", strconv.Itoa(u.port), "--mcp-port", strconv.Itoa(u.port+1), "--job-timeout", "3m"); err != nil {
+		t.Fatalf("asking for what is installed is not a change: %v", err)
+	}
+	u = newUpgradeHarness(t, nil)
+	if err := u.upgrade("--image", testImage, "--yes", "--http-port", "70000"); err == nil {
+		t.Fatal("an invalid port must be refused")
+	}
+	u.noChanges()
+}

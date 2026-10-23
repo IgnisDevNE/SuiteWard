@@ -31,6 +31,7 @@ import (
 type isoFake struct {
 	calls []call
 	tty   []call // the commands that got the real terminal
+	ttyAt []int  // how many commands had run when each of them got it
 	goos  string
 	euid  string
 
@@ -72,6 +73,7 @@ func (f *isoFake) deps() Deps {
 		Getenv: func(k string) string { return map[string]string{"HOME": f.home}[k] },
 		Interactive: func(_ context.Context, name string, args []string) error {
 			f.tty = append(f.tty, call{name: name, args: append([]string(nil), args...)})
+			f.ttyAt = append(f.ttyAt, len(f.calls))
 			return nil
 		},
 		Exec: func(_ context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
@@ -1208,10 +1210,26 @@ func TestInstallIsolatedRerunRestartsARunningServiceToTakeTheGivenValues(t *test
 	}
 }
 
+// flowAppEnvFile is the env file of an install with the App the fake GitHub flow returns: what writeEnvFile writes for it.
+const flowAppEnvFile = "SUITEWARD_GITHUB_APP_ID=123\nSUITEWARD_GITHUB_INSTALLATION_ID=456\nSUITEWARD_GITHUB_REPOSITORIES=octo/one,octo/two\n"
+
+// writeAccountEnvFile writes the GitHub env file the service of an earlier install reads.
+func writeAccountEnvFile(t *testing.T, home, text string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(envFile(home)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envFile(home), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInstallIsolatedRerunWithNothingGivenKeepsWhatIsInstalledAndLeavesARunningServiceAlone(t *testing.T) {
 	home := t.TempDir()
 	installedStackUnits(t, home)
+	writeAccountEnvFile(t, home, flowAppEnvFile) // the service of a stack with GitHub reads it, and the key secret is there
 	f := newIsoFake(home)
+	f.secrets[SecretGitHubAppKey] = "existing"
 	f.serviceRunning, f.everActive, f.listening = true, true, []int{18081, 18091}
 	out, err := runIsolated(t, f, nil, "")
 	if err != nil {
@@ -1225,6 +1243,51 @@ func TestInstallIsolatedRerunWithNothingGivenKeepsWhatIsInstalledAndLeavesARunni
 	}
 	if f.has("restart suiteward.service") || strings.Contains(out, "Changing") {
 		t.Errorf("nothing changes, so nothing restarts:\n%s\n%v", out, f.lines())
+	}
+}
+
+// A running service reads its units, its env file and its key secret only when it starts: a re-run that changes any of them over
+// an active service restarts it, before setup enrolls the owner on it; a re-run that changes none leaves it alone.
+func TestInstallIsolatedRerunRestartsARunningServiceWhenWhatItReadsChanges(t *testing.T) {
+	off := map[string]string{"github-app-id": "none", "github-installation-id": "", "github-repositories": "", "github-owner": ""}
+	for name, tc := range map[string]struct {
+		noGitHub  bool              // the installed service unit has no key lines
+		env       string            // the env file of the stack
+		keySecret bool              // the key secret exists
+		answers   map[string]string // over the answers of newIsoGitHub: the App 123
+		restarts  bool
+	}{
+		"GitHub is turned on over a stack without it": {true, "", false, nil, true},
+		"GitHub is turned off over a stack with it":   {false, "", true, off, true},
+		"another App":                    {false, handMadeEnv, true, nil, true},
+		"the key secret is stored again": {false, flowAppEnvFile, false, nil, true},
+		"nothing changed":                {false, flowAppEnvFile, true, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			terminalForSetup(t)
+			home := t.TempDir()
+			installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: DefaultEnvFile, NoGitHub: tc.noGitHub})
+			writeAccountEnvFile(t, home, tc.env)
+			f := newIsoFake(home)
+			f.serviceRunning, f.everActive = true, true
+			if tc.keySecret {
+				f.secrets[SecretGitHubAppKey] = "existing"
+			}
+			g := isoGitHubOn(t, f)
+			maps.Copy(g.answers, tc.answers)
+			if err := g.run(); err != nil {
+				t.Fatalf("%v\n%s", err, g.out.String())
+			}
+			restart := f.index("systemctl --user restart suiteward.service", 0)
+			switch {
+			case tc.restarts && restart < 0:
+				t.Fatalf("the service runs with what it read at its last start: it must be restarted:\n%s", strings.Join(f.lines(), "\n"))
+			case !tc.restarts && restart >= 0:
+				t.Fatalf("nothing the service reads changed, so it must not be restarted:\n%s", strings.Join(f.lines(), "\n"))
+			case tc.restarts && len(f.tty) > 0 && restart >= f.ttyAt[0]:
+				t.Errorf("setup enrolled the owner on the old service: the restart is call %d, setup came after %d calls", restart, f.ttyAt[0])
+			}
+		})
 	}
 }
 

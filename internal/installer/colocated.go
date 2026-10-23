@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // The user of a database URL, read without parsing the URL: a parse error would repeat the URL, password included.
@@ -53,6 +54,8 @@ func guardDefaultSettings(t installTarget, runtimeName, connection string) error
 
 // installColocated is the co-located install: choose and check everything first, then bring the stack up.
 func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
+	scr := r.screen
+	scr.Steps("Environment", "Checks", "GitHub", "Start", "Owner", "Done")
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, true)
 	if err != nil {
 		return err
@@ -99,9 +102,11 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 			return err
 		}
 	}
+	scr.Step(2)
 	if err := c.preflight(ctx); err != nil {
 		return err
 	}
+	scr.Step(3)
 	if err := c.githubFlow(ctx, r, filepath.Dir(t.settingsPath)); err != nil {
 		return err
 	}
@@ -111,6 +116,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := c.planKeep(ctx); err != nil {
 		return err
 	}
+	scr.Step(4)
 	save := func() error {
 		if err := SaveSettings(t.settingsPath, c.s); err != nil {
 			return err
@@ -122,7 +128,8 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	c.restartAfterReboot(ctx)
-	return c.finish(ctx, t)
+	scr.Step(5)
+	return c.finish(ctx, scr, t)
 }
 
 // openRuntime chooses the runtime and the connection and identifies the engine behind it. Docker needs a confirmation
@@ -160,13 +167,17 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, conf
 	if err != nil {
 		return nil, "", err
 	}
-	engine := rt.Engine()
+	r.screen.Check("Using %s.\n", engineLine(rt.Engine()))
+	return rt, connection, nil
+}
+
+// engineLine describes the engine a command works with: "Podman 5.8.2 (rootless)".
+func engineLine(e Engine) string {
 	daemon := "a rootful daemon"
-	if engine.Rootless {
+	if e.Rootless {
 		daemon = "rootless"
 	}
-	r.say("Using %s (%s).\n", strings.TrimSpace(engine.Name+" "+engine.Version), daemon)
-	return rt, connection, nil
+	return fmt.Sprintf("%s (%s)", strings.TrimSpace(e.Name+" "+e.Version), daemon)
 }
 
 // chooseSettings resolves the ports and the job timeout over base, and validates the result. The GitHub values stay as
@@ -208,20 +219,30 @@ func (c *colocatedInstall) pullImages(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return pullMissing(ctx, c.rt, c.image, postgres)
+	return pullMissing(ctx, screenOn(c.out), c.rt, c.image, postgres)
 }
 
-// pullMissing pulls the images the engine does not have yet.
-func pullMissing(ctx context.Context, rt Runtime, images ...string) error {
+// pullMissing pulls the images the engine does not have yet, each under a spinner on a full screen.
+func pullMissing(ctx context.Context, scr *ui.Screen, rt Runtime, images ...string) error {
 	for _, img := range images {
 		if rt.ImageExists(ctx, img) {
 			continue
 		}
-		if err := rt.Pull(ctx, img); err != nil {
+		if err := working(scr, "Pulling "+imageLabel(img), func() error { return rt.Pull(ctx, img) }); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// imageLabel is an image as the spinner names it: its name without the registry, and the start of its digest.
+func imageLabel(image string) string {
+	name, digest, pinned := strings.Cut(image, "@")
+	name = name[strings.LastIndex(name, "/")+1:]
+	if !pinned {
+		return name
+	}
+	return name + "@" + digest[:min(len(digest), len("sha256:")+12)]
 }
 
 // stackInstalled is what an existing installation tells the next run.
@@ -356,7 +377,7 @@ func (c *colocatedInstall) checkPorts(ctx context.Context) error {
 	if c.inMachine() {
 		listening, err := c.machineListening(ctx)
 		if err != nil {
-			c.say("Note: the ports could not be checked inside the Podman machine (%v); a port that is in use shows up when the service starts.\n", err)
+			screenOn(c.out).Warn("Note: the ports could not be checked inside the Podman machine (%v); a port that is in use shows up when the service starts.\n", err)
 			return nil
 		}
 		free = func(port int) error {
@@ -430,7 +451,7 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 	}
 	// A v0.1.x stack has the owner URL where the application URL is now: its user is the owner.
 	if string(m[1]) == ownerRole {
-		c.say("Upgrading an existing stack: %s held the owner URL. Creating the role %s and replacing the secret with its URL; the owner URL is now in %s and only the migrate container gets it.\n",
+		screenOn(c.out).Warn("Upgrading an existing stack: %s held the owner URL. Creating the role %s and replacing the secret with its URL; the owner URL is now in %s and only the migrate container gets it.\n",
 			SecretDatabaseURL, appRole, SecretDatabaseOwnerURL)
 		state.needAppURL = true
 	}
@@ -443,7 +464,7 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 			return secretState{}, err
 		}
 		if !same {
-			c.say("The copies of %s differ (an earlier install was interrupted): the role gets a new password and every copy is rewritten.\n", SecretDatabaseURL)
+			screenOn(c.out).Warn("The copies of %s differ (an earlier install was interrupted): the role gets a new password and every copy is rewritten.\n", SecretDatabaseURL)
 			state.needAppURL = true
 		}
 	}
@@ -464,8 +485,9 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 	if !c.keepServe {
 		remove = []string{ContainerServe, ContainerMigrate}
 	}
+	scr := screenOn(c.out)
 	for _, name := range remove {
-		if err := c.rt.Remove(ctx, name); err != nil {
+		if err := working(scr, "Stopping "+name, func() error { return c.rt.Remove(ctx, name) }); err != nil { // the service gets up to 45 s to stop
 			return err
 		}
 	}
@@ -481,14 +503,14 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 	if err := c.ensureRole(ctx, c.secrets.needAppURL); err != nil {
 		return err
 	}
-	if err := c.rt.Run(ctx, c.stack.Migrate); err != nil {
+	if err := working(scr, "Running the migration", func() error { return c.rt.Run(ctx, c.stack.Migrate) }); err != nil {
 		service := "so the service was not started"
 		if c.keepServe {
 			service = "the running service was left as it was"
 		}
 		return migratingError{fmt.Errorf("suiteward migrate failed, %s: %w", service, err)}
 	}
-	c.say("suiteward migrate finished: the schema is up to date.\n")
+	scr.Check("suiteward migrate finished: the schema is up to date.\n")
 	if err := save(); err != nil {
 		return migratingError{err}
 	}
@@ -525,13 +547,14 @@ func (c colocatedInstall) ensureObjects(ctx context.Context) error {
 
 // reportStarted says which containers were started and which a re-run left running.
 func (c colocatedInstall) reportStarted() {
+	scr := screenOn(c.out)
 	var started []string
 	for _, part := range []struct {
 		name string
 		kept bool
 	}{{ContainerDB, c.keepDB}, {ContainerServe, c.keepServe}} {
 		if part.kept {
-			c.say("%s already runs as installed: it was not recreated.\n", part.name)
+			scr.Check("%s already runs as installed: it was not recreated.\n", part.name)
 		} else {
 			started = append(started, part.name)
 		}
@@ -543,7 +566,7 @@ func (c colocatedInstall) reportStarted() {
 	if c.s.GitHub.AppID != 0 {
 		github = "configured"
 	}
-	c.say("Started %s (%s), GitHub %s.\n", strings.Join(started, " and "), c.image, github)
+	scr.Check("Started %s (%s), GitHub %s.\n", strings.Join(started, " and "), c.image, github)
 }
 
 // planKeep decides which containers a re-run leaves alone: the ones that run as the install that made them defined them.
@@ -644,7 +667,7 @@ func (c colocatedInstall) checkTokenFile() error {
 func (c colocatedInstall) ensureMCPToken(ctx context.Context) error {
 	if c.secrets.haveToken {
 		if _, err := os.Stat(c.tokenFile); err != nil {
-			c.say("Warning: the secret %s exists but %s does not. Remove the stack and its secrets to generate a new token.\n", SecretMCPAuth, c.tokenFile)
+			screenOn(c.out).Warn("Warning: the secret %s exists but %s does not. Remove the stack and its secrets to generate a new token.\n", SecretMCPAuth, c.tokenFile)
 		}
 		return nil
 	}
@@ -683,7 +706,8 @@ func writeTokenFile(ctx context.Context, d Deps, path, token string) error {
 // waitHealthy polls the database for 90 s, one check a second.
 func (c colocatedInstall) waitHealthy(ctx context.Context) error {
 	logs := c.rt.Name() + " logs " + ContainerDB
-	for range 90 {
+	bar := barOn(screenOn(c.out), "Database")
+	for i := range 90 {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -693,10 +717,12 @@ func (c colocatedInstall) waitHealthy(ctx context.Context) error {
 		}
 		switch {
 		case state.Status == "running" && state.Health == "healthy":
+			bar.set(1, "healthy")
 			return nil
 		case slices.Contains([]string{"exited", "stopped", "dead"}, state.Status):
 			return fmt.Errorf("%s exited before it became healthy (%s)", ContainerDB, logs)
 		}
+		bar.set(float64(i)/90, fmt.Sprintf("starting, %d s", i))
 		c.env.Sleep(time.Second)
 	}
 	return fmt.Errorf("%s did not become healthy within 90 s (%s)", ContainerDB, logs)
@@ -766,10 +792,10 @@ func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 		}
 	}
 	if err != nil {
-		c.say("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: %s.\n", restartUnit, err, fix)
+		screenOn(c.out).Warn("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: %s.\n", restartUnit, err, fix)
 	}
 	if d.GOOS != "linux" {
-		c.say("Note: the Podman machine is not started at logon. After this PC restarts, run `podman machine start`; the stack comes back with it.\n")
+		screenOn(c.out).Warn("Note: the Podman machine is not started at logon. After this PC restarts, run `podman machine start`; the stack comes back with it.\n")
 	}
 }
 
@@ -823,23 +849,20 @@ func connectionUser(ctx context.Context, p *Podman, connection string) (string, 
 	return "", fmt.Errorf("%q is not a Podman machine connection", connection)
 }
 
-// finish runs setup, or says how, and prints the next steps.
-func (c *colocatedInstall) finish(ctx context.Context, t installTarget) error {
+// finish runs setup, or says how, prints the next steps and, on a full screen, ends with the summary.
+func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t installTarget) error {
 	c.say("The MCP token for a client is in %s (it is not printed).\n", c.tokenFile)
 	c.say("Read the status of the service: %s\n", c.statusHint(ctx))
-	doctor := "suiteward doctor"
-	if !t.defaultPath {
-		doctor += " --settings " + quoteArg(t.settingsPath)
-	}
 	if c.s.GitHub.AppID == 0 {
 		c.say("GitHub is not configured. Run the install again with --github yes (or the GitHub values) to set it up, then enroll the owner.\n")
-		return nil
+	} else {
+		if err := c.enroll(ctx, c.readStatus); err != nil {
+			return err
+		}
+		c.say("Then check the instance with `%s`.\n", doctorHint(t.settingsPath, t.defaultPath))
 	}
-	if err := c.enroll(ctx, c.readStatus); err != nil {
-		return err
-	}
-	c.say("Then check the instance with `%s`.\n", doctor)
-	return nil
+	scr.Step(6)
+	return showSummary(scr, func() []ui.KV { return c.installSummary(ctx, t) })
 }
 
 // statusHint is the command that reads /status of the service: inside the Podman machine when the port is published there.

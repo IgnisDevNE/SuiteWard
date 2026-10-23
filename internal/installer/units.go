@@ -37,7 +37,15 @@ type UnitParams struct {
 	// NoGitHub leaves the App key secret and its environment variable out of the service unit: without an App there is no key to
 	// mount, and the service stops at startup when it is given the key but not the App. The zero value keeps both lines.
 	NoGitHub bool
+	// NoReportURL leaves the report base URL out of the service unit. Only the adoption sets it, for units of v0.3.0-alpha.2 that
+	// predate the line, so that they compare equal; an install or an upgrade renders the line (UnitParamsFrom never sets it).
+	NoReportURL bool
 }
+
+// reportBaseURLEnv names the variable that tells the service the address of its own HTTP listener, which is published on the loopback.
+const reportBaseURLEnv = "SUITEWARD_REPORT_BASE_URL"
+
+func reportBaseURL(httpPort int) string { return "http://127.0.0.1:" + strconv.Itoa(httpPort) }
 
 // UnitParamsFrom takes the ports, tier, job timeout and whether GitHub is configured from the settings.
 func UnitParamsFrom(s Settings, digest string) UnitParams {
@@ -108,6 +116,9 @@ func render(templates map[string][]byte, p UnitParams) (map[string][]byte, error
 	}
 	release := lineEdit{old: "Image=" + releaseImageRepo + "@sha256:<digest>", new: "Image=" + releaseImageRepo + "@" + p.Digest}
 	tier := "Environment=SUITEWARD_INSTALLATION_TIER=" + string(p.Tier)
+	if !p.NoReportURL {
+		tier += "\nEnvironment=" + reportBaseURLEnv + "=" + reportBaseURL(p.HTTPPort)
+	}
 	if p.JobTimeout != "" {
 		tier += "\nEnvironment=SUITEWARD_JOB_TIMEOUT=" + p.JobTimeout
 	}

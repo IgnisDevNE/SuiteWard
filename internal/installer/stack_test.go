@@ -83,7 +83,7 @@ func TestColocatedServeKeepsTheFlagSetOfLocalPS1(t *testing.T) {
 	}
 	wantEnv := []string{
 		"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
-		"SUITEWARD_INSTALLATION_TIER=co-located",
+		"SUITEWARD_INSTALLATION_TIER=co-located", "SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:18081",
 	}
 	if !slices.Equal(serve.Env, wantEnv) {
 		t.Errorf("serve env without GitHub: %v", serve.Env)

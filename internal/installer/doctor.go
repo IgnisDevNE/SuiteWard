@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // Doctor is the host half of `suiteward doctor`:
@@ -36,7 +37,11 @@ func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, 
 		d.fail("settings", err.Error(), "this is a bug of the installer: report it")
 	} else {
 		d.deps.Exec = boundExec(deps.Exec)
-		d.run(ctx, settingsPath)
+		scr := screenOn(out)
+		if !jsonOut {
+			scr.Steps("Doctor")
+		}
+		spinning(scr, "Checking the instance", func() { d.run(ctx, settingsPath) })
 	}
 	if err := writeDoctor(out, d.results, jsonOut); err != nil {
 		return 1 // a failed write to the output cannot be reported anywhere else
@@ -60,6 +65,19 @@ type doctorResult struct {
 func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(results)
+	}
+	if scr, ok := w.(*ui.Screen); ok && scr.FullScreen() { // the checks are lines of the screen, and Close keeps the ones to read twice
+		for _, r := range results {
+			switch {
+			case r.OK && r.Warning:
+				scr.Warn("WARN %s: %s — %s\n", r.Name, r.Detail, r.Fix)
+			case r.OK:
+				scr.Check("%s", r.Name)
+			default:
+				scr.Warn("FAIL %s: %s — %s\n", r.Name, r.Detail, r.Fix)
+			}
+		}
+		return nil
 	}
 	var b strings.Builder
 	for _, r := range results {

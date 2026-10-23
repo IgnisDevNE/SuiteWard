@@ -177,6 +177,10 @@ func newReportView(repo, reference string, built revisionReport) reportView {
 	v := reportView{Repo: repo, Reference: reference, Base: string(built.Base), Facts: commandtext.ChangesOf(built.Report).Facts(false), Truncated: built.Report.Truncated}
 	for _, f := range built.Report.Files {
 		file := fileView{Status: string(f.Status), Path: commandtext.Visible(f.Path), Counts: "no line count", Notes: fileNotes(f)}
+		crlf := usesCRLF(f)
+		if crlf {
+			file.Notes = append(file.Notes, "This file uses CRLF line endings.")
+		}
 		if f.CountsKnown {
 			file.Counts = fmt.Sprintf("+%d/−%d", f.LinesAdded, f.LinesRemoved)
 		}
@@ -186,7 +190,11 @@ func newReportView(repo, reference string, built revisionReport) reportView {
 		for _, h := range f.Hunks {
 			hunk := hunkView{Header: fmt.Sprintf("@@ -%d,%d +%d,%d @@", h.OldStart, h.OldLines, h.NewStart, h.NewLines)}
 			for _, l := range h.Lines {
-				hunk.Lines = append(hunk.Lines, lineView{Class: lineClasses[l.Kind], Text: string(rune(l.Kind)) + commandtext.Visible(l.Text), Cut: l.Cut})
+				text := l.Text
+				if crlf { // the file says once that it ends its lines with one; a line whose ending changed is still a pair of lines in the diff
+					text = strings.TrimSuffix(text, "\r")
+				}
+				hunk.Lines = append(hunk.Lines, lineView{Class: lineClasses[l.Kind], Text: string(rune(l.Kind)) + commandtext.Visible(text), Cut: l.Cut})
 				if l.NoNewline {
 					hunk.Lines = append(hunk.Lines, lineView{Class: "nonl", Text: `\ No newline at end of file`})
 				}
@@ -196,6 +204,23 @@ func newReportView(repo, reference string, built revisionReport) reportView {
 		v.Files = append(v.Files, file)
 	}
 	return v
+}
+
+// usesCRLF reports whether most of the lines of f's hunks that end a line (not the last line of a file that has no terminator) end with a carriage return.
+func usesCRLF(f report.File) bool {
+	lines, returns := 0, 0
+	for _, h := range f.Hunks {
+		for _, l := range h.Lines {
+			if l.NoNewline {
+				continue
+			}
+			lines++
+			if strings.HasSuffix(l.Text, "\r") {
+				returns++
+			}
+		}
+	}
+	return returns*2 > lines
 }
 
 var lineClasses = map[report.LineKind]string{report.LineContext: "ctx", report.LineAdded: "add", report.LineRemoved: "del"}

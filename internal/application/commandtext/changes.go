@@ -284,12 +284,15 @@ func validateReport(r Revision) error {
 }
 
 // Visible returns s with every character that hides itself written as an escape: a control character, a bidirectional or
-// zero-width one, and a byte that is not UTF-8. A tab stays, for the source lines a report page shows.
+// zero-width one, and a byte that is not UTF-8. A literal backslash is written twice, so that an escape is never the spelling of a file's own text.
+// A tab stays, for the source lines a report page shows.
 func Visible(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
 		case r == utf8.RuneError && size == 1:
 			fmt.Fprintf(&b, `\x%02x`, s[i])
 		case r == '\t' || !hidden(r):

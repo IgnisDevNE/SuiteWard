@@ -329,6 +329,12 @@ func (r *Resolver) given(key string) (string, bool) {
 	return v, ok
 }
 
+// asks says whether Value of key would put a question to the person at the terminal: no flag or answer gives it, and there is one.
+func (r *Resolver) asks(key string) bool {
+	_, given := r.given(key)
+	return !given && r.term.IsTerminal
+}
+
 // existingApp verifies an App that was made earlier: its JWT works (GET /app) and the installation is one of its own.
 func existingApp(ctx context.Context, env githubEnv) (appauth.App, GitHubResult, error) {
 	idText, _ := env.R.given("app-id")
@@ -821,6 +827,7 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 // importRulesets writes one ruleset file per repository, tells the user how to import it, waits for the import and re-reads
 // the protection of each repository.
 func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubResult, repos []repoInfo) (map[string]protection.Result, error) {
+	scr := screenOn(env.Out)
 	for _, r := range repos {
 		data, err := rulesetJSON(res.AppID, res.TestChecks[r.name])
 		if err != nil {
@@ -830,14 +837,17 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		if err != nil {
 			return nil, fmt.Errorf("write the ruleset of %s: %w", r.name, err)
 		}
-		ghSay(env.Out, "\nRuleset for %s: %s\n", r.name, path)
+		scr.Keep("\nRuleset for %s: %s\n", r.name, path) // the file and how to import it are needed after the page of this step is gone
 		if r.private {
-			screenOn(env.Out).Warn("Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
+			scr.Warn("Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
 		}
-		ghSay(env.Out, "Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", env.WebURL, r.name)
+		scr.Keep("Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", env.WebURL, r.name)
 	}
 	if !env.SkipRulesetWait {
-		if _, err := env.R.Value("ruleset-imported", "\nPress Enter when the rulesets are imported", "yes"); err != nil {
+		if env.R.asks("ruleset-imported") {
+			ghSay(env.Out, "\n") // the blank line is not part of the label: an interrupted question names its label in one line
+		}
+		if _, err := env.R.Value("ruleset-imported", "Press Enter when the rulesets are imported", "yes"); err != nil {
 			return nil, err
 		}
 	}
@@ -850,8 +860,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
 	results := make(map[string]protection.Result, len(repos))
-	// The protection the user must act on is kept: the page of this step is gone before the install ends.
-	scr := screenOn(env.Out)
+	// The protection the user must act on is kept as well.
 	scr.Keep("\nProtection as GitHub reports it now:\n")
 	for _, r := range repos {
 		result := protection.Unknown()
@@ -919,13 +928,16 @@ func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]s
 	defer scr.Resume()
 	ghSay(out, "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n")
 	execErr := rt.ExecTTY(ctx, ContainerServe, argv)
+	var waitErr error
 	if scr.FullScreen() { // the screen comes back when this returns, so the secret stays on the terminal until the user has copied it
-		if _, err := scr.Prompt("\nPress Enter to return to the installer: "); err != nil && !errors.Is(err, io.EOF) {
-			return fmt.Errorf("wait for Enter after setup: %w", err)
-		}
+		_, waitErr = scr.Prompt("\nPress Enter to return to the installer: ")
 	}
 	if execErr != nil {
-		return fmt.Errorf("setup failed: %w", execErr)
+		return fmt.Errorf("setup failed: %w", execErr) // whatever became of the wait
+	}
+	// The owner is enrolled: Ctrl-C or the end of the input at the wait only skips it, and must not report the enrollment as failed.
+	if waitErr != nil && !errors.Is(waitErr, io.EOF) && !errors.Is(waitErr, context.Canceled) {
+		return fmt.Errorf("wait for Enter after setup: %w", waitErr)
 	}
 	return nil
 }

@@ -92,7 +92,7 @@ func (h *host) dnf(ctx context.Context, why string, args ...string) error {
 	if !ok {
 		return fmt.Errorf("%s; run `%s` yourself, or pass --yes", why, command)
 	}
-	if _, err := h.run(ctx, "dnf", args...); err != nil {
+	if err := working(screenOn(h.out), "Running "+command, func() error { _, err := h.run(ctx, "dnf", args...); return err }); err != nil {
 		return fmt.Errorf("%s: %w", command, err)
 	}
 	return nil

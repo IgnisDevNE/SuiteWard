@@ -23,7 +23,7 @@ type enrollTarget struct {
 // Enroll is `suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]`, the
 // deliberate way to enroll the owner again, for example after losing the authenticator. It finds the instance as install and
 // uninstall do and runs setup, which replaces the TOTP secret: with an owner enrolled, it asks for a typed confirmation first.
-func Enroll(ctx context.Context, args []string, env Env) error {
+func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func Enroll(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	defer endConsole(scr)
+	defer endConsole(scr, &err)
 	scr.Steps("Instance", "Owner")
 	r, err := NewResolver(flags, nil, env.Term)
 	if err != nil {

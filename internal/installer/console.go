@@ -29,8 +29,13 @@ import (
 //	enroll                Instance (finding the stack), Owner (status, confirmation, setup)
 //	doctor                Doctor (the checks as Check and Warn lines)
 
-// endConsole closes the Screen. A failed write cannot be reported anywhere else, as for the say helpers.
-func endConsole(scr *ui.Screen) { _ = scr.Close() }
+// endConsole closes the Screen when a command ends and joins what the terminal failed to take to the command's own error (err points
+// at its result), as doctor does with its exit code: the command may have succeeded, and what it printed was lost.
+func endConsole(scr *ui.Screen, err *error) {
+	if closeErr := scr.Close(); closeErr != nil {
+		*err = errors.Join(*err, closeErr)
+	}
+}
 
 // screenOn is the Screen that out is, or a plain one that writes to out: a caller that has no terminal (a test, a library call) still
 // talks to the one Screen API.

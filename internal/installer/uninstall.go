@@ -13,7 +13,7 @@ import (
 // Uninstall is `suiteward uninstall [--purge] [--yes]` for the co-located tier: it removes the three containers and keeps
 // the state, or with --purge also the volumes, the secrets, the network, the MCP token copy and the settings file. It
 // asks first unless --yes is given, and it never touches an instance that is not this one: the guards of the install apply.
-func Uninstall(ctx context.Context, args []string, env Env) error {
+func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	defer endConsole(scr)
+	defer endConsole(scr, &err)
 	scr.Steps("Confirm", "Remove")
 	r, err := NewResolver(flags, nil, env.Term)
 	if err != nil {

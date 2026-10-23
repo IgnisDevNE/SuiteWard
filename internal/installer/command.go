@@ -147,7 +147,9 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		// A failed write to stderr cannot be reported anywhere else.
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
-	case ctx.Err() != nil && errors.Is(err, context.Canceled): // Ctrl-C: the command has closed its screen, and read nothing since
+	// Ctrl-C: the command has closed its screen, and read nothing since. cmd/suiteward cancels the context for SIGTERM as well, so a
+	// SIGTERM ends here too, as "interrupted" with 130; that is accepted.
+	case ctx.Err() != nil && errors.Is(err, context.Canceled):
 		_, _ = fmt.Fprintf(stderr, "suiteward: interrupted: %v\n", err) // the error keeps what a failed step left behind and how to clean it up
 		return 130
 	default:
@@ -252,7 +254,7 @@ func loadSaved(path string) (Settings, bool, error) {
 }
 
 // Install runs the install command (args without the command name).
-func Install(ctx context.Context, args []string, env Env) error {
+func Install(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
 	}
@@ -275,7 +277,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	defer endConsole(scr)
+	defer endConsole(scr, &err)
 	aliasGitHubKeys(flags)
 	aliasGitHubKeys(answers)
 	r, err := NewResolver(flags, answers, env.Term)
@@ -320,7 +322,7 @@ func Install(ctx context.Context, args []string, env Env) error {
 }
 
 // installHost is `suiteward install host`, the administrator half of the isolated install.
-func installHost(ctx context.Context, args []string, env Env) error {
+func installHost(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
 	}
@@ -347,7 +349,7 @@ func installHost(ctx context.Context, args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	defer endConsole(scr)
+	defer endConsole(scr, &err)
 	r, err := NewResolver(flags, answers, env.Term)
 	if err != nil {
 		return err
@@ -383,7 +385,8 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", err)
 		return 1
 	}
-	defer endConsole(scr) // a panic must not leave the terminal on the alternate screen
+	var closed error
+	defer endConsole(scr, &closed) // a panic must not leave the terminal on the alternate screen; the exit code below reads the error of Close
 	code := Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, false)
 	if err := scr.Close(); err != nil && code == 0 {
 		return 1 // the report could not be written to the terminal, and nothing else says so

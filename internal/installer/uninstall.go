@@ -89,7 +89,7 @@ func Uninstall(ctx context.Context, args []string, env Env) error {
 	if err := purgeState(ctx, rt, tokenFile, settingsPath); err != nil {
 		return err
 	}
-	r.say("Removed the volumes, the secrets, the network, %s and %s.\n", tokenFile, settingsPath)
+	r.say("Removed the volumes, the secrets, the network, %s and %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", tokenFile, settingsPath, backupParent(r, filepath.Dir(tokenFile)))
 	return nil
 }
 

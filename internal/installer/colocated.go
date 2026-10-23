@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -106,6 +107,9 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
+		return err
+	}
+	if err := c.planKeep(ctx); err != nil {
 		return err
 	}
 	save := func() error {
@@ -314,6 +318,10 @@ type colocatedInstall struct {
 	tokenFile string
 	secrets   secretState
 
+	// A re-run leaves these containers alone: they run as the install that made them defined them (planKeep). An upgrade keeps
+	// neither.
+	keepDB, keepServe bool
+
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
 }
 
@@ -460,38 +468,25 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 // save runs once migrate has succeeded and before the service starts: a service that runs without settings is a container
 // that a later run cannot tell from a stranger's.
 func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error {
-	secrets := c.rt.Secrets()
-
-	if err := c.ensure(ctx, KindNetwork, NetworkName); err != nil {
+	if err := c.ensureObjects(ctx); err != nil {
 		return err
 	}
-	for _, volume := range []string{VolumeData, VolumeDBData} {
-		if err := c.ensure(ctx, KindVolume, volume); err != nil {
-			return err
-		}
-	}
 
-	if err := c.ensureOwnerSecrets(ctx); err != nil {
-		return err
+	// The old service, and a migrate container an interrupted run left, go first: the database may restart below and the
+	// application secret may be replaced. A service that a re-run keeps stays.
+	remove := []string{ContainerMigrate}
+	if !c.keepServe {
+		remove = []string{ContainerServe, ContainerMigrate}
 	}
-	if err := c.ensureMCPToken(ctx); err != nil {
-		return err
-	}
-	if c.githubKey != nil {
-		if err := secrets.Write(ctx, SecretGitHubAppKey, c.githubKey, false); err != nil {
-			return err
-		}
-	}
-
-	// The old service, and a migrate container an interrupted run left, go first: the database restarts below and the
-	// application secret may be replaced.
-	for _, name := range []string{ContainerServe, ContainerMigrate} {
+	for _, name := range remove {
 		if err := c.rt.Remove(ctx, name); err != nil {
 			return err
 		}
 	}
-	if err := c.rt.Run(ctx, c.stack.DB); err != nil {
-		return err
+	if !c.keepDB {
+		if err := c.rt.Run(ctx, c.stack.DB); err != nil {
+			return err
+		}
 	}
 	c.say("Waiting for %s to become healthy (up to 90 s)...\n", ContainerDB)
 	if err := c.waitHealthy(ctx); err != nil {
@@ -501,20 +496,110 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 		return err
 	}
 	if err := c.rt.Run(ctx, c.stack.Migrate); err != nil {
-		return migratingError{fmt.Errorf("suiteward migrate failed, so the service was not started: %w", err)}
+		service := "so the service was not started"
+		if c.keepServe {
+			service = "the running service was left as it was"
+		}
+		return migratingError{fmt.Errorf("suiteward migrate failed, %s: %w", service, err)}
 	}
 	c.say("suiteward migrate finished: the schema is up to date.\n")
 	if err := save(); err != nil {
 		return migratingError{err}
 	}
-	if err := c.rt.Run(ctx, c.stack.Serve); err != nil {
-		return migratingError{err}
+	if !c.keepServe {
+		if err := c.rt.Run(ctx, c.stack.Serve); err != nil {
+			return migratingError{err}
+		}
+	}
+	c.reportStarted()
+	return nil
+}
+
+// ensureObjects creates the network, the volumes and the secrets that are missing.
+func (c colocatedInstall) ensureObjects(ctx context.Context) error {
+	if err := c.ensure(ctx, KindNetwork, NetworkName); err != nil {
+		return err
+	}
+	for _, volume := range []string{VolumeData, VolumeDBData} {
+		if err := c.ensure(ctx, KindVolume, volume); err != nil {
+			return err
+		}
+	}
+	if err := c.ensureOwnerSecrets(ctx); err != nil {
+		return err
+	}
+	if err := c.ensureMCPToken(ctx); err != nil {
+		return err
+	}
+	if c.githubKey == nil {
+		return nil
+	}
+	return c.rt.Secrets().Write(ctx, SecretGitHubAppKey, c.githubKey, false)
+}
+
+// reportStarted says which containers were started and which a re-run left running.
+func (c colocatedInstall) reportStarted() {
+	var started []string
+	for _, part := range []struct {
+		name string
+		kept bool
+	}{{ContainerDB, c.keepDB}, {ContainerServe, c.keepServe}} {
+		if part.kept {
+			c.say("%s already runs as installed: it was not recreated.\n", part.name)
+		} else {
+			started = append(started, part.name)
+		}
+	}
+	if len(started) == 0 {
+		return
 	}
 	github := "not configured"
 	if c.s.GitHub.AppID != 0 {
 		github = "configured"
 	}
-	c.say("Started %s and %s (%s), GitHub %s.\n", ContainerDB, ContainerServe, c.image, github)
+	c.say("Started %s (%s), GitHub %s.\n", strings.Join(started, " and "), c.image, github)
+}
+
+// planKeep decides which containers a re-run leaves alone: the ones that run as the install that made them defined them.
+// shortcut: Docker only. Its stack is known by the settings file of that install, so the settings and the image are what the
+// containers were made from; a Podman re-run still replaces both containers (its stack is adopted from them instead), extend
+// this when a Podman re-run should keep them too. Two effects are known: a plain re-run does not move the database to a newer
+// PostgreSQL pin (`install --upgrade` does), and a change of the container definition that comes with a newer binary but the
+// same image is not detected (run `uninstall`, then `install`). An upgrade never calls it: it replaces on purpose, after a backup.
+func (c *colocatedInstall) planKeep(ctx context.Context) error {
+	s := c.secrets
+	// A settings file from before the image was saved cannot tell what the service was made from.
+	if c.rt.Name() != RuntimeDocker || !c.previous.Known || c.previous.Image == "" || !s.haveDB || !s.haveOwner {
+		return nil
+	}
+	exists, err := c.rt.Exists(ctx, KindContainer, ContainerDB)
+	if err != nil || !exists {
+		return err
+	}
+	db, err := c.rt.State(ctx, ContainerDB)
+	if err != nil {
+		return err
+	}
+	if c.keepDB = db.Status == "running" && db.Health == "healthy"; !c.keepDB {
+		return nil
+	}
+	was, err := ColocatedStack(c.previous.Settings, c.previous.Image)
+	if err != nil {
+		return err
+	}
+	// The service reads its secrets when it starts, so one that this run makes or rewrites needs a new service.
+	if !reflect.DeepEqual(was.Serve, c.stack.Serve) || !s.haveToken || s.needAppURL || c.githubKey != nil {
+		return nil
+	}
+	// ensureRole rewrites the application URL when the role is missing.
+	if role, err := appRoleExists(ctx, c.rt); err != nil || !role {
+		return err
+	}
+	serve, err := c.rt.State(ctx, ContainerServe)
+	if err != nil {
+		return err
+	}
+	c.keepServe = serve.Status == "running"
 	return nil
 }
 
@@ -648,29 +733,85 @@ func (c colocatedInstall) ensureRole(ctx context.Context, needAppURL bool) error
 	return c.rt.Secrets().Write(ctx, SecretDatabaseURL, []byte(DatabaseURL(appRole, password)), true)
 }
 
+const (
+	restartUnit      = "podman-restart.service"
+	restartEnableFix = "enable " + restartUnit + " as the rootless user: systemctl --user enable " + restartUnit
+	// restartReloadCommand makes the user's systemd see the link, then prints whether the unit is enabled.
+	restartReloadCommand = "systemctl --user daemon-reload && systemctl --user is-enabled " + restartUnit
+)
+
+// plainUser is a machine user name that can go into a path and into a shell command that runs as the machine's default ssh user.
+var plainUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+
+// restartLinkCommand links podman-restart.service for user in a Podman machine. It runs as the machine's default ssh user, which
+// is root on a Windows WSL machine: Podman's WSL machine creates the user's systemd directories owned by root, so the user's own
+// `systemctl --user enable` is denied there.
+func restartLinkCommand(user string) string {
+	wants := "/home/" + user + "/.config/systemd/user/default.target.wants"
+	return "mkdir -p " + wants + " && ln -sf /usr/lib/systemd/user/" + restartUnit + " " + wants + "/" + restartUnit
+}
+
+// restartFix is what to run by hand to enable podman-restart.service in a Podman machine: the link as the machine's default ssh
+// user, then the reload and check as the user. A user name that is not plain gets the generic fix, never a command built from it.
+func restartFix(machine, user string) string {
+	if !plainUser.MatchString(user) {
+		return restartEnableFix
+	}
+	return fmt.Sprintf("in the machine, link %s as the machine's default ssh user (root on a Windows WSL machine): podman machine ssh %s %s; then reload and check as the user (it prints enabled): podman machine ssh --username %s %s %s",
+		restartUnit, machine, quoteArg(restartLinkCommand(user)), user, machine, quoteArg(restartReloadCommand))
+}
+
 // restartAfterReboot enables podman-restart.service of the rootless user, which is what starts a --restart always
 // container after the machine restarts. A failure is reported, not fatal.
 func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 	if _, ok := c.rt.(*Podman); !ok {
 		return
 	}
-	const unit = "podman-restart.service"
 	d := c.env.Deps
 	var err error
-	if machine := c.s.Connection; machine == "" && d.GOOS == "linux" {
-		_, err = d.Exec(ctx, "systemctl", []string{"--user", "enable", unit}, nil)
+	fix := restartEnableFix
+	if c.s.Connection == "" && d.GOOS == "linux" {
+		_, err = d.Exec(ctx, "systemctl", []string{"--user", "enable", restartUnit}, nil)
 	} else {
 		var user string
 		if user, err = c.lookUpMachineUser(ctx); err == nil {
-			_, err = d.Exec(ctx, "podman", []string{"machine", "ssh", "--username", user, machine, "systemctl", "--user", "enable", unit}, nil)
+			err = c.enableInMachine(ctx, user)
+			fix = restartFix(c.s.Connection, user)
 		}
 	}
 	if err != nil {
-		c.say("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: enable it as the rootless user (systemctl --user enable %s).\n", unit, err, unit)
+		c.say("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: %s.\n", restartUnit, err, fix)
 	}
 	if d.GOOS != "linux" {
 		c.say("Note: the Podman machine is not started at logon. After this PC restarts, run `podman machine start`; the stack comes back with it.\n")
 	}
+}
+
+// enableInMachine enables podman-restart.service for user in the Podman machine: nothing when it is enabled already, the user's
+// own enable, and when that is denied the link as the default ssh user followed by a reload and a check that it took.
+func (c *colocatedInstall) enableInMachine(ctx context.Context, user string) error {
+	d, machine := c.env.Deps, c.s.Connection
+	asUser := func(command string) ([]byte, error) {
+		return d.Exec(ctx, "podman", []string{"machine", "ssh", "--username", user, machine, command}, nil)
+	}
+	// is-enabled exits 1 for a unit that is not enabled: only a clean "enabled" is an answer, the rest goes on to the enable.
+	if out, err := asUser("systemctl --user is-enabled " + restartUnit); err == nil && strings.TrimSpace(string(out)) == "enabled" {
+		return nil
+	}
+	_, err := asUser("systemctl --user enable " + restartUnit)
+	if err == nil {
+		return nil
+	}
+	if !plainUser.MatchString(user) {
+		return fmt.Errorf("%w; the machine user %q is not a plain name, so the link is not made for it", err, user)
+	}
+	if _, linkErr := d.Exec(ctx, "podman", []string{"machine", "ssh", machine, restartLinkCommand(user)}, nil); linkErr != nil {
+		return fmt.Errorf("%w; the link as the default ssh user failed too: %v", err, linkErr)
+	}
+	if out, checkErr := asUser(restartReloadCommand); checkErr != nil || strings.TrimSpace(string(out)) != "enabled" {
+		return fmt.Errorf("%w; the link as the default ssh user was made, but the unit is still not enabled after a reload", err)
+	}
+	return nil
 }
 
 // connectionUser is the user of the machine connection's ssh URI: the machine's rootless user.

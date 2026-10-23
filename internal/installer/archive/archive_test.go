@@ -468,6 +468,7 @@ func TestATruncatedArchiveIsRefusedAndLeavesNothing(t *testing.T) {
 
 // rawEntry is a tar member the writer would never produce.
 type rawEntry struct {
+	pre  []byte // bytes written as they are before the header, such as a PAX header that tar.Writer would refuse
 	hdr  tar.Header
 	body string
 }
@@ -516,6 +517,14 @@ func paddedArchive(t *testing.T, rec *age.HybridRecipient, entries []rawEntry, p
 	}
 	tw := tar.NewWriter(enc)
 	for _, e := range entries {
+		if e.pre != nil {
+			if err := tw.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := enc.Write(e.pre); err != nil {
+				t.Fatal(err)
+			}
+		}
 		hdr := e.hdr
 		if err := tw.WriteHeader(&hdr); err != nil {
 			t.Fatal(err)
@@ -579,6 +588,9 @@ func TestAHostileArchiveIsRefusedAndNothingIsLeftBehind(t *testing.T) {
 	hardlink := rawEntry{hdr: tar.Header{Name: "status.json", Typeflag: tar.TypeLink, Linkname: "suiteward.sql", Mode: 0o600}}
 	directory := rawEntry{hdr: tar.Header{Name: "units/", Typeflag: tar.TypeDir, Mode: 0o700}}
 	tooLarge := reg("manifest.json", strings.Repeat("x", 2<<20))
+	// A correct manifest behind a PAX record in the GNU.sparse family: Go ignores a record it does not know, the format must not.
+	sparseManifest := manifestOf(1, []rawEntry{good})
+	sparseManifest.pre = paxHeader("GNU.sparse.note", "x")
 
 	cases := []struct {
 		name    string
@@ -594,6 +606,8 @@ func TestAHostileArchiveIsRefusedAndNothingIsLeftBehind(t *testing.T) {
 		{"a nested unit", withManifest(good, reg("units/a/suiteward.container", "evil")), "not allowed"},
 		{"a name with a trailing newline", withManifest(good, reg("units/suiteward.container\n", "evil")), "not allowed"},
 		{"a name in another case", withManifest(good, reg("Status.json", "evil")), "not allowed"},
+		{"a sparse member", sparseEntries(), "sparse"},
+		{"a manifest with a sparse record", []rawEntry{good, sparseManifest}, "sparse"},
 		{"a duplicate", withManifest(good, good), "twice"},
 		{"a symbolic link", withManifest(good, symlink), "not a regular file"},
 		{"a hard link", withManifest(good, hardlink), "not a regular file"},

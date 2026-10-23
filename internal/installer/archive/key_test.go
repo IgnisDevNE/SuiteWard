@@ -9,6 +9,9 @@ import (
 	"filippo.io/age"
 )
 
+// bom is the byte order mark that Windows tools put at the start of a text file.
+var bom = string(rune(0xFEFF))
+
 func TestNewKeyReturnsAMatchingPostQuantumPairInTheAgeTextForms(t *testing.T) {
 	recipient, identity, err := NewKey()
 	if err != nil {
@@ -79,6 +82,9 @@ func TestParseIdentityTakesAKitFileAndRefusesAnythingElse(t *testing.T) {
 		"comments and blanks": "# created by age-keygen\n\n  # indented comment\n" + secret + "\n\n# trailing\n",
 		"carriage returns":    "# kit\r\n" + secret + "\r\n",
 		"surrounding spaces":  "  " + secret + "  \n",
+		// A byte order mark would otherwise be part of the first line.
+		"a BOM before a comment":  bom + "# kit\r\n" + secret + "\r\n",
+		"a BOM before the secret": bom + secret + "\n",
 	} {
 		got, err := ParseIdentity(kit)
 		if err != nil || got.String() != secret {
@@ -145,6 +151,9 @@ func TestParseRecipientRefusesWhatIsNotARecipient(t *testing.T) {
 	}
 	if got, err := ParseRecipient(" " + id.Recipient().String() + "\n"); err != nil || got.String() != id.Recipient().String() {
 		t.Errorf("a recipient with surrounding space = %v", err)
+	}
+	if got, err := ParseRecipient(bom + id.Recipient().String() + "\r\n"); err != nil || got.String() != id.Recipient().String() {
+		t.Errorf("a recipient with a byte order mark = %v", err)
 	}
 	for name, s := range map[string]string{"empty": "", "garbage": "age1garbage", "an identity": id.String(), "two": id.Recipient().String() + "\n" + id.Recipient().String()} {
 		_, err := ParseRecipient(s)

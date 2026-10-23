@@ -117,6 +117,8 @@ func TestMarkersAreKeyedByLanguage(t *testing.T) {
 		{"x.go", "\tt.Run(\"(a) Test\", f)", true},      // the text of a test name
 		{"x.ts", "if (/x/.test(s)) {", true},            // a regular expression, not a test
 		{"x.ts", "foo.it('x')", true},                   // a method, not the test function
+		{"x.ts", "model.fit(x, y)", false},              // a method, not a focused test
+		{"x.ts", "page.xit('x')", false},                // likewise for a skip
 	} {
 		if got := markersOf(t, c.path, c.line, c.remove); len(got) != 0 {
 			t.Errorf("%s %q: got %+v, want none", c.path, c.line, got)

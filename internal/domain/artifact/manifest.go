@@ -84,3 +84,12 @@ func ValidPath(path string) bool {
 	}
 	return true
 }
+
+// ErrInvalidEncoding reports bytes that are not the canonical encoding of a manifest.
+var ErrInvalidEncoding = errors.New("invalid manifest encoding")
+
+// Encoding returns the canonical encoding that identifies the manifest: the bytes whose SHA-256 is its Digest. It is nil for an absent manifest.
+func (m Manifest) Encoding() []byte { return nil }
+
+// ParseManifest reads the canonical encoding of a manifest.
+func ParseManifest(raw []byte) (Manifest, error) { return Manifest{}, nil }

@@ -81,7 +81,9 @@ func TestCloseWithoutSummaryPrintsThePageAndTheWarnings(t *testing.T) {
 	s.Say("pending: ")
 	s.Spin("Waiting", 0)
 	mustClose(t, s)
-	want := "a line\na check\nDatabase: pulling\npending: \nWaiting...\n" + "early warning\nkept line\nlate warning\n"
+	// The warning of the first step comes first, then the page in the order it was written: the checks, the Keep and the Warn lines are
+	// where they were written, not after the rest of the page.
+	want := "! early warning\na line\n✓ a check\nDatabase: pulling\nkept line\n! late warning\npending: \nWaiting...\n"
 	if got := afterLastLeave(out.String()); got != want {
 		t.Fatalf("the normal screen received\n%q\nwant\n%q", got, want)
 	}

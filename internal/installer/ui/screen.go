@@ -670,3 +670,6 @@ func clean(text string) string {
 
 // oneLine is clean for a text that must stay on one row: a newline becomes a space.
 func oneLine(text string) string { return strings.ReplaceAll(clean(text), "\n", " ") }
+
+// Wait holds the page until Enter. It does nothing yet.
+func (s *Screen) Wait() error { return nil }

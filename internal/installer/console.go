@@ -27,6 +27,10 @@ import (
 //	uninstall             Confirm, Remove
 //	install host          Podman, Account, Metadata, Next (the configuration directory and the command for the service account)
 //	enroll                Instance (finding the stack), Owner (status, confirmation, setup)
+//	backup init           Keys (the instance, the key pair), Kit (the file, the typed word), Settings (the recipient)
+//	backup                Status, Dump, Artifacts, Encrypt
+//	restore               Verify (the kit, the backup, the release), Preview (what it holds, the confirmation), Safety backup, Stop, Load (the
+//	                      dump, the artifacts), Start (the migration, the service), Compare (/status with the backup's)
 //	doctor                Doctor (the checks as Check and Warn lines)
 
 // endConsole closes the Screen when a command ends and joins what the terminal failed to take to the command's own error (err points

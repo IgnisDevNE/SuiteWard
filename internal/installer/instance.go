@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // instance is the installed stack that backup init, backup and restore work on, found as install --upgrade finds it: the guards of
@@ -26,6 +27,7 @@ type instance struct {
 	parent       string                                    // where backups go unless the command names another directory
 	units        map[string][]byte                         // isolated tier: the unit files as installed
 	startCommand string                                    // starts a stopped service by hand, for messages
+	restore      tierSteps
 }
 
 // instanceFlags adds the flags that say which instance a command works on, which every command of the backup family has.
@@ -99,6 +101,7 @@ func locateColocated(ctx context.Context, r *Resolver, env Env, t installTarget)
 		rt: rt, s: s, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus,
 		parent:       backupParent(r, filepath.Dir(tokenFile)),
 		startCommand: fmt.Sprintf("`%s start %s`, then, once it is healthy, `%s start %s`", engine, ContainerDB, engine, ContainerServe),
+		restore:      colocatedSteps(rt, s, previous.Image, r.screen),
 	}, nil
 }
 
@@ -123,6 +126,7 @@ func locateIsolated(ctx context.Context, r *Resolver, env Env, s Settings, haveS
 		parent:       backupParent(r, host.configDir),
 		units:        st.units,
 		startCommand: "systemctl --user start suiteward.service",
+		restore:      isolatedSteps(host, env.Deps, r.screen),
 	}, nil
 }
 
@@ -184,4 +188,74 @@ func (i instance) needSettings() error {
 func settingsExist(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// tierSteps is what a restore does to the stack of one tier, so that the restore itself is the same for both.
+type tierSteps struct {
+	unavailable error                           // why the stack cannot be restored; nil when it can
+	stop        func(ctx context.Context) error // stops the service, with the database still running
+	clearVolume func(ctx context.Context) error // leaves the artifact volume empty
+	start       func(ctx context.Context) error // migrates, then starts the service; it has its own spinner
+	recovery    string                          // what to run by hand to get the service back after a restore that failed
+}
+
+// colocatedSteps: the service container is removed (a volume that a container uses cannot be), and made again by the run of its
+// own spec, the one an upgrade uses, so a restore changes nothing about how the stack is run.
+func colocatedSteps(rt Runtime, s Settings, image string, scr *ui.Screen) tierSteps {
+	stack, err := ColocatedStack(s, image)
+	return tierSteps{
+		unavailable: err,
+		stop:        func(ctx context.Context) error { return rt.Remove(ctx, ContainerServe) },
+		clearVolume: func(ctx context.Context) error {
+			if err := rt.Delete(ctx, KindVolume, VolumeData); err != nil {
+				return err
+			}
+			return rt.Create(ctx, KindVolume, VolumeData)
+		},
+		start: func(ctx context.Context) error {
+			return working(scr, "Running the migration and starting the service", func() error {
+				if err := rt.Run(ctx, stack.Migrate); err != nil {
+					return fmt.Errorf("the migration failed, so the service was not started: %w", err)
+				}
+				return rt.Run(ctx, stack.Serve)
+			})
+		},
+		recovery: "run `suiteward install` with the options of this run: it creates the service again from the settings, and the volumes and the secrets are kept",
+	}
+}
+
+// isolatedSteps: both units stop, so that the start runs the migration again; the Quadlet unit of the volume makes it again, empty.
+func isolatedSteps(host isolatedHost, d Deps, scr *ui.Screen) tierSteps {
+	systemctl := userSystemctl(d)
+	return tierSteps{
+		stop: func(ctx context.Context) error {
+			_, err := systemctl(ctx, "stop", "suiteward.service", "suiteward-migrate.service")
+			return err
+		},
+		clearVolume: func(ctx context.Context) error {
+			if err := host.rt.Delete(ctx, KindVolume, VolumeData); err != nil {
+				return err
+			}
+			_, err := systemctl(ctx, "restart", "suiteward-data-volume.service")
+			return err
+		},
+		start:    func(ctx context.Context) error { return migrateAndStart(ctx, d, scr) },
+		recovery: "run `systemctl --user start suiteward.service`",
+	}
+}
+
+// owner is the login of the enrolled owner, "" when none is.
+func (d statusDoc) owner() string {
+	if d.Owner == nil {
+		return ""
+	}
+	return d.Owner.Login
+}
+
+func (d statusDoc) repositories() []string {
+	repos := make([]string, len(d.GitHub))
+	for i, g := range d.GitHub {
+		repos[i] = g.Repo
+	}
+	return repos
 }

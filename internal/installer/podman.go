@@ -3,7 +3,6 @@ package installer
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -114,7 +113,10 @@ func (p *Podman) Run(ctx context.Context, spec RunSpec) error {
 	return nil
 }
 
-// ImportVolume is `podman volume import`.
-func (p *Podman) ImportVolume(_ context.Context, _, _ string) error {
-	return errors.New("import is not implemented")
+// ImportVolume is `podman volume import`, which reads the file itself.
+func (p *Podman) ImportVolume(ctx context.Context, volume, path string) error {
+	if _, err := p.run(ctx, nil, "volume", "import", volume, path); err != nil {
+		return fmt.Errorf("import the volume %s: %w", volume, err)
+	}
+	return nil
 }

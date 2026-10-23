@@ -30,6 +30,8 @@ const Usage = `usage: suiteward install [flags]
        suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]
        suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated]
        suiteward backup [--to DIR] [--settings PATH] [--tier isolated]
+       suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated]
+       suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated]
        suiteward doctor [--json] [--settings PATH]
 `
 
@@ -137,6 +139,8 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		err = BackupInit(ctx, rest[1:], env)
 	case command == "backup":
 		err = Backup(ctx, rest, env)
+	case command == "restore":
+		err = Restore(ctx, rest, env)
 	case command == "enroll":
 		err = Enroll(ctx, rest, env)
 	case command == "uninstall":
@@ -226,17 +230,42 @@ func printHelp(fs *flag.FlagSet, out io.Writer) {
 
 // parse parses args and reports a bad command line as a usage error, and --help as flag.ErrHelp after printing the flags.
 func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, error) {
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			printHelp(fs, out)
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: %v", ErrUsage, err)
+	if err := parseFlags(fs, args, out); err != nil {
+		return nil, err
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
 	}
 	return FlagsSet(fs), nil
+}
+
+func parseFlags(fs *flag.FlagSet, args []string, out io.Writer) error {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printHelp(fs, out)
+			return err
+		}
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	return nil
+}
+
+// parseWithFile is parse for a command with at most one argument that is not a flag, a file, which may come before the flags: the flag
+// package stops at the first argument that is not a flag, so the rest is parsed again.
+func parseWithFile(fs *flag.FlagSet, args []string, out io.Writer) (file string, flags map[string]string, err error) {
+	if err := parseFlags(fs, args, out); err != nil {
+		return "", nil, err
+	}
+	if fs.NArg() > 0 {
+		file = fs.Arg(0)
+		if err := parseFlags(fs, fs.Args()[1:], out); err != nil {
+			return "", nil, err
+		}
+	}
+	if fs.NArg() > 0 {
+		return "", nil, fmt.Errorf("%w: unexpected argument %q", ErrUsage, fs.Arg(0))
+	}
+	return file, FlagsSet(fs), nil
 }
 
 // settingsPathFrom is the settings file of a command and whether it is the shared per-user default.

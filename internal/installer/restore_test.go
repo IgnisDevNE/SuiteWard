@@ -289,7 +289,7 @@ func TestRestoreRefusesABackupThatLacksAMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "partial.tar.age")
-	f, err := os.Create(path)
+	f, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}

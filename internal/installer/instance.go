@@ -242,11 +242,11 @@ func settingsExist(path string) bool {
 }
 
 // currentID is the id of the instance: what /status shows, else what the database holds, else "unknown" (as a backup of an instance that
-// does not answer says).
-func (i instance) currentID(ctx context.Context) string {
+// does not answer says) with what the database answered.
+func (i instance) currentID(ctx context.Context) (string, error) {
 	if body, err := i.status(ctx); err == nil {
 		if doc, err := parseStatus(body); err == nil {
-			return doc.Instance
+			return doc.Instance, nil
 		}
 	}
 	return instanceFromDatabase(ctx, i.rt)

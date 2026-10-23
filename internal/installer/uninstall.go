@@ -143,10 +143,10 @@ func engineNamed(flags map[string]string, settingsPath string) error {
 // confirmRemoval says which instance is about to be removed (its id, its engine and its settings file) and asks. A plain uninstall asks yes
 // or no; a purge, which deletes the database, asks for the instance id: typed, or --yes with --instance where nobody can type.
 func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, question string) error {
-	id := i.currentID(ctx)
+	id, why := i.currentID(ctx)
 	shown, settings := id, i.settingsPath
-	if id == unknownValue {
-		shown += " (neither /status nor the database names it)"
+	if why != nil {
+		shown += " (neither /status nor the database names it: " + oneLine(why.Error()) + ")"
 	}
 	if !i.haveSettings {
 		settings = "none (there is no file at " + i.settingsPath + ")"

@@ -143,18 +143,22 @@ func (r *backupRun) readStatus(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("record that the status is unavailable: %w", err)
 	}
-	r.statusBody, r.doc = record, statusDoc{Unavailable: true, Version: unknownValue, Instance: instanceFromDatabase(ctx, r.rt)}
+	id, _ := instanceFromDatabase(ctx, r.rt) // no reason is needed: the backup records "unknown" when the database names no instance
+	r.statusBody, r.doc = record, statusDoc{Unavailable: true, Version: unknownValue, Instance: id}
 	return nil
 }
 
-// instanceFromDatabase is the id /status would have shown, read from the table that holds it, or "unknown": a database that is
-// reachable but names no instance in the shape of one is not a reason to fail a backup.
-func instanceFromDatabase(ctx context.Context, rt Runtime) string {
+// instanceFromDatabase is the id /status would have shown, read from the table that holds it, or "unknown" and what the database answered: a
+// database that is reachable but names no instance in the shape of one is not a reason to fail a backup. The answer of a SELECT carries no secret.
+func instanceFromDatabase(ctx context.Context, rt Runtime) (string, error) {
 	out, err := ownerPSQL(ctx, rt, "SELECT substr(instance_id, 1, 8) FROM suiteward_instance", false)
-	if err != nil || !instanceID.MatchString(out) {
-		return unknownValue
+	switch {
+	case err != nil:
+		return unknownValue, err
+	case !instanceID.MatchString(out):
+		return unknownValue, errors.New("the table of the instance holds no id in the form /status shows")
 	}
-	return out
+	return out, nil
 }
 
 func (r *backupRun) dumpDatabase(ctx context.Context) error {

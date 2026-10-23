@@ -1,7 +1,7 @@
 # ADR 0019: Encrypted backups and an instance recovery key
 
 - **Date:** 2026-09-26
-- **Status:** Accepted, deferred to post-MVP (phase R1, 2026-10-05). Original status: Accepted design decision; the primary remote destination is updated by [ADR 0021](0021-release-backups-and-health-reconciliation.md). Physical format and implementation details remain open. Not yet implemented.
+- **Status:** Accepted. Deferred to post-MVP by phase R1 (2026-10-05); phase M1.13 (2026-10-23) delivered the encrypted archive, the recovery kit and the key handling, and left the rest deferred: see the last amendment. Original status: Accepted design decision; the primary remote destination is updated by [ADR 0021](0021-release-backups-and-health-reconciliation.md). Release storage is not implemented.
 - **Product:** SuiteWard
 - **Scope:** Local recovery copy, encrypted versioned repository backup, one external recovery kit per instance, recovery references, and restore boundaries.
 - **Related:** [Hosting](0001-self-hosted-github-synchronization.md), [background jobs](0005-river-background-jobs.md), [canonical authority](0007-canonical-contract-authority.md), [authorization](0012-mvp-authorization-policy.md), [promotion](0014-merge-triggered-canonical-promotion.md), and [history retention](0018-corrective-pr-rollback-and-audit-history.md).
@@ -155,3 +155,25 @@ The two-copy workflow, single external recovery kit per instance, and self-conta
 ## Amendment (2026-10-05, phase R1): deferred to post-MVP
 
 Encrypted archives, the recovery kit, and recovery receipts are deferred; the decision stays accepted. The MVP backup is `pg_dump` plus a tarball of the artifact volume, with a runbook that re-bootstraps the instance from the protected main branch. The archive design above is the target for the post-MVP backup work.
+
+## Amendment (2026-10-23, phase M1.13): a first part is delivered
+
+Phase M1.13 delivered the encrypted archive, the recovery kit and the key handling, in the installer (`suiteward backup init`, `suiteward backup` and the backup of `suiteward install --upgrade`; the restore is in [ADR 0020](0020-guided-local-cli-recovery.md)). The decision stays accepted. The runbook is [backup.md](../backup.md), and the owner's decisions are in [D-M1.13](../plan/decisions.md#d-m113-macos-the-one-line-install-installer-screens-the-change-report-and-encrypted-backups).
+
+**What it delivered.**
+- **A key of the hybrid post-quantum kind** (owner, 2026-10-23): an age key pair, ML-KEM-768 with X25519, because a backup lives for years and holds the TOTP secret. A classic age key is refused.
+- **One recovery kit per instance.** `suiteward backup init` makes the pair, writes the private key into a kit file that only the user can read, never overwrites a file, asks the operator to copy the kit off the machine and to type `stored`, and keeps only the public key, as `backup_recipient`, in the settings. The recipient is trusted configuration. Through SuiteWard, a pull request, a `.suiteward.yml` or an MCP call cannot set it. Whatever runs as the user can still write the settings file, run `backup init --replace` or, while no key is set, give `--backup-recipient` to an upgrade: on the co-located tier that includes the agent, and on the isolated tier whoever runs as the service account. A rotation is `backup init --replace`, and the old kit stays needed for the old backups.
+- **The physical archive format** (a decision this ADR left open): one age file, `suiteward-backup-<date>-<time>.tar.age`, whose content is a tar of `status.json`, `suiteward.sql`, `suiteward-artifacts.tar`, `settings.yaml`, the unit files on the isolated tier, and `manifest.json` last, which records the release, the image digest, the instance, the tier, the time, and the size and SHA-256 of every member. The members are streamed, so the dump is never a file in plaintext.
+- **The local copy**, written on demand to a folder on the same machine, and before every upgrade, which no longer writes a plaintext directory.
+
+**What it delivered differently.**
+- **The payload is the whole instance, not a project archive.** The archive holds the database dump and the artifact volume as they are, with the TOTP secret and the enrollments of every repository of the instance, where this ADR asked for archives that carry no instance-wide secret. The App key, the database passwords and the MCP token stay out of it. The ledger plus one copy of each distinct content is not built: the artifact volume is archived as it is.
+- **The recovery point is not coordinated.** The service keeps running, the dump is taken before the volume, and the manifest records the time and the release. There is no consistent export of metadata and content as one recovery point.
+- **The kit is not verified at creation.** The operator types `stored`, and the rehearsal of the runbook (section 5) is the way to prove that a kit opens a backup.
+- **Encryption does not say who wrote a backup.** The recipient is public, so anyone who has it can write an archive that decrypts with the kit. The restore checks the manifest and its hashes, which catch damage and not forgery, so only a backup that the operator made and kept is safe to restore ([threat model](../security/threat-model.md)).
+
+**What stays deferred.**
+- the separate backup container and a periodic or promotion-triggered backup;
+- recovery receipts in PR comments, backup health in the status and MCP, and the deduplicated GitHub issue;
+- backups published off the machine as Release assets, and their Git fallback ([ADR 0021](0021-release-backups-and-health-reconciliation.md)), which needs Contents write; the App keeps none, and no tier gets one;
+- archive size budgets and compression, key rotation beyond `--replace`, and escrow of the key.

@@ -40,6 +40,7 @@ func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Scr
 			o.Mode = ModePlain // shortcut: the reason is not reported, only that the console cannot draw; plain output still works
 		} else {
 			o.RestoreConsole = restore
+			o.KeyInput = func() (func() error, error) { return enableKeys(os.Stdin) }
 		}
 	}
 	return Open(o)

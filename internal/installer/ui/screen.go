@@ -1,7 +1,7 @@
 // Package ui draws the installer as a full-screen "window" in the SuiteWard colors, or as plain lines.
 //
 // A Screen is the console of one installer run. It is an io.Writer, so code that prints with fmt.Fprintf to a writer keeps working, and
-// it has the calls of a screen: a step list (Steps, Step), lines (Say, Check, Warn, Keep), questions (Ask, Prompt, Choose, Secret),
+// it has the calls of a screen: a step list (Steps, Step), lines (Say, Check, Warn, Keep), questions (Ask, Prompt, Choose, Select, Secret),
 // live lines (Progress, Spin) and a Summary. In full-screen mode it draws on the alternate screen: a frame with a title bar, the step
 // column, a content column and a hint line. In plain mode it writes only text, with no escape sequence, and the lines of Say and Write
 // are exactly what the caller wrote.
@@ -15,6 +15,9 @@
 //     glyph. Close prints every one again, with its glyph, whatever step it was written in, like a Keep line.
 //   - Steps, Step: the step column and "step i of N"; plain mode prints nothing, so a flow's plain output is unchanged. A new step
 //     starts a clean page.
+//   - Choose, Select: a numbered question that is answered by typing the number. Select, on a full screen whose terminal can be put in key
+//     mode (Options.KeyInput), draws the choices with a highlighted row instead: the up and down arrows move it, Enter picks, and the
+//     answer replaces the list on the question's line. Plain mode, and a screen that cannot read keys, ask Select by number as Choose.
 //   - Progress, Spin: one live row per label; plain mode prints a line only when the label or the status text changes.
 //   - Keep: a line like Say that Close prints again on the normal screen, so it survives the alternate screen. Plain mode has nothing
 //     to repeat: the line is already in the output.
@@ -32,7 +35,7 @@
 //   - Suspend: while suspended, every call that writes text writes it straight to the terminal, as plain mode does, and the screen
 //     keeps none of it: a child's output (setup prints a TOTP secret) is not redrawn after Resume or repeated by Close.
 //
-// Questions must go through Ask, Prompt, Choose and Secret so that the answer joins its question on the page; they read from the input
+// Questions must go through Ask, Prompt, Choose, Select and Secret so that the answer joins its question on the page; they read from the input
 // that was passed to Open, and nothing else may write to the terminal while one is open. A prompt ends with the context's error when
 // Options.Context is done. Display calls ignore a failed write, as the installer's say does; the first failure comes back from Close.
 //
@@ -80,7 +83,7 @@ type Options struct {
 	Height  int
 	// RestoreConsole undoes what the OS needed for escape sequences. Optional. Close calls it, and so does Open when it fails.
 	RestoreConsole func() error
-	// Context ends a prompt: Ask, Prompt, Choose, Summary and Wait return the context's error as soon as it is done. Optional; nil never
+	// Context ends a prompt: Ask, Prompt, Choose, Select, Summary and Wait return the context's error as soon as it is done. Optional; nil never
 	// ends one. Pass the context that SIGINT cancels (cmd/suiteward traps it with signal.NotifyContext), or Ctrl-C does nothing at a
 	// prompt until Enter. The read that was pending is abandoned in its goroutine and may still take a line from the input, so the
 	// process is expected to exit and the input is not read again. Secret cannot be interrupted this way: its reader is the caller's.
@@ -112,10 +115,12 @@ type Screen struct {
 	color   ColorLevel
 	w, h    int
 	restore func() error
-	err     error // the first write or restore failure
+	keys    func() (func() error, error) // Options.KeyInput
+	err     error                        // the first write or restore failure
 
 	full, suspended, closed bool
 	terminal                bool // the input is a terminal (Options.InputIsTerminal)
+	selecting               bool // a Select list is open: the arrow keys move its highlight
 
 	steps []string
 	cur   int // the current step, 1-based; 0 with no steps
@@ -157,7 +162,7 @@ func Open(o Options) (*Screen, error) {
 	}
 	s := &Screen{
 		out: o.Out, in: bufio.NewReader(o.In), ctx: ctx, version: oneLine(o.Version), color: o.Color, w: o.Width, h: o.Height,
-		restore: o.RestoreConsole, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
+		restore: o.RestoreConsole, keys: o.KeyInput, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
 	}
 	if s.full {
 		s.write(enterAltScreen)
@@ -379,30 +384,35 @@ func (s *Screen) readAnswer() (string, error) {
 
 // readLine reads one answer without the lock held, so that the screen stays usable while it waits, and gives up with the context's
 // error when the context is done: the read goes on in its goroutine, abandoned (see Options.Context).
-func (s *Screen) readLine() (string, error) {
+func (s *Screen) readLine() (string, error) { return awaiting(s, s.readAnswer) }
+
+// awaiting is readLine for any read of the input: it calls read in a goroutine and gives up with the context's error when the context is
+// done, or soon after a read that failed on a terminal (afterTerminalError). The caller holds no lock.
+func awaiting[T any](s *Screen, read func() (T, error)) (T, error) {
+	var zero T
 	if err := s.ctx.Err(); err != nil {
-		return "", err
+		return zero, err
 	}
 	if s.ctx.Done() == nil { // a context that is never done needs no goroutine
-		return s.readAnswer()
+		return read()
 	}
-	type answer struct {
-		line string
-		err  error
+	type result struct {
+		v   T
+		err error
 	}
-	got := make(chan answer, 1)
+	got := make(chan result, 1)
 	go func() {
-		line, err := s.readAnswer()
-		got <- answer{line, err}
+		v, err := read()
+		got <- result{v, err}
 	}()
 	select {
-	case a := <-got:
-		if a.err != nil && s.terminal {
-			return "", s.afterTerminalError(a.err)
+	case r := <-got:
+		if r.err != nil && s.terminal {
+			return zero, s.afterTerminalError(r.err)
 		}
-		return a.line, a.err
+		return r.v, r.err
 	case <-s.ctx.Done():
-		return "", s.ctx.Err()
+		return zero, s.ctx.Err()
 	}
 }
 
@@ -460,8 +470,8 @@ func (s *Screen) Ask(label, def string) (string, error) {
 // number of a choice answers it and an empty line takes the default. It returns the index of the choice, 0-based. An invalid answer
 // is explained and asked again; the end of the input is an error that wraps io.EOF.
 func (s *Screen) Choose(label string, choices []Choice, def int) (int, error) {
-	if len(choices) == 0 || def < 0 || def >= len(choices) {
-		return 0, fmt.Errorf("choose %q needs a default among its %d choices, got %d", label, len(choices), def)
+	if err := checkChoices("choose", label, choices, def); err != nil {
+		return 0, err
 	}
 	s.mu.Lock()
 	s.listChoices(label, choices, def)
@@ -479,6 +489,110 @@ func (s *Screen) Choose(label string, choices []Choice, def int) (int, error) {
 	}
 }
 
+// checkChoices refuses a list that has no choice, or a default that is not one of them: a bug of the caller.
+func checkChoices(verb, label string, choices []Choice, def int) error {
+	if len(choices) == 0 || def < 0 || def >= len(choices) {
+		return fmt.Errorf("%s %q needs a default among its %d choices, got %d", verb, label, len(choices), def)
+	}
+	return nil
+}
+
+// Select asks like Choose with the arrow keys: the list is drawn with the default highlighted, the up and down arrows move the highlight
+// (past an end it goes round) and Enter picks it. The answer replaces the list on the question's line, as Ask leaves its answer. It
+// returns the index of the choice, 0-based. The terminal is put in key mode (Options.KeyInput) for the length of the call and back
+// whatever the way out, a done context included. Plain mode, a screen with no way to read keys and a terminal that cannot be put in key
+// mode ask by number, exactly as Choose does. The end of the input is an error that wraps io.EOF.
+// shortcut: space, Esc and other keys do nothing; a multiple choice with space to toggle is not built; upgrade when a question needs one.
+func (s *Screen) Select(label string, choices []Choice, def int) (idx int, err error) {
+	if err := checkChoices("select", label, choices, def); err != nil {
+		return 0, err
+	}
+	if err := s.ctx.Err(); err != nil {
+		return 0, fmt.Errorf("read the choice for %s: %w", label, err)
+	}
+	s.mu.Lock()
+	keys := s.keys
+	if !s.drawing() {
+		keys = nil
+	}
+	s.mu.Unlock()
+	if keys == nil {
+		return s.Choose(label, choices, def)
+	}
+	restore, err := keys()
+	if err != nil {
+		return s.Choose(label, choices, def) // shortcut: the reason is not reported, only that the keys cannot be read; the numbered question still works
+	}
+	defer func() { // the one place the console is put back, so an abandoned read never has to
+		if rerr := restore(); rerr != nil { // a terminal left in key mode must be reported, whatever the choice was
+			idx, err = 0, errors.Join(err, fmt.Errorf("put the terminal input back: %w", rerr))
+		}
+	}()
+
+	n, cur := len(choices), def
+	s.openSelect(label, choices, def)
+	for {
+		k, err := awaiting(s, func() (key, error) { return readKey(s.in) })
+		switch {
+		case err != nil:
+			s.closeSelect(0, "")
+			return 0, fmt.Errorf("read the choice for %s: %w", label, err)
+		case k == keyUp:
+			cur = (cur + n - 1) % n
+			s.moveSelect(n, cur)
+		case k == keyDown:
+			cur = (cur + 1) % n
+			s.moveSelect(n, cur)
+		case k == keyEnter:
+			s.closeSelect(n, oneLine(label)+": "+oneLine(choices[cur].Name))
+			return cur, nil
+		case k == keyCtrlC:
+			s.closeSelect(0, "")
+			return 0, fmt.Errorf("read the choice for %s: %w", label, errCtrlC)
+		}
+	}
+}
+
+// errCtrlC is the end of a Select by a Ctrl-C that arrived as a character. A terminal that keeps its signals raises one for the context to
+// follow instead, so this is only a terminal that cannot: the command fails, and does not report an interrupt.
+var errCtrlC = errors.New("interrupted by Ctrl-C, which reached the program as a key and not as a signal")
+
+// openSelect draws the question and the list with the default highlighted.
+func (s *Screen) openSelect(label string, choices []Choice, def int) {
+	names, nameW := choiceNames(choices)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selecting = true
+	s.add(item{kind: itemText, text: oneLine(label)})
+	for i, c := range choices {
+		s.add(item{kind: itemChoice, num: i + 1, text: names[i], desc: oneLine(c.Desc), pad: nameW, def: i == def, radio: true, sel: i == def})
+	}
+	s.draw()
+}
+
+// moveSelect highlights row to of the n that end the page: nothing else writes while a question is open.
+func (s *Screen) moveSelect(n, to int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows := s.items[len(s.items)-n:]
+	for i := range rows {
+		rows[i].sel = i == to
+	}
+	s.draw()
+}
+
+// closeSelect ends the key list. With a picked answer it replaces the question and its n rows with one line; with none, the list stays
+// as it was drawn, like a numbered question that was cut short.
+func (s *Screen) closeSelect(n int, answer string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selecting = false
+	if answer != "" {
+		s.items = append(s.items[:len(s.items)-n-1], item{kind: itemText, text: answer})
+	}
+	s.draw()
+}
+
 // parseChoice reads an answer of n choices: empty is the default, otherwise a number from 1 to n.
 func parseChoice(line string, def, n int) (int, bool) {
 	if line == "" {
@@ -491,13 +605,18 @@ func parseChoice(line string, def, n int) (int, bool) {
 	return k - 1, true
 }
 
-func (s *Screen) listChoices(label string, choices []Choice, def int) {
-	names := make([]string, len(choices))
-	nameW := 0
+// choiceNames is the names of the choices as one line each, and the width of the widest.
+func choiceNames(choices []Choice) (names []string, width int) {
+	names = make([]string, len(choices))
 	for i, c := range choices {
 		names[i] = oneLine(c.Name)
-		nameW = max(nameW, utf8.RuneCountInString(names[i]))
+		width = max(width, utf8.RuneCountInString(names[i]))
 	}
+	return names, width
+}
+
+func (s *Screen) listChoices(label string, choices []Choice, def int) {
+	names, nameW := choiceNames(choices)
 	if !s.drawing() {
 		s.write(label + "\n")
 		for i, c := range choices {
@@ -757,6 +876,3 @@ func clean(text string) string {
 
 // oneLine is clean for a text that must stay on one row: a newline becomes a space.
 func oneLine(text string) string { return strings.ReplaceAll(clean(text), "\n", " ") }
-
-// Select asks like Choose, with the arrow keys. It does nothing yet.
-func (s *Screen) Select(label string, choices []Choice, def int) (int, error) { return 0, nil }

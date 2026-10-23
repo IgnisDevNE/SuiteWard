@@ -42,6 +42,8 @@ type item struct {
 	num    int    // a choice's number
 	pad    int    // the width of the choices' name column
 	def    bool   // the default choice
+	radio  bool   // a row of a Select list: a radio glyph in front instead of the number
+	sel    bool   // the highlighted row of a Select list
 	frac   float64
 	status string // a bar's status; empty shows the percentage
 	kept   bool   // a Keep line: it outlives its page
@@ -144,6 +146,8 @@ func (s *Screen) frame() frame {
 		hint = "Enter to finish"
 	case s.secret: // the hidden read cannot be interrupted
 		hint = "Enter to confirm"
+	case s.selecting:
+		hint = "↑/↓ to choose · Enter to confirm · Ctrl-C to quit"
 	case cursor >= 0:
 		hint = "Enter to confirm · Ctrl-C to quit"
 	}
@@ -314,16 +318,25 @@ func markedLines(glyph, text string) []string {
 	return lines
 }
 
-// choiceRow is "1) name   description"; the default is green and says so.
+// choiceRow is "1) name   description"; the default is green and says so. A row of a Select list has a glyph instead of the number,
+// "● name" for the highlighted row, green and bold, and "○ name" for the others.
 func (s *Screen) choiceRow(it item, width int) row {
 	b := s.rb()
 	pad := min(it.pad, width/2)
-	head := fmt.Sprintf("%d) %-*s", it.num, pad, fit(it.text, pad))
-	t, marker := toneDefault, ""
-	if it.def {
-		t, marker = toneGreen, " (default)"
+	name := fmt.Sprintf("%-*s", pad, fit(it.text, pad))
+	head, t, bold, marker := fmt.Sprintf("%d) %s", it.num, name), toneDefault, false, ""
+	switch {
+	case it.radio && it.sel:
+		head, t, bold = "● "+name, toneGreen, true
+	case it.radio:
+		head = "○ " + name
+	case it.def:
+		t = toneGreen
 	}
-	b.put(t, false, head)
+	if it.def {
+		marker = " (default)"
+	}
+	b.put(t, bold, head)
 	b.put(toneMuted, false, "   "+fit(it.desc, width-utf8.RuneCountInString(head)-3-len(marker)))
 	b.put(toneGreen, false, marker)
 	return b.row()

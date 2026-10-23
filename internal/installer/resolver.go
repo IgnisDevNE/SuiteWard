@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -171,7 +172,33 @@ func nonEmpty(key, label string, secret []byte) ([]byte, error) {
 // that only the person at the terminal makes. The end of the input is io.EOF.
 func (r *Resolver) ask(question string) (string, error) { return r.screen.Prompt(question) }
 
-// Select resolves a choice among a few answers, in the order of Value. It asks like Value for now.
+// Select resolves a choice among a few answers as Value resolves a text one: the flag, then the answers file, then the default when
+// there is no terminal to ask. At a full screen it lists the choices (name and description) to be picked with the arrow keys; a plain
+// screen asks Value's typed question, "label (a or b) [def]: ", exactly as before. def is one of the choices' names; the answer is
+// the name of the one that was picked.
 func (r *Resolver) Select(key, label string, choices []ui.Choice, def string) (string, error) {
-	return r.Value(key, label, def)
+	if !r.asks(key) || !r.screen.FullScreen() {
+		return r.Value(key, label+" ("+orList(choices)+")", def)
+	}
+	i := slices.IndexFunc(choices, func(c ui.Choice) bool { return c.Name == def })
+	if i < 0 {
+		return "", fmt.Errorf("the default %q of %s is not one of its choices", def, key)
+	}
+	picked, err := r.screen.Select(label, choices, i)
+	if err != nil {
+		return "", err
+	}
+	return choices[picked].Name, nil
+}
+
+// orList is the names of the choices as a sentence: "a or b", "a, b or c".
+func orList(choices []ui.Choice) string {
+	names := make([]string, len(choices))
+	for i, c := range choices {
+		names[i] = c.Name
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }

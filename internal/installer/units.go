@@ -124,8 +124,8 @@ func render(templates map[string][]byte, p UnitParams) (map[string][]byte, error
 	}
 	serve := []lineEdit{
 		release,
-		{old: "PublishPort=127.0.0.1:8081:8080", new: "PublishPort=127.0.0.1:" + strconv.Itoa(p.HTTPPort) + ":8080"},
-		{old: "PublishPort=127.0.0.1:8091:8090", new: "PublishPort=127.0.0.1:" + strconv.Itoa(p.MCPPort) + ":8090"},
+		{old: "PublishPort=127.0.0.1:" + strconv.Itoa(DefaultHTTPPort) + ":8080", new: "PublishPort=127.0.0.1:" + strconv.Itoa(p.HTTPPort) + ":8080"},
+		{old: "PublishPort=127.0.0.1:" + strconv.Itoa(DefaultMCPPort) + ":8090", new: "PublishPort=127.0.0.1:" + strconv.Itoa(p.MCPPort) + ":8090"},
 		{old: "EnvironmentFile=/etc/suiteward/github.env", new: "EnvironmentFile=" + envFile},
 		{old: "Environment=SUITEWARD_INSTALLATION_TIER=isolated", new: tier},
 	}

@@ -534,9 +534,9 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 // this release, carries their tier, ports and job timeout into s and returns the image digest to pin. A difference it cannot
 // carry stops the run with the diff. Without installed units the digest comes from the "image" answer.
 // The second result is what the unit directory holds: whether anything is installed, and the env file the installed units read
-// when it is not the account's own, so the caller can say when it may go. What is installed replaces what was asked for, and
-// each such replacement is reported; except that a port or the job timeout the run is given (a flag or the answers file) wins
-// over the installed one, and the change is said.
+// when it is not the account's own, so the caller can say when it may go. The installed tier replaces the one that was asked for, and
+// that is reported; the installed ports and job timeout stand unless the run is given others (a flag or the answers file), which win,
+// and the change is said.
 func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, installedStack, error) {
 	st, err := adoptUnitsDir(unitsDir, homeEnvFile, false)
 	if err != nil {
@@ -648,19 +648,12 @@ func adoptUnitsDir(unitsDir, homeEnvFile string, refreshDB bool) (installedStack
 	return st, nil
 }
 
-// reportAdopted says which installed values replace the ones that were asked for.
+// reportAdopted says which installed tier replaces the one that was asked for. A port or the job timeout is not reported: it differs
+// from the installed one only when the run was not given it (installedWithGiven), so nothing was asked for, and one that is given wins
+// and is said by sayChanges.
 func reportAdopted(say func(string, ...any), asked, installed Settings) {
 	if asked.Tier != installed.Tier {
 		say("Keeping the installed tier %s (you asked for %s).\n", installed.Tier, asked.Tier)
-	}
-	if asked.HTTPPort != installed.HTTPPort {
-		say("Keeping the installed HTTP port %d (you asked for %d).\n", installed.HTTPPort, asked.HTTPPort)
-	}
-	if asked.MCPPort != installed.MCPPort {
-		say("Keeping the installed MCP port %d (you asked for %d).\n", installed.MCPPort, asked.MCPPort)
-	}
-	if asked.JobTimeout != installed.JobTimeout {
-		say("Keeping the installed job timeout %q (you asked for %q).\n", installed.JobTimeout, asked.JobTimeout)
 	}
 }
 

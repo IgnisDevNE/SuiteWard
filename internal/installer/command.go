@@ -33,6 +33,7 @@ const Usage = `usage: suiteward install [flags]
        suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward doctor [--json] [--settings PATH] [--plain]
+       suiteward version
 `
 
 // Env is what the install commands need from the machine; tests replace it.
@@ -184,8 +185,8 @@ var installFlags = []struct{ name, usage string }{
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},
 	{"image", "the release image pinned by digest, ghcr.io/ignisdevne/suiteward@sha256:<64 hex> (default: the installed image, else the release this binary carries; a development build needs it)"},
-	{"http-port", "loopback port of the HTTP listener (default 8081)"},
-	{"mcp-port", "loopback port of the MCP listener (default 8091)"},
+	{"http-port", "loopback port of the HTTP listener (default 27081)"},
+	{"mcp-port", "loopback port of the MCP listener (default 27091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
 	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub, new-app: create a new App although the settings name one (the old App stays on GitHub)"},
 	{"github-account", `the account that owns the new App: "personal" or an organization login`},

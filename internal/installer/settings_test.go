@@ -62,17 +62,38 @@ func TestSaveSettingsUsesRestrictiveModes(t *testing.T) {
 	}
 }
 
-func TestLoadSettingsFillsDefaultPorts(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.yaml")
-	if err := os.WriteFile(path, []byte("tier: isolated\nruntime: podman\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := LoadSettings(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.HTTPPort != DefaultHTTPPort || got.MCPPort != DefaultMCPPort || got.Tier != config.TierIsolated {
-		t.Fatalf("defaults were not applied: %+v", got)
+// The ports of a stack that exists are in its settings file alone (a Docker stack is known by nothing else): a file that lacks one would
+// take the default, and the next re-run would recreate the containers on another port. The installer always writes both keys.
+func TestLoadSettingsRefusesAFileWithoutPorts(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content      string
+		missing, has []string // the keys the error names, and the ones the file has
+	}{
+		"neither port":  {"tier: isolated\nruntime: podman\n", []string{"http_port", "mcp_port"}, nil},
+		"no MCP port":   {"tier: co-located\nruntime: docker\nhttp_port: 8081\n", []string{"mcp_port"}, []string{"http_port"}},
+		"no HTTP port":  {"tier: co-located\nruntime: docker\nmcp_port: 8091\n", []string{"http_port"}, []string{"mcp_port"}},
+		"an empty file": {"", []string{"http_port", "mcp_port"}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadSettings(path)
+			if err == nil || errors.Is(err, ErrNoSettings) || !strings.Contains(err.Error(), path) {
+				t.Fatalf("got %v, want an error that names the file", err)
+			}
+			for _, key := range tc.missing {
+				if !strings.Contains(err.Error(), key+" is not set") {
+					t.Errorf("the error does not say that %s is not set: %v", key, err)
+				}
+			}
+			for _, key := range tc.has {
+				if strings.Contains(err.Error(), key) {
+					t.Errorf("the error names %s, which the file has: %v", key, err)
+				}
+			}
+		})
 	}
 }
 

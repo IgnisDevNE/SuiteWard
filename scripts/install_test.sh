@@ -1,7 +1,7 @@
 #!/bin/sh
 # Self-test for install.sh. The installer runs under a hermetic PATH of wrappers for the few tools it needs, a fake uname and, per case, a fake
-# cosign, wget or curl, against a fake release directory served through file:// URLs (or, for the production URLs, by the fake curl), so no network,
-# no real cosign and no host tool changes a result.
+# cosign, wget or curl, against a fake release directory served through file:// URLs (or through the https://release.test base, or, for the production
+# URLs, by the fake curl), so no network, no real cosign and no host tool changes a result.
 # Run: sh scripts/install_test.sh   (INSTALL_TEST_SHELL=dash runs the installer with another shell than sh)
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -16,6 +16,7 @@ bin=$tmp/bin release=$tmp/release dest=$tmp/dest logs=$tmp/log
 mkdir "$bin" "$release" "$logs"
 if command -v cygpath >/dev/null 2>&1; then root=$(cygpath -m "$tmp"); else root=$tmp; fi # native curl on Windows cannot open a POSIX file:// path
 base=file://$root/release
+httpsbase=https://release.test # the fake curl and the fake wget serve the release directory under it
 nl='
 '
 msys=
@@ -44,7 +45,9 @@ exit "${FAKE_COSIGN_EXIT:-0}"
 EOF
 cat > "$tmp/wget" <<'EOF'
 #!/bin/sh
-# wget -q -O FILE URL for file:// URLs, which neither GNU wget nor busybox wget reads. --help answers as GNU wget or, with FAKE_WGET_BUSYBOX, as busybox wget.
+# wget -q -O FILE URL, where the https://release.test base stands for the fake release directory (the script takes no other base for wget) and a file:// URL
+# is read from disk although neither GNU wget nor busybox wget reads one: a case that must be refused calls wget only to prove that it was not called.
+# --help answers as GNU wget or, with FAKE_WGET_BUSYBOX, as busybox wget.
 if [ "${1:-}" = --help ]; then
 	if [ -n "${FAKE_WGET_BUSYBOX:-}" ]; then echo "BusyBox v1.36.1 (2024-01-01 00:00:00 UTC) multi-call binary." >&2; exit 1; fi
 	echo "GNU Wget 1.21.4, a non-interactive network retriever."
@@ -54,9 +57,11 @@ out= url=
 while [ $# -gt 0 ]; do case $1 in -O) out=$2; shift ;; -q) ;; -*) exit 2 ;; *) url=$1 ;; esac; shift; done
 echo "$url" >> "$FAKE_LOGS/wget"
 [ -z "${FAKE_WGET_SLOW:-}" ] || sleep 2
-cp "${url#file://}" "$out" 2>/dev/null || exit 8
+case $url in https://release.test/*) src=$FAKE_RELEASE/${url#https://release.test/} ;; *) src=${url#file://} ;; esac
+cp "$src" "$out" 2>/dev/null || exit 8
 EOF
-# A curl that records its arguments and serves the fixtures for the production URLs of the release assets and of the latest-release API answer.
+# A curl that records its arguments and serves the fixtures for the production URLs of the release assets and of the latest-release API answer, for the
+# https://release.test base that stands for the fake release directory, and for a file:// URL.
 cat > "$tmp/curl" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$FAKE_LOGS/curl"
@@ -65,6 +70,8 @@ while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; *) url=$1 ;; esac; shift;
 case $url in
 https://github.com/IgnisDevNE/SuiteWard/releases/download/*) src=$FAKE_RELEASE/${url#https://github.com/IgnisDevNE/SuiteWard/releases/download/} ;;
 https://api.github.com/repos/IgnisDevNE/SuiteWard/releases/latest) src=$FAKE_RELEASE/latest.json ;;
+https://release.test/*) src=$FAKE_RELEASE/${url#https://release.test/} ;;
+file://*) src=${url#file://} ;;
 *) exit 22 ;;
 esac
 cp "$src" "$out" 2>/dev/null || exit 22
@@ -379,21 +386,22 @@ run
 want_ok; installed "v1.2.3 linux_amd64"
 wrap cp
 
+# wget has no flag that restricts a protocol, so it takes only an https:// release base (the fake one here).
 name="wget instead of curl"
 drop curl
 add wget
-run
+run SUITEWARD_RELEASE_BASE="$httpsbase"
 want_ok; installed "v1.2.3 linux_amd64"
-grep -q "/v1.2.3/suiteward_v1.2.3_linux_amd64$" "$logs/wget" || fail "$name: wget did not download the binary: $(cat "$logs/wget")"
+grep -q "^$httpsbase/v1.2.3/suiteward_v1.2.3_linux_amd64$" "$logs/wget" || fail "$name: wget did not download the binary: $(cat "$logs/wget")"
 lacks "TLS certificates"
 # BusyBox wget may accept any TLS certificate; without cosign nothing else authenticates the download, and the warning says so.
 name="busybox wget without cosign"
-run FAKE_WGET_BUSYBOX=1
+run SUITEWARD_RELEASE_BASE="$httpsbase" FAKE_WGET_BUSYBOX=1
 want_ok; installed "v1.2.3 linux_amd64"
 has "TLS certificates may not have been verified"
 name="busybox wget with cosign"
 add cosign
-run FAKE_WGET_BUSYBOX=1
+run SUITEWARD_RELEASE_BASE="$httpsbase" FAKE_WGET_BUSYBOX=1
 want_ok; installed "v1.2.3 linux_amd64"
 lacks "TLS certificates"
 drop cosign
@@ -406,7 +414,7 @@ for signal in "TERM 143" "HUP 129"; do
 	rm -rf "$dest" "$tmp/home" "$tmp/t"
 	mkdir "$dest" "$tmp/t"
 	rm -f "$logs/wget"
-	( with_env FAKE_WGET_SLOW=1 "$shell" "$installer" ) < /dev/null > "$tmp/stdout" 2> "$tmp/stderr" &
+	( with_env FAKE_WGET_SLOW=1 SUITEWARD_RELEASE_BASE="$httpsbase" "$shell" "$installer" ) < /dev/null > "$tmp/stdout" 2> "$tmp/stderr" &
 	pid=$!
 	tries=0
 	while [ ! -e "$logs/wget" ] && [ "$tries" -lt 100 ]; do sleep 0.1; tries=$((tries + 1)); done
@@ -500,6 +508,41 @@ want_ok; installed "v1.2.3 linux_amd64"
 [ "$(awk '{ print $NF }' "$logs/curl")" = "$download/SHA256SUMS
 $download/suiteward_v1.2.3_linux_amd64" ] || fail "$name: curl asked for: $(awk '{ print $NF }' "$logs/curl")"
 [ "$(grep -c '^-fsSL --proto =https --proto-redir =https -o ' "$logs/curl")" -eq 2 ] || fail "$name: a request lacks the https-only flags: $(cat "$logs/curl")"
+wrap curl
+
+# SUITEWARD_RELEASE_BASE exists for this test only, and it must not turn the https rule off: the script takes an https:// or a file:// base and nothing else,
+# curl may follow a redirect to https only, and wget, which has no flag that restricts a protocol, takes an https:// base only.
+add curl
+for bad in http://release.test ftp://release.test HTTP://release.test release.test /tmp/release https:/release.test; do
+	name="the release base '$bad' is refused"
+	run SUITEWARD_RELEASE_BASE="$bad"
+	want_refused
+	has "SUITEWARD_RELEASE_BASE must start with https:// or file://"
+	[ ! -e "$logs/curl" ] || fail "$name: curl was called: $(cat "$logs/curl")"
+done
+name="a file:// release base is accepted, and curl takes only https and file"
+run
+want_ok; installed "v1.2.3 linux_amd64"
+[ "$(grep -c '^-fsSL --proto =https,file --proto-redir =https -o ' "$logs/curl")" -eq 2 ] || fail "$name: a request lacks the restricted protocols: $(cat "$logs/curl")"
+name="an https:// release base is accepted, with the same protocols"
+run SUITEWARD_RELEASE_BASE="$httpsbase"
+want_ok; installed "v1.2.3 linux_amd64"
+[ "$(grep -c '^-fsSL --proto =https,file --proto-redir =https -o ' "$logs/curl")" -eq 2 ] || fail "$name: a request lacks the restricted protocols: $(cat "$logs/curl")"
+[ "$(awk '{ print $NF }' "$logs/curl")" = "$httpsbase/v1.2.3/SHA256SUMS
+$httpsbase/v1.2.3/suiteward_v1.2.3_linux_amd64" ] || fail "$name: curl asked for: $(awk '{ print $NF }' "$logs/curl")"
+drop curl
+add wget
+name="wget with a file:// release base is refused"
+run
+want_refused
+has "SUITEWARD_RELEASE_BASE must start with https:// when the downloader is wget"
+[ ! -e "$logs/wget" ] || fail "$name: wget was called: $(cat "$logs/wget")"
+name="wget with an http:// release base is refused"
+run SUITEWARD_RELEASE_BASE=http://release.test
+want_refused
+has "SUITEWARD_RELEASE_BASE must start with https://"
+[ ! -e "$logs/wget" ] || fail "$name: wget was called: $(cat "$logs/wget")"
+drop wget
 wrap curl
 
 # A download that stops anywhere runs nothing, because the whole script is one function that is called on its last line.

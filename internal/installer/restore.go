@@ -448,7 +448,7 @@ func (x *restoreRun) warn() {
 	if x.doc.Unavailable {
 		x.scr.Warn("The status of this backup is not recorded (%s): it is the state of an instance that did not answer when the backup was taken, so its release is known by its image alone and nothing but that the service answers can be compared after the restore.\n", x.doc.Reason)
 	}
-	if x.current != nil && x.current.Instance != x.doc.Instance {
+	if x.current != nil && x.doc.Instance != unknownValue && x.current.Instance != x.doc.Instance { // "unknown" names no instance, so it is no other one
 		x.scr.Warn("This backup is of another instance (%s) than the one that runs here (%s): after the restore this instance is the backup's, and the authenticator entry of the backup is the one that works.\n", x.doc.Instance, x.current.Instance)
 	}
 	if tier := string(x.inst.s.Tier); x.info.Tier != "" && x.info.Tier != tier {

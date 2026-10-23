@@ -132,11 +132,17 @@ Patterns are gitignore-style. A pattern with no slash inside it matches at any d
 
 ## Install
 
-SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App. You install it with the `suiteward` installer, a signed release binary for linux/amd64, linux/arm64, windows/amd64 and darwin/arm64 that carries the digest of its own image. The [install guide](docs/install.md) covers both tiers:
-- **Co-located:** `suiteward install` on the developer's Windows PC, with Podman (strongly recommended) or Docker (discouraged). It starts the stack, creates the GitHub App through your browser, writes the ruleset for you to import, and runs the owner setup. Windows is validated live; macOS and Linux are covered by tests only.
+SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App. You install it with the `suiteward` installer, a signed release binary for linux/amd64, linux/arm64, windows/amd64, darwin/amd64 and darwin/arm64 that carries the digest of its own image. The [install guide](docs/install.md) covers both tiers:
+- **Co-located:** `suiteward install` on the developer's own PC, with Podman (strongly recommended) or Docker (discouraged). It starts the stack, creates the GitHub App through your browser, writes the ruleset for you to import, and runs the owner setup. On a terminal it runs full screen, in the SuiteWard colors, and prints plain lines with `--plain` or no terminal. Windows is validated live; macOS is covered by tests that CI runs on a macOS machine, with its live validation pending (the binaries are not notarized); Linux is covered by tests only.
 - **Isolated:** `sudo suiteward install host`, then `suiteward install --tier isolated` as the service account (it creates the GitHub App through a Session Manager port forward, or takes one you made), on an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance.
 
-Verify the download once with `scripts/verify-release.ps1` ([how](docs/install.md#4-get-and-verify-the-installer)), and check an instance at any time with `suiteward doctor`. The guide also covers TOTP enrollment, the ruleset, upgrades (`suiteward install --upgrade`, which backs up first) and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
+On Linux and macOS, one command downloads, checks and installs the binary of a release whose page lists `install.sh`:
+
+```sh
+curl -fsSL https://github.com/IgnisDevNE/SuiteWard/releases/download/<tag>/install.sh | SUITEWARD_VERSION=<tag> sh
+```
+
+Set `SUITEWARD_VERSION` to the same tag: the script is the same file in every release, and without the variable it takes GitHub's latest release, which is never a pre-release. It checks the binary against the release's `SHA256SUMS`, and verifies the signature when cosign is installed ([how it works](docs/install.md#4-get-and-verify-the-installer)). On Windows, or to verify the download by hand, use `scripts/verify-release.ps1` (same section). Check an instance at any time with `suiteward doctor`. The guide also covers TOTP enrollment, the ruleset, upgrades (`suiteward install --upgrade`, which backs up first) and key rotation. [Backup](docs/backup.md) covers backup, restore and a fresh bootstrap.
 
 - **In a hurry?** The [quickstart](docs/quickstart.md) is the short path for each tier.
 - **Installing with a coding agent?** Point it to [agent-install.md](docs/agent-install.md). It says what the agent may prepare, and which steps (the installer's GitHub flow and App key, TOTP enrollment, the ruleset, every `/suiteward` command) only you do.
@@ -149,7 +155,8 @@ Verify the download once with `scripts/verify-release.ps1` ([how](docs/install.m
   - `v0.1.3` was the last release before the hardening phase.
   - `v0.2.0` (2026-10-22) is the current release and runs on both tiers. It adds a least-privilege database role, `suiteward migrate`, signed releases with provenance and an SBOM, and an AlmaLinux 9 isolated host.
   - The security assessment is done, and the hardening phase ([SH](docs/plan/phases/SH.md)) is merged and released.
-  - Next is the installer (phase M1.12, `v0.3.0-alpha.1`).
+  - The installer (phase M1.12) is merged and ships as the pre-release `v0.3.0-alpha.1`; the findings of its validation are fixed in `v0.3.0-alpha.2` ([#53](https://github.com/IgnisDevNE/SuiteWard/pull/53)).
+  - Phase [M1.13](docs/plan/phases/M1.13.md) adds macOS, the one-line install and the full-screen installer; its change report and encrypted backups are not merged yet.
 - **Security:** see [SECURITY.md](SECURITY.md), the [threat model](docs/security/threat-model.md), and [`scripts/verify-release.ps1`](scripts/verify-release.ps1), which verifies a release's signature and provenance.
 - **After the MVP:**
   - canonical test execution (M2);
@@ -174,7 +181,7 @@ Verify the download once with `scripts/verify-release.ps1` ([how](docs/install.m
 
 ## Develop
 
-Development targets Windows with PowerShell 7, with Windows and Linux CI and local PostgreSQL in Podman:
+Development targets Windows with PowerShell 7, with Windows, Linux and macOS CI and local PostgreSQL in Podman:
 - `./scripts/dev.ps1 setup` prepares a checkout.
 - `./scripts/dev.ps1 doctor` verifies it.
 - `./scripts/dev.ps1 check` runs the checks.

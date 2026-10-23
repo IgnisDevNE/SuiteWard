@@ -1,6 +1,6 @@
 # Local development
 
-SuiteWard develops on Windows and verifies portable behavior on Windows and Linux. This bootstrap supports x64 Windows/Linux with PowerShell 7.2 or newer. SuiteWard is released (`v0.2.0`, 2026-10-22). This document covers the development infrastructure it is built on.
+SuiteWard develops on Windows and verifies portable behavior on Windows and Linux. This bootstrap supports x64 Windows/Linux with PowerShell 7.2 or newer. CI also builds, vets and tests the Go code on macOS (a `macos-15` runner, Apple silicon), where the bootstrap does not run: the pinned tools exist for Windows and Linux x64 only, so the lint and the sqlc check stay on those two ([CI and coverage](ci-and-coverage.md)). SuiteWard is released (`v0.2.0`, 2026-10-22). This document covers the development infrastructure it is built on.
 
 ## Start here
 
@@ -156,6 +156,8 @@ The per-phase verification entries that this section once held (M1.6a to M1.8) d
 ## Verification boundaries
 
 The offline development safety tests are part of the Windows/Linux foundation CI job. They cover archive integrity, interrupted installation detection, exclusive setup, path/resource separation, ownership rejection, process environment isolation, the shared cache location and lock, and `db-reset` ownership checks. A real database smoke check runs locally through `doctor`/`db-test`.
+
+The one-line install script, `scripts/install.sh`, has a self-test, `scripts/install_test.sh`. `check` runs it when `sh` is found: it warns and skips it on Windows without `sh` (the Linux CI job still runs it), and fails on another system without `sh`. It runs the script under stand-in tools against a fake release directory, so it needs no network. `SUITEWARD_RELEASE_BASE` is the script's variable that points it at that directory; it exists for this test only. The dry run of the installer's units through AlmaLinux 9's Podman is a CI job and has no local command ([CI and coverage](ci-and-coverage.md)).
 
 Domain and application tests need no services, so `./scripts/dev.ps1 tools` and `./scripts/dev.ps1 check` support service-free development. The PostgreSQL and filesystem adapters need a database; run `./scripts/dev.ps1 persistence` before claiming their integration succeeds. The wrapper loads the ignored `database-url.txt` only into the verification process and restores any caller value even after failure. Each database fixture owns a unique schema and cleans only that schema, preserving other tests/checkouts.
 

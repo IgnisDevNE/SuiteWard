@@ -1,27 +1,39 @@
 # SuiteWard quickstart
 
-This is the short path for one owner. The **co-located** tier runs SuiteWard next to your coding agent, on your Windows PC, and reports reduced assurance. The **isolated** tier runs it on a separate AlmaLinux 9 host and gives the full assurance. Every step links to the full [install guide](install.md), which has the details and the troubleshooting.
+This is the short path for one owner. The **co-located** tier runs SuiteWard next to your coding agent, on your own PC (Windows or macOS; Linux too), and reports reduced assurance. The **isolated** tier runs it on a separate AlmaLinux 9 host and gives the full assurance. Every step links to the full [install guide](install.md), which has the details and the troubleshooting.
 
 **You need** a GitHub user account that administers the repositories (up to 20), an authenticator app, a real terminal, and a container runtime. Podman, rootless, is strongly recommended. Docker is allowed on the co-located tier only, and discouraged. GitHub does not enforce rulesets on a private repository on the Free plan: protect a public repository, or use a paid plan ([section 3](install.md#3-before-you-start)).
 
-## Co-located (Windows PC)
+## Co-located (your PC)
 
-On Windows, start the Podman machine first: `podman machine start`. Windows with Podman is the path validated live. macOS and Linux are covered by tests only.
+On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows with Podman is the path validated live. macOS is covered by CI tests, and its live validation is pending; Linux is covered by tests only.
 
-**1. Get and verify the installer** ([section 4](install.md#4-get-and-verify-the-installer)). From the release page of the release you chose, download the binary for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json`, then verify them once, with PowerShell 7.2 or later and cosign 3.x, from the release source:
+**1. Get and verify the installer** ([section 4](install.md#4-get-and-verify-the-installer)).
+
+On Linux and macOS, one command downloads the binary of the release you chose, checks it against the release's `SHA256SUMS`, verifies the signature too when cosign 3.x is installed, and puts it in `~/.local/bin`. Use the same tag twice, and pick a release whose page lists `install.sh`:
+
+```sh
+curl -fsSL https://github.com/IgnisDevNE/SuiteWard/releases/download/<tag>/install.sh | SUITEWARD_VERSION=<tag> sh
+```
+
+Without cosign the script says that the signature was not verified: read [section 4.1](install.md#4-get-and-verify-the-installer) before you rely on it. The macOS binaries are not notarized: a browser download needs `xattr -d com.apple.quarantine <file>`, a `curl` download does not.
+
+On Windows, or to verify by hand on any system: from the release page, download the binary for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json`, then verify them once, with PowerShell 7.2 or later and cosign 3.x, from the release source:
 
 ```powershell
 pwsh ./scripts/verify-release.ps1 -Blob <folder>/SHA256SUMS -Bundle <folder>/SHA256SUMS.sigstore.json
 pwsh ./scripts/verify-release.ps1 -Sums <folder>/SHA256SUMS -File <folder>/suiteward_<tag>_windows_amd64.exe
 ```
 
-Rename the binary to `suiteward.exe` and put it on your PATH.
+Rename the binary to `suiteward.exe` (`suiteward` on Linux and macOS) and put it on your PATH.
 
 **2. Install** ([section 5](install.md#5-install-co-located)):
 
-```powershell
+```sh
 suiteward install
 ```
+
+On a real terminal it runs full screen, in the SuiteWard colors; `--plain` (or no terminal) prints plain lines instead.
 
 It starts the stack, and it walks you through the rest, on this PC:
 
@@ -32,7 +44,7 @@ It starts the stack, and it walks you through the rest, on this PC:
 
 **3. Check** ([section 5.7](install.md#5-install-co-located)):
 
-```powershell
+```sh
 suiteward doctor
 ```
 
@@ -46,7 +58,7 @@ Expect `ok` on every line. A `FAIL` line names the fix. For Docker instead of Po
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-Copy the binary to `/usr/local/bin/suiteward`. Have the AWS CLI and the Session Manager plugin on your PC for the port forward of step 3.
+Copy the binary to `/usr/local/bin/suiteward`. (The one-line install of [section 4.1](install.md#4-get-and-verify-the-installer) also works on the host: it prints the `SHA256SUMS sha256` hash to compare with the one your PC verified.) Have the AWS CLI and the Session Manager plugin on your PC for the port forward of step 3.
 
 **2. Prepare the host**, once, as the administrator ([step 10.2](install.md#10-running-on-a-separate-host-operators)):
 

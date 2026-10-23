@@ -101,7 +101,7 @@ func TestWaitHoldsThePageUntilEnter(t *testing.T) {
 		t.Errorf("the hint must come back once the wait is over:\n%s", after)
 	}
 	mustClose(t, s)
-	if got, want := afterLastLeave(out.String()), "page line\npending: \nnext\n"; got != want {
+	if got, want := afterLastLeave(out.String()), "page line\npending: next\n"; got != want {
 		t.Errorf("the normal screen received %q, want %q: the wait adds nothing to the page", got, want)
 	}
 }

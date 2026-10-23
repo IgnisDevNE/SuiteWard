@@ -11,8 +11,8 @@
 //   - Say, Write: the text as given. Full screen splits it into lines (a pending line without its newline is kept, and the cursor
 //     parks at its end), drops control characters, and lets a carriage return overwrite the pending line: the next character that is
 //     written replaces it, and a newline right after the carriage return, even in the next write, ends it as it is.
-//   - Check, Warn: a line with a glyph; plain mode prints the text as given (a newline is added when missing), without the glyph.
-//     Full screen also keeps every Warn line for Close, like a Keep line.
+//   - Check, Warn: a line with a glyph (✓ and !); plain mode prints the text as given (a newline is added when missing), without the
+//     glyph. Close prints every one again, with its glyph, whatever step it was written in, like a Keep line.
 //   - Steps, Step: the step column and "step i of N"; plain mode prints nothing, so a flow's plain output is unchanged. A new step
 //     starts a clean page.
 //   - Progress, Spin: one live row per label; plain mode prints a line only when the label or the status text changes.
@@ -21,9 +21,11 @@
 //   - Summary: a screen of key/value rows and warnings, with no step column. Full screen waits for Enter so it can be read; its rows
 //     and warnings are kept for Close, and a second Summary replaces the first. Plain mode prints "key: value" lines and the warnings
 //     as given.
-//   - Close: leaves the alternate screen, and prints on the normal screen what must not be lost: unless a Summary was shown, the lines
-//     of the current page (the ones that were not Kept or Warn lines), then the Keep and Warn lines in the order they were written,
-//     then the Summary. So a failure leaves the page it stopped on, and the warnings, in the scrollback.
+//   - Wait: holds the page until Enter, for a command that ends on text that must be read (a Summary would replace it). Close prints
+//     the page as usual. Plain mode returns at once.
+//   - Close: leaves the alternate screen, and prints on the normal screen what must not be lost: the Check, Warn and Keep lines of the
+//     pages that are gone, then the current page in the order it was written (only its Check, Warn and Keep lines when a Summary was
+//     shown), then the Summary. So a failure leaves the page it stopped on, and every check and warning of the run, in the scrollback.
 //   - Suspend: while suspended, every call that writes text writes it straight to the terminal, as plain mode does, and the screen
 //     keeps none of it: a child's output (setup prints a TOTP secret) is not redrawn after Resume or repeated by Close.
 //
@@ -48,6 +50,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,10 +117,12 @@ type Screen struct {
 	spinText  string
 	spinFor   time.Duration
 	summary   bool
+	waiting   bool // Wait is reading the Enter that ends it
 	rows      []KV
 	warns     []string
-	keep      []string // Keep and Warn lines: Close prints them on the normal screen
-	// summaryKeep is the last Summary's rows and warnings, printed after keep.
+	// history is the Check, Warn and Keep lines of the pages that are gone, as Close prints them: the pages before the current one.
+	history []string
+	// summaryKeep is the last Summary's rows and warnings, printed after the page.
 	summaryKeep []string
 
 	plainSpin string            // plain mode: the spinner label last printed
@@ -227,10 +232,7 @@ func (s *Screen) mark(kind itemKind, text string) {
 		return
 	}
 	text = clean(strings.TrimSuffix(text, "\n"))
-	s.add(item{kind: kind, text: text, kept: kind == itemWarn})
-	if kind == itemWarn {
-		s.keep = append(s.keep, keepLines(text)...)
-	}
+	s.add(item{kind: kind, text: text})
 	s.draw()
 }
 
@@ -251,7 +253,6 @@ func (s *Screen) Keep(format string, args ...any) {
 	s.keeping = true
 	s.emit(text)
 	s.keeping = false
-	s.keep = append(s.keep, keepLines(text)...)
 }
 
 // endLine commits the pending line, if there is one, as a line of its own, and forgets a pending carriage return.
@@ -260,11 +261,6 @@ func (s *Screen) endLine() {
 		s.add(item{kind: itemText, text: s.partial})
 	}
 	s.partial, s.pendingCR = "", false
-}
-
-// keepLines is text as the lines Close prints.
-func keepLines(text string) []string {
-	return strings.Split(strings.TrimSuffix(clean(text), "\n"), "\n")
 }
 
 // Steps sets the names of the step list and makes the first one current. Plain mode prints nothing.
@@ -294,7 +290,8 @@ func (s *Screen) Step(n int) {
 }
 
 func (s *Screen) newPage() {
-	s.items, s.partial, s.pendingCR, s.spinning, s.plainSpin = nil, "", false, false, ""
+	s.archive(s.items)
+	s.items,s.partial, s.pendingCR, s.spinning, s.plainSpin = nil, "", false, false, ""
 	clear(s.plainBars)
 }
 
@@ -539,6 +536,30 @@ func (s *Screen) Summary(rows []KV, warnings []string) error {
 	}
 	s.draw()
 	s.mu.Unlock()
+	return s.waitForEnter()
+}
+
+// Wait holds the page on screen until Enter, so that it can be read before Close leaves the alternate screen, and Close then prints the
+// page as usual: nothing is added to it. Plain mode has printed everything already and returns at once. It returns an error only when
+// waiting for Enter fails (a done context is one); the end of the input is not.
+func (s *Screen) Wait() error {
+	s.mu.Lock()
+	if !s.drawing() {
+		s.mu.Unlock()
+		return nil
+	}
+	s.waiting = true
+	s.draw()
+	s.mu.Unlock()
+	err := s.waitForEnter()
+	s.mu.Lock()
+	s.waiting = false
+	s.mu.Unlock()
+	return err
+}
+
+// waitForEnter reads the line that ends a wait, without the lock held; the end of the input ends it too.
+func (s *Screen) waitForEnter() error {
 	if _, err := s.readLine(); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("wait for Enter: %w", err)
 	}
@@ -571,9 +592,10 @@ func (s *Screen) Resume() {
 }
 
 // Close leaves the alternate screen, puts the console back, and prints on the normal screen what must not be lost (see the package
-// documentation): the current page unless a Summary was shown, the Keep and Warn lines, and the Summary. It is safe to call twice, so
-// a deferred Close and an explicit one before an error is printed to stderr can both stand. After Close the screen writes plain text.
-// It returns the first error the screen met while writing or restoring.
+// documentation): the Check, Warn and Keep lines of the pages that are gone, then the current page in the order it was written, or
+// only its Check, Warn and Keep lines when a Summary was shown, then the Summary. It is safe to call twice, so a deferred Close and an
+// explicit one before an error is printed to stderr can both stand. After Close the screen writes plain text. It returns the first
+// error the screen met while writing or restoring.
 func (s *Screen) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -588,25 +610,23 @@ func (s *Screen) Close() error {
 	if s.restore != nil {
 		s.note(s.restore())
 	}
-	var lines []string
-	if !s.summary {
-		lines = s.pageLines()
-	}
-	lines = append(append(lines, s.keep...), s.summaryKeep...)
-	if len(lines) > 0 {
+	if lines := append(s.pageLines(), s.summaryKeep...); len(lines) > 0 {
 		s.write(strings.Join(lines, "\n") + "\n")
 	}
 	return s.err
 }
 
-// pageLines is the current page as plain text, for Close: the lines that are not Keep or Warn lines (those are printed with the keep
-// block), then the pending line and the spinner.
+// pageLines is what Close prints before the Summary: the history, then the current page as plain text. A Summary replaces the page, so
+// then only its Check, Warn and Keep lines stay, and the pending line and the spinner are gone.
 func (s *Screen) pageLines() []string {
-	var lines []string
+	lines := slices.Clone(s.history)
 	for _, it := range s.items {
-		if !it.kept {
+		if !s.summary || it.durable() {
 			lines = append(lines, it.plainLines()...)
 		}
+	}
+	if s.summary {
+		return lines
 	}
 	if s.partial != "" {
 		lines = append(lines, s.partial)
@@ -649,7 +669,18 @@ func (s *Screen) append(text string) {
 
 func (s *Screen) add(it item) {
 	if s.items = append(s.items, it); len(s.items) > maxItems {
-		s.items = s.items[len(s.items)-maxItems:]
+		cut := len(s.items) - maxItems
+		s.archive(s.items[:cut])
+		s.items = s.items[cut:]
+	}
+}
+
+// archive moves the lines that must outlive their page, the Check, Warn and Keep lines, to the history that Close prints.
+func (s *Screen) archive(items []item) {
+	for _, it := range items {
+		if it.durable() {
+			s.history = append(s.history, it.plainLines()...)
+		}
 	}
 }
 
@@ -670,6 +701,3 @@ func clean(text string) string {
 
 // oneLine is clean for a text that must stay on one row: a newline becomes a space.
 func oneLine(text string) string { return strings.ReplaceAll(clean(text), "\n", " ") }
-
-// Wait holds the page until Enter. It does nothing yet.
-func (s *Screen) Wait() error { return nil }

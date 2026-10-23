@@ -346,8 +346,8 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	}
 	c.steps(t, "Doctor")
 	tail := c.tail()
-	// A passing check is its name beside a check mark, a failed or doubtful one is the line doctor prints.
-	for _, want := range []string{"\nsettings\n", "\nFAIL ports: ", "\nWARN github.app: not configured: GitHub is off in this instance — set GitHub up\n"} {
+	// A passing check is its name beside a check mark, a failed or doubtful one is the line doctor prints beside the warning mark.
+	for _, want := range []string{"\n✓ settings\n", "\n! FAIL ports: ", "\n! WARN github.app: not configured: GitHub is off in this instance — set GitHub up\n"} {
 		if !strings.Contains("\n"+tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
@@ -365,7 +365,9 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	port := regexp.MustCompile(`port \d+`) // the stack of each build listens on a port of its own
 	for _, line := range strings.Split(strings.TrimSpace(piped.String()), "\n") {
 		if name, ok := strings.CutPrefix(line, "ok "); ok {
-			line = name
+			line = "✓ " + name
+		} else {
+			line = "! " + line
 		}
 		if line = port.ReplaceAllString(line, "port N"); !strings.Contains(port.ReplaceAllString(tail, "port N"), line) {
 			t.Errorf("the line %q of the plain output is not in the full-screen scrollback", line)

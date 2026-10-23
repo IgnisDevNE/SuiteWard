@@ -157,9 +157,10 @@ func Main(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 		// A failed write to stderr cannot be reported anywhere else.
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
-	// Ctrl-C: the command has closed its screen, and read nothing since. cmd/suiteward cancels the context for SIGTERM as well, so a
-	// SIGTERM ends here too, as "interrupted" with 130; that is accepted.
-	case ctx.Err() != nil && errors.Is(err, context.Canceled):
+	// Ctrl-C: the command has closed its screen, and read nothing since. Any error with a done context is the interrupt's: a prompt's
+	// error that a caller put in its own words, or the failure of a child that the signal killed, has lost its Canceled but not its cause.
+	// cmd/suiteward cancels the context for SIGTERM as well, so a SIGTERM ends here too, as "interrupted" with 130; that is accepted.
+	case ctx.Err() != nil:
 		_, _ = fmt.Fprintf(stderr, "suiteward: interrupted: %v\n", err) // the error keeps what a failed step left behind and how to clean it up
 		return 130
 	default:

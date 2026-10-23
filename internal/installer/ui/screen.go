@@ -82,7 +82,9 @@ type Options struct {
 	// prompt until Enter. The read that was pending is abandoned in its goroutine and may still take a line from the input, so the
 	// process is expected to exit and the input is not read again. Secret cannot be interrupted this way: its reader is the caller's.
 	Context context.Context
-	// InputIsTerminal says that In is a terminal. It does nothing yet.
+	// InputIsTerminal says that In is a terminal. On a Windows console, Ctrl-C ends the pending read with the end of the input before
+	// the signal cancels Context, so a read that ends in an error waits a moment (interruptGrace) for the context and returns its
+	// error, which is what lets the command report an interrupt. The end of an input that is not a terminal is the end of the input.
 	InputIsTerminal bool
 }
 
@@ -106,6 +108,7 @@ type Screen struct {
 	err     error // the first write or restore failure
 
 	full, suspended, closed bool
+	terminal                bool // the input is a terminal (Options.InputIsTerminal)
 
 	steps []string
 	cur   int // the current step, 1-based; 0 with no steps
@@ -146,7 +149,7 @@ func Open(o Options) (*Screen, error) {
 	}
 	s := &Screen{
 		out: o.Out, in: bufio.NewReader(o.In), ctx: ctx, version: oneLine(o.Version), color: o.Color, w: o.Width, h: o.Height,
-		restore: o.RestoreConsole, full: o.Mode == ModeFull, plainBars: map[string]string{},
+		restore: o.RestoreConsole, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
 	}
 	if s.full {
 		s.write(enterAltScreen)
@@ -386,9 +389,28 @@ func (s *Screen) readLine() (string, error) {
 	}()
 	select {
 	case a := <-got:
+		if a.err != nil && s.terminal {
+			return "", s.afterTerminalError(a.err)
+		}
 		return a.line, a.err
 	case <-s.ctx.Done():
 		return "", s.ctx.Err()
+	}
+}
+
+// interruptGrace is how long a read that failed on a terminal waits for the context before its error is believed: on a Windows console
+// the signal that cancels the context follows the aborted read by a few milliseconds. A variable so that a test does not wait for it.
+var interruptGrace = 250 * time.Millisecond
+
+// afterTerminalError is the context's error when the context is done within interruptGrace, and err otherwise.
+func (s *Screen) afterTerminalError(err error) error {
+	timer := time.NewTimer(interruptGrace)
+	defer timer.Stop()
+	select {
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	case <-timer.C:
+		return err
 	}
 }
 
@@ -703,6 +725,3 @@ func clean(text string) string {
 
 // oneLine is clean for a text that must stay on one row: a newline becomes a space.
 func oneLine(text string) string { return strings.ReplaceAll(clean(text), "\n", " ") }
-
-// interruptGrace is how long a read that ended on a terminal waits for the context. It is unused yet.
-var interruptGrace = 250 * time.Millisecond

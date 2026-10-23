@@ -33,7 +33,7 @@ func OSEnv(plain bool) Env {
 // bufio.Reader the Resolver reads from as in, so that no buffered input is lost between them.
 func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Screen, error) {
 	env := OSEnv(plain)
-	o := Options{Out: os.Stdout, In: in, Context: ctx, Version: version, Mode: env.Mode(), Color: env.Color(), Width: env.Width, Height: env.Height}
+	o := Options{Out: os.Stdout, In: in, Context: ctx, Version: version, Mode: env.Mode(), Color: env.Color(), Width: env.Width, Height: env.Height, InputIsTerminal: env.StdinTTY}
 	if o.Mode == ModeFull {
 		restore, err := enableVT(os.Stdout)
 		if err != nil {

@@ -319,3 +319,20 @@ func TestUninstallIsolatedPurgeNeedsTheInstanceIdAndSaysWhatItRemoves(t *testing
 		t.Error("the settings file is still there")
 	}
 }
+
+// A restore replaces the data of the instance it finds: with no settings file at all it needs the engine named, as an uninstall does.
+func TestRestoreWithNoSettingsFileNeedsTheEngineNamed(t *testing.T) {
+	useDefaultConfigDir(t)
+	path, err := DefaultSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := purgeHarness(t) // the default instance runs, and its settings are not at the default path
+	code, stderr := h.main("restore", "backup.tar.age", "--tier", "co-located", "--yes", "--instance", testInstance)
+	if code != 1 || !strings.Contains(stderr, path) {
+		t.Fatalf("exit %d, stderr %q: want 1 and the default settings path", code, stderr)
+	}
+	if got := destructive(h.f, "\x00"); len(got) != 0 {
+		t.Errorf("the engine was asked to change something: %v", got)
+	}
+}

@@ -361,6 +361,7 @@ func TestUninstallPurgeOfDockerRemovesTheSecretVolumes(t *testing.T) {
 func TestUninstallAsksBeforeRemovingAnything(t *testing.T) {
 	h := newHarness(t, "linux")
 	podmanStackExists(h)
+	h.writeFiles()
 	err := h.uninstall("--runtime", "podman", "--connection", "pm", "--purge")
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("got %v", err)
@@ -369,6 +370,7 @@ func TestUninstallAsksBeforeRemovingAnything(t *testing.T) {
 
 	h = newHarness(t, "linux")
 	podmanStackExists(h)
+	h.writeFiles()
 	env := h.newEnv()
 	env.Term = Terminal{
 		In: strings.NewReader("yes\n"), Out: &h.out, IsTerminal: true,
@@ -384,6 +386,7 @@ func TestUninstallAsksBeforeRemovingAnything(t *testing.T) {
 	// A refusal at the prompt removes nothing.
 	h = newHarness(t, "linux")
 	podmanStackExists(h)
+	h.writeFiles()
 	env = h.newEnv()
 	env.Term = Terminal{In: strings.NewReader("n\n"), Out: &h.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}
 	if err := Uninstall(context.Background(), args, env); err == nil {
@@ -415,10 +418,11 @@ func TestUninstallNeverTouchesAnotherInstance(t *testing.T) {
 		t.Error("the settings of the other instance were removed")
 	}
 
-	// A Docker container nobody made through the installer.
+	// A Docker container nobody made through the installer: there are no settings, and the engine is named.
+	useDefaultConfigDir(t)
 	h = dockerHarness(t, "windows")
 	h.have(KindContainer, ContainerServe)
-	if err := h.uninstall("--runtime", "docker", "--yes"); !errors.Is(err, ErrForeignContainer) {
+	if err := Uninstall(context.Background(), []string{"--runtime", "docker", "--connection", "", "--yes", "--token-file", h.tokenPath()}, h.newEnv()); !errors.Is(err, ErrForeignContainer) {
 		t.Fatalf("got %v", err)
 	}
 	h.mustNotMutate()
@@ -438,8 +442,9 @@ func TestUninstallNeverTouchesAnotherInstance(t *testing.T) {
 }
 
 func TestUninstallOfTheIsolatedTierNeedsTheServiceAccount(t *testing.T) {
+	useDefaultConfigDir(t)
 	h := newHarness(t, "linux")
-	err := h.uninstall("--tier", "isolated", "--yes")
+	err := Uninstall(context.Background(), []string{"--tier", "isolated", "--yes"}, h.newEnv())
 	if err == nil || !strings.Contains(err.Error(), ServiceAccount) {
 		t.Fatalf("got %v", err)
 	}

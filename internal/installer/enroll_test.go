@@ -52,11 +52,17 @@ func (h *harness) enroll(stdin string, args ...string) (int, string) {
 
 func (h *harness) enrollOn(term Terminal, args ...string) (int, string) {
 	h.t.Helper()
+	return h.enrollWith(term, append([]string{"--settings", h.settingsPath()}, args...)...)
+}
+
+// enrollWith runs `suiteward enroll` with the arguments as they are: a test of what a run with no settings file does gives no --settings.
+func (h *harness) enrollWith(term Terminal, args ...string) (int, string) {
+	h.t.Helper()
 	env := h.newEnv()
 	term.Out = &h.out
 	env.Term = term
 	var stderr bytes.Buffer
-	code := Main(context.Background(), append([]string{"enroll", "--settings", h.settingsPath()}, args...), env, &stderr)
+	code := Main(context.Background(), append([]string{"enroll"}, args...), env, &stderr)
 	return code, stderr.String()
 }
 
@@ -200,9 +206,11 @@ func TestEnrollNeedsAGitHubApp(t *testing.T) {
 
 func TestEnrollNeedsAnInstalledStack(t *testing.T) {
 	withTerminal(t, true)
+	useDefaultConfigDir(t)
 	h := newHarness(t, "linux") // no containers, no settings
 	h.status = statusIs(statusNoOwner)
-	code, stderr := h.enroll("", "--owner", "alice", "--tier", "co-located")
+	term, _ := fakeTerminal(true, "")
+	code, stderr := h.enrollWith(term, "--owner", "alice", "--tier", "co-located")
 	if code != 1 || !strings.Contains(stderr, "nothing is installed") || len(h.f.tty) != 0 {
 		t.Fatalf("exit %d, stderr %q, setup %v", code, stderr, h.f.tty)
 	}

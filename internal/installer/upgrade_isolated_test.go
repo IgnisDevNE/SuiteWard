@@ -541,7 +541,8 @@ func TestUninstallIsolatedPurgesWhatIsLeftAfterAnEarlierUninstall(t *testing.T) 
 	if !slices.ContainsFunc(u.f.lines()[calls:], func(l string) bool { return strings.Contains(l, "volume rm "+VolumeData) }) {
 		t.Errorf("the volume was not removed")
 	}
-	if err := u.uninstall("--yes"); err == nil || !strings.Contains(err.Error(), "nothing is installed") {
+	useDefaultConfigDir(t) // the purge removed the settings: a file that is named and gone is refused, so this run names none
+	if err := Uninstall(context.Background(), []string{"--tier", "isolated", "--yes"}, u.env()); err == nil || !strings.Contains(err.Error(), "nothing is installed") {
 		t.Fatalf("uninstall of nothing without --purge must say so: %v", err)
 	}
 }

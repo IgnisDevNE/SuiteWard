@@ -1,0 +1,24 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ◆ SuiteWard installer v1.2.3                                            done │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ App         suiteward-q (id 123456)                                          │
+│ Repos       IgnisDevNE/SuiteWardQ                                            │
+│ Owner       octocat (TOTP enrolled)                                          │
+│ Status URL  http://127.0.0.1:8080/status                                     │
+│ Doctor      12 ok, 1 warning, 0 failed                                       │
+│                                                                              │
+│ ! The Podman machine is not started at logon; run `podman machine start`     │
+│   after a restart.                                                           │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Enter to finish                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯

@@ -446,7 +446,7 @@ func selfCheckDatabaseResults(ctx context.Context, cfg config.Config) (schema, r
 		return schema, role, warning, nil
 	case !found:
 		return schema, role, checkFailed(nameOwnerEnrolled, "no owner is enrolled",
-			"run `suiteward enroll` on the machine that runs the instance, on a real terminal with session recording off (see the install guide)"), nil
+			"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host), on a real terminal with session recording off (see the install guide)"), nil
 	}
 	return schema, role, checkPassed(nameOwnerEnrolled, fmt.Sprintf("%s is enrolled for %d repositories, tier %s", state.Owner.Login, len(state.Projects), state.Tier)), state.Projects
 }

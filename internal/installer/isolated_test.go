@@ -1284,7 +1284,9 @@ func TestInstallIsolatedRerunRestartsARunningServiceWhenWhatItReadsChanges(t *te
 				t.Fatalf("the service runs with what it read at its last start: it must be restarted:\n%s", strings.Join(f.lines(), "\n"))
 			case !tc.restarts && restart >= 0:
 				t.Fatalf("nothing the service reads changed, so it must not be restarted:\n%s", strings.Join(f.lines(), "\n"))
-			case tc.restarts && len(f.tty) > 0 && restart >= f.ttyAt[0]:
+			case tc.restarts && tc.answers == nil && len(f.ttyAt) != 1: // with an App, setup runs once; without one it does not run
+				t.Fatalf("setup must run once on the terminal after the restart, it ran %d times", len(f.ttyAt))
+			case tc.restarts && len(f.ttyAt) > 0 && restart >= f.ttyAt[0]:
 				t.Errorf("setup enrolled the owner on the old service: the restart is call %d, setup came after %d calls", restart, f.ttyAt[0])
 			}
 		})

@@ -88,10 +88,20 @@ func (it item) plainLines() []string {
 
 // row is one line of the content or the step column: its text with the color sequences in place, and its width in columns.
 type row struct {
-	s   string
-	w   int
-	pin bool // a row of a critical box: a page that is trimmed to fit does not trim it
+	s    string
+	w    int
+	keep keepLevel // how far a page that is trimmed to fit may go in trimming the row
+	grp  int       // the rows of one warning share a number, so that a warning is trimmed whole
 }
+
+// keepLevel says whether a page that is taller than the body may trim a row.
+type keepLevel int
+
+const (
+	keepNone keepLevel = iota // the row is explanation, which goes first
+	keepWarn                  // the row is part of a warning, which goes last, whole
+	keepBox                   // the row is part of a critical box, which never goes
+)
 
 func (r row) pad(width int) string { return r.s + strings.Repeat(" ", max(0, width-r.w)) }
 
@@ -277,6 +287,14 @@ func (s *Screen) contentRows(width int) pageRows {
 		if i == 0 && it.kind == itemTitle {
 			p.head = len(rows)
 		}
+		for j := range rows {
+			switch it.kind {
+			case itemWarn:
+				rows[j].keep, rows[j].grp = keepWarn, i+1
+			case itemCritical:
+				rows[j].keep = keepBox
+			}
+		}
 		p.rows = append(p.rows, rows...)
 	}
 	if s.multi != nil {
@@ -313,21 +331,15 @@ func (s *Screen) trimmedRow(width int) row {
 
 // fitBody is the rows of a page that show in a body of bodyH rows, and the row of the cursor. A page that is taller shows its last rows,
 // as a terminal would (shortcut: no scrollback), except a page that Page opened and that waits on something: it keeps its title at the top
-// and what it waits on at the bottom, and trims the explanation between them from the end, behind one row that says so. The rows of a
-// critical box are not trimmed. When the title, the question and the boxes do not fit together, the last rows show.
+// and what it waits on at the bottom, and trims what is between them (see trim). When the title, the question and the boxes do not fit
+// together, the last rows show.
 func (s *Screen) fitBody(p pageRows, bodyH, width int) ([]row, int) {
 	n := len(p.rows)
 	if n <= bodyH {
 		return p.rows, p.cursor
 	}
 	if p.head > 0 && p.tail >= p.head {
-		gone, first, drop := make([]bool, n), n, n-bodyH+1 // the row that says so takes one of the rows
-		for i := p.tail - 1; i >= p.head && drop > 0; i-- {
-			if !p.rows[i].pin {
-				gone[i], first, drop = true, i, drop-1
-			}
-		}
-		if drop == 0 {
+		if gone, first, ok := p.trim(n - bodyH); ok {
 			rows, cursor := make([]row, 0, bodyH), -1
 			for i, r := range p.rows {
 				if i == first {
@@ -346,6 +358,49 @@ func (s *Screen) fitBody(p pageRows, bodyH, width int) ([]row, int) {
 	}
 	cut := n - bodyH
 	return p.rows[cut:], p.cursor - cut
+}
+
+// trim chooses the rows between the title and what the page waits on that go, so that need rows fewer remain, in this order:
+//  1. the blank rows, from the end, the one above the rule last: no word is lost;
+//  2. the explanation, from the end, behind a row that says so (first is the row of the first one that goes, where that row is drawn);
+//  3. whole warnings, from the end, behind that row too.
+//
+// A critical box is never trimmed. ok is false when that is not enough.
+func (p pageRows) trim(need int) (gone []bool, first int, ok bool) {
+	gone, first = make([]bool, len(p.rows)), -1
+	drop := func(i int) { gone[i], need = true, need-1 }
+	blank := func(i int) bool { return !gone[i] && p.rows[i].w == 0 }
+	for i := p.tail - 2; i >= p.head && need > 0; i-- {
+		if blank(i) {
+			drop(i)
+		}
+	}
+	if need > 0 && blank(p.tail-1) {
+		drop(p.tail - 1)
+	}
+	if need <= 0 {
+		return gone, -1, true
+	}
+	need++                 // the row that says that words are missing takes one
+	words := func(i int) { // a row that goes with its words: the row that says so is drawn where the first of them was
+		drop(i)
+		if first < 0 || i < first {
+			first = i
+		}
+	}
+	for i := p.tail - 1; i >= p.head && need > 0; i-- {
+		if !gone[i] && p.rows[i].keep == keepNone && p.rows[i].w > 0 {
+			words(i)
+		}
+	}
+	for i := p.tail - 1; i >= p.head && need > 0; i-- {
+		if g := p.rows[i].grp; !gone[i] && p.rows[i].keep == keepWarn {
+			for j := i; j >= p.head && p.rows[j].grp == g; j-- {
+				words(j)
+			}
+		}
+	}
+	return gone, first, need <= 0
 }
 
 func (s *Screen) itemRows(it item, width, labelW int) []row {
@@ -402,11 +457,7 @@ func (s *Screen) criticalRows(text string, width int) []row {
 		b.put(toneRed, false, "│")
 		rows = append(rows, b.row())
 	}
-	rows = append(rows, edge("╰", "╯"))
-	for i := range rows {
-		rows[i].pin = true
-	}
-	return rows
+	return append(rows, edge("╰", "╯"))
 }
 
 // fieldRows is a label/value row: the label muted in a column of keyW, the value wrapped under itself. A block of fields is indented.

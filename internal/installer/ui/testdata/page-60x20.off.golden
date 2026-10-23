@@ -2,9 +2,9 @@
 │ ◆ SuiteWard installer v1.2.3                 step 3 of 5 │
 ├──────────────────┬───────────────────────────────────────┤
 │ ✓ Welcome        │ Restore preview                       │
-│ ✓ Backup         │                                       │
-│ ● Restore        │ Restoring replaces the database and   │
-│ ○ Verify         │ … enlarge the window to read the rest │
+│ ✓ Backup         │ … enlarge the window to read the rest │
+│ ● Restore        │ ! The default branch on GitHub may be │
+│ ○ Verify         │   ahead of the restored canonical.    │
 │ ○ Finish         │ ╭───────────────────────────────────╮ │
 │                  │ │ The recovery kit                  │ │
 │                  │ │ C:\Users\magal\Documents\         │ │

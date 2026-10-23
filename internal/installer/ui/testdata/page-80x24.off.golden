@@ -2,14 +2,13 @@
 │ ◆ SuiteWard installer v1.2.3                                     step 3 of 5 │
 ├──────────────────┬───────────────────────────────────────────────────────────┤
 │ ✓ Welcome        │ Restore preview                                           │
-│ ✓ Backup         │                                                           │
-│ ● Restore        │ Restoring replaces the database and the artifacts of this │
-│ ○ Verify         │ instance with the backup's.                               │
-│ ○ Finish         │                                                           │
-│                  │   Instance  da0aff25                                      │
-│                  │   Backup    suiteward-backup-20261022.tar.age             │
+│ ✓ Backup         │ Restoring replaces the database and the artifacts of this │
+│ ● Restore        │ instance with the backup's.                               │
+│ ○ Verify         │   Instance  da0aff25                                      │
+│ ○ Finish         │   Backup    suiteward-backup-20261022.tar.age             │
 │                  │   Tier      co-located                                    │
-│                  │ … enlarge the window to read the rest                     │
+│                  │ ! The default branch on GitHub may be ahead of the        │
+│                  │   restored canonical.                                     │
 │                  │ ╭───────────────────────────────────────────────────────╮ │
 │                  │ │ The recovery kit                                      │ │
 │                  │ │ C:\Users\magal\Documents\                             │ │
@@ -17,6 +16,7 @@
 │                  │ │ backup. Copy it off this machine now and delete this  │ │
 │                  │ │ copy.                                                 │ │
 │                  │ ╰───────────────────────────────────────────────────────╯ │
+│                  │                                                           │
 │                  │ ───────────────────────────────────────────────────────── │
 │                  │ Type the instance id to confirm:                          │
 ├──────────────────┴───────────────────────────────────────────────────────────┤

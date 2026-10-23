@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -76,6 +77,7 @@ type backupEngine struct {
 	dump      string
 	dumpErr   error
 	exportErr error
+	volume    string            // what the volume holds, "TARBYTES" when empty
 	onExport  func(path string) // called before the volume is written
 	execs     [][]string        // the argument lists of the commands run in a container
 }
@@ -92,7 +94,7 @@ func (e *backupEngine) ExportVolume(_ context.Context, _, path string) error {
 	if e.exportErr != nil {
 		return e.exportErr
 	}
-	return os.WriteFile(path, []byte("TARBYTES"), 0o600)
+	return os.WriteFile(path, []byte(cmp.Or(e.volume, "TARBYTES")), 0o600)
 }
 
 const backupSettingsText = "tier: isolated\nruntime: podman\nhttp_port: 8081\nmcp_port: 8091\n"

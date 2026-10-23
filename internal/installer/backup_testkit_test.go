@@ -70,3 +70,14 @@ func assertNoPlaintext(t *testing.T, dir string, texts ...string) {
 		t.Fatal(err)
 	}
 }
+
+// writeTestKit writes the recovery kit of the test key into dir and returns its path.
+func writeTestKit(t *testing.T, dir string) string {
+	t.Helper()
+	recipient, identity := testRecoveryKey(t)
+	path := filepath.Join(dir, "kit.txt")
+	if err := os.WriteFile(path, []byte(archive.RecoveryKit(identity, recipient, testInstance)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

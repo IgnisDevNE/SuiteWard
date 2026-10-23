@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -33,6 +34,9 @@ type upgradeHarness struct {
 	backups string
 	port    int
 	stack   Settings // what the installed stack was made from
+
+	volumeData string // what `volume export` writes, "TARBYTES" when empty
+	imported   string // what `volume import` was given
 }
 
 func newUpgradeHarness(t *testing.T, edit func(s *Settings)) *upgradeHarness {
@@ -92,11 +96,18 @@ func (u *upgradeHarness) env() Env {
 	inner := env.Deps.Exec
 	env.Deps.Exec = func(ctx context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 		out, err := inner(ctx, name, args, stdin)
-		if _, rest, ok := strings.Cut(strings.Join(args, " "), "volume export "); ok && err == nil {
+		line := strings.Join(args, " ")
+		if _, rest, ok := strings.Cut(line, "volume export "); ok && err == nil {
 			if fields := strings.Fields(rest); len(fields) == 3 && fields[1] == "--output" {
-				if err := os.WriteFile(fields[2], []byte("TARBYTES"), 0o644); err != nil { //nolint:gosec // the engine writes it world-readable
+				if err := os.WriteFile(fields[2], []byte(cmp.Or(u.volumeData, "TARBYTES")), 0o644); err != nil { //nolint:gosec // the engine writes it world-readable
 					return nil, err
 				}
+			}
+		}
+		// `volume import` reads its file when it runs: the restore removes the file afterwards.
+		if _, rest, ok := strings.Cut(line, "volume import "); ok && err == nil {
+			if fields := strings.Fields(rest); len(fields) == 2 {
+				u.imported = readFile(u.t, fields[1])
 			}
 		}
 		return out, err

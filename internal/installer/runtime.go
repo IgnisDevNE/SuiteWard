@@ -91,6 +91,8 @@ type Runtime interface {
 	// ExportVolume writes a tarball of the volume to the new file path, readable only by its owner where the system allows it. The
 	// engine may write the file from its own process, so a caller on Windows restricts it afterwards (restrictPath).
 	ExportVolume(ctx context.Context, volume, path string) error
+	// ImportVolume fills the volume, which exists and is empty, from the tarball at path, as ExportVolume wrote it.
+	ImportVolume(ctx context.Context, volume, path string) error
 	Secrets() SecretStore
 	// PurgeSecrets removes every secret of the stack: Podman's secrets, or Docker's secret volumes.
 	PurgeSecrets(ctx context.Context) error

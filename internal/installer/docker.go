@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -174,3 +175,8 @@ func componentNames(components []engineComponent) string {
 }
 
 type engineComponent struct{ Name string }
+
+// ImportVolume writes the tarball into the volume.
+func (dk *Docker) ImportVolume(_ context.Context, _, _ string) error {
+	return errors.New("import is not implemented")
+}

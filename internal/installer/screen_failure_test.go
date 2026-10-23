@@ -200,6 +200,9 @@ func TestAUsageErrorOnAFullScreenDoesNotWait(t *testing.T) {
 	if strings.Contains(c.out.String(), "Enter to finish") {
 		t.Error("a usage error waited for Enter")
 	}
+	if len(c.opened) != 0 {
+		t.Errorf("%d screens were opened for a command line that cannot be run: a usage error comes before the screen", len(c.opened))
+	}
 }
 
 // Every command that draws the screen ends a failure on the same page. Each one fails here on a settings file that does not exist, after

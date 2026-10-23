@@ -241,9 +241,9 @@ func settleRecipient(r *Resolver, env Env, s *Settings) (agreed bool, err error)
 		return false, nil
 	}
 	if !env.Term.IsTerminal {
-		return false, errNoRecipient
+		return false, noKeyError(true)
 	}
-	if err := askForKey(r); err != nil {
+	if err := askForKey(r, true); err != nil {
 		return false, err
 	}
 	return true, nil

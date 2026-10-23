@@ -11,10 +11,11 @@ import (
 	"filippo.io/age"
 )
 
-// NewKey makes the key pair of an instance: the recipient (age1...) goes into the instance's settings, the identity
-// (AGE-SECRET-KEY-1...) only into the recovery kit that the owner keeps off the machine. Never print or log the identity.
+// NewKey makes the key pair of an instance, of age's hybrid post-quantum type (ML-KEM-768 and X25519): the recipient (age1pq1...)
+// goes into the instance's settings, the identity (AGE-SECRET-KEY-PQ-1...) only into the recovery kit that the owner keeps off
+// the machine. Never print or log the identity.
 func NewKey() (recipient, identity string, err error) {
-	id, err := age.GenerateX25519Identity()
+	id, err := age.GenerateHybridIdentity()
 	if err != nil {
 		return "", "", fmt.Errorf("generate the recovery key: %w", err)
 	}
@@ -22,13 +23,19 @@ func NewKey() (recipient, identity string, err error) {
 	return recipient, id.String(), nil
 }
 
-// ParseRecipient reads the recipient string of the settings. The error never repeats the input: it may be a private key.
+// ParseRecipient reads the recipient string of the settings, which must be a post-quantum recipient: a classic age1... key is
+// refused. The error never repeats the input, which may be a private key.
 func ParseRecipient(s string) (*age.HybridRecipient, error) {
-	return nil, errors.New("not implemented")
+	rec, err := age.ParseHybridRecipient(strings.TrimSpace(s))
+	if err != nil {
+		return nil, errors.New("the recovery recipient is not a post-quantum age public key (age1pq1...): backups use post-quantum keys, so a classic age1... key is refused")
+	}
+	return rec, nil
 }
 
 // ParseIdentity reads the contents of a recovery kit file: comment lines (#) and blank lines are ignored, and exactly one
-// identity must remain. The errors never repeat any of the input.
+// identity must remain, and it must be a post-quantum one: a classic AGE-SECRET-KEY-1... key is refused. The errors never repeat
+// any of the input.
 func ParseIdentity(kit string) (*age.HybridIdentity, error) {
 	var lines []string
 	for _, line := range strings.Split(kit, "\n") {
@@ -37,9 +44,13 @@ func ParseIdentity(kit string) (*age.HybridIdentity, error) {
 		}
 	}
 	if len(lines) != 1 {
-		return nil, fmt.Errorf("the recovery kit must hold exactly one identity line (AGE-SECRET-KEY-1...), it holds %d", len(lines))
+		return nil, fmt.Errorf("the recovery kit must hold exactly one identity line (AGE-SECRET-KEY-PQ-1...), it holds %d", len(lines))
 	}
-	return nil, errors.New("not implemented")
+	id, err := age.ParseHybridIdentity(lines[0])
+	if err != nil {
+		return nil, errors.New("the identity line of the recovery kit is not a post-quantum age secret key (AGE-SECRET-KEY-PQ-1...): backups use post-quantum keys, so a classic AGE-SECRET-KEY-1... key is refused")
+	}
+	return id, nil
 }
 
 // RecoveryKit is the text of the file the owner keeps off the machine. Every line but the identity is a comment, so the file

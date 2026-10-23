@@ -1,4 +1,4 @@
-// Package archive is the file format of a SuiteWard backup (ADR 0019): one age file encrypted to the recovery recipient of the
+// Package archive is the file format of a SuiteWard backup (ADR 0019): one age file encrypted to the post-quantum recovery recipient of the
 // instance, whose plaintext is a tar of a few allowed members and a manifest.json that comes last. The manifest records the
 // size and SHA-256 of every member, computed while the member streams, so a backup is neither buffered nor written in plaintext.
 package archive

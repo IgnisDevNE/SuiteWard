@@ -8,10 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/report"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -154,6 +159,35 @@ func (c *changeReports) fileChanges(ctx context.Context, base, proposed artifact
 		changes = append(changes, change)
 	}
 	return changes, nil
+}
+
+// revisionReference is the reference of revision R<revision> of proposal P<proposal> in the default Suite of a repository.
+func revisionReference(repositoryID int64, proposal, revision int) contract.ProposalReference {
+	return contract.ProposalReference{ProjectID: owner.ProjectID(repositoryID), SuiteID: defaultSuite, ProposalID: proposalID(proposal), RevisionID: contract.ProposalRevisionID("R" + strconv.Itoa(revision))}
+}
+
+// summarize states the numbers of the revision at ref for a comment or a check summary. A report that cannot be built is no reason to withhold what the
+// comment or the check says otherwise: found is then false and the cause is logged under what, so the caller posts without the numbers. A delivery
+// whose context ended is the only error, because it is delivered again and the numbers are then counted.
+func summarize(ctx context.Context, reports reportSource, logger *slog.Logger, what string, ref contract.ProposalReference) (changes commandtext.Changes, found bool, err error) {
+	built, err := reports.revisionReport(ctx, ref)
+	if cause := ctx.Err(); cause != nil {
+		return commandtext.Changes{}, false, cause
+	}
+	if err != nil {
+		logger.WarnContext(ctx, what+": the change report is unavailable, so the numbers are left out", "reference", referenceText(ref), "error", err)
+		return commandtext.Changes{}, false, nil
+	}
+	return commandtext.ChangesOf(built.Report), true, nil
+}
+
+// reportURL is the link to the report of a revision of repo (owner/name) on the instance at base, or "" without a base.
+func reportURL(base, repo, reference string) string {
+	if base == "" {
+		return ""
+	}
+	owner, name, _ := strings.Cut(repo, "/")
+	return base + "/reports/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" + reference
 }
 
 // manifestMagic starts the canonical encoding of a manifest, as artifact.NewManifest hashes it: a big-endian uint64 entry count, then each

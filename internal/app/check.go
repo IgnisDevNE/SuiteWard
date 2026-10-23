@@ -198,7 +198,21 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 	case record.Generation != generation: // a newer state or head superseded this message; it is not rendered, as its reason may no longer exist
 		return nil
 	}
+	if check.Proposal != 0 && check.Version != 0 { // a revision against a canonical: there is something to count
+		changes, found, err := summarize(ctx, p.reports, p.logger, githubCheckKind+" "+key, revisionReference(repositoryID, check.Proposal, check.Revision))
+		if err != nil {
+			return fmt.Errorf("%s %s: %w", githubCheckKind, key, err)
+		}
+		if found {
+			check.Changes = &changes
+		}
+	}
 	title, summary, err := renderCheck(key, check)
+	if err != nil && check.Changes != nil { // the check is the gate of the merge: it is posted without numbers that cannot be rendered
+		p.logger.WarnContext(ctx, "github_check: the check is posted without the numbers of the change report, which it could not render", "key", key)
+		check.Changes = nil
+		title, summary, err = renderCheck(key, check)
+	}
 	if err != nil {
 		return err
 	}

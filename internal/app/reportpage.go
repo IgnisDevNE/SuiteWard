@@ -84,9 +84,7 @@ func (a *api) report(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	ref := contract.ProposalReference{ProjectID: owner.ProjectID(project.RepositoryID), SuiteID: defaultSuite, ProposalID: proposalID(proposal),
-		RevisionID: contract.ProposalRevisionID("R" + strconv.Itoa(revision))}
-	built, err := a.reports.revisionReport(ctx, ref)
+	built, err := a.reports.revisionReport(ctx, revisionReference(project.RepositoryID, proposal, revision))
 	switch {
 	case errors.Is(err, governance.ErrNotFound):
 		http.NotFound(w, r)

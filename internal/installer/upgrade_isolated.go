@@ -152,7 +152,7 @@ func replaceUnits(ctx context.Context, host isolatedHost, d Deps, params UnitPar
 	if _, err := systemctl(ctx, "stop", "suiteward.service"); err != nil {
 		return fmt.Errorf("stop the service: %w", err)
 	}
-	if err := prepareUnits(ctx, host, d, params, dbChanges); err != nil {
+	if _, err := prepareUnits(ctx, host, d, params, dbChanges); err != nil {
 		return stoppedError{err}
 	}
 	if err := migrateAndStart(ctx, d); err != nil {
@@ -161,29 +161,30 @@ func replaceUnits(ctx context.Context, host isolatedHost, d Deps, params UnitPar
 	return nil
 }
 
-// prepareUnits writes the units, checks them, reloads and refreshes the database when its pin changed.
-func prepareUnits(ctx context.Context, host isolatedHost, d Deps, params UnitParams, dbChanges bool) error {
+// prepareUnits writes the units, checks them, reloads and refreshes the database when its pin changed. It returns the units it
+// wrote.
+func prepareUnits(ctx context.Context, host isolatedHost, d Deps, params UnitParams, dbChanges bool) (map[string][]byte, error) {
 	units, err := RenderUnits(params)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := WriteUnits(host.unitsDir, units); err != nil {
-		return err
+		return nil, err
 	}
 	if err := dryRun(ctx, d, units); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := d.Exec(ctx, DaemonReload[0], DaemonReload[1:], nil); err != nil {
-		return fmt.Errorf("systemctl --user daemon-reload: %w", err)
+		return nil, fmt.Errorf("systemctl --user daemon-reload: %w", err)
 	}
 	if dbChanges {
 		// The running database container has the old image: restart it, so it is recreated from the new pin on the same volume.
 		if _, err := userSystemctl(d)(ctx, "restart", "suiteward-db.service"); err != nil {
-			return fmt.Errorf("restart the database: %w", err)
+			return nil, fmt.Errorf("restart the database: %w", err)
 		}
-		return waitHealthy(ctx, host.rt)
+		return units, waitHealthy(ctx, host.rt)
 	}
-	return nil
+	return units, nil
 }
 
 // migrateAndStart migrates and starts the service.

@@ -31,7 +31,7 @@ function Assert-CiGate {
     $hasGo = $Results.inspect.outputs.go
     if ($hasGo -cnotin @('true', 'false')) { throw 'Missing or invalid Go classification' }
     $expected = if ($hasGo -ceq 'true') { 'success' } else { 'skipped' }
-    foreach ($required in @('go', 'coverage')) {
+    foreach ($required in @('go', 'coverage', 'quadlet')) {
         if ($Results.$required.result -ne $expected) { throw "$required must be $expected" }
     }
 }

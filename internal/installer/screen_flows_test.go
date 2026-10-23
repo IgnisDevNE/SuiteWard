@@ -328,6 +328,13 @@ func TestEnrollOnAFullScreenRunsSetupOnTheRealTerminal(t *testing.T) {
 	if strings.Contains(c.tail(), "CHILD-OUTPUT") {
 		t.Error("the child's output was printed again by Close")
 	}
+	// The page it holds says what happened: the check is drawn on the screen that came back after setup, and kept for the scrollback.
+	if at := strings.LastIndex(out, "alice is enrolled as the owner."); at < strings.LastIndex(out, enterAlt) {
+		t.Errorf("the finished enrollment was not on the screen that the command waited on")
+	}
+	if !strings.Contains(c.tail(), "✓ alice is enrolled as the owner.\n") {
+		t.Errorf("the scrollback does not say that the owner is enrolled:\n%s", c.tail())
+	}
 }
 
 const doctorNoGitHub = `[{"name":"github.app","ok":true,"warning":true,"detail":"not configured: GitHub is off in this instance","fix":"set GitHub up"},` +

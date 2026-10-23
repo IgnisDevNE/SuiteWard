@@ -130,6 +130,9 @@ func TestEnrollWithNoOwnerEnrolledNeedsNoConfirmation(t *testing.T) {
 	if !strings.Contains(h.out.String(), "Stop any session recording") {
 		t.Errorf("the recording warning of setup is missing:\n%s", h.out.String())
 	}
+	if !strings.Contains(h.out.String(), "alice is enrolled as the owner.\n") {
+		t.Errorf("a finished enrollment does not say so:\n%s", h.out.String())
+	}
 }
 
 func TestEnrollAsksForTheOwnerAndOffersTheEnrolledOne(t *testing.T) {

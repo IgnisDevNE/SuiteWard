@@ -229,6 +229,8 @@ func TestEveryCommandShowsItsFailureOnTheScreen(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			withTerminal(t, true) // enroll refuses a console that is not a terminal before it reads anything
+			// The cases without --settings must never read the user's own settings file.
+			useDefaultConfigDir(t)
 			h := newHarness(t, tc.goos)
 			missing := filepath.Join(h.dir, "nowhere", "settings.yaml")
 			args := slices.Clone(tc.args)

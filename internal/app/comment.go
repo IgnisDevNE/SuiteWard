@@ -434,6 +434,9 @@ type commentPublisher struct {
 	owners   ownerSource
 	suites   governance.UnitOfWork
 	logger   *slog.Logger
+	reports  reportSource // rebuilds the change report of a revision for its comment
+	// reportBase is the loopback origin of the report links (SUITEWARD_REPORT_BASE_URL); empty for a comment without a link.
+	reportBase string
 }
 
 func keyError(kind, key, what string) error { return fmt.Errorf("%s %s: %s", kind, key, what) }
@@ -943,7 +946,10 @@ func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, 
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-func (p *commentPublisher) revision(_ context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+// revision renders the comment of a revision and, when it can, states the numbers of its change report and links it: the report is rebuilt now, from
+// the stored manifest, so the payload holds none of it. The comment carries the command that approves the revision, so a report that cannot be built, or
+// numbers or a link that the renderer refuses, never stop it: it is posted as it was, and the cause is logged. A delivery that was cancelled is the only error.
+func (p *commentPublisher) revision(ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
 	r, err := decodePayload[revisionPayload](githubCommentKind, key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
@@ -951,7 +957,25 @@ func (p *commentPublisher) revision(_ context.Context, key, tail string, payload
 	if r.validate() != nil || r.Reference != tail {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
-	text, err := r.text(key)
+	plain, err := r.revision()
+	if err != nil {
+		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload cannot be rendered")
+	}
+	changes, found, err := summarize(ctx, p.reports, p.logger, githubCommentKind+" "+key, revisionReference(r.RepositoryID, plain.Proposal, plain.Revision))
+	if err != nil {
+		return commentTarget{}, "", fmt.Errorf("%s %s: %w", githubCommentKind, key, err)
+	}
+	numbered := plain
+	if found {
+		numbered.Changes, numbered.ReportURL = &changes, reportURL(p.reportBase, r.Repo, r.Reference)
+	} else {
+		numbered.ChangesUnavailable = true
+	}
+	text, err := render(githubCommentKind, key, func() string { return commandtext.RevisionComment(numbered) })
+	if err != nil && found {
+		p.logger.WarnContext(ctx, "github_comment: the revision comment is posted without the numbers of the change report, which it could not render", "key", key)
+		text, err = render(githubCommentKind, key, func() string { return commandtext.RevisionComment(plain) })
+	}
 	return r.commentTarget, text, err
 }
 

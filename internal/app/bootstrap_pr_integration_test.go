@@ -101,7 +101,7 @@ func newPRFlow(t *testing.T) *prFlow {
 	f.checks = &checksJob{repos: []string{bootRepo}, reader: f.reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(),
 		commands: store, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: f.logger, now: func() time.Time { return f.clock }}
 	publisher := &commentPublisher{writer: bootMust(github.NewWriter(client)), bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil }), instance: newLazy(store.Instance),
-		owners: store, suites: store}
+		owners: store, suites: store, reports: newChangeReports(store, artifacts), reportBase: prReportBase}
 	f.relay = bootMust(river.NewRelay(river.RelayConfig{Store: store, Publishers: map[string]river.Publisher{githubCommentKind: publisher.publish}, MaxAttempts: 3, Lease: time.Minute, Logger: f.logger}))
 	f.instance = bootMust(store.Instance(t.Context()))
 	return f
@@ -188,6 +188,25 @@ func (f *prFlow) wantComments(pull, n int, what string) {
 	f.t.Helper()
 	if got := len(f.gh.posted(pull)); got != n {
 		f.t.Fatalf("%d comments on pull %d%s, want %d", got, pull, what, n)
+	}
+}
+
+// prReportBase is the origin the report links of the flow name.
+const prReportBase = "http://127.0.0.1:8080"
+
+// wantReportPage requires the report page of a revision to be served from what the stores hold, and to say every phrase.
+func (f *prFlow) wantReportPage(reference string, phrases ...string) {
+	f.t.Helper()
+	recorder := httptest.NewRecorder()
+	a := &api{owners: f.store, reports: newChangeReports(f.store, f.artifacts), logger: f.logger}
+	newRouter(a).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, prReportBase+"/reports/acme/widgets/"+reference, nil))
+	if recorder.Code != http.StatusOK {
+		f.t.Fatalf("the report page of %s = %d %s, want 200", reference, recorder.Code, recorder.Body.String())
+	}
+	for _, phrase := range phrases {
+		if !strings.Contains(recorder.Body.String(), phrase) {
+			f.t.Fatalf("the report page of %s lacks %q:\n%s", reference, phrase, recorder.Body.String())
+		}
 	}
 }
 
@@ -290,8 +309,10 @@ func (f *prFlow) secondPull() {
 	f.step()
 	f.pass()
 	f.wantCheck(6, checks.InProgress, "approval-missing", "P2-R1", " against V1")
-	f.wantComment(6, "revision:1001:P2-R1", "V1", "tests/a_test.go", "/suiteward approve P2-R1 <code>", "does not run tests")
+	f.wantComment(6, "revision:1001:P2-R1", "V1", "tests/a_test.go", "/suiteward approve P2-R1 <code>", "does not run tests",
+		"- Files: 0 added, 1 modified, 0 removed", "- Lines: +1/−1 (counted in 1 of 1 files)", "[Full change report]("+prReportBase+"/reports/acme/widgets/P2-R1)")
 	f.wantComments(6, 1, "")
+	f.wantReportPage("P2-R1", "V1", "v2")
 	if record := f.current(7); record.State != checks.Success || record.Reason != "unchanged" || len(f.gh.posted(7)) != 1 {
 		f.t.Fatalf("check of pull 7 %+v with %d comments, want success unchanged against V1 and still only the notice", record.Result, len(f.gh.posted(7)))
 	}

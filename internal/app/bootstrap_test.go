@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"slices"
@@ -143,12 +144,43 @@ func (f *fakeBootReader) Tree(_ context.Context, name, sha string) (inventory.Tr
 	return repo.trees[sha], nil
 }
 
-// fakeBootContent is a ContentWriter that records the digests it was given.
-type fakeBootContent struct{ stored map[string]bool }
+// fakeBootContent is a ContentWriter that records the digests it was given and keeps their bytes, which it also reads back.
+type fakeBootContent struct {
+	stored map[string]bool
+	bytes  map[string][]byte
+	putErr error // every Put fails with it
+}
 
-func (c *fakeBootContent) Put(_ context.Context, digest artifact.Digest, _ io.Reader) error {
+func (c *fakeBootContent) Put(_ context.Context, digest artifact.Digest, content io.Reader) error {
+	if c.putErr != nil {
+		return c.putErr
+	}
+	data, err := io.ReadAll(content)
+	if err != nil {
+		return err
+	}
 	c.stored[digest.String()] = true
+	if c.bytes == nil {
+		c.bytes = map[string][]byte{}
+	}
+	c.bytes[digest.String()] = data
 	return nil
+}
+
+// Size answers like the artifact store: the length of the bytes under digest, or fs.ErrNotExist.
+func (c *fakeBootContent) Size(_ context.Context, digest artifact.Digest) (int64, error) {
+	if data, found := c.bytes[digest.String()]; found {
+		return int64(len(data)), nil
+	}
+	return 0, fmt.Errorf("inspect artifact object: %w", fs.ErrNotExist)
+}
+
+// Read answers like the artifact store: the bytes under digest, or fs.ErrNotExist.
+func (c *fakeBootContent) Read(_ context.Context, digest artifact.Digest) ([]byte, error) {
+	if data, found := c.bytes[digest.String()]; found {
+		return data, nil
+	}
+	return nil, fmt.Errorf("inspect artifact object: %w", fs.ErrNotExist)
 }
 
 // probeSuites passes every call to the Memory, records the outbox messages of the units of work that

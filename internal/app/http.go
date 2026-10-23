@@ -31,7 +31,7 @@ type store interface {
 	Instance(ctx context.Context) (string, error)
 }
 
-// api serves /healthz, /readyz and /status. Only fixed reasons reach a
+// api serves /healthz, /readyz, /status and the change report pages. Only fixed reasons reach a
 // response; the cause of a failure is logged.
 type api struct {
 	store    store
@@ -39,6 +39,7 @@ type api struct {
 	tier     string // the configured installation tier
 	owners   ownerReader
 	github   *githubStatus // nil when the GitHub settings are not set
+	reports  reportSource  // rebuilds the change report of a revision for the report page
 	stopping atomic.Bool   // set when shutdown begins: readiness turns 503 first
 }
 
@@ -47,6 +48,10 @@ func newRouter(a *api) http.Handler {
 	r.Get("/healthz", a.healthz)
 	r.Get("/readyz", a.readyz)
 	r.Get("/status", a.status)
+	r.Route("/reports", func(r chi.Router) {
+		r.Use(reportGuard)
+		r.Get("/{owner}/{repo}/{revision}", a.report)
+	})
 	return r
 }
 

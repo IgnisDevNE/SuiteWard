@@ -205,7 +205,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	scr.Step(2)
 	stored := s
 	stored.Image = previous.Image // what the settings file says until the upgrade is done: a key made now is saved beside it
-	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus, startCommand: startCommand}
+	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus, startCommand: startCommand, serviceStarted: started}
 	dir, err := upgradeBackup(ctx, r, env, &inst, parent, nil, agreed)
 	if err != nil {
 		return err

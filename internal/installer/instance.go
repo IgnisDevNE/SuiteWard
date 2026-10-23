@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
@@ -18,16 +20,17 @@ import (
 // instance is the installed stack that backup init, backup and restore work on, found as install --upgrade finds it: the guards of
 // the install apply, and a stack that was edited by hand stops the command.
 type instance struct {
-	rt           Runtime
-	s            Settings // the settings of the install, with the ports and the release the stack has; what init saves
-	settingsPath string
-	haveSettings bool                                      // the settings file exists
-	image        string                                    // the release image that runs
-	status       func(ctx context.Context) ([]byte, error) // GET /status of the service
-	parent       string                                    // where backups go unless the command names another directory
-	units        map[string][]byte                         // isolated tier: the unit files as installed
-	startCommand string                                    // starts a stopped service by hand, for messages
-	restore      tierSteps
+	rt             Runtime
+	s              Settings // the settings of the install, with the ports and the release the stack has; what init saves
+	settingsPath   string
+	haveSettings   bool                                      // the settings file exists
+	image          string                                    // the release image that runs
+	status         func(ctx context.Context) ([]byte, error) // GET /status of the service
+	parent         string                                    // where backups go unless the command names another directory
+	units          map[string][]byte                         // isolated tier: the unit files as installed
+	startCommand   string                                    // starts a stopped service by hand, for messages
+	serviceStarted bool                                      // this run started the service, which was down: what it says of what it changed must say so
+	restore        tierSteps
 }
 
 // instanceFlags adds the flags that say which instance a command works on, which every command of the backup family has.
@@ -151,15 +154,46 @@ type statusDoc struct {
 // instanceID is the id /status shows: the first 8 hex characters of the instance id, safe in a file name.
 var instanceID = regexp.MustCompile(`^[0-9a-f]{8}$`)
 
+// plainName is a version or a tier as the installer writes them: a few characters that no terminal acts on and no shell reads as more.
+var plainName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
+
+// printable makes text that came from outside, an archive or a service, safe to print on one line, also in plain output, which reaches the
+// terminal as it is: it drops the control characters (what the full screen drops) and the format characters (bidirectional overrides
+// among them), and turns a line break and a tab into a space, so that a line of the text can never be a line of the output.
+func printable(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, text)
+}
+
+// clean makes the strings of the status that are printed safe to print.
+func (d *statusDoc) clean() {
+	d.Reason = printable(d.Reason)
+	if d.Owner != nil {
+		d.Owner.Login = printable(d.Owner.Login)
+	}
+	for i := range d.GitHub {
+		d.GitHub[i].Repo, d.GitHub[i].Integrity = printable(d.GitHub[i].Repo), printable(d.GitHub[i].Integrity)
+	}
+}
+
 // parseBackedUpStatus is parseStatus for the status of a backup, which may be the record that there was none.
 func parseBackedUpStatus(body []byte) (statusDoc, error) {
 	var d statusDoc
 	if err := json.Unmarshal(body, &d); err == nil && d.Unavailable {
+		d.clean()
 		return d, nil
 	}
 	return parseStatus(body)
 }
 
+// parseStatus reads a status, which is text of another program: the version must be a plain name, and what is printed of the rest is cleaned.
 func parseStatus(body []byte) (statusDoc, error) {
 	var d statusDoc
 	if err := json.Unmarshal(body, &d); err != nil {
@@ -168,9 +202,12 @@ func parseStatus(body []byte) (statusDoc, error) {
 	switch {
 	case d.Version == "":
 		return statusDoc{}, errors.New("/status reports no version")
+	case !plainName.MatchString(d.Version):
+		return statusDoc{}, errors.New("/status reports a version that is not a plain name (the value is not shown)")
 	case !instanceID.MatchString(d.Instance):
 		return statusDoc{}, errors.New("/status reports no instance id (8 hexadecimal characters): this service is older than the installer supports")
 	}
+	d.clean()
 	return d, nil
 }
 
@@ -270,4 +307,12 @@ func (d statusDoc) repositories() []string {
 		repos[i] = g.Repo
 	}
 	return repos
+}
+
+// changed says what a command that stops half way has changed of this instance, for the error that says it stopped.
+func (i instance) changed() string {
+	if i.serviceStarted {
+		return "the service that this run started is running, and nothing else was changed"
+	}
+	return "nothing was changed"
 }

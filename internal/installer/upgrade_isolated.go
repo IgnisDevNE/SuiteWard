@@ -98,7 +98,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	// The replaced units go into the archive, and beside it as plain files (they hold only the names of secrets), so that a rollback can
 	// copy them back.
 	keepUnits := func(path string) error { return keepUnitsBeside(path, st.units) }
-	inst := instance{rt: host.rt, s: s, settingsPath: host.settingsPath, haveSettings: settingsExist(host.settingsPath), image: st.adopted.Image, status: status, units: st.units, startCommand: "systemctl --user start suiteward.service"}
+	inst := instance{rt: host.rt, s: s, settingsPath: host.settingsPath, haveSettings: settingsExist(host.settingsPath), image: st.adopted.Image, status: status, units: st.units, startCommand: "systemctl --user start suiteward.service", serviceStarted: started}
 	dir, err := upgradeBackup(ctx, r, env, &inst, parent, keepUnits, agreed)
 	if err != nil {
 		return err

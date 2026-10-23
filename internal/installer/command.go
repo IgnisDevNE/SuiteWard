@@ -27,12 +27,12 @@ const Usage = `usage: suiteward install [flags]
        suiteward install --upgrade [--yes] [--backup-dir DIR] [--backup-recipient age1pq1...] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
        suiteward uninstall [--purge] [--yes] [flags]
-       suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated]
-       suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated]
-       suiteward backup [--to DIR] [--settings PATH] [--tier isolated]
-       suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated]
-       suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated]
-       suiteward doctor [--json] [--settings PATH]
+       suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated] [--plain]
+       suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated] [--plain]
+       suiteward backup [--to DIR] [--settings PATH] [--tier isolated] [--plain]
+       suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
+       suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
+       suiteward doctor [--json] [--settings PATH] [--plain]
 `
 
 // Env is what the install commands need from the machine; tests replace it.

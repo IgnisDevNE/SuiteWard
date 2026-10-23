@@ -193,8 +193,8 @@ func TestInstallIsolatedWithAnAppButNoKeyStopsBeforeAnyChange(t *testing.T) {
 		return res, err
 	}
 	err := g.run()
-	if err == nil || !strings.Contains(err.Error(), SecretGitHubAppKey) {
-		t.Fatalf("the unit mounts the App key secret, so an App without that secret must say so: %v", err)
+	if err == nil || !strings.Contains(err.Error(), SecretGitHubAppKey) || !strings.Contains(err.Error(), "--github-app-id none") {
+		t.Fatalf("the unit mounts the App key secret, so an App without that secret must say so, and name the way out: %v", err)
 	}
 	if g.f.has("secret create") || g.f.has("start") || g.f.has("daemon-reload") || exists(unitDir(g.home)) || exists(envFile(g.home)) {
 		t.Fatalf("nothing may change: %v", g.f.lines())

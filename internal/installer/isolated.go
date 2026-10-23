@@ -307,10 +307,30 @@ func sayOldEnvFile(out io.Writer, current, old string, leftRunning bool) {
 	_, _ = fmt.Fprintf(out, "\nThe service %s. An administrator may remove the old file: sudo rm %s\n", reads, old)
 }
 
-// startStack starts the database, waits for it, creates the application role, starts the service (the unit dependency runs
-// migrate first) and checks the three units. It reports whether a running service was left as it was: starting a running
-// service does nothing, so it keeps what it read at its last start. With restart (the ports or the job timeout of its units
-// changed) a running service is restarted instead, so that it takes the new units.
+// ensureNetwork restarts the network service of the stack when the database is not active. That service is a oneshot that stays
+// active once it ran: after a purge removed the Podman network, a database started while the service is still active exits 125
+// (network not found), because systemd never runs `podman network create` again. With the database down nothing that needs the
+// network runs, so the restart is safe, and it creates the network again (the unit runs it with --ignore, so an existing network
+// is no problem). A database that runs keeps the network it has.
+func ensureNetwork(ctx context.Context, systemctl func(ctx context.Context, args ...string) (string, error)) error {
+	state, err := systemctl(ctx, "show", "--property=ActiveState", "--value", "suiteward-db.service")
+	if err != nil {
+		return fmt.Errorf("ask for the state of suiteward-db.service: %w", err)
+	}
+	if state == "active" {
+		return nil
+	}
+	network := unitService("suiteward.network")
+	if _, err := systemctl(ctx, "restart", network); err != nil {
+		return fmt.Errorf("restart the network (read `journalctl --user -u %s -n 50 --no-pager`): %w", network, err)
+	}
+	return nil
+}
+
+// startStack starts the database (after the network service, when the database is down), waits for it, creates the application
+// role, starts the service (the unit dependency runs migrate first) and checks the three units. It reports whether a running
+// service was left as it was: starting a running service does nothing, so it keeps what it read at its last start. With restart
+// (what it reads changed: its unit, its env file or its key secret) a running service is restarted instead, so that it takes them.
 func startStack(ctx context.Context, rt Runtime, d Deps, restart bool) (leftRunning bool, err error) {
 	systemctl := userSystemctl(d)
 	before, err := systemctl(ctx, "show", "--property=ActiveState", "--value", "suiteward.service")
@@ -319,6 +339,9 @@ func startStack(ctx context.Context, rt Runtime, d Deps, restart bool) (leftRunn
 	}
 	running := before == "active"
 	leftRunning = running && !restart
+	if err := ensureNetwork(ctx, systemctl); err != nil {
+		return leftRunning, err
+	}
 	if _, err := systemctl(ctx, "start", "suiteward-db.service"); err != nil {
 		return leftRunning, fmt.Errorf("start the database: %w", err)
 	}

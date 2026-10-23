@@ -173,8 +173,8 @@ func (s *Store) Verify(ctx context.Context, digest artifact.Digest) error {
 	return nil
 }
 
-// scan passes the bytes of the object named by digest, once it is a regular file, to consume.
-func (s *Store) scan(ctx context.Context, digest artifact.Digest, consume func(io.Reader) error) error {
+// inspect finds the object named by digest and calls use with the root, the object's name and what the inspection of it found, once it is a regular file.
+func (s *Store) inspect(ctx context.Context, digest artifact.Digest, use func(root *os.Root, name string, info fs.FileInfo) error) error {
 	name, err := objectName(digest)
 	if err != nil {
 		return err
@@ -195,16 +195,34 @@ func (s *Store) scan(ctx context.Context, digest artifact.Digest, consume func(i
 	if !info.Mode().IsRegular() {
 		return ErrCorruptArtifact
 	}
-	file, err := s.io.openFile(root, name, os.O_RDONLY, 0)
-	if err != nil {
-		return fmt.Errorf("open artifact object: %w", err)
-	}
-	consumeErr := consume(contextReader{ctx, file})
-	closeErr := file.Close()
-	if err := errors.Join(consumeErr, closeErr); err != nil {
-		return fmt.Errorf("read artifact object: %w", err)
-	}
-	return nil
+	return use(root, name, info)
+}
+
+// scan passes the bytes of the object named by digest, once it is a regular file, to consume.
+func (s *Store) scan(ctx context.Context, digest artifact.Digest, consume func(io.Reader) error) error {
+	return s.inspect(ctx, digest, func(root *os.Root, name string, _ fs.FileInfo) error {
+		file, err := s.io.openFile(root, name, os.O_RDONLY, 0)
+		if err != nil {
+			return fmt.Errorf("open artifact object: %w", err)
+		}
+		consumeErr := consume(contextReader{ctx, file})
+		closeErr := file.Close()
+		if err := errors.Join(consumeErr, closeErr); err != nil {
+			return fmt.Errorf("read artifact object: %w", err)
+		}
+		return nil
+	})
+}
+
+// Size returns the byte length of the object named by digest, once it is a regular file, from its inspection alone: nothing is opened and nothing
+// is read, so a caller can decide what to read before it holds the bytes. Objects are immutable, but the length is not verified; Read verifies the bytes.
+func (s *Store) Size(ctx context.Context, digest artifact.Digest) (int64, error) {
+	var size int64
+	err := s.inspect(ctx, digest, func(_ *os.Root, _ string, info fs.FileInfo) error {
+		size = info.Size()
+		return nil
+	})
+	return size, err
 }
 
 func objectName(digest artifact.Digest) (string, error) {
@@ -258,6 +276,3 @@ func removeOrphanStages(abs string) error {
 	}
 	return nil
 }
-
-// Size returns the byte length of the object named by digest.
-func (s *Store) Size(ctx context.Context, digest artifact.Digest) (int64, error) { return 0, nil }

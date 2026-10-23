@@ -45,7 +45,6 @@ type backup struct {
 	units          map[string][]byte          // isolated tier: the unit files as installed, which are members too
 	beside         func(archive string) error // more to write beside the archive, optional
 	tolerateStatus bool
-	warn           func(format string, args ...any)
 	now            func() time.Time
 }
 
@@ -283,3 +282,6 @@ func keepUnitsBeside(archivePath string, units map[string][]byte) error {
 	}
 	return nil
 }
+
+// removeLeftovers removes the private directories that a backup or a restore that was killed left in dir.
+func removeLeftovers(_ string, _ func(format string, args ...any)) error { return nil }

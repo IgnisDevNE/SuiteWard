@@ -207,3 +207,25 @@ func TestMainRoutesBackupAndTheUsageNamesIt(t *testing.T) {
 		t.Error("a stray argument made something")
 	}
 }
+
+func TestBackupCommandRemovesWhatAKilledBackupOrRestoreLeftAndSaysSo(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	dir := filepath.Join(t.TempDir(), "mine")
+	stale, keep := leftovers(t, dir)
+	if err := u.backupCmd("--to", dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stale {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Errorf("%s was left", name)
+		}
+		if !strings.Contains(u.out.String(), name) {
+			t.Errorf("the output does not say that %s was removed:\n%s", name, u.out.String())
+		}
+	}
+	for _, name := range keep {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s was removed: %v", name, err)
+		}
+	}
+}

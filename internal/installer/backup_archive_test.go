@@ -411,39 +411,45 @@ func TestBackupThatMayLackAStatusRecordsItAsUnavailable(t *testing.T) {
 	}
 }
 
-// A backup or a restore that was killed leaves a private directory with plaintext in it. The next backup removes the directories that
+// leftovers makes the directory of a backup with what a backup and a restore that were killed leave, and what is not theirs.
+func leftovers(t *testing.T, dir string) (stale, keep []string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale = []string{".suiteward-spool-111", ".suiteward-restore-222"}
+	for _, name := range stale {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, backupVolume), []byte("plaintext"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep = []string{".suiteward-spool-a-file", "mine", "suiteward-backup-20250101-000000.tar.age"}
+	if err := os.WriteFile(filepath.Join(dir, keep[0]), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, keep[1]), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, keep[2]), []byte("an older backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return stale, keep
+}
+
+// A backup or a restore that was killed leaves a private directory with plaintext in it. The next one removes the directories that
 // carry the names of the two, and only those, and says which.
-func TestBackupRemovesWhatAKilledBackupOrRestoreLeft(t *testing.T) {
-	b := newBackup(t, &backupEngine{dump: dumpText})
-	if err := os.MkdirAll(b.dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	stale := []string{".suiteward-spool-111", ".suiteward-restore-222"}
-	for _, name := range stale {
-		if err := os.MkdirAll(filepath.Join(b.dir, name), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(b.dir, name, backupVolume), []byte("plaintext"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	keep := []string{".suiteward-spool-a-file", "mine", "suiteward-backup-20250101-000000.tar.age"}
-	if err := os.WriteFile(filepath.Join(b.dir, keep[0]), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(b.dir, keep[1]), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(b.dir, keep[2]), []byte("an older backup"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestRemoveLeftoversRemovesWhatAKilledBackupOrRestoreLeft(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backups")
+	stale, keep := leftovers(t, dir)
 	var said []string
-	b.warn = func(format string, args ...any) { said = append(said, fmt.Sprintf(format, args...)) }
-	if _, err := takeBackup(context.Background(), b); err != nil {
+	if err := removeLeftovers(dir, func(format string, args ...any) { said = append(said, fmt.Sprintf(format, args...)) }); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range stale {
-		if _, err := os.Stat(filepath.Join(b.dir, name)); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
 			t.Errorf("%s was left", name)
 		}
 		if !strings.Contains(strings.Join(said, "\n"), name) {
@@ -451,8 +457,22 @@ func TestBackupRemovesWhatAKilledBackupOrRestoreLeft(t *testing.T) {
 		}
 	}
 	for _, name := range keep {
-		if _, err := os.Stat(filepath.Join(b.dir, name)); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("%s was removed: %v", name, err)
+		}
+	}
+	// A directory that does not exist yet has none, and without a place to say it they are removed all the same.
+	if err := removeLeftovers(filepath.Join(t.TempDir(), "absent"), nil); err != nil {
+		t.Errorf("a directory that does not exist: %v", err)
+	}
+	quiet := filepath.Join(t.TempDir(), "quiet")
+	stale, _ = leftovers(t, quiet)
+	if err := removeLeftovers(quiet, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stale {
+		if _, err := os.Stat(filepath.Join(quiet, name)); err == nil {
+			t.Errorf("%s was left when there was nowhere to say so", name)
 		}
 	}
 }

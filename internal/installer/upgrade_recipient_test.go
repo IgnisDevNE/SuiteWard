@@ -246,3 +246,19 @@ func TestUpgradeIsolatedAsksForTheKeyBeforeItStartsAServiceThatIsDown(t *testing
 	}
 	u.untouched(before)
 }
+
+func TestUpgradeRemovesWhatAKilledBackupOrRestoreLeftBeforeItsOwnBackup(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	stale, _ := leftovers(t, u.backups)
+	if err := u.upgradeAt(false, "", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stale {
+		if _, err := os.Stat(filepath.Join(u.backups, name)); err == nil {
+			t.Errorf("%s was left", name)
+		}
+		if !strings.Contains(u.out.String(), name) {
+			t.Errorf("the output does not say that %s was removed:\n%s", name, u.out.String())
+		}
+	}
+}

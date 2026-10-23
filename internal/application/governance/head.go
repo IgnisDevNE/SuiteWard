@@ -43,6 +43,7 @@ type RevisionNotice struct {
 	Reference                contract.ProposalReference
 	Previous                 *contract.ProposalReference // the revision it supersedes, nil for R1
 	Canonical                contract.SuiteVersionID     // the base version
+	Manifest                 artifact.Manifest           // the manifest of the revision, which a change report is rebuilt from
 	Added, Modified, Removed []string                    // inventory.Classify against the canonical, sorted
 	Reduced                  bool                        // a scope reduction
 	// ReducedRules and ReducedPaths detail the reduction (inventory.Classify), sorted, and are empty unless Reduced.

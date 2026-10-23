@@ -96,8 +96,12 @@ func TestInstallIsolatedRerunOverUnitsOnTheOldPortsKeepsThem(t *testing.T) {
 	home := t.TempDir()
 	installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: oldHTTPPort, MCPPort: oldMCPPort, EnvFile: DefaultEnvFile})
 	f := newIsoFake(home)
-	if _, err := runIsolated(t, f, nil, ""); err != nil {
+	out, err := runIsolated(t, f, nil, "")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(out, "you asked for") {
+		t.Errorf("no port was given, so nothing was asked for:\n%s", out)
 	}
 	serve := string(readFileOrFail(t, filepath.Join(unitDir(home), "suiteward.container")))
 	for _, want := range []string{"\nPublishPort=127.0.0.1:8081:8080\n", "\nPublishPort=127.0.0.1:8091:8090\n"} {

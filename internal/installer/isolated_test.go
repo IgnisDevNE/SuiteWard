@@ -589,8 +589,8 @@ func TestInstallIsolatedAdoptsAnInstallAndCarriesItsFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an adopted install needs no --image: %v", err)
 	}
-	if !strings.Contains(out, "9081") || !strings.Contains(out, "27081") {
-		t.Errorf("an adopted port that replaces the requested one must be reported, with both values:\n%s", out)
+	if strings.Contains(out, "you asked for") {
+		t.Errorf("no port was asked for, so the installed ones are adopted without saying that something was asked:\n%s", out)
 	}
 	serve, _ := os.ReadFile(filepath.Join(unitDir(home), "suiteward.container"))
 	if !strings.Contains(string(serve), "127.0.0.1:9081:8080") || !strings.Contains(string(serve), "@"+other) {

@@ -243,7 +243,9 @@ func TestAdoptUnitsDirRefusesAUnitItCannotRead(t *testing.T) {
 	}
 }
 
-func TestReportAdoptedSaysWhatReplacesWhatWasAsked(t *testing.T) {
+// Only the tier is reported: a port or the job timeout differs from the installed one only when the run was not given it, and then
+// nothing was asked for. One that is given wins and is said by sayChanges.
+func TestReportAdoptedSaysOnlyWhichTierReplacesTheOneAskedFor(t *testing.T) {
 	var said []string
 	say := func(format string, args ...any) {
 		said = append(said, strings.TrimSpace(strings.ReplaceAll(format, "\n", " ")))
@@ -253,16 +255,15 @@ func TestReportAdoptedSaysWhatReplacesWhatWasAsked(t *testing.T) {
 	if len(said) != 0 {
 		t.Fatalf("equal settings reported %v", said)
 	}
-	asked.Tier, installed.Tier = config.TierCoLocated, config.TierIsolated
 	installed.HTTPPort, installed.MCPPort, installed.JobTimeout = asked.HTTPPort+1, asked.MCPPort+1, "9m"
 	reportAdopted(say, asked, installed)
-	if len(said) != 4 {
-		t.Fatalf("said %d things, want one per difference: %v", len(said), said)
+	if len(said) != 0 {
+		t.Fatalf("a port or a job timeout that was not asked for was reported: %v", said)
 	}
-	for i, want := range []string{"installed tier", "HTTP port", "MCP port", "job timeout"} {
-		if !strings.Contains(said[i], want) {
-			t.Errorf("line %d = %q, want it to name the %s", i, said[i], want)
-		}
+	asked.Tier, installed.Tier = config.TierCoLocated, config.TierIsolated
+	reportAdopted(say, asked, installed)
+	if len(said) != 1 || !strings.Contains(said[0], "installed tier") {
+		t.Fatalf("said %v, want the installed tier alone", said)
 	}
 }
 

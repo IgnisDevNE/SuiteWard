@@ -22,7 +22,8 @@ Assert-Throws { Get-RepositoryMode -HeadFiles @('go.mod') -BaseFiles @() } 'modu
 $checks++
 
 function New-Results {
-    param([string]$HasGo, [string]$GoResult, [string]$CoverageResult, [string]$QuadletResult = $CoverageResult)
+    # The quadlet job follows the Go classification unless a case is about quadlet: a case about go or coverage must not fail it too.
+    param([string]$HasGo, [string]$GoResult, [string]$CoverageResult, [string]$QuadletResult = $(if ($HasGo -ceq 'true') { 'success' } else { 'skipped' }))
     return [pscustomobject]@{
         inspect = [pscustomobject]@{ result = 'success'; outputs = [pscustomobject]@{ go = $HasGo } }
         foundation = [pscustomobject]@{ result = 'success' }

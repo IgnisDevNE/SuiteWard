@@ -322,6 +322,9 @@ func TestUninstallColocatedRefusesWhatItCannotReadBeforeRemovingAnything(t *test
 		if err == nil || !strings.Contains(err.Error(), "LOCALAPPDATA") {
 			t.Fatalf("uninstall = %v", err)
 		}
+		if got := h.removals(); len(got) != 0 {
+			t.Errorf("the purge removed %v before it found that the token copy has no place", got)
+		}
 	})
 	t.Run("a console that cannot ask", func(t *testing.T) {
 		h := newHarness(t, "linux")

@@ -354,3 +354,54 @@ func TestEnrollWithNoSettingsFileRefusesOnTheCoLocatedTier(t *testing.T) {
 		t.Errorf("the runtime was called before the refusal: %v, setup %v", h.f.lines(), h.f.tty)
 	}
 }
+
+// An id that nothing names is no confirmation of the data it stands for: with no settings file and the database volume still there, --yes
+// does not purge it, with or without --instance unknown. The id typed on a terminal, or the settings file of the instance, is the way on.
+func TestUninstallPurgeOfAnInstanceNothingNamesNeedsATerminalOrItsSettingsWhileItsDatabaseIsThere(t *testing.T) {
+	down := func(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
+	noSettings := func(t *testing.T) *harness {
+		useDefaultConfigDir(t)
+		h := newHarness(t, "linux")
+		podmanStackExists(h)
+		h.status = down
+		return h
+	}
+	purge := func(h *harness, env Env, more ...string) error {
+		args := append([]string{"--runtime", "podman", "--connection", "pm", "--token-file", h.tokenPath(), "--purge"}, more...)
+		return Uninstall(context.Background(), args, env)
+	}
+	for _, terminal := range []bool{false, true} {
+		name := "--yes refuses without a terminal"
+		if terminal {
+			name = "--yes refuses on a terminal"
+		}
+		t.Run(name, func(t *testing.T) {
+			h := noSettings(t)
+			err := purge(h, h.consoleOf(terminal, ""), "--yes", "--instance", unknownValue)
+			if err == nil || !strings.Contains(err.Error(), "terminal") || !strings.Contains(err.Error(), "--settings") {
+				t.Fatalf("got %v, want a refusal that names the terminal and the settings file", err)
+			}
+			if got := h.removals(); len(got) != 0 {
+				t.Errorf("something was removed: %v", got)
+			}
+		})
+	}
+	t.Run("the id typed on a terminal", func(t *testing.T) {
+		h := noSettings(t)
+		if err := purge(h, h.consoleOf(true, unknownValue+"\n")); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := h.removed("volume rm"), []string{VolumeData, VolumeDBData}; !slices.Equal(got, want) {
+			t.Errorf("volumes removed: %v, want %v", got, want)
+		}
+	})
+	t.Run("no database volume", func(t *testing.T) {
+		useDefaultConfigDir(t)
+		h := newHarness(t, "linux")
+		h.existingStack(colocatedSettings(), testImage, nil) // the containers, and no volume
+		h.status = down
+		if err := purge(h, h.newEnv(), "--yes", "--instance", unknownValue); err != nil {
+			t.Fatal(err)
+		}
+	})
+}

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Self-test for install.sh. The installer runs under a hermetic PATH of wrappers for the few tools it needs, a fake uname and, per case, a fake
-# cosign or wget, against a fake release directory served through file:// URLs, so no network, no real cosign and no host tool changes a result.
+# cosign, wget or curl, against a fake release directory served through file:// URLs (or, for the production URLs, by the fake curl), so no network,
+# no real cosign and no host tool changes a result.
 # Run: sh scripts/install_test.sh   (INSTALL_TEST_SHELL=dash runs the installer with another shell than sh)
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -43,14 +44,32 @@ exit "${FAKE_COSIGN_EXIT:-0}"
 EOF
 cat > "$tmp/wget" <<'EOF'
 #!/bin/sh
-# wget -q -O FILE URL for file:// URLs, which neither GNU wget nor busybox wget reads.
+# wget -q -O FILE URL for file:// URLs, which neither GNU wget nor busybox wget reads. --help answers as GNU wget or, with FAKE_WGET_BUSYBOX, as busybox wget.
+if [ "${1:-}" = --help ]; then
+	if [ -n "${FAKE_WGET_BUSYBOX:-}" ]; then echo "BusyBox v1.36.1 (2024-01-01 00:00:00 UTC) multi-call binary." >&2; exit 1; fi
+	echo "GNU Wget 1.21.4, a non-interactive network retriever."
+	exit 0
+fi
 out= url=
 while [ $# -gt 0 ]; do case $1 in -O) out=$2; shift ;; -q) ;; -*) exit 2 ;; *) url=$1 ;; esac; shift; done
 echo "$url" >> "$FAKE_LOGS/wget"
 [ -z "${FAKE_WGET_SLOW:-}" ] || sleep 2
 cp "${url#file://}" "$out" 2>/dev/null || exit 8
 EOF
-chmod +x "$bin/uname" "$bin/sudo" "$tmp/cosign" "$tmp/wget"
+# A curl that records its arguments and serves the fixtures for the production URLs of the release assets and of the latest-release API answer.
+cat > "$tmp/curl" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$FAKE_LOGS/curl"
+out= url=
+while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; *) url=$1 ;; esac; shift; done
+case $url in
+https://github.com/IgnisDevNE/SuiteWard/releases/download/*) src=$FAKE_RELEASE/${url#https://github.com/IgnisDevNE/SuiteWard/releases/download/} ;;
+https://api.github.com/repos/IgnisDevNE/SuiteWard/releases/latest) src=$FAKE_RELEASE/latest.json ;;
+*) exit 22 ;;
+esac
+cp "$src" "$out" 2>/dev/null || exit 22
+EOF
+chmod +x "$bin/uname" "$bin/sudo" "$tmp/cosign" "$tmp/wget" "$tmp/curl"
 add() { cp "$tmp/$1" "$bin/$1"; }
 drop() { rm -f "$bin/$1"; }
 
@@ -68,20 +87,21 @@ mkrelease() {
 
 # with_env [VAR=value ...] COMMAND...: COMMAND under the hermetic PATH and the fake home, temporary, install and release directories. It execs, so the
 # caller runs it in parentheses; a background one is then the installer's own process, the one a signal must reach.
-with_env() { exec env PATH="$bin" HOME="$tmp/home" TMPDIR="$tmp/t" FAKE_LOGS="$logs" SUITEWARD_RELEASE_BASE="$base" SUITEWARD_INSTALL_DIR="$dest" SUITEWARD_VERSION=v1.2.3 "$@"; }
+with_env() { exec env PATH="$bin" HOME="$tmp/home" TMPDIR="$tmp/t" FAKE_LOGS="$logs" FAKE_RELEASE="$release" SUITEWARD_RELEASE_BASE="$base" SUITEWARD_INSTALL_DIR="$dest" SUITEWARD_VERSION=v1.2.3 "$@"; }
 
 # run [VAR=value ...]: run the installer for v1.2.3 on linux/amd64 under the hermetic PATH with a closed stdin (pipe=FILE: that file on stdin, as in
 # curl | sh). It sets rc and out (stdout and stderr), and fails when a temporary directory is left behind.
 run_keep() {
-	rm -f "$logs/cosign" "$logs/wget"
+	rm -f "$logs/cosign" "$logs/wget" "$logs/curl"
 	rm -rf "$tmp/t"
 	mkdir "$tmp/t"
 	if [ -n "${pipe:-}" ]; then
-		( with_env "$@" "$shell" ) < "$pipe" > "$tmp/out" 2>&1
+		( with_env "$@" "$shell" ) < "$pipe" > "$tmp/stdout" 2> "$tmp/stderr"
 	else
-		( with_env "$@" "$shell" "$installer" ) < /dev/null > "$tmp/out" 2>&1
+		( with_env "$@" "$shell" "$installer" ) < /dev/null > "$tmp/stdout" 2> "$tmp/stderr"
 	fi
 	rc=$?
+	cat "$tmp/stdout" "$tmp/stderr" > "$tmp/out"
 	out=$(cat "$tmp/out")
 	[ -z "$(ls -A "$tmp/t")" ] || fail "$name: a temporary directory was left behind: $(ls -A "$tmp/t")"
 }
@@ -129,6 +149,9 @@ has "NOT verified by signature"
 has "cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity-regexp '$identity' --certificate-oidc-issuer $issuer SHA256SUMS"
 has "verify-release.ps1 -Blob SHA256SUMS -Bundle SHA256SUMS.sigstore.json"
 has "Using SUITEWARD_RELEASE_BASE=$base"
+grep -q "Using SUITEWARD_RELEASE_BASE=" "$tmp/stderr" || fail "$name: the announcement of SUITEWARD_RELEASE_BASE is not on stderr: $out"
+! grep -q "SUITEWARD_RELEASE_BASE" "$tmp/stdout" || fail "$name: the announcement of SUITEWARD_RELEASE_BASE is on stdout, where a pipe would take it"
+lacks "TLS certificates"
 has "$dest is not in your PATH"
 has "$dest/suiteward install"
 has "install host"
@@ -184,6 +207,25 @@ name="SUITEWARD_REQUIRE_COSIGN with cosign"
 add cosign
 run SUITEWARD_REQUIRE_COSIGN=1
 want_ok; installed "v1.2.3 linux_amd64"
+drop cosign
+# Only unset, empty, 0 and 1 mean something: any other value is an error, with or without cosign, so a typo never turns the requirement off.
+for value in "" 0; do
+	name="SUITEWARD_REQUIRE_COSIGN='$value' does not require cosign"
+	run SUITEWARD_REQUIRE_COSIGN="$value"
+	want_ok; installed "v1.2.3 linux_amd64"
+done
+for value in true yes TRUE 2 " 1" 01; do
+	name="SUITEWARD_REQUIRE_COSIGN='$value' without cosign"
+	run SUITEWARD_REQUIRE_COSIGN="$value"
+	want_refused
+	has "SUITEWARD_REQUIRE_COSIGN must be 0 or 1"
+done
+name="SUITEWARD_REQUIRE_COSIGN=true with cosign"
+add cosign
+run SUITEWARD_REQUIRE_COSIGN=true
+want_refused
+has "SUITEWARD_REQUIRE_COSIGN must be 0 or 1"
+[ ! -e "$logs/cosign" ] || fail "$name: cosign ran"
 drop cosign
 
 name="a wrong hash"
@@ -315,27 +357,65 @@ if [ -z "$msys" ] && [ "$(id -u)" != 0 ]; then
 	want_refused
 fi
 
+# A target that is a directory would make mv put the binary inside it: refused before anything is downloaded.
+name="the target is a directory"
+rm -rf "$dest" "$tmp/home"
+mkdir "$dest" "$dest/suiteward"
+run_keep SUITEWARD_RELEASE_BASE=file:///nonexistent
+[ "$rc" -ne 0 ] || fail "$name: exit 0, wanted a failure: $out"
+has "$dest/suiteward is a directory"
+lacks "download"
+[ "$(ls -A "$dest")" = suiteward ] && [ -z "$(ls -A "$dest/suiteward")" ] || fail "$name: the install directory changed: $(ls -A "$dest" "$dest/suiteward")"
+
+# What mv puts in place is the file that was hashed: a copy that differs from the download is refused.
+name="a staged copy that differs from the verified download"
+printf '#!/bin/sh\n"%s" "$@" || exit\n[ -z "${FAKE_CP_CORRUPT:-}" ] || { for last; do :; done; echo x >> "$last"; }\n' "$(command -v cp)" > "$bin/cp"
+chmod +x "$bin/cp"
+run FAKE_CP_CORRUPT=1
+want_refused
+has "does not match SHA256SUMS"
+name="the same copy without the corruption"
+run
+want_ok; installed "v1.2.3 linux_amd64"
+wrap cp
+
 name="wget instead of curl"
 drop curl
 add wget
 run
 want_ok; installed "v1.2.3 linux_amd64"
 grep -q "/v1.2.3/suiteward_v1.2.3_linux_amd64$" "$logs/wget" || fail "$name: wget did not download the binary: $(cat "$logs/wget")"
+lacks "TLS certificates"
+# BusyBox wget may accept any TLS certificate; without cosign nothing else authenticates the download, and the warning says so.
+name="busybox wget without cosign"
+run FAKE_WGET_BUSYBOX=1
+want_ok; installed "v1.2.3 linux_amd64"
+has "TLS certificates may not have been verified"
+name="busybox wget with cosign"
+add cosign
+run FAKE_WGET_BUSYBOX=1
+want_ok; installed "v1.2.3 linux_amd64"
+lacks "TLS certificates"
+drop cosign
 
-# A TERM that arrives during a download runs the trap once the download returns: nothing is left behind, and the exit status says it was a TERM.
-name="a TERM during a download"
-rm -rf "$dest" "$tmp/home" "$tmp/t"
-mkdir "$dest" "$tmp/t"
-rm -f "$logs/wget"
-( with_env FAKE_WGET_SLOW=1 "$shell" "$installer" ) < /dev/null > "$tmp/out" 2>&1 &
-pid=$!
-tries=0
-while [ ! -e "$logs/wget" ] && [ "$tries" -lt 100 ]; do sleep 0.1; tries=$((tries + 1)); done
-kill -TERM "$pid"
-wait "$pid"
-rc=$?
-[ "$rc" -eq 143 ] || fail "$name: exit $rc, wanted 143: $(cat "$tmp/out")"
-[ -z "$(ls -A "$dest")" ] && [ -z "$(ls -A "$tmp/t")" ] || fail "$name: it left a file behind: $(ls -A "$dest" "$tmp/t")"
+# A TERM or a HUP that arrives during a download runs the trap once the download returns: nothing is left behind, and the exit status says which signal it was.
+# (An INT cannot be sent this way: a background job of a non-interactive shell ignores it.)
+for signal in "TERM 143" "HUP 129"; do
+	set -- $signal
+	name="a $1 during a download"
+	rm -rf "$dest" "$tmp/home" "$tmp/t"
+	mkdir "$dest" "$tmp/t"
+	rm -f "$logs/wget"
+	( with_env FAKE_WGET_SLOW=1 "$shell" "$installer" ) < /dev/null > "$tmp/stdout" 2> "$tmp/stderr" &
+	pid=$!
+	tries=0
+	while [ ! -e "$logs/wget" ] && [ "$tries" -lt 100 ]; do sleep 0.1; tries=$((tries + 1)); done
+	kill -"$1" "$pid"
+	wait "$pid"
+	rc=$?
+	[ "$rc" -eq "$2" ] || fail "$name: exit $rc, wanted $2: $(cat "$tmp/stderr")"
+	[ -z "$(ls -A "$dest")" ] && [ -z "$(ls -A "$tmp/t")" ] || fail "$name: it left a file behind: $(ls -A "$dest" "$tmp/t")"
+done
 
 name="neither curl nor wget"
 drop wget
@@ -396,6 +476,31 @@ rm "$release/latest.json"
 run SUITEWARD_VERSION=
 want_refused
 has "SUITEWARD_VERSION"
+
+# The production download path, which every case above replaces with SUITEWARD_RELEASE_BASE: a curl that records its arguments and answers the real
+# GitHub URLs from the fixtures. Every request must carry the https-only flags and name the real API or release URL, and nothing may announce a base.
+name="the production URLs and curl flags, latest release, with cosign"
+printf '{"tag_name": "v1.2.3"}\n' > "$release/latest.json"
+add curl
+add cosign
+run SUITEWARD_RELEASE_BASE= SUITEWARD_VERSION=
+want_ok; installed "v1.2.3 linux_amd64"
+lacks "SUITEWARD_RELEASE_BASE"
+download=https://github.com/IgnisDevNE/SuiteWard/releases/download/v1.2.3
+want="https://api.github.com/repos/IgnisDevNE/SuiteWard/releases/latest
+$download/SHA256SUMS
+$download/SHA256SUMS.sigstore.json
+$download/suiteward_v1.2.3_linux_amd64"
+[ "$(awk '{ print $NF }' "$logs/curl")" = "$want" ] || fail "$name: curl asked for: $(awk '{ print $NF }' "$logs/curl")"
+[ "$(grep -c '^-fsSL --proto =https --proto-redir =https -o ' "$logs/curl")" -eq 4 ] || fail "$name: a request lacks the https-only flags: $(cat "$logs/curl")"
+name="the production URLs and curl flags, a given version, without cosign"
+drop cosign
+run SUITEWARD_RELEASE_BASE=
+want_ok; installed "v1.2.3 linux_amd64"
+[ "$(awk '{ print $NF }' "$logs/curl")" = "$download/SHA256SUMS
+$download/suiteward_v1.2.3_linux_amd64" ] || fail "$name: curl asked for: $(awk '{ print $NF }' "$logs/curl")"
+[ "$(grep -c '^-fsSL --proto =https --proto-redir =https -o ' "$logs/curl")" -eq 2 ] || fail "$name: a request lacks the https-only flags: $(cat "$logs/curl")"
+wrap curl
 
 # A download that stops anywhere runs nothing, because the whole script is one function that is called on its last line.
 lines=$(wc -l < "$installer")

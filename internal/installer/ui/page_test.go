@@ -72,13 +72,13 @@ func TestPageDrawsATitleParagraphsAndFieldsSeparatedByBlankLines(t *testing.T) {
 	s, _ := openScreen(t, fullOptions(ColorNone), "")
 	s.Steps("Confirm", "Restore")
 	s.Page("Restore preview",
-		Para("Restoring replaces the database and the artifacts of this instance."),
+		Para("Restoring replaces the database of this instance."),
 		Fields(KV{"Instance", "da0aff25"}, KV{"Backup", "suiteward-backup.tar.age"}),
 		Para("Nothing is changed until you confirm."))
 	wantLines(t, snapshot(s),
 		"Restore preview",
 		"",
-		"Restoring replaces the database and the artifacts of this instance.",
+		"Restoring replaces the database of this instance.",
 		"",
 		"  Instance  da0aff25",
 		"  Backup    suiteward-backup.tar.age",
@@ -113,7 +113,7 @@ func TestPageStylesTheTitleAndTheLabels(t *testing.T) {
 	rows := strings.Join(snapshot(s).rows, "\n")
 	for _, want := range []string{
 		esc + "[1;38;2;61;214;160mRestore preview" + esc + "[0m",
-		esc + "[38;2;143;163;181mInstance" + esc + "[0m",
+		esc + "[38;2;143;163;181mInstance  ",
 	} {
 		if !strings.Contains(rows, want) {
 			t.Errorf("the page lacks %q:\n%s", want, rows)
@@ -192,7 +192,7 @@ func TestTheQuestionOfAPageIsSetApart(t *testing.T) {
 		"We need a name.",
 		"",
 		strings.Repeat("─", 57),
-		"Your name: ")
+		"Your name:")
 	wantLines(t, snapshot(s),
 		"Who are you?",
 		"",
@@ -214,7 +214,7 @@ func TestTheRuleIsMuted(t *testing.T) {
 // Only the first question of a page is set apart, and only a page that Page opened has one: the pages of the flows that do not use Page
 // look as they did.
 func TestOnlyTheFirstQuestionOfAPageIsSetApart(t *testing.T) {
-	rules := func(f frame) int { return strings.Count(content(f), "──────") }
+	rules := countRules
 
 	s, _, _ := openChunks(t, fullOptions(ColorNone), "a\n", "b\n")
 	s.Page("T", Para("p"))
@@ -248,7 +248,7 @@ func TestAStepEndsThePageThatSetsItsQuestionApart(t *testing.T) {
 	s.Page("T", Para("p"))
 	s.Step(2)
 	_, _ = s.Ask("Question", "")
-	if got := strings.Count(content(snapshot(s)), "──────"); got != 0 {
+	if got := countRules(snapshot(s)); got != 0 {
 		t.Errorf("a question after a step has %d rules, want none", got)
 	}
 }
@@ -265,10 +265,10 @@ func TestTheRuleIsNotPrintedOnTheNormalScreen(t *testing.T) {
 }
 
 func TestEverySelectionAndSecretOfAPageIsSetApart(t *testing.T) {
-	apart := func(f frame) bool { return strings.Contains(content(f), "──────") }
+	apart := func(f frame) bool { return strings.Contains(content(f), strings.Repeat("─", 57)) }
 	secret := func() ([]byte, error) { return []byte("pw"), nil }
 
-	s, _, frames := openChunks(t, fullOptions(ColorNone), "")
+	s, _, _ := openChunks(t, fullOptions(ColorNone), "")
 	s.Page("T", Para("p"))
 	_, _ = s.Secret("Key", secret)
 	if !apart(snapshot(s)) {
@@ -278,7 +278,7 @@ func TestEverySelectionAndSecretOfAPageIsSetApart(t *testing.T) {
 	keys := &fakeKeys{}
 	o := fullOptions(ColorNone)
 	o.KeyInput = keys.toggle
-	s, _, frames = openChunks(t, o, "\r")
+	s, _, frames := openChunks(t, o, "\r")
 	s.Page("T", Para("p"))
 	_, _ = s.Select("Tier", testChoices, 0)
 	if !apart((*frames)[0]) {
@@ -298,4 +298,15 @@ func TestAWarningOfAPageIsSetOffByABlankLine(t *testing.T) {
 	s.Say("a page that Page did not open\n")
 	s.Warn("Not set off.\n")
 	wantLines(t, snapshot(s), "a page that Page did not open", "! Not set off.")
+}
+
+// countRules is the number of rules that set a question apart in the content column of a frame.
+func countRules(f frame) int {
+	n := 0
+	for _, l := range strings.Split(content(f), "\n") {
+		if strings.TrimRight(l, " ") == strings.Repeat("─", 57) {
+			n++
+		}
+	}
+	return n
 }

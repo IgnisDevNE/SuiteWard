@@ -2,7 +2,7 @@ package ui
 
 import "bufio"
 
-// key is one key press that Select understands.
+// key is one key press that Select and MultiSelect understand.
 type key int
 
 const (

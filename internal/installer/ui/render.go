@@ -26,6 +26,10 @@ const (
 	itemWarn
 	itemChoice
 	itemBar
+	itemTitle    // the title of a Page: a section title
+	itemField    // a label/value row of a Page, indented
+	itemRule     // the rule that sets a question apart: a drawing, with no text of its own
+	itemCritical // a warning that must not be missed: a red box
 )
 
 // The glyphs in front of a Check and a Warn line: the frame draws them, and Close prints the same ones.
@@ -37,10 +41,10 @@ const (
 // item is one thing on the page of a step.
 type item struct {
 	kind   itemKind
-	text   string // the line; the name of a choice; the label of a bar
-	desc   string // a choice's description
+	text   string // the line; the name of a choice; the label of a bar; the label of a field
+	desc   string // a choice's description; the value of a field
 	num    int    // a choice's number
-	pad    int    // the width of the choices' name column
+	pad    int    // the width of the choices' name column, or of the labels of a block of fields
 	def    bool   // the default choice
 	radio  bool   // a row of a Select list: a radio glyph in front instead of the number
 	sel    bool   // the highlighted row of a Select list
@@ -49,8 +53,10 @@ type item struct {
 	kept   bool   // a Keep line: it outlives its page
 }
 
-// durable says that Close prints the item whatever page the run ends on: a Check, a Warn or a Keep line.
-func (it item) durable() bool { return it.kept || it.kind == itemCheck || it.kind == itemWarn }
+// durable says that Close prints the item whatever page the run ends on: a Check, a Warn, a Critical or a Keep line.
+func (it item) durable() bool {
+	return it.kept || it.kind == itemCheck || it.kind == itemWarn || it.kind == itemCritical
+}
 
 // plainLines is the item as text, as Close prints it: a Check and a Warn line with the glyph the frame draws.
 func (it item) plainLines() []string {
@@ -59,8 +65,14 @@ func (it item) plainLines() []string {
 		return strings.Split(it.text, "\n")
 	case itemCheck:
 		return markedLines(checkGlyph, it.text)
-	case itemWarn:
+	case itemWarn, itemCritical:
 		return markedLines(warnGlyph, it.text)
+	case itemTitle:
+		return []string{it.text}
+	case itemField:
+		return []string{fmt.Sprintf("  %-*s  %s", it.pad, it.text, it.desc)}
+	case itemRule:
+		return nil
 	case itemChoice:
 		return []string{choiceLine(it.num, it.pad, it.text, it.desc, it.def)}
 	case itemBar:
@@ -146,8 +158,12 @@ func (s *Screen) frame() frame {
 		hint = "Enter to finish"
 	case s.secret: // the hidden read cannot be interrupted
 		hint = "Enter to confirm"
+	case s.multi != nil:
+		hint = "↑/↓ move · Space toggle · Enter confirm · Ctrl-C quit"
 	case s.selecting:
 		hint = "↑/↓ to choose · Enter to confirm · Ctrl-C to quit"
+	case cursor >= 0 && s.hasDef:
+		hint = "Enter takes the default · Ctrl-C to quit"
 	case cursor >= 0:
 		hint = "Enter to confirm · Ctrl-C to quit"
 	}
@@ -246,6 +262,9 @@ func (s *Screen) contentRows(width int) (rows []row, cursor int) {
 	for _, it := range s.items {
 		rows = append(rows, s.itemRows(it, width, labelW)...)
 	}
+	if s.multi != nil {
+		rows = append(rows, s.multiRows(len(rows), width)...)
+	}
 	cursor = -1
 	if s.partial != "" {
 		rows = append(rows, s.textRows(s.partial, width)...)
@@ -258,7 +277,7 @@ func (s *Screen) contentRows(width int) (rows []row, cursor int) {
 		if len(rows) > 0 {
 			rows = append(rows, row{})
 		}
-		rows, cursor = append(rows, s.markedRows(warnGlyph, toneAmber, s.failure, width)...), -1
+		rows, cursor = append(rows, s.markedRows(warnGlyph, toneAmber, toneDefault, s.failure, width)...), -1
 	}
 	return rows, cursor
 }
@@ -268,16 +287,73 @@ func (s *Screen) itemRows(it item, width, labelW int) []row {
 	case itemText:
 		return s.textRows(it.text, width)
 	case itemCheck:
-		return s.markedRows(checkGlyph, toneGreen, it.text, width)
+		return s.markedRows(checkGlyph, toneGreen, toneDefault, it.text, width)
 	case itemWarn:
-		return s.markedRows(warnGlyph, toneAmber, it.text, width)
+		return s.markedRows(warnGlyph, toneAmber, toneAmber, it.text, width)
 	case itemChoice:
 		return []row{s.choiceRow(it, width)}
 	case itemBar:
 		return []row{s.barRow(it, width, labelW)}
+	case itemTitle:
+		return s.styledRows(toneGreen, true, it.text, width)
+	case itemField:
+		return s.fieldRows(it.text, it.desc, min(width/3, it.pad), 2, width)
+	case itemRule:
+		return s.styledRows(toneMuted, false, strings.Repeat("─", width), width)
+	case itemCritical:
+		return s.criticalRows(it.text, width)
 	default:
 		panic(fmt.Sprintf("ui: unknown item kind %d", it.kind))
 	}
+}
+
+// styledRows is a text wrapped to the column, every row in one tone.
+func (s *Screen) styledRows(t tone, bold bool, text string, width int) []row {
+	var rows []row
+	for _, l := range wrapLines(text, width) {
+		b := s.rb()
+		b.put(t, bold, l)
+		rows = append(rows, b.row())
+	}
+	return rows
+}
+
+// criticalRows is a box with a red border around the text, as wide as the column; the text keeps the terminal's color, in bold.
+func (s *Screen) criticalRows(text string, width int) []row {
+	inner := max(1, width-4)
+	edge := func(left, right string) row {
+		b := s.rb()
+		b.put(toneRed, false, left+strings.Repeat("─", width-2)+right)
+		return b.row()
+	}
+	rows := []row{edge("╭", "╮")}
+	for _, l := range wrapLines(text, inner) {
+		b := s.rb()
+		b.put(toneRed, false, "│")
+		b.put(toneDefault, false, " ")
+		b.put(toneDefault, true, l)
+		b.put(toneDefault, false, strings.Repeat(" ", inner-utf8.RuneCountInString(l))+" ")
+		b.put(toneRed, false, "│")
+		rows = append(rows, b.row())
+	}
+	return append(rows, edge("╰", "╯"))
+}
+
+// fieldRows is a label/value row: the label muted in a column of keyW, the value wrapped under itself. A block of fields is indented.
+func (s *Screen) fieldRows(key, value string, keyW, indent, width int) []row {
+	var rows []row
+	for i, l := range wrap(value, width-indent-keyW-2) {
+		b := s.rb()
+		b.put(toneDefault, false, strings.Repeat(" ", indent))
+		if i == 0 {
+			b.put(toneMuted, false, fmt.Sprintf("%-*s  ", keyW, fit(key, keyW)))
+		} else {
+			b.put(toneDefault, false, strings.Repeat(" ", keyW+2))
+		}
+		b.put(toneDefault, false, l)
+		rows = append(rows, b.row())
+	}
+	return rows
 }
 
 func (s *Screen) textRows(text string, width int) []row {
@@ -291,16 +367,16 @@ func (s *Screen) textRows(text string, width int) []row {
 }
 
 // markedRows is a text with a glyph in front of its first line; the other lines are indented under the text.
-func (s *Screen) markedRows(glyph string, t tone, text string, width int) []row {
+func (s *Screen) markedRows(glyph string, glyphTone, textTone tone, text string, width int) []row {
 	var rows []row
 	for i, l := range wrapLines(text, width-2) {
 		b := s.rb()
 		if i == 0 {
-			b.put(t, false, glyph+" ")
+			b.put(glyphTone, false, glyph+" ")
 		} else {
 			b.put(toneDefault, false, "  ")
 		}
-		b.put(toneDefault, false, l)
+		b.put(textTone, false, l)
 		rows = append(rows, b.row())
 	}
 	return rows
@@ -378,22 +454,13 @@ func (s *Screen) summaryRows(width int) []row {
 	}
 	var rows []row
 	for _, kv := range s.rows {
-		for i, l := range wrap(kv.Value, width-keyW-2) {
-			b := s.rb()
-			if i == 0 {
-				b.put(toneMuted, false, fmt.Sprintf("%-*s  ", keyW, fit(kv.Key, keyW)))
-			} else {
-				b.put(toneDefault, false, strings.Repeat(" ", keyW+2))
-			}
-			b.put(toneDefault, false, l)
-			rows = append(rows, b.row())
-		}
+		rows = append(rows, s.fieldRows(kv.Key, kv.Value, keyW, 0, width)...)
 	}
 	if len(s.rows) > 0 && len(s.warns) > 0 {
 		rows = append(rows, row{})
 	}
 	for _, w := range s.warns {
-		rows = append(rows, s.markedRows(warnGlyph, toneAmber, w, width)...)
+		rows = append(rows, s.markedRows(warnGlyph, toneAmber, toneAmber, w, width)...)
 	}
 	return rows
 }

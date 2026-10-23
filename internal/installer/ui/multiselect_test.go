@@ -19,8 +19,8 @@ const (
 var repoChoices = []Choice{{"acme/api", ""}, {"acme/web", "the website"}, {"acme/docs", ""}}
 
 // repoQuestion is a question over repoChoices with the given bounds (a max of 0 has no upper bound) and the rows picked at first.
-func repoQuestion(min, max int, defaults ...int) Multi {
-	return Multi{Label: "Repositories to protect", Choices: repoChoices, Defaults: defaults, Min: min, Max: max}
+func repoQuestion(lo, hi int, defaults ...int) Multi {
+	return Multi{Label: "Repositories to protect", Choices: repoChoices, Defaults: defaults, Min: lo, Max: hi}
 }
 
 func openMultiKeys(t *testing.T, keys *fakeKeys, chunks ...string) (*Screen, *bytes.Buffer, *[]frame) {
@@ -205,7 +205,8 @@ func TestMultiSelectAsksByTypingWhenKeyInputIsNotAvailable(t *testing.T) {
 				"1) acme/api     (default)",
 				"2) acme/web    the website",
 				"3) acme/docs",
-				"Pick (numbers or names, comma-separated, at most 2) [1]: 2,ACME/docs",
+				"Pick (numbers or names, comma-separated, at most 2) [1]:",
+				"2,ACME/docs",
 			} {
 				if !strings.Contains(rows, want) {
 					t.Errorf("the page lacks %q:\n%s", want, rows)

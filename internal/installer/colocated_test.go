@@ -1092,17 +1092,23 @@ func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 			if tc.note && !strings.Contains(out, "as the machine's default ssh user (root on a Windows WSL machine)") {
 				t.Errorf("the note does not say which user makes the link:\n%s", out)
 			}
-			for _, c := range h.f.find("ln -sf") {
-				if strings.Contains(c.line(), "--username") || !strings.Contains(c.line(), "mkdir -p /home/user/.config/systemd/user/default.target.wants") {
-					t.Errorf("the link is not made as the default ssh user, with its directory: %s", c.line())
-				}
-			}
-			for _, c := range h.f.find(restartReload) {
-				if !strings.Contains(c.line(), "--username user podman-machine-default") {
-					t.Errorf("the reload is not run as the user: %s", c.line())
-				}
-			}
+			assertRestartCommandsRunAsTheirUsers(t, h)
 		})
+	}
+}
+
+// The link runs as the machine's default ssh user (no --username) and creates its directory; the reload runs as the user.
+func assertRestartCommandsRunAsTheirUsers(t *testing.T, h *harness) {
+	t.Helper()
+	for _, c := range h.f.find("ln -sf") {
+		if strings.Contains(c.line(), "--username") || !strings.Contains(c.line(), "mkdir -p /home/user/.config/systemd/user/default.target.wants") {
+			t.Errorf("the link is not made as the default ssh user, with its directory: %s", c.line())
+		}
+	}
+	for _, c := range h.f.find(restartReload) {
+		if !strings.Contains(c.line(), "--username user podman-machine-default") {
+			t.Errorf("the reload is not run as the user: %s", c.line())
+		}
 	}
 }
 

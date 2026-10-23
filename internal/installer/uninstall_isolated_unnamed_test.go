@@ -17,6 +17,7 @@ func TestUninstallIsolatedPurgeOfAnInstanceNothingNamesRefusesWhileItsDatabaseIs
 		configDir := filepath.Join(u.home, ".config") // where the account's default settings path is, with no --settings
 		t.Setenv("XDG_CONFIG_HOME", configDir)
 		t.Setenv("APPDATA", configDir)
+		t.Setenv("HOME", u.home) // macOS reads the configuration directory from it: never the settings file of the user running the test
 		if err := os.Remove(settingsFile(u.home)); err != nil {
 			t.Fatal(err)
 		}

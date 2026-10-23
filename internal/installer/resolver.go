@@ -202,3 +202,38 @@ func orList(choices []ui.Choice) string {
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
+
+// MultiSelect resolves a multiple choice as Select resolves a single one: the flag, then the answers file, then the defaults when there
+// is no terminal to ask. A plain screen asks Value's typed question, "label (hint) [defaults]: ", word for word and without a list of its
+// own (the flow prints the list it printed before); at a full screen the rows are picked with the keys (space toggles). The flag, the
+// answers file, the defaults and the typed answer are the numbers (from 1) or the names of the rows, comma-separated. The answer is the
+// names of the rows that were picked: in the order typed, or in the order of the list when they were picked with the keys.
+func (r *Resolver) MultiSelect(key string, m ui.Multi) ([]string, error) {
+	if err := m.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	var picked []int
+	var err error
+	if r.asks(key) && r.screen.FullScreen() {
+		picked, err = r.screen.MultiSelect(m)
+	} else {
+		defaults := make([]string, len(m.Defaults))
+		for i, d := range m.Defaults {
+			defaults[i] = m.Choices[d].Name
+		}
+		var answer string
+		if answer, err = r.Value(key, m.TypedLabel(), strings.Join(defaults, ",")); err == nil {
+			if picked, err = m.Parse(answer); err != nil {
+				err = fmt.Errorf("%s: %w", m.Label, err)
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(picked))
+	for i, p := range picked {
+		names[i] = m.Choices[p].Name
+	}
+	return names, nil
+}

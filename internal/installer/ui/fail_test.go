@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 )
 
 // mustNotRead is an input that fails the test when it is read: a screen that does not wait never reads.
@@ -147,5 +148,90 @@ func TestFailKeepsAPendingLine(t *testing.T) {
 	mustClose(t, s)
 	if got, want := afterLastLeave(out.String()), "Type the instance id 1a2b3c4d to remove it: \n"; got != want {
 		t.Errorf("Close printed %q, want %q", got, want)
+	}
+}
+
+// On a Windows console a Ctrl-C reaches the child process first, and the command that ran it returns the child's error a few
+// milliseconds before the signal cancels the context. On a terminal Fail waits a moment for the signal, so that the command ends as
+// interrupted (130) and no failure page is drawn for an error that the user caused.
+func TestFailOnATerminalWaitsForTheSignalThatFollowsTheChildsError(t *testing.T) {
+	old := interruptGrace
+	interruptGrace = 2 * time.Second
+	t.Cleanup(func() { interruptGrace = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	time.AfterFunc(20*time.Millisecond, cancel)
+	var out strings.Builder
+	o := fullOptions(ColorNone)
+	o.Out, o.In, o.Context, o.InputIsTerminal = &out, strings.NewReader("\n"), ctx, true
+	s, err := Open(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := out.String()
+	start := time.Now()
+	if s.Fail("exit status 0xc000013a") {
+		t.Error("Fail says that it showed the error of a command that was interrupted")
+	}
+	if out.String() != before {
+		t.Errorf("Fail drew %q for an interrupt", strings.TrimPrefix(out.String(), before))
+	}
+	if time.Since(start) > time.Second {
+		t.Errorf("Fail waited %v for a signal that came after 20ms", time.Since(start))
+	}
+}
+
+func TestFailOnATerminalDrawsAfterTheGraceWhenNoSignalFollows(t *testing.T) {
+	old := interruptGrace
+	interruptGrace = 50 * time.Millisecond
+	t.Cleanup(func() { interruptGrace = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	var out strings.Builder
+	o := fullOptions(ColorNone)
+	o.Out, o.In, o.Context, o.InputIsTerminal = &out, strings.NewReader("\n"), ctx, true
+	s, err := Open(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if !s.Fail("the command failed") {
+		t.Fatal("Fail says that it showed nothing: no signal followed the error")
+	}
+	if elapsed := time.Since(start); elapsed < interruptGrace {
+		t.Errorf("Fail drew after %v, before the grace of %v for a signal had passed", elapsed, interruptGrace)
+	}
+	if rows := strings.Join(snapshot(s).rows, "\n"); !strings.Contains(rows, "! the command failed") {
+		t.Errorf("the failure is not on the page:\n%s", rows)
+	}
+}
+
+// Where the input is not a terminal, or the screen is plain, there is no console to abort a read first: Fail does not wait.
+func TestFailDoesNotWaitForASignalWhereNoConsoleRacesIt(t *testing.T) {
+	old := interruptGrace
+	interruptGrace = 2 * time.Second
+	t.Cleanup(func() { interruptGrace = old })
+	for _, tc := range []struct {
+		name     string
+		mode     Mode
+		terminal bool
+	}{
+		{"a pipe", ModeFull, false},
+		{"a plain screen on a terminal", ModePlain, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			o := Options{Mode: tc.mode, Color: ColorNone, Width: 80, Height: 24, Out: io.Discard, In: strings.NewReader("\n"), Context: ctx, InputIsTerminal: tc.terminal}
+			s, err := Open(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			s.Fail("the command failed")
+			if time.Since(start) > time.Second {
+				t.Errorf("Fail waited %v for a signal", time.Since(start))
+			}
+		})
 	}
 }

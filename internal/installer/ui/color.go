@@ -19,12 +19,13 @@ const (
 
 type rgb struct{ r, g, b int }
 
-// The brand colors of assets/brand/README.md (Green), the muted blue-gray of secondary text and the warning amber. The terminal's own
-// background and foreground stay in place: Ink and Paper are never forced.
+// The brand colors of assets/brand/README.md (Green), the muted blue-gray of secondary text, the warning amber and the red of a critical
+// warning. The terminal's own background and foreground stay in place: Ink and Paper are never forced.
 var (
 	green = rgb{0x3D, 0xD6, 0xA0}
 	muted = rgb{0x8F, 0xA3, 0xB5}
 	amber = rgb{0xF2, 0xC4, 0x6D}
+	red   = rgb{0xF2, 0x6B, 0x6B}
 )
 
 // tone is a color role of the screens.
@@ -35,6 +36,7 @@ const (
 	toneGreen
 	toneMuted
 	toneAmber
+	toneRed
 )
 
 func (t tone) rgb() rgb {
@@ -45,6 +47,8 @@ func (t tone) rgb() rgb {
 		return muted
 	case toneAmber:
 		return amber
+	case toneRed:
+		return red
 	default:
 		panic("ui: the default tone has no color of its own")
 	}

@@ -296,7 +296,7 @@ func (s *Screen) Step(n int) {
 
 func (s *Screen) newPage() {
 	s.archive(s.items)
-	s.items,s.partial, s.pendingCR, s.spinning, s.plainSpin = nil, "", false, false, ""
+	s.items, s.partial, s.pendingCR, s.spinning, s.plainSpin = nil, "", false, false, ""
 	clear(s.plainBars)
 }
 

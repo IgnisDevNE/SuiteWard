@@ -9,24 +9,36 @@
 // What the two modes do with the calls:
 //
 //   - Say, Write: the text as given. Full screen splits it into lines (a pending line without its newline is kept, and the cursor
-//     parks at its end), drops control characters, and lets a carriage return overwrite the pending line.
+//     parks at its end), drops control characters, and lets a carriage return overwrite the pending line: the next character that is
+//     written replaces it, and a newline right after the carriage return, even in the next write, ends it as it is.
 //   - Check, Warn: a line with a glyph; plain mode prints the text as given (a newline is added when missing), without the glyph.
+//     Full screen also keeps every Warn line for Close, like a Keep line.
 //   - Steps, Step: the step column and "step i of N"; plain mode prints nothing, so a flow's plain output is unchanged. A new step
 //     starts a clean page.
 //   - Progress, Spin: one live row per label; plain mode prints a line only when the label or the status text changes.
 //   - Keep: a line like Say that Close prints again on the normal screen, so it survives the alternate screen. Plain mode has nothing
 //     to repeat: the line is already in the output.
 //   - Summary: a screen of key/value rows and warnings, with no step column. Full screen waits for Enter so it can be read; its rows
-//     and warnings are kept for Close. Plain mode prints "key: value" lines and the warnings as given.
+//     and warnings are kept for Close, and a second Summary replaces the first. Plain mode prints "key: value" lines and the warnings
+//     as given.
+//   - Close: leaves the alternate screen, and prints on the normal screen what must not be lost: unless a Summary was shown, the lines
+//     of the current page (the ones that were not Kept or Warn lines), then the Keep and Warn lines in the order they were written,
+//     then the Summary. So a failure leaves the page it stopped on, and the warnings, in the scrollback.
+//   - Suspend: while suspended, every call that writes text writes it straight to the terminal, as plain mode does, and the screen
+//     keeps none of it: a child's output (setup prints a TOTP secret) is not redrawn after Resume or repeated by Close.
 //
 // Questions must go through Ask, Prompt, Choose and Secret so that the answer joins its question on the page; they read from the input
-// that was passed to Open. Display calls ignore a failed write, as the installer's say does; the first failure comes back from Close.
+// that was passed to Open, and nothing else may write to the terminal while one is open. A prompt ends with the context's error when
+// Options.Context is done. Display calls ignore a failed write, as the installer's say does; the first failure comes back from Close.
 //
-// A Screen is safe for concurrent use, except that prompts must be asked from one goroutine at a time.
+// A Screen is safe for concurrent use, except that prompts must be asked from one goroutine at a time. Close is not called by a panic
+// on another goroutine: the deferred Close of the goroutine that opened the screen does not run then, and the terminal stays on the
+// alternate screen.
 //
 // shortcut: the size is read once, a resize is not followed; the layout counts runes, not terminal columns, so wide characters misalign;
 // the glyphs ◆ ● ○ have an ambiguous width in East Asian locales; every change redraws the whole frame; the content column keeps no
-// scrollback, only the last rows that fit. Upgrade each when a real terminal shows the problem.
+// scrollback, only the last rows that fit; a step list longer than the body is cut, and the steps beyond it are not drawn. Upgrade each
+// when a real terminal shows the problem.
 package ui
 
 import (
@@ -53,14 +65,20 @@ const (
 
 // Options is what Open needs.
 type Options struct {
-	Out            io.Writer       // the terminal; the screen draws nothing until it is opened
-	In             io.Reader       // answers are read from it; pass the bufio.Reader the Resolver uses so that they share one buffer
-	Version        string          // shown in the title bar: "installer <Version>"
-	Mode           Mode            // Env.Mode()
-	Color          ColorLevel      // Env.Color()
-	Width, Height  int             // the terminal's size; full screen needs at least 60x20
-	RestoreConsole func() error    // optional: undoes what the OS needed for escape sequences; called by Close
-	Context        context.Context // stub for the test-first commit: not used yet
+	Out     io.Writer  // the terminal; the screen draws nothing until it is opened
+	In      io.Reader  // answers are read from it; pass the bufio.Reader the Resolver uses so that they share one buffer
+	Version string     // shown in the title bar: "installer <Version>"
+	Mode    Mode       // Env.Mode()
+	Color   ColorLevel // Env.Color()
+	Width   int        // the terminal's size; full screen needs at least 60x20
+	Height  int
+	// RestoreConsole undoes what the OS needed for escape sequences. Optional. Close calls it, and so does Open when it fails.
+	RestoreConsole func() error
+	// Context ends a prompt: Ask, Prompt, Choose and Summary return the context's error as soon as it is done. Optional; nil never
+	// ends one. Pass the context that SIGINT cancels (cmd/suiteward traps it with signal.NotifyContext), or Ctrl-C does nothing at a
+	// prompt until Enter. The read that was pending is abandoned in its goroutine and may still take a line from the input, so the
+	// process is expected to exit and the input is not read again. Secret cannot be interrupted this way: its reader is the caller's.
+	Context context.Context
 }
 
 // Choice is one numbered answer of Choose.
@@ -75,6 +93,7 @@ type Screen struct {
 	mu      sync.Mutex
 	out     io.Writer
 	in      *bufio.Reader
+	ctx     context.Context
 	version string
 	color   ColorLevel
 	w, h    int
@@ -87,37 +106,56 @@ type Screen struct {
 	cur   int // the current step, 1-based; 0 with no steps
 	items []item
 	// partial is the line that has no newline yet; it is the last row of the page and holds the cursor.
-	partial  string
-	spinning bool
-	spinText string
-	spinFor  time.Duration
-	summary  bool
-	rows     []KV
-	warns    []string
-	keep     []string // lines Close prints on the normal screen
+	partial   string
+	pendingCR bool // the last character written was a carriage return: the line is overwritten by the next one, or ended by a newline
+	keeping   bool // the items that Write commits now are Keep lines
+	secret    bool // a hidden prompt is open
+	spinning  bool
+	spinText  string
+	spinFor   time.Duration
+	summary   bool
+	rows      []KV
+	warns     []string
+	keep      []string // Keep and Warn lines: Close prints them on the normal screen
+	// summaryKeep is the last Summary's rows and warnings, printed after keep.
+	summaryKeep []string
 
 	plainSpin string            // plain mode: the spinner label last printed
 	plainBars map[string]string // plain mode: the status text last printed for each bar
 }
 
 // Open returns a screen on o.Out. A full-screen one enters the alternate screen and draws its frame; call Close to leave it again.
+// When Open fails it has already called o.RestoreConsole.
 func Open(o Options) (*Screen, error) {
-	if o.Out == nil || o.In == nil {
-		return nil, errors.New("the screen needs an output and an input")
+	if err := o.validate(); err != nil {
+		if o.RestoreConsole != nil {
+			err = errors.Join(err, o.RestoreConsole())
+		}
+		return nil, err
 	}
-	full := o.Mode == ModeFull
-	if full && (o.Width < minWidth || o.Height < minHeight) {
-		return nil, fmt.Errorf("the full-screen layout needs a terminal of at least %dx%d, got %dx%d", minWidth, minHeight, o.Width, o.Height)
+	ctx := o.Context
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	s := &Screen{
-		out: o.Out, in: bufio.NewReader(o.In), version: o.Version, color: o.Color, w: o.Width, h: o.Height,
-		restore: o.RestoreConsole, full: full, plainBars: map[string]string{},
+		out: o.Out, in: bufio.NewReader(o.In), ctx: ctx, version: oneLine(o.Version), color: o.Color, w: o.Width, h: o.Height,
+		restore: o.RestoreConsole, full: o.Mode == ModeFull, plainBars: map[string]string{},
 	}
-	if full {
+	if s.full {
 		s.write(enterAltScreen)
 		s.draw()
 	}
 	return s, nil
+}
+
+func (o Options) validate() error {
+	if o.Out == nil || o.In == nil {
+		return errors.New("the screen needs an output and an input")
+	}
+	if o.Mode == ModeFull && (o.Width < minWidth || o.Height < minHeight) {
+		return fmt.Errorf("the full-screen layout needs a terminal of at least %dx%d, got %dx%d", minWidth, minHeight, o.Width, o.Height)
+	}
+	return nil
 }
 
 // FullScreen reports whether the screen is drawing a frame (false in plain mode, and after Close).
@@ -126,6 +164,10 @@ func (s *Screen) FullScreen() bool {
 	defer s.mu.Unlock()
 	return s.full
 }
+
+// drawing reports whether text is going to the frame; the caller holds the lock. Plain, closed and suspended screens write text
+// straight to the terminal instead.
+func (s *Screen) drawing() bool { return s.full && !s.suspended }
 
 // write sends text to the terminal; the caller holds the lock.
 func (s *Screen) write(text string) {
@@ -143,7 +185,7 @@ func (s *Screen) note(err error) {
 func (s *Screen) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.full {
+	if s.drawing() {
 		s.append(string(p))
 		s.draw()
 		return len(p), nil
@@ -155,7 +197,7 @@ func (s *Screen) Write(p []byte) (int, error) {
 
 // emit prints text as Write does; the caller holds the lock.
 func (s *Screen) emit(text string) {
-	if s.full {
+	if s.drawing() {
 		s.append(text)
 		s.draw()
 		return
@@ -171,32 +213,49 @@ func (s *Screen) Say(format string, args ...any) {
 // Check prints a line that reports something that is fine.
 func (s *Screen) Check(format string, args ...any) { s.mark(itemCheck, fmt.Sprintf(format, args...)) }
 
-// Warn prints a line that the reader should notice.
+// Warn prints a line that the reader should notice. Close prints it again on the normal screen.
 func (s *Screen) Warn(format string, args ...any) { s.mark(itemWarn, fmt.Sprintf(format, args...)) }
 
 func (s *Screen) mark(kind itemKind, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.full {
+	if !s.drawing() {
 		if !strings.HasSuffix(text, "\n") {
 			text += "\n"
 		}
 		s.write(text)
 		return
 	}
-	s.add(item{kind: kind, text: clean(strings.TrimSuffix(text, "\n"))})
+	text = clean(strings.TrimSuffix(text, "\n"))
+	s.add(item{kind: kind, text: text, kept: kind == itemWarn})
+	if kind == itemWarn {
+		s.keep = append(s.keep, keepLines(text)...)
+	}
 	s.draw()
 }
 
-// Keep prints a line like Say and remembers it: Close prints it again on the normal screen, after the alternate screen is gone.
+// Keep prints a line like Say and remembers it: Close prints it again on the normal screen, after the alternate screen is gone. Full
+// screen ends the line if the text does not.
 func (s *Screen) Keep(format string, args ...any) {
 	text := fmt.Sprintf(format, args...)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.emit(text)
-	if s.full {
-		s.keep = append(s.keep, strings.Split(strings.TrimSuffix(clean(text), "\n"), "\n")...)
+	if !s.drawing() {
+		s.write(text)
+		return
 	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	s.keeping = true
+	s.emit(text)
+	s.keeping = false
+	s.keep = append(s.keep, keepLines(text)...)
+}
+
+// keepLines is text as the lines Close prints.
+func keepLines(text string) []string {
+	return strings.Split(strings.TrimSuffix(clean(text), "\n"), "\n")
 }
 
 // Steps sets the names of the step list and makes the first one current. Plain mode prints nothing.
@@ -226,7 +285,7 @@ func (s *Screen) Step(n int) {
 }
 
 func (s *Screen) newPage() {
-	s.items, s.partial, s.spinning, s.plainSpin = nil, "", false, ""
+	s.items, s.partial, s.pendingCR, s.spinning, s.plainSpin = nil, "", false, false, ""
 	clear(s.plainBars)
 }
 
@@ -240,7 +299,7 @@ func (s *Screen) Progress(label string, fraction float64, status string) {
 		fraction = 0
 	}
 	fraction = math.Min(fraction, 1)
-	if !s.full {
+	if !s.drawing() {
 		if status == "" {
 			status = fmt.Sprintf("%d%%", int(fraction*100)/10*10)
 		}
@@ -268,7 +327,7 @@ func (s *Screen) Progress(label string, fraction float64, status string) {
 func (s *Screen) Spin(label string, elapsed time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.full {
+	if !s.drawing() {
 		if s.plainSpin != label {
 			s.plainSpin = label
 			s.write(label + "...\n")
@@ -290,9 +349,8 @@ func (s *Screen) EndSpin() {
 	}
 }
 
-// readLine reads one answer from the input without the lock held, so that the screen stays usable while it waits. The last line may
-// lack its newline; the end of the input is io.EOF.
-func (s *Screen) readLine() (string, error) {
+// readAnswer reads one line from the input. The last line may lack its newline; the end of the input is io.EOF.
+func (s *Screen) readAnswer() (string, error) {
 	line, err := s.in.ReadString('\n')
 	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
 		return "", err
@@ -300,8 +358,34 @@ func (s *Screen) readLine() (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
+// readLine reads one answer without the lock held, so that the screen stays usable while it waits, and gives up with the context's
+// error when the context is done: the read goes on in its goroutine, abandoned (see Options.Context).
+func (s *Screen) readLine() (string, error) {
+	if err := s.ctx.Err(); err != nil {
+		return "", err
+	}
+	if s.ctx.Done() == nil { // a context that is never done needs no goroutine
+		return s.readAnswer()
+	}
+	type answer struct {
+		line string
+		err  error
+	}
+	got := make(chan answer, 1)
+	go func() {
+		line, err := s.readAnswer()
+		got <- answer{line, err}
+	}()
+	select {
+	case a := <-got:
+		return a.line, a.err
+	case <-s.ctx.Done():
+		return "", s.ctx.Err()
+	}
+}
+
 // Prompt prints text exactly as given, without a newline, and reads one line: the answer, trimmed. Full screen parks the cursor after
-// the text and then shows the answer on that line; the end of the input is io.EOF.
+// the text and then shows the answer on that line; the end of the input is io.EOF, and a done context is its error.
 func (s *Screen) Prompt(text string) (string, error) {
 	s.mu.Lock()
 	s.emit(text)
@@ -312,7 +396,7 @@ func (s *Screen) Prompt(text string) (string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.full {
+	if s.drawing() {
 		s.emit(line + "\n") // a terminal echoes the typed line itself; the frame has to draw it
 	}
 	return line, nil
@@ -376,14 +460,10 @@ func (s *Screen) listChoices(label string, choices []Choice, def int) {
 		names[i] = oneLine(c.Name)
 		nameW = max(nameW, utf8.RuneCountInString(names[i]))
 	}
-	if !s.full {
+	if !s.drawing() {
 		s.write(label + "\n")
 		for i, c := range choices {
-			mark := ""
-			if i == def {
-				mark = " (default)"
-			}
-			s.write(fmt.Sprintf("%d) %-*s   %s%s\n", i+1, nameW, c.Name, c.Desc, mark))
+			s.write(choiceLine(i+1, nameW, c.Name, c.Desc, i == def) + "\n")
 		}
 		return
 	}
@@ -394,29 +474,41 @@ func (s *Screen) listChoices(label string, choices []Choice, def int) {
 	s.draw()
 }
 
+// choiceLine is a choice as plain text: "1) name   description (default)".
+func choiceLine(num, nameWidth int, name, desc string, def bool) string {
+	mark := ""
+	if def {
+		mark = " (default)"
+	}
+	return fmt.Sprintf("%d) %-*s   %s%s", num, nameWidth, name, desc, mark)
+}
+
 // Secret prints "label (input is hidden): " and calls read, the caller's no-echo reader (term.ReadPassword on the terminal), then
-// ends the line. The text is returned as read and never stored, shown or logged here.
+// ends the line. The text is returned as read and never stored, shown or logged here. The read cannot be interrupted, so the hint
+// of the frame offers Enter and not Ctrl-C while it is open, and Options.Context is not looked at until it returns.
 func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, error) {
 	if read == nil {
 		return nil, fmt.Errorf("the secret %s needs a reader that does not echo", label)
 	}
 	s.mu.Lock()
+	s.secret = true
 	s.emit(label + " (input is hidden): ")
 	s.mu.Unlock()
 	secret, err := read()
 	s.mu.Lock()
+	s.secret = false
 	s.emit("\n")
 	s.mu.Unlock()
 	return secret, err
 }
 
 // Summary shows key/value rows and warnings on a screen with no step column. Full screen waits for Enter, so the screen can be read
-// before Close leaves it, and keeps the rows and warnings for Close to print on the normal screen: do not Keep them as well. Plain
-// mode prints "key: value" lines and then the warnings as given. It returns an error only when waiting for Enter fails; the end of
-// the input is not one.
+// before Close leaves it, and keeps the rows and warnings for Close to print on the normal screen (a second Summary replaces them):
+// do not Keep them as well. Plain mode prints "key: value" lines and then the warnings as given. It returns an error only when
+// waiting for Enter fails (a done context is one); the end of the input is not.
 func (s *Screen) Summary(rows []KV, warnings []string) error {
 	s.mu.Lock()
-	if !s.full {
+	if !s.drawing() {
 		for _, r := range rows {
 			s.write(r.Key + ": " + r.Value + "\n")
 		}
@@ -426,15 +518,15 @@ func (s *Screen) Summary(rows []KV, warnings []string) error {
 		s.mu.Unlock()
 		return nil
 	}
-	s.summary, s.rows, s.warns = true, nil, nil
+	s.summary, s.rows, s.warns, s.summaryKeep = true, nil, nil, nil
 	for _, r := range rows {
 		r = KV{oneLine(r.Key), oneLine(r.Value)}
 		s.rows = append(s.rows, r)
-		s.keep = append(s.keep, r.Key+": "+r.Value)
+		s.summaryKeep = append(s.summaryKeep, r.Key+": "+r.Value)
 	}
 	for _, w := range warnings {
 		s.warns = append(s.warns, oneLine(w))
-		s.keep = append(s.keep, oneLine(w))
+		s.summaryKeep = append(s.summaryKeep, oneLine(w))
 	}
 	s.draw()
 	s.mu.Unlock()
@@ -445,8 +537,8 @@ func (s *Screen) Summary(rows []KV, warnings []string) error {
 }
 
 // Suspend leaves the alternate screen and restores the normal terminal, for a child that needs the real TTY (setup prints a TOTP secret
-// there). While suspended the screen records what is written and draws nothing; Resume enters the alternate screen again and redraws.
-// Plain mode does nothing.
+// there). While suspended the screen draws nothing and every call that writes text writes it straight to the terminal, keeping none of
+// it; Resume enters the alternate screen again and redraws the page as it was. Plain mode does nothing.
 func (s *Screen) Suspend() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -469,9 +561,10 @@ func (s *Screen) Resume() {
 	s.draw()
 }
 
-// Close leaves the alternate screen, puts the console back, and prints the lines marked Keep (and the summary) on the normal screen.
-// It is safe to call twice, so a deferred Close and an explicit one before an error is printed to stderr can both stand. After Close
-// the screen writes plain text. It returns the first error the screen met while writing or restoring.
+// Close leaves the alternate screen, puts the console back, and prints on the normal screen what must not be lost (see the package
+// documentation): the current page unless a Summary was shown, the Keep and Warn lines, and the Summary. It is safe to call twice, so
+// a deferred Close and an explicit one before an error is printed to stderr can both stand. After Close the screen writes plain text.
+// It returns the first error the screen met while writing or restoring.
 func (s *Screen) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -486,29 +579,60 @@ func (s *Screen) Close() error {
 	if s.restore != nil {
 		s.note(s.restore())
 	}
-	if len(s.keep) > 0 {
-		s.write(strings.Join(s.keep, "\n") + "\n")
+	var lines []string
+	if !s.summary {
+		lines = s.pageLines()
+	}
+	lines = append(append(lines, s.keep...), s.summaryKeep...)
+	if len(lines) > 0 {
+		s.write(strings.Join(lines, "\n") + "\n")
 	}
 	return s.err
 }
 
-// append adds written text to the page, as a terminal would show it: a newline ends the pending line, a carriage return clears it
-// (a progress line that rewrites itself ends up as its last version), a tab is a space, and other control characters, escape included,
-// are dropped, so that text from a child or from the network cannot move the cursor or recolor the screen.
+// pageLines is the current page as plain text, for Close: the lines that are not Keep or Warn lines (those are printed with the keep
+// block), then the pending line and the spinner.
+func (s *Screen) pageLines() []string {
+	var lines []string
+	for _, it := range s.items {
+		if !it.kept {
+			lines = append(lines, it.plainLines()...)
+		}
+	}
+	if s.partial != "" {
+		lines = append(lines, s.partial)
+	}
+	if s.spinning {
+		lines = append(lines, s.spinText+"...")
+	}
+	return lines
+}
+
+// append adds written text to the page, as a terminal would show it: a newline ends the pending line, a carriage return makes the
+// next character replace it (a progress line that rewrites itself ends up as its last version), a tab is a space, and other control
+// characters, escape included, are dropped, so that text from a child or from the network cannot move the cursor or recolor the screen.
 func (s *Screen) append(text string) {
 	var b strings.Builder
 	b.WriteString(s.partial)
-	for _, r := range strings.ReplaceAll(text, "\r\n", "\n") {
+	put := func(r rune) {
+		if s.pendingCR {
+			b.Reset()
+			s.pendingCR = false
+		}
+		b.WriteRune(r)
+	}
+	for _, r := range text {
 		switch {
 		case r == '\n':
-			s.add(item{kind: itemText, text: b.String()})
+			s.pendingCR = false
+			s.add(item{kind: itemText, text: b.String(), kept: s.keeping})
 			b.Reset()
 		case r == '\r':
-			b.Reset()
+			s.pendingCR = true
 		case r == '\t':
-			b.WriteByte(' ')
+			put(' ')
 		case !unicode.IsControl(r):
-			b.WriteRune(r)
+			put(r)
 		}
 	}
 	s.partial = b.String()

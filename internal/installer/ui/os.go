@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"io"
 	"os"
 
@@ -27,12 +28,12 @@ func OSEnv(plain bool) Env {
 	return e
 }
 
-// OpenOS opens a screen on the process's console, reading answers from in. The mode comes from OSEnv; on Windows the console must also
-// accept virtual-terminal sequences, and if it does not the screen is plain. Pass the bufio.Reader the Resolver reads from as in, so
-// that no buffered input is lost between them.
-func OpenOS(in io.Reader, version string, plain bool) (*Screen, error) {
+// OpenOS opens a screen on the process's console, reading answers from in; ctx ends a prompt (see Options.Context). The mode comes
+// from OSEnv; on Windows the console must also accept virtual-terminal sequences, and if it does not the screen is plain. Pass the
+// bufio.Reader the Resolver reads from as in, so that no buffered input is lost between them.
+func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Screen, error) {
 	env := OSEnv(plain)
-	o := Options{Out: os.Stdout, In: in, Version: version, Mode: env.Mode(), Color: env.Color(), Width: env.Width, Height: env.Height}
+	o := Options{Out: os.Stdout, In: in, Context: ctx, Version: version, Mode: env.Mode(), Color: env.Color(), Width: env.Width, Height: env.Height}
 	if o.Mode == ModeFull {
 		restore, err := enableVT(os.Stdout)
 		if err != nil {

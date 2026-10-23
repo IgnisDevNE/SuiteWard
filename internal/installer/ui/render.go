@@ -38,6 +38,25 @@ type item struct {
 	def    bool   // the default choice
 	frac   float64
 	status string // a bar's status; empty shows the percentage
+	kept   bool   // a Keep or Warn line: Close prints it with the keep block, not with the page
+}
+
+// plainLines is the item as text, as Close prints the page.
+func (it item) plainLines() []string {
+	switch it.kind {
+	case itemText, itemCheck, itemWarn:
+		return strings.Split(it.text, "\n")
+	case itemChoice:
+		return []string{choiceLine(it.num, it.pad, it.text, it.desc, it.def)}
+	case itemBar:
+		status := it.status
+		if status == "" {
+			status = fmt.Sprintf("%d%%", int(it.frac*100))
+		}
+		return []string{it.text + ": " + status}
+	default:
+		panic(fmt.Sprintf("ui: unknown item kind %d", it.kind))
+	}
 }
 
 // row is one line of the content or the step column: its text with the color sequences in place, and its width in columns.
@@ -72,7 +91,7 @@ type frame struct {
 
 // draw paints the whole frame with absolute row addresses and one write; the caller holds the lock.
 func (s *Screen) draw() {
-	if !s.full || s.suspended {
+	if !s.drawing() {
 		return
 	}
 	f := s.frame()
@@ -109,6 +128,8 @@ func (s *Screen) frame() frame {
 	switch {
 	case s.summary:
 		hint = "Enter to finish"
+	case s.secret: // the hidden read cannot be interrupted
+		hint = "Enter to confirm"
 	case cursor >= 0:
 		hint = "Enter to confirm · Ctrl-C to quit"
 	}

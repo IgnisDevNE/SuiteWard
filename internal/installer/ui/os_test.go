@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -37,7 +38,7 @@ func TestOSEnvPlainFlagWins(t *testing.T) {
 
 // OpenOS with the plain flag never touches the console, so this is safe to run in a terminal.
 func TestOpenOSPlain(t *testing.T) {
-	s, err := OpenOS(strings.NewReader(""), testVersion, true)
+	s, err := OpenOS(context.Background(), strings.NewReader(""), testVersion, true)
 	if err != nil {
 		t.Fatalf("OpenOS: %v", err)
 	}

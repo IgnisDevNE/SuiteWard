@@ -77,7 +77,7 @@ type Options struct {
 	Height  int
 	// RestoreConsole undoes what the OS needed for escape sequences. Optional. Close calls it, and so does Open when it fails.
 	RestoreConsole func() error
-	// Context ends a prompt: Ask, Prompt, Choose and Summary return the context's error as soon as it is done. Optional; nil never
+	// Context ends a prompt: Ask, Prompt, Choose, Summary and Wait return the context's error as soon as it is done. Optional; nil never
 	// ends one. Pass the context that SIGINT cancels (cmd/suiteward traps it with signal.NotifyContext), or Ctrl-C does nothing at a
 	// prompt until Enter. The read that was pending is abandoned in its goroutine and may still take a line from the input, so the
 	// process is expected to exit and the input is not read again. Secret cannot be interrupted this way: its reader is the caller's.

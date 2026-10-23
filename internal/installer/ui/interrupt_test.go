@@ -48,7 +48,7 @@ func TestAReadThatEndsOnATerminalIsAnInterruptWhenTheContextIsDoneSoon(t *testin
 }
 
 func TestTheEndOfAnInputThatIsNotATerminalIsTheEndOfTheInput(t *testing.T) {
-	s := openFull(t, endOfInput(), false, 10*time.Millisecond)
+	s := openFull(t, endOfInput(), false, 150*time.Millisecond) // after the read, and before the grace a wrong grace would add
 	if _, err := s.Ask("Name", "x"); !errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
 		t.Fatalf("Ask = %v, want the end of the input: a pipe that ends is not an interrupt", err)
 	}

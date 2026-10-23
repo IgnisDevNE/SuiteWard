@@ -250,7 +250,8 @@ func TestBuildCutsLongLines(t *testing.T) {
 
 func TestBuildHunkTextBudget(t *testing.T) {
 	t.Parallel()
-	// Each file is 10,000 lines of 99 bytes: about 0.99 MB of hunk text, so four fit in the 4 MiB budget and a fifth does not.
+	// A stored line costs its text and 32 bytes more. Each file is 10,000 lines of 99 bytes, 1.31 MB, so three fit in the
+	// 4 MiB budget and a fourth does not; a small file after them still fits.
 	big := strings.Repeat(strings.Repeat("a", 99)+"\n", 10_000)
 	changes := []report.FileChange{added("f.txt", "small\n")}
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
@@ -261,9 +262,9 @@ func TestBuildHunkTextBudget(t *testing.T) {
 		t.Fatal("the report must say it left hunks out")
 	}
 	for _, f := range r.Files {
-		if f.Path == "e.txt" {
+		if f.Path == "d.txt" || f.Path == "e.txt" {
 			if !f.Truncated || len(f.Hunks) != 0 || !f.CountsKnown || f.LinesAdded != 10_000 {
-				t.Errorf("e.txt: got Truncated=%v, %d hunks, counts known=%v, +%d", f.Truncated, len(f.Hunks), f.CountsKnown, f.LinesAdded)
+				t.Errorf("%s: got Truncated=%v, %d hunks, counts known=%v, +%d", f.Path, f.Truncated, len(f.Hunks), f.CountsKnown, f.LinesAdded)
 			}
 		} else if f.Truncated || len(f.Hunks) != 1 {
 			t.Errorf("%s: got Truncated=%v, %d hunks; want its hunk", f.Path, f.Truncated, len(f.Hunks))
@@ -271,6 +272,33 @@ func TestBuildHunkTextBudget(t *testing.T) {
 	}
 	if r.Totals.LinesAdded != 5*10_000+1 {
 		t.Errorf("totals keep the counts of a file whose hunks were left out: got +%d", r.Totals.LinesAdded)
+	}
+}
+
+// Empty lines have no text, but a report of millions of them is as large to hold and to render as any other.
+func TestBuildHunkBudgetCountsLinesWithoutText(t *testing.T) {
+	t.Parallel()
+	empty := strings.Repeat("\n", 20_000)
+	var changes []report.FileChange
+	for i := range 150 {
+		changes = append(changes, added(fmt.Sprintf("f%03d.txt", i), empty))
+	}
+	changes = append(changes, added("zz.txt", "small\n"))
+	r := build(t, changes...)
+	if !r.Truncated {
+		t.Fatal("the report must say it left hunks out")
+	}
+	kept := 0
+	for _, f := range r.Files {
+		for _, h := range f.Hunks {
+			kept += len(h.Lines)
+		}
+	}
+	if kept > (4<<20)/2 {
+		t.Fatalf("the report keeps %d lines of no text", kept)
+	}
+	if last := r.Files[len(r.Files)-1]; last.Path != "zz.txt" || last.Truncated || len(last.Hunks) != 1 {
+		t.Fatalf("a small file after the full ones still fits: got %+v", last)
 	}
 }
 

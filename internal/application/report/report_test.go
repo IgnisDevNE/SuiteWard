@@ -162,7 +162,7 @@ func TestBuildBinary(t *testing.T) {
 		added("a.bin", "\x00"),
 		removed("a.bin", "\x00\x00"),
 	} {
-		want := report.File{Path: c.Path, Status: c.Status, OldSize: len(c.Old), NewSize: len(c.New), Binary: true}
+		want := report.File{Path: c.Path, Status: c.Status, OldSize: len(c.Old), NewSize: len(c.New), Limit: report.LimitBinary}
 		if got := one(t, c); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: got %+v, want %+v", c.Status, got, want)
 		}
@@ -185,7 +185,7 @@ func TestBuildTooLarge(t *testing.T) {
 	t.Run("a modified side over the bound has unknown counts", func(t *testing.T) {
 		t.Parallel()
 		for _, c := range []report.FileChange{mod("a.txt", many, "y\n"), mod("a.txt", "y\n", many), mod("a.txt", wide, "y\n"), mod("a.txt", "y\n", wide)} {
-			want := report.File{Path: "a.txt", Status: report.Modified, OldSize: len(c.Old), NewSize: len(c.New), TooLarge: true}
+			want := report.File{Path: "a.txt", Status: report.Modified, OldSize: len(c.Old), NewSize: len(c.New), Limit: report.LimitSize}
 			if got := one(t, c); !reflect.DeepEqual(got, want) {
 				t.Errorf("got %+v, want %+v", got, want)
 			}
@@ -195,7 +195,7 @@ func TestBuildTooLarge(t *testing.T) {
 		t.Parallel()
 		plus, minus := added("a.txt", many), removed("a.txt", many)
 		wantPlus, wantMinus := counted(plus, 20_001, 0), counted(minus, 0, 20_001)
-		wantPlus.TooLarge, wantMinus.TooLarge = true, true
+		wantPlus.Limit, wantMinus.Limit = report.LimitSize, report.LimitSize
 		if got := one(t, plus); !reflect.DeepEqual(got, wantPlus) {
 			t.Errorf("added: got %+v, want %+v", got, wantPlus)
 		}
@@ -206,25 +206,25 @@ func TestBuildTooLarge(t *testing.T) {
 	t.Run("a file at the bound is compared", func(t *testing.T) {
 		t.Parallel()
 		got := one(t, added("a.txt", fits))
-		if got.TooLarge || len(got.Hunks) != 1 || got.LinesAdded != 20_000 {
-			t.Fatalf("got %d hunks, TooLarge=%v, +%d", len(got.Hunks), got.TooLarge, got.LinesAdded)
+		if got.Limit != "" || len(got.Hunks) != 1 || got.LinesAdded != 20_000 {
+			t.Fatalf("got %d hunks, Limit=%q, +%d", len(got.Hunks), got.Limit, got.LinesAdded)
 		}
 	})
 	t.Run("an added file is not limited by the edit distance", func(t *testing.T) {
 		t.Parallel()
 		got := one(t, added("a.txt", differ("n", 5000)))
-		if got.TooLarge || got.LinesAdded != 5000 || len(got.Hunks) != 1 {
-			t.Fatalf("got TooLarge=%v +%d with %d hunks, want an exact 5000", got.TooLarge, got.LinesAdded, len(got.Hunks))
+		if got.Limit != "" || got.LinesAdded != 5000 || len(got.Hunks) != 1 {
+			t.Fatalf("got Limit=%q +%d with %d hunks, want an exact 5000", got.Limit, got.LinesAdded, len(got.Hunks))
 		}
 	})
 	t.Run("a pair of files too different to compare is too large", func(t *testing.T) {
 		t.Parallel()
 		// Two files with no line in common take as many edits as both have lines: 500+500 is the bound.
-		if got := one(t, mod("a.txt", differ("o", 500), differ("n", 500))); got.TooLarge || got.LinesAdded != 500 || got.LinesRemoved != 500 {
-			t.Fatalf("at the bound: got TooLarge=%v +%d -%d", got.TooLarge, got.LinesAdded, got.LinesRemoved)
+		if got := one(t, mod("a.txt", differ("o", 500), differ("n", 500))); got.Limit != "" || got.LinesAdded != 500 || got.LinesRemoved != 500 {
+			t.Fatalf("at the bound: got Limit=%q +%d -%d", got.Limit, got.LinesAdded, got.LinesRemoved)
 		}
 		c := mod("a.txt", differ("o", 501), differ("n", 501))
-		want := report.File{Path: "a.txt", Status: report.Modified, OldSize: len(c.Old), NewSize: len(c.New), TooLarge: true}
+		want := report.File{Path: "a.txt", Status: report.Modified, OldSize: len(c.Old), NewSize: len(c.New), Limit: report.LimitEditDistance}
 		if got := one(t, c); !reflect.DeepEqual(got, want) {
 			t.Fatalf("past the bound: got %+v, want %+v", got, want)
 		}
@@ -311,8 +311,8 @@ func TestBuildMarkerListIsBoundedButCountsAreExact(t *testing.T) {
 	if got := len(r.Files[0].Markers); got != 1000 {
 		t.Errorf("listed markers = %d, want 1000", got)
 	}
-	if !r.Truncated {
-		t.Error("the report must say it left markers out")
+	if !r.Truncated || !r.Files[0].MarkersTruncated {
+		t.Errorf("the report and the file must say they left markers out: got %v and %v", r.Truncated, r.Files[0].MarkersTruncated)
 	}
 	if small := build(t, removed("a.py", "assert x\n")); small.Truncated {
 		t.Error("a report with room for its markers is not truncated")
@@ -380,6 +380,8 @@ func TestBuildRejectsInvalidChanges(t *testing.T) {
 		{"an added file with a canonical side", []report.FileChange{{Path: "a", Status: report.Added, Old: []byte("x"), New: []byte("y")}}},
 		{"a removed file with a proposal side", []report.FileChange{{Path: "a", Status: report.Removed, Old: []byte("x"), New: []byte("y")}}},
 		{"a repeated path", []report.FileChange{added("a", "x"), removed("b", "x"), added("a", "y")}},
+		{"an empty path", []report.FileChange{added("", "x")}},
+		{"a path with a backslash", []report.FileChange{added("dir\\a.txt", "x")}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

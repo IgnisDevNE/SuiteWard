@@ -94,20 +94,32 @@ type Marker struct {
 	Text string
 }
 
+// Limit says why a file was not compared line by line; its zero value means it was.
+type Limit string
+
+const (
+	LimitBinary       Limit = "binary"
+	LimitSize         Limit = "too-large"
+	LimitEditDistance Limit = "edit-distance"
+	LimitBudget       Limit = "budget"
+)
+
 // File is the report of one FileChange. OldSize and NewSize are byte lengths. LinesAdded and LinesRemoved are exact
 // only when CountsKnown: a binary file, and a modified file too large or too different to compare within the
-// bounds (TooLarge), have unknown counts, never zero. An added or removed file over the size bound has Hunks
+// bounds, have unknown counts, never zero. An added or removed file over the size bound has Hunks
 // omitted but its counts are exact, since counting lines is cheap. Truncated says the Hunks were left out to keep the
 // report within its size budget, in which a line costs its text and 32 bytes; the counts stay exact.
 type File struct {
-	Path                        string
-	Status                      Status
-	OldSize, NewSize            int
-	LinesAdded, LinesRemoved    int
-	CountsKnown                 bool
-	Binary, TooLarge, Truncated bool
-	Hunks                       []Hunk
-	Markers                     []Marker
+	Path                     string
+	Status                   Status
+	OldSize, NewSize         int
+	LinesAdded, LinesRemoved int
+	CountsKnown              bool
+	Limit                    Limit
+	Truncated                bool
+	MarkersTruncated         bool
+	Hunks                    []Hunk
+	Markers                  []Marker
 }
 
 // Totals sum a report. LinesAdded and LinesRemoved cover the files with CountsKnown only. Markers counts every
@@ -204,10 +216,10 @@ func (b *builder) add(c FileChange) {
 func (b *builder) compare(f *File, c FileChange) ([]entry, bool) {
 	switch {
 	case bytes.IndexByte(c.Old, 0) >= 0 || bytes.IndexByte(c.New, 0) >= 0:
-		f.Binary = true
+		f.Limit = LimitBinary
 		return nil, false
 	case tooLarge(c.Old) || tooLarge(c.New):
-		f.TooLarge = true
+		f.Limit = LimitSize
 		if c.Status != Modified {
 			f.LinesAdded, f.LinesRemoved, f.CountsKnown = lineCount(c.New), lineCount(c.Old), true
 		}
@@ -217,7 +229,7 @@ func (b *builder) compare(f *File, c FileChange) ([]entry, bool) {
 	ids := map[string]int{}
 	del, ins, ok := diff(intern(ids, before), intern(ids, after), &b.workRoom)
 	if !ok {
-		f.TooLarge = true
+		f.Limit = LimitEditDistance
 		return nil, false
 	}
 	return script(before, after, del, ins), true

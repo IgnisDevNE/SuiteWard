@@ -19,6 +19,7 @@ func FuzzDiff(f *testing.F) {
 		{1, "", ""}, {1, "a\n", "a\n"}, {0, "", "a\nb\n"}, {2, "a\nb\n", ""}, {1, "a\nb", "a\nb\n"}, {1, "a\r\nb\r\n", "a\nb\n"},
 		{1, "a\nb\nc\nd\n", "a\nx\nc\ny\n"}, {1, "a\n\n\nb\n", "b\n\n\na\n"}, {1, "x\nx\nx\n", "x\nx\n"}, {1, "a\x00b", "a\nb"},
 		{1, strings.Repeat("l\n", 30) + "m", "n\n" + strings.Repeat("l\n", 30)},
+		{1, "assert x\nfunc TestA() {\nb\n", "b\n  assert x\nt.Skip()\n"}, {2, "func TestA() {\n\tt.Fatal()\n}\n", ""}, {0, "", "t.Skip()\nt.Skip()\n"},
 	} {
 		f.Add(seed.status, seed.old, seed.next)
 	}
@@ -35,16 +36,17 @@ func FuzzDiff(f *testing.F) {
 			t.Fatalf("Build: %v", err)
 		}
 		got := r.Files[0]
-		if got.Binary != (bytes.IndexByte(c.Old, 0) >= 0 || bytes.IndexByte(c.New, 0) >= 0) {
-			t.Fatalf("Binary = %v for %q and %q", got.Binary, c.Old, c.New)
+		if (got.Limit == report.LimitBinary) != (bytes.IndexByte(c.Old, 0) >= 0 || bytes.IndexByte(c.New, 0) >= 0) {
+			t.Fatalf("Limit = %q for %q and %q", got.Limit, c.Old, c.New)
 		}
-		if got.Binary {
+		if got.Limit == report.LimitBinary {
 			return
 		}
-		if got.TooLarge && len(c.Old)+len(c.New) < 1000 {
+		if got.Limit != "" && len(c.Old)+len(c.New) < 1000 {
 			t.Fatalf("%d bytes are never too large", len(c.Old)+len(c.New))
 		}
-		if got.TooLarge || got.Truncated {
+		checkMarkers(t, c, r)
+		if got.Limit != "" || got.Truncated {
 			return
 		}
 		checkHunks(t, c, got)
@@ -76,6 +78,33 @@ func checkHunks(t *testing.T, c report.FileChange, got report.File) {
 	}
 	if plus != got.LinesAdded || minus != got.LinesRemoved || !got.CountsKnown {
 		t.Fatalf("counts +%d -%d (known %v), hunk lines +%d -%d", got.LinesAdded, got.LinesRemoved, got.CountsKnown, plus, minus)
+	}
+}
+
+// checkMarkers requires that every marker of the one file of r names a line of the side its kind belongs to, with that
+// line's trimmed text, and that the totals count the markers listed.
+func checkMarkers(t *testing.T, c report.FileChange, r report.Report) {
+	t.Helper()
+	oldLines, newLines := splitAfter(string(c.Old)), splitAfter(string(c.New))
+	for _, m := range r.Files[0].Markers {
+		lines := oldLines
+		if m.Kind == report.MarkAddedSkip || m.Kind == report.MarkFocus {
+			lines = newLines
+		}
+		if m.Path != c.Path || m.Line < 1 || m.Line > len(lines) {
+			t.Fatalf("marker %+v does not name a line of %q or %q", m, c.Old, c.New)
+		}
+		trimmed := strings.TrimSpace(lines[m.Line-1])
+		if !strings.HasPrefix(trimmed, m.Text) || len(m.Text) > 200 || (len(trimmed) <= 200 && trimmed != m.Text) {
+			t.Fatalf("marker %+v is not the trimmed line %q", m, trimmed)
+		}
+	}
+	count := 0
+	for _, n := range r.Totals.Markers {
+		count += n
+	}
+	if !r.Truncated && count != len(r.Files[0].Markers) {
+		t.Fatalf("totals count %d markers, the file lists %d", count, len(r.Files[0].Markers))
 	}
 }
 

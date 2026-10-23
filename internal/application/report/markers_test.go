@@ -41,8 +41,19 @@ func TestMarkersPerPattern(t *testing.T) {
 		{"x_test.go", "\tt.Skip(\"later\")", false, skip},
 		{"x_test.go", "\tt.Skipf(\"later %d\", 1)", false, skip},
 		{"x_test.go", "func TestFoo(t *testing.T) {", true, test},
+		{"x_test.go", "\tb.Error(\"bad\")", true, assertion},
+		{"x_test.go", "\tb.Fatalf(\"bad\")", true, assertion},
+		{"x_test.go", "\ttb.Error(\"bad\")", true, assertion},
+		{"x_test.go", "\ttb.Fatalf(\"bad\")", true, assertion},
+		{"x_test.go", "\tt.Fail()", true, assertion},
+		{"x_test.go", "\tt.FailNow()", true, assertion},
+		{"x_test.go", "\tb.Skip(\"later\")", false, skip},
+		{"x_test.go", "\ttb.Skipf(\"later\")", false, skip},
+		{"x_test.go", "func (s *Suite) TestFoo() {", true, test},
 
 		{"test_x.py", "    assert x == 1", true, assertion},
+		{"test_x.py", "    assert(x == 1)", true, assertion},
+		{"test_x.py", "    self.skipTest(\"no\")", false, skip},
 		{"test_x.py", "        self.assertEqual(a, b)", true, assertion},
 		{"test_x.py", "    with pytest.raises(ValueError):", true, assertion},
 		{"test_x.py", "    pytest.skip(\"no\")", false, skip},
@@ -64,6 +75,11 @@ func TestMarkersPerPattern(t *testing.T) {
 		{"x.test.ts", "describe.only('x', () => {", false, focus},
 		{"x.test.ts", "it('does x', () => {", true, test},
 		{"x.test.ts", "test('does y', () => {", true, test},
+		{"x.test.ts", "describe('a group', () => {", true, test},
+		{"x.test.ts", "xtest('x', () => {", false, skip},
+		{"x.test.ts", "fit('x', () => {", false, focus},
+		{"x.test.ts", "fdescribe('x', () => {", false, focus},
+		{"x.test.ts", "  chai.expect(a).to.equal(1)", true, assertion},
 
 		{"x.rb", "assert_equal 1, 1", true, assertion},
 		{"x.txt", "  assert result", true, assertion},
@@ -96,6 +112,11 @@ func TestMarkersAreKeyedByLanguage(t *testing.T) {
 		{"x.go", "expect(a).toBe(1)", true},             // a JavaScript idiom in a Go file
 		{"x.go", "it.only('x')", false},                 // focus is a JavaScript idiom
 		{"x.txt", "func TestFoo(t *testing.T) {", true}, // no test declaration in the fallback
+		{"x.go", "\tif t.Failed() {", true},             // a query, not a failure
+		{"x.go", "func (s *Suite) setup() {", true},     // a method that is no test
+		{"x.go", "\tt.Run(\"(a) Test\", f)", true},      // the text of a test name
+		{"x.ts", "if (/x/.test(s)) {", true},            // a regular expression, not a test
+		{"x.ts", "foo.it('x')", true},                   // a method, not the test function
 	} {
 		if got := markersOf(t, c.path, c.line, c.remove); len(got) != 0 {
 			t.Errorf("%s %q: got %+v, want none", c.path, c.line, got)
@@ -118,6 +139,29 @@ func TestMarkersOnlyLookAtChangedLinesOfTheRightSide(t *testing.T) {
 		if got := one(t, mod(tc.path, tc.old, tc.proposed)).Markers; len(got) != 0 {
 			t.Errorf("%s: got %+v, want none", tc.name, got)
 		}
+	}
+}
+
+func TestMarkersIgnoreLinesThatOnlyMoved(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path, old, proposed string
+	}{
+		{"an assertion moved", "x.py", "assert a\nb\nc\n", "b\nc\nassert a\n"},
+		{"an assertion reindented", "x.py", "assert a\nb\n", "    assert a\nb\n"},
+		{"CRLF turned into LF", "x.py", "assert a\r\nb\r\n", "assert a\nb\n"},
+		{"a test declaration moved", "x.go", "func TestA(t *testing.T) {}\nfunc B() {}\n", "func B() {}\nfunc TestA(t *testing.T) {}\n"},
+		{"a skip moved", "x.py", "pytest.skip('x')\na\nb\n", "a\nb\n    pytest.skip('x')\n"},
+		{"a focus reindented", "x.ts", "a\nit.only('x', f)\n", "  a\n  it.only('x', f)\n"},
+	} {
+		if got := one(t, mod(tc.path, tc.old, tc.proposed)).Markers; len(got) != 0 {
+			t.Errorf("%s: got %+v, want none", tc.name, got)
+		}
+	}
+	// Two copies of an assertion go and one comes back: one removal is left to see.
+	got := one(t, mod("x.py", "assert a\nx\nassert a\ny\n", "x\ny\nassert a\n")).Markers
+	if len(got) != 1 || got[0].Kind != report.MarkRemovedAssertion {
+		t.Errorf("got %+v, want one removed assertion", got)
 	}
 }
 
@@ -179,7 +223,8 @@ func TestMarkerTextIsTrimmedAndCut(t *testing.T) {
 
 func TestMarkerOfARemovedTestFile(t *testing.T) {
 	t.Parallel()
-	for _, path := range []string{"a_test.go", "pkg/a_test.go", "test_a.py", "a_test.py", "a.test.ts", "a.spec.js", "tests/data.json", "src/__tests__/a.js", "src/test/java/A.java"} {
+	for _, path := range []string{"a_test.go", "pkg/a_test.go", "test_a.py", "a_test.py", "a.test.ts", "a.spec.js", "tests/data.json", "src/__tests__/a.js", "src/test/java/A.java",
+		"spec/models/user_spec.rb", "lib/user_spec.rb", "spec/helper.js", "src/UserTest.java", "conftest.py", "pkg/conftest.py", "Tests/data.txt", "Test/x.cs"} {
 		got := one(t, removed(path, "x\n")).Markers
 		want := []report.Marker{{Kind: report.MarkTestFileRemoved, Path: path}}
 		if !reflect.DeepEqual(got, want) {
@@ -188,6 +233,7 @@ func TestMarkerOfARemovedTestFile(t *testing.T) {
 	}
 	for _, c := range []report.FileChange{
 		removed("main.go", "x\n"), removed("a_test.txt", "x\n"), removed("contest.py", "x\n"), removed("latest/a.go", "x\n"),
+		removed("src/Contest.java", "x\n"), removed("specs/a.go", "x\n"), removed("myconftest.py", "x\n"), removed("lib/user.rb", "x\n"),
 		mod("a_test.go", "x\n", "y\n"), added("b_test.go", "x\n"),
 	} {
 		if got := one(t, c).Markers; len(got) != 0 {

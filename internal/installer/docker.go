@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -140,29 +142,69 @@ func (dk *Docker) Run(ctx context.Context, spec RunSpec) error {
 // serviceUser owns the files of the artifact volume: the user the service image runs as.
 const serviceUser = "65532:65532"
 
-// ExportVolume reads the volume with a throwaway container, because Docker has no `volume export`. The container is the
-// database's own image (it is here, and it has tar), with no network, a read-only root and the volume mounted read-only, as the
-// service user that owns its files; the tarball comes back on its standard output.
-func (dk *Docker) ExportVolume(ctx context.Context, volume, path string) error {
+// helperImage is the image of the throwaway containers that read and write a volume: the database's own (it is here, and it has tar).
+func (dk *Docker) helperImage(ctx context.Context) (string, error) {
 	raw, err := dk.Inspect(ctx, ContainerDB)
 	if err != nil {
-		return err
+		return "", err
 	}
 	in, err := parseInspect(ContainerDB, raw)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if in.Config.Image == "" {
-		return fmt.Errorf("the container %s reports no image", ContainerDB)
+		return "", fmt.Errorf("the container %s reports no image", ContainerDB)
+	}
+	return in.Config.Image, nil
+}
+
+// confined are the flags of a throwaway container that touches a volume: no network, a read-only root, no capabilities, the service
+// user that owns the files.
+var confined = []string{"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "all", "--security-opt", "no-new-privileges", "--user", serviceUser}
+
+// ExportVolume reads the volume with a throwaway container, because Docker has no `volume export`. The container is confined and
+// mounts the volume read-only; the tarball comes back on its standard output.
+func (dk *Docker) ExportVolume(ctx context.Context, volume, path string) error {
+	image, err := dk.helperImage(ctx)
+	if err != nil {
+		return err
 	}
 	// shortcut: the tarball is held in memory until it is written, so the artifact volume must fit in the installer's memory, stream it to the file when volumes outgrow that.
-	tarball, err := dk.run(ctx, nil, "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "all",
-		"--security-opt", "no-new-privileges", "--user", serviceUser, "--volume", volume+":/data:ro",
-		in.Config.Image, "tar", "-cf", "-", "-C", "/data", ".")
+	tarball, err := dk.run(ctx, nil, append(slices.Clone(confined), "--volume", volume+":/data:ro", image, "tar", "-cf", "-", "-C", "/data", ".")...)
 	if err != nil {
 		return fmt.Errorf("export the volume %s: %w", volume, err)
 	}
 	return writePrivateFile(path, tarball)
+}
+
+// importFlags are the flags of the throwaway container that writes a volume. A volume that Docker has just created is owned by root,
+// and the helper image has nothing at /data to copy an ownership from, so the service user could not write it. The container runs as
+// root, with no network, a read-only root and no new privileges, and with only the three capabilities that let tar do what a root tar does:
+// restore the owner and the group that the tarball records (the service user's), change the mode and the times of files that user
+// owns, and enter the directories it made.
+var importFlags = []string{
+	"run", "--rm", "--interactive", "--network", "none", "--read-only", "--cap-drop", "all",
+	"--cap-add", "CHOWN", "--cap-add", "FOWNER", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--user", "0",
+}
+
+// ImportVolume writes the volume with a throwaway container, because Docker has no `volume import`: the container of importFlags with
+// the volume mounted writable and the tarball on its standard input, which is the file, streamed. The owners are numeric, so that a name
+// in the tarball cannot map to another user of the helper image.
+func (dk *Docker) ImportVolume(ctx context.Context, volume, path string) error {
+	image, err := dk.helperImage(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("read the tarball %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	args := append(slices.Clone(importFlags), "--volume", volume+":/data", image, "tar", "--numeric-owner", "-xf", "-", "-C", "/data")
+	if _, err := dk.run(ctx, f, args...); err != nil {
+		return fmt.Errorf("import the volume %s: %w", volume, err)
+	}
+	return nil
 }
 
 func componentNames(components []engineComponent) string {

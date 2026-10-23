@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +74,11 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
 		return nil
 	}
+	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
+	agreed, err := settleRecipient(r, env, &s)
+	if err != nil {
+		return err
+	}
 	status := func(ctx context.Context) ([]byte, error) {
 		return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
 	}
@@ -87,31 +91,19 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return err
 	}
 	parent := backupParent(r, host.configDir)
-	if err := confirmUpgrade(r, plan, parent, started); err != nil {
+	if err := confirmUpgrade(r, plan, parent, s.BackupRecipient, started); err != nil {
 		return err
-	}
-	// The replaced units go into the backup, so a rollback can put them back.
-	keepUnits := func(dir string) error {
-		units := filepath.Join(dir, backupUnits)
-		if err := os.Mkdir(units, 0o700); err != nil {
-			return fmt.Errorf("create %s: %w", units, err)
-		}
-		for _, name := range sortedKeys(st.units) {
-			if err := writePrivateFile(filepath.Join(units, name), st.units[name]); err != nil {
-				return err
-			}
-		}
-		return nil
 	}
 	scr.Step(2)
-	var dir string
-	err = working(scr, "Backing up the database and the artifacts", func() (err error) {
-		dir, err = takeBackup(ctx, backup{rt: host.rt, d: d, parent: parent, status: status, extra: keepUnits, now: time.Now})
-		return err
-	})
+	// The replaced units go into the archive, and beside it as plain files (they hold only the names of secrets), so that a rollback can
+	// copy them back.
+	keepUnits := func(path string) error { return keepUnitsBeside(path, st.units) }
+	inst := instance{rt: host.rt, s: s, settingsPath: host.settingsPath, haveSettings: settingsExist(host.settingsPath), image: st.adopted.Image, status: status, units: st.units, startCommand: "systemctl --user start suiteward.service"}
+	dir, err := upgradeBackup(ctx, r, env, &inst, parent, keepUnits, agreed)
 	if err != nil {
 		return err
 	}
+	s.BackupRecipient = inst.s.BackupRecipient
 	say("Backup written to %s.\n", dir)
 	scr.Step(3)
 	if err := pullMissing(ctx, scr, host.rt, postgres, image); err != nil {

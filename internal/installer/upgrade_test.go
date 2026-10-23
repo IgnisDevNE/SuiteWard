@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -23,7 +24,7 @@ var (
 )
 
 const (
-	statusBody = `{"version":"v0.2.0","schemaVersion":20}`
+	statusBody = `{"version":"v0.2.0","schemaVersion":20,"tier":"co-located","instance":"1a2b3c4d","owner":{"login":"octo","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"},"github":[{"repo":"octo/app","integrity":"passed"}]}`
 	dumpText   = "-- PostgreSQL database dump\nCOPY owner (totp_secret) FROM stdin;\nHUNTER2-TOTP\n"
 )
 
@@ -33,6 +34,9 @@ type upgradeHarness struct {
 	backups string
 	port    int
 	stack   Settings // what the installed stack was made from
+
+	volumeData string // what `volume export` writes, "TARBYTES" when empty
+	imported   string // what `volume import` was given
 }
 
 func newUpgradeHarness(t *testing.T, edit func(s *Settings)) *upgradeHarness {
@@ -57,6 +61,7 @@ func newUpgradeHarness(t *testing.T, edit func(s *Settings)) *upgradeHarness {
 	h.status = httpGet // the service of this harness answers on a real port
 	s := colocatedSettings()
 	s.HTTPPort, s.MCPPort, s.Connection, s.Image = port, port+1, "pm", oldImage
+	s.BackupRecipient, _ = testRecoveryKey(t)
 	if edit != nil {
 		edit(&s)
 	}
@@ -91,11 +96,18 @@ func (u *upgradeHarness) env() Env {
 	inner := env.Deps.Exec
 	env.Deps.Exec = func(ctx context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 		out, err := inner(ctx, name, args, stdin)
-		if _, rest, ok := strings.Cut(strings.Join(args, " "), "volume export "); ok && err == nil {
+		line := strings.Join(args, " ")
+		if _, rest, ok := strings.Cut(line, "volume export "); ok && err == nil {
 			if fields := strings.Fields(rest); len(fields) == 3 && fields[1] == "--output" {
-				if err := os.WriteFile(fields[2], []byte("TARBYTES"), 0o644); err != nil { //nolint:gosec // the engine writes it world-readable
+				if err := os.WriteFile(fields[2], []byte(cmp.Or(u.volumeData, "TARBYTES")), 0o644); err != nil { //nolint:gosec // the engine writes it world-readable
 					return nil, err
 				}
+			}
+		}
+		// `volume import` reads its file when it runs: the restore removes the file afterwards.
+		if _, rest, ok := strings.Cut(line, "volume import "); ok && err == nil {
+			if fields := strings.Fields(rest); len(fields) == 2 {
+				u.imported = readFile(u.t, fields[1])
 			}
 		}
 		return out, err
@@ -109,14 +121,20 @@ func (u *upgradeHarness) upgrade(args ...string) error {
 	return Install(context.Background(), all, u.env())
 }
 
-// backup is the one directory the upgrade made.
+// backup is the one encrypted backup the upgrade made.
 func (u *upgradeHarness) backup() string {
 	u.t.Helper()
-	dirs, err := filepath.Glob(filepath.Join(u.backups, "*"))
-	if err != nil || len(dirs) != 1 {
-		u.t.Fatalf("want one backup directory under %s, got %v, %v", u.backups, dirs, err)
+	return oneArchive(u.t, u.backups)
+}
+
+// oneArchive is the one backup file under dir.
+func oneArchive(t *testing.T, dir string) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "suiteward-backup-*.tar.age"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("want one backup file under %s, got %v, %v", dir, files, err)
 	}
-	return dirs[0]
+	return files[0]
 }
 
 // beforeCall lists the changes the engine was asked for before the first call that contains marker.
@@ -202,21 +220,28 @@ func TestUpgradeBackupFilesAreComplete(t *testing.T) {
 	if err := u.upgrade("--image", testImage, "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	dir := u.backup()
+	path := u.backup()
+	manifest, members := openBackup(t, path)
 	for file, want := range map[string]string{"suiteward.sql": dumpText, "suiteward-artifacts.tar": "TARBYTES", "status.json": statusBody} {
-		if got := readFile(t, filepath.Join(dir, file)); got != want {
+		if got := members[file]; got != want {
 			t.Errorf("%s holds %q, want %q", file, got, want)
 		}
 	}
+	// The settings file of the backup is the one the upgrade found, before it saved the new release.
+	if got := members["settings.yaml"]; !strings.Contains(got, oldDigest) || strings.Contains(got, testDigest) {
+		t.Errorf("settings.yaml is not the settings of the old release:\n%s", got)
+	}
+	if manifest.SuitewardVersion != "v0.2.0" || manifest.Instance != testInstance || manifest.Tier != "co-located" || manifest.ImageDigest != oldDigest {
+		t.Errorf("the manifest names %+v", manifest.Info)
+	}
 	if runtime.GOOS != "windows" {
-		for path, want := range map[string]os.FileMode{
-			dir: 0o700, filepath.Join(dir, "suiteward.sql"): 0o600, filepath.Join(dir, "suiteward-artifacts.tar"): 0o600, filepath.Join(dir, "status.json"): 0o600,
-		} {
-			if info, err := os.Stat(path); err != nil || info.Mode().Perm() != want {
-				t.Errorf("%s has mode %v, %v; want %v", path, info.Mode().Perm(), err, want)
+		for p, want := range map[string]os.FileMode{u.backups: 0o700, path: 0o600} {
+			if info, err := os.Stat(p); err != nil || info.Mode().Perm() != want {
+				t.Errorf("%s has mode %v, %v; want %v", p, info.Mode().Perm(), err, want)
 			}
 		}
 	}
+	assertNoPlaintext(t, u.backups, "HUNTER2-TOTP", "TARBYTES")
 }
 
 func TestUpgradeNeverShowsTheBackupOrAPassword(t *testing.T) {
@@ -424,7 +449,10 @@ func TestUpgradeOfAV01StackConvertsItsSecrets(t *testing.T) {
 	}
 }
 
-func TestUpgradeBacksUpDockerThroughAThrowawayContainer(t *testing.T) {
+// newDockerUpgrade is a Docker stack that runs an older release, with a service that answers /status and a recovery key; backups
+// go to the directory it returns.
+func newDockerUpgrade(t *testing.T) (*harness, string) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, statusBody) }))
 	t.Cleanup(srv.Close)
 	u, err := url.Parse(srv.URL)
@@ -436,6 +464,7 @@ func TestUpgradeBacksUpDockerThroughAThrowawayContainer(t *testing.T) {
 	h.status = httpGet
 	s := DefaultSettings()
 	s.Runtime, s.HTTPPort, s.MCPPort, s.Image = RuntimeDocker, port, port+1, oldImage
+	s.BackupRecipient, _ = testRecoveryKey(t)
 	if err := SaveSettings(h.settingsPath(), s); err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +482,11 @@ func TestUpgradeBacksUpDockerThroughAThrowawayContainer(t *testing.T) {
 	if err := os.WriteFile(h.tokenPath(), []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	backups := filepath.Join(h.dir, "backups")
+	return h, filepath.Join(h.dir, "backups")
+}
+
+func TestUpgradeBacksUpDockerThroughAThrowawayContainer(t *testing.T) {
+	h, backups := newDockerUpgrade(t)
 	args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--upgrade", "--yes", "--backup-dir", backups, "--runtime", "docker", "--image", testImage}
 	if err := Install(context.Background(), args, h.newEnv()); err != nil {
 		t.Fatal(err)
@@ -467,9 +500,8 @@ func TestUpgradeBacksUpDockerThroughAThrowawayContainer(t *testing.T) {
 			t.Errorf("the export container lacks %q: %s", want, export[0].line())
 		}
 	}
-	dirs, _ := filepath.Glob(filepath.Join(backups, "*"))
-	if len(dirs) != 1 || readFile(t, filepath.Join(dirs[0], "suiteward-artifacts.tar")) != "TARBYTES" {
-		t.Errorf("the tarball is not in the backup: %v", dirs)
+	if _, members := openBackup(t, oneArchive(t, backups)); members["suiteward-artifacts.tar"] != "TARBYTES" {
+		t.Errorf("the tarball is not in the backup: %v", members)
 	}
 }
 

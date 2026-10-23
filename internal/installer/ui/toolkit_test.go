@@ -9,8 +9,10 @@ import (
 
 // The frames of the toolkit that the flow pages are built with, one per element, for a reviewer to read:
 //
-//	testdata/page.*.golden            a page: the title, a paragraph, fields, a warning, a critical box, and the question set apart
-//	testdata/multiselect.*.golden     a multiple choice with the cursor on the third row and the note of a pick that was refused
+//	testdata/page.*.golden              a page: the title, a paragraph, fields, a warning, a critical box, and the question set apart (80x32)
+//	testdata/page-80x24.*.golden        the same page in the default window: the explanation is trimmed from the end, behind one row
+//	testdata/page-60x20.*.golden        and in the smallest window: the title, the critical box and the question stay
+//	testdata/multiselect.*.golden       a multiple choice with the cursor on the third row and the note of a pick that was refused
 //	testdata/multiselect-long.*.golden  a list longer than the page, scrolled to its cursor
 //
 // The "off" frames show the layout without color; the "truecolor" ones show which element is which tone.
@@ -22,20 +24,25 @@ func toolkitOptions(color ColorLevel) Options {
 	return o
 }
 
-func pageDemo(t *testing.T, color ColorLevel) frame {
-	t.Helper()
-	s, _, frames := openChunks(t, toolkitOptions(color), "abc123\n")
-	s.Steps("Welcome", "Backup", "Restore", "Verify", "Finish")
-	s.Step(3)
-	s.Page("Restore preview",
-		Para("Restoring replaces the database and the artifacts of this instance with the backup's."),
-		Fields(KV{"Instance", "da0aff25"}, KV{"Backup", "suiteward-backup-20261022.tar.age"}, KV{"Tier", "co-located"}))
-	s.Warn("The default branch on GitHub may be ahead of the restored canonical.")
-	s.Critical("The recovery kit suiteward-recovery-kit-da0aff25.txt opens every backup. Copy it off this machine now and delete this copy.")
-	if _, err := s.Ask("Type the instance id to confirm", ""); err != nil {
-		t.Fatalf("Ask: %v", err)
+// pageDemo is the restore preview page in a terminal of width x height.
+func pageDemo(width, height int) func(*testing.T, ColorLevel) frame {
+	return func(t *testing.T, color ColorLevel) frame {
+		t.Helper()
+		o := fullOptions(color)
+		o.Width, o.Height = width, height
+		s, _, frames := openChunks(t, o, "abc123\n")
+		s.Steps("Welcome", "Backup", "Restore", "Verify", "Finish")
+		s.Step(3)
+		s.Page("Restore preview",
+			Para("Restoring replaces the database and the artifacts of this instance with the backup's."),
+			Fields(KV{"Instance", "da0aff25"}, KV{"Backup", "suiteward-backup-20261022.tar.age"}, KV{"Tier", "co-located"}))
+		s.Warn("The default branch on GitHub may be ahead of the restored canonical.")
+		s.Critical("The recovery kit " + `C:\Users\magal\Documents\suiteward-recovery-kit-da0aff25.txt` + " opens every backup. Copy it off this machine now and delete this copy.")
+		if _, err := s.Ask("Type the instance id to confirm", ""); err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+		return (*frames)[0]
 	}
-	return (*frames)[0]
 }
 
 func multiDemo(t *testing.T, color ColorLevel) frame {
@@ -83,7 +90,10 @@ func multiLongDemo(t *testing.T, color ColorLevel) frame {
 }
 
 func TestToolkitGoldens(t *testing.T) {
-	demos := map[string]func(*testing.T, ColorLevel) frame{"page": pageDemo, "multiselect": multiDemo, "multiselect-long": multiLongDemo}
+	demos := map[string]func(*testing.T, ColorLevel) frame{
+		"page": pageDemo(80, 32), "page-80x24": pageDemo(80, 24), "page-60x20": pageDemo(60, 20),
+		"multiselect": multiDemo, "multiselect-long": multiLongDemo,
+	}
 	for name, color := range map[string]ColorLevel{"off": ColorNone, "truecolor": ColorTrue} {
 		for demo, build := range demos {
 			t.Run(demo+"/"+name, func(t *testing.T) { checkGolden(t, demo+"."+name, goldenText(build(t, color))) })

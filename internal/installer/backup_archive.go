@@ -143,14 +143,14 @@ func (r *backupRun) readStatus(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("record that the status is unavailable: %w", err)
 	}
-	r.statusBody, r.doc = record, statusDoc{Unavailable: true, Version: unknownValue, Instance: r.instanceFromDatabase(ctx)}
+	r.statusBody, r.doc = record, statusDoc{Unavailable: true, Version: unknownValue, Instance: instanceFromDatabase(ctx, r.rt)}
 	return nil
 }
 
 // instanceFromDatabase is the id /status would have shown, read from the table that holds it, or "unknown": a database that is
 // reachable but names no instance in the shape of one is not a reason to fail a backup.
-func (r *backupRun) instanceFromDatabase(ctx context.Context) string {
-	out, err := ownerPSQL(ctx, r.rt, "SELECT substr(instance_id, 1, 8) FROM suiteward_instance", false)
+func instanceFromDatabase(ctx context.Context, rt Runtime) string {
+	out, err := ownerPSQL(ctx, rt, "SELECT substr(instance_id, 1, 8) FROM suiteward_instance", false)
 	if err != nil || !instanceID.MatchString(out) {
 		return unknownValue
 	}

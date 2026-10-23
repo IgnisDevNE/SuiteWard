@@ -4,17 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // uninstallIsolated is `suiteward uninstall [--purge]` as the service account: stop the units and delete the six unit files, and
 // with purge also the secrets, the volumes (the database!), the network, the GitHub env file and the settings file. The units
 // must be this release's, and an edit is refused with its diff. It never touches /etc: that file is the administrator's.
-func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps, out io.Writer, purge bool) error {
+func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env, purge bool) error {
+	d, out := env.Deps, env.Term.Out
 	s := saved
 	s.Tier, s.Runtime = "isolated", RuntimePodman
 	host, err := openIsolatedHost(ctx, s, d)
@@ -32,12 +33,17 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, d Deps,
 	if purge {
 		question = "Stop and remove the units, and delete the secrets, the volumes (this deletes the database and the artifacts), the network, the GitHub env file and the settings file?"
 	}
-	ok, err := r.confirm("yes", question)
-	if err != nil {
-		return err
+	port := s.HTTPPort // the units that are gone (a purge after an earlier uninstall) leave the port the settings name
+	if st.found {
+		port = st.adopted.Settings.HTTPPort
 	}
-	if !ok {
-		return errors.New("nothing was removed")
+	status := func(ctx context.Context) ([]byte, error) {
+		return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(port)+"/status")
+	}
+	// The file a purge removes is the account's own, whatever --settings the settings were read from.
+	inst := instance{rt: host.rt, settingsPath: host.settingsPath, haveSettings: settingsExist(host.settingsPath), status: status}
+	if err := inst.confirmRemoval(ctx, r, purge, question); err != nil {
+		return err
 	}
 	r.screen.Step(2) // Uninstall set the steps on this screen
 	// Also with no unit files (a purge after an earlier uninstall): a service that uninstall left active has no file, and the next

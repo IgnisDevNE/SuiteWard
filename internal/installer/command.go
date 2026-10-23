@@ -26,7 +26,7 @@ var ErrUsage = errors.New("usage")
 const Usage = `usage: suiteward install [flags]
        suiteward install --upgrade [--yes] [--backup-dir DIR] [--backup-recipient age1pq1...] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
-       suiteward uninstall [--purge] [--yes] [flags]
+       suiteward uninstall [--purge] [--yes] [--instance ID] [flags]
        suiteward enroll [--owner LOGIN] [--test-check OWNER/NAME=CHECK ...] [--settings PATH] [--tier isolated] [--plain]
        suiteward backup init [--kit PATH] [--yes] [--replace] [--settings PATH] [--tier isolated] [--plain]
        suiteward backup [--to DIR] [--settings PATH] [--tier isolated] [--plain]
@@ -278,12 +278,15 @@ func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err
 	return path, true, err
 }
 
-// loadSaved reads the settings of an earlier install; none yet is not an error.
-func loadSaved(path string) (Settings, bool, error) {
+// loadSaved reads the settings of an earlier install. None yet is not an error for the default file, but a file the command line
+// names (named) must exist: a mistyped path would otherwise run the command on defaults, which are not an instance.
+func loadSaved(path string, named bool) (Settings, bool, error) {
 	saved, err := LoadSettings(path)
 	switch {
 	case err == nil:
 		return saved, true, nil
+	case errors.Is(err, ErrNoSettings) && named:
+		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `suiteward install` makes a settings file)", path, ErrNoSettings)
 	case errors.Is(err, ErrNoSettings):
 		return DefaultSettings(), false, nil
 	}
@@ -327,12 +330,11 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	saved, haveSaved, err := loadSaved(settingsPath)
+	upgrade := flags["upgrade"] == "true"
+	saved, haveSaved, err := loadSaved(settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
 	if err != nil {
 		return err
 	}
-
-	upgrade := flags["upgrade"] == "true"
 	if _, given := r.given("backup-recipient"); given && !upgrade {
 		return errors.New("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `suiteward backup init`")
 	}

@@ -59,7 +59,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	saved, haveSaved, err := loadSaved(settingsPath)
+	saved, haveSaved, err := loadSaved(settingsPath, !defaultPath)
 	if err != nil {
 		return err
 	}

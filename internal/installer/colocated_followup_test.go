@@ -258,6 +258,7 @@ func (h *harness) removed(verb string) []string {
 
 func podmanStackExists(h *harness) {
 	h.existingStack(colocatedSettings(), testImage, nil)
+	h.status = statusIs(statusBody) // the service runs: it names the instance testInstance
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
 }
@@ -288,7 +289,7 @@ func TestUninstallPurgeRemovesTheStateToo(t *testing.T) {
 	h := newHarness(t, "linux")
 	podmanStackExists(h)
 	h.writeFiles()
-	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--purge", "--yes"); err != nil {
+	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--purge", "--yes", "--instance", testInstance); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := h.removed("volume rm"), []string{VolumeData, VolumeDBData}; !slices.Equal(got, want) {
@@ -317,7 +318,7 @@ func TestUninstallPurgeSaysThatBackupsAreKept(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(backups, "20261022T101500Z"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--purge", "--yes"); err != nil {
+	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--purge", "--yes", "--instance", testInstance); err != nil {
 		t.Fatal(err)
 	}
 	if want := "Backups under " + backups + " (or the --backup-dir an upgrade was given) are kept."; !strings.Contains(h.out.String(), want) {
@@ -339,10 +340,11 @@ func TestUninstallPurgeOfDockerRemovesTheSecretVolumes(t *testing.T) {
 	h.have(KindNetwork, NetworkName)
 	secretVolumes := []string{"suiteward-secrets-suiteward", "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate"}
 	h.have(KindVolume, append([]string{VolumeData, VolumeDBData}, secretVolumes...)...)
+	h.status = statusIs(statusBody)
 	if err := os.WriteFile(h.tokenPath(), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.uninstall("--runtime", "docker", "--purge", "--yes"); err != nil {
+	if err := h.uninstall("--runtime", "docker", "--purge", "--yes", "--instance", testInstance); err != nil {
 		t.Fatal(err)
 	}
 	want := append([]string{VolumeData, VolumeDBData}, secretVolumes...)
@@ -429,6 +431,7 @@ func TestUninstallNeverTouchesAnotherInstance(t *testing.T) {
 
 	// A Podman stack that was edited.
 	h = newHarness(t, "linux")
+	h.writeFiles()
 	h.existingStack(colocatedSettings(), testImage, func(name string, obj map[string]any) {
 		if name == ContainerServe {
 			obj["HostConfig"].(map[string]any)["Memory"] = int64(512 << 20)

@@ -585,12 +585,16 @@ Read the release notes first. An instance on v0.1.1 or older upgrades to v0.1.3 
 suiteward uninstall
 ```
 
-It asks first (`--yes` skips the question), then removes the stack and keeps the data:
+It first says which instance it is about to remove (the instance id that `/status` shows, the engine, and the settings file), asks (`--yes` skips the question), then removes the stack and keeps the data:
 
 - **Co-located:** the three containers (`suiteward`, `suiteward-migrate` and `suiteward-db`). The volumes, the secrets and the settings stay: run `suiteward install` again to start the stack. `--purge` also removes the volumes (the database and the artifacts), the secrets, the network, the MCP token copy and the settings file.
 - **Isolated,** run as `suiteward` in the shell of step 10.3: it stops the services and deletes the six unit files. `--purge` also removes the secrets, the volumes, the network, `~/.config/suiteward/github.env` and the settings file, and stops any SuiteWard service that an earlier uninstall left running without its unit file (alpha.1 left the network service so, and the next install then failed with `network not found`). It never touches `/etc`: when the installed units read `/etc/suiteward/github.env`, it prints the `sudo rm` line for an administrator. With no settings file on Linux, a host installed by hand needs `--tier isolated`.
 
 `--purge` deletes your TOTP enrollment and every contract version, so back up first (`suiteward backup`, [the backup runbook](backup.md)). It keeps every backup in the backup folder, those of `suiteward backup`, of `--upgrade` and of `suiteward restore` alike, but it removes the settings file, and with it the public half of the recovery key: after a reinstall, make a new key (`suiteward backup init`), and keep the old kit, which still opens the old backups. It removes the record of an unfinished GitHub App (`settings.yaml.pending-app`, see Troubleshooting). The command leaves a stack that this installer did not make, or whose units or containers were edited, alone. On Docker, it uses the runtime and connection that the install recorded. SuiteWard changes nothing on GitHub: delete the App, and the ruleset rule that requires `SuiteWard / Contract`, yourself. The account `suiteward`, the metadata rule and Podman stay on the host; remove them with the administrator's own tools if you no longer need them.
+
+**`--purge` needs the instance id, as `suiteward restore` does.** On a terminal it asks you to type the id of the instance it names. Where nothing can ask (a script, an agent's session) or with `--yes`, pass it: `suiteward uninstall --purge --yes --instance <id>`, the 8 characters shown as `instance` in `/status` (`http://127.0.0.1:<http port>/status`, 8081 by default). A wrong id removes nothing. When the service does not answer, the id is read from the database; when neither names it (the usual state after a plain `suiteward uninstall`, which leaves no database container), the id is `unknown`, which you type or pass on purpose. A plain `suiteward uninstall` keeps its yes-or-no question.
+
+**The settings file decides which instance this is.** A file that you name with `--settings` must exist: a mistyped path stops the command (exit 1, naming the path) before it calls the container engine, in every command that reads the file (`uninstall`, `enroll`, `backup init`, `backup`, `restore`, `install --upgrade` and `doctor`). Only a plain `install`, which writes the file, may name one that is not there yet. With no `--settings` and no file at the default path, `uninstall` and `restore` do not run on the defaults of this PC, which may be another instance: name the engine, `--runtime podman --connection <name>` (`--connection=` for the default one), as the way to remove a stack whose settings were never saved, for example after an install that failed early; or give `--tier isolated` as the service account.
 
 ### Rotating the App key
 
@@ -697,7 +701,7 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 | Flag | Meaning |
 | --- | --- |
 | `--answers PATH` | Read answers from a YAML file. A flag wins over the file. |
-| `--settings PATH` | The installer settings file (default: `suiteward/settings.yaml` in your per-user configuration directory). |
+| `--settings PATH` | The installer settings file (default: `suiteward/settings.yaml` in your per-user configuration directory). A file that you name must exist, except for a plain `install`, which writes it (see "Uninstalling"). |
 | `--token-file PATH` | Where the copy of the MCP token for a client goes (co-located). |
 | `--tier` | `co-located` (default) or `isolated`. The isolated install passes it, and `--upgrade` on Linux with no settings file needs it. |
 | `--runtime` | `podman` (default, recommended) or `docker` (co-located only). |
@@ -724,7 +728,7 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 
 `sudo suiteward install host`: `--answers PATH`, `--yes` (answer yes to installing Podman with `dnf`), `--metadata-rule yes|no` and `--plain`.
 
-`suiteward uninstall`: `--purge`, `--yes`, `--settings`, `--token-file`, `--tier`, `--runtime`, `--connection` and `--plain`, as above. On the isolated tier, give `--tier isolated` when there is no settings file.
+`suiteward uninstall`: `--purge`, `--yes`, `--instance ID` (with `--purge`: the instance id, which `--yes` needs and a terminal asks you to type), `--settings`, `--token-file`, `--tier`, `--runtime`, `--connection` and `--plain`, as above. On the isolated tier, give `--tier isolated` when there is no settings file; on the co-located tier, give `--runtime` and `--connection` then.
 
 `suiteward enroll`: `--owner LOGIN`, `--test-check OWNER/NAME=CHECK` (repeat it), `--settings PATH`, `--tier` (give `--tier isolated` as the service account) and `--plain`. It needs a real terminal and a running service, and asks you to type `enroll` before it replaces the TOTP secret of an enrolled owner (section 6, "Enroll again").
 
@@ -732,7 +736,7 @@ Every command prints its flags with `--help`. The exit code is 0 on success, 1 o
 
 `suiteward backup`: `--to DIR` (default: the backup folder of section 11), `--settings PATH`, `--token-file`, `--tier`, `--runtime`, `--connection` and `--plain`. It takes the encrypted backup of the running instance, with the key of the settings.
 
-`suiteward restore <backup.tar.age>`: `--kit PATH`, `--yes` with `--instance ID`, `--backup-dir DIR`, `--plaintext-dir DIR` (instead of the file, for the directory of an earlier release), `--settings PATH`, `--token-file`, `--tier`, `--runtime`, `--connection` and `--plain`. The key of the kit is never an argument: without `--kit` it is pasted hidden, or piped in. On the isolated tier, give `--tier isolated` when there is no settings file. [The backup runbook](backup.md) says what each one does.
+`suiteward restore <backup.tar.age>`: `--kit PATH`, `--yes` with `--instance ID`, `--backup-dir DIR`, `--plaintext-dir DIR` (instead of the file, for the directory of an earlier release), `--settings PATH`, `--token-file`, `--tier`, `--runtime`, `--connection` and `--plain`. The key of the kit is never an argument: without `--kit` it is pasted hidden, or piped in. On the isolated tier, give `--tier isolated` when there is no settings file; on the co-located tier, give `--runtime` and `--connection` then. [The backup runbook](backup.md) says what each one does.
 
 `suiteward doctor`: `--json`, `--settings PATH` and `--plain`.
 

@@ -49,13 +49,12 @@ func (h *harness) consoleOf(terminal bool, stdin string) Env {
 	return env
 }
 
-// purgeHarness is the co-located stack with its files, whose service answers /status as the instance testInstance.
+// purgeHarness is the co-located stack with its files, whose service answers /status as the instance testInstance (podmanStackExists).
 func purgeHarness(t *testing.T) *harness {
 	t.Helper()
 	h := newHarness(t, "linux")
 	podmanStackExists(h)
 	h.writeFiles()
-	h.status = statusIs(statusBody)
 	return h
 }
 

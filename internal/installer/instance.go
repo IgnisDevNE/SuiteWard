@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,7 +51,7 @@ func locateInstance(ctx context.Context, r *Resolver, env Env, flags map[string]
 	if err != nil {
 		return instance{}, err
 	}
-	saved, haveSaved, err := loadSaved(settingsPath)
+	saved, haveSaved, err := loadSaved(settingsPath, !defaultPath)
 	if err != nil {
 		return instance{}, err
 	}
@@ -238,6 +239,59 @@ func (i instance) needSettings() error {
 func settingsExist(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// currentID is the id of the instance: what /status shows, else what the database holds, else "unknown" (as a backup of an instance that
+// does not answer says).
+func (i instance) currentID(ctx context.Context) string {
+	if body, err := i.status(ctx); err == nil {
+		if doc, err := parseStatus(body); err == nil {
+			return doc.Instance
+		}
+	}
+	return instanceFromDatabase(ctx, i.rt)
+}
+
+// instanceConfirm is what the owner confirms with the id of an instance, and how.
+type instanceConfirm struct {
+	id       string
+	action   string // what the id confirms: "restore" or "purge"
+	ofWhat   string // whose id it is, for the refusal that names a wrong one
+	prompt   string // what a terminal is asked
+	yesAlone bool   // --yes with the right --instance confirms on a terminal too: a purge may run from a script, a restore always has the id typed
+}
+
+// confirmInstance is the owner typing the instance id, or --yes with --instance where nobody can type.
+func (r *Resolver) confirmInstance(c instanceConfirm) error {
+	yes, err := parseYesNo("yes", r.preset("yes", "false"))
+	if err != nil {
+		return err
+	}
+	if !r.term.IsTerminal || (yes && c.yesAlone) {
+		given := r.preset("instance", "")
+		switch {
+		case !yes || given == "":
+			because := "the input is not a terminal"
+			if r.term.IsTerminal {
+				because = "--yes does not ask"
+			}
+			return fmt.Errorf("confirm the %s with --yes and --instance %s: nothing can ask you to type the instance id here, because %s", c.action, c.id, because)
+		case given != c.id:
+			return fmt.Errorf("the %s was not confirmed: --instance %s is not the instance id %s (%s): nothing was changed", c.action, given, c.ofWhat, c.id)
+		}
+		return nil
+	}
+	line, err := r.ask(c.prompt)
+	switch {
+	case errors.Is(err, io.EOF):
+		line = ""
+	case err != nil:
+		return fmt.Errorf("read the confirmation: %w", err)
+	}
+	if line != c.id {
+		return fmt.Errorf("the %s was not confirmed: you did not type the instance id %s: nothing was changed", c.action, c.id)
+	}
+	return nil
 }
 
 // tierSteps is what a restore does to the stack of one tier, so that the restore itself is the same for both.

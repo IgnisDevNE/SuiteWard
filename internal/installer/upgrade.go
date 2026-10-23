@@ -205,7 +205,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	scr.Step(2)
 	stored := s
 	stored.Image = previous.Image // what the settings file says until the upgrade is done: a key made now is saved beside it
-	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus, startCommand: startCommand}
+	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus, startCommand: startCommand, serviceStarted: started}
 	dir, err := upgradeBackup(ctx, r, env, &inst, parent, nil, agreed)
 	if err != nil {
 		return err
@@ -214,7 +214,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	c.say("Backup written to %s.\n", dir)
 	scr.Step(3)
 	if err := c.pullImages(ctx); err != nil {
-		return fmt.Errorf("%w (nothing was changed; the backup is in %s)", err, dir)
+		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
 		return withBackup(err, dir, "")
@@ -241,9 +241,9 @@ func settleRecipient(r *Resolver, env Env, s *Settings) (agreed bool, err error)
 		return false, nil
 	}
 	if !env.Term.IsTerminal {
-		return false, errNoRecipient
+		return false, noKeyError(true)
 	}
-	if err := askForKey(r); err != nil {
+	if err := askForKey(r, true); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -257,7 +257,7 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 		return "", err
 	}
 	if err := prepareBackupDir(dir, r.screen.Warn); err != nil {
-		return "", backupFailed(err)
+		return "", backupFailed(err, inst.serviceStarted)
 	}
 	b := inst.backup(env.Deps, dir, recipient)
 	b.beside = beside

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"filippo.io/age"
 )
@@ -621,6 +622,10 @@ func TestAHostileArchiveIsRefusedAndNothingIsLeftBehind(t *testing.T) {
 		{"a manifest that is not JSON", []rawEntry{good, reg("manifest.json", "not json")}, "is not valid"},
 		{"a manifest with an unknown key", []rawEntry{good, reg("manifest.json", `{"format":1,"extra":true}`)}, "is not valid"},
 		{"a manifest that is too large", []rawEntry{good, tooLarge}, "too large"},
+		{"a sha256 with an escape sequence", withHash(good, func(h string) string { return "\x1b[2Jevil" + h[10:] }), "64 lowercase hexadecimal"},
+		{"a sha256 in capitals", withHash(good, strings.ToUpper), "64 lowercase hexadecimal"},
+		{"a sha256 that is short", withHash(good, func(h string) string { return h[:63] }), "64 lowercase hexadecimal"},
+		{"no sha256", withHash(good, func(string) string { return "" }), "64 lowercase hexadecimal"},
 		{"a member that differs from its hash", append([]rawEntry{reg("status.json", "[]")}, manifestOf(1, []rawEntry{good})), "sha256"},
 		{"a size that differs", append([]rawEntry{good}, retag(manifestOf(1, []rawEntry{good}), "status.json", func(m *Member) { m.Size++ })), "size"},
 		{"a member the manifest lacks", withLast(good, reg("suiteward.sql", "-- dump\n")), "not in the manifest"},
@@ -734,5 +739,39 @@ func TestReadManifestVerifiesEverythingAndAReaderIsSingleUse(t *testing.T) {
 	}
 	if left := walk(t, dir); len(left) != 0 {
 		t.Errorf("a refused read wrote %v", left)
+	}
+}
+
+// withHash is the archive of the one member, whose manifest records the hash that edit makes of the true one.
+func withHash(member rawEntry, edit func(string) string) []rawEntry {
+	return []rawEntry{member, retag(manifestOf(1, []rawEntry{member}), member.hdr.Name, func(m *Member) { m.SHA256 = edit(m.SHA256) })}
+}
+
+// The manifest is text of whoever wrote the archive: a hash that is not hexadecimal is refused without being repeated, and the hashes that
+// a mismatch does print are quoted.
+func TestAManifestHashThatIsNotHexadecimalIsNotRepeated(t *testing.T) {
+	rec, id := newKeyPair(t)
+	good := reg("status.json", "{}")
+	data := rawArchive(t, rec, withHash(good, func(h string) string { return "\x1b[2Jevil" + h[10:] }))
+	rd, err := Open(bytes.NewReader(data), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = rd.ReadManifest()
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ReadManifest = %v, want ErrInvalid", err)
+	}
+	if strings.ContainsFunc(err.Error(), unicode.IsControl) || strings.Contains(err.Error(), "evil") {
+		t.Errorf("the refusal repeats the hash: %q", err)
+	}
+
+	// A member that differs from a well-formed hash prints both hashes quoted.
+	other := append([]rawEntry{reg("status.json", "[]")}, manifestOf(1, []rawEntry{good}))
+	rd, err = Open(bytes.NewReader(rawArchive(t, rec, other)), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rd.ReadManifest(); err == nil || !strings.Contains(err.Error(), `has sha256 "`) || !strings.Contains(err.Error(), `records "`) {
+		t.Errorf("ReadManifest = %v, want both hashes quoted", err)
 	}
 }

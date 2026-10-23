@@ -145,7 +145,7 @@ func (k *keyInit) confirmStored() error {
 		return fmt.Errorf("read the confirmation: %w", err)
 	}
 	if line != storedWord {
-		return fmt.Errorf("you did not type %q, so the key was not stored and the kit was removed: nothing was changed", storedWord)
+		return fmt.Errorf("you did not type %q, so the key was not stored and the kit was removed: %s", storedWord, k.inst.changed())
 	}
 	return nil
 }

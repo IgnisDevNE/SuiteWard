@@ -229,3 +229,45 @@ func TestBackupCommandRemovesWhatAKilledBackupOrRestoreLeftAndSaysSo(t *testing.
 		}
 	}
 }
+
+// The refusal of a command that has no key names what applies to that command: `suiteward backup` has no --backup-recipient, and an
+// upgrade has.
+func TestTheRefusalForALackOfAKeyNamesOnlyWhatAppliesToTheCommand(t *testing.T) {
+	flags := []string{"--backup-recipient", "backup_recipient"}
+	check := func(t *testing.T, err error, want, absent []string) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("the command went on without a key")
+		}
+		for _, w := range want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("the refusal lacks %q: %v", w, err)
+			}
+		}
+		for _, a := range absent {
+			if strings.Contains(err.Error(), a) {
+				t.Errorf("the refusal names %q, which this command does not have: %v", a, err)
+			}
+		}
+	}
+	t.Run("backup, without a terminal", func(t *testing.T) {
+		u := newUpgradeHarness(t, noRecipient)
+		check(t, u.backupCmd("--to", filepath.Join(t.TempDir(), "mine")), []string{"suiteward backup init"}, flags)
+	})
+	t.Run("backup, on a terminal that says no", func(t *testing.T) {
+		u := newUpgradeHarness(t, noRecipient)
+		check(t, u.backupCmdOnTerminal("n\n", "--to", filepath.Join(t.TempDir(), "mine")), []string{"suiteward backup init"}, flags)
+	})
+	t.Run("backup, on a terminal whose input ends", func(t *testing.T) {
+		u := newUpgradeHarness(t, noRecipient)
+		check(t, u.backupCmdOnTerminal("", "--to", filepath.Join(t.TempDir(), "mine")), []string{"suiteward backup init"}, flags)
+	})
+	t.Run("upgrade, without a terminal", func(t *testing.T) {
+		u := newUpgradeHarness(t, noRecipient)
+		check(t, u.upgradeAt(false, "", "--yes"), append([]string{"suiteward backup init"}, flags...), nil)
+	})
+	t.Run("upgrade, on a terminal that says no", func(t *testing.T) {
+		u := newUpgradeHarness(t, noRecipient)
+		check(t, u.upgradeAt(true, "n\n", "--yes"), append([]string{"suiteward backup init"}, flags...), nil)
+	})
+}
